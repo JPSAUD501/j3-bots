@@ -5,7 +5,8 @@ import {
   type J3Client,
   makeUpdatePrompt,
   type Readable,
-  serverRelease,
+  offeredRelease,
+  serverOffer,
   snoozeStore,
   type UpdatePrompt,
   type UpdatePromptEntry,
@@ -129,8 +130,10 @@ const useNow = (until: number | null): number => {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (until === null || until <= now) return;
-    // Timers take at most about 24.8 days; a longer wait looks again then.
-    const wait = Math.min(until - now, 2 ** 31 - 1);
+    // From the time now, not the last render's: "Later" is often pressed
+    // long after it. Timers take at most about 24.8 days; a longer wait
+    // looks again then.
+    const wait = Math.max(0, Math.min(until - Date.now(), 2 ** 31 - 1));
     const timer = window.setTimeout(() => setNow(Date.now()), wait);
     return () => window.clearTimeout(timer);
   }, [until, now]);
@@ -164,7 +167,7 @@ export function useUpdatePrompt(blocked: boolean): UpdatePromptHandle {
   const input: UpdatePromptInput = {
     paired: pairing !== null,
     blocked,
-    server: serverRelease(serverView),
+    server: serverOffer(serverView),
     app: side.app,
     now,
   };
@@ -172,7 +175,7 @@ export function useUpdatePrompt(blocked: boolean): UpdatePromptHandle {
     view: {
       open: updatePromptShown(state, input),
       run: state.run,
-      server: input.server,
+      server: offeredRelease(input.server),
       app: side.app,
       follow: side.follow,
       local: desktop?.mode === "local",

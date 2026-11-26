@@ -41,12 +41,21 @@ const done: UpdateResult = {
   detail: null,
 };
 
+/** The status of a server whose update ran: on the new version, with how it ended. */
+const updated: ReceivedUpdateStatus = {
+  ...offering,
+  current: { version: "0.9.0", channel: "stable" },
+  available: null,
+  lastResult: done,
+};
+
 /** A runner over fakes: what the server and the client were asked, and how to answer. */
 const harness = (start: ServerUpdateStart = { _tag: "started" }) => {
   const view = new Cell<ServerUpdateView>({ _tag: "status", status: offering });
   const ended = new Cell<UpdateResult | null>(null);
   const side = new Cell<ClientSide>({ follow: "install", app: null, workItStops: 0 });
   const asked: Array<string> = [];
+  let refreshed = 0;
   let kept: Snooze | null = null;
   let settleClient: (outcome: "current" | "failed") => void = () => {};
   const prompt = makeUpdatePrompt({
@@ -54,8 +63,21 @@ const harness = (start: ServerUpdateStart = { _tag: "started" }) => {
       view,
       ended,
       dismissEnded: () => ended.set(null),
+      refresh: () => {
+        refreshed++;
+      },
       start: (version, stopWork) => {
         asked.push(`server ${version}${stopWork ? " stopping work" : ""}`);
+        // As the server does, the run is recorded before it answers.
+        if (start._tag === "started") {
+          view.set({
+            _tag: "status",
+            status: {
+              ...offering,
+              state: { _tag: "downloading", receivedBytes: 0, totalBytes: null },
+            },
+          });
+        }
         return Promise.resolve(start);
       },
     },
@@ -82,6 +104,7 @@ const harness = (start: ServerUpdateStart = { _tag: "started" }) => {
     view,
     ended,
     asked,
+    refreshed: () => refreshed,
     kept: () => kept,
     settleClient: (o: "current" | "failed") => settleClient(o),
   };
@@ -93,7 +116,7 @@ const tick = async () => {
 };
 
 describe("the update prompt's runner", () => {
-  it("starts the client only once the server has answered that its update ended on the new version", async () => {
+  it("starts the client only once the server answers that its update ended on the new version", async () => {
     const { prompt, view, ended, asked, settleClient } = harness();
     prompt.updateNow();
     await tick();
@@ -101,11 +124,27 @@ describe("the update prompt's runner", () => {
     // Restarting: the server is silent, and the client waits.
     view.set({ _tag: "restarting", to: "0.9.0", last: offering });
     assert.deepStrictEqual(asked, ["server 0.9.0"]);
-    ended.set(done);
+    // The first read that answers, a reconnect's as well as the follower's, ends it.
+    view.set({ _tag: "status", status: updated });
     assert.deepStrictEqual(asked, ["server 0.9.0", "client install"]);
+    // The follower's own report of the same end says nothing more.
+    ended.set(done);
+    assert.strictEqual(ended.get(), null);
     settleClient("current");
     await tick();
     assert.strictEqual(prompt.state.get().run._tag, "done");
+  });
+
+  it("reads the server again before trying again after losing sight of it, and goes on if it got there", async () => {
+    const { prompt, view, asked, refreshed } = harness();
+    prompt.updateNow();
+    await tick();
+    view.set({ _tag: "lost", to: "0.9.0", last: offering });
+    prompt.retry();
+    assert.strictEqual(refreshed(), 1);
+    assert.deepStrictEqual(asked, ["server 0.9.0"]);
+    view.set({ _tag: "status", status: updated });
+    assert.deepStrictEqual(asked, ["server 0.9.0", "client install"]);
   });
 
   it("leaves the client alone when the server goes silent for good", async () => {

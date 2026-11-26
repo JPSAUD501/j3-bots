@@ -1656,6 +1656,8 @@ export const en = {
   "updatePrompt.work.hint": "Update later, once they’re done, or stop their work now.",
   "updatePrompt.work.stop": "Stop and update",
   "updatePrompt.serverFailed.title": "The server didn’t update",
+  "updatePrompt.serverFailed.unconfirmed":
+    "The update ended, but the server doesn’t say it runs {version}. On the server’s machine, run this to see why:",
   "updatePrompt.serverFailed.hint":
     "Nothing else was changed: this app stays on the version it runs.",
   "updatePrompt.appFailed.title": "The server runs {version}, but this app didn’t update",

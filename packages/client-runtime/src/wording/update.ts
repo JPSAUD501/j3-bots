@@ -237,5 +237,11 @@ export function serverFailureLine(failure: ServerFailure, i18n: I18n): ServerUpd
       return updateResultLine(failure.result, i18n);
     case "lost":
       return line(i18n.t("serverUpdate.lost"), "blocked", { command: "j3-bots doctor" });
+    case "unconfirmed":
+      return line(
+        i18n.t("updatePrompt.serverFailed.unconfirmed", { version: failure.version }),
+        "blocked",
+        { command: "j3-bots doctor" },
+      );
   }
 }

@@ -23,6 +23,25 @@ export interface Release {
 }
 
 /**
+ * What the server brings to the prompt, as this client last read it:
+ *
+ * - `release`: a release this client can start now;
+ * - `current`: nothing to start, and no update runs; `version` is what the
+ *   server runs, null for a server from before the update routes;
+ * - `unknown`: not read yet, not answering, or updating.
+ *
+ * Only a server known to be current lets the app's part run alone.
+ */
+export type ServerOffer =
+  | { readonly _tag: "release"; readonly release: Release }
+  | { readonly _tag: "current"; readonly version: string | null }
+  | { readonly _tag: "unknown" };
+
+/** The release a server offers, or null. */
+export const offeredRelease = (offer: ServerOffer): Release | null =>
+  offer._tag === "release" ? offer.release : null;
+
+/**
  * A newer version of this app: one it installs itself (`install`), or one
  * the operator downloads by hand, as for a build that cannot install it
  * (`download`).
@@ -69,6 +88,11 @@ export type ServerFailure =
   | { readonly _tag: "unreachable" }
   /** It ran and ended elsewhere: rolled back, or failed with its rollback. */
   | { readonly _tag: "ended"; readonly result: UpdateResult }
+  /**
+   * It ended, but the server does not say it runs `version`: it kept no
+   * result, or runs another version than the one its result names.
+   */
+  | { readonly _tag: "unconfirmed"; readonly version: string }
   /** It started and the server has not answered since, for as long as an update may take. */
   | { readonly _tag: "lost" };
 
@@ -128,7 +152,7 @@ export type PromptEvent =
   /** The operator pressed "Update now" at `now`, with what is on offer at that moment. */
   | {
       readonly _tag: "update-now";
-      readonly server: Release | null;
+      readonly server: ServerOffer;
       readonly client: ClientSide;
       readonly now: number;
     }
@@ -142,8 +166,15 @@ export type PromptEvent =
     }
   /** The request to start did not reach the server. */
   | { readonly _tag: "server-unreachable" }
-  /** The server's update ended, and the server answered with how. */
-  | { readonly _tag: "server-ended"; readonly result: UpdateResult }
+  /**
+   * The server's update ended, and the server answered: how it ended, when
+   * it kept that, and the version it runs now.
+   */
+  | {
+      readonly _tag: "server-ended";
+      readonly result: UpdateResult | null;
+      readonly runs: string;
+    }
   /** The server's update stopped answering for as long as one may take. */
   | { readonly _tag: "server-lost" }
   /** This client found nothing newer to install. */
@@ -153,7 +184,7 @@ export type PromptEvent =
   /** The operator pressed "Try again" at `now`, with what is on offer at that moment. */
   | {
       readonly _tag: "retry";
-      readonly server: Release | null;
+      readonly server: ServerOffer;
       readonly client: ClientSide;
       readonly now: number;
     }
@@ -206,9 +237,12 @@ const clientPart = (prompt: Prompt, plan: Plan, stopWork: boolean, workItStops: 
 /** What "Update now" and "Try again" start: the server first, when it has a release. */
 const begin = (
   prompt: Prompt,
-  event: { readonly server: Release | null; readonly client: ClientSide; readonly now: number },
+  event: { readonly server: ServerOffer; readonly client: ClientSide; readonly now: number },
 ): Step => {
-  const { server, client } = event;
+  // Whether the server is behind is not known: nothing starts on a guess.
+  if (event.server._tag === "unknown") return stay(prompt);
+  const { client } = event;
+  const server = offeredRelease(event.server);
   // A build that cannot install itself, with a current server: the
   // operator downloads the new version, and the prompt rests as after "Later".
   if (server === null && client.app?.how === "download") {
@@ -241,9 +275,20 @@ export const step = (prompt: Prompt, event: PromptEvent): Step => {
     case "retry":
       switch (run._tag) {
         case "server-failed":
-          return begin(prompt, event);
+          // The update may have gone through after this client lost sight of it.
+          if (
+            event.server._tag === "current" &&
+            event.server.version !== null &&
+            event.server.version === run.plan.server?.version
+          ) {
+            return clientPart(prompt, run.plan, false, event.client.workItStops);
+          }
+          // Only the server's own release starts it again: a server that
+          // offers none is not current for this, it did not reach the version.
+          return event.server._tag === "release" ? begin(prompt, event) : stay(prompt);
         case "client-failed":
-          return clientPart(prompt, run.plan, true, 0);
+          // Work may have started since the last try: it is counted again.
+          return clientPart(prompt, run.plan, false, event.client.workItStops);
         default:
           return stay(prompt);
       }
@@ -288,12 +333,24 @@ export const step = (prompt: Prompt, event: PromptEvent): Step => {
         : stay(prompt);
     case "server-ended": {
       if (run._tag !== "server" || run.plan.server === null) return stay(prompt);
-      const { result } = event;
-      // Only an update that ended on the version asked for lets the client follow.
-      if (result.outcome !== "done" || result.to !== run.plan.server.version) {
+      const { result, runs } = event;
+      const target = run.plan.server.version;
+      // Only an update that ended on the version asked for, on a server that
+      // runs it, lets the client follow.
+      if (result !== null && result.outcome !== "done") {
         return stay({
           ...prompt,
           run: { _tag: "server-failed", plan: run.plan, failure: { _tag: "ended", result } },
+        });
+      }
+      if (result === null || result.to !== target || runs !== target) {
+        return stay({
+          ...prompt,
+          run: {
+            _tag: "server-failed",
+            plan: run.plan,
+            failure: { _tag: "unconfirmed", version: target },
+          },
         });
       }
       // The server this client runs is never the one updated here, so its restart stops nothing.
@@ -359,19 +416,30 @@ export interface PromptInput {
    * way, and opens nothing of its own.
    */
   readonly blocked: boolean;
-  /** The server's release this client can start now (`serverRelease`). */
-  readonly server: Release | null;
+  /** What the server offers now (`serverOffer`). */
+  readonly server: ServerOffer;
   /** A newer version of this app ready for the operator. */
   readonly app: AppRelease | null;
   readonly now: number;
 }
 
 /** Whether "Later" still keeps the prompt closed for what is on offer. */
-const snoozed = (snooze: Snooze | null, input: PromptInput): boolean =>
-  snooze !== null &&
-  input.now < snooze.until &&
-  (input.server === null || input.server.version === snooze.server) &&
-  (input.app === null || input.app.version === snooze.app);
+const snoozed = (snooze: Snooze | null, input: PromptInput): boolean => {
+  const server = offeredRelease(input.server);
+  return (
+    snooze !== null &&
+    input.now < snooze.until &&
+    (server === null || server.version === snooze.server) &&
+    (input.app === null || input.app.version === snooze.app)
+  );
+};
+
+/**
+ * What the prompt offers: the server's release, or the app's alone once the
+ * server is known to be current. Null when there is nothing.
+ */
+const onOffer = (input: PromptInput): Release | null =>
+  offeredRelease(input.server) ?? (input.server._tag === "current" ? input.app : null);
 
 /** Whether the dialog is in front now. */
 export const shown = (prompt: Prompt, input: PromptInput): boolean => {
@@ -379,11 +447,7 @@ export const shown = (prompt: Prompt, input: PromptInput): boolean => {
   const { run } = prompt;
   switch (run._tag) {
     case "idle":
-      return (
-        !input.blocked &&
-        (input.server !== null || input.app !== null) &&
-        !snoozed(prompt.snooze, input)
-      );
+      return !input.blocked && onOffer(input) !== null && !snoozed(prompt.snooze, input);
     case "server":
     case "client":
       return !run.hidden;
@@ -409,23 +473,43 @@ export const entry = (prompt: Prompt, input: PromptInput): Entry | null => {
   const { run } = prompt;
   if (run._tag === "server" || run._tag === "client") return { _tag: "running" };
   if (run._tag !== "idle") return null;
-  const version = input.server?.version ?? input.app?.version ?? null;
-  return version === null ? null : { _tag: "offer", version };
+  const offer = onOffer(input);
+  return offer === null ? null : { _tag: "offer", version: offer.version };
 };
 
+const UNKNOWN: ServerOffer = { _tag: "unknown" };
+
 /**
- * The release on the server that this client can start now: a verified,
- * newer one, on a server that can update itself from a client and runs no
- * update. A server that cannot (as the one the desktop app runs, which
- * updates with the app) offers nothing here: its Settings say why.
+ * What the server offers this client, from how it last answered. A release
+ * counts when this client can start it: a verified, newer one, on a server
+ * that can update itself from a client and runs no update. A server that
+ * cannot (as the one the desktop app runs, which updates with the app) is
+ * current here: its Settings say why. A server from before the update routes
+ * is current too, as far as this client can tell.
  */
-export const serverRelease = (view: ServerUpdateView): Release | null => {
-  if (view._tag !== "status") return null;
-  const { available, canUpdate, state } = view.status;
-  if (available === null || canUpdate._tag !== "able" || isRunning(state)) return null;
-  return {
-    version: available.version,
-    notesUrl: available.notesUrl,
-    highlights: available.highlights,
-  };
+export const serverOffer = (view: ServerUpdateView): ServerOffer => {
+  switch (view._tag) {
+    case "unsupported":
+      return { _tag: "current", version: null };
+    case "status": {
+      const { available, canUpdate, state, current } = view.status;
+      if (isRunning(state)) return UNKNOWN;
+      if (available !== null && canUpdate._tag === "able") {
+        return {
+          _tag: "release",
+          release: {
+            version: available.version,
+            notesUrl: available.notesUrl,
+            highlights: available.highlights,
+          },
+        };
+      }
+      return { _tag: "current", version: current.version };
+    }
+    case "unread":
+    case "unreachable":
+    case "restarting":
+    case "lost":
+      return UNKNOWN;
+  }
 };

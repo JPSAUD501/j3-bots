@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  serverRelease,
+  offeredRelease,
+  serverOffer,
   type UpdatePlan,
   type UpdatePromptEntry,
   type UpdatePromptInput,
@@ -37,7 +38,9 @@ const useNow = (until: number | null): number => {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (until === null || until <= now) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.min(until - now, 2 ** 31 - 1));
+    // From the time now, not the last render's: "Later" is often pressed long after it.
+    const wait = Math.max(0, Math.min(until - Date.now(), 2 ** 31 - 1));
+    const timer = setTimeout(() => setNow(Date.now()), wait);
     return () => clearTimeout(timer);
   }, [until, now]);
   return now;
@@ -60,7 +63,7 @@ function useUpdatePrompt(blocked: boolean) {
   const input: UpdatePromptInput = {
     paired: pairing !== null,
     blocked,
-    server: serverRelease(view),
+    server: serverOffer(view),
     app: side.app,
     now,
   };
@@ -160,20 +163,21 @@ function Body({ blocked, run }: { readonly blocked: boolean; readonly run: Updat
   const appLine = phone === null ? null : phoneUpdateLine(phone, i18n);
   switch (run._tag) {
     case "idle": {
-      const release = input.server ?? input.app;
+      const server = offeredRelease(input.server);
+      const release = server ?? input.app;
       if (release === null) return null;
       return (
         <>
           <Title>
-            {input.server !== null
-              ? t("updatePrompt.title", { version: input.server.version })
+            {server !== null
+              ? t("updatePrompt.title", { version: server.version })
               : t("updatePrompt.titleApp", { version: release.version })}
           </Title>
           <Sentence>
-            {input.server === null
+            {server === null
               ? t("updatePrompt.plan.app")
               : side.follow === "install"
-                ? t("updatePrompt.plan.serverThenApp", { version: input.server.version })
+                ? t("updatePrompt.plan.serverThenApp", { version: server.version })
                 : t("updatePrompt.plan.server")}
           </Sentence>
           <View className="gap-2 rounded-lg bg-muted p-3">

@@ -312,6 +312,13 @@ export interface AppUpdate {
    * that fails says so and waits for the next opening or the operator.
    */
   readonly check: (opening?: boolean) => Promise<void>;
+  /**
+   * While the update prompt updates the server first (`true`), the checks
+   * the app makes as it opens or comes back wait, so "Update automatically"
+   * never installs this app ahead of its server; the prompt installs it
+   * after. The operator's own check still runs.
+   */
+  readonly waitForServer: (waiting: boolean) => void;
   readonly setChannel: (channel: UpdateChannel) => void;
   readonly setAutomatic: (on: boolean) => void;
   /** Downloads, verifies and installs the available release, asking for what Android needs. */
@@ -340,6 +347,7 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
   const automatic = new Cell<boolean>(readAutomatic());
   let checkedAt = 0;
   let busy = false;
+  let serverFirst = false;
 
   const fail = (release: AppRelease | null, failure: AppUpdateFailure) =>
     state.set({ _tag: "failed", release, failure });
@@ -348,7 +356,7 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
     if (route === "play" || busy || updateInHand(state.get())) return;
     const now = Date.now();
     const every = automatic.get() ? AUTOMATIC_CHECK_EVERY_MS : CHECK_EVERY_MS;
-    if (opening && now - checkedAt < every) return;
+    if (opening && (serverFirst || now - checkedAt < every)) return;
     const running = installed.versionName;
     if (running === null) return;
     busy = true;
@@ -357,9 +365,9 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
     // what this check found is dropped and the new channel is read instead,
     // so only the chosen channel ever offers a release.
     const asked = channel.get();
-    const found = (next: AppUpdateState) => {
-      if (channel.get() === asked) state.set(next);
-    };
+    // What the check found, published once it lets go of `busy`, so whoever
+    // the news wakes (the operator's tap, the update prompt) can take it at once.
+    let next: AppUpdateState;
     // The release this check offered, which "Update automatically" takes.
     let offeredRelease: AppRelease | null = null;
     state.set({ _tag: "checking" });
@@ -368,27 +376,30 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
       const offered = appOffer({ releases, channel: asked, running });
       const candidate = offered.available;
       if (candidate === null) {
-        found({ _tag: "current", waitingForStable: offered.waitingForStable });
-        return;
+        next = { _tag: "current", waitingForStable: offered.waitingForStable };
+      } else {
+        const verified = await verifiedRelease(feed, candidate);
+        if (Result.isFailure(verified)) {
+          next = {
+            _tag: "failed",
+            release: null,
+            failure: { _tag: "unverified", version: candidate.version, reason: verified.failure },
+          };
+        } else {
+          offeredRelease = verified.success;
+          next = { _tag: "available", release: verified.success };
+        }
       }
-      const verified = await verifiedRelease(feed, candidate);
-      if (Result.isFailure(verified)) {
-        found({
-          _tag: "failed",
-          release: null,
-          failure: { _tag: "unverified", version: candidate.version, reason: verified.failure },
-        });
-        return;
-      }
-      offeredRelease = verified.success;
-      found({ _tag: "available", release: verified.success });
     } catch {
-      found({ _tag: "failed", release: null, failure: { _tag: "unreachable" } });
-    } finally {
-      busy = false;
-      if (channel.get() !== asked) void check();
-      else if (offeredRelease !== null && automatic.get()) void takeOffered(offeredRelease);
+      next = { _tag: "failed", release: null, failure: { _tag: "unreachable" } };
     }
+    busy = false;
+    if (channel.get() !== asked) {
+      void check();
+      return;
+    }
+    state.set(next);
+    if (offeredRelease !== null && automatic.get()) void takeOffered(offeredRelease);
   };
 
   const fileOf = (release: AppRelease) => new File(folder, apkName(release.version));
@@ -532,6 +543,9 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
     automatic,
     installed,
     check,
+    waitForServer: (waiting) => {
+      serverFirst = waiting;
+    },
     setChannel: (next) => {
       if (next === channel.get()) return;
       try {

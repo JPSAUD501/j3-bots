@@ -45,6 +45,13 @@ const FOLLOW_EVERY = Duration.seconds(2);
 const GIVE_UP_AFTER = Duration.minutes(10);
 
 /**
+ * How often a client that stays connected reads the status again. The
+ * server checks its feed every few hours, so a release it finds meanwhile
+ * reaches the update prompt within the hour, without a reconnect.
+ */
+const READ_AGAIN_EVERY = Duration.hours(1);
+
+/**
  * Where the server's updates stand, as this client knows it.
  *
  * - `unread`: not read yet;
@@ -387,7 +394,8 @@ const changes = <A>(readable: Readable<A>): Stream.Stream<A> =>
 /**
  * The server's update status for this client. It is read when the client
  * connects and when it finds the server on another protocol, which is when a
- * client most needs it; screens that show it read it again with `refresh`.
+ * client most needs it, then every hour while it stays so; screens that show
+ * it read it again with `refresh`.
  */
 export const layer = Layer.effect(
   ServerUpdate,
@@ -407,6 +415,18 @@ export const layer = Layer.effect(
       Stream.changes,
       Stream.filter((tag) => tag === "connected" || tag === "incompatible"),
       Stream.runForEach(() => service.refresh.pipe(Effect.ignore)),
+      Effect.forkScoped,
+    );
+    yield* Effect.sleep(READ_AGAIN_EVERY).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const tag = connection.state.get()._tag;
+          return tag === "connected" || tag === "incompatible"
+            ? service.refresh.pipe(Effect.ignore)
+            : Effect.void;
+        }),
+      ),
+      Effect.forever,
       Effect.forkScoped,
     );
     return service;

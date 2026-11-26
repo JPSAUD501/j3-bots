@@ -1681,6 +1681,8 @@ const sentences = {
   "updatePrompt.work.hint": "Atualize depois, quando eles terminarem, ou pare o trabalho agora.",
   "updatePrompt.work.stop": "Parar e atualizar",
   "updatePrompt.serverFailed.title": "O servidor não se atualizou",
+  "updatePrompt.serverFailed.unconfirmed":
+    "A atualização terminou, mas o servidor não diz que roda a {version}. Na máquina do servidor, rode isto para ver o motivo:",
   "updatePrompt.serverFailed.hint": "Nada mais foi mudado: este app fica na versão que roda.",
   "updatePrompt.appFailed.title": "O servidor roda a {version}, mas este app não se atualizou",
   "updatePrompt.appFailed.hint":

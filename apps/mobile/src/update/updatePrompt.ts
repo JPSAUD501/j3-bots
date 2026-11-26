@@ -119,6 +119,8 @@ export const updatePromptOf = (client: J3Client): UpdatePrompt => {
     }),
     now: Date.now,
   });
+  // The app's own checks as it opens wait while the server updates first.
+  prompt.state.subscribe(() => appUpdate?.waitForServer(prompt.state.get().run._tag === "server"));
   prompts.set(client, prompt);
   return prompt;
 };
