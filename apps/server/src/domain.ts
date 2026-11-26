@@ -13,6 +13,7 @@ import * as Templates from "./bots/Templates.ts";
 import * as Workspaces from "./bots/Workspaces.ts";
 import * as CommandReceipts from "./commands/CommandReceipts.ts";
 import * as ConnectorStore from "./connectors/ConnectorStore.ts";
+import * as ConnectorApps from "./connectors/ConnectorApps.ts";
 import * as Connectors from "./connectors/Connectors.ts";
 import * as ConnectorInputs from "./connectors/ConnectorInputs.ts";
 import * as ConnectorSteps from "./turns/ConnectorSteps.ts";
@@ -97,6 +98,7 @@ export const layer = Layer.mergeAll(
     Layer.mergeAll(
       Bots.layer,
       BrowserHelp.layer,
+      ConnectorApps.layer,
       Templates.layer,
       Roster.layer,
       Pairs.layer,

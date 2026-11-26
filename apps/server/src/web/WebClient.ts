@@ -9,7 +9,12 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Mime from "effect/http/Mime";
-import { VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
+import {
+  CONNECTOR_APP_FRAME_PATH,
+  CONNECTOR_APP_FRAME_POLICY,
+  VISUAL_FRAME_PATH,
+  VISUAL_FRAME_POLICY,
+} from "@j3-bots/contracts";
 import type { AdminStatus } from "../admin/protocol.ts";
 import { ServerConfig } from "../config.ts";
 import { isWithin } from "../paths.ts";
@@ -44,6 +49,20 @@ const HTML_HEADERS = {
 
 /** The page a visual is drawn in: its own policy, sandboxed, framed only by the client. */
 const VISUAL_FRAME_HEADERS = { "content-security-policy": VISUAL_FRAME_POLICY };
+
+/**
+ * The page a connector's app is drawn in: the widest policy an app may have,
+ * which the app's document narrows, sandboxed, framed only by the client.
+ */
+const CONNECTOR_APP_FRAME_HEADERS = { "content-security-policy": CONNECTOR_APP_FRAME_POLICY };
+
+/** The headers an HTML page of the client is served with. */
+const htmlHeaders = (path: string) =>
+  path === VISUAL_FRAME_PATH
+    ? VISUAL_FRAME_HEADERS
+    : path === CONNECTOR_APP_FRAME_PATH
+      ? CONNECTOR_APP_FRAME_HEADERS
+      : HTML_HEADERS;
 
 /** API paths are never the client's, so an unknown one is a 404, not the app. */
 const API_PREFIX = "/api/";
@@ -181,11 +200,7 @@ export const routes = (root: string) =>
               "cache-control":
                 decoded.value.startsWith(ASSETS_PREFIX) && !html ? IMMUTABLE : REVALIDATE,
               "x-content-type-options": "nosniff",
-              ...(!html
-                ? {}
-                : decoded.value === VISUAL_FRAME_PATH
-                  ? VISUAL_FRAME_HEADERS
-                  : HTML_HEADERS),
+              ...(html ? htmlHeaders(decoded.value) : {}),
             });
             if (!stillFresh(request, response)) return response;
             const { etag, "last-modified": lastModified } = response.headers;

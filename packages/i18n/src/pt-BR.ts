@@ -197,6 +197,17 @@ const sentences = {
   "visual.expand": "Abrir {title} em tela cheia",
   "visual.close": "Fechar",
   "visual.failed": "Não foi possível mostrar este visual.",
+  "connectorApp.from": "{tool} · {connector}",
+  "connectorApp.title": "{tool}, um app de {connector}",
+  "connectorApp.failed": "Não foi possível mostrar este app.",
+  "connectorApp.askCall": "Este app quer executar {tool} em {connector}, como o bot.",
+  "connectorApp.allow": "Permitir",
+  "connectorApp.deny": "Não permitir",
+  "connectorApp.askMessage": "Este app sugere enviar ao bot: “{text}”",
+  "connectorApp.send": "Enviar",
+  "connectorApp.askLink": "Este app quer abrir {url}",
+  "connectorApp.open": "Abrir",
+  "connectorApp.dismiss": "Agora não",
 
   "card.waiting": "Esperando por você",
 

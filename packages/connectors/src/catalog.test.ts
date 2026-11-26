@@ -5,6 +5,7 @@ import {
   type ListedTool,
   MAX_DESCRIPTION_CHARACTERS,
   MAX_SCHEMA_BYTES,
+  toolUiOf,
 } from "./catalog.ts";
 
 const schema = (properties: Record<string, { readonly type: string }> = {}) => ({
@@ -109,5 +110,43 @@ describe("catalogOf", () => {
     const [a] = catalogOf([listed("t", { inputSchema: { type: "object", properties: {} } })]);
     const [b] = catalogOf([listed("t", { inputSchema: { properties: {}, type: "object" } })]);
     expect(a?.digest).toBe(b?.digest);
+  });
+});
+
+describe("toolUiOf", () => {
+  it("reads a tool's app, in the extension's form and its earlier flat one", () => {
+    const [tool] = catalogOf([listed("t", { _meta: { ui: { resourceUri: "ui://stock/table" } } })]);
+    expect(toolUiOf(tool?.ui ?? null)).toEqual({
+      resourceUri: "ui://stock/table",
+      model: true,
+      app: true,
+    });
+    const [flat] = catalogOf([listed("t", { _meta: { "ui/resourceUri": "ui://stock/table" } })]);
+    expect(toolUiOf(flat?.ui ?? null).resourceUri).toBe("ui://stock/table");
+  });
+
+  it("is no app for an address that is not a ui:// one on one clean line", () => {
+    for (const uri of [
+      "https://example.com/app",
+      "ui://a b",
+      "ui://a\u200b",
+      `ui://${"a".repeat(3000)}`,
+    ]) {
+      expect(toolUiOf({ resourceUri: uri }).resourceUri, uri).toBeNull();
+    }
+  });
+
+  it("says who may call the tool: the bot, the app, both, or neither", () => {
+    expect(toolUiOf({ visibility: ["app"] })).toMatchObject({ model: false, app: true });
+    expect(toolUiOf({ visibility: ["model"] })).toMatchObject({ model: true, app: false });
+    expect(toolUiOf({ visibility: [] })).toMatchObject({ model: false, app: false });
+    expect(toolUiOf({ visibility: "app" })).toMatchObject({ model: true, app: true });
+    expect(toolUiOf(null)).toEqual({ resourceUri: null, model: true, app: true });
+  });
+
+  it("puts a tool's app in its digest, so a new one is a changed tool", () => {
+    const [plain] = catalogOf([listed("t")]);
+    const [app] = catalogOf([listed("t", { _meta: { ui: { resourceUri: "ui://stock/table" } } })]);
+    expect(app?.digest).not.toBe(plain?.digest);
   });
 });

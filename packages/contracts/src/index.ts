@@ -5,6 +5,7 @@ export * from "./bot.ts";
 export * from "./browser.ts";
 export * from "./commandLine.ts";
 export * from "./connector.ts";
+export * from "./connectorApp.ts";
 export * from "./device.ts";
 export * from "./elicitation.ts";
 export * from "./engineStatus.ts";

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
+import { MCP_APP_MIME_TYPE, MCP_APPS_EXTENSION } from "@j3-bots/contracts";
 import { NeedsSignIn } from "./errors.ts";
 import type { UrlPolicy } from "./guard.ts";
 import {
@@ -19,6 +20,7 @@ import {
   type SessionLimits,
   scrubberOf,
 } from "./session.ts";
+import { TASKS_EXTENSION } from "./tasks.ts";
 import { type FakeOptions, fakeMcpServer } from "./testing/fakeMcpServer.ts";
 
 // The fake listens on loopback over plain HTTP, as a command connector's server would.
@@ -81,7 +83,12 @@ describe("openSession", () => {
         ["search"],
       );
       const answer = yield* session.callTool({ name: "search", arguments: { q: "x" } });
-      assert.deepStrictEqual(answer, { text: 'search {"q":"x"}', isError: false, cut: false });
+      assert.deepStrictEqual(answer, {
+        text: 'search {"q":"x"}',
+        isError: false,
+        cut: false,
+        result: { content: [{ type: "text", text: 'search {"q":"x"}' }], isError: false },
+      });
       assert.isAbove(fake.requests.length, 2);
       for (const request of fake.requests) {
         assert.strictEqual(request.headers.authorization, `Bearer ${TOKEN}`);
@@ -192,7 +199,68 @@ describe("openSession", () => {
         assert.deepStrictEqual(leaks(answer.text, [TOKEN, API_KEY]), []);
         assert.isTrue(answer.cut);
         assert.strictEqual(answer.text, "you sent Bearer [redacted] and [redacted");
+        // The whole answer an app is given is not cut, and has no secret either.
+        assert.deepStrictEqual(leaks(JSON.stringify(answer.result), [TOKEN, API_KEY]), []);
+        assert.include(JSON.stringify(answer.result), "Bearer [redacted] and [redacted]");
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("tells the server it shows apps, and reads a tool's app without its secrets", () =>
+    Effect.gen(function* () {
+      const fake = yield* fakeMcpServer({
+        tools: [{ name: "stock", _meta: { ui: { resourceUri: "ui://stock" } } }],
+        call: echo,
+        resources: (uri) =>
+          uri === "ui://stock"
+            ? [{ uri, mimeType: MCP_APP_MIME_TYPE, text: `<p>key ${API_KEY}</p>` }]
+            : uri === "ui://stock-blob"
+              ? [
+                  {
+                    uri,
+                    mimeType: MCP_APP_MIME_TYPE,
+                    blob: Buffer.from(`<p>key ${API_KEY}</p>`).toString("base64"),
+                  },
+                ]
+              : undefined,
+      });
+      const session = yield* open(fake.url, fixed(bearer(TOKEN)));
+      assert.deepInclude(fake.clientCapabilities[0], {
+        extensions: {
+          [TASKS_EXTENSION]: {},
+          [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        },
+      });
+      const [tool] = yield* session.listTools;
+      assert.deepStrictEqual(tool?.ui, { resourceUri: "ui://stock" });
+      const read = yield* session.readAppResource("ui://stock", 64 * 1024);
+      assert.deepStrictEqual(read, {
+        contents: [
+          { uri: "ui://stock", mimeType: MCP_APP_MIME_TYPE, text: "<p>key [redacted]</p>" },
+        ],
+      });
+      // A document sent as base64 is scrubbed as its text.
+      assert.deepStrictEqual(yield* session.readAppResource("ui://stock-blob", 64 * 1024), {
+        contents: [
+          {
+            uri: "ui://stock-blob",
+            mimeType: MCP_APP_MIME_TYPE,
+            blob: Buffer.from("<p>key [redacted]</p>").toString("base64"),
+          },
+        ],
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives no resource larger than it was asked for", () =>
+    Effect.gen(function* () {
+      const fake = yield* fakeMcpServer({
+        tools: [],
+        call: echo,
+        resources: (uri) => [{ uri, mimeType: MCP_APP_MIME_TYPE, text: "y".repeat(2_000) }],
+      });
+      const session = yield* open(fake.url, fixed(bearer(TOKEN)));
+      assert.isNull(yield* session.readAppResource("ui://big", 1_000));
+    }).pipe(Effect.scoped),
   );
 
   it.effect(

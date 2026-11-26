@@ -110,6 +110,7 @@ import { Onboarding } from "../onboarding/Onboarding";
 import { cn } from "../lib/cn";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import type { ConnectorsIntents } from "../components/connectors/screen";
+import type { ConnectorAppAccess } from "../components/ConnectorAppCard";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ImageViewer } from "../components/ImageViewer";
@@ -481,7 +482,12 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
           onRetryNow={j3.reconnectNow}
         >
           {/* Mounted afresh for each pairing: nothing open or typed under one shows under the next. */}
-          <LiveShell key={pairing ?? "none"} pairing={pairing} local={local?.intents}>
+          <LiveShell
+            key={pairing ?? "none"}
+            origin={origin}
+            pairing={pairing}
+            local={local?.intents}
+          >
             {children}
           </LiveShell>
           {local?.details}
@@ -867,10 +873,13 @@ interface MemoryView {
 const memoryScopeOf = (view: MemoryView): MemoryScope => ({ _tag: "bot", botId: view.botId });
 
 function LiveShell({
+  origin,
   pairing,
   local,
   children,
 }: {
+  /** The server this page talks to. */
+  origin: URL;
   pairing: DeviceId | null;
   /** In local mode, what the shell offers for the bots on this computer. */
   local: DesktopLocal | undefined;
@@ -1454,7 +1463,29 @@ function LiveShell({
     });
   };
 
+  // One for as long as the client is: an app's frame is drawn again only when its view changes.
+  const connectorApp = useMemo<ConnectorAppAccess>(() => {
+    const value = <A,>(
+      result: { readonly _tag: "done"; readonly value: A } | { readonly _tag: "failed" },
+    ) => (result._tag === "done" ? result.value : null);
+    return {
+      server: origin,
+      open: (viewId) => j3.connectors.app.open(viewId).then(value),
+      callTool: (viewId, name, args, allowed) =>
+        j3.connectors.app.callTool(viewId, name, args, allowed).then(value),
+      readResource: (viewId, uri) => j3.connectors.app.readResource(viewId, uri).then(value),
+      sendMessage: (botId, text) =>
+        j3
+          .send({ target: { _tag: "conversation", botId }, text })
+          .then((result) => result._tag === "done"),
+      openLink: (url) => {
+        window.open(url.href, "_blank", "noopener,noreferrer");
+      },
+    };
+  }, [j3, origin]);
+
   const intents: ShellIntents = {
+    connectorApp,
     // An answer too long to reach the bot leaves the card open, with what was typed, to shorten.
     answerQuestion: (entryId, answers) =>
       void j3.answerCard(entryId, { _tag: "question", answers }).then((result) => {

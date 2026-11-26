@@ -21,7 +21,14 @@
  * - The errors a connector's request can end in, none of which carries a URL,
  *   a secret or the remote server's text.
  */
-export { CatalogTool, catalogOf, ListedTool, MAX_DESCRIPTION_CHARACTERS } from "./catalog.ts";
+export { type AppDocument, appDocumentOf, MAX_APP_RESOURCE_JSON_BYTES } from "./app.ts";
+export {
+  CatalogTool,
+  catalogOf,
+  ListedTool,
+  MAX_DESCRIPTION_CHARACTERS,
+  toolUiOf,
+} from "./catalog.ts";
 export { type ResourceContents, resourceText } from "./content.ts";
 export { type ElicitationRefusal, elicitationOf } from "./elicitation.ts";
 export type { Prompt, PromptArgument, Resource } from "./features.ts";

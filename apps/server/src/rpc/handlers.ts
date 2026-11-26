@@ -49,6 +49,7 @@ import { SendPause } from "../turns/SendPause.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
+import { ConnectorApps } from "../connectors/ConnectorApps.ts";
 import { Connectors } from "../connectors/Connectors.ts";
 import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { Secrets } from "../secrets/Secrets.ts";
@@ -99,6 +100,7 @@ export const handlers = ServedRpcs.toLayer(
     const secretAsks = yield* SecretAsks;
     const connectors = yield* Connectors;
     const connectorInputs = yield* ConnectorInputs;
+    const connectorApps = yield* ConnectorApps;
     const connectorAuth = yield* ConnectorAuth;
     const connectorSources = yield* ConnectorSources;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
@@ -287,6 +289,9 @@ export const handlers = ServedRpcs.toLayer(
       "connector.setBots": (input) => connectors.setBots({ ...input, by: operator }),
       "connector.prompts": ({ botId }) => connectors.menuPrompts(botId),
       "connector.renderPrompt": (input) => connectors.renderPrompt(input),
+      "connectorApp.open": ({ viewId }) => connectorApps.open(viewId),
+      "connectorApp.callTool": (input) => connectorApps.callTool(input),
+      "connectorApp.readResource": (input) => connectorApps.readResource(input),
       // A sign-in's address and the one it returns to carry its code and
       // `state`: neither is logged, and neither request has a receipt.
       "connector.beginSignIn": ({ connectorId, redirect }) =>

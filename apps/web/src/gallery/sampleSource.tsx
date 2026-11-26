@@ -60,6 +60,7 @@ import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import { ImageViewer } from "../components/ImageViewer";
 import type { ShellData, ShellIntents } from "../shell/data";
+import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
@@ -379,6 +380,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     }));
 
   return {
+    connectorApp: sampleConnectorAppAccess,
     openConnectors,
     signInConnector: (entry) =>
       openConnectors({

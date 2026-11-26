@@ -23,6 +23,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   turnStartedAt: null,
   status,
   stepCount: 3,
+  apps: [],
 });
 
 const finished = (
@@ -90,6 +91,7 @@ describe("workFoldTitle", () => {
       createdAt: at(finishedAt),
       turnStartedAt: at("2026-11-20T14:00:00Z"),
       stepCount: 0,
+      apps: [],
     });
     expect(plain(workFoldTitle(before("2026-11-20T14:01:04Z", "interrupted"), ctx))).toBe(
       "Stopped after 1m 4s",

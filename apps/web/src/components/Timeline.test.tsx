@@ -35,6 +35,14 @@ const intents: TimelineIntents = {
   signInConnector: nothing,
   answerConnectorInput: nothing,
   openConnectorPage: nothing,
+  connectorApp: {
+    server: new URL("https://bots.example.com"),
+    open: () => Promise.resolve(null),
+    callTool: () => Promise.resolve(null),
+    readResource: () => Promise.resolve(null),
+    sendMessage: () => Promise.resolve(false),
+    openLink: nothing,
+  },
 };
 
 describe("a conversation", () => {

@@ -229,6 +229,7 @@ export const sessionRecords = (
         author: { _tag: "bot", botId: session.bot_id },
         turnStartedAt: turn.started_at,
         stepCount: 0,
+        apps: [],
         status,
       },
     });

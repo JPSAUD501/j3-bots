@@ -177,6 +177,7 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
+import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
@@ -1181,6 +1182,7 @@ const timelineIntents: TimelineIntents = {
   signInConnector: nothing,
   answerConnectorInput: nothing,
   openConnectorPage: nothing,
+  connectorApp: sampleConnectorAppAccess,
   resendMessage: nothing,
   discardMessage: nothing,
   closeWorkFold: nothing,

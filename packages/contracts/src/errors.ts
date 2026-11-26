@@ -45,6 +45,8 @@ export const Resource = Schema.Literals([
   "provider",
   /** A skill, which only skill requests name. */
   "skill",
+  /** A connector's app, which only `connectorApp` requests, new in 0.9.0, name. */
+  "connector-app",
 ]);
 export type Resource = typeof Resource.Type;
 

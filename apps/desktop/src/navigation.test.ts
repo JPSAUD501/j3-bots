@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { externalUrl, isAppUrl, isVisualFrameUrl } from "./navigation.ts";
+import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import { openingBounds } from "./window.ts";
 
 describe("the window", () => {
@@ -21,17 +21,20 @@ describe("the window", () => {
     }
   });
 
-  it("lets a frame in the page go only to the app's visual page", () => {
-    assert.isTrue(isVisualFrameUrl("j3bots-dev://app/visual-frame.html", "j3bots-dev://app"));
+  it("lets a frame in the page go only to the app's visual and connector app pages", () => {
+    assert.isTrue(isFrameUrl("j3bots-dev://app/visual-frame.html", "j3bots-dev://app"));
+    assert.isTrue(isFrameUrl("j3bots-dev://app/connector-app-frame.html", "j3bots-dev://app"));
     for (const url of [
       "j3bots-dev://app/",
       "j3bots-dev://app/visual-frame.html?x=1",
+      "j3bots-dev://app/connector-app-frame.html#x",
+      "https://example.com/connector-app-frame.html",
       "j3bots://app/visual-frame.html",
       "https://example.com/visual-frame.html",
       "about:blank",
       "data:text/html,<p>",
     ]) {
-      assert.isFalse(isVisualFrameUrl(url, "j3bots-dev://app"), url);
+      assert.isFalse(isFrameUrl(url, "j3bots-dev://app"), url);
     }
   });
 

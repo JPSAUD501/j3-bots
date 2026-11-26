@@ -52,3 +52,44 @@ export const visualVariables = (theme: keyof Themed): Readonly<Record<string, st
   "font-mono": fonts.mono,
   radius: `${radii.md}px`,
 });
+
+/**
+ * The style variables a connector's app is given in its host context
+ * (`hostContext.styles.variables`), named as the MCP Apps extension names
+ * them: the visual colors of one theme, the app's font stacks, its corner
+ * radii. An app reads what it uses and keeps its own value for the rest.
+ */
+export const appStyleVariables = (theme: keyof Themed): Readonly<Record<string, string>> => {
+  const color = visualColors(theme);
+  return {
+    "--color-background-primary": color.background,
+    "--color-background-secondary": color.muted,
+    "--color-background-tertiary": color.muted,
+    "--color-background-inverse": color.accent,
+    "--color-background-danger": color.destructive,
+    "--color-background-success": color.success,
+    "--color-background-warning": color.warning,
+    "--color-text-primary": color.foreground,
+    "--color-text-secondary": color["muted-foreground"],
+    "--color-text-tertiary": color["muted-foreground"],
+    "--color-text-inverse": color["accent-foreground"],
+    "--color-text-danger": color.destructive,
+    "--color-text-success": color.success,
+    "--color-text-warning": color.warning,
+    "--color-border-primary": color.border,
+    "--color-border-secondary": color.border,
+    "--color-border-tertiary": color.border,
+    "--color-border-danger": color.destructive,
+    "--color-border-success": color.success,
+    "--color-border-warning": color.warning,
+    "--color-ring-primary": color.accent,
+    "--font-sans": fonts.sans,
+    "--font-mono": fonts.mono,
+    "--border-radius-sm": `${radii.sm}px`,
+    "--border-radius-md": `${radii.md}px`,
+    "--border-radius-lg": `${radii.lg}px`,
+    "--border-radius-xl": `${radii.xl}px`,
+    "--border-radius-full": "9999px",
+    "--border-width-regular": "1px",
+  };
+};

@@ -48,6 +48,7 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ordered, previewOf, type DraftEntry } from "./entries";
+import { sampleConnectorAppRef } from "./sampleConnectorApps";
 import { sampleVisuals } from "./visuals";
 
 const claude = ProviderId.make("claude-code");
@@ -304,6 +305,7 @@ export function sampleTeam(now: DateTime.Utc) {
       createdAt: ago(60 * 26 - 1),
       turnStartedAt: ago(60 * 26),
       stepCount: 6,
+      apps: [],
       status: {
         _tag: "finished",
         finishedAt: ago(60 * 26 - 3),
@@ -366,6 +368,7 @@ export function sampleTeam(now: DateTime.Utc) {
       createdAt: ago(7),
       turnStartedAt: ago(9),
       stepCount: 2,
+      apps: [sampleConnectorAppRef],
       status: { _tag: "running" },
     },
     message(operator, ago(1), "Also check whether any of them fold", {

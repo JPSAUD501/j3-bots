@@ -26,6 +26,7 @@ const fold = (
   createdAt: at(createdAt),
   turnStartedAt: turnStartedAt === null ? null : at(turnStartedAt),
   stepCount: 2,
+  apps: [],
   status,
 });
 
