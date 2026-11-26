@@ -572,15 +572,33 @@ export const layer = Layer.effect(
           }
           return more;
         }
-        const latest = Math.max(...claimed.map(({ count }) => count));
+        // A service that answers nothing says nothing of any one push: only
+        // the furthest along counts a send, and sets how long the service is
+        // left alone; the others give theirs back and wait for it, so an
+        // outage spends one push's sends at a time, as when they went alone.
+        const [lead, ...waiting] = claimed.toSorted((a, b) => b.count - a.count);
+        if (lead === undefined) return yield* Effect.die("A request carries a push");
         yield* Effect.logInfo("The push service did not take pushes; sends wait").pipe(
-          Effect.annotateLogs({ pushes: claimed.length, attempt: latest, reason: error.reason }),
+          Effect.annotateLogs({
+            pushes: claimed.length,
+            attempt: lead.count,
+            reason: error.reason,
+          }),
         );
-        // No send begins before the latest of these may, one written since included.
-        yield* sql`
-          UPDATE push_service
-          SET not_before = ${timeText(DateTime.addDuration(yield* DateTime.now, sendBackoff(latest)))}
-        `.pipe(Effect.orDie);
+        const until = timeText(DateTime.addDuration(yield* DateTime.now, sendBackoff(lead.count)));
+        // No send begins before then, one written since included.
+        yield* sql`UPDATE push_service SET not_before = ${until}`.pipe(Effect.orDie);
+        for (const { delivery, count } of waiting) {
+          yield* supervised(
+            delivery.id,
+            sql`
+              UPDATE push_deliveries
+              SET attempts = ${delivery.attempts}, generation = ${delivery.generation},
+                due_at = ${until}
+              WHERE id = ${delivery.id} AND status = 'pending' AND attempts = ${count}
+            `.pipe(Effect.orDie, Effect.asVoid),
+          );
+        }
         return false;
       }
       for (const [index, one] of claimed.entries()) {

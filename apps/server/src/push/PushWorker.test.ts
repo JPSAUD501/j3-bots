@@ -368,7 +368,7 @@ it.effect(
 );
 
 it.effect(
-  "holds every send when the service does not answer a request, each in it counting a send, but not the receipts",
+  "holds every send when the service does not answer a request, one in it counting a send, but not the receipts",
   () =>
     Effect.gen(function* () {
       const service = yield* TestPushService;
@@ -389,11 +389,11 @@ it.effect(
       yield* deliverPending;
 
       assert.deepStrictEqual(yield* service.requests, [2, 2]);
-      // The receipts were read; both sends began, in the request not answered.
-      assert.deepStrictEqual(yield* deliveries, [
-        { status: "pending", attempts: 1 },
-        { status: "pending", attempts: 1 },
-      ]);
+      // The receipts were read; of the request not answered, one send counts.
+      assert.deepStrictEqual(
+        (yield* deliveries).map(({ status, attempts }) => `${status} ${attempts}`).toSorted(),
+        ["pending 0", "pending 1"],
+      );
       // They wait as long as that request's backoff.
       yield* deliverPending;
       assert.strictEqual((yield* service.requests).length, 2);
@@ -401,6 +401,31 @@ it.effect(
       yield* deliverPending;
       assert.deepStrictEqual(yield* service.requests, [2, 2, 2]);
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+it.effect("spends one push's sends at a time while the service does not answer", () =>
+  Effect.gen(function* () {
+    const service = yield* TestPushService;
+    const scout = yield* createBot("Scout");
+    yield* pushDevice("Phone");
+    yield* pushDevice("Tablet");
+    // Each request carries both pushes, until the first runs out of sends.
+    yield* service.answer(
+      Array.from({ length: 2 * MAX_ATTEMPTS }, () => new PushUnavailable({ reason: "HTTP 503" })),
+    );
+    yield* says(scout.id, "Done");
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      yield* deliverPending;
+      yield* TestClock.adjust(sendBackoff(attempt));
+    }
+    yield* deliverPending;
+
+    // The service answers again: the other push goes, its sends unspent.
+    assert.deepStrictEqual(yield* service.requests, [
+      ...Array.from({ length: MAX_ATTEMPTS }, () => 2),
+      1,
+    ]);
+    assert.deepStrictEqual(yield* deliveries, [{ status: "accepted", attempts: 1 }]);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 it.effect(
   "holds every send, one written since included, until the service may be tried again, across a restart",
