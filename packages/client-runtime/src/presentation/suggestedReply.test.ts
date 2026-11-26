@@ -25,6 +25,7 @@ const fold: WorkFoldEntry = {
   turnStartedAt: at("2026-11-20T10:00:01Z"),
   stepCount: 2,
   apps: [],
+  work: null,
   status: {
     _tag: "finished",
     finishedAt: at("2026-11-20T10:00:12Z"),
