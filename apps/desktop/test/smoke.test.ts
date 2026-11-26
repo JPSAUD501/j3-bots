@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the redirecting address is a plain node:http server.
 import * as NodeHttp from "node:http";
 import { BotId, CommandId, ServerOrigin } from "@j3-bots/contracts";
+import { BRIDGE_KEY } from "@j3-bots/desktop-bridge";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -324,16 +325,23 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const shownIn = yield* onPage(quick, async () => {
           await page.evaluate(() => window.history.back());
           await page.waitForURL((url) => !url.pathname.startsWith("/bots/"), { timeout: STEP });
-          await quick.evaluate(() => {
-            document.addEventListener(
-              "visibilitychange",
-              () =>
-                requestAnimationFrame(() =>
-                  Reflect.set(window, "j3DrawnAt", performance.timeOrigin + performance.now()),
-                ),
-              { once: true },
-            );
-          });
+          // The page stamps the first frame it draws after the app tells it the window shows.
+          await quick.evaluate((key) => {
+            const bridge: unknown = Reflect.get(window, key);
+            const onCue: unknown =
+              typeof bridge === "object" && bridge !== null
+                ? Reflect.get(bridge, "onQuickAccessCue")
+                : null;
+            if (typeof onCue !== "function") throw new Error("The page has no bridge.");
+            onCue((cue: unknown) => {
+              if (typeof cue !== "object" || cue === null || Reflect.get(cue, "_tag") !== "open") {
+                return;
+              }
+              requestAnimationFrame(() =>
+                Reflect.set(window, "j3DrawnAt", performance.timeOrigin + performance.now()),
+              );
+            });
+          }, BRIDGE_KEY);
           const pressedAt = await pressShortcut();
           assert.isTrue(await quickAccessShows(), "the shortcut returned before the window showed");
           const drawn = await quick.waitForFunction(() => Reflect.get(window, "j3DrawnAt"), null, {
