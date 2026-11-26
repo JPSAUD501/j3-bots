@@ -20,6 +20,7 @@ import * as ConnectorSources from "./connectors/sources/Sources.ts";
 import * as Devices from "./devices/Devices.ts";
 import * as EngineState from "./engine/EngineState.ts";
 import * as Entries from "./entries/Entries.ts";
+import * as Harnesses from "./harnesses/Harnesses.ts";
 import * as Ids from "./Ids.ts";
 import * as Layout from "./Layout.ts";
 import * as Memory from "./memory/Memory.ts";
@@ -69,17 +70,19 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 /**
  * Every service of the server's domain, over a migrated database, the server's
  * configuration, the filesystem, an `Engine` with its `BrowserBridge`, a
- * `PushSender`, the HTTP client connectors' sign-ins use (`OAuthHttp`) and
- * an `McpRegistry`. Which engine, sender, client and registry are the
- * caller's: the real ones in `server.ts`, in-memory ones in tests. Building
- * it starts the turn machinery and the push worker, which run for as long as
- * the layer's scope.
+ * `PushSender`, the HTTP client connectors' sign-ins use (`OAuthHttp`), an
+ * `McpRegistry` and the `HarnessSources` J3 Bots installs harnesses from and
+ * finds the operator's own with. Which engine, sender, client, registry and
+ * sources are the caller's: the real ones in `server.ts`, in-memory ones in
+ * tests. Building it starts the turn machinery and the push worker, which run
+ * for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(
   BotTools.layer,
   ToolLists.layer,
   Turns.layer,
   PushWorker.layer,
+  Harnesses.layer,
 ).pipe(
   // A fill is claimed for its call's turn, through `Speech`'s turn tools.
   Layer.provideMerge(CredentialFills.layer),

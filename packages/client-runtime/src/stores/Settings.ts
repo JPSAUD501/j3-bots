@@ -25,7 +25,11 @@ export type ProfileChanges = Partial<Pick<SettingsValue, "operatorName" | "timeZ
  */
 export type SettingsChange =
   | { readonly section: "profile"; readonly changes: ProfileChanges }
-  | { readonly section: "notifications"; readonly changes: NotificationSettingsChange };
+  | { readonly section: "notifications"; readonly changes: NotificationSettingsChange }
+  | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges };
+
+/** Whether the server updates the copies of the harnesses it installed by itself. */
+export type HarnessSettingsChanges = Pick<SettingsValue, "autoUpdateHarnesses">;
 
 /**
  * A section's save: under way, or how its last one ended, each with what it
@@ -43,6 +47,7 @@ export type SettingsSave<Changes> =
 export interface SettingsSaves {
   readonly profile: SettingsSave<ProfileChanges>;
   readonly notifications: SettingsSave<NotificationSettingsChange>;
+  readonly harnesses: SettingsSave<HarnessSettingsChanges>;
 }
 
 /**
@@ -107,6 +112,7 @@ export const layer = Layer.effect(
     const saves = {
       profile: new Cell<SettingsSaves["profile"]>({ _tag: "idle" }),
       notifications: new Cell<SettingsSaves["notifications"]>({ _tag: "idle" }),
+      harnesses: new Cell<SettingsSaves["harnesses"]>({ _tag: "idle" }),
     };
 
     const latest = latestRead((settings: SettingsValue) => state.set(ready(settings)));
@@ -158,7 +164,8 @@ export const layer = Layer.effect(
     const save = Effect.fn("Settings.save")(function* <Changes>(
       cell: Cell<SettingsSave<Changes>>,
       changes: Changes,
-      sent: ProfileChanges & { readonly notifications?: NotificationSettingsChange },
+      sent: ProfileChanges &
+        Partial<HarnessSettingsChanges> & { readonly notifications?: NotificationSettingsChange },
     ) {
       const commandId = yield* actions.commandId;
       const saving: SettingsSave<Changes> = { _tag: "saving", changes };
@@ -176,9 +183,16 @@ export const layer = Layer.effect(
     });
 
     const update = Effect.fn("Settings.update")(function* (change: SettingsChange) {
-      return yield* change.section === "profile"
-        ? save(saves.profile, change.changes, change.changes)
-        : save(saves.notifications, change.changes, { notifications: change.changes });
+      switch (change.section) {
+        case "profile":
+          return yield* save(saves.profile, change.changes, change.changes);
+        case "notifications":
+          return yield* save(saves.notifications, change.changes, {
+            notifications: change.changes,
+          });
+        case "harnesses":
+          return yield* save(saves.harnesses, change.changes, change.changes);
+      }
     });
 
     const signOutBrowser = connection

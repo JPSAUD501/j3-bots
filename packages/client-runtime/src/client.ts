@@ -519,6 +519,13 @@ export interface J3Client {
   readonly recheckProvider: (providerId: ProviderId) => Promise<Actions.IntentResult>;
   /** Has the engine update the provider's harness to the newer version it reports. */
   readonly updateProvider: (providerId: ProviderId) => Promise<Actions.IntentResult>;
+  /**
+   * Has the server install its own copy of the harness, or update it; done
+   * once it started, and only for a provider whose status has `copy`.
+   */
+  readonly installHarness: (harness: SignInHarness) => Promise<Actions.IntentResult>;
+  /** Stops the server's install or update of the harness under way. */
+  readonly cancelHarnessInstall: (harness: SignInHarness) => Promise<Actions.IntentResult>;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -847,6 +854,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     signOutBrowser: () => run.promise(services.settings.signOutBrowser),
     recheckProvider: (providerId) => run.promise(services.engine.recheck(providerId)),
     updateProvider: (providerId) => run.promise(services.engine.update(providerId)),
+    installHarness: (harness) => run.promise(services.engine.installHarness(harness)),
+    cancelHarnessInstall: (harness) => run.promise(services.engine.cancelHarnessInstall(harness)),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>

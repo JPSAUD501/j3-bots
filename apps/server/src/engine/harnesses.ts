@@ -3,6 +3,7 @@ import { signInHarnesses } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { PROVIDER_HOMES } from "../home/entries.ts";
+import { readCurrent } from "../harnesses/layout.ts";
 import { Host } from "../system/Host.ts";
 
 /** A harness the engine runs bots on, with a home of its own in `<J3_HOME>/providers`. */
@@ -98,14 +99,14 @@ export const withFolders = (searchPath: string, more: string, platform: string):
 };
 
 /**
- * Where `harness` is, looked up as the engine finds it: on the installed
- * service's `PATH` (`servicePath`), else on this shell's, which `j3-bots
- * serve` passes on, with, on Windows, the folders installers have added to
- * the user's `PATH` since (`Host.installersPath`), which the engine also
- * reads again. Also the `PATH` it was looked up on, which a harness started
- * for J3 Bots gets.
+ * Where the operator's own `harness` is, looked up as the engine finds it:
+ * on the installed service's `PATH` (`servicePath`), else on this shell's,
+ * which `j3-bots serve` passes on, with, on Windows, the folders installers
+ * have added to the user's `PATH` since (`Host.installersPath`), which the
+ * engine also reads again. Also the `PATH` it was looked up on, which a
+ * harness started for J3 Bots gets.
  */
-export const findHarness = Effect.fn("findHarness")(function* (
+export const findOnPath = Effect.fn("findOnPath")(function* (
   harness: Harness,
   servicePath: Option.Option<string>,
 ) {
@@ -115,4 +116,23 @@ export const findHarness = Effect.fn("findHarness")(function* (
     : withFolders(host.searchPath, yield* host.installersPath, host.platform);
   const executable = yield* host.findExecutable(HARNESSES[harness].executable, searchPath);
   return { searchPath, executable };
+});
+
+/**
+ * The harness the engine runs `harness` on for the server's home `home`:
+ * J3 Bots' own copy when it installed one (`harnesses/layout.ts`), else the
+ * operator's, found as `findOnPath` finds it. Also the `PATH` the
+ * operator's is looked up on, which a harness started for J3 Bots gets.
+ */
+export const findHarness = Effect.fn("findHarness")(function* (
+  harness: Harness,
+  servicePath: Option.Option<string>,
+  home: string,
+) {
+  const own = yield* readCurrent(home, harness);
+  const onPath = yield* findOnPath(harness, servicePath);
+  return Option.match(own, {
+    onNone: () => onPath,
+    onSome: (copy) => ({ searchPath: onPath.searchPath, executable: Option.some(copy.executable) }),
+  });
 });

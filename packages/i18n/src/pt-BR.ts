@@ -760,6 +760,30 @@ const sentences = {
   "provider.updateUnverified":
     "A atualização rodou, mas o motor não confirmou uma versão mais nova",
   "provider.updateRefused": "Não deu para começar a atualização. Tente de novo daqui a pouco.",
+  "provider.install": "Instalar",
+  "provider.install.downloading": "Baixando… {received} de {total} MB",
+  "provider.install.downloadingNoTotal": "Baixando… {received} MB",
+  "provider.install.verifying": "Verificando o download…",
+  "provider.install.waiting":
+    "Pronto. A troca acontece quando os bots que o usam terminarem o que estão fazendo.",
+  "provider.install.cancel": "Cancelar",
+  "provider.install.requestFailed":
+    "Não deu para alcançar o servidor. Tente de novo daqui a pouco.",
+  "provider.install.failed.unreachable":
+    "Não deu para baixar. Confira se o servidor está online e tente de novo.",
+  "provider.install.failed.checksum":
+    "O download não bateu com a soma de verificação do fabricante, então nada foi instalado.",
+  "provider.install.failed.check": "A cópia baixada não iniciou, então nada foi instalado.",
+  "provider.install.failed.storage":
+    "Não deu para salvar no servidor. Confira o espaço livre em disco.",
+  "provider.install.failed.engine":
+    "O motor não conseguiu trocar para ela, então a cópia anterior continua rodando.",
+  "provider.install.failed.unknown": "Não deu para instalar.",
+  "provider.installed": "Versão {version} instalada {when}.",
+  "provider.updateCancelled": "A última atualização foi cancelada.",
+  "settings.engine.autoUpdate": "Atualizar Claude Code e Codex automaticamente",
+  "settings.engine.autoUpdate.body":
+    "O J3 Bots mantém atualizadas as cópias que instalou. Uma atualização espera os bots que a usam terminarem o que estão fazendo.",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Scout",
   "firstRun.create.primary":

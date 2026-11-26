@@ -423,7 +423,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               });
             }}
             onArrived={(botId) => navigation.select({ _tag: "bot", botId })}
-            onRecheck={intents.recheckProvider}
+            providerActions={intents.providerActions}
           />
         )}
       </div>

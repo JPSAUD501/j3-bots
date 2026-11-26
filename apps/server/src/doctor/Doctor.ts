@@ -520,11 +520,16 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   status: Option.Option<AdminStatus>,
   /** The Engine line, whose fix is the one to follow while the engine is not ready. */
   engineLine: Check,
-  servicePath: Option.Option<string>,
-  serviceHome: Option.Option<string>,
+  where: {
+    readonly servicePath: Option.Option<string>;
+    readonly serviceHome: Option.Option<string>;
+    /** The server's home, where J3 Bots' own copy of the harness is, when it installed one. */
+    readonly home: string;
+  },
 ) {
+  const { servicePath, serviceHome } = where;
   const harness = HARNESSES[id];
-  const found = (yield* findHarness(id, servicePath)).executable;
+  const found = (yield* findHarness(id, servicePath, where.home)).executable;
   if (Option.isNone(found)) return yield* missingHarnessCheck(id, servicePath, serviceHome);
   if (Option.isNone(status)) {
     return check(
@@ -980,7 +985,11 @@ export const diagnose = Effect.gen(function* () {
   const servicePath = Unit.servicePathOf(unitText);
   for (const harness of PROVIDER_HOMES) {
     checks.push(
-      yield* providerCheck(harness, status, engine, servicePath, Unit.serviceHomeOf(unitText)),
+      yield* providerCheck(harness, status, engine, {
+        servicePath,
+        serviceHome: Unit.serviceHomeOf(unitText),
+        home: config.home,
+      }),
     );
   }
   checks.push(yield* webClientCheck(config, live, installation));

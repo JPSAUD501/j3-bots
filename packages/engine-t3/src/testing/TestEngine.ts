@@ -109,6 +109,7 @@ export type HeldMethod =
   | "respondSecret"
   | "resumeQueue"
   | "stop"
+  | "setHarnessExecutable"
   | "synchronize";
 
 /** A call held at the engine's door. */
@@ -139,6 +140,14 @@ export class TestEngineControl extends Context.Service<
     readonly recheckedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
     /** The providers `updateProvider` was asked to update, in order. */
     readonly updatedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
+    /** Each executable `setHarnessExecutable` was given, in order. */
+    readonly harnessExecutables: Effect.Effect<
+      ReadonlyArray<{
+        readonly providerId: ProviderId;
+        readonly executable: string | null;
+        readonly version: string | null;
+      }>
+    >;
     /**
      * The next command is applied, and then its reply is lost: it fails with
      * `EngineIndeterminate`.
@@ -604,6 +613,11 @@ const make = Effect.gen(function* () {
   let connection = Option.none<string>();
   const rechecked: Array<ProviderId> = [];
   const updated: Array<ProviderId> = [];
+  const executables: Array<{
+    readonly providerId: ProviderId;
+    readonly executable: string | null;
+    readonly version: string | null;
+  }> = [];
   let loseReply = false;
   let rejectDispatch = false;
   let rejectAnswer = false;
@@ -1251,6 +1265,8 @@ const make = Effect.gen(function* () {
     recheckProvider: (providerId) => command(Effect.sync(() => void rechecked.push(providerId))),
 
     updateProvider: (providerId) => command(Effect.sync(() => void updated.push(providerId))),
+    setHarnessExecutable: (input) =>
+      door("setHarnessExecutable", command(Effect.sync(() => void executables.push(input)))),
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
@@ -1708,6 +1724,7 @@ const make = Effect.gen(function* () {
     providerConnection: Effect.sync(() => connection),
     recheckedProviders: Effect.sync(() => [...rechecked]),
     updatedProviders: Effect.sync(() => [...updated]),
+    harnessExecutables: Effect.sync(() => [...executables]),
 
     setReachable: (value) =>
       Effect.gen(function* () {

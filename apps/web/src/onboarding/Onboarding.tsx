@@ -30,7 +30,7 @@ import { useI18n, usePresentation } from "../app/context";
 import { AvatarChoices } from "../components/avatar/AvatarPicker";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
-import { ProviderFix, type Recheck } from "../components/ProviderFix";
+import { type ProviderActions, ProviderFix } from "../components/ProviderFix";
 import { engineFindings, type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
 import { SetupVaultForm, type VaultAccess } from "../components/vault/VaultForms";
@@ -75,8 +75,8 @@ interface OnboardingProps {
   }) => Promise<IntentResult<BotId>>;
   /** Opens the new bot's conversation, which ends the first run. */
   readonly onArrived: (botId: BotId) => void;
-  /** Has the engine check a provider again, from the connect step's lines. */
-  readonly onRecheck: Recheck;
+  /** What the connect step's lines ask of the server: check a provider again, install its harness. */
+  readonly providerActions: ProviderActions;
   /** Where it starts: the welcome, or another step for the gallery. */
   readonly initialStep?: OnboardingStep;
   /** The first bot's name until the operator changes it; a random one by default. */
@@ -117,7 +117,7 @@ export function Onboarding({
   engine,
   onCreate,
   onArrived,
-  onRecheck,
+  providerActions,
   initialStep = "welcome",
   initialName,
   footer,
@@ -325,7 +325,7 @@ export function Onboarding({
             name={botName}
             failure={failure}
             onCreate={create}
-            onRecheck={onRecheck}
+            providerActions={providerActions}
             providerSetup={providerSetup}
           />
         );
@@ -771,14 +771,14 @@ function ConnectStep({
   name,
   failure,
   onCreate,
-  onRecheck,
+  providerActions,
   providerSetup,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
   readonly failure: Failure | null;
   readonly onCreate: () => void;
-  readonly onRecheck: Recheck;
+  readonly providerActions: ProviderActions;
   readonly providerSetup: LocalProviderSetup | undefined;
 }) {
   const i18n = useI18n();
@@ -866,7 +866,7 @@ function ConnectStep({
                     {t("provider.detail", { detail: provider.status.detail })}
                   </p>
                 )}
-                <ProviderFix provider={provider} place={place} onRecheck={onRecheck} />
+                <ProviderFix provider={provider} place={place} actions={providerActions} />
               </li>
             );
           })}

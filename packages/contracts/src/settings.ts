@@ -119,6 +119,13 @@ export const Settings = Schema.Struct({
    * from a server that predates update channels, which offers no update.
    */
   updateChannel: UpdateChannel.pipe(Schema.withDecodingDefaultKey(Effect.succeed("stable"))),
+  /**
+   * Whether the server updates its own copies of Claude Code and Codex by
+   * itself (`HarnessCopy`), on by default. Off, it still checks the
+   * publisher's latest version, and updates one only when a client asks.
+   * `true` from a server that predates it, which has no copy to update.
+   */
+  autoUpdateHarnesses: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
 });
 export type Settings = typeof Settings.Type;
 
@@ -136,5 +143,10 @@ export const SettingsChange = Schema.Struct({
    * would take the rest of the change and drop it.
    */
   updateChannel: Schema.optionalKey(UpdateChannel),
+  /**
+   * Sent only to a server whose providers carry `copy`: an older one would
+   * take the rest of the change and drop it.
+   */
+  autoUpdateHarnesses: Schema.optionalKey(Schema.Boolean),
 });
 export type SettingsChange = typeof SettingsChange.Type;

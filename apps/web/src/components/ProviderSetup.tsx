@@ -46,18 +46,22 @@ type Found = ReadonlyArray<HarnessLocation> | null | "looking";
 
 /**
  * What changes when the engine finds a harness or stops finding one, from
- * its providers' states: a reason to ask the server again where the
- * harnesses are, as after **Look again** found one installed since.
+ * its providers' states and the copies J3 Bots installed: a reason to ask
+ * the server again where the harnesses are, as after **Look again** found
+ * one installed since, or once J3 Bots' own copy is made current, which may
+ * come after the engine reported the provider with it.
  */
 export const engineFindings = (engine: EngineStatus | null): string =>
   engine === null
     ? ""
     : engine.providers
-        .map(({ id, status }) =>
-          status._tag === "unavailable"
-            ? `${id}:unavailable:${status.reason ?? ""}`
-            : `${id}:${status._tag}`,
-        )
+        .map(({ id, status, copy }) => {
+          const state =
+            status._tag === "unavailable"
+              ? `${id}:unavailable:${status.reason ?? ""}`
+              : `${id}:${status._tag}`;
+          return copy === undefined ? state : `${state}:${copy.source}:${copy.version ?? ""}`;
+        })
         .join(",");
 
 /**

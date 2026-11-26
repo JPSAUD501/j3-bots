@@ -12,6 +12,7 @@ const saved: Settings = {
   budgets: { hops: 4, fanOut: 2, concurrentTurns: 2 },
   notifications: { enabled: true, previews: true },
   updateChannel: "stable",
+  autoUpdateHarnesses: true,
 };
 
 describe("settingsPatch", () => {

@@ -82,7 +82,11 @@ const withRuns = <A, E, R>(
               ),
               Layer.succeed(
                 RunningWork,
-                RunningWork.of({ bots: Effect.sync(() => machine.working) }),
+                RunningWork.of({
+                  bots: Effect.sync(() => machine.working),
+                  botsOn: () => Effect.sync(() => machine.working),
+                  sessionsOn: () => Effect.succeed([]),
+                }),
               ),
               Ids.layer,
             ),

@@ -73,6 +73,7 @@ import {
   type MemoryEdit,
   type UpdateResult,
 } from "@j3-bots/client-runtime";
+import { providerActionsOf } from "./providerActions";
 import {
   type ConnectorsOpening,
   notificationOpening,
@@ -695,9 +696,7 @@ function useLocalHere(origin: URL) {
         providerSetup={providerSetup === undefined ? undefined : { ...providerSetup, signIns }}
         waiting={reached ? null : t("local.waiting")}
         onCreate={createFirst}
-        onRecheck={(providerId) =>
-          j3.recheckProvider(providerId).then((result) => result._tag === "done")
-        }
+        providerActions={providerActionsOf(j3)}
         onArrived={(botId) => {
           setCreating(false);
           setFirstRun(false);
@@ -884,6 +883,7 @@ function LiveShell({
   const settings = useSettings();
   const profileSave = useReadable(j3.settingsSaves.profile);
   const notificationsSave = useReadable(j3.settingsSaves.notifications);
+  const harnessesSave = useReadable(j3.settingsSaves.harnesses);
   const devices = useDevices();
   const actions = useActions();
   const drafts = useReadable(j3.drafts);
@@ -962,7 +962,11 @@ function LiveShell({
   const shortcut = useDesktopShortcut();
   useReportSaving(
     savesUnderWay({
-      settings: { profile: profileSave, notifications: notificationsSave },
+      settings: {
+        profile: profileSave,
+        notifications: notificationsSave,
+        harnesses: harnessesSave,
+      },
       bots: botSaves,
       memory: memorySaves,
       actions,
@@ -1233,7 +1237,11 @@ function LiveShell({
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     connectors,
     settings: settings._tag === "ready" ? settings.value : null,
-    settingsSaves: { profile: profileSave, notifications: notificationsSave },
+    settingsSaves: {
+      profile: profileSave,
+      notifications: notificationsSave,
+      harnesses: harnessesSave,
+    },
     settingsOpen,
     devices: devices._tag === "ready" ? devices.value : null,
     recentTurns: recentTurns.state,
@@ -1593,10 +1601,7 @@ function LiveShell({
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
-    recheckProvider: (providerId) =>
-      j3.recheckProvider(providerId).then((result) => result._tag === "done"),
-    updateProvider: (providerId) =>
-      j3.updateProvider(providerId).then((result) => result._tag === "done"),
+    providerActions: providerActionsOf(j3),
     vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,

@@ -205,7 +205,8 @@ const login = Command.make("login", {
       // The home and the PATH the server runs with: the installed service's, else this shell's.
       const served = yield* servedConfiguration;
       const servicePath = Unit.servicePathOf(served.unitText);
-      const harnessFound = yield* findHarness(harness, servicePath);
+      const config = yield* userFacing(ServerConfig.load.pipe(Effect.provide(served.layer)));
+      const harnessFound = yield* findHarness(harness, servicePath, config.home);
       if (Option.isNone(harnessFound.executable)) {
         const missing = yield* missingHarnessCheck(
           harness,
@@ -214,7 +215,6 @@ const login = Command.make("login", {
         );
         return yield* refuse([missing.summary, ...Option.toArray(missing.fix)].join(" "));
       }
-      const config = yield* userFacing(ServerConfig.load.pipe(Effect.provide(served.layer)));
       const whose = Option.isSome(served.unitText)
         ? "the installed service's data directory"
         : "the data directory `j3-bots serve` uses from this shell";

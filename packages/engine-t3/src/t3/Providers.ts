@@ -142,7 +142,16 @@ const notCheckedYet = (provider: ProviderInstance, engine: ReportedProvider) =>
  * `59651c1`, `ClaudeProvider.ts` and `CodexProvider.ts`). Past the budget, the
  * placeholder is `unavailable` without `checking`.
  */
-const FIRST_CHECK_BUDGET = Duration.seconds(90);
+export const FIRST_CHECK_BUDGET = Duration.seconds(90);
+
+/**
+ * The version number in a version the engine reports: the whole of it, as
+ * Codex's (the part of its user agent after the slash, **Read** at
+ * `59651c1`, `CodexProvider.ts`), or the first `x.y.z` in it, with its
+ * prerelease, as in what `claude --version` prints.
+ */
+export const versionNumberIn = (reported: string | null | undefined): string | null =>
+  /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/.exec(reported ?? "")?.[1] ?? null;
 
 /**
  * Each engine state, with whether the engine is within its first-check
@@ -401,13 +410,14 @@ const updateOf = (
 
 /**
  * Each of J3 Bots' providers as the engine reports its instance, in the order
- * J3 Bots lists them. `firstCheck`: the engine is within its first-check
- * budget (`withFirstCheckBudget`).
+ * J3 Bots lists them. `firstCheck`: whether the provider is within its
+ * first-check budget, since the engine became ready (`withFirstCheckBudget`)
+ * or the engine replaced its instance.
  */
 export const providerStatuses = (
   providers: ReadonlyArray<ProviderInstance>,
   engine: ReadonlyArray<ReportedProvider>,
-  firstCheck: boolean,
+  firstCheck: (providerId: ProviderInstance["id"]) => boolean,
   updates: ReadonlyMap<ProviderId, UpdateRequest> = new Map(),
 ): ReadonlyArray<ProviderStatus> =>
   providers.map((provider) => {
@@ -421,7 +431,7 @@ export const providerStatuses = (
       id: provider.id,
       name: provider.name,
       harness: provider.harness === "acp-command" ? "other" : provider.harness,
-      status: statusOf(provider, reported, firstCheck),
+      status: statusOf(provider, reported, firstCheck(provider.id)),
       models: modelsOf(reported),
       usage: usageOf(reported),
       ...(version === undefined ? {} : { version }),
@@ -475,7 +485,7 @@ export const providerProblems = (
   engine: ReadonlyArray<ReportedProvider>,
 ): ReadonlyMap<ProviderInstance["id"], string> =>
   new Map(
-    providerStatuses(providers, engine, true).flatMap(({ id, name, status }) =>
+    providerStatuses(providers, engine, () => true).flatMap(({ id, name, status }) =>
       status._tag === "unavailable" && !status.checking
         ? [
             [

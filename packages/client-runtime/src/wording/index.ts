@@ -45,6 +45,9 @@ export {
 export {
   engineDownload,
   engineProblem,
+  harnessFailureText,
+  harnessOutcomeText,
+  harnessTaskText,
   type ProviderPlace,
   providerLine,
   type ProviderTone,

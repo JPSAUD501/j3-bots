@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Recheck } from "../components/ProviderFix";
-import type { Update } from "../components/ProviderUpdate";
+import type { ProviderActions } from "../components/ProviderFix";
 import type {
   Addressing,
   BotPlacement,
@@ -267,10 +266,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly refreshSettings: () => void;
   /** Signs the bots' browser out of every site; resolves with whether it did. */
   readonly signOutBrowser: () => Promise<boolean>;
-  /** Has the engine check a provider again; resolves with whether the engine took the request. */
-  readonly recheckProvider: Recheck;
-  /** Has the engine update a provider's harness; resolves with whether the update started. */
-  readonly updateProvider: Update;
+  /** Checks a provider again, updates its harness, installs J3 Bots' own copy, or cancels that (`ProviderActions`). */
+  readonly providerActions: ProviderActions;
   /** Sets up, unlocks, locks and changes the vault and its logins. */
   readonly vault: VaultIntents;
   /** Reads the list of devices again, as when Settings opens. */

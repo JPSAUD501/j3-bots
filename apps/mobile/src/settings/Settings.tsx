@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { SettingsSaves } from "@j3-bots/client-runtime";
 import {
   useConnection,
   useEngineStatus,
   useJ3Client,
+  useReadable,
   useRecentTurns,
+  useSettings,
 } from "@j3-bots/client-runtime/react";
-import { connectCommand } from "@j3-bots/client-runtime/presentation";
+import { connectCommand, installsHarnesses } from "@j3-bots/client-runtime/presentation";
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import type { EngineStatus } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { type RouteProp, useFocusEffect, useIsFocused, useRoute } from "@react-navigation/native";
-import { type ComponentRef, useCallback, useRef } from "react";
+import { type ComponentRef, useCallback, useRef, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
-import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
+import { Problem, Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
 import { AboutSection } from "./About.tsx";
@@ -75,7 +78,7 @@ export function SettingsScreen() {
       <NotificationsSection connected={connected} thisPhone={thisPhone} />
       <VaultSection />
       <ConnectorsSection />
-      <EngineSection engine={engine} stale={engineStale} />
+      <EngineSection engine={engine} stale={engineStale} connected={connected} />
       <UsageSection
         engine={engine}
         engineStale={engineStale}
@@ -93,10 +96,16 @@ export function SettingsScreen() {
 }
 
 /**
- * Whether the engine runs, and if not, why and what to do; then each provider.
- * Disconnected, it is what the server last reported, muted and said to be so.
+ * Whether the engine runs, and if not, why and what to do; then each provider,
+ * and, on a server that installs its own copies of the harnesses, whether it
+ * keeps them up to date by itself. Disconnected, it is what the server last
+ * reported, muted and said to be so.
  */
-function EngineSection(props: { readonly engine: EngineStatus | null; readonly stale: boolean }) {
+function EngineSection(props: {
+  readonly engine: EngineStatus | null;
+  readonly stale: boolean;
+  readonly connected: boolean;
+}) {
   const i18n = useI18n();
   const { t } = i18n;
   const { engine, stale } = props;
@@ -136,7 +145,39 @@ function EngineSection(props: { readonly engine: EngineStatus | null; readonly s
       {engine.providers.map((provider) => (
         <ProviderRow key={provider.id} provider={provider} stale={stale} version />
       ))}
+      {installsHarnesses(engine) && <AutoUpdateHarnesses connected={props.connected} />}
       {!stale && connect !== null && <ConnectCommand command={connect} />}
     </Section>
+  );
+}
+
+/**
+ * Whether the server keeps its own copies of Claude Code and Codex up to
+ * date by itself. Saves at once, as the notification switches do.
+ */
+function AutoUpdateHarnesses(props: { readonly connected: boolean }) {
+  const { t } = useI18n();
+  const client = useJ3Client();
+  const settings = useSettings();
+  const save: SettingsSaves["harnesses"] = useReadable(client.settingsSaves.harnesses);
+  const saving = save._tag === "saving";
+  const [watching, setWatching] = useState(saving);
+  if (settings._tag !== "ready") return null;
+  const readOnly = saving || !props.connected;
+  return (
+    <View className="gap-1">
+      <SwitchRow
+        label={t("settings.engine.autoUpdate")}
+        hint={t("settings.engine.autoUpdate.body")}
+        value={saving ? save.changes.autoUpdateHarnesses : settings.value.autoUpdateHarnesses}
+        readOnly={readOnly}
+        onChange={(autoUpdateHarnesses) => {
+          if (readOnly) return;
+          setWatching(true);
+          void client.updateSettings({ section: "harnesses", changes: { autoUpdateHarnesses } });
+        }}
+      />
+      <Problem>{watching && save._tag === "failed" ? t("settings.saveFailed") : null}</Problem>
+    </View>
   );
 }

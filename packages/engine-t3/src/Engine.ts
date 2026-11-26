@@ -190,6 +190,12 @@ export type ProviderInstance = {
        * otherwise through whatever sign-in this folder holds.
        */
       readonly home: string;
+      /**
+       * The harness's executable when J3 Bots runs a copy of its own, by its
+       * absolute path; undefined runs the one the engine finds on its `PATH`.
+       * `Engine.setHarnessExecutable` changes it while the engine runs.
+       */
+      readonly executable: string | undefined;
     }
   | {
       /**
@@ -372,6 +378,29 @@ export class Engine extends Context.Service<
     readonly updateProvider: (providerId: ProviderId) => Effect.Effect<void, EngineDown>;
 
     /**
+     * Runs the Claude Code or Codex provider on `executable`, a harness J3
+     * Bots installed, by its absolute path, from now on; null runs the one
+     * the engine finds on its `PATH`. An engine that runs applies it at once,
+     * by rebuilding the provider's instance: a session it opens from then on
+     * runs the new executable, while a session it already has open keeps
+     * the one it started on until the engine releases it. It answers once a
+     * check the engine made after the request shows the rebuilt instance:
+     * with `version`, installed, that version, not failed and not flagged
+     * incompatible; with null, any check that ended. Its status reads as
+     * `checking` until then. Every later start of the engine is given it
+     * only once it succeeded. `EngineUnavailable` when the engine is not
+     * ready, which leaves what it runs as it was; `EngineIndeterminate`
+     * when it may or may not run `executable` now: asking again, for either
+     * executable, sends it again. Sends nothing for a provider that already
+     * runs `executable`.
+     */
+    readonly setHarnessExecutable: (input: {
+      readonly providerId: ProviderId;
+      readonly executable: string | null;
+      readonly version: string | null;
+    }) => Effect.Effect<void, EngineDown>;
+
+    /**
      * A link that opens the engine's own web interface, signed in, for setting
      * up providers until J3 Bots has its own screen. Short-lived.
      */
@@ -478,7 +507,8 @@ export class Engine extends Context.Service<
       readonly permissionMode?: PermissionMode;
       /**
        * Starts the session's provider again before its next turn, so it
-       * takes the tools its project allows now (`setBrowserAccess`). The
+       * takes the tools its project allows now (`setBrowserAccess`) and
+       * runs the provider's executable now (`setHarnessExecutable`). The
        * conversation resumes where it was. Refused as a change is: while a
        * turn runs, and while background work it would end runs.
        */

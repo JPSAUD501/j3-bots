@@ -15,6 +15,8 @@ import * as OAuthEndpoints from "./connectors/oauth/endpoints.ts";
 import * as McpRegistry from "./connectors/sources/Registry.ts";
 import * as Domain from "./domain.ts";
 import { engineProviders } from "./engine/providers.ts";
+import { ownExecutables } from "./harnesses/layout.ts";
+import * as HarnessSources from "./harnesses/sources.ts";
 import * as Home from "./home/Home.ts";
 import * as Http from "./http.ts";
 import * as Installation from "./installation.ts";
@@ -55,11 +57,13 @@ const engine = Layer.unwrap(
     const basePrompt = yield* BasePrompt.BasePrompt;
     // Before the engine's first start, which links the shared skills into each harness home.
     yield* SharedSkills.install();
+    // The copies J3 Bots installed of the harnesses, which the engine runs from its start.
+    const executables = yield* ownExecutables(config.home);
     return EngineLive.layer({
       home: config.engineHome,
       port: config.enginePort,
       binaryOverride: config.engineBinary,
-      providers: engineProviders(path, config),
+      providers: engineProviders(path, config, executables),
       toolBridge: {
         command: process.execPath,
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
@@ -110,7 +114,14 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     // One decision for the client routes and the admin socket's report.
     Layer.provide(WebClient.statusLayer),
     Layer.provide(Domain.layer),
-    Layer.provide(Layer.mergeAll(engine, ExpoPushSender.layer, OAuthEndpoints.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        engine,
+        ExpoPushSender.layer,
+        OAuthEndpoints.layer,
+        HarnessSources.layer.pipe(Layer.provide(Host.layer)),
+      ),
+    ),
     Layer.provide(McpRegistry.layer),
     // One base prompt for the engine and the settings that change it.
     Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),

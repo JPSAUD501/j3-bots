@@ -27,10 +27,12 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
  * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77);
  * write the engine's settings, for each bot's browser access
  * (`BrowserAccess.ts`); and manage providers, for the operator's update of
- * a harness (`server.updateProvider` needs `providers:manage`; **Read** at
- * `59651c1`, `apps/server/src/auth/RpcAuthorization.ts`). A stored token
- * without one of them is refused by `checkAccess`, and the supervisor mints
- * a new one with all of them.
+ * a harness (`server.updateProvider`) and to replace a provider instance
+ * for the harness J3 Bots installed (`setHarnessExecutable`), both of which
+ * need `providers:manage` (**Read** at `59651c1`,
+ * `apps/server/src/auth/RpcAuthorization.ts`). A stored token without one of
+ * them is refused by `checkAccess`, and the supervisor mints a new one with
+ * all of them.
  */
 const CREDENTIAL_SCOPES = [
   "orchestration:read",

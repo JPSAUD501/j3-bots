@@ -27,6 +27,7 @@ import {
   deliveryIs,
   engineSession,
   eventually,
+  finishRunning,
   flushed,
   gateSettled,
   mainSessionId,
@@ -64,11 +65,13 @@ it.effect("delivers a steer the turn read, with no turn after it", () =>
   Effect.gen(function* () {
     const { control, bot, session, turnId, steer } = yield* steering;
     yield* control.readSteers({ sessionId: session, turnId });
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    // The bot answers both: no `undelivered` follow-up runs after its turn either.
+    yield* finishRunning(bot.id);
 
     yield* deliveryIs(steer, "delivered");
     yield* turnEnded(bot.id);
     yield* flushed(bot.id);
+    assert.lengthOf(yield* received(session), 2);
     assert.strictEqual(yield* timesSent(session, "Also check the tests."), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

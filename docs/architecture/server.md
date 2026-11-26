@@ -10,7 +10,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 
 | Entity | What it holds |
 | --- | --- |
-| Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences, the update channel |
+| Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences, the update channel, and whether J3 Bots updates its own copies of the harnesses by itself |
 | Bot | Profile, model, permission mode, whether it may use the browser, whether it may fill saved logins ([Filling a login](#filling-a-login)) and how many times it lost it that are not yet withdrawn from its project, how many times its model, permission mode or browser switch changed, workspace path and the real path it had when first provisioned, engine project id, whether its conversation was told that its main session is not ready, the count of model or permission mode changes at which the engine refused its permission mode, and the refusal of it its conversation was told of |
 | Conversation | One per bot. A sequence of entries, and how far the operator has read |
 | Section | A named group of bots in the roster: its name and its place among the others. A bot names the one it is in, or none |
@@ -62,6 +62,14 @@ providers/
     skills/          a link to each shared skill, made at every engine start
   codex/             Codex's home for every bot (`CODEX_HOME`)
     skills/          the same
+harnesses/
+  claude-code/       J3 Bots' own copy of Claude Code, when it installed one
+    current.json     the version the provider runs, and its executable in that version's folder
+    state.json       the newest version the maker listed at the last check, and how the last install ended
+    versions/<v>/    an installed copy, checked; only the current one stays
+    <v>.partial      a download cut off, resumed by the next install of that version
+    <v>.staging/     where a download is unpacked and run once before it is installed
+  codex/             the same for Codex
 state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
   runtime.json       the release this home's data was last handed to, whether by a rollback, and a transition under way
@@ -913,6 +921,23 @@ A client asks the server to update itself through `POST /api/update/v1/start`, w
 - `failed`: bringing the release before back failed too, and `j3-bots update --rollback` finishes it; or the unit ended without recording how, as when the machine restarted under it (`interrupted`). A run whose unit has ended while it has not is ended that way the next time the status is read. The detail of any ending but `done` names the unit's journal, where what the update printed is.
 
 While a run has not ended, the status' `state` is its stage and `run` names it, so a client follows it by polling `status`. A stream would end with the restart, and a client already polls `GET /api/server` while the server is down. The server logs the run, the versions and the device when it starts one, and how it ended when it finds one cut off, never a token.
+
+## J3 Bots' own harnesses
+
+When the engine finds neither Claude Code nor Codex where the server runs, the server can install its own copy of each, and it keeps the copies it installed up to date ([decision 0045](../decisions/0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md); what keeps it safe is in [Security](security.md#j3-bots-own-copies)). A harness the operator installed is theirs: the server never installs beside it, and its update is the engine's ([decision 0044](../decisions/0044-j3-bots-installs-and-updates-the-harnesses.md)).
+
+**Which harness a provider runs.** At start, before the engine is created, the server reads each `harnesses/<provider>/current.json`; a copy whose executable is there is the one the provider runs (`binaryPath`, [Engine](engine.md#the-adapters-interface)). Without one, the engine looks on its `PATH`, as before. `j3-bots doctor`, the sign-in buttons and `j3-bots provider` look the same way. Each Claude Code and Codex provider's status carries `copy`: where its harness comes from (`j3`, `operator` or `none`), the version of J3 Bots' copy, the newest version the maker listed at the last check, whether J3 Bots has a build of it for the server's system and processor (`installable`), an install or update under way (`task`), and how the last one ended (`last`, kept in `state.json`). A provider on J3 Bots' copy carries no engine `version` or `update`, and `engine.updateProvider` refuses it, so the engine never runs the harness's own updater on it.
+
+**Install and update are one request.** `provider.installHarness` installs the newest version the maker lists, for a provider whose harness is not the operator's, when J3 Bots has a build of it for the server; it answers once the install has started, and from then on it reads `downloading`, with Cancel, and how it goes follows on `engine.subscribe`. `provider.cancelHarnessInstall` stops it. A second request while one runs is taken as the same. Each runs in order:
+
+1. **The listing.** The maker's channel and the version's checksums, read over HTTPS from the maker's origin, following no redirect, at most 2 MiB each and 30 seconds to the last byte.
+2. **The download** (`downloading`, with how far it has come, at most once a second) into `<v>.partial`, resumed with a `Range` request when an earlier one was cut off; an answer that is not the rest of it starts it over.
+3. **The check** (`verifying`): its SHA-256, and its size where the maker gives one, against the listing; a mismatch removes the download. Then it is unpacked into `<v>.staging/` and run once with `--version`, as the engine would run it; it must say the version listed. A copy that does not is removed.
+4. **The switch** (`waiting` while any bot has a turn or background work running in a session on that provider, or the engine is not ready). The checked copy moves to `versions/<v>/` and waits; every 30 seconds the server looks again. Once no bot's work runs there, with new first sends held (`SendPause`), it looks last at whether the copy is still wanted: a first install whose harness the operator installed on the `PATH` meanwhile is given up, its copy removed, and so is an update the check started, when no client asked for it and `autoUpdateHarnesses` was turned off. Then the engine is given the new executable (`setHarnessExecutable`), which answers once the engine's check of the rebuilt instance shows the new version running without an error, within 90 seconds; `current.json` is replaced whole, and the copy recorded, in the same uninterruptible step, so a cancel that lands meanwhile keeps it, and the install ends recorded as installed. Still with first sends held, the server has the engine release each of its sessions on that provider (`configureSession` with `reloadTools`), since a session the engine has open keeps running the copy it started on; the next turn of each starts the new copy. The old version's folder is removed once every session was released, else once the engine starts again. If the engine may have taken the new executable without showing it runs it, or `current.json` cannot be written, the engine is given the old one back and the install fails (`engine`, `storage`); if that cannot be shown either, the new copy is kept on disk, and the next install of that version reuses it, until the engine starts again.
+
+A failure names its reason (`unreachable`, `checksum`, `check`, `storage`, `engine`) in `last`, and the provider offers to try again. A cancel removes what was downloaded; a stop of the server keeps a partial download, which the next install of that version resumes.
+
+**Updates by themselves.** For each harness with J3 Bots' own copy, the server reads the maker's newest version a minute after it starts, then about every six hours, up to half an hour later so the checks spread out, and an hour after a check that failed. With `autoUpdateHarnesses` on, as it is unless the operator turns it off in Settings, a newer version is installed as above, and so waits for the provider's bots like any update. Turning it on checks at once. A harness on the operator's own `PATH`, or one J3 Bots has no build of for the server, is never checked.
 
 ## Configuration
 

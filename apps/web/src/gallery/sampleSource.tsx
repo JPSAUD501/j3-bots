@@ -4,6 +4,7 @@
  * are decided, bots answer after a moment. A stand-in for the client runtime
  * in development only; nothing here reaches a server.
  */
+import type { ProviderActions } from "../components/ProviderFix";
 import type {
   Draft,
   DraftFile,
@@ -76,6 +77,14 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** The connectors screen, and what opened it; null while it is closed. */
   readonly connectorsOpening: ConnectorsOpening | null;
 }
+
+/** Provider actions as the gallery takes them: done at once, changing nothing. */
+export const sampleProviderActions: ProviderActions = {
+  recheck: () => Promise.resolve(true),
+  update: () => Promise.resolve(true),
+  install: () => Promise.resolve(true),
+  cancelInstall: () => Promise.resolve(true),
+};
 
 const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
 
@@ -665,17 +674,19 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
         roster: s.roster.filter((item) => !(item._tag === "bot" && item.bot.id === botId)),
       })),
     updateSettings: (change) =>
-      update((s) =>
-        change.section === "profile"
-          ? {
+      update((s): State => {
+        switch (change.section) {
+          case "profile":
+            return {
               ...s,
               settings: { ...s.settings, ...change.changes },
               settingsSaves: {
                 ...s.settingsSaves,
                 profile: { _tag: "saved", changes: change.changes },
               },
-            }
-          : {
+            };
+          case "notifications":
+            return {
               ...s,
               settings: {
                 ...s.settings,
@@ -685,8 +696,18 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
                 ...s.settingsSaves,
                 notifications: { _tag: "saved", changes: change.changes },
               },
-            },
-      ),
+            };
+          case "harnesses":
+            return {
+              ...s,
+              settings: { ...s.settings, ...change.changes },
+              settingsSaves: {
+                ...s.settingsSaves,
+                harnesses: { _tag: "saved", changes: change.changes },
+              },
+            };
+        }
+      }),
     setSettingsOpen: (open) => update((s) => ({ ...s, settingsOpen: open })),
     startPairing: () =>
       Promise.resolve({
@@ -811,8 +832,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     freshStart: nothing,
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
-    recheckProvider: () => Promise.resolve(true),
-    updateProvider: () => Promise.resolve(true),
+    providerActions: sampleProviderActions,
     vault,
     refreshDevices: nothing,
     loadMoreTurns: nothing,
@@ -892,7 +912,11 @@ export function useSampleSource({
       ...sampleTeam(SAMPLE_NOW),
       inFlight: new Set(),
       drafts: {},
-      settingsSaves: { profile: { _tag: "idle" }, notifications: { _tag: "idle" } },
+      settingsSaves: {
+        profile: { _tag: "idle" },
+        notifications: { _tag: "idle" },
+        harnesses: { _tag: "idle" },
+      },
       settingsOpen: false,
       connectors: sampleConnectors,
       connectorsOpening: null,

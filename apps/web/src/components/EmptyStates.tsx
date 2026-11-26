@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus, Room } from "@j3-bots/contracts";
-import { connectCommand, openingHeld } from "@j3-bots/client-runtime/presentation";
+import { connectCommand, openingHeld, ownHarness } from "@j3-bots/client-runtime/presentation";
 import { avatarEnsemble } from "@j3-bots/design-tokens";
 import { type LucideIcon, SearchXIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -19,8 +19,8 @@ import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
-import { ProviderFix, type Recheck } from "./ProviderFix";
-import { ProviderUpdate, type Update } from "./ProviderUpdate";
+import { OwnHarnessLine, type ProviderActions, ProviderFix } from "./ProviderFix";
+import { ProviderUpdate } from "./ProviderUpdate";
 
 /** Three idle bots: the picture for screens where the team is still to come. */
 function Ensemble() {
@@ -129,27 +129,27 @@ const providerToneClass = {
 /**
  * One provider: its name, and its state in words. `stale` mutes a state
  * reported before a disconnection. One the engine cannot run also shows what
- * the engine said of it and what fixes it (`ProviderFix`), and one whose
- * version the server reports, that version and its update
- * (`ProviderUpdate`), unless stale.
+ * the engine said of it and what fixes it (`ProviderFix`); and its
+ * harness's version and update: of J3 Bots' own copy when it runs one
+ * (`OwnHarnessLine`), else of the harness the engine found
+ * (`ProviderUpdate`); unless stale.
  */
 export function ProviderRow({
   provider,
   place,
-  onRecheck,
-  onUpdate,
+  actions,
   stale = false,
 }: {
   provider: ProviderStatus;
   place: ProviderPlace;
-  onRecheck: Recheck;
-  onUpdate: Update;
+  actions: ProviderActions;
   stale?: boolean;
 }) {
   const { t } = useI18n();
   const line = providerLine(provider, usePresentation(), place);
   const { status } = provider;
   const detail = status._tag === "unavailable" ? status.detail : undefined;
+  const own = ownHarness(provider);
   return (
     <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
@@ -165,8 +165,13 @@ export function ProviderRow({
           {t("provider.detail", { detail })}
         </p>
       )}
-      {!stale && <ProviderFix provider={provider} place={place} onRecheck={onRecheck} />}
-      {!stale && <ProviderUpdate provider={provider} onUpdate={onUpdate} />}
+      {!stale && <ProviderFix provider={provider} place={place} actions={actions} />}
+      {!stale &&
+        (own === null ? (
+          <ProviderUpdate provider={provider} onUpdate={actions.update} />
+        ) : (
+          <OwnHarnessLine own={own} actions={actions} />
+        ))}
     </li>
   );
 }

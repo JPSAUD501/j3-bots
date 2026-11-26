@@ -20,17 +20,12 @@ import { editToml, type TomlEdit, type TomlInline, type TomlTable } from "./toml
 /** One harness instance, in the shape the engine needs it. */
 export type InstanceSpec =
   | {
-      readonly kind: "claude-code";
+      readonly kind: "claude-code" | "codex";
       readonly instanceId: string;
       readonly name: string;
       readonly home: string;
-      readonly environment: ReadonlyArray<EnvironmentVariable>;
-    }
-  | {
-      readonly kind: "codex";
-      readonly instanceId: string;
-      readonly name: string;
-      readonly home: string;
+      /** The harness J3 Bots installed, by its absolute path; undefined for the one on the engine's `PATH`. */
+      readonly executable: string | undefined;
       readonly environment: ReadonlyArray<EnvironmentVariable>;
     }
   | {
@@ -275,25 +270,51 @@ const connectionVariables = (
     : [key];
 };
 
-/** The variables an instance runs with whatever the connection: for Codex, its own home folder. */
+/**
+ * The variables an instance runs with whatever the connection: for Codex, its
+ * own home folder; for a Claude Code J3 Bots installed, its own updater
+ * turned off, since J3 Bots updates that copy itself and Claude Code's
+ * updater would install another into the server user's home (**Assumed**
+ * from Claude Code's documented `DISABLE_AUTOUPDATER`).
+ */
 const instanceVariables = (
   path: Path.Path,
   input: ProvisionInput,
   spec: InstanceSpec,
 ): ReadonlyArray<SettingsVariable> => {
-  const home = spec.kind === "codex" ? codexProcessHome(path, input, spec.instanceId) : undefined;
-  return home === undefined ? [] : [{ name: "HOME", value: home, sensitive: false }];
+  switch (spec.kind) {
+    case "codex": {
+      const home = codexProcessHome(path, input, spec.instanceId);
+      return home === undefined ? [] : [{ name: "HOME", value: home, sensitive: false }];
+    }
+    case "claude-code":
+      return spec.executable === undefined
+        ? []
+        : [{ name: "DISABLE_AUTOUPDATER", value: "1", sensitive: false }];
+    case "acp-local":
+      return [];
+  }
 };
+
+/**
+ * The executable a Claude Code or Codex instance runs, when J3 Bots installed
+ * it: the engine's `binaryPath`, which it runs in place of the command on its
+ * `PATH` (**Read** at `59651c1`, `ClaudeSettings` and `CodexSettings` in
+ * `contracts/src/settings.ts`).
+ */
+const binaryPath = (spec: { readonly executable: string | undefined }) =>
+  spec.executable === undefined ? {} : { binaryPath: spec.executable };
 
 const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
   switch (spec.kind) {
     case "claude-code":
       return {
+        ...binaryPath(spec),
         homePath: spec.home,
         launchArgs: claudeLaunchArgs(input.systemPromptFile, input.toolBridge),
       };
     case "codex":
-      return { homePath: spec.home };
+      return { ...binaryPath(spec), homePath: spec.home };
     case "acp-local":
       return {
         source: "local",
@@ -323,22 +344,33 @@ const engineSettings = (
     ...ENGINE_DEFAULT_INSTANCES.map((driver) => [driver, { driver, enabled: false }] as const),
     ...input.instances.map(
       (spec) =>
-        [
-          spec.instanceId,
-          {
-            driver: DRIVERS[spec.kind],
-            displayName: spec.name,
-            enabled: !disabled.has(spec.instanceId),
-            environment: [
-              ...instanceVariables(path, input, spec),
-              ...connectionVariables(spec, connected),
-              ...spec.environment.map((variable) => secretVariable(variable.name)),
-            ],
-            config: instanceConfig(input, spec),
-          },
-        ] as const,
+        [spec.instanceId, instanceEntry(path, input, spec, { connected, disabled })] as const,
     ),
   ]),
+});
+
+/**
+ * One instance as the engine's settings keep it, as provisioning writes it:
+ * `connected` when a provider connection is stored, and turned off when it
+ * is in `disabled`, the instances whose harness configuration could not be
+ * written. A secret variable names its value in the engine's secret store
+ * without carrying it, so the entry holds no secret.
+ */
+export const instanceEntry = (
+  path: Path.Path,
+  input: ProvisionInput,
+  spec: InstanceSpec,
+  state: { readonly connected: boolean; readonly disabled: ReadonlySet<string> },
+) => ({
+  driver: DRIVERS[spec.kind],
+  displayName: spec.name,
+  enabled: !state.disabled.has(spec.instanceId),
+  environment: [
+    ...instanceVariables(path, input, spec),
+    ...connectionVariables(spec, state.connected),
+    ...spec.environment.map((variable) => secretVariable(variable.name)),
+  ],
+  config: instanceConfig(input, spec),
 });
 
 /**
@@ -561,7 +593,8 @@ const claudeSettings = (
  * fails the provisioning, and the engine does not start.
  *
  * Answers the connection's key it gave the harnesses, null when there is no
- * connection: a secret the engine's words must not carry (`withoutSecrets`).
+ * connection: a secret the engine's words must not carry (`withoutSecrets`);
+ * and the instances it turned off.
  */
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
@@ -681,7 +714,10 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     settingsFile,
     engineSettings(path, input, connection !== null, disabled, existing),
   );
-  return connection === null ? null : Redacted.make(connection.key);
+  return {
+    key: connection === null ? null : Redacted.make(connection.key),
+    disabled,
+  } as const;
 });
 
 /**
