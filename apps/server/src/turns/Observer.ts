@@ -8,6 +8,7 @@ import {
   type EngineIncompatible,
   EngineInstanceId,
   type EngineRequest,
+  type EngineStep,
   EventCursor,
   type IdempotencyKey,
   type OpenRequest,
@@ -72,6 +73,7 @@ import { stopTargets } from "./stopTargets.ts";
 import { workStopped } from "./workStopped.ts";
 import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
+import { WorkImages } from "../attachments/WorkImages.ts";
 import { annotate } from "./ConnectorSteps.ts";
 
 const Watched = Schema.Struct({
@@ -290,6 +292,7 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const ids = yield* Ids;
     const workSteps = yield* WorkSteps;
+    const workImages = yield* WorkImages;
     const routing = yield* RoomRouting;
     const roomOf = liveRoom(sql);
     const scope = yield* Effect.scope;
@@ -1044,7 +1047,7 @@ export const layer = Layer.effect(
     const step = Effect.fn("Observer.step")(function* (
       session: Watched,
       turnId: TurnId,
-      engineStep: WorkStep,
+      engineStep: EngineStep,
       at: DateTime.Utc,
     ) {
       const turn = yield* turnOf(session.id, turnId);
@@ -1052,8 +1055,25 @@ export const layer = Layer.effect(
       // A routine run works out of the operator's sight: its turn has no fold.
       if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
       const foldId = yield* foldOf(session, turn.value);
+      // The path of an image the step looked at stays here: the step names it by an id.
+      const { viewedImage, ...shown } = engineStep;
+      const image =
+        viewedImage === undefined
+          ? Option.none()
+          : yield* workImages.record({
+              botId: session.bot_id,
+              entryId: foldId,
+              stepId: shown.id,
+              given: viewedImage,
+            });
       // What J3 Bots added to a connector's call stays as the engine writes it again.
-      const work = yield* withConnector(session.id, engineStep);
+      const work = yield* withConnector(
+        session.id,
+        Option.match(image, {
+          onNone: (): WorkStep => shown,
+          onSome: (id): WorkStep => ({ ...shown, image: { id } }),
+        }),
+      );
       yield* sql`
         INSERT INTO work_steps (entry_id, step_id, position, step_json)
         VALUES (

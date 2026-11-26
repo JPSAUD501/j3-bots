@@ -36,7 +36,6 @@ import {
   ProviderId,
   SectionId,
   ServerOrigin,
-  type Attachment,
   type Bot,
   type BotState,
   type Connector,
@@ -56,7 +55,8 @@ import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
-import { AttachmentImagesProvider } from "../components/attachmentImages";
+import { AttachmentImagesProvider, type ImageSource } from "../components/attachmentImages";
+import { galleryImage } from "./workImages";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import { ImageViewer } from "../components/ImageViewer";
 import type { ShellData, ShellIntents } from "../shell/data";
@@ -762,6 +762,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     openWorkFold: nothing,
     closeWorkFold: nothing,
     openAttachment: nothing,
+    openWorkImage: nothing,
     openRoutine: nothing,
     openConversation: nothing,
     openMemoryFile: nothing,
@@ -1031,22 +1032,29 @@ export function useSampleSource({
 export function SampleSourceProvider({ children }: { children: ReactNode }) {
   const { overlays, ...source } = useSampleSource();
   // An image the operator attached here shows as it would from a server.
-  const [viewing, setViewing] = useState<Attachment | null>(null);
+  const [viewing, setViewing] = useState<ImageSource | null>(null);
   const intents: ShellIntents = {
     ...source.intents,
     openAttachment: (attachment) => {
-      if (showsImage(attachment) && attached.has(attachment.id)) setViewing(attachment);
+      if (showsImage(attachment) && attached.has(attachment.id)) {
+        setViewing({ _tag: "file", attachment });
+      }
     },
+    openWorkImage: (id) => setViewing({ _tag: "work", id }),
   };
   return (
     <ClockProvider now={SAMPLE_NOW}>
       <ShellSourceProvider source={{ ...source, intents }}>
         <AttachmentImagesProvider
-          fetch={(attachment) => Promise.resolve(attached.get(attachment.id) ?? null)}
+          fetch={(image) =>
+            image._tag === "file"
+              ? Promise.resolve(attached.get(image.attachment.id) ?? null)
+              : galleryImage(image)
+          }
         >
           {children}
           {overlays}
-          <ImageViewer attachment={viewing} onClose={() => setViewing(null)} onSave={() => {}} />
+          <ImageViewer image={viewing} onClose={() => setViewing(null)} onSave={() => {}} />
           {overlays}
         </AttachmentImagesProvider>
       </ShellSourceProvider>

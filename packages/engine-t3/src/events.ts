@@ -9,6 +9,7 @@ import {
   WorkStep,
 } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import {
   DelegatedResultId,
   EventCursor,
@@ -214,6 +215,21 @@ export type BackgroundWork = typeof BackgroundWork.Type;
 export const isBackgroundWorkPending = (work: BackgroundWork) =>
   work.turns.length > 0 || work.unattributed;
 
+/**
+ * A step of a turn's work as the engine reports it: the step a client is
+ * shown, without the image the server names (`WorkStep.image`), and for a step
+ * that looked at an image file, that file's path as the harness gave it,
+ * absolute or relative to the session's workspace. The server reads it there,
+ * and never passes the path on.
+ */
+export const EngineStep = Schema.Struct({
+  ...Struct.omit(WorkStep.fields, ["image"]),
+  viewedImage: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+  ),
+});
+export type EngineStep = typeof EngineStep.Type;
+
 /** A turn that has not ended. */
 export const OpenTurn = Schema.Struct({
   turnId: TurnId,
@@ -226,7 +242,7 @@ export const OpenTurn = Schema.Struct({
   /** As on `turn-started`. */
   model: Schema.NullOr(ModelChoice),
   /** Every step so far, in the order they started. */
-  steps: Schema.Array(WorkStep),
+  steps: Schema.Array(EngineStep),
   /** Its `j3` tool calls still in progress. */
   toolCalls: Schema.Array(ToolCall),
   /** The `steered` dispatches it has taken so far, as `steer-taken` tells each. */
@@ -255,7 +271,7 @@ export const EndedTurn = Schema.Struct({
   /** As on `turn-finished`, as it stands now: null once it ran or was dropped. */
   continuation: Schema.NullOr(PendingContinuation),
   /** Every step, in its final state. */
-  steps: Schema.Array(WorkStep),
+  steps: Schema.Array(EngineStep),
   /** As on `turn-finished`. */
   contextRecovered: Schema.Boolean,
 });
@@ -473,7 +489,7 @@ export const SessionEvent = Schema.Union([
    * A step was added or changed. Steps replace by id; the latest running step is
    * what the bot is doing right now.
    */
-  Schema.TaggedStruct("step", { ...at, turnId: TurnId, step: WorkStep }),
+  Schema.TaggedStruct("step", { ...at, turnId: TurnId, step: EngineStep }),
   /**
    * The bot used the host's own tool for showing text to the user mid-turn
    * (`send_to_user` on Claude Code) instead of `say`. The server delivers the

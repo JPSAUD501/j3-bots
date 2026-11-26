@@ -35,6 +35,7 @@ import {
   type DelegatedResult,
   type EndedTurn,
   type EngineRequest,
+  type EngineStep,
   type HostSpeech,
   type OpenRequest,
   type OpenTurn,
@@ -1288,7 +1289,7 @@ const dynamicToolStep = (item: DynamicTool) =>
 const stepStatus = (item: Item): WorkStep["status"] =>
   LIVE_ITEM.has(item.status) ? "running" : item.status === "completed" ? "completed" : "failed";
 
-const stepOf = (item: Item): WorkStep | undefined => {
+const stepOf = (item: Item): EngineStep | undefined => {
   const kind = stepKind(item);
   if (kind === undefined) return undefined;
   return {
@@ -1299,6 +1300,13 @@ const stepOf = (item: Item): WorkStep | undefined => {
     status: stepStatus(item),
     startedAt: item.startedAt ?? item.updatedAt,
     finishedAt: LIVE_ITEM.has(item.status) ? null : (item.completedAt ?? item.updatedAt),
+    // The path the harness read the image from, as it gave it: Claude Code's
+    // and an ACP agent's `Read` of an image file, Codex's `imageView` (**Read**
+    // at `59651c1`, `ClaudeAdapterV2.ts` L7287, `CodexAdapterV2.ts` L5819,
+    // `provider-acp/src/server/adapter.ts` L4734).
+    ...(item.type === "dynamic_tool" && item.viewedImagePath !== undefined
+      ? { viewedImage: item.viewedImagePath }
+      : {}),
   };
 };
 
@@ -1308,8 +1316,8 @@ const stepsOf = (mirror: Mirror, run: Run) =>
     return step === undefined ? [] : [step];
   });
 
-const fingerprint = (step: WorkStep) =>
-  `${step.status}|${step.tool ?? ""}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}`;
+const fingerprint = (step: EngineStep) =>
+  `${step.status}|${step.tool ?? ""}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}|${step.viewedImage ?? ""}`;
 
 const SpeechInput = Schema.Struct({ message: Schema.String });
 const decodeSpeechInput = Schema.decodeUnknownOption(SpeechInput);

@@ -4,7 +4,9 @@ import {
   type DeviceId,
   type DeviceToken,
   HTTP_PATHS,
+  MAX_INLINE_IMAGE_SIZE,
   NotAuthenticated,
+  type WorkImageId,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -92,6 +94,14 @@ export class Files extends Context.Service<
     }) => Effect.Effect<Attachment, UploadRefused | NotPaired>;
     readonly download: (
       attachment: Attachment,
+    ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
+    /**
+     * The image a step of a bot's work looked at (`WorkStep.image`), as the
+     * server reads it now: `not-found` once the file is gone or is no longer
+     * an image it shows.
+     */
+    readonly workImage: (
+      id: WorkImageId,
     ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
   }
 >()("@j3-bots/client-runtime/files/Files") {}
@@ -186,12 +196,13 @@ export const layer = Layer.effect(
       }).pipe(Effect.raceFirst(ended(input.pairing)));
     });
 
-    const download = Effect.fn("Files.download")(function* (attachment: Attachment) {
+    /** The bytes at `path` on the server, given the time `size` bytes take to arrive. */
+    const get = Effect.fnUntraced(function* (path: string, size: number) {
       const pairing = connection.pairing.get();
       if (pairing === null) return yield* new NotPaired();
       const token = yield* connection.bearer(pairing);
       const unreachable = new AttachmentUnavailable({ reason: "unreachable" });
-      const url = new URL(`${HTTP_PATHS.attachments}/${encodeURIComponent(attachment.id)}`, origin);
+      const url = new URL(path, origin);
       // The deadline runs until the last byte is read, not only to the headers.
       return yield* Effect.gen(function* () {
         const response = yield* http.execute(
@@ -213,11 +224,26 @@ export const layer = Layer.effect(
         }
       }).pipe(
         Effect.catchTag("HttpClientError", () => Effect.fail(unreachable)),
-        within(transferDeadline(attachment.size, policy.requestTimeout), () => unreachable),
+        within(transferDeadline(size, policy.requestTimeout), () => unreachable),
         Effect.raceFirst(ended(pairing)),
       );
     });
 
-    return Files.of({ upload, download });
+    const download = Effect.fn("Files.download")(function* (attachment: Attachment) {
+      return yield* get(
+        `${HTTP_PATHS.attachments}/${encodeURIComponent(attachment.id)}`,
+        attachment.size,
+      );
+    });
+
+    // Its size is known only as it arrives: it is given the time the largest takes.
+    const workImage = Effect.fn("Files.workImage")(function* (id: WorkImageId) {
+      return yield* get(
+        `${HTTP_PATHS.workImages}/${encodeURIComponent(id)}`,
+        MAX_INLINE_IMAGE_SIZE,
+      );
+    });
+
+    return Files.of({ upload, download, workImage });
   }),
 );

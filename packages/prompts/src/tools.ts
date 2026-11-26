@@ -145,7 +145,7 @@ const SayInput = toolInput({
   attachments: Schema.optionalKey(
     described(
       Schema.Array(text(1, 1_024)).check(Schema.isMaxLength(10)),
-      "Files to attach: paths in your workspace, usually under files/.",
+      "Files to attach: paths in your workspace, usually under files/. A GIF, JPEG, PNG or WebP shows as a photo.",
     ),
   ),
   visual: Schema.optionalKey(
@@ -735,7 +735,7 @@ export const tools = {
       "Send a message to your user. Nothing else you write reaches them: reply text outside this tool goes nowhere.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead. In any other turn it reaches only your user: to post in a room from there, use `message_bot` with the room\'s id.',
       "In a room, the members you list in `mention` are woken to answer; with none listed, every other member is, and each reads what you said in its next turn either way. Your user limits how many rounds bots may answer each other in a room since they last wrote, so speak there only when the room needs it, and mention the one who must act next when there is one. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
-      "Attach files you produced, rather than linking workspace paths they cannot open.",
+      "Attach files you produced, and pictures you made or found for your user, rather than linking workspace paths they cannot open or describing an image in its place.",
       "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it. Then end your turn.",
       "Returns once the message is recorded.",
       BOT_ONLY,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { fileIcon, type FileIcon } from "@j3-bots/client-runtime/presentation";
+import { fileIcon, type FileIcon, showsImage } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import { fileDetail } from "@j3-bots/client-runtime/wording";
 import type { Attachment } from "@j3-bots/contracts";
@@ -11,7 +11,7 @@ import {
   FileText,
   type LucideIcon,
 } from "lucide-react-native";
-import { use } from "react";
+import { use, useState } from "react";
 import { Image, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -125,6 +125,43 @@ export function InlineFile({
       <Text numberOfLines={1} style={{ color: ink }} className="shrink text-sm font-medium">
         {attachment.name}
       </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * A file a message carries: an image as a photo, large enough to see what it
+ * is, in a frame of fixed size, so the conversation never moves as it
+ * arrives; pressing it shows it whole. Any other file, and an image that
+ * cannot be had, as its card.
+ */
+export function MessageFile({ attachment }: { readonly attachment: Attachment }) {
+  const { t } = useI18n();
+  const client = useJ3Client();
+  const opener = useFileOpener();
+  const widths = use(EntryWidths);
+  const image = useImageFile(client, attachment);
+  // Bytes named as an image that do not decode as one show as the file they are.
+  const [undrawable, setUndrawable] = useState(false);
+  if (!showsImage(attachment) || image._tag === "failed" || undrawable) {
+    return <FileCard attachment={attachment} />;
+  }
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={t("file.open", { name: attachment.name })}
+      onPress={() => opener.open(attachment)}
+      style={{ width: Math.min(240, widths.bubble), height: 176 }}
+      className="overflow-hidden rounded-md border border-border bg-muted"
+    >
+      {image._tag === "shown" && (
+        <Image
+          source={{ uri: image.uri }}
+          resizeMode="cover"
+          onError={() => setUndrawable(true)}
+          style={{ flex: 1 }}
+        />
+      )}
     </Pressable>
   );
 }

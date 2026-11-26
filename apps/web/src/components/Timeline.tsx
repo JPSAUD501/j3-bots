@@ -14,6 +14,7 @@ import type {
   Room,
   RoomId,
   RoutineId,
+  WorkImageId,
   WorkStep,
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
@@ -75,6 +76,8 @@ export interface TimelineIntents {
   readonly openWorkFold: (entryId: EntryId) => void;
   readonly closeWorkFold: (entryId: EntryId) => void;
   readonly openAttachment: (attachment: Attachment) => void;
+  /** Shows large an image a step of a bot's work looked at. */
+  readonly openWorkImage: (id: WorkImageId) => void;
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openConversation: (botId: BotId) => void;
   /** Opens the connector's page with its sign-in started. */
@@ -182,6 +185,7 @@ export function Timeline({
                 live={item.live ? turnBot : null}
                 {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
                 steps={fold === null ? null : workSteps(fold.id)}
+                onOpenImage={intents.openWorkImage}
                 onOpenChange={(open) => {
                   if (fold === null) return;
                   if (open) intents.openWorkFold(fold.id);

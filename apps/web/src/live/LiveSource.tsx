@@ -39,7 +39,12 @@ import type {
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
-import { TEMPLATE_FILE_EXTENSION, TEMPLATE_MEDIA_TYPE, templateFileText } from "@j3-bots/contracts";
+import {
+  INLINE_IMAGE_MEDIA_TYPES,
+  TEMPLATE_FILE_EXTENSION,
+  TEMPLATE_MEDIA_TYPE,
+  templateFileText,
+} from "@j3-bots/contracts";
 import { Dialog } from "@base-ui/react/dialog";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
@@ -116,7 +121,7 @@ import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import type { ConnectorsIntents } from "../components/connectors/screen";
 import type { ConnectorAppAccess } from "../components/ConnectorAppCard";
 import { EditBotDialog } from "../components/EditBotDialog";
-import { AttachmentImagesProvider } from "../components/attachmentImages";
+import { AttachmentImagesProvider, type ImageSource } from "../components/attachmentImages";
 import { ImageViewer } from "../components/ImageViewer";
 import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
@@ -1016,7 +1021,7 @@ function LiveShell({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   // The image a file shows over everything, opened from a conversation.
-  const [viewing, setViewing] = useState<Attachment | null>(null);
+  const [viewing, setViewing] = useState<ImageSource | null>(null);
   // The connectors screen, and what opened it; null while it is closed.
   const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsPlace | null>(null);
   const openConnectors = (opening: ConnectorsPlace) => {
@@ -1086,15 +1091,18 @@ function LiveShell({
           : t("file.unreachable", { name: attachment.name }),
       );
     });
-  // Only the image types a page draws without running anything get here (`showsImage`).
-  const imageOf = (attachment: Attachment) =>
-    j3
-      .download(attachment)
-      .then((result) =>
-        result._tag === "done"
-          ? new Blob([result.value.bytes], { type: attachment.mediaType })
-          : null,
-      );
+  // Only the image types a page draws without running anything get here: a
+  // file's by `showsImage`, and one a bot looked at as the server sends only those.
+  const imageOf = (source: ImageSource) =>
+    (source._tag === "file" ? j3.download(source.attachment) : j3.workImage(source.id)).then(
+      (result) => {
+        if (result._tag !== "done") return null;
+        const type = source._tag === "file" ? source.attachment.mediaType : result.value.mediaType;
+        return INLINE_IMAGE_MEDIA_TYPES.includes(type)
+          ? new Blob([result.value.bytes], { type })
+          : null;
+      },
+    );
 
   const view: ConversationView =
     conversation.state === null
@@ -1568,9 +1576,10 @@ function LiveShell({
       setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
     // An image shows here; any other file opens in its own window, or is saved.
     openAttachment: (attachment) => {
-      if (showsImage(attachment)) setViewing(attachment);
+      if (showsImage(attachment)) setViewing({ _tag: "file", attachment });
       else deliverAttachment(attachment, reserveWindow(attachment));
     },
+    openWorkImage: (id) => setViewing({ _tag: "work", id }),
     // Over its bot's details, which list it with the bot's other routines.
     openRoutine: (routineId) =>
       void navigate({
@@ -1776,7 +1785,7 @@ function LiveShell({
       <AttachmentImagesProvider fetch={imageOf}>
         {children}
         <ImageViewer
-          attachment={viewing}
+          image={viewing}
           onClose={() => setViewing(null)}
           onSave={(attachment) => deliverAttachment(attachment, null)}
         />

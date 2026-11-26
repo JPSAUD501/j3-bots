@@ -5,6 +5,7 @@ import { fileIcon } from "@j3-bots/client-runtime/presentation";
 import { fileDetail } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
+import { useState } from "react";
 import { useAttachmentImage } from "./attachmentImages";
 
 const kindIcons = {
@@ -58,6 +59,39 @@ export function FileCard({
         <span className="truncate text-sm font-medium">{attachment.name}</span>
         <span className="text-2xs text-muted-foreground">{fileDetail(attachment, i18n)}</span>
       </span>
+    </button>
+  );
+}
+
+/**
+ * An image a message carries, as a photo: large enough to see what it is, in
+ * a frame of fixed size, so the conversation never moves as it arrives.
+ * Opening it shows it whole. An image that cannot be had shows as its card.
+ */
+export function PhotoCard({ attachment, onOpen }: { attachment: Attachment; onOpen: () => void }) {
+  const { t } = useI18n();
+  const image = useAttachmentImage(attachment);
+  // Bytes named as an image that do not decode as one show as the file they are.
+  const [undrawable, setUndrawable] = useState(false);
+  if (image === null || image._tag === "failed" || undrawable) {
+    return <FileCard attachment={attachment} onOpen={onOpen} />;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={t("file.open", { name: attachment.name })}
+      title={attachment.name}
+      className="pressable h-44 w-60 max-w-full overflow-hidden rounded-md border border-border bg-muted transition-opacity duration-(--duration-fast) hover:opacity-90"
+    >
+      {image._tag === "shown" && (
+        <img
+          src={image.url}
+          alt=""
+          onError={() => setUndrawable(true)}
+          className="size-full object-cover"
+        />
+      )}
     </button>
   );
 }

@@ -45,6 +45,7 @@ import * as DateTime from "effect/DateTime";
 import { ids } from "./sample";
 import type { SampleValues } from "./sampleSecrets";
 import { sampleVisuals } from "./visuals";
+import { GALLERY_PHOTO, GALLERY_WORK_IMAGES } from "./workImages";
 
 export function galleryVariants(now: DateTime.Utc) {
   const ago = (minutes: number) =>
@@ -138,6 +139,16 @@ export function galleryVariants(now: DateTime.Utc) {
           name: "Invoice 2026-04.pdf",
           mediaType: "application/pdf",
           size: 101_900,
+        },
+      ],
+    }),
+    withPhoto: message("photo", scout, "Here is the chart you asked for.", {
+      attachments: [
+        {
+          id: GALLERY_PHOTO,
+          name: "spending-by-month.png",
+          mediaType: "image/png",
+          size: 48_200,
         },
       ],
     }),
@@ -758,6 +769,39 @@ export function galleryVariants(now: DateTime.Utc) {
         step("tool", "Bank statement lookup"),
         step("edit", "memory/log/2026-11.md"),
         step("other", "Wrote the summary"),
+      ],
+      open: true,
+    },
+    {
+      entry: fold(
+        "fold-images",
+        {
+          _tag: "finished",
+          finishedAt: ago(1),
+          ending: "completed",
+          waitedMs: 0,
+          waitedBeforeMs: 0,
+          background: false,
+        },
+        3,
+      ),
+      // Images it looked at: shown, still arriving, and one it has removed since.
+      steps: [
+        {
+          ...step("tool", "Looked at an image", "completed", "image"),
+          id: WorkStepId.make("variant-image-shown"),
+          image: { id: GALLERY_WORK_IMAGES.shown },
+        },
+        {
+          ...step("tool", "Looked at an image", "completed", "image"),
+          id: WorkStepId.make("variant-image-loading"),
+          image: { id: GALLERY_WORK_IMAGES.loading },
+        },
+        {
+          ...step("tool", "Looked at an image", "completed", "image"),
+          id: WorkStepId.make("variant-image-gone"),
+          image: { id: GALLERY_WORK_IMAGES.gone },
+        },
       ],
       open: true,
     },

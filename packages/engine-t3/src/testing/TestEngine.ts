@@ -5,7 +5,6 @@ import {
   type ModelChoice,
   PermissionMode,
   type ProviderId,
-  type WorkStep,
   type WorkStepId,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
@@ -50,6 +49,7 @@ import type {
   DelegatedResult,
   EndedTurn,
   EngineRequest,
+  EngineStep,
   HostSpeech,
   OpenRequest,
   OpenTurn,
@@ -383,7 +383,7 @@ export class TestEngineControl extends Context.Service<
     readonly step: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
-      readonly step: WorkStep;
+      readonly step: EngineStep;
     }) => Effect.Effect<void>;
     /**
      * The agent takes every steer of the running turn, each told at once
@@ -590,7 +590,7 @@ interface TurnRecord {
    */
   model: ModelChoice | null;
   startedAt: DateTime.Utc | null;
-  readonly steps: Map<WorkStepId, WorkStep>;
+  readonly steps: Map<WorkStepId, EngineStep>;
   readonly steers: Array<SteerRecord>;
   /** Delegated results steered into it, told as it ends (`delegatedResult`). */
   readonly landed: Array<DelegatedResult>;

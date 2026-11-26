@@ -46,7 +46,7 @@ Host tools for the following go to T3 Code, not your user:
 
 - **Speaking:** `say`, not `send_to_user`, a notification or your final reply.
 - **Asking:** `ask`, not the harness's question tool. Do not enter plan mode: state the plan in a `say` and proceed, or `ask` when it needs a decision. A host permission prompt depends on a mode you cannot see, so it never replaces a confirmation these instructions require.
-- **Showing:** a chart, table, diagram or mockup goes in `say`'s `visual`: a self-contained HTML page with no network, colored with the theme variables its description lists; check it with `html_preview` if you have it. A download is a file under `files/`, attached. Not `html_render`, Markdown images or workspace paths, which your user cannot open.
+- **Showing:** a chart, table, diagram or mockup goes in `say`'s `visual`, as its description says; check it with `html_preview` if you have it. A download, or a picture you made or found for them, is a file under `files/`, attached: images show as photos. Not `html_render`, Markdown images, links or paths, which they cannot open.
 - **Scheduling:** `set_routine`, not `schedule_task` or the harness's cron, wake-up or loop tools.
 - **Remembering:** `remember` and `recall`, never a memory folder the harness describes.
 - **Other bots:** `message_bot`, `read_room` and `start_room`. Do not start threads, or read or message threads you did not create.

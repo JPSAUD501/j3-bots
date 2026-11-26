@@ -2,6 +2,7 @@
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Attachments from "./attachments/Attachments.ts";
+import * as WorkImages from "./attachments/WorkImages.ts";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
 import * as BrowserHelp from "./browser/BrowserHelp.ts";
@@ -147,7 +148,13 @@ export const layer = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(
-    Layer.mergeAll(MemoryFiles.layer, Entries.layer, Attachments.layer, BotStore.layer),
+    Layer.mergeAll(
+      MemoryFiles.layer,
+      Entries.layer,
+      Attachments.layer,
+      WorkImages.layer,
+      BotStore.layer,
+    ),
   ),
   Layer.provideMerge(
     Layer.mergeAll(BotStates.layer, RoomStates.layer, Presence.layer, PushDeliveries.layer),

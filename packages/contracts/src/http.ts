@@ -64,6 +64,15 @@ export const HTTP_PATHS = {
    */
   attachments: "/attachments",
   /**
+   * `GET <path>/<id>` with the device token as a bearer answers an image a
+   * step of a bot's work looked at (`WorkStep.image`), read again from the
+   * bot's workspace: a GIF, JPEG, PNG or WebP of at most
+   * `MAX_INLINE_IMAGE_SIZE` bytes, as its content shows it, never by its name.
+   * 404 when the server knows no such image, or the file is gone, has left
+   * the workspace, has grown past the limit or is not one of those images.
+   */
+  workImages: "/work-images",
+  /**
    * The RPC socket (`J3Rpcs`, JSON frames). The upgrade carries the device token
    * as `Authorization: Bearer`, or a ticket in the `ticket` query parameter. An
    * upgrade without a valid one is answered 401 and never becomes a socket.

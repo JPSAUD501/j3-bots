@@ -421,6 +421,10 @@ const sentences = {
   "work.live": "{status}, {duration} até agora",
   "work.offline": "Último estado conhecido: {status}",
   "work.showSteps": "Passos até agora",
+  "work.image.title": "Uma imagem que o bot viu",
+  "work.image.open": "Mostrar a imagem que o bot viu",
+  "work.image.unavailable":
+    "Não dá para mostrar esta imagem. O bot pode tê-la mudado ou apagado depois.",
 
   "tool.backgroundTask.did": "Iniciou uma tarefa em segundo plano",
   "tool.backgroundTask.doing": "Iniciando uma tarefa em segundo plano",
