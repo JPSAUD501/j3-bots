@@ -143,6 +143,42 @@ export const PhoneAccess = Schema.Struct({
 });
 export type PhoneAccess = typeof PhoneAccess.Type;
 
+/** How many names of the files an export left out the app keeps to show. */
+export const LEFT_OUT_NAMES_SHOWN = 20;
+
+const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** What the export of the bots on this computer left out, from its report. */
+export const LeftOut = Schema.Struct({
+  /**
+   * Why the secrets stayed behind, when they did: in an old vault that waits
+   * for its password, under a key that is missing or another one, or changed
+   * by a newer release.
+   */
+  secrets: Schema.optionalKey(Schema.Literals(["old-vault", "unreadable", "newer"])),
+  /** Links in the bots' folders, which an export never carries. */
+  links: Count,
+  /** Files whose name no import takes: how many, and the first of them by path. */
+  names: Count,
+  firstNames: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(
+    Schema.isMaxLength(LEFT_OUT_NAMES_SHOWN),
+  ),
+  /** Attachments already missing on this computer. */
+  attachmentsMissing: Count,
+});
+export type LeftOut = typeof LeftOut.Type;
+
+/**
+ * The export the bots on this computer were moved with: its file, when it
+ * was written, and what it left out.
+ */
+export const MovedAway = Schema.Struct({
+  file: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+  at: Schema.DateTimeUtcFromString,
+  leftOut: LeftOut,
+});
+export type MovedAway = typeof MovedAway.Type;
+
 /** What the desktop app holds that the page needs before it starts. */
 export const DesktopState = Schema.Struct({
   /**
@@ -169,6 +205,13 @@ export const DesktopState = Schema.Struct({
   phoneAccess: PhoneAccess,
   /** Whether the app starts, in the tray, when the operator signs in to the system. */
   startWithSystem: Schema.Boolean,
+  /**
+   * The bots on this computer were moved to another server (`LocalExportResult`):
+   * where the export was written and when. Their data is still here, and the
+   * server on this computer does not start until the operator runs them here
+   * again. Absent while they were not.
+   */
+  moved: Schema.optionalKey(MovedAway),
 });
 export type DesktopState = typeof DesktopState.Type;
 
@@ -192,6 +235,38 @@ export const UseThisComputerResult = Schema.Union([
   Schema.TaggedStruct("home-refused", { reason: Message, fix: Message }),
 ]);
 export type UseThisComputerResult = typeof UseThisComputerResult.Type;
+
+/** The shortest passphrase an export takes (`j3-bots export`). */
+export const EXPORT_PASSPHRASE_MIN_LENGTH = 8;
+
+/**
+ * What the page asks for to move the bots on this computer to another
+ * server: the passphrase the export seals their secrets under, which the
+ * operator typed twice. The app asks where to write the file.
+ */
+export const LocalExportRequest = Schema.Struct({
+  passphrase: Schema.String.check(
+    Schema.isMinLength(EXPORT_PASSPHRASE_MIN_LENGTH),
+    Schema.isMaxLength(1024),
+  ),
+});
+export type LocalExportRequest = typeof LocalExportRequest.Type;
+
+/**
+ * How moving the bots on this computer ended:
+ *
+ * - `exported`: the export is written, the server on this computer stopped,
+ *   and the page loads again on the screen that says they moved;
+ * - `cancelled`: the operator closed the save dialog, and nothing changed;
+ * - `failed`: nothing was exported, for `reason` (English, the export's own
+ *   words when it gave them), and the bots run here again.
+ */
+export const LocalExportResult = Schema.Union([
+  Schema.TaggedStruct("exported", {}),
+  Schema.TaggedStruct("cancelled", {}),
+  Schema.TaggedStruct("failed", { reason: Schema.optionalKey(Message) }),
+]);
+export type LocalExportResult = typeof LocalExportResult.Type;
 
 /**
  * What the page asks for to sign this computer in to the server it runs.
@@ -765,5 +840,8 @@ export const HostedBridge = Schema.Struct({
   stopCatchingSignIn: Callable,
   onSignInReturn: Callable,
   copySecret: Callable,
+  exportLocal: Callable,
+  runHereAgain: Callable,
+  deleteLocalData: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

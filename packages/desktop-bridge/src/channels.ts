@@ -110,6 +110,18 @@ export const IPC_CHANNELS = {
   signInReturned: "j3bots:sign-in-returned",
   /** `SecretCopy`, answered with whether it reached the clipboard. */
   copySecret: "j3bots:copy-secret",
+  /**
+   * `LocalExportRequest`: asks where to write the export of the bots on this
+   * computer, stops their server and writes it. Answers `LocalExportResult`.
+   */
+  exportLocal: "j3bots:export-local",
+  /** Runs the bots that moved away from this computer here again. Answers `ModeChange`. */
+  runHereAgain: "j3bots:run-here-again",
+  /**
+   * Deletes the data of the bots that moved away from this computer, and
+   * loads the page again. Answers `ModeChange`.
+   */
+  deleteLocalData: "j3bots:delete-local-data",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -193,4 +205,8 @@ export interface DesktopBridge {
   readonly onSignInReturn: (listener: (signInReturn: unknown) => void) => () => void;
   /** Puts a secret's value on the clipboard, for a while (a `SecretCopy`). */
   readonly copySecret: (request: unknown) => Promise<unknown>;
+  /** Moves the bots on this computer to another server (a `LocalExportRequest`). */
+  readonly exportLocal: (request: unknown) => Promise<unknown>;
+  readonly runHereAgain: () => Promise<unknown>;
+  readonly deleteLocalData: () => Promise<unknown>;
 }

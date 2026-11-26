@@ -117,6 +117,7 @@ import {
   LocalServerFailed,
   LocalServerFailedBody,
   LocalSignIn,
+  MovedAwayScreen,
   StoppingLocal,
   StopUsingComputer,
   WhereBotsLive,
@@ -3590,8 +3591,28 @@ const grantedLink: Extract<LocalPairingLink, { readonly _tag: "granted" }> = {
   origins: [LAN_ORIGIN, WIRED_ORIGIN],
 };
 
-/** Settings' section for where the bots live, alone: the rest of Settings is in the shell's. */
-function WhereSettings({ local }: { local: boolean }) {
+/**
+ * Bots that moved from this computer the day before the sample's now,
+ * leaving out their secrets, still in an old vault, and two files.
+ */
+const movedAway = {
+  file: "/exports/j3-bots-export-2026-11-19.tar.gz",
+  at: DateTime.subtract(SAMPLE_NOW, { days: 1 }),
+  leftOut: {
+    secrets: "old-vault",
+    links: 0,
+    names: 2,
+    firstNames: ["bots/ana/files/report\\draft.md", "shared/memory/notes\\old.md"],
+    attachmentsMissing: 0,
+  },
+} as const;
+
+/**
+ * Settings' section for where the bots live, alone: the rest of Settings is
+ * in the shell's. `leftHere`: on a server, with the data of bots that moved
+ * from this computer still here.
+ */
+function WhereSettings({ local, leftHere = false }: { local: boolean; leftHere?: boolean }) {
   const [startWithSystem, setStartWithSystem] = useState(false);
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -3603,12 +3624,17 @@ function WhereSettings({ local }: { local: boolean }) {
                 address: "https://j3.example.test",
                 forget: () => Promise.resolve(false),
                 chooseThisComputer: () => Promise.resolve("failed"),
+                ...(leftHere
+                  ? { leftHere: { moved: movedAway, deleteData: () => Promise.resolve(false) } }
+                  : {}),
               }
         }
         local={
           local
             ? {
                 stopUsing: () => Promise.resolve(false),
+                moveAway: () =>
+                  Promise.resolve({ _tag: "failed", reason: "There is no room left on the disk." }),
                 serverUpdate: undefined,
                 retryServerUpdate: nothing,
                 showUpdateDetails: nothing,
@@ -3769,7 +3795,7 @@ function WhereBotsLiveSection() {
           <StoppingLocal />
         </Frame>
         <Frame
-          label="Settings, on this computer: Stop using this computer asks first (and fails here)"
+          label="Settings, on this computer: Move to another server asks for the passphrase twice (and fails here); Stop using this computer asks first (and fails here)"
           width={420}
           height={300}
         >
@@ -3781,6 +3807,25 @@ function WhereBotsLiveSection() {
           height={220}
         >
           <WhereSettings local={false} />
+        </Frame>
+        <Frame
+          label="The bots moved to another server: the file, what's next there, and the ways on (each fails here)"
+          width={390}
+          height={820}
+        >
+          <MovedAwayScreen
+            moved={movedAway}
+            onConnect={() => Promise.resolve(false)}
+            onRunHere={() => Promise.resolve(false)}
+            onDelete={() => Promise.resolve(false)}
+          />
+        </Frame>
+        <Frame
+          label="Settings, on the new server: the data the bots left on this computer, and deleting it (fails here)"
+          width={420}
+          height={300}
+        >
+          <WhereSettings local={false} leftHere />
         </Frame>
       </div>
     </Section>
@@ -3928,6 +3973,7 @@ function UpdatesFrame({
 /** The bots on this computer, the app having done `serverUpdate` to them. */
 const localBots = (serverUpdate?: ServerUpdate): DesktopLocal => ({
   stopUsing: () => Promise.resolve(false),
+  moveAway: () => Promise.resolve(null),
   serverUpdate,
   retryServerUpdate: nothing,
   showUpdateDetails: nothing,

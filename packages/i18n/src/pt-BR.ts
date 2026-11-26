@@ -1165,6 +1165,66 @@ const sentences = {
   "local.stop.cancel": "Continuar usando",
   "local.stop.pending": "Parando…",
   "local.stop.failed": "Não foi possível parar os bots deste computador. Tente de novo.",
+  "local.move": "Mover para outro servidor",
+  "local.move.title": "Mover seus bots para outro servidor",
+  "local.move.body":
+    "O J3 Bots grava seus bots num único arquivo, para o novo servidor importar: as conversas, a memória, as habilidades e os arquivos deles, a memória e as habilidades compartilhadas, os anexos, as rotinas, as salas e os segredos.",
+  "local.move.stays":
+    "Os dispositivos pareados e os logins dos provedores ficam para trás: no novo servidor você pareia e entra de novo, e cada webhook ganha um endereço novo. Os bots daqui param assim que o arquivo estiver gravado.",
+  "local.move.passphrase": "Senha para os segredos",
+  "local.move.passphrase.hint":
+    "Pelo menos {min} caracteres. O novo servidor vai pedir essa senha.",
+  "local.move.passphrase.again": "A mesma senha de novo",
+  "local.move.unrecoverable":
+    "Ela não pode ser recuperada: sem ela, os segredos do arquivo se perdem.",
+  "local.move.tooShort": "A senha precisa ter pelo menos {min} caracteres.",
+  "local.move.differ": "As duas senhas são diferentes.",
+  "local.move.submit": "Escolher onde salvar",
+  "local.move.pending": "Exportando…",
+  "local.move.cancel": "Cancelar",
+  "local.move.failed": "A exportação falhou, e seus bots voltaram a rodar aqui.",
+  "local.moved.title": "Seus bots foram para outro servidor",
+  "local.moved.body":
+    "O J3 Bots os exportou {when}. O servidor deles neste computador está parado, e os dados continuam aqui.",
+  "local.moved.file": "O arquivo: {file}",
+  "local.moved.leftOut": "Ficou fora do arquivo:",
+  "local.moved.leftOut.secrets.old-vault":
+    "Os segredos: estão num cofre antigo que espera a senha dele. Para levá-los, rode os bots aqui de novo, digite a senha em Configurações → Segredos e mova os bots outra vez.",
+  "local.moved.leftOut.secrets.unreadable":
+    "Os segredos: a chave que os protege não está neste computador, ou é outra.",
+  "local.moved.leftOut.secrets.newer": "Os segredos: uma versão mais nova do J3 Bots os mudou.",
+  "local.moved.leftOut.links.one": "{count} link nas pastas dos bots: o arquivo leva só arquivos.",
+  "local.moved.leftOut.links.other":
+    "{count} links nas pastas dos bots: o arquivo leva só arquivos.",
+  "local.moved.leftOut.names.one":
+    "{count} arquivo com \\ no nome, que nenhuma importação aceita. Renomeie e mova os bots de novo para levá-lo:",
+  "local.moved.leftOut.names.other":
+    "{count} arquivos com \\ no nome, que nenhuma importação aceita. Renomeie e mova os bots de novo para levá-los:",
+  "local.moved.leftOut.names.more.one": "e mais {count}",
+  "local.moved.leftOut.names.more.other": "e mais {count}",
+  "local.moved.leftOut.attachments.one": "{count} anexo, que já faltava neste computador.",
+  "local.moved.leftOut.attachments.other": "{count} anexos, que já faltavam neste computador.",
+  "local.moved.next": "No novo servidor:",
+  "local.moved.step.import": "Importe o arquivo: j3-bots import, com o caminho do arquivo.",
+  "local.moved.step.pair":
+    "Pareie este computador e seus celulares de novo: nenhum dispositivo está pareado lá ainda.",
+  "local.moved.step.webhooks": "Passe a cada webhook o endereço novo dele lá.",
+  "local.moved.connect": "Conectar ao novo servidor",
+  "local.moved.runHere": "Rodar os bots aqui de novo",
+  "local.moved.runHere.title": "Rodar os bots aqui de novo?",
+  "local.moved.runHere.body":
+    "O servidor deles neste computador volta a rodar com os dados que guardou. Se o novo servidor também rodar os bots, cada cópia segue sozinha com o que lembra.",
+  "local.moved.runHere.cancel": "Manter parados",
+  "local.moved.delete": "Apagar os dados deste computador",
+  "local.moved.delete.title": "Apagar os dados dos bots deste computador?",
+  "local.moved.delete.body":
+    "As conversas, a memória, as habilidades, os arquivos e os segredos deles são apagados deste computador. Guarde a exportação até o novo servidor rodar os bots: até lá, ela é a única cópia.",
+  "local.moved.delete.secrets":
+    "Os segredos não foram no arquivo: apagar os dados daqui os perde de vez.",
+  "local.moved.delete.cancel": "Manter os dados",
+  "local.moved.failed": "Não deu certo. Tente de novo.",
+  "local.moved.leftHere":
+    "Os bots que você moveu deste computador {when} deixaram os dados deles aqui.",
   "pairing.server": "Servidor: {address}",
 
   "links.pairingServer":

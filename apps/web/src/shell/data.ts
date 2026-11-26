@@ -52,7 +52,9 @@ import type {
 } from "@j3-bots/contracts";
 import type {
   Accelerator,
+  LocalExportResult,
   LocalPairingLink,
+  MovedAway,
   UseThisComputerResult,
   PhoneAccess,
   PhoneAccessChange,
@@ -61,6 +63,7 @@ import type {
   ShortcutStatus,
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
+import type * as Redacted from "effect/Redacted";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
@@ -348,6 +351,15 @@ export interface DesktopServer {
    * bots here. Absent where this computer cannot run them.
    */
   readonly chooseThisComputer?: () => Promise<UseThisComputerResult | null>;
+  /**
+   * The data the bots that moved from this computer left here, and deleting
+   * it, which resolves `false` when nothing was deleted. Absent while there
+   * is none.
+   */
+  readonly leftHere?: {
+    readonly moved: MovedAway;
+    readonly deleteData: () => Promise<boolean>;
+  };
 }
 
 /** The bots on this computer, as the desktop app runs them. */
@@ -358,6 +370,12 @@ export interface DesktopLocal {
    * screen. Resolves `false` when it did not stop.
    */
   readonly stopUsing: () => Promise<boolean>;
+  /**
+   * Moves the bots to another server: the app asks where to save the export,
+   * its secrets sealed under `passphrase`, stops their server and writes it,
+   * then loads the page again on the screen that says they moved.
+   */
+  readonly moveAway: (passphrase: Redacted.Redacted<string>) => Promise<LocalExportResult | null>;
   /** Whether the app starts, in the tray, as the operator signs in to the system. */
   readonly startWithSystem: boolean;
   /** Changes it; resolves with what holds once the app answered. */

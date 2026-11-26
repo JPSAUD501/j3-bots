@@ -6,8 +6,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { ExportFailed } from "./localServer/exportProcess.ts";
 import type * as Home from "./localServer/home.ts";
 import * as LocalHost from "./localServer/localHost.ts";
 import * as ServerChoice from "./serverChoice.ts";
@@ -17,17 +20,30 @@ const origin = Schema.decodeSync(ServerOrigin);
 const SERVER = origin("http://192.168.1.20:3737");
 const LOCAL = origin("http://127.0.0.1:3747");
 const DEVICE = "device-1";
+const EXPORT = "/exports/j3-bots-export.tar.gz";
+const PASSPHRASE = Redacted.make("a long passphrase for the move");
+/** What an export left out: the secrets, which wait for an old vault's password. */
+const LEFT_OUT = {
+  secrets: "old-vault",
+  links: 1,
+  names: 0,
+  firstNames: [],
+  attachmentsMissing: 0,
+} as const;
+/** Bots that moved away from this computer, as the settings file keeps it. */
+const MOVED = { file: EXPORT, at: "2026-11-20T10:00:00.000Z", leftOut: LEFT_OUT };
 
 /**
  * A server choice over the settings in `file`, whose check answers `answer`,
  * and a page that records what is done to it, with the server kept as it
- * happens.
+ * happens. An export fails with `exportRefusal` when it is given.
  */
 const setUp = (
   file: string,
   answer: ConnectRefusal | null = null,
   localAvailable = true,
   prepare: ServerChoice.LocalServer["prepare"] = Effect.succeed(LOCAL),
+  exportRefusal?: string,
 ) =>
   Effect.gen(function* () {
     const settings = yield* Settings.DesktopSettings;
@@ -38,6 +54,17 @@ const setUp = (
       prepare,
       start: Effect.sync(() => done.push("start local server")),
       stop: Effect.sync(() => done.push("stop local server")),
+      exportTo: (to, passphrase) =>
+        Effect.gen(function* () {
+          done.push(`export to ${to} (passphrase ${Redacted.value(passphrase).length} long)`);
+          if (exportRefusal !== undefined) {
+            return yield* new ExportFailed({ reason: exportRefusal });
+          }
+          return LEFT_OUT;
+        }),
+      deleteData: Effect.sync(() => {
+        done.push("delete local data");
+      }),
     };
     const choice = yield* ServerChoice.make(
       (server) =>
@@ -300,6 +327,7 @@ describe("the settings file", () => {
     phoneAccess: false,
     updateChannel: "stable",
     automaticUpdates: true,
+    moved: null,
   } as const;
   const NONE = {
     mode: null,
@@ -309,6 +337,7 @@ describe("the settings file", () => {
     phoneAccess: false,
     updateChannel: "stable",
     automaticUpdates: true,
+    moved: null,
   } as const;
 
   it("reads the server, the window, the shortcut, the appearance, starting with the system, phone access, the update channel and updating by itself each on its own", () => {
@@ -416,7 +445,140 @@ describe("the settings file", () => {
         phoneAccess: false,
         updateChannel: "stable",
         automaticUpdates: true,
+        moved: null,
       },
     );
   });
+
+  it("keeps where the bots moved to, and drops a record of it that is not one", () => {
+    const kept = Settings.decodeSettings(
+      JSON.stringify({ mode: "local", server: LOCAL, moved: MOVED }),
+    );
+    assert.strictEqual(kept.settings.moved?.file, EXPORT);
+    assert.deepStrictEqual(kept.dropped, []);
+    const dropped = Settings.decodeSettings(
+      JSON.stringify({ mode: "local", server: LOCAL, moved: { file: "", at: "yesterday" } }),
+    );
+    assert.isNull(dropped.settings.moved);
+    assert.deepStrictEqual(dropped.dropped, ["moved"]);
+  });
+});
+
+describe("moving the bots away from this computer", () => {
+  it.effect(
+    "stops their server, writes the export, keeps that they moved, and starts nothing here again",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.deepStrictEqual(yield* choice.moveAway(page, EXPORT, PASSPHRASE), {
+          _tag: "exported",
+        });
+        assert.deepStrictEqual(done, [
+          "stop local server",
+          `export to ${EXPORT} (passphrase 30 long)`,
+          `open home (server ${LOCAL})`,
+        ]);
+        assert.deepInclude((yield* settings.get).moved, { file: EXPORT, leftOut: LEFT_OUT });
+        // A retry, an update's try again or phone access starts nothing now.
+        assert.isTrue(Option.isNone(yield* choice.whileLocal(Effect.sync(() => done.push("ran")))));
+        assert.notInclude(done, "ran");
+        // Nor is a second export taken from the data that moved.
+        assert.deepStrictEqual(yield* choice.moveAway(page, EXPORT, PASSPHRASE), {
+          _tag: "failed",
+        });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("starts their server again, and says why, when the export fails", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const { choice, page, done, settings } = yield* setUp(
+        file,
+        null,
+        true,
+        Effect.succeed(LOCAL),
+        "There is no room left on the disk.",
+      );
+      assert.deepStrictEqual(yield* choice.moveAway(page, EXPORT, PASSPHRASE), {
+        _tag: "failed",
+        reason: "There is no room left on the disk.",
+      });
+      assert.deepStrictEqual(done, [
+        "stop local server",
+        `export to ${EXPORT} (passphrase 30 long)`,
+        "start local server",
+      ]);
+      assert.isNull((yield* settings.get).moved);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("runs them here again on their data, which starts their server", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(
+        JSON.stringify({ mode: "local", server: LOCAL, moved: MOVED }),
+      );
+      const { choice, page, done, settings } = yield* setUp(file);
+      assert.strictEqual(yield* choice.runHereAgain(page), "changed");
+      assert.deepStrictEqual(done, ["start local server", `open home (server ${LOCAL})`]);
+      const now = yield* settings.get;
+      assert.isNull(now.moved);
+      assert.strictEqual(now.server, LOCAL);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "deletes their data and asks again where the bots live, with the page's storage emptied",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(
+          JSON.stringify({
+            mode: "local",
+            server: LOCAL,
+            localDevice: { id: DEVICE, current: true },
+            phoneAccess: true,
+            moved: MOVED,
+          }),
+        );
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.strictEqual(yield* choice.deleteLocalData(page), "changed");
+        assert.deepStrictEqual(done, [
+          "delete local data",
+          "clear (server none)",
+          "open home (server none)",
+        ]);
+        const now = yield* settings.get;
+        assert.deepInclude(now, {
+          mode: null,
+          server: null,
+          localDevice: null,
+          phoneAccess: false,
+          moved: null,
+        });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "deletes their data while the page runs on the new server, and leaves the page there",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(
+          JSON.stringify({ mode: "remote", server: SERVER, moved: MOVED }),
+        );
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.strictEqual(yield* choice.deleteLocalData(page), "changed");
+        assert.deepStrictEqual(done, ["delete local data"]);
+        assert.deepInclude(yield* settings.get, { mode: "remote", server: SERVER, moved: null });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("deletes nothing of bots that did not move away", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const { choice, page, done } = yield* setUp(file);
+      assert.strictEqual(yield* choice.deleteLocalData(page), "failed");
+      assert.strictEqual(yield* choice.runHereAgain(page), "failed");
+      assert.deepStrictEqual(done, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

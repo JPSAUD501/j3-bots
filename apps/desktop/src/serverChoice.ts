@@ -3,15 +3,20 @@ import type {
   ConnectRefusal,
   ConnectResult,
   ForgetResult,
+  LeftOut,
+  LocalExportResult,
   ModeChange,
   ServerOrigin,
   UseThisComputerResult,
 } from "@j3-bots/desktop-bridge";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import type { ExportFailed } from "./localServer/exportProcess.ts";
 import { parseServerAddress } from "./serverAddress.ts";
 import { DesktopSettings } from "./settings.ts";
 
@@ -20,6 +25,14 @@ export class StorageNotCleared extends Schema.TaggedError<StorageNotCleared>()(
   "StorageNotCleared",
   { cause: Schema.Defect() },
 ) {}
+
+/** The data of the bots on this computer could not be deleted. */
+export class DataNotDeleted extends Schema.TaggedError<DataNotDeleted>()("DataNotDeleted", {
+  cause: Schema.Defect(),
+}) {}
+
+/** The longest reason the page is given (`LocalExportResult`). */
+const REASON_LIMIT = 4096;
 
 /** The page that asks to connect or to forget the server. */
 export interface Page {
@@ -52,6 +65,13 @@ export interface LocalServer {
   readonly start: Effect.Effect<void>;
   /** Stops it, gracefully, its data kept. */
   readonly stop: Effect.Effect<void>;
+  /** Writes the export of its data to `file`, while it is stopped; says what it left out. */
+  readonly exportTo: (
+    file: string,
+    passphrase: Redacted.Redacted<string>,
+  ) => Effect.Effect<LeftOut, ExportFailed>;
+  /** Deletes its data from this computer, while it is stopped. */
+  readonly deleteData: Effect.Effect<void, DataNotDeleted>;
 }
 
 /**
@@ -152,6 +172,8 @@ export const make = Effect.fn("ServerChoice.make")(function* (
               server,
               localDevice:
                 current.localDevice === null ? null : { ...current.localDevice, current: false },
+              // Bots that moved away and run here again are the operator's choice too.
+              moved: null,
             })),
           ),
           Effect.as(true),
@@ -210,20 +232,159 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   });
 
   /**
+   * Moves the bots on this computer to another server: stops their server,
+   * writes the export of their data to `file`, its secrets sealed under
+   * `passphrase`, and keeps that they moved (`moved`), so their server does
+   * not start here again until the operator asks; then opens the first page,
+   * which says so. An export that fails starts their server again.
+   */
+  const moveAway = Effect.fn("ServerChoice.moveAway")(function* (
+    page: Page,
+    file: string,
+    passphrase: Redacted.Redacted<string>,
+  ) {
+    return yield* oneAtATime.withPermits(1)(
+      Effect.gen(function* (): Effect.fn.Return<LocalExportResult> {
+        const current = yield* settings.get;
+        if (current.mode !== "local" || current.moved !== null) return { _tag: "failed" };
+        yield* local.stop;
+        const exported = yield* Effect.result(local.exportTo(file, passphrase));
+        if (Result.isFailure(exported)) {
+          yield* Effect.logWarning(
+            "Exporting this computer's bots failed",
+            exported.failure.reason,
+          );
+          yield* local.start;
+          const { reason } = exported.failure;
+          return reason === undefined
+            ? { _tag: "failed" }
+            : { _tag: "failed", reason: reason.slice(0, REASON_LIMIT) };
+        }
+        const at = yield* DateTime.now;
+        const kept = yield* settings
+          .update((now) => ({ ...now, moved: { file, at, leftOut: exported.success } }))
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("Keeping that this computer's bots moved failed", error).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (!kept) {
+          // The next launch would start them again: they run here now too.
+          yield* local.start;
+          return {
+            _tag: "failed",
+            reason:
+              `The export is written to ${file}, but the app could not keep that the bots moved, so they run on this computer again.`.slice(
+                0,
+                REASON_LIMIT,
+              ),
+          };
+        }
+        yield* page.openHome;
+        return { _tag: "exported" };
+      }),
+    );
+  });
+
+  /** Runs the bots that moved away from this computer here again, on their data as it was kept. */
+  const runHereAgain = Effect.fn("ServerChoice.runHereAgain")(function* (page: Page) {
+    return yield* oneAtATime.withPermits(1)(
+      Effect.gen(function* (): Effect.fn.Return<ModeChange> {
+        const current = yield* settings.get;
+        if (current.mode !== "local" || current.moved === null) return "failed";
+        const saved = yield* settings
+          .update((now) => ({ ...now, moved: null }))
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("Running this computer's bots again failed", error).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (!saved) return "failed";
+        yield* local.start;
+        yield* page.openHome;
+        return "changed";
+      }),
+    );
+  });
+
+  /**
+   * Deletes the data of the bots that moved away from this computer. In local
+   * mode the app then asks again where the bots live, with the page's
+   * storage emptied and the first page opened; elsewhere the page stays.
+   */
+  const deleteLocalData = Effect.fn("ServerChoice.deleteLocalData")(function* (page: Page) {
+    return yield* oneAtATime.withPermits(1)(
+      Effect.gen(function* (): Effect.fn.Return<ModeChange> {
+        const current = yield* settings.get;
+        if (current.moved === null) return "failed";
+        const deleted = yield* local.deleteData.pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logWarning("Deleting this computer's bots' data failed", error).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+        if (!deleted) return "failed";
+        const wasLocal = current.mode === "local";
+        const saved = yield* settings
+          .update((now) => ({
+            ...now,
+            // The device this computer was signed in as went with the data.
+            localDevice: null,
+            moved: null,
+            ...(wasLocal ? { mode: null, server: null, phoneAccess: false } : {}),
+          }))
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("Forgetting this computer's bots failed", error).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (!saved) return "failed";
+        if (wasLocal) {
+          yield* page.clearStorage.pipe(
+            Effect.catch((error) => Effect.logWarning("Clearing the page's storage failed", error)),
+          );
+          yield* page.openHome;
+        }
+        return "changed";
+      }),
+    );
+  });
+
+  /**
    * Runs `effect` while the bots run on this computer, one at a time with the
    * changes above: a change of where they run never comes between its steps.
-   * Nothing, without running it, while they run elsewhere.
+   * Nothing, without running it, while they run elsewhere or moved away.
    */
   const whileLocal = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<Option.Option<A>, E, R> =>
     oneAtATime.withPermits(1)(
       settings.get.pipe(
-        Effect.flatMap(({ mode }) =>
-          mode === "local" ? Effect.asSome(effect) : Effect.succeedNone,
+        Effect.flatMap(({ mode, moved }) =>
+          mode === "local" && moved === null ? Effect.asSome(effect) : Effect.succeedNone,
         ),
       ),
     );
 
-  return { connect, forget, useThisComputer, connectToServerInstead, whileLocal } as const;
+  return {
+    connect,
+    forget,
+    useThisComputer,
+    connectToServerInstead,
+    moveAway,
+    runHereAgain,
+    deleteLocalData,
+    whileLocal,
+  } as const;
 });

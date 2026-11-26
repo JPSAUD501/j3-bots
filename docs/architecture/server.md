@@ -1060,7 +1060,7 @@ A failure names its reason (`unreachable`, `checksum`, `check`, `storage`, `engi
 
 ## Moving to another server
 
-`j3-bots export` writes a home's bots to one file, and `j3-bots import` puts them in another home, on this machine or another, on Linux or Windows ([decision 0062](../decisions/0062-a-home-moves-as-an-export.md); the commands are in [Operating](../operations/operating.md#move-to-another-server)). Both run with no server on the home. Each holds `server.lock` while it works, so neither starts while a server or an update holds it, and no server starts while either runs.
+`j3-bots export` writes a home's bots to one file, and `j3-bots import` puts them in another home, on this machine or another, on Linux or Windows ([decision 0062](../decisions/0062-a-home-moves-as-an-export.md); the commands are in [Operating](../operations/operating.md#move-to-another-server)). The desktop app runs the same `export` on the bots it runs, from Settings ([Clients: Desktop](clients.md#desktop)). Both run with no server on the home. Each holds `server.lock` while it works, so neither starts while a server or an update holds it, and no server starts while either runs.
 
 **The archive.** It is a gzipped tar that the server writes and reads in its own code, so it needs no system `tar`. Its first file is `manifest.json`, which holds:
 

@@ -90,7 +90,13 @@ import {
   LocalSignIn,
 } from "./ProviderSetup";
 import { ChangeServer } from "./ServerAddress";
-import { StartWithSystem, StopUsingComputer, UseThisComputer } from "./LocalMode";
+import {
+  LeftHere,
+  MoveToAnotherServer,
+  StartWithSystem,
+  StopUsingComputer,
+  UseThisComputer,
+} from "./LocalMode";
 import { PairingQr } from "./PairingQr";
 import { PhoneAccessSetting } from "./PhoneAccess";
 import { Section } from "./SettingsSection";
@@ -1292,6 +1298,7 @@ export function WhereSection({
   local: DesktopLocal | undefined;
 }) {
   const { t } = useI18n();
+  const [leftHereDeleted, setLeftHereDeleted] = useState(false);
   if (local !== undefined) {
     return (
       <>
@@ -1303,9 +1310,12 @@ export function WhereSection({
           <StartWithSystem on={local.startWithSystem} onChange={local.setStartWithSystem} />
           <PhoneAccessSetting phone={local.phone} />
         </Section>
-        {/* Stopping takes the bots off this computer: ruled off from the rest. */}
+        {/* Moving and stopping take the bots off this computer: ruled off from the rest. */}
         <Section apart>
-          <StopUsingComputer onStop={local.stopUsing} />
+          <div className="flex flex-wrap items-start gap-2">
+            <MoveToAnotherServer onMove={local.moveAway} />
+            <StopUsingComputer onStop={local.stopUsing} />
+          </div>
         </Section>
       </>
     );
@@ -1328,6 +1338,19 @@ export function WhereSection({
           className="items-start"
         />
       </div>
+      {server.leftHere !== undefined && !leftHereDeleted && (
+        <LeftHere
+          moved={server.leftHere.moved}
+          onDelete={() =>
+            server.leftHere === undefined
+              ? Promise.resolve(false)
+              : server.leftHere.deleteData().then((deleted) => {
+                  if (deleted) setLeftHereDeleted(true);
+                  return deleted;
+                })
+          }
+        />
+      )}
     </Section>
   );
 }

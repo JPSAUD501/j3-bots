@@ -1151,6 +1151,64 @@ export const en = {
   "local.stop.cancel": "Keep using it",
   "local.stop.pending": "Stopping…",
   "local.stop.failed": "The bots on this computer couldn’t be stopped. Try again.",
+  "local.move": "Move to another server",
+  "local.move.title": "Move your bots to another server",
+  "local.move.body":
+    "J3 Bots writes your bots to one file, for the new server to import: their conversations, memory, skills and files, the shared memory and skills, attachments, routines, rooms and secrets.",
+  "local.move.stays":
+    "Paired devices and provider sign-ins stay behind: on the new server you pair and sign in again, and each webhook gets a new address. The bots here stop once the file is written.",
+  "local.move.passphrase": "Passphrase for the secrets",
+  "local.move.passphrase.hint": "At least {min} characters. The new server asks for it.",
+  "local.move.passphrase.again": "The same passphrase again",
+  "local.move.unrecoverable":
+    "It can’t be recovered: without it, the secrets in the file are lost.",
+  "local.move.tooShort": "The passphrase needs at least {min} characters.",
+  "local.move.differ": "The two passphrases differ.",
+  "local.move.submit": "Choose where to save",
+  "local.move.pending": "Exporting…",
+  "local.move.cancel": "Cancel",
+  "local.move.failed": "The export failed, and your bots run here again.",
+  "local.moved.title": "Your bots moved to another server",
+  "local.moved.body":
+    "J3 Bots exported them {when}. Their server on this computer is stopped, and their data is still here.",
+  "local.moved.file": "The file: {file}",
+  "local.moved.leftOut": "Left out of the file:",
+  "local.moved.leftOut.secrets.old-vault":
+    "The secrets: they’re in an old vault that waits for its password. To bring them, run the bots here again, type it in Settings → Secrets, then move them again.",
+  "local.moved.leftOut.secrets.unreadable":
+    "The secrets: the key they’re sealed under is missing on this computer, or is another one.",
+  "local.moved.leftOut.secrets.newer": "The secrets: a newer version of J3 Bots changed them.",
+  "local.moved.leftOut.links.one": "{count} link in the bots’ folders: the file holds files only.",
+  "local.moved.leftOut.links.other":
+    "{count} links in the bots’ folders: the file holds files only.",
+  "local.moved.leftOut.names.one":
+    "{count} file whose name has a \\ in it, which no import takes. Rename it and move the bots again to bring it:",
+  "local.moved.leftOut.names.other":
+    "{count} files whose name has a \\ in it, which no import takes. Rename them and move the bots again to bring them:",
+  "local.moved.leftOut.names.more.one": "and {count} more",
+  "local.moved.leftOut.names.more.other": "and {count} more",
+  "local.moved.leftOut.attachments.one": "{count} attachment, already missing on this computer.",
+  "local.moved.leftOut.attachments.other": "{count} attachments, already missing on this computer.",
+  "local.moved.next": "On the new server:",
+  "local.moved.step.import": "Import the file: j3-bots import, with the file’s path.",
+  "local.moved.step.pair":
+    "Pair this computer and your phones again: no device is paired there yet.",
+  "local.moved.step.webhooks": "Give each webhook its new address there.",
+  "local.moved.connect": "Connect to the new server",
+  "local.moved.runHere": "Run the bots here again",
+  "local.moved.runHere.title": "Run the bots here again?",
+  "local.moved.runHere.body":
+    "Their server on this computer starts on the data it kept. If the new server runs them too, each copy goes on with what it remembers on its own.",
+  "local.moved.runHere.cancel": "Keep them stopped",
+  "local.moved.delete": "Delete the data on this computer",
+  "local.moved.delete.title": "Delete the bots’ data on this computer?",
+  "local.moved.delete.body":
+    "Their conversations, memory, skills, files and secrets are deleted from this computer. Keep the export until the new server runs them: until then, it’s their only copy.",
+  "local.moved.delete.secrets":
+    "The secrets weren’t in the file: deleting the data here loses them for good.",
+  "local.moved.delete.cancel": "Keep the data",
+  "local.moved.failed": "That didn’t go through. Try again.",
+  "local.moved.leftHere": "The bots you moved from this computer {when} left their data here.",
   "pairing.server": "Server: {address}",
 
   "links.pairingServer":

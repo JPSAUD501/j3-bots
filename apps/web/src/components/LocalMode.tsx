@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { LocalServerState, UseThisComputerResult } from "@j3-bots/desktop-bridge";
+import { Dialog } from "@base-ui/react/dialog";
+import { timeInSentence } from "@j3-bots/client-runtime/wording";
+import {
+  EXPORT_PASSPHRASE_MIN_LENGTH,
+  type LeftOut,
+  type LocalExportResult,
+  type LocalServerState,
+  type MovedAway,
+  type UseThisComputerResult,
+} from "@j3-bots/desktop-bridge";
+import * as Redacted from "effect/Redacted";
 import { useId, useState, type ReactNode } from "react";
-import { useI18n } from "../app/context";
+import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { BigButton, FirstScreen, FormProblem } from "../onboarding/parts";
 import { Button } from "./ui/button";
-import { Confirm } from "./ui/confirm";
+import { Confirm, ConfirmDialog } from "./ui/confirm";
+import { alertDialog, dialogBackdrop, dialogTitle } from "./ui/dialog";
+import { lineField } from "./ui/field";
 import { Switch } from "./ui/switch";
 
 // Where the bots live, in the desktop app: on this computer, which runs its
@@ -401,6 +413,364 @@ export function StartWithSystem({
       <p role="alert" className="text-xs text-blocked empty:hidden">
         {state === "failed" && t("settings.startWithSystem.failed")}
       </p>
+    </div>
+  );
+}
+
+/** How moving the bots stands: nothing asked yet, under way, or failed, with the export's own words. */
+type MoveState =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "pending" }
+  | { readonly _tag: "failed"; readonly reason: string | null };
+
+/** What the two passphrases say is wrong, once the operator asked to export. */
+type PassphraseProblem = "too-short" | "differ";
+
+const passphraseProblem = (passphrase: string, again: string): PassphraseProblem | null =>
+  passphrase.length < EXPORT_PASSPHRASE_MIN_LENGTH
+    ? "too-short"
+    : passphrase !== again
+      ? "differ"
+      : null;
+
+/**
+ * Moves the bots on this computer to another server: a dialog that says what
+ * the file holds and what stays behind, and asks for the passphrase its
+ * secrets are sealed under, twice, with the line that it cannot be
+ * recovered. The app then asks where to save the file and writes it.
+ */
+export function MoveToAnotherServer({
+  onMove,
+}: {
+  /** Resolves with the app's answer; once it exported, the app loads the page again. */
+  readonly onMove: (passphrase: Redacted.Redacted<string>) => Promise<LocalExportResult | null>;
+}) {
+  const { t } = useI18n();
+  const titleId = useId();
+  const passphraseId = useId();
+  const hintId = useId();
+  const againId = useId();
+  const problemId = useId();
+  const [open, setOpen] = useState(false);
+  const [passphrase, setPassphrase] = useState("");
+  const [again, setAgain] = useState("");
+  const [checked, setChecked] = useState(false);
+  const [state, setState] = useState<MoveState>({ _tag: "idle" });
+  const pending = state._tag === "pending";
+  const problem = checked ? passphraseProblem(passphrase, again) : null;
+  const close = () => {
+    setOpen(false);
+    setPassphrase("");
+    setAgain("");
+    setChecked(false);
+    setState({ _tag: "idle" });
+  };
+  const submit = () => {
+    setChecked(true);
+    if (pending || passphraseProblem(passphrase, again) !== null) return;
+    setState({ _tag: "pending" });
+    void onMove(Redacted.make(passphrase)).then((answer) => {
+      // Once it exported, the app loads the page again: only the rest is shown here.
+      if (answer?._tag === "exported") return;
+      setState(
+        answer?._tag === "cancelled"
+          ? { _tag: "idle" }
+          : { _tag: "failed", reason: answer?._tag === "failed" ? (answer.reason ?? null) : null },
+      );
+    });
+  };
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setOpen(true);
+        else if (!pending) close();
+      }}
+    >
+      <Dialog.Trigger render={<Button size="sm" variant="secondary" />}>
+        {t("local.move")}
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Backdrop className={dialogBackdrop} />
+        <Dialog.Popup
+          aria-labelledby={titleId}
+          className={cn(
+            alertDialog,
+            "max-h-[calc(100dvh-2rem)] max-w-md gap-3 overflow-y-auto p-5",
+          )}
+        >
+          <Dialog.Title id={titleId} className={dialogTitle}>
+            {t("local.move.title")}
+          </Dialog.Title>
+          <Dialog.Description className="text-sm text-muted-foreground">
+            {t("local.move.body")}
+          </Dialog.Description>
+          <p className="text-sm text-muted-foreground">{t("local.move.stays")}</p>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit();
+            }}
+          >
+            <div className="flex flex-col gap-1">
+              <label htmlFor={passphraseId} className="text-xs">
+                {t("local.move.passphrase")}
+              </label>
+              <input
+                id={passphraseId}
+                type="password"
+                className={lineField}
+                value={passphrase}
+                readOnly={pending}
+                autoComplete="new-password"
+                aria-describedby={`${hintId} ${problemId}`}
+                aria-invalid={problem === "too-short"}
+                onChange={(event) => setPassphrase(event.currentTarget.value)}
+              />
+              <p id={hintId} className="text-2xs text-muted-foreground">
+                {t("local.move.passphrase.hint", { min: EXPORT_PASSPHRASE_MIN_LENGTH })}
+              </p>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor={againId} className="text-xs">
+                {t("local.move.passphrase.again")}
+              </label>
+              <input
+                id={againId}
+                type="password"
+                className={lineField}
+                value={again}
+                readOnly={pending}
+                autoComplete="new-password"
+                aria-describedby={problemId}
+                aria-invalid={problem === "differ"}
+                onChange={(event) => setAgain(event.currentTarget.value)}
+              />
+            </div>
+            <p className="text-sm font-medium">{t("local.move.unrecoverable")}</p>
+            <p
+              id={problemId}
+              role="alert"
+              className="text-xs text-pretty break-words text-blocked empty:hidden"
+            >
+              {problem === "too-short"
+                ? t("local.move.tooShort", { min: EXPORT_PASSPHRASE_MIN_LENGTH })
+                : problem === "differ"
+                  ? t("local.move.differ")
+                  : state._tag === "failed"
+                    ? state.reason === null
+                      ? t("local.move.failed")
+                      : `${t("local.move.failed")} ${state.reason}`
+                    : null}
+            </p>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" aria-disabled={pending} onClick={pending ? undefined : close}>
+                {t("local.move.cancel")}
+              </Button>
+              <Button type="submit" variant="primary" aria-disabled={pending}>
+                {pending ? t("local.move.pending") : t("local.move.submit")}
+              </Button>
+            </div>
+          </form>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/**
+ * Deletes the data the bots that moved away left on this computer, once the
+ * operator confirms, after a question that says the export is then their only
+ * copy. `quiet`: a plain text button, below the screen's way on.
+ */
+function DeleteLocalData({
+  onDelete,
+  secretsLeftOut,
+  quiet = false,
+}: {
+  /** Resolves `false` when nothing was deleted. */
+  readonly onDelete: () => Promise<boolean>;
+  /** The export left the secrets out: deleting the data here loses them. */
+  readonly secretsLeftOut: boolean;
+  readonly quiet?: boolean;
+}) {
+  const { t } = useI18n();
+  const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
+  const pending = state === "pending";
+  return (
+    <div className={cn("flex flex-col gap-1.5", quiet ? "items-center" : "items-start")}>
+      <Confirm
+        trigger={
+          <Button
+            size="sm"
+            variant={quiet ? "ghost-muted" : "destructive-outline"}
+            aria-disabled={pending}
+          />
+        }
+        busy={pending}
+        title={t("local.moved.delete.title")}
+        body={
+          secretsLeftOut
+            ? `${t("local.moved.delete.body")} ${t("local.moved.delete.secrets")}`
+            : t("local.moved.delete.body")
+        }
+        cancel={t("local.moved.delete.cancel")}
+        confirm={t("local.moved.delete")}
+        onConfirm={() => {
+          setState("pending");
+          void onDelete().then((deleted) => setState(deleted ? "idle" : "failed"));
+        }}
+      >
+        {t("local.moved.delete")}
+      </Confirm>
+      <p role="alert" className="text-xs text-blocked empty:hidden">
+        {state === "failed" && t("local.moved.failed")}
+      </p>
+    </div>
+  );
+}
+
+/** What the export left out, when it left anything out; nothing otherwise. */
+function LeftOutNotice({ leftOut }: { readonly leftOut: LeftOut }) {
+  const { t, plural } = useI18n();
+  const more = leftOut.names - leftOut.firstNames.length;
+  const lines: Array<ReactNode> = [
+    leftOut.secrets === undefined ? null : (
+      <li key="secrets">{t(`local.moved.leftOut.secrets.${leftOut.secrets}`)}</li>
+    ),
+    leftOut.links === 0 ? null : (
+      <li key="links">{plural("local.moved.leftOut.links", leftOut.links)}</li>
+    ),
+    leftOut.names === 0 ? null : (
+      <li key="names">
+        {plural("local.moved.leftOut.names", leftOut.names)}
+        <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs break-all">
+          {leftOut.firstNames.map((name) => (
+            <li key={name}>{name}</li>
+          ))}
+          {more > 0 && <li>{plural("local.moved.leftOut.names.more", more)}</li>}
+        </ul>
+      </li>
+    ),
+    leftOut.attachmentsMissing === 0 ? null : (
+      <li key="attachments">
+        {plural("local.moved.leftOut.attachments", leftOut.attachmentsMissing)}
+      </li>
+    ),
+  ].filter((line) => line !== null);
+  if (lines.length === 0) return null;
+  return (
+    <div className="flex w-full flex-col gap-1.5 rounded-lg border border-border px-4 py-3 text-start">
+      <p className="text-sm font-medium">{t("local.moved.leftOut")}</p>
+      <ul className="flex list-disc flex-col gap-1 ps-5 text-sm text-muted-foreground">{lines}</ul>
+    </div>
+  );
+}
+
+/**
+ * The bots on this computer moved to another server, and their data is
+ * still here: when, the file, what the new server needs next, and the ways
+ * on: connecting to it, running the bots here again, or deleting their data.
+ */
+export function MovedAwayScreen({
+  moved,
+  onConnect,
+  onRunHere,
+  onDelete,
+}: {
+  readonly moved: MovedAway;
+  /** Goes on to the server address screen. Resolves `false` when nothing changed. */
+  readonly onConnect: () => Promise<boolean>;
+  /** Resolves `false` when nothing changed; otherwise the app loads the page again. */
+  readonly onRunHere: () => Promise<boolean>;
+  readonly onDelete: () => Promise<boolean>;
+}) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const problemId = useId();
+  const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
+  const [askingRunHere, setAskingRunHere] = useState(false);
+  const pending = state === "pending";
+  const go = (step: () => Promise<boolean>) => {
+    if (pending) return;
+    setState("pending");
+    void step().then((changed) => setState(changed ? "pending" : "failed"));
+  };
+  return (
+    <FirstScreen
+      title={t("local.moved.title")}
+      body={t("local.moved.body", { when: timeInSentence(moved.at, ctx) })}
+    >
+      <p className="w-full rounded-lg bg-muted px-4 py-3 text-start font-mono text-xs break-all">
+        {t("local.moved.file", { file: moved.file })}
+      </p>
+      <LeftOutNotice leftOut={moved.leftOut} />
+      <div className="flex w-full flex-col gap-1.5 text-start">
+        <p className="text-sm font-medium">{t("local.moved.next")}</p>
+        <ol className="flex list-decimal flex-col gap-1 ps-5 text-sm text-muted-foreground">
+          <li>{t("local.moved.step.import")}</li>
+          <li>{t("local.moved.step.pair")}</li>
+          <li>{t("local.moved.step.webhooks")}</li>
+        </ol>
+      </div>
+      <BigButton
+        disabled={pending}
+        describedBy={state === "failed" ? problemId : undefined}
+        onClick={() => go(onConnect)}
+      >
+        {t("local.moved.connect")}
+      </BigButton>
+      <Button
+        variant="ghost"
+        className="h-11 w-full text-base"
+        aria-disabled={pending}
+        onClick={() => {
+          if (!pending) setAskingRunHere(true);
+        }}
+      >
+        {t("local.moved.runHere")}
+      </Button>
+      <ConfirmDialog
+        open={askingRunHere}
+        onOpenChange={setAskingRunHere}
+        title={t("local.moved.runHere.title")}
+        body={t("local.moved.runHere.body")}
+        cancel={t("local.moved.runHere.cancel")}
+        confirm={t("local.moved.runHere")}
+        tone="primary"
+        onConfirm={() => go(onRunHere)}
+      />
+      <DeleteLocalData
+        quiet
+        secretsLeftOut={moved.leftOut.secrets !== undefined}
+        onDelete={onDelete}
+      />
+      <FormProblem id={problemId}>
+        {state === "failed" ? t("local.moved.failed") : null}
+      </FormProblem>
+    </FirstScreen>
+  );
+}
+
+/**
+ * In Settings, once the page runs on another server: the bots that moved
+ * from this computer left their data here, and a way to delete it.
+ */
+export function LeftHere({
+  moved,
+  onDelete,
+}: {
+  readonly moved: MovedAway;
+  readonly onDelete: () => Promise<boolean>;
+}) {
+  const ctx = usePresentation();
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <p className="text-2xs text-pretty text-muted-foreground">
+        {ctx.i18n.t("local.moved.leftHere", { when: timeInSentence(moved.at, ctx) })}
+      </p>
+      <DeleteLocalData secretsLeftOut={moved.leftOut.secrets !== undefined} onDelete={onDelete} />
     </div>
   );
 }

@@ -282,7 +282,7 @@ Restore onto the version the backup was taken with, or a newer one, into a data 
 
 ## Move to another server
 
-To run the bots somewhere else, export them where they are and import them there. An export comes from a server or from the desktop app, on Linux or Windows, and goes to a server you install ([Install](install.md)), at any path. A backup restores only at the same path. The desktop app has no import.
+To run the bots somewhere else, export them where they are and import them there. An export comes from a server or from the bots the desktop app runs, on Linux or Windows, and goes to a server you install ([Install](install.md)), at any path. A backup restores only at the same path. The desktop app has no import.
 
 Where the bots are now:
 
@@ -291,22 +291,13 @@ systemctl --user stop j3-bots
 j3-bots export --output ~/j3-bots-export.tar.gz
 ```
 
-The bots the desktop app runs on this computer have no service and no `j3-bots` command ([The server the desktop app runs](#the-server-the-desktop-app-runs)). Quit the app from its tray, so their server stops, then run the server it carries on their data home. On Linux, with `<version>` the newest folder in `server-runtime`:
+The bots the desktop app runs on this computer have no service and no `j3-bots` command ([The server the desktop app runs](#the-server-the-desktop-app-runs)). Export them from the app: Settings → Where your bots live → **Move to another server**. It asks for the passphrase twice and where to save the file, which it never writes over, then stops their server and runs the export of the server it carries. A failed export says why, and the bots run there again. Once the file is written, the app says the bots moved, names the file, says what the export left out, as below, and lists what to do on the new server, and their server stays stopped, even when the app starts again, so the bots never run in two places unasked. From there:
 
-```sh
-cd ~/.config/"J3 Bots"/server-runtime/<version>
-J3_HOME=~/.config/"J3 Bots"/server/home node/bin/node server/bin.mjs export --output ~/j3-bots-export.tar.gz
-```
+- **Connect to the new server**, once it runs them, to pair the app with it. The data stays on this computer, and Settings says so, with a way to delete it.
+- **Run the bots here again** starts their server on the data it kept, as before the export. If the new server runs them too, each copy goes on alone.
+- **Delete the data on this computer** deletes their home and their server's log. Keep the export until the new server runs them: until then it is their only copy. When the export left the secrets out, the app says that deleting loses them.
 
-On Windows, in PowerShell, from `current`, the copy of the release that runs:
-
-```powershell
-cd "$env:APPDATA\J3 Bots\server-runtime\current"
-$env:J3_HOME = "$env:APPDATA\J3 Bots\server\home"
-.\node\node.exe server\bin.mjs export --output "$HOME\j3-bots-export.tar.gz"
-```
-
-The export asks for a passphrase for the secrets, twice, at least eight characters. **It cannot be recovered**: without it, the secrets in the export are lost. Without `--output`, it writes `j3-bots-export-<date>.tar.gz` in the folder you are in; it never writes over a file. It tells you how many bots and secrets it holds, and what it left out: links in the bots' folders, files whose name has a `\` in it (each named, to rename and export again), attachments already missing, and secrets it could not read, with the reason.
+On a server, the export asks for a passphrase for the secrets, twice, at least eight characters. **It cannot be recovered**: without it, the secrets in the export are lost. Without `--output`, it writes `j3-bots-export-<date>.tar.gz` in the folder you are in; it never writes over a file. It tells you how many bots and secrets it holds, and what it left out: links in the bots' folders, files whose name has a `\` in it (each named, to rename and export again), attachments already missing, and secrets it could not read, with the reason.
 
 Keep the file private, as you would a backup: it holds every conversation, memory and file. Copy it to the other server over a private channel, such as `scp`. There, install J3 Bots ([Install](install.md)), then:
 
@@ -327,7 +318,7 @@ The import checks every file against what the export recorded before it changes 
 - **A server that already has something the import would delete** refuses it: bots, secrets, files kept from a deleted bot, shared memory, attachments, shared skills of your own, or a link you put in place of one of those folders. `j3-bots import <file> --replace` deletes them and puts the export's in their place.
 - **A newer release's export** is refused: update J3 Bots on the new server first. An older release's export is updated as it is imported.
 - **If an import stops halfway**, the server refuses to start until you run the same `j3-bots import` with the same file again, which finishes it. Another file is imported in its place only with `--replace`.
-- **For a script,** `--passphrase-stdin` reads the passphrase from the first line of standard input on both commands, instead of asking at the terminal.
+- **For a script,** `--passphrase-stdin` reads the passphrase from the first line of standard input on both commands, instead of asking at the terminal, and `j3-bots export --report <file>` also writes what the export holds and left out to that file, as JSON, with no secret in it.
 - **The server you exported from still has everything.** If you start it again, the bots run in two places, each with its own copy of what they remember. Once the new server works, delete the old data directory (`j3-bots uninstall --delete-data`), or keep it stopped.
 
 ## Remove

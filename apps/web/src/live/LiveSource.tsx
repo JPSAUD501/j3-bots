@@ -88,7 +88,7 @@ import {
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
-import type { AppLink } from "@j3-bots/desktop-bridge";
+import type { AppLink, MovedAway } from "@j3-bots/desktop-bridge";
 import * as Redacted from "effect/Redacted";
 import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
@@ -102,6 +102,7 @@ import {
   LocalServerFailed,
   LocalServerFailedBody,
   LocalSignIn,
+  MovedAwayScreen,
   StoppingLocal,
   StopUsingComputer,
   WhereBotsLive,
@@ -160,7 +161,7 @@ import {
   useReportLanguage,
   useReportTray,
 } from "./desktopMenus";
-import { desktop, systemOf } from "./desktop";
+import { type Desktop, desktop, systemOf } from "./desktop";
 import {
   asksSilently,
   localScreen,
@@ -201,16 +202,25 @@ const copySecret =
 
 /**
  * In the desktop app, the server elsewhere it talks to, a way to leave it for
- * another and, where this computer can run the bots, for this computer.
+ * another and, where this computer can run the bots, for this computer; and
+ * the data bots that moved from this computer left here, while there is any.
  */
-const desktopServer: DesktopServer | undefined =
-  desktop === null || server === null || localMode !== null
-    ? undefined
+const serverOf = (app: Desktop, at: URL): DesktopServer => ({
+  address: at.origin,
+  forget: app.forgetServer,
+  ...(app.localAvailable ? { chooseThisComputer: app.chooseThisComputer } : {}),
+  ...(app.moved === null
+    ? {}
     : {
-        address: server.origin,
-        forget: desktop.forgetServer,
-        ...(desktop.localAvailable ? { chooseThisComputer: desktop.chooseThisComputer } : {}),
-      };
+        leftHere: {
+          moved: app.moved,
+          deleteData: () => app.deleteLocalData().then((answer) => answer === "changed"),
+        },
+      }),
+});
+
+const desktopServer: DesktopServer | undefined =
+  desktop === null || server === null || localMode !== null ? undefined : serverOf(desktop, server);
 
 /** One client for the page, made on first use. */
 const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)));
@@ -236,8 +246,36 @@ export function LiveSourceProvider({ children }: { children: ReactNode }) {
       </Screen>
     );
   }
+  // The bots moved away: their server here stays stopped, so nothing connects to it.
+  if (localMode !== null && localMode.moved !== null) {
+    return (
+      <Screen>
+        <MovedAwayHere here={localMode} moved={localMode.moved} />
+      </Screen>
+    );
+  }
   if (server === null) return <FirstScreens />;
   return <Connected origin={server}>{children}</Connected>;
+}
+
+/**
+ * The bots on this computer moved to another server: on to it, which goes
+ * to the server address screen with the app no longer starting with the
+ * system for them, or back to running them here, or their data deleted.
+ */
+function MovedAwayHere({ here, moved }: { readonly here: Desktop; readonly moved: MovedAway }) {
+  return (
+    <MovedAwayScreen
+      moved={moved}
+      onConnect={() =>
+        (here.startWithSystem ? here.setStartWithSystem(false) : Promise.resolve(null))
+          .then(() => here.connectToServerInstead())
+          .then((answer) => answer === "changed")
+      }
+      onRunHere={() => here.runHereAgain().then((answer) => answer === "changed")}
+      onDelete={() => here.deleteLocalData().then((answer) => answer === "changed")}
+    />
+  );
 }
 
 /**
@@ -677,6 +715,7 @@ function useLocalHere(origin: URL) {
 
   const intents: DesktopLocal = {
     stopUsing,
+    moveAway: desktopLocal.moveAway,
     serverUpdate: view?.server.update,
     retryServerUpdate: desktopLocal.retryServerUpdate,
     showUpdateDetails: () => setDetailsOpen(true),

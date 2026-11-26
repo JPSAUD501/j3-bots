@@ -16,6 +16,10 @@
       "types": "./src/system/Network.ts",
       "import": "./src/system/Network.ts"
     },
+    "./transfer-report": {
+      "types": "./src/transfer/report.ts",
+      "import": "./src/transfer/report.ts"
+    },
     "./windows-acl": {
       "types": "./src/home/windowsAcl.ts",
       "import": "./src/home/windowsAcl.ts"

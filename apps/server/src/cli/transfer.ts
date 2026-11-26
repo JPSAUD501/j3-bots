@@ -2,9 +2,11 @@
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag, Prompt } from "effect/cli";
@@ -13,6 +15,7 @@ import { PASSPHRASE_MIN_LENGTH } from "../secrets/transfer.ts";
 import type { ArchivedSecrets } from "../transfer/archive.ts";
 import { exportHome } from "../transfer/Export.ts";
 import { importHome } from "../transfer/Import.ts";
+import { type ExportReport, ExportReportJson } from "../transfer/report.ts";
 import { refuse, userFacing } from "./errors.ts";
 
 // `j3-bots export` and `j3-bots import` (docs/operations/operating.md,
@@ -138,14 +141,41 @@ const outputFlag = Flag.String("output").pipe(
   Flag.optional,
 );
 
+const reportFlag = Flag.String("report").pipe(
+  Flag.withDescription(
+    "Also write what the export holds and left out to this file, as JSON, for a program that runs this command. It holds no secret.",
+  ),
+  Flag.optional,
+);
+
+const encodeReport = Schema.encodeEffect(ExportReportJson);
+
+/** Writes the export's report where `--report` names, once the archive is in place. */
+const writeReport = Effect.fn("transfer.writeReport")(function* (
+  to: string,
+  archive: string,
+  report: ExportReport,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = path.resolve(to);
+  yield* encodeReport(report).pipe(
+    Effect.flatMap((json) => fs.writeFileString(file, json)),
+    Effect.mapError(() =>
+      refuse(`The export is at ${archive}, but its report could not be written to ${file}.`),
+    ),
+  );
+});
+
 export const exportCommand = Command.make("export", {
   output: outputFlag,
   passphraseStdin: passphraseStdinFlag,
+  report: reportFlag,
 }).pipe(
   Command.withDescription(
     "Write the bots, their conversations, memory, skills and files, the shared memory and skills, the attachments and the secrets to one file, for `j3-bots import` on another server. The secrets are sealed under a passphrase of the export's own. Paired devices, provider sign-ins and the configuration stay here. The server must be stopped.",
   ),
-  Command.withHandler(({ output, passphraseStdin }) =>
+  Command.withHandler(({ output, passphraseStdin, report }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const home = yield* userFacing(ServerConfig.resolveHome);
@@ -158,6 +188,18 @@ export const exportCommand = Command.make("export", {
           passphrase: (records) => newPassphrase(records, passphraseStdin),
         }),
       );
+      if (Option.isSome(report)) {
+        yield* writeReport(report.value, done.file, {
+          bots: done.bots,
+          secrets:
+            done.secrets._tag === "sealed"
+              ? { _tag: "sealed", records: done.secrets.records }
+              : done.secrets,
+          linksLeftOut: done.linksLeftOut,
+          namesLeftOut: done.namesLeftOut,
+          attachmentsMissing: done.attachmentsMissing,
+        });
+      }
       yield* Console.log(
         [
           `Exported ${done.bots} bot${done.bots === 1 ? "" : "s"} to ${done.file}.`,

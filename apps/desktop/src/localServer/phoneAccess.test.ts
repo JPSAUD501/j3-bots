@@ -174,6 +174,8 @@ const setUp = (world: World, leftRunning: Option.Option<PhoneAccess.ListenHost> 
       prepare: Effect.succeed(LOOPBACK_ORIGIN),
       start: supervisor.start,
       stop: supervisor.stop,
+      exportTo: () => Effect.die("phone access never exports"),
+      deleteData: Effect.die("phone access never deletes the data"),
     });
     const phone = yield* PhoneAccess.serve({
       listening,
