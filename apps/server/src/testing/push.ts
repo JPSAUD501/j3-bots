@@ -17,7 +17,7 @@ import {
 
 /**
  * How the service fails one message without taking it. `PushUnavailable`
- * fails the whole request the message is in.
+ * leaves the whole request the message is in unanswered.
  */
 type TestPushFailure = PushUnavailable | PushThrottled | PushUnregistered | PushRejected;
 
@@ -88,7 +88,8 @@ export const layer = Layer.effectContext(
           }
         }
         if (hangs) return yield* Effect.never;
-        if (unavailable !== null) return yield* unavailable;
+        const unanswered = unavailable;
+        if (unanswered !== null) return messages.map((): PushSent => Result.fail(unanswered));
         return sent;
       });
 

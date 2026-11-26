@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
@@ -31,8 +32,10 @@ import {
   PushDeliveryId,
   type PushMessage,
   PushReceiptId,
+  type PushRejected,
   PushSender,
-  type PushSent,
+  type PushThrottled,
+  type PushUnregistered,
 } from "./PushSender.ts";
 
 /** How many sends of one delivery may begin before it is given up. */
@@ -313,6 +316,12 @@ export const layer = Layer.effect(
         }),
       );
 
+    /** What the service answered about a send it was asked: all but not answering. */
+    type Answered = Result.Result<
+      PushReceiptId | null,
+      PushThrottled | PushUnregistered | PushRejected
+    >;
+
     /** A send claimed: the delivery, its message, and the registration it goes to. */
     interface Claimed {
       readonly delivery: Due;
@@ -374,7 +383,7 @@ export const layer = Layer.effect(
     });
 
     /** What the service answered about one claimed send, recorded. */
-    const record = Effect.fn("PushWorker.record")(function* (claimed: Claimed, sent: PushSent) {
+    const record = Effect.fn("PushWorker.record")(function* (claimed: Claimed, sent: Answered) {
       const { delivery, attempt } = claimed;
       if (sent._tag === "Success") {
         if (sent.success === null) return yield* settle(delivery.id);
@@ -551,7 +560,6 @@ export const layer = Layer.effect(
       }
       if (claimed.length === 0) return more;
       const sent = yield* sender.send(claimed.map(({ message }) => message)).pipe(
-        Effect.result,
         // Each send is claimed, so each comes due again when its next may begin.
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
@@ -563,54 +571,48 @@ export const layer = Layer.effect(
         ),
       );
       if (sent === null) return more;
-      if (sent._tag === "Failure") {
-        const error = sent.failure;
-        if (error._tag === "PushRejected") {
-          // Refused as a request: so is each message in it.
-          for (const { delivery, attempt } of claimed) {
-            yield* supervised(delivery.id, gaveUp(delivery.id, attempt, error.reason));
-          }
-          return more;
-        }
-        // A service that answers nothing says nothing of any one push: only
-        // the furthest along counts a send, and sets how long the service is
-        // left alone; the others give theirs back and wait for it, so an
-        // outage spends one push's sends at a time, as when they went alone.
-        const [lead, ...waiting] = claimed.toSorted((a, b) => b.count - a.count);
-        if (lead === undefined) return yield* Effect.die("A request carries a push");
-        yield* Effect.logInfo("The push service did not take pushes; sends wait").pipe(
-          Effect.annotateLogs({
-            pushes: claimed.length,
-            attempt: lead.count,
-            reason: error.reason,
-          }),
-        );
-        const until = timeText(DateTime.addDuration(yield* DateTime.now, sendBackoff(lead.count)));
-        // No send begins before then, one written since included.
-        yield* sql`UPDATE push_service SET not_before = ${until}`.pipe(Effect.orDie);
-        for (const { delivery, count } of waiting) {
-          yield* supervised(
-            delivery.id,
-            sql`
-              UPDATE push_deliveries
-              SET attempts = ${delivery.attempts}, generation = ${delivery.generation},
-                due_at = ${until}
-              WHERE id = ${delivery.id} AND status = 'pending' AND attempts = ${count}
-            `.pipe(Effect.orDie, Effect.asVoid),
-          );
-        }
-        return false;
-      }
+      const unanswered: Array<Claimed> = [];
+      let reason = "";
       for (const [index, one] of claimed.entries()) {
-        const answer = sent.success[index];
+        const answer = sent[index];
+        if (answer === undefined) return yield* Effect.die("The push sender answers each message");
+        if (Result.isSuccess(answer)) {
+          yield* supervised(one.delivery.id, record(one, Result.succeed(answer.success)));
+          continue;
+        }
+        const { failure } = answer;
+        if (failure._tag === "PushUnavailable") {
+          unanswered.push(one);
+          reason = failure.reason;
+          continue;
+        }
+        yield* supervised(one.delivery.id, record(one, Result.fail(failure)));
+      }
+      // A service that does not answer says nothing of any one push: only the
+      // furthest along of those it did not answer counts a send, and sets how
+      // long the service is left alone; the others give theirs back and wait
+      // for it, so an outage spends one push's sends at a time, as when they
+      // went alone.
+      const [lead, ...waiting] = unanswered.toSorted((a, b) => b.count - a.count);
+      if (lead === undefined) return more;
+      yield* Effect.logInfo("The push service did not take pushes; sends wait").pipe(
+        Effect.annotateLogs({ pushes: unanswered.length, attempt: lead.count, reason }),
+      );
+      const resumes = timeText(DateTime.addDuration(yield* DateTime.now, sendBackoff(lead.count)));
+      // No send begins before then, one written since included.
+      yield* sql`UPDATE push_service SET not_before = ${resumes}`.pipe(Effect.orDie);
+      for (const { delivery, count } of waiting) {
         yield* supervised(
-          one.delivery.id,
-          answer === undefined
-            ? Effect.die("The push sender answers each message")
-            : record(one, answer),
+          delivery.id,
+          sql`
+            UPDATE push_deliveries
+            SET attempts = ${delivery.attempts}, generation = ${delivery.generation},
+              due_at = ${resumes}
+            WHERE id = ${delivery.id} AND status = 'pending' AND attempts = ${count}
+          `.pipe(Effect.orDie, Effect.asVoid),
         );
       }
-      return more;
+      return false;
     });
 
     const pass = yield* onePassAtATime(

@@ -71,12 +71,13 @@ export class PushRejected extends Schema.TaggedError<PushRejected>()("PushReject
 }) {}
 
 /**
- * What the service answered about one message of a send: it took it, with a
- * receipt to ask about later if the service gives one, or refused it.
+ * What came of one message of a send: the service took it, with a receipt to
+ * ask about later if the service gives one, refused it, or did not answer
+ * about it (`PushUnavailable`).
  */
 export type PushSent = Result.Result<
   PushReceiptId | null,
-  PushThrottled | PushUnregistered | PushRejected
+  PushUnavailable | PushThrottled | PushUnregistered | PushRejected
 >;
 
 /** The most messages `PushSender.send` takes at once: what Expo takes in one request. */
@@ -105,14 +106,11 @@ export class PushSender extends Context.Service<
   PushSender,
   {
     /**
-     * Sends up to `MAX_MESSAGES_PER_SEND` messages in one request: what the
-     * service answered about each, in their order. Fails when the service
-     * answered none of them (`PushUnavailable`), or refused the request as a
-     * whole (`PushRejected`), which holds for each of them.
+     * Sends up to `MAX_MESSAGES_PER_SEND` messages: what came of each, in
+     * their order. A request the service did not answer, or refused as a
+     * whole, is that answer for each message in it.
      */
-    readonly send: (
-      messages: ReadonlyArray<PushMessage>,
-    ) => Effect.Effect<ReadonlyArray<PushSent>, PushUnavailable | PushRejected>;
+    readonly send: (messages: ReadonlyArray<PushMessage>) => Effect.Effect<ReadonlyArray<PushSent>>;
     /**
      * What became of messages the service took. A receipt the service has no
      * answer for yet, or that could not be asked for now, is left out: the

@@ -402,6 +402,7 @@ it.effect(
       assert.deepStrictEqual(yield* service.requests, [2, 2, 2]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
+
 it.effect("spends one push's sends at a time while the service does not answer", () =>
   Effect.gen(function* () {
     const service = yield* TestPushService;

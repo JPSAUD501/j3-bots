@@ -218,37 +218,46 @@ export const layer = Layer.effect(
       return data.map(sentOf);
     });
 
+    /** What a request that failed as a whole says of each message in it. */
+    const eachOf = (failure: PushUnavailable | RequestRefused): PushSent =>
+      Result.fail(failure._tag === "PushUnavailable" ? failure : rejectedOf(failure));
+
     /**
      * Each message in a request of its own, after Expo refused them together
-     * for coming from apps of more than one project.
+     * for coming from apps of more than one project. Once one goes
+     * unanswered, the service is not answering: the rest are not sent now.
      */
-    const sendAlone = (messages: ReadonlyArray<PushMessage>) =>
-      Effect.forEach(messages, (message) =>
-        sendTogether([message]).pipe(
-          Effect.flatMap(([sent]) =>
-            sent === undefined
-              ? Effect.die("A request of one message is answered for it")
-              : Effect.succeed(sent),
-          ),
-          Effect.catchTag("RequestRefused", (alone) =>
-            Effect.succeed<PushSent>(Result.fail(rejectedOf(alone))),
-          ),
-        ),
-      );
+    const sendAlone = Effect.fnUntraced(function* (messages: ReadonlyArray<PushMessage>) {
+      const sent: Array<PushSent> = [];
+      for (const message of messages) {
+        const alone = yield* sendTogether([message]).pipe(Effect.result);
+        if (Result.isFailure(alone) && alone.failure._tag === "PushUnavailable") {
+          const unanswered = eachOf(alone.failure);
+          return [...sent, ...messages.slice(sent.length).map(() => unanswered)];
+        }
+        const [one] = Result.isSuccess(alone) ? alone.success : [eachOf(alone.failure)];
+        if (one === undefined) return yield* Effect.die("A request of one message answers it");
+        sent.push(one);
+      }
+      return sent;
+    });
 
     const send = Effect.fn("ExpoPushSender.send")(function* (messages: ReadonlyArray<PushMessage>) {
       if (messages.length === 0) return [];
       const together = yield* sendTogether(messages).pipe(Effect.result);
       if (Result.isSuccess(together)) return together.success;
-      const refused = together.failure;
-      if (refused._tag === "PushUnavailable") return yield* refused;
+      const { failure } = together;
       // Expo takes one request only for one project's apps, and a device may
       // run a build of another: each message then goes alone, and is answered
       // as its own request is.
-      if (refused.code === "PUSH_TOO_MANY_EXPERIENCE_IDS" && messages.length > 1) {
+      if (
+        failure._tag === "RequestRefused" &&
+        failure.code === "PUSH_TOO_MANY_EXPERIENCE_IDS" &&
+        messages.length > 1
+      ) {
         return yield* sendAlone(messages);
       }
-      return yield* rejectedOf(refused);
+      return messages.map(() => eachOf(failure));
     });
 
     const receipts = Effect.fn("ExpoPushSender.receipts")(function* (

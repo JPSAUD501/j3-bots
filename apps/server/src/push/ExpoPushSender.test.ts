@@ -454,20 +454,36 @@ it.effect(
 it.effect("sends each push alone when Expo refuses a request for apps of two projects", () =>
   Effect.gen(function* () {
     const expo = yield* ExpoWire;
+    const sql = yield* SqlClient.SqlClient;
     const scout = yield* createBot("Scout");
     const phone = yield* pushDevice("Phone");
     yield* pushDevice("Tablet");
-    expo.send = (messages) =>
-      messages.length > 1
-        ? { status: 400, body: { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] } }
-        : undefined;
+    yield* pushDevice("Watch");
+    const mixed = { status: 400, body: { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] } };
+    // The second push sent alone gets no answer, so the third waits unsent.
+    expo.send = (messages, n) =>
+      messages.length > 1 ? mixed : n === 3 ? { status: 503, body: {} } : undefined;
+    const followed = Effect.map(
+      sql<{ readonly status: string; readonly attempts: number }>`
+        SELECT status, attempts FROM push_deliveries
+      `,
+      (rows) => rows.map(({ status, attempts }) => `${status} ${attempts}`).toSorted(),
+    );
 
     yield* says(scout.id, "Done");
     yield* deliverPending;
+    assert.deepStrictEqual(expo.requests, [3, 1, 1]);
+    // The first was taken and keeps its receipt; of the others, one send counts.
+    assert.deepStrictEqual(yield* followed, ["accepted 1", "pending 0", "pending 1"]);
 
-    assert.deepStrictEqual(expo.requests, [2, 1, 1]);
-    // Both were taken, and wait for their receipts.
-    assert.lengthOf(yield* pending, 2);
+    yield* TestClock.adjust(sendBackoff(1));
+    yield* deliverPending;
+    assert.deepStrictEqual(expo.requests, [3, 1, 1, 2, 1, 1]);
+    assert.deepStrictEqual(yield* followed, ["accepted 1", "accepted 1", "accepted 2"]);
+    assert.lengthOf(
+      expo.sends.filter(({ to }) => to === "ExponentPushToken[fixture-Phone]"),
+      2,
+    );
     assert.strictEqual(yield* failuresOf(phone), 0);
   }).pipe(Effect.provide(domain)),
 );
