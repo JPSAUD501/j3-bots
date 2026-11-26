@@ -193,6 +193,45 @@ export const ready = Effect.fn("Runtime.ready")(function* (options: ReadyOptions
   );
 });
 
+export interface WebClientOptions {
+  /** The web client the package carries. */
+  readonly source: string;
+  /** Where the server serves it from: `<userData>/server/web`. */
+  readonly folder: string;
+  /** The release it is the client of: the package's. */
+  readonly version: string;
+}
+
+/**
+ * Keeps a copy of the web client the package carries at `folder`, for the
+ * server to serve to phones, and answers where it is. The server never
+ * serves it from the package: an AppImage's mount goes as the app exits,
+ * while a server it started may be taken over by the next run, and an
+ * update replaces the package's files. The copy is made again only for
+ * another release, beside the one there and renamed over it, and marked as
+ * that release's (`<folder>.complete`) once in place.
+ */
+export const keepWebClient = Effect.fn("Runtime.keepWebClient")(function* (
+  options: WebClientOptions,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const { folder, version } = options;
+  const marker = `${folder}${COMPLETE}`;
+  const there = yield* fs.readFileString(marker).pipe(Effect.option);
+  if (Option.isSome(there) && there.value.trim() === version) return folder;
+  const staging = `${folder}.partial`;
+  const retired = `${folder}.old`;
+  yield* fs.remove(marker, { force: true });
+  yield* fs.remove(staging, { recursive: true, force: true });
+  yield* fs.copy(options.source, staging, { overwrite: true });
+  yield* fs.remove(retired, { recursive: true, force: true });
+  if (yield* fs.exists(folder)) yield* fs.rename(folder, retired);
+  yield* fs.rename(staging, folder);
+  yield* fs.writeFileString(marker, `${version}\n`);
+  yield* fs.remove(retired, { recursive: true, force: true }).pipe(Effect.ignore);
+  return folder;
+}, Effect.mapError(notCopied));
+
 /**
  * Removes the runtime of every version but `keep` from `folder`: what a
  * version transition does once the new version runs, keeping the two it

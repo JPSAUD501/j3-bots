@@ -26,6 +26,7 @@ import * as VersionTransition from "./versionTransition.ts";
 // mode change the app drives it with.
 //
 //   <userData>/server/home              its data home (J3_HOME)
+//   <userData>/server/web               the web client it serves (packaged)
 //   <userData>/server/server.log        its output, appended at each start
 //   <userData>/server/server.pid        the last one started (Windows)
 //   <userData>/server-runtime/<version> the runtimes of the releases it ran
@@ -46,8 +47,9 @@ export interface LocalHostOptions {
   readonly appPath: string;
   readonly userData: string;
   /**
-   * The app's own build of the web client, which the server serves too: a
-   * phone that opens the pairing link reaches it there.
+   * The app's own build of the web client, which the server serves too
+   * (from a copy the app keeps, once packaged): a phone that opens the
+   * pairing link reaches it there.
    */
   readonly webClient: string;
   readonly platform: NodeJS.Platform;
@@ -186,9 +188,32 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     publicAddress: network.ipv4Addresses.pipe(Effect.map(Network.publicAddressOf)),
   });
 
+  /**
+   * The web client the server serves: in a package, a copy the app keeps,
+   * which outlives the package's files, as a server taken over by a later
+   * run of the app must; in development, the build itself.
+   */
+  const webClient = Option.match(
+    Option.filter(bundled, () => options.packaged),
+    {
+      onNone: () => Effect.succeed(options.webClient),
+      onSome: (release) =>
+        Runtime.keepWebClient({
+          source: options.webClient,
+          folder: path.join(serverFolder, "web"),
+          version: release.version,
+        }).pipe(
+          Effect.mapError(
+            (error) => new Supervisor.LaunchFailed({ reason: error.message, retry: true }),
+          ),
+        ),
+    },
+  );
+
   /** Starts the server from `runtime`. */
   const run = Effect.fn("LocalHost.run")(function* (runtime: Runtime.Runtime) {
     yield* fs.makeDirectory(serverFolder, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
+    const served = yield* webClient;
     const server = yield* ServerProcess.launch({
       node: runtime.node,
       entry: runtime.entry,
@@ -196,12 +221,12 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
         path: yield* shellPath,
         home,
         host: yield* phone.hostForLaunch,
-        webClient: options.webClient,
+        webClient: served,
       }),
       logFile,
       platform: options.platform,
     });
-    if (options.platform === "win32") yield* Orphans.record(pidFile, server.pid, runtime.node);
+    if (options.platform === "win32") yield* Orphans.record(pidFile, server.pid);
     return server;
   }, Effect.provideContext(context));
 
@@ -250,7 +275,7 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
   const adopt = Effect.gen(function* () {
     if (Option.isNone(versions)) return Option.none<Supervisor.RunningServer>();
     if (options.platform === "win32") {
-      yield* Orphans.stopRecorded(pidFile, (pid) => ServerProcess.killTree(pid, options.platform));
+      yield* Orphans.stopRecorded(pidFile);
       return Option.none<Supervisor.RunningServer>();
     }
     // Only a private home's socket is the app's own server.

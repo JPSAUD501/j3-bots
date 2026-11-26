@@ -58,12 +58,13 @@ const REFUSAL_KEY = {
   "public-address": "settings.phone.public",
   unavailable: "settings.phone.unavailable",
   "no-network": "settings.phone.noNetwork",
+  "not-running": "settings.phone.notRunning",
 } as const;
 
 /** The switch, what holds, and, while phones reach the bots, pairing one and the firewall. */
 export function PhoneAccessSetting({ phone }: { readonly phone: DesktopPhone }) {
   const { t, plural } = useI18n();
-  const labelId = useId();
+  const switchId = useId();
   const hintId = useId();
   const [access, setAccess] = useState(phone.access);
   const { follow } = phone;
@@ -104,17 +105,17 @@ export function PhoneAccessSetting({ phone }: { readonly phone: DesktopPhone }) 
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-3">
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span id={labelId} className="text-sm">
+          <label htmlFor={switchId} className="text-sm">
             {t("settings.phone")}
-          </span>
+          </label>
           <span id={hintId} className="text-2xs text-muted-foreground">
             {t("settings.phone.hint")}
           </span>
         </span>
         <Switch
+          id={switchId}
           checked={shown ?? access.on}
           readOnly={pending}
-          aria-labelledby={labelId}
           aria-describedby={hintId}
           onCheckedChange={(next) => send(next, false)}
         />
@@ -140,9 +141,16 @@ export function PhoneAccessSetting({ phone }: { readonly phone: DesktopPhone }) 
             {line.detail !== undefined && (
               <p className="text-2xs break-words text-muted-foreground">{line.detail}</p>
             )}
-            <Button size="sm" aria-disabled={pending} onClick={() => !pending && send(true, false)}>
-              {t("settings.phone.retry")}
-            </Button>
+            {/* The server's own failure says why, and starts it again. */}
+            {line.reason !== "not-running" && (
+              <Button
+                size="sm"
+                aria-disabled={pending}
+                onClick={() => !pending && send(true, false)}
+              >
+                {t("settings.phone.retry")}
+              </Button>
+            )}
           </div>
         )}
       </div>

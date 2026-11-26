@@ -184,6 +184,24 @@ describe("the version of the server on this computer", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live(
+    "stops saying it updates once the new release answers, the one before deleted by hand",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const here = yield* computer();
+        yield* fs.remove(path.join(here.runtimes, OLD), { recursive: true });
+        const versions = yield* here.app(NEW);
+
+        const server = yield* versions.launch;
+        assert.strictEqual(yield* here.versionOf(server), NEW);
+        assert.strictEqual(Option.getOrThrow(yield* versions.update)._tag, "updating");
+        yield* versions.onReady;
+        assert.isTrue(Option.isNone(yield* versions.update));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("removes the runtimes of other releases only once the new one runs", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

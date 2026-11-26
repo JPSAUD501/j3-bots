@@ -368,7 +368,7 @@ export function StartWithSystem({
   readonly onChange: (on: boolean) => Promise<boolean>;
 }) {
   const { t } = useI18n();
-  const labelId = useId();
+  const switchId = useId();
   const hintId = useId();
   const [shown, setShown] = useState(on);
   const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
@@ -376,17 +376,17 @@ export function StartWithSystem({
     <div className="flex flex-col gap-1">
       <div className="flex items-start gap-3">
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span id={labelId} className="text-sm">
+          <label htmlFor={switchId} className="text-sm">
             {t("settings.startWithSystem")}
-          </span>
+          </label>
           <span id={hintId} className="text-2xs text-muted-foreground">
             {t("settings.startWithSystem.hint")}
           </span>
         </span>
         <Switch
+          id={switchId}
           checked={shown}
           readOnly={state === "pending"}
-          aria-labelledby={labelId}
           aria-describedby={hintId}
           onCheckedChange={(next) => {
             setShown(next);

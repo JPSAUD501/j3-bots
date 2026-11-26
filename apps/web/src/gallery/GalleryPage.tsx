@@ -3844,6 +3844,9 @@ function PhoneAccessSection() {
         <Frame label="On, with no local network" width={420} height={340}>
           <PhoneSetting access={{ on: true, origins: [], refusedReason: "no-network" }} />
         </Frame>
+        <Frame label="On, while the bots on this computer have stopped" width={420} height={340}>
+          <PhoneSetting access={{ on: true, origins: [], refusedReason: "not-running" }} />
+        </Frame>
         <Frame
           label="A code for a phone: QR, address and code typed out, the time left; two addresses to pick from"
           width={420}

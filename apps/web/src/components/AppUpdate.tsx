@@ -146,24 +146,19 @@ export function AppUpdate({
 /** "Update automatically": whether a verified version installs at launch or as the app quits. */
 function AutomaticUpdates({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
   const { t } = useI18n();
-  const labelId = useId();
+  const switchId = useId();
   const hintId = useId();
   return (
     <div className="flex items-start gap-3 self-stretch text-start">
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span id={labelId} className="text-xs">
+        <label htmlFor={switchId} className="text-xs">
           {t("update.automatic")}
-        </span>
+        </label>
         <span id={hintId} className="text-2xs text-muted-foreground">
           {t("update.automatic.hint")}
         </span>
       </span>
-      <Switch
-        checked={on}
-        aria-labelledby={labelId}
-        aria-describedby={hintId}
-        onCheckedChange={onChange}
-      />
+      <Switch id={switchId} checked={on} aria-describedby={hintId} onCheckedChange={onChange} />
     </div>
   );
 }

@@ -216,24 +216,30 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const path = yield* Path.Path;
       const parent = yield* freshHome;
       const home = path.join(parent, "j3");
-      const outside = yield* Effect.context<FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>();
+      const outside = yield* Effect.context<
+        FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+      >();
       // Once the server has found the home missing, another process makes it, open to others.
       const racing = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.FileSystem.of({
           ...fs,
           makeDirectory: (target, options) =>
-            fs.makeDirectory(target, options).pipe(
-              Effect.andThen(
-                path.resolve(target) === parent
-                  ? fs.makeDirectory(home).pipe(
-                      Effect.andThen(openToOthers(home)),
-                      Effect.provide(outside),
-                      Effect.orDie,
-                    )
-                  : Effect.void,
+            fs
+              .makeDirectory(target, options)
+              .pipe(
+                Effect.andThen(
+                  path.resolve(target) === parent
+                    ? fs
+                        .makeDirectory(home)
+                        .pipe(
+                          Effect.andThen(openToOthers(home)),
+                          Effect.provide(outside),
+                          Effect.orDie,
+                        )
+                    : Effect.void,
+                ),
               ),
-            ),
         }),
       );
       const exit = yield* withEnvironment(initialize, { J3_HOME: home }).pipe(

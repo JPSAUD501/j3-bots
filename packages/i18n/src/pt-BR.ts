@@ -1486,6 +1486,8 @@ const sentences = {
     "Não deu para abrir os bots para a rede, então eles continuam só neste computador.",
   "settings.phone.noNetwork":
     "Este computador não está em nenhuma rede local. Conecte-o ao Wi-Fi ou a um cabo.",
+  "settings.phone.notRunning":
+    "Os bots deste computador pararam, então o celular só vai alcançá-los quando voltarem a funcionar.",
   "settings.phone.retry": "Tentar de novo",
   "settings.phone.failed": "Não foi possível mudar isso. Tente de novo.",
   "settings.phone.restart.title": "Reiniciar os bots?",
