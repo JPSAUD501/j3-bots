@@ -456,7 +456,7 @@ it.effect("sends each push alone when Expo refuses a request for apps of two pro
     const expo = yield* ExpoWire;
     const sql = yield* SqlClient.SqlClient;
     const scout = yield* createBot("Scout");
-    const phone = yield* pushDevice("Phone");
+    yield* pushDevice("Phone");
     yield* pushDevice("Tablet");
     yield* pushDevice("Watch");
     const mixed = { status: 400, body: { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] } };
@@ -475,16 +475,23 @@ it.effect("sends each push alone when Expo refuses a request for apps of two pro
     assert.deepStrictEqual(expo.requests, [3, 1, 1]);
     // The first was taken and keeps its receipt; of the others, one send counts.
     assert.deepStrictEqual(yield* followed, ["accepted 1", "pending 0", "pending 1"]);
+    const takenFirst = expo.sends[3]?.to;
 
     yield* TestClock.adjust(sendBackoff(1));
     yield* deliverPending;
     assert.deepStrictEqual(expo.requests, [3, 1, 1, 2, 1, 1]);
     assert.deepStrictEqual(yield* followed, ["accepted 1", "accepted 1", "accepted 2"]);
+    // The one taken first was not sent alone again.
     assert.lengthOf(
-      expo.sends.filter(({ to }) => to === "ExponentPushToken[fixture-Phone]"),
+      expo.sends.filter(({ to }) => to === takenFirst),
       2,
     );
-    assert.strictEqual(yield* failuresOf(phone), 0);
+    assert.deepStrictEqual(
+      (yield* sql<{ readonly failures: number }>`SELECT failures FROM push_registrations`).map(
+        ({ failures }) => failures,
+      ),
+      [0, 0, 0],
+    );
   }).pipe(Effect.provide(domain)),
 );
 
