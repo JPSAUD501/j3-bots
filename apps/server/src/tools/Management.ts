@@ -150,7 +150,7 @@ const statusJson = (connector: Connector): Schema.Json => {
       return { needsSignIn: status.reason };
     case "failing":
       return { failing: status.reason };
-    case "vault-locked":
+    case "secrets-unavailable":
       return "secrets-unavailable";
   }
 };

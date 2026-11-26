@@ -426,8 +426,6 @@ describe("Connectors", () => {
     "records who changed a connector last, the operator or a bot, and when",
     () =>
       Effect.gen(function* () {
-        const vault = yield* Vault;
-        yield* vault.setup(PASSWORD);
         const bots = yield* Bots;
         const ana = yield* bots.create({
           commandId: CommandId.make("ana"),
