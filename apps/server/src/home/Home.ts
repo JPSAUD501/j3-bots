@@ -16,7 +16,7 @@ import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
 import { publishFile } from "../files.ts";
 import { UPDATE_LOCK, unfinishedRollback } from "../install/snapshot.ts";
 import { unfinishedImport } from "../transfer/importMark.ts";
-import { HOME_ENTRIES, providerHomes } from "./entries.ts";
+import { HOME_ENTRIES, providerFolders } from "./entries.ts";
 import {
   type AclVerdict,
   createPrivateFolder,
@@ -34,14 +34,15 @@ import {
 export const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
-/** The home, or a provider's home in it, is not a folder only this user can open. */
+/** The home, or a folder in it where a harness keeps its sign-in, is not one only this user can open. */
 export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
   home: Schema.String,
   /**
-   * The provider's home in it that is not private, where a harness keeps its
-   * sign-in, when that is what failed; otherwise the home itself did.
+   * The folder in it that is not private, `providers` or a provider's home
+   * in it, where the harnesses keep their sign-ins, when that is what
+   * failed; otherwise the home itself did.
    */
-  providerHome: Schema.optionalKey(Schema.String),
+  providerFolder: Schema.optionalKey(Schema.String),
   reason: Schema.Literals([
     "not-a-folder",
     "not-owned",
@@ -62,9 +63,9 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
    */
   detail: Schema.optionalKey(Schema.String),
 }) {
-  /** The folder that is not private: the provider's home, or the home. */
+  /** The folder that is not private: the one in the home, or the home. */
   get folder(): string {
-    return this.providerHome ?? this.home;
+    return this.providerFolder ?? this.home;
   }
 
   /** The problem, without the fix. */
@@ -75,9 +76,9 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
       case "not-owned":
         return `${this.folder} belongs to another user, so this user cannot keep it private.`;
       case "open-to-others":
-        return this.providerHome === undefined
+        return this.providerFolder === undefined
           ? `Other users on this machine can open ${this.home}, which holds the database, the engine's credential and the admin socket.`
-          : `Other users on this machine can open ${this.providerHome}, where a harness keeps its sign-in.`;
+          : `Other users on this machine can open ${this.providerFolder}, where the harnesses keep their sign-ins.`;
       case "closed-to-owner":
         return `This user's own permissions on ${this.folder} do not let it read, write and open the files there.`;
       case "unverifiable":
@@ -97,7 +98,7 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
       return `Check that ${this.folder} and every folder it is in are folders this user can open.`;
     }
     if (this.reason === "not-a-folder") {
-      return this.providerHome === undefined
+      return this.providerFolder === undefined
         ? "Move it away, or set J3_HOME to another folder."
         : "Move it away, then start the server again.";
     }
@@ -149,33 +150,44 @@ const lookAtHome = Effect.fnUntraced(function* (home: string) {
     Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
     Effect.mapError(
       (error) =>
-        new HomeNotPrivate({
-          home,
-          reason: "unreadable",
-          detail: Predicate.isError(error.cause) ? error.cause.message : error.message,
-        }),
+        new HomeNotPrivate({ home, reason: "unreadable", detail: whatTheSystemSaid(error) }),
     ),
   );
 });
 
+/** What the system said when it would not show a file. */
+const whatTheSystemSaid = (error: PlatformError.PlatformError): string =>
+  Predicate.isError(error.cause) ? error.cause.message : error.message;
+
 /**
- * `checkPrivate` of `home` and of each provider's home in it that exists
- * (`providerHomes`). On Windows every list is read in one PowerShell run.
+ * `checkPrivate` of `home` and of each folder in it where the harnesses keep
+ * their sign-ins (`providerFolders`) that exists. One the server cannot look
+ * at is refused, once what it could look at passes: a folder above it that
+ * this user may not open is what to repair first. On Windows every list is
+ * read in one PowerShell run.
  */
 export const checkPrivateHome = Effect.fn("Home.checkPrivateHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const info = yield* lookAtHome(home);
   if (Option.isNone(info)) return;
-  const inside = yield* Effect.forEach(providerHomes(path, home), (folder) =>
-    fs
-      .stat(folder)
-      .pipe(Effect.option, Effect.map(Option.map((found) => ({ folder, info: found })))),
-  );
-  yield* checkFolders(home, [
-    { folder: home, info: info.value },
-    ...inside.flatMap(Option.toArray),
-  ]);
+  const looked: Array<Looked> = [{ folder: home, info: info.value }];
+  for (const folder of providerFolders(path, home)) {
+    const found = yield* fs.stat(folder).pipe(Effect.result);
+    if (Result.isSuccess(found)) {
+      looked.push({ folder, info: found.success });
+      continue;
+    }
+    if (found.failure.reason._tag === "NotFound") continue;
+    yield* checkFolders(home, looked);
+    return yield* new HomeNotPrivate({
+      home,
+      providerFolder: folder,
+      reason: "unreadable",
+      detail: whatTheSystemSaid(found.failure),
+    });
+  }
+  yield* checkFolders(home, looked);
 });
 
 /** A folder `checkFolders` judges, with what a stat of it found. */
@@ -200,7 +212,7 @@ type Refusal = (folder: string, found: Finding) => HomeNotPrivate;
  */
 const checkFolders = Effect.fnUntraced(function* (home: string, folders: ReadonlyArray<Looked>) {
   const refusal: Refusal = (folder, found) =>
-    new HomeNotPrivate({ home, ...(folder === home ? {} : { providerHome: folder }), ...found });
+    new HomeNotPrivate({ home, ...(folder === home ? {} : { providerFolder: folder }), ...found });
   for (const { folder, info } of folders) {
     if (info.type !== "Directory") return yield* refusal(folder, { reason: "not-a-folder" });
   }

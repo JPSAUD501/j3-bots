@@ -141,13 +141,35 @@ describe("checking the server's home", () => {
       const home = yield* freshFolder;
       yield* fs.chmod(home, 0o700);
       const codex = path.join(home, "providers", "codex");
-      yield* fs.makeDirectory(codex, { recursive: true });
+      yield* fs.makeDirectory(codex, { recursive: true, mode: 0o700 });
       yield* fs.chmod(codex, 0o755);
       const refusal = yield* Effect.flip(Home.checkHome(home, linux));
       assert.strictEqual(refusal.reason, "open-to-others");
       assert.include(refusal.message, codex);
       assert.include(refusal.fix, `chmod 700 '${codex}'`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(process.getuid?.() === 0)(
+    "refuses a home whose providers folder is open to others, or hides the provider homes from this user",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* freshFolder;
+        yield* fs.chmod(home, 0o700);
+        const providers = path.join(home, "providers");
+        yield* fs.makeDirectory(path.join(providers, "codex"), { recursive: true, mode: 0o700 });
+        yield* fs.chmod(providers, 0o755);
+        const opened = yield* Effect.flip(Home.checkHome(home, linux));
+        yield* fs.chmod(providers, 0o000);
+        const hidden = yield* Effect.flip(Home.checkHome(home, linux));
+        yield* fs.chmod(providers, 0o700);
+        assert.strictEqual(opened.reason, "open-to-others");
+        assert.include(opened.message, providers);
+        assert.strictEqual(hidden.reason, "closed-to-owner");
+        assert.include(hidden.message, providers);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("on Windows, refuses a home where a provider's home others can open, by its list", () =>

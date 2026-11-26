@@ -10,7 +10,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { powerShellLiteral } from "@j3-bots/processes";
-import { providerHomes } from "@j3-bots/server/home-entries";
+import { providerFolders } from "@j3-bots/server/home-entries";
 import * as WindowsAclModule from "@j3-bots/server/windows-acl";
 
 // The data home of the server the app runs: `<userData>/server/home`, the
@@ -54,11 +54,12 @@ export interface HomeSystem {
 const shellWord = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 /**
- * The home, or a provider's home in it, is not one only this user can open,
- * or the app could not look at it (`unreadable`), and how to repair it.
+ * The home, or a folder in it where the harnesses keep their sign-ins, is
+ * not one only this user can open, or the app could not look at it
+ * (`unreadable`), and how to repair it.
  */
 class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
-  /** The folder refused: the home, or a provider's home in it, which holds the bots' data too. */
+  /** The folder refused: the home, or a folder in it where the harnesses keep their sign-ins. */
   home: Schema.String,
   platform: Schema.String,
   reason: Schema.Literals([
@@ -123,14 +124,24 @@ class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivat
   }
 }
 
+/** The refusal of `folder` on `system`. */
+const refusalOn =
+  (system: HomeSystem) =>
+  (
+    folder: string,
+    reason: HomeNotPrivate["reason"],
+    more: { readonly windowsRepair?: string; readonly detail?: string } = {},
+  ) =>
+    new HomeNotPrivate({ home: folder, platform: system.platform, reason, ...more });
+
 /**
  * Whether `home` may hold the server's data, as the server judges it when it
  * starts there, so the app never starts a server that then refuses its home:
  * a folder owned by this user that this user may read, write and search and
  * no group and no other user can open (on Windows, by its access list), or
- * nothing yet (`prepareHome` creates it private). Each provider's home in it
- * that exists is judged the same way, and a folder that is a link, or on
- * Windows a junction, by the folder it leads to.
+ * nothing yet (`prepareHome` creates it private). Each folder in it where
+ * the harnesses keep their sign-ins (`providerFolders`) that exists is
+ * judged the same way, and one the app cannot look at is refused.
  */
 export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
   home: string,
@@ -138,11 +149,7 @@ export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const refuse = (
-    folder: string,
-    reason: HomeNotPrivate["reason"],
-    more: { readonly windowsRepair?: string; readonly detail?: string } = {},
-  ) => new HomeNotPrivate({ home: folder, platform: system.platform, reason, ...more });
+  const refuse = refusalOn(system);
   // Only a home that is not there passes unseen; one the system would not
   // show is refused, never taken for missing.
   const info = yield* fs.stat(home).pipe(
@@ -154,14 +161,39 @@ export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
     ),
   );
   if (Option.isNone(info)) return;
-  // A provider's home the app cannot look at is left to the home's own
-  // verdict, as the server leaves it: a home this user cannot open hides it.
-  const inside = yield* Effect.forEach(providerHomes(path, home), (folder) =>
-    fs
-      .stat(folder)
-      .pipe(Effect.option, Effect.map(Option.map((found) => ({ folder, info: found })))),
-  );
-  const folders = [{ folder: home, info: info.value }, ...inside.flatMap(Option.toArray)];
+  const looked: Array<Looked> = [{ folder: home, info: info.value }];
+  for (const folder of providerFolders(path, home)) {
+    const found = yield* fs.stat(folder).pipe(Effect.result);
+    if (Result.isSuccess(found)) {
+      looked.push({ folder, info: found.success });
+      continue;
+    }
+    if (found.failure.reason._tag === "NotFound") continue;
+    // A folder above it that this user may not open is what to repair first.
+    yield* judgeFolders(home, looked, system);
+    return yield* refuse(folder, "unreadable", { detail: found.failure.message });
+  }
+  yield* judgeFolders(home, looked, system);
+});
+
+/** A folder `judgeFolders` judges, with what a stat of it found. */
+interface Looked {
+  readonly folder: string;
+  readonly info: FileSystem.File.Info;
+}
+
+/**
+ * Fails for the first of `folders`, `home` and folders in it, that is not
+ * private, as the server judges it. A link, or on Windows a junction, is
+ * judged by the folder it leads to.
+ */
+const judgeFolders = Effect.fnUntraced(function* (
+  home: string,
+  folders: ReadonlyArray<Looked>,
+  system: HomeSystem,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const refuse = refusalOn(system);
   for (const { folder, info } of folders) {
     if (info.type !== "Directory") return yield* refuse(folder, "not-a-folder");
   }

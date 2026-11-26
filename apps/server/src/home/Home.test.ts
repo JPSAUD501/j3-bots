@@ -146,13 +146,52 @@ it.layer(NodeServices.layer)("home", (it) => {
         _tag: "HomeNotPrivate",
         reason: "open-to-others",
         home: config.home,
-        providerHome: codex,
+        providerFolder: codex,
       });
       const refusal = Schema.is(Home.HomeNotPrivate)(error) ? error : undefined;
       assert.include(refusal?.message, "sign-in");
       assert.include(refusal?.fix, REPAIR);
       assert.include(refusal?.fix, "codex");
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "refuses a home whose providers folder other users can open, before a provider's home is made in it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* freshHome;
+        const providers = path.join(config.home, "providers");
+        yield* fs.makeDirectory(providers, { mode: 0o700 });
+        yield* openToOthers(providers);
+        const error = failure(yield* reserveIn(config).pipe(Effect.scoped, Effect.exit));
+        assert.deepInclude(error, {
+          _tag: "HomeNotPrivate",
+          reason: "open-to-others",
+          providerFolder: providers,
+        });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "refuses a home whose providers folder hides the provider homes from this user, rather than take them for missing",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* freshHome;
+        const providers = path.join(config.home, "providers");
+        yield* fs.makeDirectory(path.join(providers, "codex"), { recursive: true, mode: 0o700 });
+        yield* fs.chmod(providers, 0o000);
+        const exit = yield* reserveIn(config).pipe(Effect.scoped, Effect.exit);
+        yield* fs.chmod(providers, 0o700);
+        assert.deepInclude(failure(exit), {
+          _tag: "HomeNotPrivate",
+          reason: "closed-to-owner",
+          providerFolder: providers,
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect(
