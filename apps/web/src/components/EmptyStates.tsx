@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus, Room } from "@j3-bots/contracts";
-import { connectCommand, openingHeld, ownHarness } from "@j3-bots/client-runtime/presentation";
+import {
+  connectCommand,
+  openingHeld,
+  ownHarness,
+  providerDetail,
+} from "@j3-bots/client-runtime/presentation";
 import { avatarEnsemble } from "@j3-bots/design-tokens";
 import { type LucideIcon, SearchXIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -148,8 +153,7 @@ export function ProviderRow({
 }) {
   const { t } = useI18n();
   const line = providerLine(provider, usePresentation(), place);
-  const { status } = provider;
-  const detail = status._tag === "unavailable" ? status.detail : undefined;
+  const detail = providerDetail(provider);
   const own = ownHarness(provider);
   return (
     <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
@@ -161,7 +165,7 @@ export function ProviderRow({
           {line.text}
         </span>
       </div>
-      {!stale && detail !== undefined && (
+      {!stale && detail !== null && (
         <p className="text-xs text-pretty break-words text-muted-foreground">
           {t("provider.detail", { detail })}
         </p>

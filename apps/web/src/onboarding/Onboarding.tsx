@@ -7,6 +7,7 @@ import {
   type OnboardingFlow,
   type OnboardingStep,
   previousStep,
+  providerDetail,
   providerGate,
   resumedStep,
   showsConnect,
@@ -651,15 +652,16 @@ function ConnectStep({
         <ul className="flex w-full flex-col gap-3 text-start text-sm">
           {listed.map((provider) => {
             const line = providerLine(provider, ctx, place);
+            const detail = providerDetail(provider);
             return (
               <li key={provider.id} className="flex flex-col gap-1.5">
                 <div className="flex justify-between gap-3">
                   <span>{provider.name}</span>
                   <span className="text-muted-foreground">{line.text}</span>
                 </div>
-                {provider.status._tag === "unavailable" && provider.status.detail !== undefined && (
+                {detail !== null && (
                   <p className="text-xs break-words text-pretty text-muted-foreground">
-                    {t("provider.detail", { detail: provider.status.detail })}
+                    {t("provider.detail", { detail })}
                   </p>
                 )}
                 <ProviderFix provider={provider} place={place} actions={providerActions} />

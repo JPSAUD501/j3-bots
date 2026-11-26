@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a 190 MB archive needs an incremental hash; Effect has none.
 import * as NodeCrypto from "node:crypto";
-import type { EngineInstallProgress } from "@j3-bots/contracts";
-import { holdLockWaiting } from "@j3-bots/processes";
+import {
+  type EngineInstallFailure,
+  type EngineInstallProgress,
+  engineInstallFailures,
+} from "@j3-bots/contracts";
+import {
+  errnoCode,
+  fileFailure,
+  holdLockWaiting,
+  platformErrorCode,
+  whileHeld,
+} from "@j3-bots/processes";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import type * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -41,14 +52,15 @@ import { extractZip } from "./Unzip.ts";
 // The owner's own `t3` on the PATH is never used.
 
 /**
- * Why the pinned engine could not be installed. Retrying may help for every
- * reason but `unsupported-platform`. `storage`: a file under the engine's data
- * directory could not be written, as on a full disk.
+ * Why the pinned engine could not be installed (`EngineInstallFailure`).
+ * Retrying may help for every reason but `unsupported-platform`. A file
+ * under the engine's data directory that could not be written says what it
+ * comes down to (`fileFailure`): only `storage` is a full disk.
  */
 export class EngineInstallFailed extends Schema.TaggedError<EngineInstallFailed>()(
   "EngineInstallFailed",
   {
-    reason: Schema.Literals(["unsupported-platform", "download", "checksum", "extract", "storage"]),
+    reason: Schema.Literals(engineInstallFailures),
     version: Schema.String,
   },
 ) {
@@ -63,10 +75,59 @@ export class EngineInstallFailed extends Schema.TaggedError<EngineInstallFailed>
       case "extract":
         return `Unpacking T3 Code ${this.version} failed.`;
       case "storage":
-        return `Writing T3 Code ${this.version} to disk failed.`;
+        return `Writing T3 Code ${this.version} failed: the disk is full.`;
+      case "in-use":
+        return `Writing T3 Code ${this.version} failed: another program kept one of its files open.`;
+      case "permission":
+        return `Writing T3 Code ${this.version} failed: the system did not allow it.`;
+      case "outside-home":
+        return `Writing T3 Code ${this.version} failed: a location leads out of the server's private data.`;
+      case "files":
+        return `Writing T3 Code ${this.version} failed.`;
     }
   }
 }
+
+/** A file of the engine's install that could not be written, moved or removed. */
+type InstallFileError =
+  | PlatformError.PlatformError
+  | { readonly _tag: "StorageExposed"; readonly location: string }
+  | { readonly _tag: "LockUnusable"; readonly file: string; readonly cause: unknown };
+
+/** The system's code and the file for `error`, as the log keeps them. */
+const describedFile = (error: InstallFileError) => {
+  switch (error._tag) {
+    case "StorageExposed":
+      return { code: null, file: error.location };
+    case "LockUnusable":
+      return { code: errnoCode(error.cause), file: error.file };
+    case "PlatformError":
+      return {
+        code: platformErrorCode(error),
+        file:
+          error.reason._tag === "BadArgument" || error.reason.pathOrDescriptor === undefined
+            ? null
+            : String(error.reason.pathOrDescriptor),
+      };
+  }
+};
+
+/**
+ * Fails the install for `error` with the reason it truly comes down to,
+ * logged with the system's code and the file. On `platform`; `moves` for a
+ * rename or a removal, which Windows refuses while another program holds
+ * the file (`whileHeld`).
+ */
+const fileFailed = (platform: string, moves: boolean) =>
+  Effect.fnUntraced(function* (error: InstallFileError) {
+    const { code, file } = describedFile(error);
+    const reason: EngineInstallFailure =
+      error._tag === "StorageExposed" ? "outside-home" : fileFailure(code, { platform, moves });
+    yield* Effect.logWarning("A file of the engine's install could not be written").pipe(
+      Effect.annotateLogs({ reason, code, file }),
+    );
+    return yield* new EngineInstallFailed({ reason, version: pin.version });
+  });
 
 const RELEASE_PLATFORMS: Record<string, Record<string, string>> = {
   linux: { x64: "linux-x64", arm64: "linux-arm64" },
@@ -304,8 +365,21 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const path = yield* Path.Path;
   const fail = (reason: EngineInstallFailed["reason"]) =>
     new EngineInstallFailed({ reason, version: pin.version });
-  const storage = () => fail("storage");
-  const remove = (location: string) => input.files.remove(location).pipe(Effect.mapError(storage));
+  const writeFailed = fileFailed(input.platform, false);
+  const movedFailed = fileFailed(input.platform, true);
+  // A rename or a removal Windows refuses while another program, as a
+  // scanner looking at the new `t3.exe`, holds a file, is tried again a while.
+  const patiently = <A>(
+    operation: Effect.Effect<
+      A,
+      PlatformError.PlatformError | { readonly _tag: "StorageExposed"; readonly location: string }
+    >,
+  ) =>
+    whileHeld(operation, {
+      platform: input.platform,
+      codeOf: (error) => (error._tag === "PlatformError" ? platformErrorCode(error) : null),
+    }).pipe(Effect.catch(movedFailed));
+  const remove = (location: string) => patiently(input.files.remove(location));
 
   const target = runtimeDirectory(path, input.home);
   const binary = executableName(input.platform);
@@ -337,15 +411,12 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const { name: archive, format, digest: expected } = pinned.value;
 
   // Checked as the download is: a link or a folder there fails at once.
-  yield* input.files.writable(lock).pipe(Effect.mapError(storage));
+  yield* input.files.writable(lock).pipe(Effect.catch(writeFailed));
   return yield* Effect.gen(function* () {
     yield* holdLockWaiting(
       lock,
       (input.onDownload ?? (() => Effect.void))({ _tag: "waiting" }),
-    ).pipe(
-      Effect.tapError((cause) => Effect.logWarning(`Locking ${lock} failed`, cause)),
-      Effect.mapError(storage),
-    );
+    ).pipe(Effect.catch(writeFailed));
     // Another install may have finished while this one waited for the lock.
     if (yield* published) {
       yield* clearLeftovers;
@@ -360,7 +431,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 
     // Checked before anything is fetched, so a link or a folder there fails at
     // once rather than after a large download; the write itself checks again.
-    const have = yield* input.files.writable(partial).pipe(Effect.mapError(storage));
+    const have = yield* input.files.writable(partial).pipe(Effect.catch(writeFailed));
 
     // Resume with a range request; a server that ignores it sends the whole file again.
     const response = yield* client
@@ -387,15 +458,15 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
             input.onDownload ?? (() => Effect.void),
           ),
         )
-        .pipe(Effect.catchTags({ StorageExposed: storage, PlatformError: storage }));
+        .pipe(Effect.catchTags({ StorageExposed: writeFailed, PlatformError: writeFailed }));
     }
 
     // Checked again before it is read: the download may have taken long.
-    yield* input.files.writable(partial).pipe(Effect.mapError(storage));
+    yield* input.files.writable(partial).pipe(Effect.catch(writeFailed));
     const hash = NodeCrypto.createHash("sha256");
     yield* fs.stream(partial).pipe(
       Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
-      Effect.mapError(storage),
+      Effect.catch(writeFailed),
     );
     if (hash.digest("hex") !== expected) {
       // A corrupt partial would fail the same way forever; start over next time.
@@ -407,14 +478,14 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     // Whatever is at the staging name is removed (a link itself, never what it
     // leads to), and the folder is then created only if nothing is there, so a
     // link planted in between is never followed into.
-    yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
+    yield* input.files.folder(path.dirname(staging)).pipe(Effect.catch(writeFailed));
     yield* remove(staging);
-    yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
+    yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.catch(writeFailed));
     yield* Effect.gen(function* () {
       if (!(yield* unpack(format, partial, staging))) return yield* fail("extract");
 
       // The archive holds the server either at its root or in one top-level folder.
-      const entries = yield* fs.readDirectory(staging).pipe(Effect.mapError(storage));
+      const entries = yield* fs.readDirectory(staging).pipe(Effect.catch(writeFailed));
       const root =
         entries.includes(binary) || entries.length !== 1 || entries[0] === undefined
           ? staging
@@ -424,9 +495,9 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       }
       yield* fs
         .writeFileString(path.join(root, INSTALLED_MARKER), `${expected}\n`)
-        .pipe(Effect.mapError(storage));
+        .pipe(Effect.catch(writeFailed));
       yield* remove(target);
-      yield* fs.rename(root, target).pipe(Effect.mapError(storage));
+      yield* patiently(fs.rename(root, target));
     }).pipe(
       // An unpacking cut short, as by a full disk, can be most of the engine's
       // size: it goes at once, not at the next install. The download stays,
@@ -484,11 +555,7 @@ export const installForThisMachine = Effect.fn("engine.installForThisMachine")(f
   files: PrivateFiles,
   onDownload: (event: DownloadEvent) => Effect.Effect<void>,
 ) {
-  yield* files
-    .folder(home)
-    .pipe(
-      Effect.mapError(() => new EngineInstallFailed({ reason: "storage", version: pin.version })),
-    );
+  yield* files.folder(home).pipe(Effect.catch(fileFailed(process.platform, false)));
   return yield* ensureInstalled({
     home,
     platform: process.platform,
@@ -507,7 +574,8 @@ export const installForThisMachine = Effect.fn("engine.installForThisMachine")(f
  * - `starting` without `install` once the download has ended, while the
  *   archive is checked and unpacked, and once installed, until the supervisor
  *   starts the engine;
- * - `unavailable` (`install-failed`) after a failure, while it waits to retry.
+ * - `unavailable` (`install-failed`) after a failure, with why
+ *   (`installFailure`), while it waits to retry.
  * Each attempt's download goes to the log as `makeProgressLog` keeps it.
  * Answers the executable.
  */
@@ -538,7 +606,11 @@ export const installTracked = Effect.fnUntraced(function* <R>(options: {
     Effect.tapError((error) =>
       Effect.logWarning("Installing the engine failed", error).pipe(
         Effect.andThen(
-          SubscriptionRef.set(state, { _tag: "unavailable", reason: "install-failed" }),
+          SubscriptionRef.set(state, {
+            _tag: "unavailable",
+            reason: "install-failed",
+            installFailure: error.reason,
+          }),
         ),
       ),
     ),

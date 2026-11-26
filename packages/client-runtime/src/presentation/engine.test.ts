@@ -9,7 +9,7 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { ownHarness, providerFix, providerGate } from "./engine.ts";
+import { ownHarness, preparation, providerDetail, providerFix, providerGate } from "./engine.ts";
 
 const provider = (id: string, status: ProviderStatus["status"]): ProviderStatus => ({
   id: ProviderId.make(id),
@@ -115,6 +115,34 @@ describe("providerFix", () => {
     });
   });
 
+  it("follows J3 Bots' own install while the engine still checks or says it found nothing", () => {
+    const installing: HarnessCopy = {
+      source: "none",
+      version: null,
+      latest: null,
+      installable: true,
+      task: { _tag: "downloading", receivedBytes: 42_000_000, totalBytes: 230_000_000 },
+      last: null,
+    };
+    for (const status of [checking, unavailable("not-installed"), unavailable("failed")]) {
+      expect(providerFix({ ...provider("claude", status), copy: installing })).toEqual({
+        _tag: "getting",
+        harness: "claude-code",
+        task: installing.task,
+      });
+    }
+    const failed: HarnessCopy = {
+      ...installing,
+      task: null,
+      last: { _tag: "failed", reason: "in-use", at: DateTime.nowUnsafe() },
+    };
+    expect(providerFix({ ...provider("claude", checking), copy: failed })).toEqual({
+      _tag: "get",
+      harness: "claude-code",
+      failed: "in-use",
+    });
+  });
+
   it("offers nothing where no client can fix it, or the server cannot check again", () => {
     for (const status of [
       unavailable("disabled"),
@@ -153,5 +181,96 @@ describe("ownHarness", () => {
   it("is null for the operator's own harness, and on a server that installs none", () => {
     expect(ownHarness(ready({ ...copy, source: "operator", version: null }))).toBeNull();
     expect(ownHarness(provider("claude", { _tag: "ready" }))).toBeNull();
+  });
+});
+
+describe("providerDetail", () => {
+  const notFound = {
+    _tag: "unavailable",
+    checking: false,
+    reason: "not-installed",
+    detail: "Claude Agent CLI (`claude`) was not found on PATH.",
+  } as const;
+  const copy = (source: HarnessCopy["source"], installable: boolean): HarnessCopy => ({
+    source,
+    version: null,
+    latest: null,
+    installable,
+    task: null,
+    last: null,
+  });
+
+  it("leaves out the engine's words about a harness J3 Bots installs itself", () => {
+    expect(
+      providerDetail({ ...provider("claude", notFound), copy: copy("none", true) }),
+    ).toBeNull();
+  });
+
+  it("keeps them where only the operator can act", () => {
+    for (const status of [
+      { ...provider("claude", notFound), copy: copy("operator", true) },
+      { ...provider("claude", notFound), copy: copy("none", false) },
+      provider("claude", notFound),
+    ]) {
+      expect(providerDetail(status)).toBe(notFound.detail);
+    }
+  });
+});
+
+describe("preparation", () => {
+  const copy = (change: Partial<HarnessCopy>): HarnessCopy => ({
+    source: "none",
+    version: null,
+    latest: null,
+    installable: true,
+    task: null,
+    last: null,
+    ...change,
+  });
+
+  it("follows the engine and both harnesses downloading at once, before the engine is ready", () => {
+    const status: EngineStatus = {
+      state: { _tag: "starting", install: { receivedBytes: 10, totalBytes: 100 } },
+      pinnedVersion: "0.1.11",
+      providers: [],
+      harnesses: {
+        "claude-code": copy({
+          task: { _tag: "downloading", receivedBytes: 20, totalBytes: 200 },
+        }),
+        codex: copy({ task: { _tag: "verifying" } }),
+      },
+    };
+    expect(preparation(status)).toEqual({
+      items: [
+        { id: "engine", state: "downloading", receivedBytes: 10, totalBytes: 100 },
+        { id: "claude-code", state: "downloading", receivedBytes: 20, totalBytes: 200 },
+        { id: "codex", state: "installing", receivedBytes: 0, totalBytes: null },
+      ],
+      ready: false,
+    });
+  });
+
+  it("is ready once everything J3 Bots installs is, leaving out the operator's own", () => {
+    const status: EngineStatus = {
+      ...engine(),
+      harnesses: {
+        "claude-code": copy({ source: "j3", version: "2.1.326" }),
+        codex: copy({ source: "operator" }),
+      },
+    };
+    const ready = preparation(status);
+    expect(ready.items.map((item) => item.id)).toEqual(["engine", "claude-code"]);
+    expect(ready.ready).toBe(true);
+    const failed = preparation({
+      ...status,
+      harnesses: {
+        "claude-code": copy({
+          last: { _tag: "failed", reason: "storage", at: DateTime.nowUnsafe() },
+        }),
+        codex: copy({ source: "operator" }),
+      },
+    });
+    expect(failed.items[1]?.state).toBe("failed");
+    expect(failed.ready).toBe(false);
   });
 });

@@ -22,11 +22,23 @@ export type HarnessVersion = typeof HarnessVersion.Type;
  *   publisher gave no checksum for it;
  * - `check`: the new copy did not run, or did not say it is the version the
  *   publisher listed;
- * - `storage`: it could not be written into the server's data directory, as
- *   on a full disk;
+ * - `storage`: the disk that holds the server's data directory is full
+ *   (`ENOSPC`, or `EDQUOT` for a quota). Before 0.10.0 a server gave it for
+ *   any file that could not be written, which the four after it now tell
+ *   apart;
  * - `engine`: the engine could not take the new copy, as when it was down;
  *   the provider keeps the copy it ran;
+ * - `in-use`: another program, as a virus scanner, kept a file of the copy
+ *   open, and Windows refused to move or remove it for longer than the
+ *   server waits;
+ * - `permission`: the system did not let the server write in its data
+ *   directory;
+ * - `outside-home`: a location the server was about to write leads, through
+ *   a link, out of its data directory, so it did not write it;
+ * - `files`: a file could not be written for another reason, which the
+ *   server's log gives with the system's code and the file;
  * - `unknown`, as a client reads it: a reason a newer server gives.
+ * The last four are additive: a client older than them reads `unknown`.
  */
 export const harnessInstallFailures = [
   "unreachable",
@@ -34,6 +46,10 @@ export const harnessInstallFailures = [
   "check",
   "storage",
   "engine",
+  "in-use",
+  "permission",
+  "outside-home",
+  "files",
 ] as const;
 export const HarnessInstallFailure = OpenLiterals(harnessInstallFailures);
 export type HarnessInstallFailure = typeof HarnessInstallFailure.Type;

@@ -198,7 +198,7 @@ describe("ensureInstalled", () => {
         prepare: ({ partial }) => fs.symlink(outside, partial),
       });
 
-      assert.strictEqual(reason, "storage");
+      assert.strictEqual(reason, "outside-home");
       assert.deepStrictEqual(requests, []);
       assert.strictEqual(yield* fs.readFileString(outside), "the owner's file");
       assert.strictEqual((yield* fs.lstat(partial)).type, "SymbolicLink");
@@ -320,7 +320,7 @@ describe("ensureInstalled", () => {
           },
         });
 
-        assert.strictEqual(reason, "storage");
+        assert.strictEqual(reason, "outside-home");
         assert.strictEqual(yield* fs.readFileString(ownerFile), "the owner's file");
       }).pipe(Effect.scoped, Effect.provide(machine)),
   );
@@ -614,8 +614,8 @@ describe("installTracked", () => {
       assert.deepStrictEqual(seen, [
         { _tag: "starting" },
         { _tag: "starting", install: { receivedBytes: 4_000_000, totalBytes: 10_000_000 } },
-        // Waiting to try again, the failure shows; the next download replaces it.
-        { _tag: "unavailable", reason: "install-failed" },
+        // Waiting to try again, the failure shows, with why; the next download replaces it.
+        { _tag: "unavailable", reason: "install-failed", installFailure: "download" },
         { _tag: "starting", install: { receivedBytes: 2_000_000, totalBytes: 10_000_000 } },
         { _tag: "starting" },
         { _tag: "starting" },

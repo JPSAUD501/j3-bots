@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { IntentResult } from "@j3-bots/client-runtime";
-import { type OwnHarness, ownHarness, providerFix } from "@j3-bots/client-runtime/presentation";
+import {
+  type OwnHarness,
+  ownHarness,
+  providerDetail,
+  providerFix,
+} from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import {
   harnessFailureText,
@@ -42,8 +47,7 @@ export function ProviderRow(props: {
   // A phone never runs the server: its providers are always the server's.
   const line = providerLine(props.provider, usePresentation(), "server");
   const stale = props.stale === true;
-  const { status } = props.provider;
-  const detail = status._tag === "unavailable" ? status.detail : undefined;
+  const detail = providerDetail(props.provider);
   const own = props.version === true ? ownHarness(props.provider) : null;
   return (
     <View className="gap-1.5 rounded-md border border-border px-3 py-2">
@@ -53,7 +57,7 @@ export function ProviderRow(props: {
           {line.text}
         </Text>
       </View>
-      {!stale && detail !== undefined && (
+      {!stale && detail !== null && (
         <Text selectable className="text-xs text-muted-foreground">
           {t("provider.detail", { detail })}
         </Text>

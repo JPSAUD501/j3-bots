@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
+import type {
+  EngineInstallFailure,
+  EngineStatus,
+  ProviderStatus,
+  UnavailableReason,
+} from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -383,13 +388,31 @@ const UNAVAILABLE_REASONS: Record<
     fix: 'Stop that program, or set "enginePort" in the configuration to a free port and restart the service.',
   },
   "install-failed": {
-    summary: "The server could not download or check the pinned engine.",
-    fix: "Check this machine's internet connection and disk space, then restart the service.",
+    summary: "The server could not install the pinned engine; it keeps trying.",
+    fix: "Read why in the log: `journalctl --user -u j3-bots -n 100`.",
   },
   "credential-refused": {
     summary: "The engine refused the server's credential.",
     fix: "Restart the service. If it happens again, report it with the log.",
   },
+};
+
+/** What mends an engine install that failed for each reason the server gives (`installFailure`). */
+const INSTALL_FIXES: Record<EngineInstallFailure, string> = {
+  "unsupported-platform": "Run J3 Bots on Linux (x64 or arm64), macOS (arm64) or Windows (x64).",
+  download: "Check this machine's internet connection; the server tries again on its own.",
+  checksum:
+    "The server downloads it again on its own. If it keeps failing, report it with the log.",
+  extract: "The server tries again on its own. If it keeps failing, report it with the log.",
+  storage:
+    "Free some space on the disk that holds the data directory; the server tries again on its own.",
+  "in-use":
+    "Another program, such as a virus scanner, kept one of its files open. The server tries again on its own; if it keeps failing, let the scanner skip the data directory.",
+  permission: "Make the data directory and everything in it owned by the user the service runs as.",
+  "outside-home":
+    "A link in the data directory leads out of it. Remove the link; the server tries again on its own.",
+  files: "Read why in the log: `journalctl --user -u j3-bots -n 100`.",
+  unknown: "Read why in the log: `journalctl --user -u j3-bots -n 100`.",
 };
 
 const engineCheck = Effect.fn("doctor.engine")(function* (
@@ -461,7 +484,13 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
       );
     case "unavailable": {
       const reason = UNAVAILABLE_REASONS[engine.state.reason];
-      return check("Engine", "problem", reason.summary, reason.fix);
+      const { installFailure } = engine.state;
+      return check(
+        "Engine",
+        "problem",
+        reason.summary,
+        installFailure === undefined ? reason.fix : INSTALL_FIXES[installFailure],
+      );
     }
   }
 });

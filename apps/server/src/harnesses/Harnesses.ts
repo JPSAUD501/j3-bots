@@ -2,6 +2,7 @@
 import {
   Conflict,
   type EngineStatus,
+  type HarnessCopies,
   type HarnessCopy,
   type HarnessOutcome,
   type HarnessTask,
@@ -35,7 +36,7 @@ import { SettingsService } from "../settings/SettingsService.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
 import type { Distribution, Release } from "./distributions.ts";
-import { HarnessFailed } from "./failure.ts";
+import { fileFailed, HarnessFailed } from "./failure.ts";
 import { installRelease, type Probe } from "./install.ts";
 import {
   copyLayout,
@@ -49,12 +50,16 @@ import {
 import { HarnessSources } from "./sources.ts";
 
 // J3 Bots' own copies of Claude Code and Codex
-// (docs/decisions/0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md):
-// installed when a client asks, for a harness the operator has none of on
-// the server's `PATH`, and kept up to date. Each maker's listing is read a
-// minute after the server starts and about every six hours after; a newer
-// version than J3 Bots' copy is installed then unless the operator turned
-// that off (`autoUpdateHarnesses`), and a client can ask for it at any time.
+// (docs/decisions/0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md,
+// docs/decisions/0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md):
+// installed for a harness the operator has none of on the server's `PATH`,
+// both at once as soon as the server starts, beside the engine's own
+// download, and again at each check while one is missing, whatever
+// `autoUpdateHarnesses` says, which is about updates; a client may ask too.
+// Each maker's listing is read a minute after the server starts and about
+// every six hours after; a newer version than J3 Bots' copy is installed
+// then unless the operator turned that off (`autoUpdateHarnesses`), and a
+// client can ask for it at any time.
 //
 // A new version is downloaded, checked against its maker's SHA-256, run once,
 // and installed beside the one the provider runs, which keeps running. The
@@ -357,8 +362,11 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
             );
           if (!taken) return { _tag: "waiting" } as const;
           yield* currentText(copy).pipe(
+            // An installed copy always encodes: a failure is a defect.
+            Effect.orDie,
             Effect.flatMap((text) => files.writeFile(layout.current, text)),
-            Effect.mapError(() => new HarnessFailed({ reason: "storage" })),
+            // Ends in a rename over the file, as a move does.
+            Effect.catch(fileFailed(options.platform, true)),
             Effect.tapError(() => putBack),
           );
           // Recorded in the same step: a cancel that lands meanwhile finds
@@ -553,10 +561,21 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
   });
 
   /**
-   * Reads `harness`'s listing, and installs a newer version than J3 Bots'
-   * copy when updates install by themselves, as they do once it was read. A
-   * harness the operator has on `PATH`, and no copy of J3 Bots', is theirs
-   * to update: it is not read.
+   * Whether `harness` has no copy at all to run and J3 Bots should install
+   * one without being asked: none of J3 Bots', none of the operator's, a
+   * build for this machine, and no install of it the operator cancelled.
+   */
+  const missing = (harness: SignInHarness, slot: Slot) =>
+    Option.isNone(slot.installed) &&
+    !slot.operator &&
+    options.distributions[harness].installable &&
+    slot.state.last?._tag !== "cancelled";
+
+  /**
+   * Reads `harness`'s listing, and installs it when it is `missing`, or a
+   * newer version than J3 Bots' copy when updates install by themselves, as
+   * they do once it was read. A harness the operator has on `PATH`, and no
+   * copy of J3 Bots', is theirs to update: it is not read.
    */
   const check = Effect.fn("Harnesses.check")(function* (harness: SignInHarness) {
     const operator = yield* options.onPath(harness);
@@ -566,7 +585,9 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
     if (Option.isNone(slot.installed) && operator) return true;
     const release = yield* latestOf(harness).pipe(Effect.option);
     if (Option.isNone(release)) return false;
-    if (
+    if (missing(harness, slot)) {
+      yield* start(harness, release, false);
+    } else if (
       (yield* SubscriptionRef.get(autoUpdate)) &&
       Option.isSome(slot.installed) &&
       isNewerHarness(release.value.version, slot.installed.value.version)
@@ -614,6 +635,21 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
       ),
     ),
     Effect.forkIn(scope),
+  );
+
+  // Each harness that is missing starts installing now, beside the other and
+  // the engine's download, so that a first run finds them installed or under
+  // way. As a client's request, it is not given up when updates are off.
+  yield* Effect.forEach(
+    HARNESS_IDS,
+    (harness) =>
+      Effect.gen(function* () {
+        const slot = yield* slotOf(harness);
+        if (slot !== undefined && missing(harness, slot)) {
+          yield* start(harness, Option.none(), false);
+        }
+      }),
+    { discard: true },
   );
 
   // Each listing on its own: a minute after the start, then about every six
@@ -696,16 +732,15 @@ export const layer = Layer.effect(
 );
 
 /**
- * `status`, each Claude Code and Codex provider with its harness's copy
- * (`ProviderStatus.copy`). One that runs J3 Bots' own copy leaves out the
+ * `status` with each harness's copy (`EngineStatus.harnesses`), whatever the
+ * engine's state, and each Claude Code and Codex provider with its harness's
+ * copy (`ProviderStatus.copy`). One that runs J3 Bots' own copy leaves out the
  * engine's `version` and `update`: that copy is updated by J3 Bots, never by
  * the engine's update, which would run the harness's own updater on it.
  */
-export const withCopies = (
-  status: EngineStatus,
-  copies: Readonly<Record<SignInHarness, HarnessCopy>>,
-): EngineStatus => ({
+export const withCopies = (status: EngineStatus, copies: HarnessCopies): EngineStatus => ({
   ...status,
+  harnesses: copies,
   providers: status.providers.map((provider) => {
     const harness = HARNESS_IDS.find((id) => id === provider.id);
     if (harness === undefined) return provider;

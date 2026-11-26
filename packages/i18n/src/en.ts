@@ -801,6 +801,10 @@ export const en = {
   "provider.noModels": "Connected, but the engine lists no model for it yet",
   "provider.unavailable": "Not available right now",
   "provider.checking": "Checking…",
+  "provider.installing": "Installing…",
+  "provider.installing.progress": "Installing… {received} of {total} MB",
+  "provider.installing.progressNoTotal": "Installing… {received} MB",
+  "provider.installFailed": "Couldn’t install it",
   "provider.notInstalled.here": "Not installed on this computer",
   "provider.notInstalled.server": "Not installed on the server",
   "provider.failed": "Found, but it failed to start",
@@ -835,7 +839,15 @@ export const en = {
   "provider.install.failed.checksum":
     "The download didn’t match its maker’s checksum, so nothing was installed.",
   "provider.install.failed.check": "The downloaded copy didn’t start, so nothing was installed.",
-  "provider.install.failed.storage": "Couldn’t save it on the server. Check its free disk space.",
+  "provider.install.failed.storage":
+    "The disk where J3 Bots keeps its files is full. Free up some space, then try again.",
+  "provider.install.failed.inUse":
+    "Another program, such as an antivirus, was using its files. Try again in a moment.",
+  "provider.install.failed.permission":
+    "J3 Bots wasn’t allowed to save its files. Try again; if it keeps happening, restart the computer.",
+  "provider.install.failed.outsideHome":
+    "A shortcut in J3 Bots’ folder points somewhere else, so J3 Bots didn’t save there. Try again; if it keeps happening, ask for help.",
+  "provider.install.failed.files": "J3 Bots couldn’t save its files. Try again.",
   "provider.install.failed.engine":
     "The engine couldn’t switch to it, so the copy before keeps running.",
   "provider.install.failed.unknown": "It couldn’t be installed.",
@@ -1276,8 +1288,17 @@ export const en = {
   "engine.portInUse.body":
     "Another program is using the port the engine needs. Stop that program, or set J3_ENGINE_PORT to a free port, and restart J3 Bots.",
   "engine.installFailed.title": "The engine couldn’t be installed",
-  "engine.installFailed.body":
-    "J3 Bots couldn’t download or check its engine, and keeps trying. Check that the machine is online and has free disk space.",
+  "engine.installFailed.body": "J3 Bots couldn’t install its engine, and keeps trying on its own.",
+  "engine.installFailed.body.download":
+    "J3 Bots couldn’t download its engine, and keeps trying on its own. Check that the machine is online.",
+  "engine.installFailed.body.storage":
+    "The disk where J3 Bots keeps its files is full. Free up some space; J3 Bots keeps trying on its own.",
+  "engine.installFailed.body.inUse":
+    "Another program, such as an antivirus, was using its files. J3 Bots keeps trying on its own.",
+  "engine.installFailed.body.permission":
+    "J3 Bots wasn’t allowed to save its engine’s files. It keeps trying; if it keeps failing, restart the computer.",
+  "engine.installFailed.body.unsupported":
+    "Its engine has no version for this kind of computer, so J3 Bots can’t run here.",
   "engine.credentialRefused.title": "The engine refused J3 Bots",
   "engine.credentialRefused.body":
     "The engine won’t accept J3 Bots’ credential, even a new one. Restart J3 Bots; if it keeps happening, check its log.",

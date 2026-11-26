@@ -2326,7 +2326,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             };
           case "unavailable":
             return {
-              state: { _tag: "unavailable", reason: current.reason },
+              state:
+                current.installFailure === undefined
+                  ? { _tag: "unavailable", reason: current.reason }
+                  : {
+                      _tag: "unavailable",
+                      reason: current.reason,
+                      installFailure: current.installFailure,
+                    },
               pinnedVersion: pin.version,
               providers: [],
             };

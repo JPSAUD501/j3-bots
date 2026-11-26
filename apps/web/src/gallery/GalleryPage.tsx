@@ -2584,6 +2584,11 @@ const engines = {
   down: { ...team.engine, state: { _tag: "unavailable", reason: "down" } },
   portInUse: { ...team.engine, state: { _tag: "unavailable", reason: "port-in-use" } },
   installFailed: { ...team.engine, state: { _tag: "unavailable", reason: "install-failed" } },
+  /** The engine's download done, its move into place refused while another program held it. */
+  installFailedInUse: {
+    ...team.engine,
+    state: { _tag: "unavailable", reason: "install-failed", installFailure: "in-use" },
+  },
   credentialRefused: {
     ...team.engine,
     state: { _tag: "unavailable", reason: "credential-refused" },
@@ -2671,6 +2676,36 @@ const engines = {
         task: { _tag: "downloading", receivedBytes: 61_000_000, totalBytes: 200_434_347 },
       },
     },
+  ),
+  /**
+   * The first run: neither harness on the machine, J3 Bots downloading both.
+   * The engine's own "not found" detail is there, as it sends it, and stays off the screen.
+   */
+  bothInstalling: engineWithCopies(
+    {
+      status: { ...notInstalled, detail: "Claude Agent CLI (`claude`) is not installed." },
+      copy: {
+        ...noCopy,
+        latest: "2.1.330",
+        task: { _tag: "downloading", receivedBytes: 42_000_000, totalBytes: 230_000_000 },
+      },
+    },
+    {
+      status: { ...notInstalled, detail: "Codex CLI (`codex`) is not installed or not on PATH." },
+      copy: { ...noCopy, task: { _tag: "verifying" } },
+    },
+  ),
+  /** Claude Code's first install refused while another program held its new copy. */
+  copyInUse: engineWithCopies(
+    {
+      status: { ...notInstalled, detail: "Claude Agent CLI (`claude`) is not installed." },
+      copy: {
+        ...noCopy,
+        latest: "2.1.330",
+        last: { _tag: "failed", reason: "in-use", at: minutesAgo(1) },
+      },
+    },
+    { status: { _tag: "ready" }, copy: { ...noCopy, source: "j3", version: "0.172.0" } },
   ),
   /** Claude Code's update waits for its bots; Codex's install failed its checksum. */
   copyWaitingAndFailed: engineWithCopies(
@@ -2851,6 +2886,18 @@ function EngineSettingsSection() {
         <Frame padded label="The download failed" width={420} height={160}>
           <EngineSection
             engine={{ ...engines.installFailed, providers: [] }}
+            stale={false}
+            actions={providerActions}
+          />
+        </Frame>
+        <Frame
+          padded
+          label="The download failed: another program held the engine's files"
+          width={420}
+          height={180}
+        >
+          <EngineSection
+            engine={{ ...engines.installFailedInUse, providers: [] }}
             stale={false}
             actions={providerActions}
           />
@@ -3128,6 +3175,20 @@ function FirstRunSection() {
           height={760}
         >
           <FirstRunAt step="connect" engine={engines.notInstalled} />
+        </Frame>
+        <Frame
+          label="First run: the server installing both harnesses, the engine's “not found” kept off"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.bothInstalling} />
+        </Frame>
+        <Frame
+          label="Claude Code's install refused while another program held it, with its own fix"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.copyInUse} />
         </Frame>
         <Frame label="Providers turned off on the server" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.disabled} />

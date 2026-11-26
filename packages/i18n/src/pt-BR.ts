@@ -804,6 +804,10 @@ const sentences = {
   "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
   "provider.unavailable": "Indisponível agora",
   "provider.checking": "Verificando…",
+  "provider.installing": "Instalando…",
+  "provider.installing.progress": "Instalando… {received} de {total} MB",
+  "provider.installing.progressNoTotal": "Instalando… {received} MB",
+  "provider.installFailed": "Não deu para instalar",
   "provider.notInstalled.here": "Não instalado neste computador",
   "provider.notInstalled.server": "Não instalado no servidor",
   "provider.failed": "Encontrado, mas não conseguiu iniciar",
@@ -841,7 +845,15 @@ const sentences = {
     "O download não bateu com a soma de verificação do fabricante, então nada foi instalado.",
   "provider.install.failed.check": "A cópia baixada não iniciou, então nada foi instalado.",
   "provider.install.failed.storage":
-    "Não deu para salvar no servidor. Confira o espaço livre em disco.",
+    "O disco onde o J3 Bots guarda os arquivos dele está cheio. Libere um pouco de espaço e tente de novo.",
+  "provider.install.failed.inUse":
+    "Outro programa, como um antivírus, estava usando os arquivos dele. Tente de novo daqui a pouco.",
+  "provider.install.failed.permission":
+    "O J3 Bots não teve permissão para salvar os arquivos dele. Tente de novo; se continuar, reinicie o computador.",
+  "provider.install.failed.outsideHome":
+    "Um atalho na pasta do J3 Bots aponta para outro lugar, então o J3 Bots não salvou lá. Tente de novo; se continuar, peça ajuda.",
+  "provider.install.failed.files":
+    "O J3 Bots não conseguiu salvar os arquivos dele. Tente de novo.",
   "provider.install.failed.engine":
     "O motor não conseguiu trocar para ela, então a cópia anterior continua rodando.",
   "provider.install.failed.unknown": "Não deu para instalar.",
@@ -1295,7 +1307,17 @@ const sentences = {
     "Outro programa usa a porta de que o motor precisa. Pare esse programa, ou defina J3_ENGINE_PORT com uma porta livre, e reinicie o J3 Bots.",
   "engine.installFailed.title": "O motor não pôde ser instalado",
   "engine.installFailed.body":
-    "O J3 Bots não conseguiu baixar ou verificar o motor e continua tentando. Verifique se a máquina tem internet e espaço livre em disco.",
+    "O J3 Bots não conseguiu instalar o motor e continua tentando sozinho.",
+  "engine.installFailed.body.download":
+    "O J3 Bots não conseguiu baixar o motor e continua tentando sozinho. Confira se a máquina tem internet.",
+  "engine.installFailed.body.storage":
+    "O disco onde o J3 Bots guarda os arquivos dele está cheio. Libere um pouco de espaço; o J3 Bots continua tentando sozinho.",
+  "engine.installFailed.body.inUse":
+    "Outro programa, como um antivírus, estava usando os arquivos dele. O J3 Bots continua tentando sozinho.",
+  "engine.installFailed.body.permission":
+    "O J3 Bots não teve permissão para salvar os arquivos do motor. Ele continua tentando; se não der certo, reinicie o computador.",
+  "engine.installFailed.body.unsupported":
+    "O motor não tem versão para este tipo de computador, então o J3 Bots não roda aqui.",
   "engine.credentialRefused.title": "O motor recusou o J3 Bots",
   "engine.credentialRefused.body":
     "O motor não aceita a credencial do J3 Bots, nem uma nova. Reinicie o J3 Bots; se continuar, veja o log dele.",
