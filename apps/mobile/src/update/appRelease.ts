@@ -46,10 +46,10 @@ export const apkRefusal = (input: {
   if (apk === null || apk.packageName !== installed.packageName || apk.versionName !== version) {
     return "not-this-app";
   }
-  // Two nightlies of one day share a version code, which Android takes over
-  // each other: only a lower one is refused.
+  // A newer version has a higher version code (androidVersionCode), a nightly
+  // too, since a day has one nightly at most.
   if (
-    apk.versionCode < installed.versionCode ||
+    apk.versionCode <= installed.versionCode ||
     installed.versionName === null ||
     !isNewer(version, installed.versionName)
   ) {

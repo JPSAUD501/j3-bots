@@ -372,6 +372,24 @@ jobs:
         working-directory: apps/mobile
         run: vp exec -- expo prebuild --platform android --no-install
 
+      # The build's Gradle plugins come from the Gradle Plugin Portal, which
+      # now and then does not answer for a while, and Gradle's own retries
+      # last seconds. Configuring the build resolves every plugin, so this
+      # step does only that and tries again after a pause; the build then
+      # takes the plugins from Gradle's cache. A failure that outlasts three
+      # tries is the build's own, and Gradle's message says what it is.
+      - name: Resolve the Gradle plugins
+        working-directory: apps/mobile/android
+        run: |
+          for try in 1 2 3; do
+            if ./gradlew help --no-daemon -PreactNativeArchitectures=arm64-v8a; then exit 0; fi
+            if ((try < 3)); then
+              echo "::warning::Configuring the build failed (try $try of 3); trying again in $((try * 60)) seconds."
+              sleep $((try * 60))
+            fi
+          done
+          exit 1
+
       - name: Build
         working-directory: apps/mobile/android
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a

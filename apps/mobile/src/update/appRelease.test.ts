@@ -63,31 +63,18 @@ describe("whether a downloaded APK may replace the app", () => {
     }
   });
 
-  it("refuses a downgrade, by version or by version code", () => {
+  it("refuses a release that is not newer, or whose version code is not higher", () => {
     expect(apkRefusal({ apk: apk("0.3.0", 30_099), installed, version: "0.3.0" })).toBe(
       "not-newer",
     );
     expect(apkRefusal({ apk: apk("0.3.1", 3_019_999), installed, version: "0.3.1" })).toBe(
       "not-newer",
     );
-    expect(apkRefusal({ apk: apk("0.3.2", 3_000_000), installed, version: "0.3.2" })).toBe(
-      "not-newer",
-    );
-  });
-
-  it("takes a later nightly of the same day, which has the same version code", () => {
-    const nightly = {
-      ...installed,
-      versionName: "0.3.2-nightly.20261124.7",
-      versionCode: 3_020_328,
-    };
-    expect(
-      apkRefusal({
-        apk: apk("0.3.2-nightly.20261124.8", 3_020_328),
-        installed: nightly,
-        version: "0.3.2-nightly.20261124.8",
-      }),
-    ).toBeNull();
+    for (const code of [3_000_000, installed.versionCode]) {
+      expect(apkRefusal({ apk: apk("0.3.2", code), installed, version: "0.3.2" })).toBe(
+        "not-newer",
+      );
+    }
   });
 });
 

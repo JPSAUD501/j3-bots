@@ -274,8 +274,11 @@ jobs:
         include:
           - platform: linux-x64
             runner: ubuntu-24.04
+          # Built as a nightly, whose release's tag is its version with no
+          # `v`, so the smoke installs both kinds of release.
           - platform: linux-arm64
             runner: ubuntu-24.04-arm
+            nightly: true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
@@ -288,6 +291,16 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      # The version the nightly workflow would name after this one, set as
+      # the release workflow sets it.
+      - name: Version as a nightly's
+        if: matrix.nightly
+        shell: bash
+        working-directory: apps/server
+        run: |
+          version="$(../../scripts/nightly-version.sh "$(npm pkg get version | tr -d '"')" "$(date -u +%Y%m%d)" "$GITHUB_RUN_NUMBER")"
+          npm pkg set version="$version"
 
       # The web client and the server bundle, with the pinned Node for this
       # runner's platform, checked against its checksum in package.json.

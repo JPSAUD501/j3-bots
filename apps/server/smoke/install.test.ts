@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { runToEnd, searchPathWithoutNode } from "./host.ts";
+import { releaseTag } from "@j3-bots/release";
 import { latestPage, MIRROR_PUBLIC_KEY, mirror, releaseArchive, releaseFiles } from "./mirror.ts";
 
 // scripts/install.sh, run as a stranger runs it, against a static mirror of a
@@ -54,7 +55,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
         const { name, version, bytes } = yield* releaseArchive("J3_RELEASE_ARCHIVE");
         const files = releaseFiles(version, name, bytes);
         files.set(
-          `/download/v${version}/install.sh`,
+          `/download/${releaseTag(version)}/install.sh`,
           yield* fs.readFile(path.resolve(INSTALL_SCRIPT)),
         );
         const site = yield* mirror(files);
@@ -68,13 +69,14 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
         yield* fs.writeFileString(path.join(host.data, "j3.sqlite"), "");
 
         // By name, as a pre-release is installed: what a tag's own release notes say to run.
+        // CI builds one archive as a nightly, whose tag has no `v`.
         const installed = yield* runToEnd(
           ChildProcess.make(
             "sh",
             [
               "-c",
               'curl -fsSL "$0" | sh -s -- --version "$1" --no-service',
-              `${site.url}/download/v${version}/install.sh`,
+              `${site.url}/download/${releaseTag(version)}/install.sh`,
               version,
             ],
             { env, extendEnv: false },

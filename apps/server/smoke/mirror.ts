@@ -6,11 +6,12 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { releaseTag } from "@j3-bots/release";
 
 // A static mirror of a GitHub release page, as `J3_RELEASE_BASE_URL` names one
 // for scripts/install.sh and `j3-bots update`: `<base>/latest` and
-// `<base>/download/v<version>/<file>`. Its SHA256SUMS are signed with a key
-// made for the run, which `J3_RELEASE_PUBLIC_KEY` names to install.sh.
+// `<base>/download/<tag>/<file>`, where a nightly's tag has no `v`. Its SHA256SUMS are signed with a key made
+// for the run, which `J3_RELEASE_PUBLIC_KEY` names to install.sh.
 
 /** A mirror serving `files` by path and noting each path asked for, for the scope. */
 export const mirror = (files: ReadonlyMap<string, Uint8Array>) =>
@@ -74,10 +75,11 @@ export const releaseArchive = Effect.fn("releaseArchive")(function* (variable: s
 /** One release on a release page, `version`, with its archive and its signed SHA256SUMS. */
 export const releaseFiles = (version: string, archive: string, bytes: Uint8Array) => {
   const sums = encoded(`${sha256(bytes)}  ${archive}\n`);
+  const folder = `/download/${releaseTag(version)}`;
   return new Map<string, Uint8Array>([
-    [`/download/v${version}/${archive}`, bytes],
-    [`/download/v${version}/SHA256SUMS`, sums],
-    [`/download/v${version}/SHA256SUMS.sig`, signature(sums)],
+    [`${folder}/${archive}`, bytes],
+    [`${folder}/SHA256SUMS`, sums],
+    [`${folder}/SHA256SUMS.sig`, signature(sums)],
   ]);
 };
 

@@ -28,7 +28,7 @@ where the stage is 9,999 for a release, 9,000 + n for `-rc.n`, and for a nightly
 - `install.sh` needs OpenSSL 3, the first version whose `pkeyutl` verifies Ed25519 over raw input. It refuses without it, with the fix, and never installs unchecked.
 - The scheduled nightly runs on `main`, so `release-signing` and `android-signing` admit `main` as well as `v*` tags. A change merged to `main` can therefore reach both keys, as a `v*` tag pushed by an admin can.
 - The nightly creates and deletes its own tags with the workflow's token, which any workflow on any branch also holds. Its tags are therefore outside `v*`, where only admins may create a tag, and are unprotected: GitHub refuses the GitHub Actions app as a ruleset's bypass actor on a user-owned repository, so no ruleset could leave them to the nightly alone. A nightly tag reaches no signing environment, so a nightly's integrity rests on its signature alone. With a `v` before its version, the nightly would need that token to create `v*` tags, which the signing environments admit, and so would every branch's workflow. electron-updater takes a bare-version tag as it takes a `v` tag, and rejects one with a `/`.
-- Version limits from `0.3.1`: a major up to 20, a minor and a patch up to 99, a release candidate up to `rc.98`, and nightlies dated from 2026-01-01 to 2050-08-21 (stage up to 8,999). Two nightlies of one patch built on the same day share a version code. Android refuses only a lower code, so the later one still installs (**Assumed** from Android's downgrade check; to confirm on the emulator).
+- Version limits from `0.3.1`: a major up to 20, a minor and a patch up to 99, a release candidate up to `rc.98`, and nightlies dated from 2026-01-01 to 2050-08-21 (stage up to 8,999). The stage leaves a nightly's run out, so a day has one nightly at most: the nightly workflow skips a day that already has one, and no two nightlies share a version code.
 
 ## Rejected
 
@@ -38,4 +38,4 @@ where the stage is 9,999 for a release, 9,000 + n for `-rc.n`, and for a nightly
 
 **The nightly's run number as its Android stage.** It grows strictly, but it starts over when the workflow is renamed or recreated, and then a nightly would get a lower code than the one before it. The date never goes back.
 
-**A date in the version without a run number.** Two nightlies on one day would have the same version, so the second couldn't be published.
+**A date in the version without a run number.** A day has one published nightly, but a run that fails leaves a draft under its version, and a second try that day would take the same version, and that draft, made on the commit the failed run built.

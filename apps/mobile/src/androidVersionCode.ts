@@ -50,7 +50,9 @@ const daysToNightly = (day: string): number | undefined => {
  * from `0.3.1` it is `major * 100_000_000 + minor * 1_000_000 + patch * 10_000
  * + stage`, where the stage is 9,999 for the release, 9,000 + n for `-rc.n`,
  * and for a nightly the days from 2026-01-01 to its date, plus one. Every code
- * of the second formula is above every code of the first.
+ * of the second formula is above every code of the first. A nightly's run
+ * takes no part: the nightly workflow builds one nightly a day at most, so no
+ * two nightlies share a code (.github/workflows/nightly.yml).
  *
  * A version this cannot order (another pre-release label, a nightly of `0.3.0`
  * or before, a date outside 2026-01-01 to 2050-08-21, a minor or patch above
