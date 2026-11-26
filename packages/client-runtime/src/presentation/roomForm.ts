@@ -79,7 +79,8 @@ export function withoutDeleted(
  * before, only with other spaces around it, stays as typed until the server
  * changes it. The form then compares with the room as it is, so it sends
  * only what differs from it, but for whether it is hidden: once the operator
- * moved that switch, it is compared with what it showed then, so their choice
+ * moved that switch, it is compared with the room as it was then
+ * (`startAfterChange`), so their choice
  * is sent and recorded as theirs even when a bot set the same meanwhile
  * (decision 0050).
  */
@@ -101,6 +102,21 @@ export function followRoom(
     },
   };
 }
+
+/**
+ * What the form compares with once the operator changes `values` to `next`.
+ * Moving the hidden switch measures it against `room` as the server has it
+ * then, as a bot's form does (`withHiddenEdit`): moving it back to that sends
+ * nothing, and anything else is sent, also when a bot sets the same meanwhile
+ * (`followRoom`).
+ */
+export const startAfterChange = (
+  start: RoomFormValues,
+  values: RoomFormValues,
+  next: RoomFormValues,
+  room: Room | null,
+): RoomFormValues =>
+  room === null || next.hidden === values.hidden ? start : { ...start, hidden: room.hidden };
 
 /** `values` with `botId` in or out of the room. A seventh bot is not taken. */
 export function withMember(values: RoomFormValues, botId: BotId, member: boolean): RoomFormValues {

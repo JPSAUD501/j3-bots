@@ -12,6 +12,7 @@ import {
   roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
+  startAfterChange,
   withMember,
   withoutDeleted,
 } from "./roomForm.ts";
@@ -137,14 +138,21 @@ describe("followRoom", () => {
     });
   });
 
-  it("sends the operator's hidden switch even when a bot hid the room meanwhile", () => {
+  it("sends the operator's hidden switch even when a bot set the room the same meanwhile", () => {
     const opened = roomFormOf(room);
-    const values = { ...opened, hidden: true };
-    const followed = followRoom(opened, values, { ...room, hidden: true });
+    const on = { ...opened, hidden: true };
+    const hiddenRoom: Room = { ...room, hidden: true };
+    const followed = followRoom(startAfterChange(opened, opened, on, room), on, hiddenRoom);
     expect(roomChanges(followed.start, followed.values)).toEqual({
       _tag: "ready",
       value: { hidden: true },
     });
+    // Moved back off with the room hidden now: that is a choice to show it.
+    const off = { ...on, hidden: false };
+    const start = startAfterChange(followed.start, on, off, hiddenRoom);
+    expect(roomChanges(start, off)).toEqual({ _tag: "ready", value: { hidden: false } });
+    // Moved back to what the room is: nothing to send.
+    expect(sameRoomForm(startAfterChange(opened, on, opened, room), opened)).toBe(true);
   });
 
   it("follows the room shown again elsewhere, so Save does not hide it back", () => {

@@ -12,6 +12,7 @@ import {
   roomFormStart,
   type RoomFormValues,
   sameRoomForm,
+  startAfterChange,
   withMember,
   withoutDeleted,
 } from "../presentation/roomForm.ts";
@@ -154,6 +155,7 @@ export function useRoomForm(options: {
 
   const change = (next: RoomFormValues) => {
     if (busy) return;
+    setStart(startAfterChange(start, values, next, room));
     setValues(next);
     setFailure(null);
   };
