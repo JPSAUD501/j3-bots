@@ -76,7 +76,7 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
   /** The command that repairs it, for the operator to run on this system. */
   get fix(): string {
     if (this.reason === "unreadable") {
-      return `Check that this user can open ${this.home} and every folder it is in.`;
+      return `Check that ${this.home} and every folder it is in are folders this user can open.`;
     }
     if (process.platform === "win32") {
       const repair = this.windowsRepair ?? `icacls ${powerShellWord(this.home)} /inheritance:r`;
@@ -212,7 +212,9 @@ const checkPrivateOnWindows = Effect.fnUntraced(function* (home: string) {
 const createHome = Effect.fnUntraced(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fs.makeDirectory(path.dirname(home), { recursive: true });
+  // Folders made for it are as closed as the home: one others could write in
+  // would let them put another home in its place.
+  yield* fs.makeDirectory(path.dirname(home), { recursive: true, mode: 0o700 });
   if (process.platform === "win32") {
     // A folder already there is left as it is.
     yield* createPrivateFolder(home).pipe(

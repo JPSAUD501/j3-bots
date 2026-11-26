@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { hasAdminSocket } from "./admin/socket.ts";
 import { HOME_ENTRIES, homeLayout } from "./home/entries.ts";
@@ -375,14 +376,11 @@ const workspaceNames = Effect.fn("workspaceNames")(function* (home: string) {
 /** The settings in `<home>/config.json`; none when the file does not exist. */
 const readConfigFile = Effect.fn("readConfigFile")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(file))) return {} satisfies ConfigFile;
-  const text = yield* fs
-    .readFileString(file)
-    .pipe(
-      Effect.mapError(
-        (error) => new ConfigFileUnreadable({ path: file, reason: error.reason._tag }),
-      ),
-    );
+  const unreadable = (error: PlatformError.PlatformError) =>
+    new ConfigFileUnreadable({ path: file, reason: error.reason._tag });
+  // One the system will not say is there, as in a folder this user cannot open, is not missing.
+  if (!(yield* fs.exists(file).pipe(Effect.mapError(unreadable)))) return {} satisfies ConfigFile;
+  const text = yield* fs.readFileString(file).pipe(Effect.mapError(unreadable));
   return yield* decodeConfigFile(text, { onExcessProperty: "error" }).pipe(
     Effect.mapError((error) => new ConfigFileInvalid({ path: file, detail: error.message })),
   );

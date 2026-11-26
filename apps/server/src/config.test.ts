@@ -141,6 +141,41 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("fails on a config.json in a folder it may not open, never taking it for missing", () =>
+    Effect.gen(function* () {
+      const home = yield* freshHome;
+      yield* writeConfigFile(home, JSON.stringify({ port: 4000 }));
+      const exit = yield* withEnvironment(load, { J3_HOME: home }).pipe(
+        Effect.provide(
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (fs) =>
+              FileSystem.FileSystem.of({
+                ...fs,
+                exists: (path) =>
+                  path.endsWith("config.json")
+                    ? Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "PermissionDenied",
+                          module: "FileSystem",
+                          method: "access",
+                          pathOrDescriptor: path,
+                        }),
+                      )
+                    : fs.exists(path),
+              }),
+            ),
+          ),
+        ),
+        Effect.exit,
+      );
+      assert.deepInclude(failure(exit), {
+        _tag: "ConfigFileUnreadable",
+        reason: "PermissionDenied",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "takes a public origin only as a bare https origin, written as a browser writes it",
     () =>
@@ -219,27 +254,22 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const outside = yield* Effect.context<
         FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
       >();
-      // Once the server has found the home missing, another process makes it, open to others.
+      // Right after the server first finds the home missing, another process makes it, open to others.
+      let made = false;
       const racing = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.FileSystem.of({
           ...fs,
-          makeDirectory: (target, options) =>
-            fs
-              .makeDirectory(target, options)
-              .pipe(
-                Effect.andThen(
-                  path.resolve(target) === parent
-                    ? fs
-                        .makeDirectory(home)
-                        .pipe(
-                          Effect.andThen(openToOthers(home)),
-                          Effect.provide(outside),
-                          Effect.orDie,
-                        )
-                    : Effect.void,
-                ),
-              ),
+          stat: (target) =>
+            fs.stat(target).pipe(
+              Effect.tapError(() => {
+                if (made || path.resolve(target) !== home) return Effect.void;
+                made = true;
+                return fs
+                  .makeDirectory(home)
+                  .pipe(Effect.andThen(openToOthers(home)), Effect.provide(outside), Effect.orDie);
+              }),
+            ),
         }),
       );
       const exit = yield* withEnvironment(initialize, { J3_HOME: home }).pipe(
