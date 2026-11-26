@@ -56,7 +56,7 @@ type Page = "main" | "sections" | "more";
  * on its row or its pinned avatar: mark its conversation read or unread, pin
  * or unpin it, put it in a section, make it the primary bot, hide it, and
  * under More what its details offer (the details, its profile, sharing it as
- * a template, a fresh start and deleting it). A hidden bot, which a search finds, offers Unhide in
+ * a template, a fresh start and deleting it). A hidden bot, which a search finds, offers Show in
  * place of Pin and Hide. The system's Back on a page a row opened goes back
  * to the first page. Sections and Mark as unread are offered only by a server
  * that has them, which says so with its sections; Mark as read, only with
