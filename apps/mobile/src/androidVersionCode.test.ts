@@ -47,12 +47,6 @@ describe("androidVersionCode", () => {
     expect(androidVersionCode("20.99.99")).toBeLessThanOrEqual(2_100_000_000);
   });
 
-  it("gives two nightlies of one day the same code, which Android installs over each other", () => {
-    expect(androidVersionCode("0.3.1-nightly.20261124.57")).toBe(
-      androidVersionCode("0.3.1-nightly.20261124.58"),
-    );
-  });
-
   it("refuses a version it cannot order", () => {
     for (const version of [
       "1.4",

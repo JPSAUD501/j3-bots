@@ -58,10 +58,13 @@ jobs:
 
       # The last nightly is the newest published pre-release whose tag is a
       # nightly's: its version, with no `v`. A nightly whose run failed was
-      # never published, so the next run builds that commit again. A nightly
-      # is published with no review, so it is built only from a commit whose
-      # CI run on `main` passed; one still running, failed or cancelled waits
-      # for the next day. The version is the patch after the newest published
+      # never published, so the next run builds that commit again. A day has
+      # one nightly at most: the Android version code numbers a nightly by its
+      # patch and its day, not its run, so a second one that day, from a run
+      # by hand, could share the first one's code; it waits for the next day. A nightly is
+      # published with no review, so it is built only from a commit whose CI
+      # run on `main` passed; one still running, failed or cancelled waits for
+      # the next day. The version is the patch after the newest published
       # release or release candidate, so a nightly sorts above both.
       - name: Compare with the last nightly
         id: plan
@@ -81,6 +84,12 @@ jobs:
           done < <(sort -t$'\t' -k3,3r "$RUNNER_TEMP/published")
           if [[ -n "$last" ]] && [[ "$(gh api "repos/$GH_REPO/commits/$last" --jq .sha)" == "$GITHUB_SHA" ]]; then
             echo "main is at $GITHUB_SHA, which $last was built from: no nightly today." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          today="$(date -u +%Y%m%d)"
+          if [[ "$last" == *-nightly."$today".* ]]; then
+            echo "$last is today's nightly, and a day has one: the next is built tomorrow." >> "$GITHUB_STEP_SUMMARY"
             echo "build=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -108,7 +117,7 @@ jobs:
             echo "::error::No published release or release candidate to name the nightly after."
             exit 1
           fi
-          version="$(scripts/nightly-version.sh "$newest" "$(date -u +%Y%m%d)" "$GITHUB_RUN_NUMBER")"
+          version="$(scripts/nightly-version.sh "$newest" "$today" "$GITHUB_RUN_NUMBER")"
           echo "Building $version from $GITHUB_SHA, after ${last:-no nightly} and $newest." >> "$GITHUB_STEP_SUMMARY"
           echo "build=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
