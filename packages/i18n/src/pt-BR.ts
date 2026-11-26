@@ -322,6 +322,7 @@ const sentences = {
   "secrets.hide": "Ocultar",
   "secrets.copy": "Copiar",
   "secrets.copied": "Copiado",
+  "secrets.selected": "Selecionado. Copie manualmente.",
   "secrets.code": "Código agora",
   "secrets.codeShow": "Mostrar o código agora",
   "secrets.codeUntil": "até {time}",

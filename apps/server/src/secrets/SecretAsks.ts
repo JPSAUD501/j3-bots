@@ -176,10 +176,11 @@ export const layer = Layer.effect(
         input.access._tag === "every-bot" || input.access.botIds.includes(botId)
           ? input.access
           : { _tag: "bots", botIds: [...input.access.botIds, botId] };
-      // The secrets are another database: the secret is added first, and the
-      // card closed after, so a retry of the same secret after a crash
-      // between the two still closes it.
-      const { secret } = yield* secrets.add({ ...input, access });
+      // The secrets are another database: the secret is added first, with
+      // the card it answers, and the card closed after. A crash between the
+      // two leaves the card open: a device that sends the answer again, under
+      // any id, closes it, and so does the next sweep.
+      const { secret } = yield* secrets.add({ ...input, access, askedIn: card.id });
       yield* transaction(close(card.id, "saved"));
       return secret;
     });
@@ -194,7 +195,27 @@ export const layer = Layer.effect(
       `,
     });
 
+    const openAsks = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ entry_id: EntryId }),
+      execute: () => sql`SELECT entry_id FROM secret_asks WHERE closed_at IS NULL`,
+    });
+
+    /**
+     * Closes as saved the asks whose secret was added before the server
+     * stopped short of closing their card, then as expired those that waited
+     * past `SECRET_ASK_WAIT`. While the secrets cannot be read, nothing can
+     * be saved from a card either, and none closes as saved.
+     */
     const sweep = Effect.gen(function* () {
+      const open = yield* openAsks(undefined).pipe(Effect.orDie);
+      if (open.length === 0) return;
+      const saved = yield* secrets
+        .askedIn(open.map(({ entry_id }) => entry_id))
+        .pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set()));
+      for (const { entry_id } of open) {
+        if (saved.has(entry_id)) yield* transaction(close(entry_id, "saved"));
+      }
       const due = yield* openPastWait(timeText(yield* DateTime.now)).pipe(Effect.orDie);
       for (const { entry_id } of due) yield* transaction(close(entry_id, "expired"));
     });

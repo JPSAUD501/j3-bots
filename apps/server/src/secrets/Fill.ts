@@ -393,12 +393,7 @@ const make = (timing: FillTiming) =>
         // change to the login in between cannot pair a new value with the
         // origins it had before.
         const { value, secret } = yield* secrets
-          .fillValue({
-            id: found.id,
-            field: request.field,
-            botId,
-            use: { _tag: "browser", origin },
-          })
+          .fillValue({ id: found.id, field: request.field })
           .pipe(
             Effect.catchTags({
               NotFound: () => Effect.fail(refused("no-value")),
@@ -426,6 +421,10 @@ const make = (timing: FillTiming) =>
           yield* viewer.send(ENTER_UP);
         }
         yield* drained;
+        // Ready secrets never stop being so: a refusal here cannot happen.
+        yield* secrets
+          .filled({ id: secret.id, botId, use: { _tag: "browser", origin } })
+          .pipe(Effect.orDie);
         if (request.field !== "password") return { submitted };
         // The bot gets the tab back on the page that follows. A page that
         // stays, as one that only shows an error does, has the password

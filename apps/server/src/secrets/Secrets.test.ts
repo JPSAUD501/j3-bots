@@ -11,13 +11,16 @@ import {
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as Domain from "../domain.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -378,6 +381,38 @@ it.effect("gives a reference its value only for a bot that may use the secret", 
       Exit.succeed("weather-token-value"),
     );
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "answers a bot's tool that holds the main database while a device lists the secrets",
+  () =>
+    Effect.gen(function* () {
+      const secrets = yield* Secrets;
+      const sql = yield* SqlClient.SqlClient;
+      const ana = yield* createBot("Ana");
+      yield* secrets.add({
+        id: idOf(1),
+        name: name("weather-api"),
+        draft: value("weather-token-value"),
+        access: onlyBots(ana.id),
+      });
+      // Settings lists the secrets, which reads the bots from the main
+      // database, while a bot's tool holds that database's transaction and
+      // reads a secret in it, as `ask_for_secret` does.
+      const inTransaction = yield* Deferred.make<void>();
+      const listing = yield* Effect.forkChild(
+        Deferred.await(inTransaction).pipe(Effect.andThen(secrets.list)),
+      );
+      const found = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* Deferred.succeed(inTransaction, undefined);
+          for (let step = 0; step < 10; step++) yield* Effect.yieldNow;
+          return { secret: yield* secrets.named(name("weather-api")), listing };
+        }),
+      );
+      assert.strictEqual(Option.getOrNull(found.secret)?.name, "weather-api");
+      assert.lengthOf(yield* Fiber.join(found.listing), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("keeps a secret's name its own, and its kind's fields", () =>

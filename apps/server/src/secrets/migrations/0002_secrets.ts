@@ -18,6 +18,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 //   bots of `record_bots` otherwise.
 // - `used_at`, `used_by` and `used_for`: the last time a bot used it, which
 //   bot, and where (a `SecretUse` as JSON).
+// - `asked_in`: the bot's ask the operator saved it from, the card's entry in
+//   the main database, so an ask whose card a crash left open after its
+//   secret was added closes as saved.
 // - `key_check`: a value sealed under the data key, which tells the key file's
 //   key from another one. No row: nothing was ever sealed under a key file's
 //   key.
@@ -49,6 +52,7 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE records ADD COLUMN used_at TEXT`;
   yield* sql`ALTER TABLE records ADD COLUMN used_by TEXT`;
   yield* sql`ALTER TABLE records ADD COLUMN used_for TEXT`;
+  yield* sql`ALTER TABLE records ADD COLUMN asked_in TEXT`;
 
   yield* sql`
     CREATE TABLE key_check (

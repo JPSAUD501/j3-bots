@@ -232,6 +232,12 @@ describe("filling a saved login", () => {
         PROBE,
         { type: "release" },
       ]);
+      // Settings says where the login was used last.
+      const [login] = yield* (yield* Secrets).list;
+      assert.deepStrictEqual(
+        login?.lastUse === null ? null : [login?.lastUse?.botId, login?.lastUse?.use],
+        [at.bot.id, { _tag: "browser", origin: SiteOrigin.make("https://example.com") }],
+      );
     }).pipe(Effect.provide(domain)),
   );
 
@@ -419,6 +425,9 @@ describe("a fill refused by the page", () => {
       const second = yield* fillHeld(request(at, "password"));
       assert.deepStrictEqual(yield* Fiber.join(second.running), refusal("navigated"));
       assert.deepStrictEqual(typed(yield* second.viewer.inputs), []);
+      // Nothing was typed, so the login was not used.
+      const [login] = yield* (yield* Secrets).list;
+      assert.isNull(login?.lastUse);
     }).pipe(Effect.provide(domain)),
   );
 

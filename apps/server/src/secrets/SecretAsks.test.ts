@@ -244,6 +244,66 @@ it.effect(
     }).pipe(Effect.provide(domain)),
 );
 
+it.effect(
+  "closes as saved an ask whose secret was added before the server could close its card",
+  () =>
+    Effect.gen(function* () {
+      const { bot, session, turnId, card } = yield* askedScene;
+      // The server stopped between adding the secret and closing the card.
+      yield* (yield* Secrets).add({
+        id: SecretId.make("sec_aaaaaaaaaaaaaaaa"),
+        name: SecretName.make("example-work"),
+        draft: loginDraft,
+        access: { _tag: "bots", botIds: [bot.id] },
+        askedIn: card.id,
+      });
+      assert.strictEqual(yield* statusOf(bot.id), "pending");
+      // A device that lost the answer sends it again, under another id.
+      const again = yield* (yield* SecretAsks).add({
+        id: SecretId.make("sec_bbbbbbbbbbbbbbbb"),
+        name: SecretName.make("example-work"),
+        draft: loginDraft,
+        access: { _tag: "bots", botIds: [] },
+        request: card.id,
+      });
+      assert.strictEqual(again.id, "sec_aaaaaaaaaaaaaaaa");
+      assert.strictEqual(yield* statusOf(bot.id), "saved");
+      const { text } = yield* nextWake(bot.id, session, turnId);
+      assert.include(text, "saved the secret you asked for");
+    }).pipe(Effect.provide(domain)),
+);
+
+it.effect("closes such an ask as saved at the next sweep when no device sends it again", () =>
+  Effect.gen(function* () {
+    const { bot, card } = yield* askedScene;
+    yield* (yield* Secrets).add({
+      id: SecretId.make("sec_aaaaaaaaaaaaaaaa"),
+      name: SecretName.make("example-work"),
+      draft: loginDraft,
+      access: { _tag: "bots", botIds: [bot.id] },
+      askedIn: card.id,
+    });
+    yield* TestClock.adjust(Duration.minutes(1));
+    assert.strictEqual(yield* statusOf(bot.id), "saved");
+  }).pipe(Effect.provide(domain)),
+);
+
+it.effect("tells a bot that a secret of that name it may use is not the one it asks for", () =>
+  Effect.gen(function* () {
+    const { bot, session, turnId } = yield* scene;
+    yield* (yield* Secrets).add({
+      id: SecretId.make("sec_aaaaaaaaaaaaaaaa"),
+      name: SecretName.make("example-work"),
+      draft: { ...loginDraft, origins: [SiteOrigin.make("https://other.example")] },
+      access: { _tag: "bots", botIds: [bot.id] },
+    });
+    const answer = yield* callTool(session, turnId, "ask_for_secret", LOGIN_ASK);
+    assert.strictEqual(answer._tag, "refused");
+    assert.include(JSON.stringify(answer), "https://other.example");
+    assert.isEmpty((yield* conversation(bot.id)).filter((entry) => entry._tag === "secret-ask"));
+  }).pipe(Effect.provide(domain)),
+);
+
 it.effect("shows no card for a name another secret has, nor for a login without its page", () =>
   Effect.gen(function* () {
     // A secret of that name no bot may use, this one among them.

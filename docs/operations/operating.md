@@ -228,7 +228,7 @@ Secrets keep the logins and values you type for bots, and what connectors need t
   systemctl --user start j3-bots
   ```
 
-  The secrets are then empty. Add each login again and sign in to each connector again. Keep the moved folder if you might find the password or the key: putting it back while the service is stopped brings everything back.
+  The secrets are then empty. Add each login again. A connector kept its address, its keys and its sign-in among the secrets, so each one lost them too: remove it from its page and add it again, with the address or command and any key or app it was given. Keep the moved folder if you might find the password or the key: putting it back while the service is stopped brings everything back.
 
 ## J3 Bots' own harnesses
 
@@ -250,11 +250,12 @@ Everything J3 Bots keeps is in the data directory: the configuration, the databa
 systemctl --user stop j3-bots
 (umask 077 && tar -C ~/.j3-bots --exclude=./engine/j3/runtime --exclude=./engine/tools \
   --exclude=./engine/userdata/server-browser --exclude=./admin.sock --exclude=./vault/key \
+  --exclude='./vault/.*' \
   -czf ~/j3-bots-$(date +%F).tar.gz . && cp ~/.j3-bots/vault/key ~/j3-bots-key-$(date +%F))
 systemctl --user start j3-bots
 ```
 
-The archive leaves out the secrets' key file, which `cp` copies on its own. Keep that copy apart from the archive, on another disk or in a password manager: either one alone opens no secret.
+The archive leaves out the secrets' key file, which `cp` copies on its own, and any temporary file beside it a write that was cut short left, which can hold the key. Keep that copy apart from the archive, on another disk or in a password manager: either one alone opens no secret.
 
 `umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the secrets (sealed, and of no use without the key file you keep apart), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, and `engine/tools` the browser it downloaded, which it downloads again. `engine/userdata/server-browser` is that browser's profile: it holds live session cookies for every site you signed in to there, which let whoever has them act on those sites as you, so the command above leaves it out, and after a restore you sign in again. Moving bots to another server with `j3-bots export` and `import` ([#154](https://github.com/JPSAUD501/j3-bots/issues/154), planned) leaves out the engine's directory, and the profile with it. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
 

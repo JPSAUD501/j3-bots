@@ -241,6 +241,20 @@ const secretAskOf = (
   });
 };
 
+/**
+ * Whether a secret of `kind`, for `origins` when a login, is the one an ask
+ * for `asked` wants: a value for a value, a login for one of its sites for a
+ * login.
+ */
+const askFits = (
+  asked: SecretAskEntry["secret"],
+  kind: string,
+  origins: ReadonlyArray<string>,
+): boolean =>
+  asked._tag === "value"
+    ? kind === "value"
+    : kind === "login" && origins.some((origin) => origin === asked.origin);
+
 /** The turn tools a request is pinned for. */
 type PinnedTool =
   | "say"
@@ -1792,6 +1806,20 @@ export const layer = Layer.effect(
       );
     });
 
+    /** The bot's ask for a secret of that name that still waits: what it asks for. */
+    const waitingAsk = (request: { readonly botId: BotId; readonly name: string }) =>
+      SqlSchema.findAll({
+        Request: Schema.Struct({ botId: Schema.String, name: Schema.String }),
+        Result: Schema.Struct({ kind: Schema.String, origin: Schema.NullOr(Schema.String) }),
+        execute: ({ botId, name }) => sql`
+          SELECT json_extract(e.body_json, '$.secret._tag') AS kind,
+            json_extract(e.body_json, '$.secret.origin') AS origin
+          FROM secret_asks a JOIN entries e ON e.id = a.entry_id
+          WHERE a.bot_id = ${botId} AND a.closed_at IS NULL
+            AND json_extract(e.body_json, '$.name') = ${name}
+        `,
+      })(request).pipe(Effect.orDie);
+
     /**
      * `ask_for_secret` (`docs/architecture/server.md`, Secrets): a card in
      * the bot's own conversation, whatever audience the turn speaks for,
@@ -1802,7 +1830,9 @@ export const layer = Layer.effect(
      * `SECRET_ASK_WAIT` (`SecretAsks`). No card is shown for a secret of that
      * name the bot may use already, and none twice while one of the bot's
      * asks for that name waits. Refused, with nothing written, for a name
-     * another secret has, and for work the operator stopped.
+     * another secret has, one the bot may use that is not what it asks for
+     * (another kind, or a login for other sites), a waiting ask under that
+     * name for something else, and for work the operator stopped.
      */
     const askForSecret = Effect.fn("Speech.askForSecret")(function* (
       found: Pin,
@@ -1824,13 +1854,25 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const existing = yield* secrets.named(name.value).pipe(Effect.option);
           if (Option.isSome(existing) && Option.isSome(existing.value)) {
-            if (accessAllows(existing.value.value.access, found.botId)) {
-              return { status: "exists", reference, note: SECRET_ASK_EXISTS } satisfies Schema.Json;
+            const saved = existing.value.value;
+            if (!accessAllows(saved.access, found.botId)) {
+              return yield* new TurnToolRefused({
+                reason:
+                  "Nothing was shown: another secret has that name, and it is not one you may use. Ask under another name.",
+              });
             }
-            return yield* new TurnToolRefused({
-              reason:
-                "Nothing was shown: another secret has that name, and it is not one you may use. Ask under another name.",
-            });
+            if (
+              !askFits(
+                secret,
+                saved.kind._tag,
+                saved.kind._tag === "login" ? saved.kind.origins : [],
+              )
+            ) {
+              return yield* new TurnToolRefused({
+                reason: `Nothing was shown: you may use ${reference} already, but it is ${saved.kind._tag === "login" ? `a login for ${saved.kind.origins.join(", ")}` : "a single value"}, not what you asked for. Use it if it fits; otherwise ask under another name.`,
+              });
+            }
+            return { status: "exists", reference, note: SECRET_ASK_EXISTS } satisfies Schema.Json;
           }
           const target = yield* requireTarget(found.botId, conversation);
           const work = yield* workStopped(found);
@@ -1839,12 +1881,14 @@ export const layer = Layer.effect(
               reason: "Nothing was shown: your user stopped this work. Stop here.",
             });
           }
-          const [waiting] = yield* sql`
-            SELECT 1 FROM secret_asks a JOIN entries e ON e.id = a.entry_id
-            WHERE a.bot_id = ${found.botId} AND a.closed_at IS NULL
-              AND json_extract(e.body_json, '$.name') = ${name.value}
-          `.pipe(Effect.orDie);
+          const [waiting] = yield* waitingAsk({ botId: found.botId, name: name.value });
           if (waiting !== undefined) {
+            if (!askFits(secret, waiting.kind, waiting.origin === null ? [] : [waiting.origin])) {
+              return yield* new TurnToolRefused({
+                reason:
+                  "Nothing was shown: your card asking for a different secret under that name still waits. Wait for it, or ask under another name.",
+              });
+            }
             return { status: "shown", reference, note: SECRET_ASK_SHOWN } satisfies Schema.Json;
           }
           const card = yield* entries.append({

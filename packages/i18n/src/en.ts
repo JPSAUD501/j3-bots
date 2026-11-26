@@ -324,6 +324,7 @@ export const en = {
   "secrets.hide": "Hide",
   "secrets.copy": "Copy",
   "secrets.copied": "Copied",
+  "secrets.selected": "Selected. Copy it manually.",
   "secrets.code": "Code now",
   "secrets.codeShow": "Show the code now",
   "secrets.codeUntil": "until {time}",

@@ -6,6 +6,7 @@ import {
   BotId,
   Conflict,
   DeviceId,
+  type EntryId,
   type FillField,
   Invalid,
   LoginOrigins,
@@ -40,6 +41,7 @@ import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { BotStore } from "../bots/BotStore.ts";
+import { removeLeftovers, replaceFileDurably } from "../files.ts";
 import { ServerConfig } from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import { Layout } from "../Layout.ts";
@@ -228,17 +230,24 @@ export class Secrets extends Context.Service<
     }) => Effect.Effect<Redacted.Redacted<string>, Conflict | NotFound>;
     /**
      * Adds a secret as `id`. When `id` is added already, nothing changes and
-     * `created` is false.
+     * `created` is false; so too when a secret of that name was added from
+     * the same ask (`askedIn`, the card's entry), under another id, as a
+     * device that lost the first answer sends it again.
      */
     readonly add: (input: {
       readonly id: SecretId;
       readonly name: SecretName;
       readonly draft: SecretDraft;
       readonly access: SecretAccess;
+      readonly askedIn?: EntryId | undefined;
     }) => Effect.Effect<
       { readonly secret: Secret; readonly created: boolean },
       Conflict | Invalid | NotFound
     >;
+    /** Which of the asks of `entries` a secret was added from. */
+    readonly askedIn: (
+      entries: ReadonlyArray<EntryId>,
+    ) => Effect.Effect<ReadonlySet<string>, Conflict>;
     readonly update: (input: {
       readonly id: SecretId;
       readonly changes: SecretChanges;
@@ -255,17 +264,24 @@ export class Secrets extends Context.Service<
      * one-time code now, with the login as it was when the value was opened,
      * read together so no change to the login falls between them. Fails
      * with `NotFound("secret")` for a login without that value, an empty
-     * user name included. Records the use, not a reveal: no device saw it.
+     * user name included. Records nothing: the fill may still type nothing.
      */
     readonly fillValue: (input: {
       readonly id: SecretId;
       readonly field: FillField;
-      readonly botId: BotId;
-      readonly use: SecretUse;
     }) => Effect.Effect<
       { readonly value: Redacted.Redacted<string>; readonly secret: Secret },
       Conflict | NotFound
     >;
+    /**
+     * Records that `botId` used the login at `use`, once the browser took
+     * what was typed: a use, not a reveal, since no device saw it.
+     */
+    readonly filled: (input: {
+      readonly id: SecretId;
+      readonly botId: BotId;
+      readonly use: SecretUse;
+    }) => Effect.Effect<void, Conflict>;
     /**
      * `text`, a connector's header, argument or environment value, with each
      * reference to a secret (`${secret:<name>}`) replaced by its value, for
@@ -356,6 +372,9 @@ export const layer = Layer.effect(
     const folder = yield* layout.writable(path.join(home, HOME_ENTRIES.secrets)).pipe(Effect.orDie);
     yield* fs.makeDirectory(folder, { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
     yield* fs.chmod(folder, 0o700).pipe(Effect.orDie);
+    // A key file's write the server was stopped in can leave the key in a
+    // temporary file beside it.
+    yield* removeLeftovers(folder).pipe(Effect.orDie);
     const keyFile = path.join(folder, KEY_FILE);
     const file: SecretsFile = yield* openSecretsFile(path.join(folder, SECRETS_FILE)).pipe(
       Effect.provide(Reactivity.layer),
@@ -376,9 +395,17 @@ export const layer = Layer.effect(
       return keyOfText(yield* fs.readFileString(keyFile));
     }).pipe(Effect.orDie);
 
-    /** Writes `key` to the key file, private to the server's user, replacing any. */
+    /**
+     * Writes `key` to the key file, private to the server's user, replacing
+     * any, and flushes it to the disk: what is written after it (the key
+     * check, an old vault's keyring deleted) never outlives it in a power cut.
+     */
     const writeKeyFile = (key: Uint8Array) =>
-      layout.writeFile(keyFile, keyFileText(key)).pipe(Effect.orDie);
+      replaceFileDurably(keyFile, keyFileText(key), 0o600).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.orDie,
+      );
 
     const keyringOf = (sql: SqlClient.SqlClient) =>
       SqlSchema.findOneOption({
@@ -663,11 +690,21 @@ export const layer = Layer.effect(
 
     // ---- Secrets ------------------------------------------------------------------
 
-    /** The bots that still exist, of `ids`. */
-    const existingBots = Effect.fn("Secrets.existingBots")(function* (ids: ReadonlyArray<BotId>) {
-      const known = new Set<string>((yield* bots.list).map(({ bot }) => bot.id));
-      return ids.filter((id) => known.has(id));
-    });
+    /** The ids of the bots that exist now. */
+    const knownBots = Effect.map(
+      bots.list,
+      (rows): ReadonlySet<string> => new Set(rows.map(({ bot }) => bot.id)),
+    );
+
+    /**
+     * `serial`, for a request that reads which bots may use a secret: the
+     * bots are read before its turn, from the main database, so no request
+     * waits on that database while it holds the secrets, and none that holds
+     * the main database's transaction (a bot's tool) waits on one that does.
+     */
+    const serialKnowing = <A, E, R>(
+      effect: (known: ReadonlySet<string>) => Effect.Effect<A, E, R>,
+    ) => Effect.flatMap(knownBots, (known) => serial(effect(known)));
 
     const secretRows = (sql: SqlClient.SqlClient, only: Option.Option<string>) =>
       SqlSchema.findAll({
@@ -691,6 +728,7 @@ export const layer = Layer.effect(
       sql: SqlClient.SqlClient,
       key: Uint8Array,
       only: Option.Option<string>,
+      known: ReadonlySet<string>,
     ) {
       const records = yield* secretRows(sql, only);
       const ids = records.map(({ id }) => id);
@@ -718,7 +756,6 @@ export const layer = Layer.effect(
                   AND r.seq = (SELECT MAX(seq) FROM reveals l WHERE l.record_id = r.record_id)
               `,
             })(undefined).pipe(Effect.orDie);
-      const known = new Set<string>(yield* existingBots(allowed.map(({ bot_id }) => bot_id)));
       const secrets: Array<Secret> = [];
       for (const record of records) {
         secrets.push(
@@ -785,17 +822,22 @@ export const layer = Layer.effect(
       } satisfies Secret;
     });
 
-    const secretById = (sql: SqlClient.SqlClient, key: Uint8Array, id: SecretId) =>
-      Effect.flatMap(readSecrets(sql, key, Option.some(id)), ([secret]) =>
+    const secretById = (
+      sql: SqlClient.SqlClient,
+      key: Uint8Array,
+      id: SecretId,
+      known: ReadonlySet<string>,
+    ) =>
+      Effect.flatMap(readSecrets(sql, key, Option.some(id), known), ([secret]) =>
         secret === undefined
           ? Effect.fail(new NotFound({ resource: "secret" }))
           : Effect.succeed(secret),
       );
 
-    const list = serial(
+    const list = serialKnowing((known) =>
       Effect.gen(function* () {
         const { sql, key } = yield* ready;
-        return yield* readSecrets(sql, key, Option.none());
+        return yield* readSecrets(sql, key, Option.none(), known);
       }),
     );
 
@@ -812,21 +854,24 @@ export const layer = Layer.effect(
       })(undefined).pipe(Effect.orDie, Effect.map(Option.map(({ id }) => id)));
 
     const named = (name: SecretName) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
           const id = yield* idNamed(sql, name);
           if (Option.isNone(id)) return Option.none<Secret>();
-          const [secret] = yield* readSecrets(sql, key, id);
+          const [secret] = yield* readSecrets(sql, key, id, known);
           return Option.fromNullishOr(secret);
         }),
       );
 
     /** The bots of `access`, each once, refusing one that does not exist. */
-    const checkedAccess = Effect.fn("Secrets.checkedAccess")(function* (access: SecretAccess) {
+    const checkedAccess = Effect.fn("Secrets.checkedAccess")(function* (
+      access: SecretAccess,
+      known: ReadonlySet<string>,
+    ) {
       if (access._tag === "every-bot") return access;
       const unique = [...new Set(access.botIds)];
-      if ((yield* existingBots(unique)).length !== unique.length) {
+      if (!unique.every((id) => known.has(id))) {
         return yield* new NotFound({ resource: "bot" });
       }
       return { _tag: "bots", botIds: unique } satisfies SecretAccess;
@@ -895,16 +940,26 @@ export const layer = Layer.effect(
       readonly name: SecretName;
       readonly draft: SecretDraft;
       readonly access: SecretAccess;
+      readonly askedIn?: EntryId | undefined;
     }) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
-          const [saved] = yield* readSecrets(sql, key, Option.some(input.id));
+          const askedIn = input.askedIn ?? null;
+          const [saved] = yield* readSecrets(sql, key, Option.some(input.id), known);
           if (saved !== undefined) return { secret: saved, created: false };
-          if (Option.isSome(yield* idNamed(sql, input.name))) {
-            return yield* new Conflict({ reason: "secret-name-taken" });
+          const taken = yield* idNamed(sql, input.name);
+          if (Option.isSome(taken)) {
+            const [same] =
+              askedIn === null
+                ? []
+                : yield* sql`
+                    SELECT 1 FROM records WHERE id = ${taken.value} AND asked_in = ${askedIn}
+                  `.pipe(Effect.orDie);
+            if (same === undefined) return yield* new Conflict({ reason: "secret-name-taken" });
+            return { secret: yield* secretById(sql, key, taken.value, known), created: false };
           }
-          const access = yield* checkedAccess(input.access);
+          const access = yield* checkedAccess(input.access, known);
           const { draft } = input;
           const rows = yield* sealedValues(
             key,
@@ -922,8 +977,8 @@ export const layer = Layer.effect(
           yield* transactional(sql)(
             Effect.gen(function* () {
               yield* sql`
-                INSERT INTO records (id, kind, name, created_at, updated_at)
-                VALUES (${input.id}, ${draft._tag}, ${input.name}, ${now}, ${now})
+                INSERT INTO records (id, kind, name, asked_in, created_at, updated_at)
+                VALUES (${input.id}, ${draft._tag}, ${input.name}, ${askedIn}, ${now}, ${now})
               `.pipe(Effect.orDie);
               yield* writeRows(sql, input.id, rows);
               yield* writeAccess(sql, input.id, access);
@@ -933,15 +988,31 @@ export const layer = Layer.effect(
             Effect.annotateLogs({ secretId: input.id, kind: draft._tag }),
           );
           yield* changed;
-          return { secret: yield* secretById(sql, key, input.id), created: true };
+          return { secret: yield* secretById(sql, key, input.id, known), created: true };
+        }),
+      );
+
+    const askedIn = (ids: ReadonlyArray<EntryId>) =>
+      serial(
+        Effect.gen(function* () {
+          const { sql } = yield* ready;
+          if (ids.length === 0) return new Set<string>();
+          const rows = yield* SqlSchema.findAll({
+            Request: Schema.Void,
+            Result: Schema.Struct({ asked_in: Schema.String }),
+            execute: () => sql`
+              SELECT asked_in FROM records WHERE ${sql.in("asked_in", ids)}
+            `,
+          })(undefined).pipe(Effect.orDie);
+          return new Set<string>(rows.map((row) => row.asked_in));
         }),
       );
 
     const update = (input: { readonly id: SecretId; readonly changes: SecretChanges }) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
-          const current = yield* secretById(sql, key, input.id);
+          const current = yield* secretById(sql, key, input.id, known);
           const { changes } = input;
           const login =
             changes.origins !== undefined ||
@@ -983,7 +1054,7 @@ export const layer = Layer.effect(
             Effect.annotateLogs({ secretId: input.id }),
           );
           yield* changed;
-          return yield* secretById(sql, key, input.id);
+          return yield* secretById(sql, key, input.id, known);
         }),
       );
 
@@ -1001,11 +1072,11 @@ export const layer = Layer.effect(
       );
 
     const setAccess = (id: SecretId, access: SecretAccess) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
-          yield* secretById(sql, key, id);
-          const checked = yield* checkedAccess(access);
+          yield* secretById(sql, key, id, known);
+          const checked = yield* checkedAccess(access, known);
           yield* transactional(sql)(
             Effect.gen(function* () {
               yield* writeAccess(sql, id, checked);
@@ -1018,7 +1089,7 @@ export const layer = Layer.effect(
             Effect.annotateLogs({ secretId: id, access: checked._tag }),
           );
           yield* changed;
-          return yield* secretById(sql, key, id);
+          return yield* secretById(sql, key, id, known);
         }),
       );
 
@@ -1046,10 +1117,10 @@ export const layer = Layer.effect(
       readonly field: SecretField;
       readonly deviceId: DeviceId;
     }) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
-          const secret = yield* secretById(sql, key, input.id);
+          const secret = yield* secretById(sql, key, input.id, known);
           const sealed = fieldOf(secret.kind._tag, input.field);
           if (sealed === null) return yield* new NotFound({ resource: "secret" });
           const opened = yield* openedField(sql, key, input.id, sealed);
@@ -1080,10 +1151,10 @@ export const layer = Layer.effect(
     });
 
     const totpPreview = (id: SecretId) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
-          yield* secretById(sql, key, id);
+          yield* secretById(sql, key, id, known);
           const code = yield* codeNow(id, yield* openedField(sql, key, id, "totp"));
           return {
             code: Redacted.make(code.code),
@@ -1131,16 +1202,11 @@ export const layer = Layer.effect(
       yield* changed;
     });
 
-    const fillValue = (input: {
-      readonly id: SecretId;
-      readonly field: FillField;
-      readonly botId: BotId;
-      readonly use: SecretUse;
-    }) =>
-      serial(
+    const fillValue = (input: { readonly id: SecretId; readonly field: FillField }) =>
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const { sql, key } = yield* ready;
-          const secret = yield* secretById(sql, key, input.id);
+          const secret = yield* secretById(sql, key, input.id, known);
           if (secret.kind._tag !== "login") return yield* new NotFound({ resource: "secret" });
           const opened = yield* openedField(sql, key, input.id, input.field);
           let value: string;
@@ -1150,8 +1216,19 @@ export const layer = Layer.effect(
             value = text(opened);
             if (value === "") return yield* new NotFound({ resource: "secret" });
           }
-          yield* noteUse(sql, input.id, input.botId, input.use);
           return { value: Redacted.make(value), secret };
+        }),
+      );
+
+    const filled = (input: {
+      readonly id: SecretId;
+      readonly botId: BotId;
+      readonly use: SecretUse;
+    }) =>
+      serial(
+        Effect.gen(function* () {
+          const { sql } = yield* ready;
+          yield* noteUse(sql, input.id, input.botId, input.use);
         }),
       );
 
@@ -1162,12 +1239,13 @@ export const layer = Layer.effect(
       botId: BotId,
       reference: SecretReference,
       use: SecretUse,
+      known: ReadonlySet<string>,
     ) {
       const unavailable = (reason: SecretUnavailable["reason"]) =>
         new SecretUnavailable({ secret: reference.name, reason });
       const id = yield* idNamed(sql, reference.name);
       if (Option.isNone(id)) return yield* unavailable("missing");
-      const secret = yield* secretById(sql, key, id.value).pipe(
+      const secret = yield* secretById(sql, key, id.value, known).pipe(
         Effect.mapError(() => unavailable("unavailable")),
       );
       if (!accessAllows(secret.access, botId)) return yield* unavailable("not-allowed");
@@ -1192,7 +1270,7 @@ export const layer = Layer.effect(
       readonly text: string;
       readonly use: SecretUse;
     }) =>
-      serial(
+      serialKnowing((known) =>
         Effect.gen(function* () {
           const references = referencesIn(input.text);
           const [first] = references;
@@ -1206,7 +1284,10 @@ export const layer = Layer.effect(
           for (const reference of references) {
             const found = referenceText(reference);
             if (values.has(found)) continue;
-            values.set(found, yield* referenceValue(sql, key, input.botId, reference, input.use));
+            values.set(
+              found,
+              yield* referenceValue(sql, key, input.botId, reference, input.use, known),
+            );
           }
           return Redacted.make(replaceReferences(input.text, values));
         }),
@@ -1318,11 +1399,13 @@ export const layer = Layer.effect(
       named,
       reveal,
       add,
+      askedIn,
       update,
       remove,
       setAccess,
       totpPreview,
       fillValue,
+      filled,
       resolve,
       connectorSecrets: {
         get: connectorSecret,

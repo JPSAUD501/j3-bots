@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { ChevronLeftIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useBots, useI18n, usePresentation } from "../../app/context";
 import { cn } from "../../lib/cn";
 import { Section } from "../SettingsSection";
@@ -351,15 +351,22 @@ function ShownValue({
   const { t } = useI18n();
   const failureText = useSecretsFailureText();
   const [value, setValue] = useState<Redacted.Redacted<string> | null>(null);
-  const [copied, setCopied] = useState(false);
+  // What the last Copy did: copied, or, where the page has no clipboard (plain
+  // HTTP on the local network) or the browser refused, selected to copy by hand.
+  const [copied, setCopied] = useState<"copied" | "selected" | null>(null);
+  const shownRef = useRef<HTMLElement>(null);
   const reveal = useRequest();
   useEffect(() => {
     if (value === null) return;
-    return hideShownLater(() => setValue(null), document);
+    const stop = hideShownLater(() => setValue(null), document);
+    return () => {
+      stop();
+      setCopied(null);
+    };
   }, [value]);
   useEffect(() => {
-    if (!copied) return;
-    const settle = window.setTimeout(() => setCopied(false), 1500);
+    if (copied !== "copied") return;
+    const settle = window.setTimeout(() => setCopied(null), 1500);
     return () => window.clearTimeout(settle);
   }, [copied]);
   return (
@@ -367,7 +374,10 @@ function ShownValue({
       <span className="text-xs text-muted-foreground">{t(fieldLabel[field])}</span>
       <span className="flex min-w-0 items-center gap-1">
         {value !== null && (
-          <code className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+          <code
+            ref={shownRef}
+            className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+          >
             {Redacted.value(value)}
           </code>
         )}
@@ -378,12 +388,24 @@ function ShownValue({
           <Button
             size="sm"
             variant="ghost-muted"
-            onClick={() =>
-              void navigator.clipboard.writeText(Redacted.value(value)).then(() => setCopied(true))
-            }
+            onClick={() => {
+              const select = () => {
+                if (shownRef.current) window.getSelection()?.selectAllChildren(shownRef.current);
+                setCopied("selected");
+              };
+              if (!("clipboard" in navigator)) return select();
+              navigator.clipboard
+                .writeText(Redacted.value(value))
+                .then(() => setCopied("copied"), select);
+            }}
           >
-            {copied ? t("secrets.copied") : t("secrets.copy")}
+            {copied === "copied" ? t("secrets.copied") : t("secrets.copy")}
           </Button>
+        )}
+        {value !== null && copied === "selected" && (
+          <span role="status" className="text-xs text-muted-foreground">
+            {t("secrets.selected")}
+          </span>
         )}
         <Button
           size="sm"
