@@ -52,6 +52,7 @@ import Migration0046 from "./migrations/0046_refusal_engine_start.ts";
 import Migration0047 from "./migrations/0047_browser_help_pushes.ts";
 import Migration0048 from "./migrations/0048_stop_reach.ts";
 import Migration0049 from "./migrations/0049_engine_edges.ts";
+import Migration0050 from "./migrations/0050_engine_instance.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -105,6 +106,7 @@ const migrations = SqliteMigrator.fromRecord({
   "47_browser_help_pushes": Migration0047,
   "48_stop_reach": Migration0048,
   "49_engine_edges": Migration0049,
+  "50_engine_instance": Migration0050,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });
@@ -205,6 +207,9 @@ export const migrate = Effect.fn("migrate")(function* (loader: Migrator.Loader) 
   }
   return applied;
 });
+
+/** The migrations this release knows, by id. */
+export const knownMigrations = Effect.map(migrations, (all) => all.map(([id]) => id));
 
 /** Applies every migration of this server the database has not recorded yet. */
 export const runMigrations = () => migrate(migrations);

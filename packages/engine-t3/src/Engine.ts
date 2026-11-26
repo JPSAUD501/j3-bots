@@ -19,6 +19,7 @@ import type {
   DispatchRejected,
   EngineDown,
   EngineIncompatible,
+  EngineUnavailable,
   ModelUnavailable,
   OpenRejected,
   PermissionModeRefused,
@@ -31,6 +32,7 @@ import type {
 import type { SessionEvent } from "./events.ts";
 import type {
   EngineAttachmentId,
+  EngineInstanceId,
   EngineProjectId,
   EventCursor,
   IdempotencyKey,
@@ -371,6 +373,13 @@ export class Engine extends Context.Service<
      * started names the start that gave it (`PermissionModeRefused`).
      */
     readonly starts: Stream.Stream<number | null>;
+
+    /**
+     * Which engine is ready now. Projects, sessions and the keys they were
+     * opened under are that engine's alone: another one, as a fresh data
+     * directory starts, has none of them. Fails while the engine is not ready.
+     */
+    readonly instance: Effect.Effect<EngineInstanceId, EngineUnavailable>;
 
     /**
      * Points the Claude Code and Codex instances at `connection`. It is

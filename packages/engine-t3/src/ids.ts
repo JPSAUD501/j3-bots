@@ -6,6 +6,14 @@ import * as Schema from "effect/Schema";
 
 const opaque = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 
+/**
+ * The engine itself: one data directory's engine, the same across its
+ * restarts. A fresh data directory is another engine, which has none of the
+ * projects and sessions of the one before.
+ */
+export const EngineInstanceId = opaque.pipe(Schema.brand("EngineInstanceId"));
+export type EngineInstanceId = typeof EngineInstanceId.Type;
+
 /** The engine project behind one bot's workspace folder. */
 export const EngineProjectId = opaque.pipe(Schema.brand("EngineProjectId"));
 export type EngineProjectId = typeof EngineProjectId.Type;
