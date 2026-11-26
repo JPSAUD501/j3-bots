@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, RoomId, RoomWorkState } from "@j3-bots/contracts";
+import { BotId, RoomId, RoomWorkState, type TurnWork } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,15 +8,32 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import type * as Statement from "effect/sql/Statement";
 import { modeRefusedSql } from "./modeRefusals.ts";
+import { WorkJson } from "./turnWork.ts";
 
 const WorkRow = Schema.Struct({ room_id: RoomId, work: RoomWorkState });
 const AnsweringRow = Schema.Struct({ room_id: RoomId, bot_id: BotId });
+const MemberWorkRow = Schema.Struct({
+  room_id: RoomId,
+  bot_id: BotId,
+  work_json: WorkJson,
+});
+
+/** A member's plan and little ones in a room, as the roster sends them with it. */
+export interface MemberWork {
+  readonly botId: BotId;
+  readonly work: TurnWork;
+}
 
 /** What an active room's members are doing there, as the roster sends it with the room. */
 export interface RoomActivity {
   readonly work: RoomWorkState;
   /** The members answering now, in member order; empty unless `work` is `running`. */
   readonly answering: ReadonlyArray<BotId>;
+  /**
+   * The plan and little ones of members at work there, in member order;
+   * empty unless `work` is `running`.
+   */
+  readonly memberWork: ReadonlyArray<MemberWork>;
 }
 
 /**
@@ -39,7 +56,15 @@ export interface RoomActivity {
  * a member goes from waiting to working, so the list changes only when a
  * member starts or ends. A member whose permission mode the engine refuses
  * waits out of the room, so it is not counted, nor is one that left the
- * room. Both are read in one transaction, so they agree.
+ * room.
+ *
+ * `memberWork`, while the work is `running`, is the plan and little ones of
+ * each member's latest turn for the room whose work may still run there: not
+ * finished, or finished with background work, such as a little one it handed
+ * off, pending, in a session the engine still has (decision 0070). A member
+ * still `answering` is in that turn; one that is not left work behind it.
+ *
+ * All three are read in one transaction, so they agree.
  */
 export class RoomStates extends Context.Service<
   RoomStates,
@@ -127,10 +152,33 @@ export const layer = Layer.effect(
       ORDER BY ra_queue.room_id, ra_member.position
     `;
 
+    /**
+     * The plan and little ones of each member's latest turn for the rooms
+     * `rooms` selects, as `rw_room`, among its turns of the room whose work
+     * may still run there, as `work` counts them: not finished, or with
+     * background work pending, in a session the engine still has. In member
+     * order, a member's turns in the order they started, so its latest is
+     * last.
+     */
+    const selectMemberWork = (rooms: Statement.Fragment) => sql`
+      SELECT rw_turn.audience_room_id AS room_id, rw_session.bot_id AS bot_id, rw_turn.work_json
+      FROM turns rw_turn
+      JOIN sessions rw_session ON rw_session.id = rw_turn.session_id
+      JOIN room_members rw_member
+        ON rw_member.room_id = rw_turn.audience_room_id AND rw_member.bot_id = rw_session.bot_id
+      WHERE rw_turn.audience = 'room' AND rw_turn.work_json IS NOT NULL
+        AND rw_session.lost_at IS NULL AND rw_session.engine_retired_at IS NULL
+        AND (rw_turn.finished_at IS NULL OR rw_turn.background_pending = 1)
+        AND rw_turn.audience_room_id IN (
+          SELECT rw_room.id FROM rooms rw_room WHERE rw_room.status = 'active' AND ${rooms}
+        )
+      ORDER BY rw_turn.audience_room_id, rw_member.position, rw_turn.started_at
+    `;
+
     /** The rooms with these ids, or those the bot is a member of, by the alias `room` has. */
-    const roomsIn = (roomIds: ReadonlyArray<string>, room: "rs_room" | "ra_room") =>
+    const roomsIn = (roomIds: ReadonlyArray<string>, room: "rs_room" | "ra_room" | "rw_room") =>
       sql.in(`${room}.id`, roomIds);
-    const roomsOf = (botId: string, room: "rs_room" | "ra_room") =>
+    const roomsOf = (botId: string, room: "rs_room" | "ra_room" | "rw_room") =>
       sql`${sql.literal(room)}.id IN (SELECT room_id FROM room_members WHERE bot_id = ${botId})`;
 
     const workByRooms = SqlSchema.findAll({
@@ -153,10 +201,21 @@ export const layer = Layer.effect(
       Result: AnsweringRow,
       execute: (botId) => selectAnswering(roomsOf(botId, "ra_room")),
     });
+    const memberWorkByRooms = SqlSchema.findAll({
+      Request: Schema.Array(RoomId),
+      Result: MemberWorkRow,
+      execute: (roomIds) => selectMemberWork(roomsIn(roomIds, "rw_room")),
+    });
+    const memberWorkByBot = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: MemberWorkRow,
+      execute: (botId) => selectMemberWork(roomsOf(botId, "rw_room")),
+    });
 
     const toMap = (
       work: ReadonlyArray<typeof WorkRow.Type>,
       answering: ReadonlyArray<typeof AnsweringRow.Type>,
+      memberWork: ReadonlyArray<typeof MemberWorkRow.Type>,
     ): ReadonlyMap<RoomId, RoomActivity> => {
       const queues = new Map<RoomId, Array<BotId>>();
       for (const row of answering) {
@@ -164,14 +223,30 @@ export const layer = Layer.effect(
         if (!queue.includes(row.bot_id)) queue.push(row.bot_id);
         queues.set(row.room_id, queue);
       }
+      // A member's latest turn comes last, and takes its place.
+      const latest = new Map<RoomId, Map<BotId, TurnWork>>();
+      for (const row of memberWork) {
+        const members = latest.get(row.room_id) ?? new Map<BotId, TurnWork>();
+        members.set(row.bot_id, row.work_json);
+        latest.set(row.room_id, members);
+      }
       return new Map(
-        work.map((row) => [
-          row.room_id,
-          {
-            work: row.work,
-            answering: row.work === "running" ? (queues.get(row.room_id) ?? []) : [],
-          },
-        ]),
+        work.map((row) => {
+          const running = row.work === "running";
+          return [
+            row.room_id,
+            {
+              work: row.work,
+              answering: running ? (queues.get(row.room_id) ?? []) : [],
+              memberWork: running
+                ? [...(latest.get(row.room_id) ?? [])].map(([botId, turnWork]) => ({
+                    botId,
+                    work: turnWork,
+                  }))
+                : [],
+            },
+          ];
+        }),
       );
     };
 
@@ -179,18 +254,21 @@ export const layer = Layer.effect(
       roomIds: ReadonlyArray<RoomId>,
     ) {
       if (roomIds.length === 0) return new Map<RoomId, RoomActivity>();
-      const [work, answering] = yield* Effect.all([
+      const [work, answering, memberWork] = yield* Effect.all([
         workByRooms(roomIds),
         answeringByRooms(roomIds),
+        memberWorkByRooms(roomIds),
       ]).pipe(sql.withTransaction);
-      return toMap(work, answering);
+      return toMap(work, answering, memberWork);
     }, Effect.orDie);
 
     const activityOfBot = Effect.fn("RoomStates.activityOfBot")(function* (botId: BotId) {
-      const [work, answering] = yield* Effect.all([workByBot(botId), answeringByBot(botId)]).pipe(
-        sql.withTransaction,
-      );
-      return toMap(work, answering);
+      const [work, answering, memberWork] = yield* Effect.all([
+        workByBot(botId),
+        answeringByBot(botId),
+        memberWorkByBot(botId),
+      ]).pipe(sql.withTransaction);
+      return toMap(work, answering, memberWork);
     }, Effect.orDie);
 
     return RoomStates.of({ activityOf, activityOfBot });

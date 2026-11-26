@@ -1868,3 +1868,166 @@ describe("what a running turn takes from outside it", () => {
     });
   });
 });
+
+describe("a turn's plan and little ones", () => {
+  const works = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((event) => (event._tag === "turn-work" ? [event.work] : []));
+  const todoList = (id: string, ordinal: number, steps: ReadonlyArray<[string, string]>) =>
+    item({
+      id,
+      ordinal,
+      type: "todo_list",
+      planId: `plan-${id}`,
+      steps: steps.map(([text, status], index) => ({ id: `step-${index + 1}`, text, status })),
+      status: "completed",
+      completedAt: at,
+    });
+  const subagent = (id: string, ordinal: number, fields: Record<string, unknown>) =>
+    item({
+      id,
+      ordinal,
+      type: "subagent",
+      subagentId: `node-${id}`,
+      origin: "provider_native",
+      driver: "claudeAgent",
+      providerInstanceId: "claudeAgent",
+      childThreadId: null,
+      prompt: "",
+      result: null,
+      status: "running",
+      ...fields,
+    });
+  const started = () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    return { mirror, view };
+  };
+
+  it("tells the latest list of what is left to do as the turn's plan, each update replacing it", () => {
+    const { mirror, view } = started();
+    applyEvent(
+      mirror,
+      todoList("item-plan-1", 10, [
+        ["Read the brief", "completed"],
+        ["Draft the  reply\nin two parts", "running"],
+        ["Send it", "pending"],
+      ]),
+    );
+    assert.deepStrictEqual(
+      works(diff(mirror, view, at, noProviders)).map((work) => work.plan),
+      [
+        {
+          steps: [
+            { text: "Read the brief", status: "done" },
+            { text: "Draft the reply in two parts", status: "running" },
+            { text: "Send it", status: "pending" },
+          ],
+        },
+      ],
+    );
+    // Told again only when it changes.
+    assert.deepStrictEqual(works(diff(mirror, view, at, noProviders)), []);
+
+    applyEvent(mirror, todoList("item-plan-2", 14, [["Send it", "completed"]]));
+    assert.deepStrictEqual(
+      works(diff(mirror, view, at, noProviders)).map((work) => work.plan),
+      [{ steps: [{ text: "Send it", status: "done" }] }],
+    );
+  });
+
+  it("names a little one by its short description, or by a few words of its instructions, never with its result", () => {
+    const { mirror, view } = started();
+    applyEvent(mirror, subagent("item-a", 10, { title: "Review the diff" }));
+    applyEvent(
+      mirror,
+      subagent("item-b", 11, {
+        prompt:
+          "## Task\nFind every venue in the old town that seats forty people and is open on Sundays. Then rank them by price.",
+        progress: "Reading\nthe venue list",
+      }),
+    );
+    applyEvent(mirror, subagent("item-c", 12, { prompt: "" }));
+    const [told] = works(diff(mirror, view, at, noProviders));
+    assert.deepStrictEqual(
+      told?.littleOnes.map(({ label, status, finishedAt, progress }) => ({
+        label,
+        status,
+        finishedAt,
+        progress,
+      })),
+      [
+        { label: "Review the diff", status: "working", finishedAt: null, progress: undefined },
+        {
+          label: "Find every venue in the old town that…",
+          status: "working",
+          finishedAt: null,
+          progress: "Reading the venue list",
+        },
+        { label: null, status: "working", finishedAt: null, progress: undefined },
+      ],
+    );
+
+    const done = DateTime.makeUnsafe("2026-11-20T12:05:00Z");
+    applyEvent(
+      mirror,
+      subagent("item-a", 10, {
+        title: "Review the diff",
+        status: "completed",
+        result: "Three issues, all in the parser.",
+        completedAt: done,
+      }),
+    );
+    applyEvent(mirror, subagent("item-c", 12, { status: "cancelled", completedAt: done }));
+    const [after] = works(diff(mirror, view, at, noProviders));
+    assert.deepStrictEqual(
+      after?.littleOnes.map(({ status, finishedAt }) => ({ status, finishedAt })),
+      [
+        { status: "done", finishedAt: done },
+        { status: "working", finishedAt: null },
+        { status: "failed", finishedAt: done },
+      ],
+    );
+    assert.notInclude(JSON.stringify(after), "parser");
+  });
+
+  it("goes on telling a little one the turn handed off after the turn's end, until it ends", () => {
+    const { mirror, view } = started();
+    applyEvent(mirror, subagent("item-task", 10, { origin: "app_owned", title: "Find a venue" }));
+    applyEvent(mirror, run("completed", 1));
+    const atEnd = diff(mirror, view, at, noProviders);
+    const tags = atEnd.map((event) => event._tag);
+    assert.isBelow(tags.indexOf("turn-work"), tags.indexOf("turn-finished"));
+
+    applyEvent(
+      mirror,
+      subagent("item-task", 10, {
+        origin: "app_owned",
+        title: "Find a venue",
+        status: "completed",
+      }),
+    );
+    assert.deepStrictEqual(
+      works(diff(mirror, view, at, noProviders)).map((work) => work.littleOnes[0]?.status),
+      ["done"],
+    );
+    assert.deepStrictEqual(works(diff(mirror, view, at, noProviders)), []);
+  });
+
+  it("lists a turn's plan and little ones in a replacement", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, todoList("item-plan", 10, [["Read the brief", "running"]]));
+    applyEvent(mirror, subagent("item-a", 11, { title: "Review the diff" }));
+    const { event: replaced, view } = replacement(mirror, false, at, new Map(), noProviders);
+    const [open] = replaced.openTurns;
+    assert.deepStrictEqual(open?.work.plan, {
+      steps: [{ text: "Read the brief", status: "running" }],
+    });
+    assert.deepStrictEqual(
+      open?.work.littleOnes.map((one) => one.label),
+      ["Review the diff"],
+    );
+    assert.deepStrictEqual(works(diff(mirror, view, at, noProviders)), []);
+  });
+});

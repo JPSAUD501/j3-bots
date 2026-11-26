@@ -184,7 +184,14 @@ export const layer = Layer.effect(
                 answering: activity.get(row.id)?.answering ?? [],
               }
             : { archivedAt: row.archived_at }),
-        }),
+        }).pipe(
+          // Already decoded: only the rest of the room comes from its row.
+          Effect.map((room): Room =>
+            room.status === "active"
+              ? { ...room, memberWork: activity.get(row.id)?.memberWork ?? [] }
+              : room,
+          ),
+        ),
       );
     }, Effect.orDie);
 

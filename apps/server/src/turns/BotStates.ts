@@ -16,6 +16,7 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { STALL_AFTER } from "./model.ts";
 import { shownStep } from "./shownStep.ts";
+import { WorkColumn } from "./turnWork.ts";
 
 const Card = Schema.Struct({ entry_id: EntryId });
 
@@ -26,6 +27,7 @@ const RunningTurn = Schema.Struct({
   started_at: Time,
   last_activity_at: Time,
   work_fold_entry_id: Schema.NullOr(EntryId),
+  work_json: WorkColumn,
 });
 
 const Continuation = Schema.Struct({
@@ -110,7 +112,7 @@ export const layer = Layer.effect(
       Request: BotId,
       Result: RunningTurn,
       execute: (botId) => sql`
-        SELECT t.started_at, t.last_activity_at, t.work_fold_entry_id
+        SELECT t.started_at, t.last_activity_at, t.work_fold_entry_id, t.work_json
         FROM sessions s JOIN turns t
           ON t.session_id = s.id AND t.engine_turn_id = s.admitted_turn_id
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND t.finished_at IS NULL
@@ -209,21 +211,22 @@ export const layer = Layer.effect(
         const since = turn.value.started_at;
         const fold = turn.value.work_fold_entry_id;
         const step = fold === null ? Option.none() : yield* shown(fold);
+        const work = turn.value.work_json;
         const typing = typists.has(botId);
-        if (Option.isNone(step)) {
+        // A plan or a little one is work as visible as a step.
+        if (Option.isNone(step) && work === null) {
           return { _tag: "thinking", since, stalled, quietSince, typing } as const;
         }
-        const latest = step.value;
-        const running = latest.status === "running";
+        const running = Option.isSome(step) && step.value.status === "running";
         return {
           _tag: "working",
           since,
           stalled,
           quietSince,
           typing,
-          activity: running ? latest.label : null,
-          tool: running ? latest.tool : null,
-          littleOnes: 0,
+          activity: running ? step.value.label : null,
+          tool: running ? step.value.tool : null,
+          littleOnes: work?.littleOnes.working ?? 0,
         } as const;
       }
 

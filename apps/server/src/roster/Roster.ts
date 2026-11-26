@@ -21,6 +21,7 @@ import { ChangeLog, type ChangeScope } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Sections } from "../sections/Sections.ts";
 import { type RoomActivity, RoomStates } from "../turns/RoomStates.ts";
+import { sameWork } from "../turns/turnWork.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 
 export type RosterFrame =
@@ -78,11 +79,17 @@ export class Roster extends Context.Service<
   }
 >()("@j3-bots/server/roster/Roster") {}
 
-/** Whether a room's work and who answers there read the same. */
+/** Whether a room's work, who answers there and their plans and little ones read the same. */
 const sameActivity = (a: RoomActivity, b: RoomActivity) =>
   a.work === b.work &&
   a.answering.length === b.answering.length &&
-  a.answering.every((id, index) => id === b.answering[index]);
+  a.answering.every((id, index) => id === b.answering[index]) &&
+  a.memberWork.length === b.memberWork.length &&
+  a.memberWork.every(
+    (member, index) =>
+      member.botId === b.memberWork[index]?.botId &&
+      sameWork(member.work, b.memberWork[index]?.work ?? null),
+  );
 
 export const layer = Layer.effect(
   Roster,
@@ -143,8 +150,8 @@ export const layer = Layer.effect(
         const sent = (item: RosterItem) => {
           if (item._tag !== "room") return item;
           if (item.room.status === "active") {
-            const { work, answering } = item.room;
-            sentActivity.set(item.room.id, { work, answering });
+            const { work, answering, memberWork } = item.room;
+            sentActivity.set(item.room.id, { work, answering, memberWork });
           } else sentActivity.delete(item.room.id);
           return item;
         };

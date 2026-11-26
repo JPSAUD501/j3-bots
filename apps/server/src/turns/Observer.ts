@@ -9,6 +9,7 @@ import {
   EngineInstanceId,
   type EngineRequest,
   type EngineStep,
+  type EngineTurnWork,
   EventCursor,
   type IdempotencyKey,
   type OpenRequest,
@@ -77,6 +78,7 @@ import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 import { WorkImages } from "../attachments/WorkImages.ts";
 import { annotate } from "./ConnectorSteps.ts";
+import { sameWork, shownWork, WorkColumn } from "./turnWork.ts";
 
 const Watched = Schema.Struct({
   id: SessionRowId,
@@ -110,6 +112,7 @@ const RequestRow = Schema.Struct({
 });
 
 const encodeStep = Schema.encodeEffect(json(WorkStep));
+const encodeWork = Schema.encodeEffect(WorkColumn);
 
 /** The longest message an entry holds; host speech past it is cut. */
 const MESSAGE_LIMIT = 100_000;
@@ -178,6 +181,7 @@ const changesWork = (event: SessionEvent): boolean => {
     case "delegated-result":
     case "request-updated":
     case "step":
+    case "turn-work":
     case "host-speech":
     case "tool-call":
     case "queue-held":
@@ -1101,6 +1105,43 @@ export const layer = Layer.effect(
       yield* touchActivity(session.id, turnId, at);
     }, Effect.orDie);
 
+    /**
+     * The turn's plan and little ones, kept with the turn (`turns.work_json`)
+     * and shown to its audience only: on its work fold, written now if the
+     * turn has none yet, for a turn of the bot's own conversation; in the room
+     * by the member for a room's turn, which the roster sends with the room
+     * (`RoomStates`). A routine run's turn shows none.
+     */
+    const turnWork = Effect.fn("Observer.turnWork")(function* (
+      session: Watched,
+      turnId: TurnId,
+      engineWork: EngineTurnWork,
+      at: DateTime.Utc,
+    ) {
+      const turn = yield* turnOf(session.id, turnId);
+      if (Option.isNone(turn)) return;
+      if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
+      const work = shownWork(engineWork);
+      yield* sql`
+        UPDATE turns SET work_json = ${yield* encodeWork(work)}
+        WHERE session_id = ${session.id} AND engine_turn_id = ${turnId}
+      `;
+      if (turn.value.audience === "conversation") {
+        const foldId =
+          turn.value.work_fold_entry_id ??
+          (work === null ? null : yield* foldOf(session, turn.value));
+        const fold = foldId === null ? Option.none() : yield* entries.find(foldId);
+        if (
+          Option.isSome(fold) &&
+          fold.value.entry._tag === "work-fold" &&
+          !sameWork(fold.value.entry.work, work)
+        ) {
+          yield* entries.update({ ...fold.value.entry, work });
+        }
+      }
+      yield* touchActivity(session.id, turnId, at);
+    }, Effect.orDie);
+
     /** The host's own speech tool, delivered once per speech like a `say` without `done`. */
     /**
      * What the bot said through the engine rather than `say`: a message of
@@ -1390,6 +1431,7 @@ export const layer = Layer.effect(
         if (turn.startedAt !== null)
           yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt, null);
         for (const work of turn.steps) yield* step(session, turn.turnId, work, turn.finishedAt);
+        yield* turnWork(session, turn.turnId, turn.work, turn.finishedAt);
         yield* finishTurn(session, {
           turnId: turn.turnId,
           cause: turn.cause,
@@ -1409,6 +1451,7 @@ export const layer = Layer.effect(
         }
         for (const key of turn.takenSteers) yield* steerTaken(session, key);
         for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
+        yield* turnWork(session, turn.turnId, turn.work, event.at);
         for (const call of turn.toolCalls)
           yield* toolCall(session, turn.turnId, call, true, event.at);
         // Recorded closed, also when this is the first sight of them.
@@ -1518,6 +1561,8 @@ export const layer = Layer.effect(
           return yield* steerRequeued(session, event.key, event.followUpTurnId);
         case "step":
           return yield* step(session, event.turnId, event.step, event.at);
+        case "turn-work":
+          return yield* turnWork(session, event.turnId, event.work, event.at);
         case "host-speech":
           return yield* hostSpeech(session, event);
         case "tool-call":

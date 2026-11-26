@@ -14,6 +14,7 @@ import { audienceOf, conversation, type SessionRowId, StoredResponse } from "./m
 import { notices } from "./notices.ts";
 import type { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
+import { endedWork, WorkJson } from "./turnWork.ts";
 import { waitedWithin } from "./waited.ts";
 import type { WorkSteps } from "./WorkSteps.ts";
 
@@ -46,6 +47,7 @@ const OpenRequest = Schema.Struct({
 });
 
 const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
+const encodeWork = Schema.encodeEffect(WorkJson);
 
 const WaitRow = Schema.Struct({ opened_at: Time, closed_at: Schema.NullOr(Time) });
 
@@ -341,6 +343,45 @@ export const sessionLoss = (
     `,
   });
 
+  const workingTurns = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      engine_turn_id: TurnId,
+      work_fold_entry_id: Schema.NullOr(EntryId),
+      work_json: WorkJson,
+    }),
+    execute: (sessionId) => sql`
+      SELECT engine_turn_id, work_fold_entry_id, work_json FROM turns
+      WHERE session_id = ${sessionId} AND json_extract(work_json, '$.littleOnes.working') > 0
+    `,
+  });
+
+  /**
+   * Every little one still working in a session nothing runs in any more
+   * ended with it, where its turn shows it: on the turn's work fold, or in
+   * its room, which no longer counts the session's turns.
+   */
+  const settleWork = Effect.fnUntraced(function* (sessionId: SessionRowId, now: DateTime.Utc) {
+    for (const turn of yield* workingTurns(sessionId)) {
+      const work = endedWork(turn.work_json, now);
+      yield* sql`
+        UPDATE turns SET work_json = ${yield* encodeWork(work)}
+        WHERE session_id = ${sessionId} AND engine_turn_id = ${turn.engine_turn_id}
+      `;
+      const fold =
+        turn.work_fold_entry_id === null
+          ? Option.none()
+          : yield* entries.find(turn.work_fold_entry_id);
+      if (
+        Option.isSome(fold) &&
+        fold.value.entry._tag === "work-fold" &&
+        fold.value.entry.work !== null
+      ) {
+        yield* entries.update({ ...fold.value.entry, work });
+      }
+    }
+  });
+
   const openRequests = SqlSchema.findAll({
     Request: Schema.String,
     Result: OpenRequest,
@@ -388,6 +429,7 @@ export const sessionLoss = (
       yield* endTurn(session, turn, interrupted, turn.last_activity_at, false);
     }
     yield* followBackground(sessionId, true);
+    yield* settleWork(sessionId, now);
     yield* sql`UPDATE engine_tool_calls SET open = 0 WHERE session_id = ${sessionId}`;
     for (const request of yield* openRequests(sessionId)) {
       yield* closeCard(request, "expired", now);

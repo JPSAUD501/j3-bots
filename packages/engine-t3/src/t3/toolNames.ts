@@ -5,6 +5,12 @@ import * as Schema from "effect/Schema";
 import { TOOL_SERVER } from "./Provision.ts";
 
 /**
+ * The tools a step names now. `background-task` and `plan` name only steps
+ * recorded before the turn's work told them (decision 0070).
+ */
+type NamedTool = Exclude<WorkTool, "background-task" | "plan">;
+
+/**
  * The engine's own tool server, as the harnesses name its tools:
  * `mcp__t3-code__delegate_task` on Claude Code, `t3-code.delegate_task` on
  * Codex and on ACP agents. **Verified** on `0.1.11`: a step of the scripted
@@ -36,7 +42,7 @@ const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
  * which are events of their own: those that change or read its MCP servers
  * and skills (decision 0049), by their bare names in the `j3` namespace.
  */
-const OWN_STEP_TOOLS: ReadonlyMap<string, WorkTool> = new Map([
+const OWN_STEP_TOOLS: ReadonlyMap<string, NamedTool> = new Map([
   ["add_mcp_server", "mcp-server-added"],
   ["update_mcp_server", "mcp-server-changed"],
   ["set_mcp_server_bots", "mcp-server-changed"],
@@ -80,9 +86,10 @@ const normalized = (tool: string) => tool.toLowerCase().replaceAll(/[\s_-]/g, ""
 /**
  * The engine's own tools, by their bare names as the engine offers them to
  * an agent (**Verified** on a running engine, 2026-11: its tool list).
+ * `delegate_task` is not among them: the task it starts is a little one of
+ * the turn (`TOLD_BY_TURN_WORK`).
  */
-const engineTool = (tool: string): WorkTool => {
-  if (tool === "delegate_task") return "background-task";
+const engineTool = (tool: string): NamedTool => {
   if (tool === "task_status") return "task-status";
   if (tool === "task_cancel") return "task-stop";
   if (tool === "request_secret") return "secret";
@@ -116,7 +123,7 @@ const inputText = (
   return null;
 };
 
-type Kind = Extract<WorkStep["kind"], "read" | "search" | "delegation" | "tool">;
+type Kind = Extract<WorkStep["kind"], "read" | "search" | "tool">;
 
 /**
  * A harness's own tool: the kind of step it is, the tool when J3 Bots names
@@ -124,7 +131,7 @@ type Kind = Extract<WorkStep["kind"], "read" | "search" | "delegation" | "tool">
  */
 interface Native {
   readonly kind: Kind;
-  readonly tool: WorkTool | null;
+  readonly tool: NamedTool | null;
   readonly about: ReadonlyArray<keyof typeof Inputs.Type>;
 }
 
@@ -132,27 +139,42 @@ interface Native {
  * The harnesses' own tools that reach the engine as plain tool calls, by
  * their bare names. Claude Code's are **Read** in T3 Code at `59651c17`
  * (`ClaudeAdapterV2.ts`, `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS`): `Read`, `Grep`,
- * `Glob`, `LS`, `Task`, `Agent`, `TaskStop` and `TodoWrite` arrive as dynamic
- * tools, with the call's input. Codex's `update_plan` and `view_image`, and
- * `WebFetch` from an agent that reports it as a tool, are **Assumed**.
+ * `Glob`, `LS` and `TaskStop` arrive as dynamic tools, with the call's input.
+ * Codex's `view_image`, and `WebFetch` from an agent that reports it as a
+ * tool, are **Assumed**.
  */
 const nativeTools: ReadonlyMap<string, Native> = new Map([
   ["read", { kind: "read", tool: null, about: ["file_path", "path"] }],
   ["grep", { kind: "search", tool: null, about: ["pattern", "path"] }],
   ["glob", { kind: "search", tool: null, about: ["pattern", "path"] }],
   ["ls", { kind: "search", tool: null, about: ["path"] }],
-  ["task", { kind: "delegation", tool: null, about: ["description"] }],
-  ["agent", { kind: "delegation", tool: null, about: ["description"] }],
   ["taskstop", { kind: "tool", tool: "task-stop", about: [] }],
-  ["todowrite", { kind: "tool", tool: "plan", about: [] }],
-  ["updateplan", { kind: "tool", tool: "plan", about: [] }],
   ["webfetch", { kind: "tool", tool: "web-page", about: [] }],
   ["viewimage", { kind: "tool", tool: "image", about: [] }],
 ]);
 
+/**
+ * The calls a turn's work tells rather than its steps: a harness's list of
+ * what is left to do, which is the turn's plan, and the launch of a subagent
+ * or of a task the engine delegates, each a little one of the turn (decision
+ * 0070). The engine records the plan as a `todo_list` item and each subagent
+ * and delegated task as a `subagent` item of the same run, which the adapter
+ * reads instead (**Read** at `59651c1`: `ClaudeAdapterV2.ts`, a `TodoWrite`
+ * call L11735 and `task_started` L11500-11545; `CodexAdapterV2.ts`,
+ * `turn/plan/updated` L4951; `Orchestrator.ts`, a delegated task's item
+ * L9923-9946). Claude Code's `Agent` call reaches the engine as no item of
+ * its own, and `Task` is its older name; Codex's `update_plan` is
+ * **Assumed** to reach it as a tool call, if at all.
+ */
+const TOLD_BY_TURN_WORK: ReadonlySet<string> = new Set([
+  "todowrite",
+  "updateplan",
+  "task",
+  "agent",
+]);
+
 /** English for a client that predates `tool`. */
-const englishLabel: Record<WorkTool, string> = {
-  "background-task": "Started a background task",
+const englishLabel: Record<NamedTool, string> = {
   "task-status": "Checked on a background task",
   "task-stop": "Stopped a background task",
   secret: "Asked for a credential",
@@ -164,7 +186,6 @@ const englishLabel: Record<WorkTool, string> = {
   schedule: "Managed a scheduled task",
   device: "Used a phone simulator",
   "web-page": "Read a web page",
-  plan: "Updated its plan",
   image: "Looked at an image",
   "built-in": "Used one of its tools",
   "mcp-server-added": "Added an MCP server",
@@ -209,14 +230,19 @@ export interface ToolCall {
  * when J3 Bots names it, and a label. A harness's file and search tools read
  * as what they worked on; a tool J3 Bots does not name keeps the engine's
  * title, else its own name made readable. The engine's name for itself never
- * reaches a label.
+ * reaches a label. A call the turn's plan or a little one tells is no step
+ * (`undefined`).
  */
 export const toolStep = (
   call: ToolCall,
-): { readonly kind: Kind; readonly tool: WorkTool | null; readonly label: string | null } => {
+):
+  | { readonly kind: Kind; readonly tool: NamedTool | null; readonly label: string | null }
+  | undefined => {
   if (call.viewsImage) return { kind: "tool", tool: "image", label: englishLabel.image };
   if (call.name === null) return { kind: "tool", tool: null, label: call.title };
   const { server, tool } = split(call.name.trim());
+  if (server === ENGINE_TOOL_SERVER && tool === "delegate_task") return undefined;
+  if (server === null && TOLD_BY_TURN_WORK.has(normalized(tool))) return undefined;
   if (server === TOOL_SERVER && isConnectorTool(tool)) {
     // From its name only: a connector call's input is the operator's data.
     return { kind: "tool", tool: "connector", label: connectorLabel(tool) };

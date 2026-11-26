@@ -133,11 +133,11 @@ export const LittleOne = Schema.Struct({
   /**
    * What it does, in a few words: the short description the harness gave
    * the subagent, or a short label made from the start of its instructions,
-   * never the instructions themselves.
+   * never the instructions themselves. Null when the engine gave neither,
+   * which a client words in the operator's language.
    */
-  label: Schema.String.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(MAX_LITTLE_ONE_LABEL_LENGTH),
+  label: Schema.NullOr(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_LITTLE_ONE_LABEL_LENGTH)),
   ),
   status: OpenLiterals(LittleOneStatus.literals),
   startedAt: Schema.DateTimeUtc,
