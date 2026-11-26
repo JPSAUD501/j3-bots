@@ -32,6 +32,8 @@ export const IPC_CHANNELS = {
   checkForUpdates: "j3bots:check-for-updates",
   /** Restarts into the downloaded update once no save is under way. Not answered. */
   restartToUpdate: "j3bots:restart-to-update",
+  /** Calls off a restart into the update that waits for a save, and offers it again. Not answered. */
+  cancelRestartToUpdate: "j3bots:cancel-restart-to-update",
   /**
    * `UpdateChannelRequest`: the releases the app follows from now on, unless a
    * version is on its way or installing. Answers the `UpdateStatus` after it.
@@ -126,6 +128,7 @@ export interface DesktopBridge {
   readonly onUpdate: (listener: (status: unknown) => void) => () => void;
   readonly checkForUpdates: () => void;
   readonly restartToUpdate: () => void;
+  readonly cancelRestartToUpdate: () => void;
   /** Chooses the releases the app follows (an `UpdateChannelRequest`). */
   readonly setUpdateChannel: (channel: string) => Promise<unknown>;
   /** Turns installing a verified version by itself on or off (an `AutomaticUpdatesRequest`). */

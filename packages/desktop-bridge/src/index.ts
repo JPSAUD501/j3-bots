@@ -390,12 +390,13 @@ export type AppVersion = typeof AppVersion.Type;
  * `verifying`: it is downloaded, and the app checks it against the release's
  * signed checksums before it offers anything. `downloaded`: it matched, and
  * restarting into it is `offered`, or was asked for and waits until no save is
- * under way (`waiting-for-save`); where updates install by themselves, it
- * also installs as the app quits. `installing`: the app is restarting into
- * it, or installing it as it quits.
+ * under way (`waiting-for-save`), which the operator may call off; where
+ * updates install by themselves, it also installs as the app quits.
+ * `installing`: the app is restarting into it, or installing it as it quits.
  * `failed`: the last check or download (`check`) failed, the download did not
  * match the release's signed checksums, or they could not be read (`verify`),
- * or the install (`install`) failed; the next check tries again.
+ * or installing `version` failed (`install`), which the operator can still
+ * download from its release page; the next check tries again.
  */
 export const UpdatePhase = Schema.Union([
   Schema.TaggedStruct("unavailable", {}),
@@ -413,7 +414,8 @@ export const UpdatePhase = Schema.Union([
     restart: Schema.Literals(["offered", "waiting-for-save"]),
   }),
   Schema.TaggedStruct("installing", { version: AppVersion }),
-  Schema.TaggedStruct("failed", { stage: Schema.Literals(["check", "verify", "install"]) }),
+  Schema.TaggedStruct("failed", { stage: Schema.Literals(["check", "verify"]) }),
+  Schema.TaggedStruct("failed", { stage: Schema.Literal("install"), version: AppVersion }),
 ]);
 export type UpdatePhase = typeof UpdatePhase.Type;
 
@@ -472,18 +474,39 @@ export type AutomaticUpdatesRequest = typeof AutomaticUpdatesRequest.Type;
 export const SavingReport = Schema.Struct({ saving: Schema.Boolean });
 export type SavingReport = typeof SavingReport.Type;
 
-/** The eight bytes every PNG file begins with. */
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** The side, in px, of the icon a notification shows: the page draws avatars at this size. */
+export const NOTIFICATION_ICON_SIZE = 192;
 
 /**
- * An image the app shows: a PNG file, no larger than a notification's icon
- * needs (a 192 px avatar is a few tens of kilobytes).
+ * The first 24 bytes every PNG file begins with: its signature, then the
+ * header chunk (`IHDR`, whose data is 13 bytes), whose first eight bytes of
+ * data are the image's width and height.
+ */
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const IHDR = [0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52];
+const PNG_HEAD = [...PNG_SIGNATURE, ...IHDR];
+
+/** Whether `bytes` begin as a PNG of at most `side` px each way, as its header says. */
+const pngWithin = (bytes: Uint8Array, side: number): boolean => {
+  if (bytes.length < PNG_HEAD.length + 8) return false;
+  if (!PNG_HEAD.every((byte, index) => bytes[index] === byte)) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = view.getUint32(PNG_HEAD.length);
+  const height = view.getUint32(PNG_HEAD.length + 4);
+  return width >= 1 && width <= side && height >= 1 && height <= side;
+};
+
+/**
+ * A notification's icon, as the main process takes it: a PNG file of at
+ * most `NOTIFICATION_ICON_SIZE` px each way, as its header says, and under
+ * 1 MiB (a 192 px avatar is a few tens of kilobytes). The main process
+ * decodes it outside any sandbox, and a small file could otherwise declare
+ * an image that takes gigabytes to decode; a decoder that finds the header
+ * lying fails instead.
  */
 export const Png = Schema.Uint8Array.check(
   Schema.isMaxLength(1024 * 1024),
-  Schema.makeFilter((bytes: Uint8Array) =>
-    PNG_SIGNATURE.every((byte, index) => bytes[index] === byte),
-  ),
+  Schema.makeFilter((bytes: Uint8Array) => pngWithin(bytes, NOTIFICATION_ICON_SIZE)),
 );
 
 /**
@@ -569,17 +592,26 @@ export const ShellCommand = Schema.Union([
 ]);
 export type ShellCommand = typeof ShellCommand.Type;
 
+/** The modifiers that set a global shortcut apart from the ones every app uses. */
+const SET_APART: ReadonlySet<string> = new Set(["Alt", "Super", "Shift"]);
+
 /**
  * A global shortcut, as Electron's accelerators write it: one or more of
  * `CommandOrControl`, `Control`, `Alt`, `Super` (in that order, at least one
  * of them), then `Shift` or not, then a letter, a digit, a function key or
- * `Space`.
+ * `Space`. It holds `Alt`, `Super` or `Shift` beside another modifier: a
+ * global shortcut takes its keys from every other app, and the ones a single
+ * modifier makes are theirs (copy, paste, undo, select all, `Alt+F4`).
  */
 export const Accelerator = Schema.String.check(
   Schema.isMaxLength(64),
   Schema.isPattern(
     /^(?=(?:CommandOrControl|Control|Alt|Super)\+)(?:CommandOrControl\+)?(?:Control\+)?(?:Alt\+)?(?:Super\+)?(?:Shift\+)?(?:[A-Z0-9]|F[1-9]|F1[0-9]|F2[0-4]|Space)$/,
   ),
+  Schema.makeFilter((accelerator: string) => {
+    const modifiers = accelerator.split("+").slice(0, -1);
+    return modifiers.length >= 2 && modifiers.some((modifier) => SET_APART.has(modifier));
+  }),
 );
 export type Accelerator = typeof Accelerator.Type;
 
@@ -686,6 +718,7 @@ export const HostedBridge = Schema.Struct({
   onUpdate: Callable,
   checkForUpdates: Callable,
   restartToUpdate: Callable,
+  cancelRestartToUpdate: Callable,
   setUpdateChannel: Callable,
   setAutomaticUpdates: Callable,
   reportSaving: Callable,

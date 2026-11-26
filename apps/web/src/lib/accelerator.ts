@@ -17,7 +17,8 @@ export interface KeyPress {
 /**
  * What a key press makes: a shortcut; `incomplete`, a modifier alone, while
  * the operator is still pressing one; or `refused`, a key a shortcut cannot
- * have, or one without Ctrl, Alt, Super or, on a Mac, ⌘.
+ * have, or modifiers it cannot (`Accelerator`): none of Ctrl, Alt, Super or,
+ * on a Mac, ⌘, or only one modifier, as every other app's own shortcuts.
  */
 export type Pressed =
   | { readonly _tag: "shortcut"; readonly accelerator: Accelerator }

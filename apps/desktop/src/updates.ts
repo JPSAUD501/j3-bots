@@ -51,6 +51,8 @@ export type UpdateEvent =
   | { readonly _tag: "saving"; readonly saving: boolean }
   /** The operator pressed "Restart to update". */
   | { readonly _tag: "restart-requested" }
+  /** The operator called off a restart that waits for a save. */
+  | { readonly _tag: "restart-cancelled" }
   /** The operator chose the releases the app follows. */
   | { readonly _tag: "channel-chosen"; readonly channel: UpdateChannel }
   /** The operator turned "Update automatically" on or off. */
@@ -104,6 +106,14 @@ const checkable = (phase: UpdatePhase): boolean =>
 
 /** Whether a check may start: none is under way, and nothing is downloading or ready. */
 export const mayCheck = ({ phase }: Updates): boolean => checkable(phase);
+
+/**
+ * Whether the last check failed to reach the release, as one made before the
+ * network is up does: worth trying again soon, unlike a download that did not
+ * match or an install that failed, which would only fail the same way.
+ */
+export const checkFailed = ({ phase }: Updates): boolean =>
+  phase._tag === "failed" && phase.stage === "check";
 
 /**
  * Whether the operator may choose another channel now: not while a version
@@ -187,7 +197,7 @@ export const step = (current: Updates, event: UpdateEvent): Step => {
       // A stray error once a version is ready leaves it ready; one while
       // installing means the install failed and the app did not quit.
       if (phase._tag === "installing") {
-        return go(opened(current), { _tag: "failed", stage: "install" });
+        return go(opened(current), { _tag: "failed", stage: "install", version: phase.version });
       }
       return inFlight(phase)
         ? go(opened(current), { _tag: "failed", stage: "check" })
@@ -195,6 +205,11 @@ export const step = (current: Updates, event: UpdateEvent): Step => {
     case "restart-requested":
       if (phase._tag !== "downloaded" || phase.restart !== "offered") return stay(current);
       return restart(current, phase.version);
+    case "restart-cancelled":
+      // The version stays ready, and installs as the app quits where it would have.
+      return phase._tag === "downloaded" && phase.restart === "waiting-for-save"
+        ? go(opened(current), { _tag: "downloaded", version: phase.version, restart: "offered" })
+        : stay(current);
     case "channel-chosen":
       if (event.channel === current.channel || !mayChooseChannel(current)) return stay(current);
       // What was found or downloaded on the other channel is not offered.

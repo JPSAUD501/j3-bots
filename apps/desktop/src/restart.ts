@@ -7,29 +7,60 @@ import { appOrigin, schemeOf } from "./identity.ts";
 
 // Restarting the app: after a keyring is unlocked, and into an update.
 
+/** Where this process runs from: an AppImage's file, and whether its runtime unpacked it. */
+interface AppImage {
+  readonly file: string;
+  /**
+   * Whether the runtime unpacked the AppImage rather than mount it, as
+   * `--appimage-extract-and-run` does where FUSE is missing. Whatever the app
+   * starts from an AppImage, a restart or an update's first run, must then be
+   * unpacked too, which `APPIMAGE_EXTRACT_AND_RUN` asks (`appImageRun`).
+   */
+  readonly unpacked: boolean;
+}
+
 /**
  * The AppImage this process runs from, or `null` when it runs from anything
- * else. An AppImage's runtime mounts it at `APPDIR` and names its file in
- * `APPIMAGE`, and every process the app starts inherits both, a deb's
- * included when started from one; so only a process whose own executable
- * lies inside `APPDIR` runs from the AppImage.
+ * else. An AppImage's runtime mounts or unpacks it at `APPDIR` and names its
+ * file in `APPIMAGE`, and every process the app starts inherits both, a
+ * deb's included when started from one; so only a process whose own
+ * executable lies inside `APPDIR` runs from the AppImage. A runtime that
+ * mounts it names the folder `.mount_*`; any other is one it unpacked.
  */
-export const runningAppImage: string | null = (() => {
-  const appImage = process.env["APPIMAGE"];
+const running: AppImage | null = (() => {
+  const file = process.env["APPIMAGE"];
   const appDir = process.env["APPDIR"];
-  if (process.platform !== "linux" || appImage === undefined || appDir === undefined) return null;
-  if (!NodePath.isAbsolute(appImage) || !NodePath.isAbsolute(appDir)) return null;
+  if (process.platform !== "linux" || file === undefined || appDir === undefined) return null;
+  if (!NodePath.isAbsolute(file) || !NodePath.isAbsolute(appDir)) return null;
   const inside = NodePath.relative(appDir, process.execPath);
   if (inside === "" || inside.startsWith("..") || NodePath.isAbsolute(inside)) return null;
-  // A runtime that mounts the AppImage names the folder `.mount_*`. Any other
-  // folder is one it unpacked, as `--appimage-extract-and-run` does where FUSE
-  // is missing: whatever this process starts from an AppImage, a restart or
-  // an update's first run, must unpack it too, which the variable asks.
-  if (!NodePath.basename(appDir).startsWith(".mount_")) {
-    process.env["APPIMAGE_EXTRACT_AND_RUN"] = "1";
-  }
-  return appImage;
+  return { file, unpacked: !NodePath.basename(appDir).startsWith(".mount_") };
 })();
+
+/** The AppImage file this process runs from, or `null` when it runs from anything else. */
+export const runningAppImage: string | null = running?.file ?? null;
+
+/** What an AppImage the app starts is told: to unpack itself where this one was unpacked. */
+const UNPACK: Readonly<Record<string, string>> = { APPIMAGE_EXTRACT_AND_RUN: "1" };
+
+/**
+ * Runs `start`, which starts an AppImage with the app's own environment, as
+ * electron-updater's install does, with the environment an AppImage the app
+ * starts needs. Only for that synchronous call: the app's own environment,
+ * which the server and everything a bot runs inherit, never asks an AppImage
+ * they start to unpack into the temporary folder and stay there.
+ */
+export const appImageRun = <A>(start: () => A): A => {
+  if (running === null || !running.unpacked) return start();
+  const before = process.env["APPIMAGE_EXTRACT_AND_RUN"];
+  Object.assign(process.env, UNPACK);
+  try {
+    return start();
+  } finally {
+    if (before === undefined) delete process.env["APPIMAGE_EXTRACT_AND_RUN"];
+    else process.env["APPIMAGE_EXTRACT_AND_RUN"] = before;
+  }
+};
 
 /**
  * What starts this app anew from outside it, as a link or the system's sign-in
@@ -82,7 +113,8 @@ const restartArgs = (): Array<string> => {
  * own launcher needs, closes what it inherited and waits for this process to
  * exit, with `-p` so that no `BASH_ENV` runs first. It is given the
  * arguments this process was, and an AppImage that runs unpacked starts
- * unpacked again. Anything else is restarted by Electron.
+ * unpacked again (`APPIMAGE_EXTRACT_AND_RUN`, in this spawn's environment
+ * only). Anything else is restarted by Electron.
  */
 export const restartApp = (appImage: string | null = runningAppImage): void => {
   if (appImage === null) app.relaunch({ args: restartArgs() });
@@ -98,7 +130,11 @@ export const restartApp = (appImage: string | null = runningAppImage): void => {
         appImage,
         ...restartArgs(),
       ],
-      { detached: true, stdio: "ignore" },
+      {
+        detached: true,
+        stdio: "ignore",
+        env: running?.unpacked === true ? { ...process.env, ...UNPACK } : process.env,
+      },
     ).unref();
   }
   app.quit();

@@ -102,6 +102,8 @@ export interface Desktop {
    * Where updates install by themselves it also installs as the app quits.
    */
   readonly restartToUpdate: () => void;
+  /** Calls off a restart into the update that waits for a save; the update stays ready. */
+  readonly cancelRestartToUpdate: () => void;
   /**
    * Chooses the releases the app follows; answers the status after it, which
    * keeps the channel it had while a version is on its way or installing.
@@ -341,6 +343,9 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     },
     restartToUpdate: () => {
       bridge.restartToUpdate();
+    },
+    cancelRestartToUpdate: () => {
+      bridge.cancelRestartToUpdate();
     },
     setUpdateChannel: (channel) => ask(() => bridge.setUpdateChannel(channel), decodeStatus),
     setAutomaticUpdates: (on) => ask(() => bridge.setAutomaticUpdates(on), decodeStatus),

@@ -75,7 +75,7 @@ describe("the release the app updates to", () => {
 });
 
 describe("the feed electron-updater reads", () => {
-  it.effect("is the chosen release's own folder, with the feed file of its kind", () =>
+  it.effect("is the chosen release's own folder, a nightly build's as a stable release's", () =>
     Effect.gen(function* () {
       const stable = published("0.3.2");
       const nightly = published("0.3.3-nightly.20261124.1", true);
@@ -87,15 +87,10 @@ describe("the feed electron-updater reads", () => {
         (answers) => Effect.map(newestRelease("nightly", answers), Option.map(feedOf)),
       );
       assert.deepStrictEqual(feeds, [
-        Option.some({
-          provider: "generic",
-          url: `${RELEASES}/download/v0.3.2/`,
-          channel: "latest",
-        }),
+        Option.some({ provider: "generic", url: `${RELEASES}/download/v0.3.2/` }),
         Option.some({
           provider: "generic",
           url: `${RELEASES}/download/0.3.3-nightly.20261124.1/`,
-          channel: "nightly",
         }),
       ]);
     }),

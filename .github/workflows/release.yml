@@ -66,11 +66,13 @@ jobs:
       # (apps/mobile/src/androidVersionCode.ts), which the Android build runs,
       # for versions after 0.3.0. This job may write, so it runs no code from
       # the repository and checks the version itself; a change to either check
-      # is made to both.
+      # is made to both. Bracket ranges match only ASCII in the C locale, so
+      # the check holds whatever locale the runner has.
       - name: Check the version
         id: version
         shell: bash
         env:
+          LC_ALL: C
           NIGHTLY_VERSION: ${{ inputs.nightly-version }}
         run: |
           number='(0|[1-9][0-9]*)'
@@ -248,8 +250,8 @@ jobs:
         run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION"
 
       # The packages, their block maps and the feed files (latest-linux.yml,
-      # latest-mac.yml, latest.yml, or the pre-release channel's), not
-      # electron-builder's own records.
+      # latest-mac.yml or latest.yml, which a build for GitHub writes for a
+      # pre-release too), not electron-builder's own records.
       - name: Hand the packages to the publish job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -546,12 +548,22 @@ jobs:
       # Each artifact is in a folder of its own, release/<name>/. This job's
       # and `sign`'s own, from an earlier try of the run, are not built files.
       # SHA256SUMS names files, not their folders, so no two may share a name,
-      # as `publish` checks again.
+      # as `publish` checks again. GitHub renames an asset whose name has any
+      # other character than these (a space becomes a dot), and the name
+      # SHA256SUMS gives must be the one the release serves, so a name is
+      # checked as written.
       - name: Write SHA256SUMS
+        env:
+          LC_ALL: C
         run: |
           rm -rf release/release-checksums release/release-signature
           mkdir checksums
           cp scripts/install.sh checksums/
+          unsafe="$(find release checksums -type f -printf '%f\n' | grep -Ev '^[A-Za-z0-9][A-Za-z0-9._-]*$' || true)"
+          if [[ -n "$unsafe" ]]; then
+            echo "::error::Files have a name GitHub would change on upload; use only letters, digits, '.', '_' and '-', starting with a letter or a digit: $unsafe"
+            exit 1
+          fi
           duplicates="$(find release checksums -type f -printf '%f\n' | sort | uniq -d)"
           if [[ -n "$duplicates" ]]; then
             echo "::error::Files built by more than one job share a name: $duplicates"
@@ -724,15 +736,25 @@ jobs:
           fi
 
       # Never onto a published release: what installed apps already read
-      # changes only through a new version.
+      # changes only through a new version. Nor onto a draft whose pre-release
+      # mark someone changed while the run built: publishing a pre-release
+      # as a release would offer it to every app on a release version.
       - name: Upload to the draft
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.draft.outputs.tag }}
+          VERSION: ${{ needs.draft.outputs.version }}
         run: |
-          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+          read -r draft marked < <(gh release view "$TAG" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+          if [[ "$draft" != "true" ]]; then
             echo "::error::The release for $TAG is not a draft; nothing is uploaded to it."
+            exit 1
+          fi
+          wanted=false
+          if [[ "$VERSION" == *-* ]]; then wanted=true; fi
+          if [[ "$marked" != "$wanted" ]]; then
+            echo "::error::The draft for $TAG is $([[ "$marked" == true ]] || echo "not ")marked as a pre-release, which its version says it $([[ "$wanted" == true ]] && echo "is" || echo "is not"); nothing is uploaded to it. Set the mark back on the draft, then re-run this job."
             exit 1
           fi
           find release -type f -print0 | xargs -0 gh release upload "$TAG" --clobber

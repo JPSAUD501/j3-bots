@@ -32,6 +32,7 @@ const bridge: DesktopBridge = {
   },
   checkForUpdates: () => ipcRenderer.send(IPC_CHANNELS.checkForUpdates),
   restartToUpdate: () => ipcRenderer.send(IPC_CHANNELS.restartToUpdate),
+  cancelRestartToUpdate: () => ipcRenderer.send(IPC_CHANNELS.cancelRestartToUpdate),
   setUpdateChannel: (channel) => ipcRenderer.invoke(IPC_CHANNELS.setUpdateChannel, { channel }),
   setAutomaticUpdates: (on) => ipcRenderer.invoke(IPC_CHANNELS.setAutomaticUpdates, { on }),
   reportSaving: (saving) => ipcRenderer.send(IPC_CHANNELS.saving, { saving }),

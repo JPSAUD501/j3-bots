@@ -218,6 +218,7 @@ export const appUpdate = (
   },
   check: nothing,
   restart: nothing,
+  cancelRestart: nothing,
   setChannel: nothing,
   setAutomatic: nothing,
 });
@@ -229,6 +230,8 @@ export const appPhases = {
   verifying: { _tag: "verifying", version: NEXT },
   ready: { _tag: "downloaded", version: NEXT, restart: "offered" },
   verifyFailed: { _tag: "failed", stage: "verify" },
+  waitingForSave: { _tag: "downloaded", version: NEXT, restart: "waiting-for-save" },
+  installFailed: { _tag: "failed", stage: "install", version: NEXT },
   released: { _tag: "released", version: NEXT },
   installing: { _tag: "installing", version: NEXT },
 } satisfies Record<string, UpdatePhase>;
@@ -262,6 +265,7 @@ const promptView = (
   local: false,
   serverLine: null,
   appLine: null,
+  cancelRestart: null,
   updateNow: nothing,
   later: nothing,
   stopWork: nothing,
@@ -293,6 +297,10 @@ export const promptViews = {
   updatingApp: promptView(
     { _tag: "client", plan: promptPlan("install"), hidden: false },
     { server: null, appLine: `Downloading version ${NEXT}… 64%` },
+  ),
+  appWaitingForSave: promptView(
+    { _tag: "client", plan: promptPlan("install"), hidden: false },
+    { server: null, appLine: "Restarting once your changes are saved…", cancelRestart: nothing },
   ),
   workRunning: promptView({
     _tag: "work-running",

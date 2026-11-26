@@ -72,13 +72,14 @@ export const newestRelease = Effect.fn("desktop.newestRelease")(function* (
 
 /**
  * The feed electron-updater reads for `release`: the folder of its files,
- * and the feed file its kind of release publishes there, `latest*.yml` for a
- * stable release and `nightly*.yml` for a nightly build.
+ * where electron-updater reads its default feed file, `latest*.yml`. Every
+ * release has that one, a nightly build's included: electron-builder names
+ * the feed after the version's pre-release identifier only for a generic
+ * publisher, never for GitHub, which the release workflow builds for.
  */
 export const feedOf = (release: Candidate) => ({
   provider: "generic" as const,
   url: releaseFolder(release.version),
-  channel: release.channel === "nightly" ? "nightly" : "latest",
 });
 
 /**

@@ -1503,7 +1503,7 @@ export const en = {
   "settings.shortcut.reset": "Use {shortcut}",
   "settings.shortcut.recording": "Press the new shortcut, or Escape to keep {shortcut}.",
   "settings.shortcut.needsModifier":
-    "A shortcut needs Ctrl, Alt or Super (⌘, ⌃ or ⌥ on a Mac) with a letter, a digit or a function key.",
+    "A shortcut needs Shift, Alt or Super beside another modifier (⇧ or ⌥ beside another on a Mac), with a letter, a digit or a function key: one like Ctrl+C belongs to every other app.",
   "settings.shortcut.registered":
     "Press {shortcut} anywhere to show J3 Bots with the cursor in the open conversation’s message box.",
   "settings.shortcut.taken":
@@ -1744,7 +1744,9 @@ export const en = {
   "update.waiting": "Restarting once your changes are saved…",
   "update.installing": "Restarting…",
   "update.failed": "Couldn’t get the latest version. J3 Bots tries again later.",
-  "update.installFailed": "Couldn’t install the update. This version keeps running.",
+  "update.installFailed":
+    "Couldn’t install version {version}. This version keeps running; you can download the new one instead.",
+  "update.cancelRestart": "Cancel restart",
   "update.check": "Check for updates",
   "update.retry": "Try again",
   "update.restart": "Restart to update",

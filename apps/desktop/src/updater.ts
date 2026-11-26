@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- One synchronous existence check of the development feed, before the updater is configured.
+// @effect-diagnostics nodeBuiltinImport:off -- Synchronous checks before the updater is configured: that the development feed exists, and that the AppImage's folder is writable.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type { UpdateChannel } from "@j3-bots/contracts";
@@ -26,6 +26,7 @@ import {
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  powerMonitor,
 } from "electron";
 import {
   AppImageUpdater,
@@ -42,10 +43,11 @@ import {
   type ReleaseChoicePorts,
   type ReleasesUnreadable,
 } from "./releaseChoice.ts";
-import { restartApp, runningAppImage } from "./restart.ts";
+import { appImageRun, restartApp, runningAppImage } from "./restart.ts";
 import { DesktopSettings } from "./settings.ts";
 import {
   type Action,
+  checkFailed,
   initial,
   mayCheck,
   mayChooseChannel,
@@ -65,6 +67,14 @@ import {
 // into it from the page (`updates.ts` decides when).
 
 const CHECK_EVERY = "6 hours";
+
+/**
+ * When a check that failed to reach the release is tried again, one after
+ * the other, before the six-hourly check takes over: a laptop opened before
+ * its Wi-Fi connects should not say for six hours that it could not check.
+ * The system waking from sleep tries it again at once.
+ */
+const RETRY_AFTER: ReadonlyArray<Duration.Input> = ["1 minute", "5 minutes", "30 minutes"];
 
 /**
  * How long a launch waits for its check to find a newer version before the
@@ -152,12 +162,28 @@ const pointAtNewest = (channel: UpdateChannel): Effect.Effect<Target, ReleasesUn
     : Effect.succeed({ _tag: "development" });
 
 /**
+ * Whether this process may replace `file`: electron-updater deletes the
+ * AppImage and moves the new one into its folder, so that folder must be one
+ * the operator's user can write to, which `/opt` or a read-only mount is not.
+ */
+const replaceable = (file: string): boolean => {
+  try {
+    NodeFS.accessSync(NodePath.dirname(file), NodeFS.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * How this build updates. An NSIS install and an AppImage install a newer
- * version themselves: each replaces files the operator's user owns. Any other
- * packaged build only says one is out. A deb would need root to install it,
- * and the app never asks for that; Squirrel.Mac installs only a signed app,
- * and builds are unsigned for now. A development build checks only against a
- * `dev-app-update.yml` of its own.
+ * version themselves: each replaces files the operator's user owns. An
+ * AppImage in a folder the user cannot write to, and any other packaged
+ * build, only says one is out: such an AppImage would fail to install every
+ * time. A deb would need root to install it, and the app never asks for
+ * that; Squirrel.Mac installs only a signed app, and builds are unsigned for
+ * now. A development build checks only against a `dev-app-update.yml` of its
+ * own.
  */
 const updateMode = (): UpdateMode => {
   if (!app.isPackaged) {
@@ -167,7 +193,9 @@ const updateMode = (): UpdateMode => {
   if (!autoUpdater.isUpdaterActive()) return "off";
   const installs =
     process.platform === "win32" ||
-    (runningAppImage !== null && autoUpdater instanceof AppImageUpdater);
+    (runningAppImage !== null &&
+      autoUpdater instanceof AppImageUpdater &&
+      replaceable(runningAppImage));
   return installs ? "install" : "notify";
 };
 
@@ -255,6 +283,37 @@ export const serve = Effect.fn("desktop.updates")(function* (
         }
       };
 
+      // A check that failed to reach the release: how many retries it has had, and the next.
+      let retries = 0;
+      let retry: Fiber.Fiber<void> | null = null;
+      const cancelRetry = () => {
+        if (retry !== null) retry.interruptUnsafe();
+        retry = null;
+      };
+      /** Tries a check that just failed again soon, and counts afresh once one reached the release. */
+      const watchFailedCheck = (previous: Updates) => {
+        const failed = checkFailed(state);
+        if (failed && !checkFailed(previous)) {
+          const wait = RETRY_AFTER[retries];
+          retries += 1;
+          cancelRetry();
+          if (wait !== undefined) {
+            retry = runFork(
+              Effect.sleep(wait).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    retry = null;
+                    check();
+                  }),
+                ),
+              ),
+            );
+          }
+        } else if (!failed && state.phase._tag !== "checking") {
+          retries = 0;
+        }
+      };
+
       const status = () =>
         encodeStatus({
           current: app.getVersion(),
@@ -273,6 +332,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
         const previous = state;
         state = taken.next;
         watchLaunchDownload(previous);
+        watchFailedCheck(previous);
         if (state.launch === "over") Deferred.doneUnsafe(launched, Effect.void);
         if (changed && !window.isDestroyed()) {
           window.webContents.send(IPC_CHANNELS.updateChanged, status());
@@ -330,7 +390,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
         void runPromise(steps.beforeInstall).then(() => {
           if (runningAppImage === null) autoUpdater.quitAndInstall(true, true);
           else {
-            autoUpdater.quitAndInstall(true, false);
+            appImageRun(() => autoUpdater.quitAndInstall(true, false));
             if (state.phase._tag === "installing") restartApp(installedTo ?? runningAppImage);
           }
           if (state.phase._tag === "failed") void runPromise(steps.installFailed);
@@ -348,10 +408,14 @@ export const serve = Effect.fn("desktop.updates")(function* (
        * electron-updater's cache and installs it.
        */
       const installOnQuit = () => {
-        if (autoUpdater instanceof BaseUpdater) autoUpdater.install(true, false);
+        if (autoUpdater instanceof BaseUpdater) {
+          const base = autoUpdater;
+          appImageRun(() => base.install(true, false));
+        }
       };
       const check = () => {
         if (!mayCheck(state)) return;
+        cancelRetry();
         dispatch({ _tag: "check-started" });
         // The release to read, electron-updater's read of its feed file, and,
         // once that file is shown to be the release's own, the download. No
@@ -408,6 +472,9 @@ export const serve = Effect.fn("desktop.updates")(function* (
       });
       ipcMain.on(IPC_CHANNELS.restartToUpdate, (event) => {
         if (fromApp(event)) dispatch({ _tag: "restart-requested" });
+      });
+      ipcMain.on(IPC_CHANNELS.cancelRestartToUpdate, (event) => {
+        if (fromApp(event)) dispatch({ _tag: "restart-cancelled" });
       });
       // A restart the page asks for, as after a keyring is unlocked, is into
       // the version that waits to install as the app quits, if one does.
@@ -471,12 +538,29 @@ export const serve = Effect.fn("desktop.updates")(function* (
       const pageGone = () => dispatch({ _tag: "saving", saving: false });
       window.webContents.on("did-navigate", pageGone);
       window.webContents.on("render-process-gone", pageGone);
+      // The network may be back after sleep: a check that could not reach the release tries again.
+      const resumed = () => {
+        if (checkFailed(state)) check();
+      };
+      powerMonitor.on("resume", resumed);
 
-      return { updater, quit, pageGone, check, dispatch, updatesFirst, clearLaunchTimers };
+      return {
+        updater,
+        quit,
+        pageGone,
+        resumed,
+        check,
+        dispatch,
+        updatesFirst,
+        clearLaunchTimers,
+        cancelRetry,
+      };
     }),
-    ({ updater, quit, pageGone, clearLaunchTimers }) =>
+    ({ updater, quit, pageGone, resumed, clearLaunchTimers, cancelRetry }) =>
       Effect.sync(() => {
         clearLaunchTimers();
+        cancelRetry();
+        powerMonitor.off("resume", resumed);
         app.off("quit", quit);
         autoUpdater.off("update-not-available", updater["update-not-available"]);
         autoUpdater.off("download-progress", updater["download-progress"]);
@@ -487,6 +571,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
         ipcMain.removeHandler(IPC_CHANNELS.update);
         ipcMain.removeAllListeners(IPC_CHANNELS.checkForUpdates);
         ipcMain.removeAllListeners(IPC_CHANNELS.restartToUpdate);
+        ipcMain.removeAllListeners(IPC_CHANNELS.cancelRestartToUpdate);
         ipcMain.removeAllListeners(IPC_CHANNELS.relaunch);
         ipcMain.removeHandler(IPC_CHANNELS.setUpdateChannel);
         ipcMain.removeHandler(IPC_CHANNELS.setAutomaticUpdates);

@@ -49,7 +49,8 @@ export const desktopUpdateStatus = {
  * see), lets the app download and verify what it finds, then restarts into
  * it once no save is under way. Settles `current` when the check finds
  * nothing newer, `failed` when the check, the download, its verification or
- * the install fails; a restart does not settle, as the page goes with it.
+ * the install fails, or the operator called off the restart while it waited
+ * for a save; a restart does not settle, as the page goes with it.
  */
 export const installDesktopUpdate = (): Promise<"current" | "failed"> => {
   const app = desktop;
@@ -59,6 +60,7 @@ export const installDesktopUpdate = (): Promise<"current" | "failed"> => {
     // it: a check this one started, or the restart it asked for.
     let checked = false;
     let restarted = false;
+    let waited = false;
     let asked = false;
     const look = () => {
       const status = latest;
@@ -74,7 +76,14 @@ export const installDesktopUpdate = (): Promise<"current" | "failed"> => {
         case "installing":
           return;
         case "downloaded":
-          if (phase.restart === "offered" && !restarted) {
+          if (phase.restart === "waiting-for-save") {
+            waited = true;
+            return;
+          }
+          // Offered again once a restart, this update's or one asked for
+          // before it, waited for a save: the operator called it off.
+          if (waited) return settle("failed");
+          if (!restarted) {
             restarted = true;
             app.restartToUpdate();
           }
@@ -123,6 +132,7 @@ const updateOf = (status: UpdateStatus | null | undefined): DesktopUpdate | unde
         status,
         check: desktop.checkForUpdates,
         restart: desktop.restartToUpdate,
+        cancelRestart: desktop.cancelRestartToUpdate,
         setChannel,
         setAutomatic,
       };

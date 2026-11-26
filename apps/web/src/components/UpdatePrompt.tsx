@@ -40,6 +40,8 @@ export interface UpdatePromptView {
   readonly serverLine: ServerUpdateLine | null;
   /** How this app's update goes now. */
   readonly appLine: string | null;
+  /** Calls off this app's restart while it waits for a save; `null` while none waits. */
+  readonly cancelRestart: (() => void) | null;
   readonly updateNow: () => void;
   readonly later: () => void;
   readonly stopWork: () => void;
@@ -306,6 +308,9 @@ function Progress({
         )}
       </ol>
       <Actions>
+        {part === "client" && view.cancelRestart !== null && (
+          <Button onClick={view.cancelRestart}>{t("update.cancelRestart")}</Button>
+        )}
         <Button onClick={view.hide}>{t("updatePrompt.hide")}</Button>
       </Actions>
     </>
