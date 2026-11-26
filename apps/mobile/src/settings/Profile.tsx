@@ -27,10 +27,9 @@ import { Button } from "../ui.tsx";
 
 /** What bots call the operator, and the time zone routines and times follow. */
 export function YouSection(props: { readonly connected: boolean }) {
-  const { t } = useI18n();
   const settings = useSettings();
   return (
-    <Section title={t("settings.you")}>
+    <Section open>
       {settings._tag !== "ready" ? (
         <SkeletonRows />
       ) : (
@@ -148,7 +147,7 @@ export function NotificationsSection(props: {
   const [watching, setWatching] = useState(saving);
   if (settings._tag !== "ready") {
     return (
-      <Section title={t("settings.notifications")}>
+      <Section open>
         <SkeletonRows />
       </Section>
     );
@@ -162,7 +161,7 @@ export function NotificationsSection(props: {
     void client.updateSettings({ section: "notifications", changes });
   };
   return (
-    <Section title={t("settings.notifications")}>
+    <Section open>
       <SwitchRow
         label={t("settings.notifications.enabled")}
         hint={t("settings.notifications.enabled.hint")}

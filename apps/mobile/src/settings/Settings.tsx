@@ -1,183 +1,136 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { SettingsSaves } from "@j3-bots/client-runtime";
+import { isRunning } from "@j3-bots/client-runtime";
 import {
-  useConnection,
+  connectorNeedsYou,
+  providersNeedYou,
+  type SettingsPage,
+  settingsGroups,
+} from "@j3-bots/client-runtime/presentation";
+import {
+  useConnectors,
   useEngineStatus,
   useJ3Client,
-  useReadable,
-  useRecentTurns,
-  useSettings,
+  useServerUpdate,
 } from "@j3-bots/client-runtime/react";
-import { connectCommand, installsHarnesses } from "@j3-bots/client-runtime/presentation";
-import { engineProblem } from "@j3-bots/client-runtime/wording";
-import type { EngineStatus } from "@j3-bots/contracts";
+import { settingsPageWords } from "@j3-bots/client-runtime/wording";
 import { layout } from "@j3-bots/design-tokens";
-import { type RouteProp, useFocusEffect, useIsFocused, useRoute } from "@react-navigation/native";
-import { type ComponentRef, useCallback, useRef, useState } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import {
+  Bell,
+  ChevronRight,
+  Cpu,
+  Gauge,
+  KeyRound,
+  type LucideIcon,
+  MonitorSmartphone,
+  Palette,
+  Plug,
+  RefreshCw,
+  Server,
+  UserRound,
+} from "lucide-react-native";
+import { useCallback } from "react";
 import { ScrollView, View } from "react-native";
-import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
-import { Problem, Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
-import type { Screens } from "../navigation.tsx";
-import { AboutSection } from "./About.tsx";
-import { BotBrowserSection } from "./BotBrowser.tsx";
-import { DevicesSection } from "./Devices.tsx";
-import { usePhoneNotifications } from "./phoneNotifications.ts";
-import { NotificationsSection, YouSection } from "./Profile.tsx";
-import { ServerSection, ThisPhoneSection } from "./ThisPhone.tsx";
-import { UsageSection } from "./Usage.tsx";
-import { VaultSection } from "../vault/VaultSection.tsx";
-import { ConnectorsSection } from "../connectors/ConnectorsSection.tsx";
+import type { Navigation } from "../navigation.tsx";
+import { PressScale } from "../press.tsx";
+import { Text } from "../text.tsx";
+
+const pageIcons: Record<SettingsPage, LucideIcon> = {
+  you: UserRound,
+  notifications: Bell,
+  appearance: Palette,
+  providers: Cpu,
+  usage: Gauge,
+  connectors: Plug,
+  vault: KeyRound,
+  devices: MonitorSmartphone,
+  where: Server,
+  updates: RefreshCw,
+};
 
 /**
- * Everything that is not about one bot. Coming to it reads the settings and
- * the devices again, for what another device changed, and the turns bots
- * spent are read while it is in front. On a wide screen it keeps to the
+ * Everything that is not about one bot, as a list of its pages, each opening
+ * on its own screen. Coming to it reads the settings and the devices again,
+ * for what another device changed. A page that waits on the operator carries
+ * a dot: the engine or no provider able to run a bot, a connector that needs
+ * them, or a server update on offer. On a wide screen it keeps to the
  * conversation's text column.
  */
 export function SettingsScreen() {
   const client = useJ3Client();
   const insets = useSafeAreaInsets();
   const status = useEngineStatus();
-  const engine = status._tag === "ready" ? status.value : null;
-  const engineStale = status._tag === "ready" && status.stale;
-  const connected = useConnection()._tag === "connected";
-  const recent = useRecentTurns(useIsFocused());
-  const thisPhone = usePhoneNotifications();
-  const section = useRoute<RouteProp<Screens, "settings">>().params?.section;
-  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  // Opened for the updates, Settings starts at them, once they are laid out.
-  const scrolled = useRef(false);
-  const onUpdatesLaidOut = (y: number) => {
-    if (section !== "updates" || scrolled.current) return;
-    scrolled.current = true;
-    scroll.current?.scrollTo({ y, animated: false });
-  };
+  const connectors = useConnectors();
+  const update = useServerUpdate();
   useFocusEffect(
     useCallback(() => {
       client.refreshSettings();
       client.refreshDevices();
     }, [client]),
   );
+  const needsYou = (page: SettingsPage): boolean => {
+    switch (page) {
+      case "providers":
+        return status._tag === "ready" && !status.stale && providersNeedYou(status.value);
+      case "connectors":
+        return connectors._tag === "ready" && connectors.value.some(connectorNeedsYou);
+      case "updates":
+        return (
+          update._tag === "status" &&
+          update.status.available !== null &&
+          update.status.canUpdate._tag === "able" &&
+          !isRunning(update.status.state)
+        );
+      default:
+        return false;
+    }
+  };
   return (
     <ScrollView
-      ref={scroll}
       className="flex-1 bg-background"
-      keyboardShouldPersistTaps="handled"
       contentContainerStyle={{
         width: "100%",
         maxWidth: layout.textColumn,
         alignSelf: "center",
+        gap: 24,
+        paddingHorizontal: 12,
+        paddingTop: 12,
         paddingBottom: insets.bottom + 16,
       }}
     >
-      {/* The operator's own settings, vault and connectors first, then the engine and what it spent, as on the web. */}
-      <YouSection connected={connected} />
-      <NotificationsSection connected={connected} thisPhone={thisPhone} />
-      <VaultSection />
-      <ConnectorsSection />
-      <EngineSection engine={engine} stale={engineStale} connected={connected} />
-      <UsageSection
-        engine={engine}
-        engineStale={engineStale}
-        recent={recent.state}
-        onLoadMore={recent.loadMore}
-        onRetry={recent.retry}
-      />
-      <DevicesSection connected={connected} />
-      <BotBrowserSection connected={connected} />
-      <ServerSection />
-      <AboutSection onLayout={onUpdatesLaidOut} />
-      <ThisPhoneSection />
+      {settingsGroups.map((group) => (
+        <View key={group[0]} className="gap-0.5">
+          {group.map((page) => (
+            <PageRow key={page} page={page} needsYou={needsYou(page)} />
+          ))}
+        </View>
+      ))}
     </ScrollView>
   );
 }
 
-/**
- * Whether the engine runs, and if not, why and what to do; then each provider,
- * and, on a server that installs its own copies of the harnesses, whether it
- * keeps them up to date by itself. Disconnected, it is what the server last
- * reported, muted and said to be so.
- */
-function EngineSection(props: {
-  readonly engine: EngineStatus | null;
-  readonly stale: boolean;
-  readonly connected: boolean;
-}) {
+/** A page's row: its icon and name, a dot while it waits on the operator, and the way in. */
+function PageRow({ page, needsYou }: { readonly page: SettingsPage; readonly needsYou: boolean }) {
   const i18n = useI18n();
-  const { t } = i18n;
-  const { engine, stale } = props;
-  if (engine === null) {
-    return (
-      <Section title={t("settings.engine")}>
-        <SkeletonRows />
-      </Section>
-    );
-  }
-  const problem = engineProblem(engine, i18n);
-  const connect = connectCommand(engine);
+  const navigation = useNavigation<Navigation>();
+  const { title } = settingsPageWords(page, i18n);
   return (
-    <Section title={t("settings.engine")}>
-      {stale && <Quiet>{t("settings.engine.lastKnown")}</Quiet>}
-      {problem === null ? (
-        <Text className={`text-sm ${stale ? "text-muted-foreground" : "text-foreground"}`}>
-          {t("settings.engine.ready", { version: engine.pinnedVersion })}
-        </Text>
-      ) : (
-        <View className="gap-1">
-          {/* Starting, or downloading, is on its way rather than blocked. */}
-          <Text
-            className={`text-sm font-medium tabular-nums ${
-              stale
-                ? "text-muted-foreground"
-                : engine.state._tag === "starting"
-                  ? "text-foreground"
-                  : "text-blocked"
-            }`}
-          >
-            {problem.title}
-          </Text>
-          <Quiet>{problem.body}</Quiet>
-        </View>
-      )}
-      {engine.providers.map((provider) => (
-        <ProviderRow key={provider.id} provider={provider} stale={stale} version />
-      ))}
-      {installsHarnesses(engine) && <AutoUpdateHarnesses connected={props.connected} />}
-      {!stale && connect !== null && <ConnectCommand command={connect} />}
-    </Section>
-  );
-}
-
-/**
- * Whether the server keeps its own copies of Claude Code and Codex up to
- * date by itself. Saves at once, as the notification switches do.
- */
-function AutoUpdateHarnesses(props: { readonly connected: boolean }) {
-  const { t } = useI18n();
-  const client = useJ3Client();
-  const settings = useSettings();
-  const save: SettingsSaves["harnesses"] = useReadable(client.settingsSaves.harnesses);
-  const saving = save._tag === "saving";
-  const [watching, setWatching] = useState(saving);
-  if (settings._tag !== "ready") return null;
-  const readOnly = saving || !props.connected;
-  return (
-    <View className="gap-1">
-      <SwitchRow
-        label={t("settings.engine.autoUpdate")}
-        hint={t("settings.engine.autoUpdate.body")}
-        value={saving ? save.changes.autoUpdateHarnesses : settings.value.autoUpdateHarnesses}
-        readOnly={readOnly}
-        onChange={(autoUpdateHarnesses) => {
-          if (readOnly) return;
-          setWatching(true);
-          void client.updateSettings({ section: "harnesses", changes: { autoUpdateHarnesses } });
-        }}
-      />
-      <Problem>{watching && save._tag === "failed" ? t("settings.saveFailed") : null}</Problem>
-    </View>
+    <PressScale
+      depth="row"
+      accessibilityRole="button"
+      accessibilityLabel={needsYou ? `${title}, ${i18n.t("settings.needsYou")}` : title}
+      onPress={() => navigation.push("settingsPage", { page })}
+      className="min-h-12 flex-row items-center gap-3 rounded-lg px-3 active:bg-muted"
+    >
+      <Icon icon={pageIcons[page]} size={20} color="accent-muted-foreground" />
+      <Text numberOfLines={1} className="min-w-0 flex-1 text-base text-foreground">
+        {title}
+      </Text>
+      {needsYou && <View className="size-2 rounded-pill bg-accent" />}
+      <Icon icon={ChevronRight} size={16} color="accent-muted-foreground" />
+    </PressScale>
   );
 }

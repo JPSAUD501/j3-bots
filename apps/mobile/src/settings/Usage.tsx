@@ -39,7 +39,7 @@ export function UsageSection(props: {
   const { engine, recent } = props;
   if (engine === null) {
     return (
-      <Section title={t("settings.usage")}>
+      <Section open>
         <SkeletonRows />
       </Section>
     );
@@ -47,7 +47,7 @@ export function UsageSection(props: {
   // Only a running engine reports its providers; the Engine section says why it is not.
   if (engine.state._tag !== "ready") {
     return (
-      <Section title={t("settings.usage")}>
+      <Section open>
         <Quiet>{t("usage.engineNotRunning")}</Quiet>
       </Section>
     );
@@ -58,7 +58,7 @@ export function UsageSection(props: {
   // above the cards says so, not one per provider.
   const anyWindows = providers.some((provider) => provider.windows.length > 0);
   return (
-    <Section title={t("settings.usage")}>
+    <Section open>
       {providers.length === 0 ? (
         <Quiet>{t("usage.noProviders")}</Quiet>
       ) : (

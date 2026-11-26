@@ -19,7 +19,7 @@ import type {
   UpdateResult,
   VaultView,
 } from "@j3-bots/client-runtime";
-import type { ConnectorsOpening } from "@j3-bots/client-runtime/presentation";
+import type { ConnectorsOpening, SettingsPage } from "@j3-bots/client-runtime/presentation";
 import type {
   AvatarChoice,
   Bot,
@@ -134,6 +134,11 @@ export interface ShellData {
   readonly settingsSaves: SettingsSaves;
   /** Settings is open. */
   readonly settingsOpen: boolean;
+  /**
+   * The page Settings shows; null for its list of pages on a narrow screen,
+   * and its first page on a wide one.
+   */
+  readonly settingsPage: SettingsPage | null;
   /** The server's vault: its state, and its saved logins while it is unlocked. */
   readonly vault: VaultView;
   /** Every paired device; null until they load. */
@@ -255,6 +260,7 @@ export interface ShellIntents extends TimelineIntents {
   /** Saves the change; the save of its section in `settingsSaves` follows it. */
   readonly updateSettings: (change: SettingsChange) => void;
   readonly setSettingsOpen: (open: boolean) => void;
+  readonly showSettingsPage: (page: SettingsPage | null) => void;
   /** Opens the connectors screen, closing Settings if it is open. */
   readonly openConnectors: (opening: ConnectorsOpening) => void;
   readonly startPairing: () => Promise<PairingStart>;

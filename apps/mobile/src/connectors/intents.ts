@@ -35,9 +35,9 @@ export function useConnectorsIntents(): ConnectorsIntents {
     openPage: (url) => {
       void Linking.openURL(url).catch(() => undefined);
     },
-    // The vault is unlocked and set up in Settings, over the connectors, which wait as they were
-    // under it.
-    openVault: () => navigation.push("settings"),
+    // The vault is unlocked and set up on its page of Settings, over the connectors, which wait
+    // as they were under it.
+    openVault: () => navigation.push("settingsPage", { page: "vault" }),
   };
 }
 

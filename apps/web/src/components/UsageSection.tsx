@@ -55,7 +55,7 @@ export function UsageSection({
   const { t } = useI18n();
   if (engine === null) {
     return (
-      <Section title={t("settings.usage")}>
+      <Section>
         <SkeletonRows />
       </Section>
     );
@@ -63,7 +63,7 @@ export function UsageSection({
   // Only a running engine reports its providers; the Engine section says why it is not.
   if (engine.state._tag !== "ready") {
     return (
-      <Section title={t("settings.usage")}>
+      <Section>
         <p className="text-xs text-muted-foreground">{t("usage.engineNotRunning")}</p>
       </Section>
     );
@@ -78,7 +78,7 @@ export function UsageSection({
   // the turns.
   const anyWindows = providers.some((provider) => provider.windows.length > 0);
   return (
-    <Section title={t("settings.usage")}>
+    <Section>
       {providers.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("usage.noProviders")}</p>
       ) : (

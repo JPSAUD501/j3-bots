@@ -15,7 +15,8 @@ import type {
   SkillName,
   SkillScope,
 } from "@j3-bots/contracts";
-import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
+import { rosterKeyText, type SettingsPage } from "@j3-bots/client-runtime/presentation";
+import { settingsPageWords } from "@j3-bots/client-runtime/wording";
 import { fontFamilies } from "@j3-bots/design-tokens";
 import {
   DarkTheme,
@@ -52,6 +53,7 @@ import { PairScreen } from "./screens/Pair.tsx";
 import { RoomFormScreen } from "./screens/RoomForm.tsx";
 import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
+import { SettingsPageScreen } from "./settings/SettingsPage.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
@@ -104,8 +106,8 @@ export type Screens = {
   browser: { readonly botId: BotId; readonly ref?: BrowserTabRef; readonly help?: EntryId };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
-  /** `section` scrolls to one section, as the roster's update notice does. */
-  settings: { readonly section?: "updates" } | undefined;
+  settings: undefined;
+  settingsPage: { readonly page: SettingsPage };
   hidden: undefined;
   vault: undefined;
   credential: { readonly id: CredentialId };
@@ -232,7 +234,8 @@ const sheet = { animation: "slide_from_bottom" } as const satisfies NativeStackN
 
 /** What a paired device shows. */
 export function Main() {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const theme = useNavigationTheme();
   const navigation = useNavigationContainerRef<Screens>();
   const [ready, setReady] = useState(false);
@@ -297,6 +300,13 @@ export function Main() {
                   name="settings"
                   component={SettingsScreen}
                   options={{ ...sheet, title: t("settings.title") }}
+                />
+                <Stack.Screen
+                  name="settingsPage"
+                  component={SettingsPageScreen}
+                  options={({ route }) => ({
+                    title: settingsPageWords(route.params.page, i18n).title,
+                  })}
                 />
                 {/* The vault's screens set their own titles. */}
                 <Stack.Screen name="vault" component={VaultScreen} />

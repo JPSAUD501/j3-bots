@@ -65,7 +65,7 @@ export function DevicesSection(props: { readonly connected: boolean }) {
       );
   };
   return (
-    <Section title={t("settings.devices")}>
+    <Section open title={t("settings.devices.paired")}>
       {devices._tag !== "ready" ? (
         <SkeletonRows />
       ) : (

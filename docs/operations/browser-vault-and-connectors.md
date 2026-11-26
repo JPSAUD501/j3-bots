@@ -89,7 +89,7 @@ A card nobody answers expires: when its page has been gone for two minutes, or a
 
 ### Sign out of every site
 
-**Settings → Bots' browser → Sign out of all sites** deletes the profile every bot's browser uses: every session in it ends, for every bot, and its open pages close.
+**Settings → Vault → Bots' browser → Sign out of all sites** deletes the profile every bot's browser uses: every session in it ends, for every bot, and its open pages close.
 
 ## Connectors
 

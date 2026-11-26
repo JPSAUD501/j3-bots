@@ -728,6 +728,27 @@ export const en = {
   "mention.everyone": "Every member answers",
 
   "settings.title": "Settings",
+  "settings.back": "All settings",
+  "settings.sections": "Settings sections",
+  "settings.you.description": "What your bots call you, and the time zone your routines follow.",
+  "settings.notifications.description":
+    "When J3 Bots tells you a bot needs you, and how much it says.",
+  "settings.appearance.description": "How J3 Bots looks on this device, and its language.",
+  "settings.theme": "Theme",
+  "settings.providers": "Providers",
+  "settings.providers.description":
+    "The subscriptions your bots think with, and the engine that runs them.",
+  "settings.usage.description": "How close each provider is to its limit, and which bots used it.",
+  "settings.connectors.description":
+    "Services your bots can use, such as Notion or GitHub, and the skills they know.",
+  "settings.vault.description":
+    "The logins your bots sign in with, and the sites their browser stays signed in to.",
+  "settings.devices.description": "This device, and every other one paired with your bots.",
+  "settings.devices.paired": "Paired devices",
+  "settings.thisPhone": "This phone",
+  "settings.where.description": "Where your bots run, and moving them.",
+  "settings.about.description": "The versions you run, and updating them.",
+  "settings.needsYou": "Needs you",
   "settings.appearance": "Appearance",
   "settings.language": "Language",
   "settings.system": "Same as the system",
@@ -1299,7 +1320,6 @@ export const en = {
   "settings.botBrowser.signOut.confirm": "Sign out",
   "settings.botBrowser.signOut.done": "Signed out of all sites.",
   "settings.botBrowser.signOut.failed": "The browser didn’t sign out. Try again.",
-  "settings.engine": "Engine",
   "settings.engine.ready": "Running, version {version}",
   "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
   "settings.engine.harness.found": "{harness}: found at {path}",
@@ -1392,7 +1412,6 @@ export const en = {
   "settings.pair.expires": "Works once, until {time}",
   "settings.pair.failed": "No code was made. Try again.",
   "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
-  "settings.server": "Server",
   "settings.where": "Where your bots live",
   "settings.where.local": "On this computer",
   "settings.where.server": "On a server",
@@ -1777,8 +1796,6 @@ export const en = {
   "signInReturn.body": "You can close this tab. J3 Bots finishes connecting in the app.",
 
   "settings.connectors": "Connectors",
-  "settings.connectors.hint":
-    "Services your bots can use, such as Notion or GitHub. You sign in once, on your server; bots never see the password or the key.",
   "settings.connectors.none": "None connected yet.",
   "settings.connectors.connected.one": "{count} connected",
   "settings.connectors.connected.other": "{count} connected",

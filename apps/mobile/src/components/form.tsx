@@ -27,7 +27,8 @@ import { Icon } from "./Icon.tsx";
 
 /**
  * A titled part of a screen, ruled off from the next; an `open` one, as in the
- * details, is set apart by space alone.
+ * details and Settings' pages, is set apart by space alone, and an `apart`
+ * one, whose action cannot be undone, is ruled off below the rest.
  */
 export function Section(props: {
   /** None, or undefined, for a section the screen's own title names. */
@@ -35,11 +36,18 @@ export function Section(props: {
   /** Beside the title, at its end. */
   readonly action?: ReactNode;
   readonly open?: boolean;
+  readonly apart?: boolean;
   readonly children: ReactNode;
 }) {
   return (
     <View
-      className={props.open === true ? "gap-2 px-5 pt-6" : "gap-3 border-b border-border px-4 py-4"}
+      className={
+        props.apart === true
+          ? "mx-5 mt-8 gap-3 border-t border-border pt-6"
+          : props.open === true
+            ? "gap-2 px-5 pt-6"
+            : "gap-3 border-b border-border px-4 py-4"
+      }
     >
       {props.title !== undefined && (
         <View className="flex-row items-center justify-between gap-2">

@@ -93,8 +93,10 @@ import {
   withLiveTurn,
   mentionOptions,
   type OnboardingStep,
+  type SettingsPage,
 } from "@j3-bots/client-runtime/presentation";
-import type { SignInRoute } from "@j3-bots/client-runtime/react";
+import { Dialog } from "@base-ui/react/dialog";
+import { type SignInRoute, useProfileEdits } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -117,7 +119,12 @@ import {
 } from "../components/LocalMode";
 import { ServerAddress } from "../components/ServerAddress";
 import type { DesktopPhone, DesktopSystem } from "../shell/data";
-import { SettingsButton, UpdatesSection, WhereSection } from "../components/SettingsDialog";
+import {
+  SettingsButton,
+  SettingsPanel,
+  UpdatesSection,
+  WhereSection,
+} from "../components/SettingsDialog";
 import {
   type Pairing as PhonePairing,
   PairPhone,
@@ -257,6 +264,7 @@ export default function GalleryPage() {
                 <EditingSection />
                 <TemplatesSection />
                 <RoomsSection />
+                <SettingsPagesSection />
                 <EngineSettingsSection />
                 <VaultGallerySection />
                 <UsageGallerySection />
@@ -2205,17 +2213,23 @@ function Frame({
   label,
   width,
   height,
+  padded = false,
   children,
 }: {
   label: string;
   width: number;
   height: number;
+  /** As a page of Settings sets its groups in. */
+  padded?: boolean;
   children: ReactNode;
 }) {
   return (
     <Labeled label={label} className="max-w-full">
       <div
-        className="max-w-full overflow-hidden rounded-md border border-border"
+        className={cn(
+          "max-w-full overflow-hidden rounded-md border border-border",
+          padded && "overflow-y-auto p-5",
+        )}
         style={{ width: `${width / 16}rem`, height: `${height / 16}rem` }}
       >
         {children}
@@ -2480,24 +2494,77 @@ const longNames = {
   },
 };
 
+/**
+ * Settings as the dialog fills: on a wide screen, `page` beside the list of
+ * pages, or the first page; on a phone's width, the list, or `page` alone.
+ * The pages move as in the app; the sample team's settings fill them.
+ */
+function SettingsFrame({
+  label,
+  wide,
+  page = null,
+  height = 640,
+}: {
+  label: string;
+  wide: boolean;
+  page?: SettingsPage | null;
+  height?: number;
+}) {
+  const source = useSampleSource();
+  const [shown, setShown] = useState<SettingsPage | null>(page);
+  const profile = useProfileEdits(source.data.settingsSaves.profile);
+  return (
+    <Frame label={label} width={wide ? 768 : 390} height={height}>
+      <Dialog.Root>
+        <div className="flex h-full flex-col bg-surface">
+          <SettingsPanel
+            data={{ ...source.data, settingsPage: shown }}
+            intents={{
+              ...source.intents,
+              showSettingsPage: setShown,
+              serverUpdate: serverUpdate(said(serverStatuses.available)),
+            }}
+            profile={profile}
+            titleId={`settings-${label}`}
+            wide={wide}
+          />
+        </div>
+      </Dialog.Root>
+    </Frame>
+  );
+}
+
+function SettingsPagesSection() {
+  return (
+    <Section title="Settings: its pages">
+      <div className="flex flex-wrap gap-4">
+        <SettingsFrame label="Wide: the list beside the first page" wide />
+        <SettingsFrame label="Wide: devices, with signing out ruled off" wide page="devices" />
+        <SettingsFrame label="Phone: the list, an update waiting" wide={false} />
+        <SettingsFrame label="Phone: a page, with Back" wide={false} page="appearance" />
+      </div>
+    </Section>
+  );
+}
+
 function EngineSettingsSection() {
   return (
     <Section title="Settings: the engine">
       <div className="flex flex-wrap gap-4">
-        <Frame label="Downloading, on the first start" width={420} height={160}>
+        <Frame padded label="Downloading, on the first start" width={420} height={160}>
           <EngineSection engine={engines.downloading} stale={false} actions={providerActions} />
         </Frame>
-        <Frame label="Downloading, with no size known" width={420} height={160}>
+        <Frame padded label="Downloading, with no size known" width={420} height={160}>
           <EngineSection
             engine={engines.downloadingNoTotal}
             stale={false}
             actions={providerActions}
           />
         </Frame>
-        <Frame label="Starting, once downloaded" width={420} height={160}>
+        <Frame padded label="Starting, once downloaded" width={420} height={160}>
           <EngineSection engine={engines.engineStarting} stale={false} actions={providerActions} />
         </Frame>
-        <Frame label="The download failed" width={420} height={160}>
+        <Frame padded label="The download failed" width={420} height={160}>
           <EngineSection
             engine={{ ...engines.installFailed, providers: [] }}
             stale={false}
@@ -2505,6 +2572,7 @@ function EngineSettingsSection() {
           />
         </Frame>
         <Frame
+          padded
           label="A provider that failed to start, in the engine's words, and one not installed"
           width={420}
           height={360}
@@ -2516,7 +2584,7 @@ function EngineSettingsSection() {
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
-        <Frame label="A newer version to update, and one updating" width={420} height={260}>
+        <Frame padded label="A newer version to update, and one updating" width={420} height={260}>
           <EngineSection
             engine={withVersions(behindUpdatable, {
               version: { installed: "0.170.0", latest: "0.171.0", canUpdate: true },
@@ -2527,6 +2595,7 @@ function EngineSettingsSection() {
           />
         </Frame>
         <Frame
+          padded
           label="An update that failed, and a version the engine cannot update"
           width={420}
           height={300}
@@ -2540,10 +2609,11 @@ function EngineSettingsSection() {
             actions={providerActions}
           />
         </Frame>
-        <Frame label="Providers turned off on the server" width={420} height={200}>
+        <Frame padded label="Providers turned off on the server" width={420} height={200}>
           <EngineSection engine={engines.disabled} stale={false} actions={providerActions} />
         </Frame>
         <Frame
+          padded
           label="The server's own copies: one with a newer version out, one downloading"
           width={420}
           height={380}
@@ -2561,6 +2631,7 @@ function EngineSettingsSection() {
           />
         </Frame>
         <Frame
+          padded
           label="An update waiting for its bots, and an install whose download did not check"
           width={420}
           height={320}
@@ -2586,23 +2657,24 @@ function VaultGallerySection() {
   return (
     <Section title="Settings: the vault">
       <div className="flex flex-wrap gap-4">
-        <Frame label="No password yet" width={420} height={360}>
+        <Frame padded label="No password yet" width={420} height={360}>
           <VaultSection vault={none} />
         </Frame>
         <Frame
+          padded
           label={`Locked (the password is “${SAMPLE_VAULT_PASSWORD}”)`}
           width={420}
           height={260}
         >
           <VaultSection vault={locked} />
         </Frame>
-        <Frame label="Unlocked, with saved logins" width={420} height={760}>
+        <Frame padded label="Unlocked, with saved logins" width={420} height={760}>
           <VaultSection vault={unlocked} />
         </Frame>
-        <Frame label="Unlocked, with none saved" width={420} height={220}>
+        <Frame padded label="Unlocked, with none saved" width={420} height={220}>
           <VaultSection vault={empty} />
         </Frame>
-        <Frame label="Changed by a newer release" width={420} height={140}>
+        <Frame padded label="Changed by a newer release" width={420} height={140}>
           <VaultSection vault={newer} />
         </Frame>
       </div>
@@ -2628,57 +2700,69 @@ function UsageGallerySection() {
   return (
     <Section title="Usage">
       <div className="flex flex-wrap gap-4">
-        <Frame label="Limits and the day's turns, by provider and bot" width={420} height={640}>
+        <Frame
+          padded
+          label="Limits and the day's turns, by provider and bot"
+          width={420}
+          height={640}
+        >
           {usage(team.engine, turnsRead(team.recentTurns))}
         </Frame>
         <Frame
+          padded
           label="More turns than one read: the latest, and the oldest shown"
           width={420}
           height={520}
         >
           {usage(team.engine, turnsRead(firstPage))}
         </Frame>
-        <Frame label="Loading earlier turns" width={420} height={520}>
+        <Frame padded label="Loading earlier turns" width={420} height={520}>
           {usage(team.engine, turnsRead(firstPage, { loadingMore: true }))}
         </Frame>
-        <Frame label="The most turns shown" width={420} height={520}>
+        <Frame padded label="The most turns shown" width={420} height={520}>
           {usage(team.engine, turnsRead({ ...firstPage, canLoadMore: false }))}
         </Frame>
-        <Frame label="A provider at its limit; another reports none" width={420} height={640}>
+        <Frame
+          padded
+          label="A provider at its limit; another reports none"
+          width={420}
+          height={640}
+        >
           {usage(usageEngines.atLimit, turnsRead(team.recentTurns))}
         </Frame>
-        <Frame label="One model at its weekly limit" width={420} height={640}>
+        <Frame padded label="One model at its weekly limit" width={420} height={640}>
           {usage(usageEngines.modelAtLimit, turnsRead(team.recentTurns))}
         </Frame>
-        <Frame label="A reset passed since the last check" width={420} height={640}>
+        <Frame padded label="A reset passed since the last check" width={420} height={640}>
           {usage(usageEngines.resetPassed, turnsRead(team.recentTurns))}
         </Frame>
         <Frame
+          padded
           label="No provider reports limits, as through a provider connection"
           width={420}
           height={520}
         >
           {usage(usageEngines.noWindows, turnsRead(team.recentTurns))}
         </Frame>
-        <Frame label="Offline: limits and turns last known" width={420} height={640}>
+        <Frame padded label="Offline: limits and turns last known" width={420} height={640}>
           {usage(team.engine, turnsRead(team.recentTurns, { stale: true }), { engineStale: true })}
         </Frame>
-        <Frame label="Turns loading" width={420} height={320}>
+        <Frame padded label="Turns loading" width={420} height={320}>
           {usage(team.engine, turnsNotRead)}
         </Frame>
-        <Frame label="The turns couldn't be read" width={420} height={320}>
+        <Frame padded label="The turns couldn't be read" width={420} height={320}>
           {usage(team.engine, { ...turnsNotRead, failed: true })}
         </Frame>
-        <Frame label="Earlier turns couldn't be read" width={420} height={520}>
+        <Frame padded label="Earlier turns couldn't be read" width={420} height={520}>
           {usage(team.engine, turnsRead(firstPage, { failed: true }))}
         </Frame>
-        <Frame label="Long names on a phone" width={320} height={640}>
+        <Frame padded label="Long names on a phone" width={320} height={640}>
           {usage(team.engine, turnsRead(longNames.turns), { roster: longNames.roster })}
         </Frame>
-        <Frame label="The engine isn't running" width={420} height={120}>
+        <Frame padded label="The engine isn't running" width={420} height={120}>
           {usage(engines.down, turnsRead(team.recentTurns))}
         </Frame>
-        <Frame label="No provider can run bots yet" width={420} height={200}>
+        <Frame padded label="No provider can run bots yet" width={420} height={200}>
           {usage(usageEngines.signedOut, turnsRead({ ...team.recentTurns, turns: [] }))}
         </Frame>
       </div>
@@ -2921,7 +3005,12 @@ function LocalFirstRunSection() {
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
-        <Frame label="Settings: where the harnesses are, and signing in" width={420} height={420}>
+        <Frame
+          padded
+          label="Settings: where the harnesses are, and signing in"
+          width={420}
+          height={420}
+        >
           <EngineSection
             engine={engines.connect}
             stale={false}
@@ -2929,7 +3018,12 @@ function LocalFirstRunSection() {
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
-        <Frame label="Settings: one provider ready, the other to sign in" width={420} height={420}>
+        <Frame
+          padded
+          label="Settings: one provider ready, the other to sign in"
+          width={420}
+          height={420}
+        >
           <EngineSection
             engine={team.engine}
             stale={false}
@@ -3506,10 +3600,8 @@ function UpdatesFrame({
   height?: number;
 }) {
   return (
-    <Frame label={label} width={390} height={height}>
-      <div className="h-full overflow-y-auto">
-        <UpdatesSection server={server} app={app} local={local} onUpdate={nothing} />
-      </div>
+    <Frame label={label} width={390} height={height} padded>
+      <UpdatesSection server={server} app={app} local={local} onUpdate={nothing} />
     </Frame>
   );
 }

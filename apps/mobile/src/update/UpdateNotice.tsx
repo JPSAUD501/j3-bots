@@ -35,6 +35,11 @@ export function UpdateNotice() {
   const automatic = useAppUpdateAutomatic();
   const { entry, reopen } = useUpdatePromptEntry();
   const navigation = useNavigation<Navigation>();
+  // Over Settings' list, so Back from the updates goes to the rest of Settings.
+  const openUpdates = () => {
+    navigation.navigate("settings");
+    navigation.push("settingsPage", { page: "updates" });
+  };
 
   if (entry !== null) {
     return (
@@ -89,11 +94,7 @@ export function UpdateNotice() {
     );
   }
   return (
-    <NoticeRow
-      text={app.line.text}
-      hint={t("updateNotice.openSettings")}
-      onOpen={() => navigation.navigate("settings", { section: "updates" })}
-    />
+    <NoticeRow text={app.line.text} hint={t("updateNotice.openSettings")} onOpen={openUpdates} />
   );
 }
 

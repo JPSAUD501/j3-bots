@@ -288,12 +288,15 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         // Changing server from Settings forgets this device's pairing here.
         const stored = yield* onPage(second, async () => {
           await second.getByRole("button", { name: "Settings" }).click();
+          const pages = second.getByRole("navigation", { name: "Settings sections" });
+          await pages.getByRole("button", { name: "Devices" }).click();
           await second
             .getByText("this device’s sign-in is stored without encryption", { exact: false })
             .waitFor({
               state: paired.protection === "unencrypted" ? "visible" : "hidden",
               timeout: STEP,
             });
+          await pages.getByRole("button", { name: "Where your bots live" }).click();
           await second.getByRole("button", { name: "Change server" }).click();
           await second
             .getByRole("alertdialog")

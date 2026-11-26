@@ -22,6 +22,7 @@ import {
   placedMessage,
   providerGate,
   ROOM_MEMBERS,
+  type SettingsPage,
   showsImage,
   withoutMarks,
 } from "@j3-bots/client-runtime/presentation";
@@ -74,6 +75,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly drafts: Readonly<Record<string, Draft>>;
   readonly settingsSaves: SettingsSaves;
   readonly settingsOpen: boolean;
+  readonly settingsPage: SettingsPage | null;
   readonly connectors: ReadonlyArray<Connector>;
   readonly skills: ReadonlyArray<Skill>;
   /** The connectors screen, and what opened it; null while it is closed. */
@@ -678,6 +680,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
         }
       }),
     setSettingsOpen: (open) => update((s) => ({ ...s, settingsOpen: open })),
+    showSettingsPage: (page) => update((s) => ({ ...s, settingsPage: page })),
     startPairing: () =>
       Promise.resolve({
         _tag: "started",
@@ -852,6 +855,7 @@ function toData(state: State, vault: VaultView): ShellData {
     settings: state.settings,
     settingsSaves: state.settingsSaves,
     settingsOpen: state.settingsOpen,
+    settingsPage: state.settingsPage,
     devices: state.devices,
     recentTurns: {
       read: { _tag: "ready", value: state.recentTurns, stale: false },
@@ -887,6 +891,7 @@ export function useSampleSource({
         harnesses: { _tag: "idle" },
       },
       settingsOpen: false,
+      settingsPage: null,
       connectors: sampleConnectors,
       skills: sampleSkills,
       connectorsOpening: null,
@@ -926,7 +931,7 @@ export function useSampleSource({
           })),
       }),
       // As the live source: Settings opens over the connectors, which wait as they were.
-      openVault: () => store.update((s) => ({ ...s, settingsOpen: true })),
+      openVault: () => store.update((s) => ({ ...s, settingsOpen: true, settingsPage: "vault" })),
     }),
     [store],
   );

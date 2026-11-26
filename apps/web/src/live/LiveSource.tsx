@@ -83,6 +83,7 @@ import {
   ROOM_MEMBERS,
   type RoomFormMode,
   roomStopFailed,
+  type SettingsPage,
   showsImage,
   templateFileName,
   type TemplateRead,
@@ -952,6 +953,7 @@ function LiveShell({
   const [memoryEditing, setMemoryEditing] = useState(false);
   const [roomFormUnsaved, setRoomFormUnsaved] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   // The image a file shows over everything, opened from a conversation.
   const [viewing, setViewing] = useState<Attachment | null>(null);
   // The connectors screen, and what opened it; null while it is closed.
@@ -967,8 +969,8 @@ function LiveShell({
   const skills = skillsState._tag === "ready" ? skillsState.value : null;
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
-  // Read each time Settings opens, and on every socket while it stays open.
-  const recentTurns = useRecentTurns(settingsOpen);
+  // Read each time Settings shows its usage, and on every socket while it does.
+  const recentTurns = useRecentTurns(settingsOpen && settingsPage === "usage");
   // What the shell shows with nothing over it.
   const [shown, setShown] = useState<EntryTarget | null>(null);
   const botSaves = useReadable(j3.botSaves);
@@ -1228,7 +1230,10 @@ function LiveShell({
       window.open(url, "_blank", "noopener");
     },
     // The vault is unlocked and set up in Settings, over the connectors, which wait as they were.
-    openVault: () => setSettingsOpen(true),
+    openVault: () => {
+      setSettingsPage("vault");
+      setSettingsOpen(true);
+    },
   };
 
   const data: ShellData = {
@@ -1264,6 +1269,7 @@ function LiveShell({
       harnesses: harnessesSave,
     },
     settingsOpen,
+    settingsPage,
     devices: devices._tag === "ready" ? devices.value : null,
     recentTurns: recentTurns.state,
     connected: connection._tag === "connected",
@@ -1602,6 +1608,7 @@ function LiveShell({
       }),
     updateSettings: (change) => void j3.updateSettings(change),
     setSettingsOpen,
+    showSettingsPage: setSettingsPage,
     startPairing: () =>
       j3
         .startPairing()

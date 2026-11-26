@@ -87,6 +87,7 @@ export {
 } from "./pairs.ts";
 export { endpointInstead, type SignInLine, signInLine } from "./providerSetup.ts";
 export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
+export { settingsPageWords } from "./settings.ts";
 export {
   activityTime,
   dividerTime,
