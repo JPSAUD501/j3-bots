@@ -166,6 +166,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
     openWorkFold: folds.open,
     closeWorkFold: folds.close,
     openAttachment: attachments.open,
+    openWorkImage: attachments.openWorkImage,
     // A bot's browser, a routine, another bot's conversation and a
     // connector's sign-in need the whole window.
     openBrowser: (bot) => openInMain(bot),
