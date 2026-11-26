@@ -9,9 +9,6 @@ import * as Schema from "effect/Schema";
 // `${secret:<name>}`, or `${secret:<name>.username}` for a login's user name.
 // A login's bare reference is its password.
 
-/** Which of a secret's values a reference names. */
-type ReferencedField = "value" | "username" | "password";
-
 /** One reference: the secret's name and, for a login, which of its values. */
 export interface SecretReference {
   readonly name: SecretName;
