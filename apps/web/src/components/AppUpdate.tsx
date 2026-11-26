@@ -59,7 +59,7 @@ export function useUpdateLine(update: DesktopUpdate | undefined): string | null 
         case "verify":
           return t("update.verifyFailed");
         case "install":
-          return t("update.installFailed");
+          return t("update.installFailed", { version: phase.version });
       }
   }
 }
@@ -67,12 +67,13 @@ export function useUpdateLine(update: DesktopUpdate | undefined): string | null 
 /**
  * The desktop app's version and where updating it stands: a check, a
  * download or the check of the download against the release's signature
- * under way, "Restart to update" once a newer version is ready, a way to
- * check again otherwise. Where updates install by themselves, a version that
- * is ready installs as the app quits, and the restart only brings it sooner.
- * A build that does not install updates says a newer version is out and
- * links to its release. With `channel`, the releases it follows and whether
- * it updates by itself, which the operator can change.
+ * under way, "Restart to update" once a newer version is ready, which the
+ * operator can call off while it waits for a save, a way to check again
+ * otherwise. Where updates install by themselves, a version that is ready
+ * installs as the app quits, and the restart only brings it sooner. A build
+ * that does not install updates says a newer version is out and links to its
+ * release, as an install that failed does. With `channel`, the releases it
+ * follows and whether it updates by itself, which the operator can change.
  */
 export function AppUpdate({
   update,
@@ -106,7 +107,12 @@ export function AppUpdate({
             {t("update.restart")}
           </Button>
         )}
-        {phase._tag === "released" && (
+        {phase._tag === "downloaded" && phase.restart === "waiting-for-save" && (
+          <Button size="sm" onClick={update.cancelRestart}>
+            {t("update.cancelRestart")}
+          </Button>
+        )}
+        {(phase._tag === "released" || (phase._tag === "failed" && phase.stage === "install")) && (
           <Button
             size="sm"
             variant="primary"

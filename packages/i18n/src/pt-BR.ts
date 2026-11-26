@@ -1525,7 +1525,7 @@ const sentences = {
   "settings.shortcut.reset": "Usar {shortcut}",
   "settings.shortcut.recording": "Pressione o novo atalho, ou Esc para manter {shortcut}.",
   "settings.shortcut.needsModifier":
-    "Um atalho precisa de Ctrl, Alt ou Super (⌘, ⌃ ou ⌥ num Mac) com uma letra, um número ou uma tecla de função.",
+    "Um atalho precisa de Shift, Alt ou Super junto com outro modificador (⇧ ou ⌥ junto com outro num Mac), com uma letra, um número ou uma tecla de função: um como Ctrl+C é de todos os outros apps.",
   "settings.shortcut.registered":
     "Pressione {shortcut} em qualquer lugar para mostrar o J3 Bots com o cursor na caixa de mensagem da conversa aberta.",
   "settings.shortcut.taken":
@@ -1772,7 +1772,9 @@ const sentences = {
   "update.waiting": "Reiniciando assim que suas alterações forem salvas…",
   "update.installing": "Reiniciando…",
   "update.failed": "Não deu para obter a versão mais recente. O J3 Bots tenta de novo mais tarde.",
-  "update.installFailed": "Não deu para instalar a atualização. Esta versão continua em uso.",
+  "update.installFailed":
+    "Não deu para instalar a versão {version}. Esta versão continua em uso; você pode baixar a nova.",
+  "update.cancelRestart": "Cancelar reinício",
   "update.check": "Procurar atualizações",
   "update.retry": "Tentar de novo",
   "update.restart": "Reiniciar para atualizar",

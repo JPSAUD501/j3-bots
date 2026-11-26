@@ -182,6 +182,12 @@ export function useUpdatePrompt(blocked: boolean): UpdatePromptHandle {
       local: desktop?.mode === "local",
       serverLine: serverUpdateLine(serverView, i18n),
       appLine,
+      cancelRestart:
+        update !== undefined &&
+        status?.phase._tag === "downloaded" &&
+        status.phase.restart === "waiting-for-save"
+          ? update.cancelRestart
+          : null,
       updateNow: prompt.updateNow,
       later: prompt.later,
       stopWork: prompt.stopWork,

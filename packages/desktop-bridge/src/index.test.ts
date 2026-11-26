@@ -27,6 +27,16 @@ import {
   UpdateStatus,
 } from "./index.ts";
 
+/** The first bytes of a PNG whose header declares `width` by `height` px. */
+const pngOf = (width: number, height: number): Uint8Array => {
+  const bytes = new Uint8Array(33);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return bytes;
+};
+
 const decodes = <S extends Schema.Constraint & { readonly DecodingServices: never }>(
   schema: S,
   input: unknown,
@@ -194,6 +204,7 @@ describe("the desktop bridge", () => {
       onUpdate: call,
       checkForUpdates: call,
       restartToUpdate: call,
+      cancelRestartToUpdate: call,
       setUpdateChannel: call,
       setAutomaticUpdates: call,
       reportSaving: call,
@@ -233,7 +244,7 @@ describe("the desktop bridge", () => {
   });
 
   it("shows a notification only as a page could ask for one: text, a PNG and what it is about", () => {
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    const png = pngOf(192, 192);
     const request = {
       entryId: "entry-1",
       title: "Wren",
@@ -255,6 +266,23 @@ describe("the desktop bridge", () => {
     const huge = new Uint8Array(1024 * 1024 + 1);
     huge.set(png);
     assert.isFalse(decodes(NotificationRequest, { ...request, icon: huge }));
+    // A small file whose header declares an image larger than an icon, or none at all.
+    for (const [width, height] of [
+      [193, 192],
+      [192, 65_536],
+      [0, 192],
+      [0xffff_ffff, 0xffff_ffff],
+    ] as const) {
+      assert.isFalse(
+        decodes(NotificationRequest, { ...request, icon: pngOf(width, height) }),
+        `${width}×${height}`,
+      );
+    }
+    assert.isTrue(decodes(NotificationRequest, { ...request, icon: pngOf(48, 192) }));
+    // The signature, then another chunk where the header must be.
+    const noHeader = pngOf(192, 192);
+    noHeader.set([0x49, 0x44, 0x41, 0x54], 12);
+    assert.isFalse(decodes(NotificationRequest, { ...request, icon: noHeader }));
     assert.isFalse(decodes(NotificationRequest, { ...request, title: "" }));
     assert.isFalse(decodes(NotificationRequest, { ...request, body: "x".repeat(4097) }));
     assert.isFalse(decodes(NotificationRequest, { ...request, target: { _tag: "settings" } }));
@@ -291,7 +319,7 @@ describe("the desktop bridge", () => {
       "CommandOrControl+Shift+J",
       "Control+Alt+Space",
       "Alt+Super+F12",
-      "Super+1",
+      "Alt+Shift+1",
     ]) {
       assert.isTrue(decodes(Accelerator, accelerator), accelerator);
     }
@@ -303,6 +331,21 @@ describe("the desktop bridge", () => {
       "CommandOrControl+F25",
       "CommandOrControl+j",
       "CommandOrControl+Shift+J+K",
+    ]) {
+      assert.isFalse(decodes(Accelerator, accelerator), accelerator);
+    }
+  });
+
+  it("refuses as a global shortcut what one modifier makes, which every other app uses", () => {
+    for (const accelerator of [
+      "CommandOrControl+C",
+      "CommandOrControl+V",
+      "CommandOrControl+Z",
+      "Control+A",
+      "Alt+F4",
+      "Super+1",
+      // Both are Ctrl outside a Mac.
+      "CommandOrControl+Control+X",
     ]) {
       assert.isFalse(decodes(Accelerator, accelerator), accelerator);
     }

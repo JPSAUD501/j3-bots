@@ -26,10 +26,16 @@ describe("a shortcut the operator presses", () => {
       _tag: "shortcut",
       accelerator: "Alt+Super+1",
     });
-    expect(pressedShortcut(press("F5", { ctrlKey: true }), true)).toEqual({
+    expect(pressedShortcut(press("F5", { ctrlKey: true, shiftKey: true }), true)).toEqual({
       _tag: "shortcut",
-      accelerator: "Control+F5",
+      accelerator: "Control+Shift+F5",
     });
+  });
+
+  it("refuses what every other app uses: one modifier and a key", () => {
+    expect(pressedShortcut(press("KeyC", { ctrlKey: true }), false)).toEqual({ _tag: "refused" });
+    expect(pressedShortcut(press("KeyV", { metaKey: true }), true)).toEqual({ _tag: "refused" });
+    expect(pressedShortcut(press("F4", { altKey: true }), false)).toEqual({ _tag: "refused" });
   });
 
   it("waits while only modifiers are down, and refuses a key alone, with Shift, or one it cannot name", () => {

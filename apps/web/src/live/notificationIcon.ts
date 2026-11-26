@@ -9,6 +9,7 @@
 import type { BotId, Notification, RosterItem } from "@j3-bots/contracts";
 import { notificationState, stillFace } from "@j3-bots/client-runtime/presentation";
 import type { Themed } from "@j3-bots/design-tokens";
+import { NOTIFICATION_ICON_SIZE } from "@j3-bots/desktop-bridge";
 
 /** The app's icon, for a notification whose avatar cannot be drawn. */
 const APP_ICON = "/icon-192.png";
@@ -20,9 +21,9 @@ const APP_ICON = "/icon-192.png";
  * stays sharp up to about two and a half device pixels per px there, and on
  * phones, whose slot is smaller. No slot is as small as 28 px, below which an
  * avatar draws its eye larger: the proportions drawn for 192 px are the ones
- * the slot needs.
+ * the slot needs. The desktop app takes no larger icon.
  */
-const ICON_SIZE = 192;
+const ICON_SIZE = NOTIFICATION_ICON_SIZE;
 
 /** The theme the system is in now, which is the one it draws its notifications in. */
 export const systemTheme = (): keyof Themed =>

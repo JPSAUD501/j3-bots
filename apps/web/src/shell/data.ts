@@ -445,6 +445,8 @@ export interface DesktopUpdate {
   readonly check: () => void;
   /** Restarts into the downloaded update, as soon as no save is under way. */
   readonly restart: () => void;
+  /** Calls off a restart that waits for a save; the update stays ready. */
+  readonly cancelRestart: () => void;
   /** Chooses the releases the app follows, unless a version is on its way or installing. */
   readonly setChannel: (channel: UpdateChannel) => void;
   /** Turns "Update automatically" on or off. */

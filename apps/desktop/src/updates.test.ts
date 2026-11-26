@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
 import {
+  checkFailed,
   initial as initialOn,
   mayCheck,
   step,
@@ -70,6 +71,23 @@ describe("updating the app when the operator asks", () => {
     expect(saved.installs).toBe(1);
   });
 
+  it("lets the operator call off a restart that waits for a save, and offers it again", () => {
+    const { state, installs } = run(initial("install"), [
+      ...found,
+      { _tag: "saving", saving: true },
+      { _tag: "restart-requested" },
+      { _tag: "restart-cancelled" },
+      { _tag: "saving", saving: false },
+    ]);
+    expect(installs).toBe(0);
+    expect(state.phase).toEqual({ _tag: "downloaded", version: "0.0.2", restart: "offered" });
+    // Called off, it is asked for again as before.
+    expect(run(state, [{ _tag: "restart-requested" }]).installs).toBe(1);
+    // There is nothing to call off once the restart is under way.
+    const installing = run(initial("install"), [...found, { _tag: "restart-requested" }]).state;
+    expect(run(installing, [{ _tag: "restart-cancelled" }]).state).toBe(installing);
+  });
+
   it("does not restart when a save ends unless the operator asked", () => {
     const { installs } = run(initial("install"), [
       { _tag: "saving", saving: true },
@@ -105,6 +123,7 @@ describe("updating the app when the operator asks", () => {
     const failed = run(initial("install"), [{ _tag: "check-started" }, { _tag: "failed" }]).state;
     expect(failed.phase).toEqual({ _tag: "failed", stage: "check" });
     expect(mayCheck(failed)).toBe(true);
+    expect(checkFailed(failed)).toBe(true);
     expect(mayCheck(run(initial("install"), found.slice(0, 2)).state)).toBe(false);
     expect(mayCheck(run(initial("install"), found.slice(0, 4)).state)).toBe(false);
     const ready = run(initial("install"), found).state;
@@ -119,8 +138,10 @@ describe("updating the app when the operator asks", () => {
       { _tag: "restart-requested" },
       { _tag: "failed" },
     ]);
-    expect(state.phase).toEqual({ _tag: "failed", stage: "install" });
+    expect(state.phase).toEqual({ _tag: "failed", stage: "install", version: "0.0.2" });
     expect(mayCheck(state)).toBe(true);
+    // Trying again soon would fail the same way: only the schedule or the operator does.
+    expect(checkFailed(state)).toBe(false);
   });
 
   it("only says a newer version is out in a build that does not install it", () => {
@@ -290,6 +311,10 @@ describe("updating the app by itself", () => {
       restart: "waiting-for-save",
     });
     expect(run(saving.state, [{ _tag: "saving", saving: false }]).installs).toBe(1);
+    // Called off, the page opens, and the version installs as the app quits.
+    const cancelled = run(saving.state, [{ _tag: "restart-cancelled" }, { _tag: "quitting" }]);
+    expect(cancelled.state.launch).toBe("over");
+    expect(cancelled.actions).toEqual([null, { _tag: "install-on-quit" }]);
   });
 
   it("never installs a launch's download that did not match, and opens as usual", () => {
@@ -305,7 +330,7 @@ describe("updating the app by itself", () => {
 
   it("opens as usual when the install at launch fails, and keeps it from repeating", () => {
     const { state } = run(automatic("install"), [...found, { _tag: "failed" }]);
-    expect(state.phase).toEqual({ _tag: "failed", stage: "install" });
+    expect(state.phase).toEqual({ _tag: "failed", stage: "install", version: "0.0.2" });
     expect(state.launch).toBe("over");
     // The next check offers it again, and leaves the install to the quit.
     expect(run(state, found).installs).toBe(0);

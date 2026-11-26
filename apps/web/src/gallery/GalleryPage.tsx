@@ -3935,6 +3935,10 @@ function UpdatesGallerySection() {
         <PromptFrame label="The prompt: only the app, in local mode" view={promptViews.appLocal} />
         <PromptFrame label="Updating: the server" view={promptViews.updatingServer} />
         <PromptFrame label="Updating: the app, after the server" view={promptViews.updatingApp} />
+        <PromptFrame
+          label="Updating: the app's restart waits for a save"
+          view={promptViews.appWaitingForSave}
+        />
         <PromptFrame label="Bots at work on the server" view={promptViews.workRunning} />
         <PromptFrame label="The server's update rolled back" view={promptViews.serverFailed} />
         <PromptFrame label="The server updated, the app did not" view={promptViews.appFailed} />
@@ -4035,6 +4039,16 @@ function UpdatesGallerySection() {
         <UpdatesFrame
           label="The app: the download did not match"
           app={appUpdate(appPhases.verifyFailed)}
+          height={300}
+        />
+        <UpdatesFrame
+          label="The app: its restart waits for a save"
+          app={appUpdate(appPhases.waitingForSave)}
+          height={300}
+        />
+        <UpdatesFrame
+          label="The app: the install failed"
+          app={appUpdate(appPhases.installFailed)}
           height={300}
         />
         <UpdatesFrame
