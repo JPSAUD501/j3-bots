@@ -313,8 +313,10 @@ function StepImage({ id }: { readonly id: WorkImageId }) {
   const client = useJ3Client();
   const opener = useFileOpener();
   const image = useImage(client, { _tag: "work", id });
+  // A file that stopped decoding as an image since the server checked it is as gone.
+  const [undrawable, setUndrawable] = useState(false);
   const frame = "size-16 overflow-hidden rounded-md border border-border bg-muted";
-  if (image._tag === "failed") {
+  if (image._tag === "failed" || undrawable) {
     return (
       <View
         accessible
@@ -334,7 +336,12 @@ function StepImage({ id }: { readonly id: WorkImageId }) {
       className={frame}
     >
       {image._tag === "shown" && (
-        <Image source={{ uri: image.uri }} resizeMode="cover" style={{ flex: 1 }} />
+        <Image
+          source={{ uri: image.uri }}
+          resizeMode="cover"
+          onError={() => setUndrawable(true)}
+          style={{ flex: 1 }}
+        />
       )}
     </Pressable>
   );

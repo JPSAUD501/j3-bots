@@ -230,8 +230,10 @@ function StepImage({
 }) {
   const { t } = usePresentation().i18n;
   const image = useImage({ _tag: "work", id });
+  // A file that stopped decoding as an image since the server checked it is as gone.
+  const [undrawable, setUndrawable] = useState(false);
   const frame = "size-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted";
-  if (image?._tag === "failed") {
+  if (image?._tag === "failed" || undrawable) {
     return (
       <span
         role="img"
@@ -250,7 +252,14 @@ function StepImage({
       aria-label={t("work.image.open")}
       className={cn("pressable hover:opacity-90", frame)}
     >
-      {image?._tag === "shown" && <img src={image.url} alt="" className="size-full object-cover" />}
+      {image?._tag === "shown" && (
+        <img
+          src={image.url}
+          alt=""
+          onError={() => setUndrawable(true)}
+          className="size-full object-cover"
+        />
+      )}
     </button>
   );
 }

@@ -1748,7 +1748,8 @@ const pictureProblems = (
   const attached = spoken.flatMap(({ say }) =>
     (say.attachments ?? []).filter((path) => IMAGE_PATH.test(path)),
   );
-  const named = (path: string) => allowed.some((image) => path.endsWith(image));
+  const named = (path: string) =>
+    allowed.some((image) => path === image || path.endsWith(`/${image}`));
   const text = spoken.map(({ say }) => say.text).join("\n\n");
   return [
     ...(attached.length === 0 ? ["no `say` attached an image"] : []),

@@ -11,7 +11,7 @@ import {
   FileText,
   type LucideIcon,
 } from "lucide-react-native";
-import { use } from "react";
+import { use, useState } from "react";
 import { Image, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -141,7 +141,9 @@ export function MessageFile({ attachment }: { readonly attachment: Attachment })
   const opener = useFileOpener();
   const widths = use(EntryWidths);
   const image = useImageFile(client, attachment);
-  if (!showsImage(attachment) || image._tag === "failed") {
+  // Bytes named as an image that do not decode as one show as the file they are.
+  const [undrawable, setUndrawable] = useState(false);
+  if (!showsImage(attachment) || image._tag === "failed" || undrawable) {
     return <FileCard attachment={attachment} />;
   }
   return (
@@ -153,7 +155,12 @@ export function MessageFile({ attachment }: { readonly attachment: Attachment })
       className="overflow-hidden rounded-md border border-border bg-muted"
     >
       {image._tag === "shown" && (
-        <Image source={{ uri: image.uri }} resizeMode="cover" style={{ flex: 1 }} />
+        <Image
+          source={{ uri: image.uri }}
+          resizeMode="cover"
+          onError={() => setUndrawable(true)}
+          style={{ flex: 1 }}
+        />
       )}
     </Pressable>
   );

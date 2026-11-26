@@ -71,6 +71,7 @@ export default defineConfig(({ mode }) => {
             proxy: {
               "/api": server,
               "/attachments": server,
+              "/work-images": server,
               "/ws": { target: server, ws: true },
             },
           }),
