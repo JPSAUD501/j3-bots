@@ -5,7 +5,7 @@ import {
   type ConnectorCredentials,
   type CredentialsUnavailable,
   NeedsSignIn,
-  type SecretHeader,
+  sameHeaders,
   SecretsUnavailable,
   Withdrawn,
 } from "@j3-bots/connectors";
@@ -121,25 +121,25 @@ export const commandOf = (
     Pick<ConnectorSecret, "env"> & {
       /** The operator's secrets' values in it, which the process's answers are scrubbed of. */
       readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
+      /** The logins' user names in it, which its answers are scrubbed of too. */
+      readonly carried: ReadonlyArray<Redacted.Redacted<string>>;
     },
   CredentialsUnavailable
 > =>
   Effect.gen(function* () {
     const resolved = yield* resolvedOf(secrets, connector);
     if (Option.isNone(resolved)) return yield* new AuthFailing({ reason: "secret-unusable" });
-    const { secret, values } = resolved.value;
+    const { secret, values, userNames } = resolved.value;
     const { command } = secret;
     if (command === null) return yield* new AuthFailing({ reason: "secret-unusable" });
-    return { program: command.program, args: command.args, env: secret.env, hidden: values };
+    return {
+      program: command.program,
+      args: command.args,
+      env: secret.env,
+      hidden: values,
+      carried: userNames,
+    };
   });
-
-/** Whether two requests carry the same headers, in order. */
-const sameHeaders = (a: ReadonlyArray<SecretHeader>, b: ReadonlyArray<SecretHeader>): boolean =>
-  a.length === b.length &&
-  a.every(
-    (header, i) =>
-      header.name === b[i]?.name && Redacted.value(header.value) === Redacted.value(b[i].value),
-  );
 
 /**
  * Signs the connector's requests from its secret and, for an OAuth connector,
@@ -160,11 +160,15 @@ export const credentialsOf = (
     const resolved = yield* resolvedOf(secrets, now.value);
     const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
     const hidden = Option.match(resolved, { onNone: () => [], onSome: hiddenOfResolved });
+    const carried = Option.match(resolved, {
+      onNone: () => [],
+      onSome: (r) => hiddenOf(r.userNames),
+    });
     const bearer =
       now.value.signIn === "oauth"
         ? Option.some(yield* signIns.accessToken(now.value.id))
         : Option.none();
-    return { bearer, headers, hidden } satisfies CallCredentials;
+    return { bearer, headers, hidden, carried } satisfies CallCredentials;
   }),
   rejected: Effect.fn("ConnectorCredentials.rejected")(function* (wwwAuthenticate, sent) {
     const now = yield* current;

@@ -985,9 +985,27 @@ export const layer = Layer.effect(
         uses.set(slot, { ...use, inUse: Math.max(0, use.inUse - 1), lastUsed: usesEnded });
       });
 
-    /** A use of a remote session, for as long as the scope it is used in. */
-    const openRemote = (key: string) =>
-      Effect.andThen(Effect.acquireRelease(admit(key), leave), RcMap.get(sessions, key));
+    /**
+     * Closes the session `slot` names while its key still names it: one closed
+     * and opened again since is another session, which a late failure of the
+     * old one leaves alone.
+     */
+    const retire = (slot: string) =>
+      Effect.suspend(() => {
+        const use = uses.get(slot);
+        return use !== undefined && slotOf(use.key) === slot ? invalidate(use.key) : Effect.void;
+      });
+
+    /**
+     * A use of a remote session, for as long as the scope it is used in, and
+     * how to close that session should it break. One that fails to open is
+     * closed, so the next use opens another.
+     */
+    const openRemote = Effect.fn("Connectors.openRemote")(function* (key: string) {
+      const slot = yield* Effect.acquireRelease(admit(key), leave);
+      const session = yield* RcMap.get(sessions, key).pipe(Effect.tapError(() => retire(slot)));
+      return { session, close: retire(slot) };
+    });
 
     /**
      * Starts a command connector's process and lists its tools. One the
@@ -1007,6 +1025,7 @@ export const layer = Layer.effect(
         args: command.args,
         variables: command.env,
         hidden: command.hidden,
+        carried: command.carried,
         serverEnvironment: commandReach.environment,
         cwd: commandReach.cwd,
         limits: reach.limits,
@@ -1059,10 +1078,8 @@ export const layer = Layer.effect(
      */
     const openFor = (connector: StoredConnector, holder: Holder) =>
       isCommand(connector)
-        ? processes.use(connector.id)
-        : openRemote(sessionKey(connector.id, holder)).pipe(
-            Effect.tapError(() => invalidate(sessionKey(connector.id, holder))),
-          );
+        ? Effect.map(processes.use(connector.id), (session) => ({ session, close: Effect.void }))
+        : openRemote(sessionKey(connector.id, holder));
 
     /** Lists the connector's tools again, through the server's own session. */
     const relist = (id: ConnectorId) =>
@@ -1383,14 +1400,16 @@ export const layer = Layer.effect(
       const { signing } = yield* seenOf(connector.id);
       const outcome = yield* Effect.scoped(
         Effect.gen(function* () {
-          const session = yield* openFor(connector, botId).pipe(
+          const opened = yield* openFor(connector, botId).pipe(
             Effect.mapError((failure) =>
               failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
                 ? failure
                 : ({ activity: "connect", failure } satisfies Stumble),
             ),
           );
-          return yield* use(session).pipe(
+          return yield* use(opened.session).pipe(
+            // The session this call used, not one opened since in its place.
+            Effect.tapError((failure) => (breaksSession(failure) ? opened.close : Effect.void)),
             Effect.mapError((failure): Stumble => ({ activity: "call", failure })),
           );
         }),
@@ -1417,16 +1436,19 @@ export const layer = Layer.effect(
         yield* closeSessions(connector.id, botId);
         return yield* new ToolNotOffered();
       }
-      yield* record(connector.id, observe(stumble.failure, stumble.activity), signing);
-      if (isCommand(connector)) {
-        if (breaksProcess(stumble.failure)) yield* processes.stop(connector.id);
-      } else if (breaksSession(stumble.failure)) {
-        yield* invalidate(sessionKey(connector.id, botId));
+      // A refusal of credentials read after the request began is of what signs it now.
+      const current =
+        stumble.failure._tag === "NeedsSignIn" && stumble.failure.renewed === true
+          ? undefined
+          : signing;
+      yield* record(connector.id, observe(stumble.failure, stumble.activity), current);
+      if (isCommand(connector) && breaksProcess(stumble.failure)) {
+        yield* processes.stop(connector.id);
       }
       // A refusal of what no longer signs its requests asks the operator for nothing.
       if (
         stumble.failure._tag === "NeedsSignIn" &&
-        (yield* seenOf(connector.id)).signing === signing
+        (current === undefined || (yield* seenOf(connector.id)).signing === current)
       ) {
         yield* signIns.needed({ botId, connectorId: connector.id });
       }
@@ -1959,6 +1981,7 @@ export const layer = Layer.effect(
       policy: UrlPolicy,
       headers: ReadonlyArray<SecretHeader>,
       hidden: ReadonlyArray<Redacted.Redacted<string>>,
+      carried: ReadonlyArray<Redacted.Redacted<string>>,
     ) =>
       Effect.scoped(
         Effect.flatMap(
@@ -1970,6 +1993,7 @@ export const layer = Layer.effect(
                 bearer: Option.none(),
                 headers,
                 hidden: hiddenOf(hidden),
+                carried: hiddenOf(carried),
               }),
               rejected: () => Effect.fail(new NeedsSignIn()),
             },
@@ -2127,10 +2151,13 @@ export const layer = Layer.effect(
       )
         ? Result.fail(checked.failure)
         : prepared.oauthClient === null
-          ? yield* probe(checked.success, policy, resolved.secret.headers, [
-              ...resolved.secret.formSecrets.map((named) => named.value),
-              ...resolved.values,
-            ])
+          ? yield* probe(
+              checked.success,
+              policy,
+              resolved.secret.headers,
+              [...resolved.secret.formSecrets.map((named) => named.value), ...resolved.values],
+              resolved.userNames,
+            )
           : Result.fail(new NeedsSignIn());
       if (
         Result.isFailure(listing) &&

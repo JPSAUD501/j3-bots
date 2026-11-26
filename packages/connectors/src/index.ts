@@ -76,6 +76,7 @@ export {
   type ListKind,
   type McpSession,
   openSession,
+  sameHeaders,
   type PromptText,
   type ResourceRead,
   type ResponseCache,

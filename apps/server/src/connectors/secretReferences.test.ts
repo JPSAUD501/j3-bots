@@ -192,7 +192,7 @@ const refusalOf = (error: ConnectorCommandError): ReadonlyArray<string> | string
 const authorizations = (fake: FakeMcpServer) =>
   fake.requests.map((request) => String(request.headers.authorization));
 
-it("scrubs answers of a login's password but not of its user name, an ordinary word", () => {
+it("keeps a login's user name apart from its secrets: it is not one, though answers are scrubbed of it", () => {
   const settings: ConnectorSecret = {
     connectorId: ID,
     address: Redacted.make("https://tracker.example/mcp"),
@@ -218,6 +218,7 @@ it("scrubs answers of a login's password but not of its user name, an ordinary w
     ]),
   );
   assert.deepStrictEqual(resolved.values.map(Redacted.value), ["hunter-two"]);
+  assert.deepStrictEqual(resolved.userNames.map(Redacted.value), ["admin"]);
   assert.deepStrictEqual(
     resolved.secret.headers.map((header) => Redacted.value(header.value)),
     ["Basic admin:hunter-two"],

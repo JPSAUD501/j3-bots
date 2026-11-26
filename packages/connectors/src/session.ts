@@ -103,13 +103,34 @@ export interface SecretHeader {
  * each as it may appear: never sent as they are, only taken out of what the
  * server answers. Each is known to be a secret, so one too short to look for
  * inside other text is still taken out where it stands as a word of its own
- * (`scrubberOf`).
+ * (`scrubberOf`). `carried` are other values a request carries only inside
+ * another, not known to be secrets, as a login's user name: taken out as the
+ * headers' values are, never as a word, since a short one is ordinary text.
  */
 export interface CallCredentials {
   readonly bearer: Option.Option<Redacted.Redacted<string>>;
   readonly headers: ReadonlyArray<SecretHeader>;
   readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
+  readonly carried: ReadonlyArray<Redacted.Redacted<string>>;
 }
+
+/** Whether two requests carry the same headers, in order. */
+export const sameHeaders = (
+  a: ReadonlyArray<SecretHeader>,
+  b: ReadonlyArray<SecretHeader>,
+): boolean =>
+  a.length === b.length &&
+  a.every(
+    (header, i) =>
+      header.name === b[i]?.name && Redacted.value(header.value) === Redacted.value(b[i].value),
+  );
+
+/** Whether two requests were signed alike: the same token and the same headers. */
+const sameCredentials = (a: CallCredentials, b: CallCredentials): boolean =>
+  Option.makeEquivalence(
+    (x: Redacted.Redacted<string>, y: Redacted.Redacted<string>) =>
+      Redacted.value(x) === Redacted.value(y),
+  )(a.bearer, b.bearer) && sameHeaders(a.headers, b.headers);
 
 /** Where a session reads its credentials, at each request. */
 export interface ConnectorCredentials {
@@ -448,7 +469,7 @@ const signingFetch =
     const second = await attempt();
     if (!refusedCredentials(second.response)) return answered(second.response);
     await second.response.body?.cancel();
-    throw new NeedsSignIn();
+    throw new NeedsSignIn({ renewed: !sameCredentials(first.sent, second.sent) });
   };
 
 const isConnectorFailure = Schema.is(
@@ -553,9 +574,11 @@ const addressValues = (url: URL): ReadonlyArray<string> => [
 /** The values the credentials requests were sent with carry as they are. */
 const sentValues = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string> =>
   sent.flatMap((credentials) =>
-    [...Option.toArray(credentials.bearer), ...credentials.headers.map((h) => h.value)].map(
-      Redacted.value,
-    ),
+    [
+      ...Option.toArray(credentials.bearer),
+      ...credentials.headers.map((h) => h.value),
+      ...credentials.carried,
+    ].map(Redacted.value),
   );
 
 /** The secrets those values were made from. */
@@ -564,15 +587,10 @@ const sentSecrets = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string
 
 const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\]/g;
 
-/**
- * Where `value` stands as a word of its own: no letter, digit or `_` right
- * before or after it. A JSON escape right before it (`\n`, `\u00a0`) ends
- * the word before, as the character it stands for does, since a structured
- * answer is read as JSON text.
- */
+/** Where `value` stands as a word of its own: no letter, digit or `_` right before or after it. */
 const asWord = (value: string) =>
   new RegExp(
-    `(?:(?<![\\p{L}\\p{N}_])|(?<=\\\\[bfnrt])|(?<=\\\\u[0-9A-Fa-f]{4}))${value.replace(REGEXP_SYNTAX, "\\$&")}(?![\\p{L}\\p{N}_])`,
+    `(?<![\\p{L}\\p{N}_])${value.replace(REGEXP_SYNTAX, "\\$&")}(?![\\p{L}\\p{N}_])`,
     "gu",
   );
 
@@ -656,6 +674,19 @@ const scrubbedJson = (value: Schema.Json, scrub: (text: string) => string): Sche
         : scrubbedJson(item, scrub),
     ]),
   );
+};
+
+/**
+ * A tool's answer with `scrub` applied to its structured result value by
+ * value, before the bot reads it as JSON text: a short secret is found where
+ * it stands in a string, which escaping would hide (`PIN:\n4096`).
+ */
+const scrubbedStructure = (result: CallResult, scrub: (text: string) => string): CallResult => {
+  if (result.structuredContent === undefined) return result;
+  const decoded = decodeJson(JSON.stringify(result.structuredContent));
+  return Option.isNone(decoded)
+    ? result
+    : { ...result, structuredContent: scrubbedJson(decoded.value, scrub) };
 };
 
 /**
@@ -1199,7 +1230,10 @@ export const sessionOf = (
             Effect.mapError(() => new NotMcp()),
           );
     const clean = scrub(answer.sent);
-    const text = cut(clean(answerText(result)), limits.maxResultCharacters);
+    const text = cut(
+      clean(answerText(scrubbedStructure(result, clean))),
+      limits.maxResultCharacters,
+    );
     return {
       text: text.text,
       cut: text.cut,

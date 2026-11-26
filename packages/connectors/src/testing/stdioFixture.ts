@@ -40,6 +40,7 @@ export const fixtureOptions = (
   args: [STDIO_SERVER, ...args].map((arg) => Redacted.make(arg)),
   variables: [{ name: "FIXTURE_SECRET", value: Redacted.make(OPERATOR_SECRET) }],
   hidden: [],
+  carried: [],
   serverEnvironment,
   cwd: NodeOs.tmpdir(),
   limits: DEFAULT_SESSION_LIMITS,

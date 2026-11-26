@@ -23,19 +23,22 @@ interface FakeTool {
 
 /**
  * What a call answers: a result, a raw body, nothing at all (it is held until
- * the client closes it), or the refusal of its credentials once `after` is
- * done, as a service that ended a key while the call was on its way.
+ * the client closes it), the refusal of its credentials once `after` is done,
+ * as a service that ended a key while the call was on its way, or a server
+ * error once `after` is done.
  */
 type FakeAnswer =
   | {
       readonly _tag: "result";
-      readonly text: string;
+      /** Its text block; none, for an answer of structured content alone. */
+      readonly text: string | null;
       readonly isError?: boolean;
       readonly structuredContent?: Readonly<Record<string, unknown>>;
     }
   | { readonly _tag: "raw"; readonly body: string }
   | { readonly _tag: "hang" }
-  | { readonly _tag: "refuse"; readonly after: Promise<void> };
+  | { readonly _tag: "refuse"; readonly after: Promise<void> }
+  | { readonly _tag: "fail"; readonly after: Promise<void> };
 
 interface FakeRequest {
   readonly method: string;
@@ -221,13 +224,19 @@ export const fakeMcpServer = (options: FakeOptions) =>
                 );
                 if (answer._tag === "hang") return hold(response);
                 if (answer._tag === "refuse") return void answer.after.then(refuse401);
+                if (answer._tag === "fail") {
+                  return void answer.after.then(() => {
+                    response.writeHead(500);
+                    response.end();
+                  });
+                }
                 if (answer._tag === "raw") {
                   response.writeHead(200, { "content-type": "application/json" });
                   response.end(answer.body);
                   return;
                 }
                 return reply(response, rpc.id, {
-                  content: [{ type: "text", text: answer.text }],
+                  content: answer.text === null ? [] : [{ type: "text", text: answer.text }],
                   isError: answer.isError ?? false,
                   ...(answer.structuredContent === undefined
                     ? {}
