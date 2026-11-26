@@ -78,6 +78,8 @@ describe("where an export may not be written", () => {
         assert.isTrue(yield* holdsFile(home, path.join(home, "export.tar.gz")));
         assert.isTrue(yield* holdsFile(home, path.join(home, "bots", "export.tar.gz")));
         assert.isTrue(yield* holdsFile(home, path.join(root, "shortcut", "export.tar.gz")));
+        yield* fs.makeDirectory(path.join(home, "..exports"));
+        assert.isTrue(yield* holdsFile(home, path.join(home, "..exports", "export.tar.gz")));
         assert.isFalse(yield* holdsFile(home, path.join(root, "server", "export.tar.gz")));
         assert.isFalse(yield* holdsFile(home, path.join(root, "home-2", "export.tar.gz")));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

@@ -397,8 +397,10 @@ const program = Effect.gen(function* () {
     const decoded = decodeExportRequest(request);
     if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
     const owner = BrowserWindow.fromWebContents(event.sender);
-    const now = DateTime.formatIso(yield* DateTime.now);
-    const stamp = `${now.slice(0, 10)}-${now.slice(11, 13)}${now.slice(14, 16)}`;
+    // The operator's own clock, to the minute.
+    const now = DateTime.toParts(DateTime.setZone(yield* DateTime.now, DateTime.zoneMakeLocal()));
+    const two = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${now.year}-${two(now.month)}-${two(now.day)}-${two(now.hour)}${two(now.minute)}`;
     const options = {
       defaultPath: path.join(app.getPath("documents"), `j3-bots-export-${stamp}.tar.gz`),
       filters: [{ name: "J3 Bots export", extensions: ["gz"] }],

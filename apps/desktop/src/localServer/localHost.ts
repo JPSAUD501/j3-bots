@@ -105,7 +105,9 @@ export const holdsFile = Effect.fn("LocalHost.holdsFile")(function* (home: strin
   const data = yield* resolved(home);
   const folder = yield* resolved(path.dirname(path.resolve(file)));
   const relative = path.relative(data, folder);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  // Outside, the path climbs out of the home by its first part: a folder in
+  // it named `..exports` is still in it.
+  return !path.isAbsolute(relative) && relative.split(path.sep)[0] !== "..";
 });
 
 /**
