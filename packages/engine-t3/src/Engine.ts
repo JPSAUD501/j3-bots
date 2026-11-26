@@ -728,8 +728,11 @@ export class Engine extends Context.Service<
      * The stream survives engine restarts and dropped connections: the adapter
      * reconnects and resumes the same way, so within one stream no event is
      * delivered twice and none is skipped without a `replaced` covering it. It
-     * fails only when the session no longer exists or the engine turns out not
-     * to be the pinned version. A stream counts as open from when it is
+     * fails only when the session no longer exists, the engine turns out not
+     * to be the pinned version, or the session is archived: by `retireSession`,
+     * or from the engine's own console, which leaves a turn already starting
+     * or running there with no end of its own. Each of those fails it with
+     * `SessionNotFound`, after the events before it. A stream counts as open from when it is
      * subscribed (when it starts running), before it emits anything: a
      * `synchronize` called after that reaches it. **Verified** on release
      * `4969` by the conformance scenario "counts a stream as open from its

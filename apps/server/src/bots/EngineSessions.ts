@@ -3,9 +3,11 @@ import { BotId, type ModelChoice, type PermissionMode, ProviderId } from "@j3-bo
 import {
   Engine,
   type EngineDown,
+  type EngineProjectId,
   IdempotencyKey,
   type ModelUnavailable,
   type OpenRejected,
+  type PermissionModeRefused,
   SessionId,
   type SessionNotFound,
 } from "@j3-bots/engine-t3";
@@ -51,6 +53,30 @@ const openingKey = (session: typeof SessionRow.Type) =>
   IdempotencyKey.make(
     session.open_refusals === 0 ? session.id : `${session.id}:${session.open_refusals}`,
   );
+
+/** A retired session the engine may have a thread of, its id never recorded. */
+const UnsettledRow = Schema.Struct({
+  ...SessionRow.fields,
+  purpose: Schema.Literals(["main", "side"]),
+});
+
+/** What the engine is asked to open a session with. */
+export interface Opening {
+  readonly projectId: EngineProjectId;
+  readonly title: string;
+  readonly model: ModelChoice;
+  readonly permissionMode: PermissionMode;
+}
+
+/**
+ * What a retired session's opening came to (`EngineSessions.settleOpening`):
+ * the engine's thread for it, which the rotator archives; no thread, since
+ * the engine refused its key; or nothing to settle any more.
+ */
+export type SettledOpening =
+  | { readonly _tag: "opened"; readonly sessionId: SessionId }
+  | { readonly _tag: "refused" }
+  | { readonly _tag: "settled" };
 
 /** A live session's alignment with its bot's settings. */
 const Alignment = Schema.Struct({
@@ -137,7 +163,10 @@ export interface BotSession {
  * Each bot's place in the engine: its project, and its main session
  * (`docs/architecture/server.md`, Sessions). The session's id is J3 Bots' own,
  * written before the engine is asked for it and used as that request's key, so
- * a retried opening never makes a second engine session. An opening the engine
+ * a retried opening never makes a second engine session. The row records that
+ * the engine was asked before each call (`open_requested_at`), so a session
+ * retired before the engine's answer was recorded is still found on the
+ * engine and archived (`settleOpening`). An opening the engine
  * refused spends its key: the row counts the refusal, and the next opening
  * goes under a fresh key (`openingKey`). The row is written in
  * the transaction that reads the bot's settings, and names the provider they
@@ -233,6 +262,32 @@ export class EngineSessions extends Context.Service<
     readonly withoutProvisioning: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
+    /**
+     * Asks the engine to open the session, a side session about to take an
+     * attempt's dispatch, under its key, as `provision` opens a main one:
+     * recording first that it asked, and spending the key on a refusal the
+     * engine keeps.
+     */
+    readonly open: (
+      sessionId: SessionRowId,
+      opening: Opening,
+    ) => Effect.Effect<
+      SessionId,
+      EngineDown | ModelUnavailable | OpenRejected | PermissionModeRefused
+    >;
+    /**
+     * A retired session whose opening was asked of the engine and whose
+     * engine id was never recorded, after a lost answer or a crash: the
+     * engine is asked once more under the same key, which answers with the
+     * thread it made, and the id is recorded, so the rotator archives it.
+     * A thread the engine never made is made now, idle, and archived the
+     * same way: that is the only way to be sure. It is asked in the lowest
+     * permission mode, which no policy refuses; an existing thread keeps the
+     * settings it was made with.
+     */
+    readonly settleOpening: (
+      sessionId: SessionRowId,
+    ) => Effect.Effect<SettledOpening, EngineDown | ModelUnavailable | PermissionModeRefused>;
     /** The session an engine session id belongs to, if it is a live one of a bot. */
     readonly ofEngineSession: (sessionId: SessionId) => Effect.Effect<Option.Option<BotSession>>;
     /**
@@ -599,13 +654,123 @@ export const layer = Layer.effect(
       );
     });
 
-    /** Counts a refused opening of the session, which its next key carries. */
+    /**
+     * Counts a refused opening of the session, which its next key carries.
+     * The refused key holds no thread: nothing of it is left to settle.
+     */
     const openingRefused = (session: typeof SessionRow.Type) =>
       sql`
-        UPDATE sessions SET open_refusals = open_refusals + 1
+        UPDATE sessions SET open_refusals = open_refusals + 1, open_requested_at = NULL
         WHERE id = ${session.id} AND engine_session_id IS NULL
           AND open_refusals = ${session.open_refusals}
       `.pipe(Effect.orDie, Effect.asVoid);
+
+    /** The engine refused the session's key, and made no thread under it. */
+    const requestForgotten = (session: typeof SessionRow.Type) =>
+      sql`
+        UPDATE sessions SET open_requested_at = NULL
+        WHERE id = ${session.id} AND engine_session_id IS NULL
+      `.pipe(Effect.orDie, Effect.asVoid);
+
+    /**
+     * Asks the engine to open the session under its key, after recording that
+     * it asked: once the call is sent, the engine may have the thread whatever
+     * comes back. A refusal is the engine's answer for the key, read from its
+     * receipt before anything else and under its dispatch lock (**Read** at
+     * `59651c1`, `Orchestrator.ts`, `dispatchWithReceiptEffect`): no thread
+     * was made under it, and the request is forgotten. A model the engine no
+     * longer offers is refused before anything is sent, so the request is
+     * forgotten too when this call was the first to ask under the key.
+     */
+    const openUnderKey = Effect.fn("EngineSessions.openUnderKey")(function* (
+      session: typeof SessionRow.Type,
+      opening: Opening,
+    ) {
+      const firstAsk = yield* sql`
+        UPDATE sessions SET open_requested_at = ${timeText(yield* DateTime.now)}
+        WHERE id = ${session.id} AND open_requested_at IS NULL
+        RETURNING id
+      `.pipe(Effect.orDie);
+      return yield* engine.openSession({ key: openingKey(session), ...opening }).pipe(
+        // The key is spent: the next opening takes a fresh one.
+        Effect.tapErrorTag("OpenRejected", () => openingRefused(session)),
+        // The engine keeps nothing for the key, which is opened under later.
+        Effect.tapErrorTag("PermissionModeRefused", () => requestForgotten(session)),
+        Effect.tapErrorTag("ModelUnavailable", () =>
+          firstAsk.length > 0 ? requestForgotten(session) : Effect.void,
+        ),
+      );
+    });
+
+    const sessionRow = SqlSchema.findOne({
+      Request: SessionRowId,
+      Result: SessionRow,
+      execute: (id) => sql`
+        SELECT id, bot_id, engine_session_id, provider_id, open_refusals FROM sessions
+        WHERE id = ${id}
+      `,
+    });
+
+    const open = Effect.fn("EngineSessions.open")(function* (
+      sessionId: SessionRowId,
+      opening: Opening,
+    ) {
+      return yield* openUnderKey(yield* sessionRow(sessionId).pipe(Effect.orDie), opening);
+    });
+
+    const unsettledRow = SqlSchema.findOneOption({
+      Request: SessionRowId,
+      Result: UnsettledRow,
+      execute: (id) => sql`
+        SELECT id, bot_id, engine_session_id, provider_id, open_refusals, purpose FROM sessions
+        WHERE id = ${id} AND retired_at IS NOT NULL AND open_requested_at IS NOT NULL
+          AND lost_at IS NULL AND engine_retired_at IS NULL
+      `,
+    });
+
+    // Under the provisioning permit, so a bot's deletion cannot remove its
+    // project meanwhile and a main session's provisioning on its way is
+    // answered first. A side session's opening takes no permit: one still on
+    // its way asks under the same key, so both get the same thread.
+    const settleOpening = Effect.fn("EngineSessions.settleOpening")(function* (
+      sessionId: SessionRowId,
+    ) {
+      const found = yield* unsettledRow(sessionId).pipe(Effect.orDie);
+      if (Option.isNone(found)) return { _tag: "settled" } satisfies SettledOpening;
+      const session = found.value;
+      if (session.engine_session_id !== null) {
+        return { _tag: "opened", sessionId: session.engine_session_id } satisfies SettledOpening;
+      }
+      const stored = yield* bots.find(session.bot_id);
+      // Its bot's deletion removed the project and every thread in it.
+      if (Option.isNone(stored)) return { _tag: "settled" } satisfies SettledOpening;
+      const { bot, engineProjectId } = stored.value;
+      if (Option.isNone(engineProjectId)) {
+        return yield* Effect.die(new Error("A session was asked of the engine with no project"));
+      }
+      const opened = yield* engine
+        .openSession({
+          key: openingKey(session),
+          projectId: engineProjectId.value,
+          title: session.purpose === "main" ? "Main" : "Routine",
+          model: bot.model,
+          permissionMode: "supervised",
+        })
+        .pipe(
+          Effect.map((id) => ({ _tag: "opened", sessionId: id }) satisfies SettledOpening),
+          // The engine kept a refusal for the key: it made no thread.
+          Effect.catchTag("OpenRejected", () =>
+            Effect.succeed({ _tag: "refused" } satisfies SettledOpening),
+          ),
+        );
+      if (opened._tag === "opened") {
+        yield* sql`
+          UPDATE sessions SET engine_session_id = ${opened.sessionId}
+          WHERE id = ${session.id} AND engine_session_id IS NULL
+        `.pipe(Effect.orDie);
+      }
+      return opened;
+    }, provisioning.withPermits(1));
 
     const provision = Effect.fn("EngineSessions.provision")(function* (botId: BotId) {
       const found = yield* bots.find(botId);
@@ -633,24 +798,19 @@ export const layer = Layer.effect(
         const generation = yield* readiness.generation;
         // Its first turn starts its tools with what the project allows then.
         yield* writeBrowserAccess(botId);
-        const opened = yield* engine
-          .openSession({
-            key: openingKey(session),
-            projectId,
-            title: "Main",
-            model: settings.model,
-            permissionMode: settings.permissionMode,
-          })
-          .pipe(
-            // The key is spent: the next opening takes a fresh one.
-            Effect.tapErrorTag("OpenRejected", () => openingRefused(session)),
-            Effect.map((sessionId) => ({ _tag: "opened" as const, sessionId })),
-            // The engine keeps nothing for the key: it opens under it once
-            // the bot's settings changed, or the engine is ready again.
-            Effect.catchTag("PermissionModeRefused", (refusal) =>
-              Effect.succeed({ _tag: "refused" as const, refusal }),
-            ),
-          );
+        const opened = yield* openUnderKey(session, {
+          projectId,
+          title: "Main",
+          model: settings.model,
+          permissionMode: settings.permissionMode,
+        }).pipe(
+          Effect.map((sessionId) => ({ _tag: "opened" as const, sessionId })),
+          // The engine keeps nothing for the key: it opens under it once
+          // the bot's settings changed, or the engine is ready again.
+          Effect.catchTag("PermissionModeRefused", (refusal) =>
+            Effect.succeed({ _tag: "refused" as const, refusal }),
+          ),
+        );
         if (opened._tag === "refused") {
           yield* refusals.refused(botId, selected.revision, opened.refusal, generation);
           return "mode-refused" as const;
@@ -706,6 +866,8 @@ export const layer = Layer.effect(
       removeProject,
       withoutProvisioning: provisioning.withPermits(1),
       ofEngineSession,
+      open,
+      settleOpening,
       syncBrowserAccess: writeBrowserAccess,
     });
   }),

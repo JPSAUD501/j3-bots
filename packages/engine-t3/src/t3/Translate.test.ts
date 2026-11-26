@@ -27,6 +27,7 @@ import {
   engineAnswersOf,
   type EventBody,
   isDeleted,
+  isOver,
   mirrorOf,
   nothingToStop,
   replacement,
@@ -1101,6 +1102,26 @@ describe("what a Stop leaves to run", () => {
     assert.isFalse(isDeleted(mirror));
     applyEvent(mirror, event("thread.deleted", { ...appThread, deletedAt: at }));
     assert.isTrue(isDeleted(mirror));
+  });
+
+  // The archive's dispatch writes `thread.archived` before the cancels of the
+  // turns still queued (**Read** at `59651c1`, `Orchestrator.ts`).
+  it("ends an archived session's stream after its queued turns' cancels, with a run still starting", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, event("thread.created", appThread));
+    applyEvent(mirror, run("starting", 1));
+    applyEvent(mirror, run("queued", 2));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(mirror, event("thread.archived", { ...appThread, archivedAt: at }));
+    assert.isFalse(isOver(mirror));
+    applyEvent(mirror, run("cancelled", 2, { startedAt: null, queuePosition: null }));
+    assert.isTrue(isOver(mirror));
+    assert.deepStrictEqual(
+      diff(mirror, view, at).flatMap((body) =>
+        body._tag === "turn-finished" ? [[body.turnId, body.outcome._tag]] : [],
+      ),
+      [[TurnId.make("run-2"), "cancelled"]],
+    );
   });
 });
 

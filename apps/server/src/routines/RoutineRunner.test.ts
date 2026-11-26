@@ -5,6 +5,7 @@ import {
   type BotId,
   type Routine,
   type RoutineId,
+  RoutineRunId,
   USAGE_PERIOD,
 } from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, Engine, SessionId, TurnId } from "@j3-bots/engine-t3";
@@ -47,6 +48,7 @@ import {
 import { BotTools } from "../tools/BotTools.ts";
 import { BotStates } from "../turns/BotStates.ts";
 import { Cards } from "../turns/Cards.ts";
+import { fitsEngine } from "../turns/envelopes.ts";
 import { MAX_INDETERMINATE_ANSWERS } from "../turns/model.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
@@ -872,6 +874,16 @@ it.effect("tries an attempt again after its delay when the engine refuses the bo
     });
     const run = yield* settled(routine);
     assert.deepStrictEqual([run.status, run.attempts], ["silent", 2]);
+    // The refused opening sent nothing: the rotator opens no thread for it
+    // once the model is offered again, only to archive it.
+    yield* until(sidesRetired(bot.id));
+    const sql = yield* SqlClient.SqlClient;
+    const made = yield* sql`
+      SELECT id FROM sessions
+      WHERE bot_id = ${bot.id} AND purpose = 'side'
+        AND (engine_session_id IS NOT NULL OR open_requested_at IS NOT NULL)
+    `.pipe(Effect.orDie);
+    assert.lengthOf(made, 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -1263,4 +1275,173 @@ it.effect("ends the background work a successful run left once the routine runs 
     yield* sideTurn(routine.id, first.engine_session_id);
     yield* until(runner.pass.pipe(Effect.andThen(archived)));
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** The run the envelope of the session's first dispatch names. */
+const runNamedIn = (sessionId: SessionId) =>
+  Effect.gen(function* () {
+    const [first] = yield* (yield* TestEngineControl).dispatches(sessionId);
+    return first?.text.match(/ run="([^"]+)"/)?.[1] ?? null;
+  });
+
+it.effect("names the same run in every attempt of it, and another in the next run", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { routine } = yield* ranRoutine;
+    const first = yield* sideTurn(routine.id);
+    yield* control.finishTurn({
+      sessionId: first.engine_session_id,
+      turnId: first.admitted_turn_id,
+      outcome: failed,
+    });
+    yield* retryRecorded(routine.id);
+    yield* TestClock.adjust(retryDelay(1));
+    const retry = yield* sideTurn(routine.id, first.engine_session_id);
+    yield* control.finishTurn({
+      sessionId: retry.engine_session_id,
+      turnId: retry.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    const run = yield* settled(routine);
+    assert.strictEqual(run.attempts, 2);
+
+    yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+    const next = yield* sideTurn(routine.id, retry.engine_session_id);
+    const [newest] = yield* history(routine.id);
+    assert.isDefined(newest);
+    assert.notStrictEqual(newest.id, run.id);
+    assert.deepStrictEqual(
+      [
+        yield* runNamedIn(first.engine_session_id),
+        yield* runNamedIn(retry.engine_session_id),
+        yield* runNamedIn(next.engine_session_id),
+      ],
+      [run.id, run.id, newest.id],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("says a run's earlier runs were left out when none fits beside its trigger data", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const { routine } = yield* ranRoutine;
+    const earlier = yield* sideTurn(routine.id);
+    yield* say(earlier.engine_session_id, earlier.admitted_turn_id, "a".repeat(3_000), "call-1");
+    yield* control.finishTurn({
+      sessionId: earlier.engine_session_id,
+      turnId: earlier.admitted_turn_id,
+      outcome: { _tag: "completed" },
+    });
+    assert.strictEqual((yield* settled(routine)).status, "delivered");
+
+    // The longest body the envelope takes with no earlier run, less a margin
+    // far below what the earlier run's 2,000 repeated characters need.
+    const alone = (length: number) =>
+      fitsEngine({
+        at: DateTime.makeUnsafe(0),
+        timeZone: DateTime.zoneMakeNamedUnsafe("America/Sao_Paulo"),
+        sinceLastTurn: [],
+        kind: "routine",
+        routine: {
+          id: routine.id,
+          name: routine.name,
+          trigger: { type: "webhook" },
+          instruction: INSTRUCTION,
+        },
+        runId: RoutineRunId.make("routine-run-0000000000000000"),
+        recentRuns: [],
+        recentRunsLeftOut: true,
+        triggerData: "x".repeat(length),
+        dueAt: null,
+      });
+    let low = 0;
+    let high = ENGINE_INPUT_LIMIT;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (alone(middle)) low = middle;
+      else high = middle - 1;
+    }
+    const { webhook_secret: secret } = yield* SqlSchema.findOne({
+      Request: Schema.String,
+      Result: Schema.Struct({ webhook_secret: Schema.String }),
+      execute: (id) => sql`SELECT webhook_secret FROM routines WHERE id = ${id}`,
+    })(routine.id).pipe(Effect.orDie);
+    yield* (yield* RoutineRuns).webhook({
+      routineId: routine.id,
+      secret,
+      body: "x".repeat(low - 500),
+      requestKey: null,
+    });
+
+    const crowded = yield* sideTurn(routine.id, earlier.engine_session_id);
+    const [envelope] = yield* control.dispatches(crowded.engine_session_id);
+    assert.include(envelope?.text, "Earlier runs were left out to fit.");
+    assert.notInclude(envelope?.text, "first run");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "tries a run again when its side session is archived from the engine's console mid-turn",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { routine } = yield* ranRoutine;
+      const side = yield* sideTurn(routine.id);
+
+      // The archive cancels only waiting turns: the running one gets no end of its own.
+      yield* control.archiveSession(side.engine_session_id);
+      yield* retryRecorded(routine.id);
+      yield* TestClock.adjust(retryDelay(1));
+      const retry = yield* sideTurn(routine.id, side.engine_session_id);
+      yield* control.finishTurn({
+        sessionId: retry.engine_session_id,
+        turnId: retry.admitted_turn_id,
+        outcome: { _tag: "completed" },
+      });
+
+      const run = yield* settled(routine);
+      assert.deepStrictEqual([run.status, run.attempts], ["silent", 2]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "archives the thread the engine made for a side session retired before its opening's answer came",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const ana = yield* createBot("Ana");
+      yield* control.loseNextOpenSessionReply;
+      const { bot, routine } = yield* ranRoutineOf(ana);
+      const Asked = Schema.Struct({ id: Schema.String });
+      const asked = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: Asked,
+        execute: (botId) => sql`
+          SELECT id FROM sessions
+          WHERE bot_id = ${botId} AND purpose = 'side' AND open_requested_at IS NOT NULL
+            AND engine_session_id IS NULL
+        `,
+      });
+      const row = yield* eventually(asked(bot.id).pipe(Effect.orDie));
+      const made = (yield* control.openedSessions).at(-1);
+      assert.isDefined(made);
+
+      // The operator stops the run before the opening is asked again: its
+      // side session is retired with no engine id recorded.
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+      yield* stopSettled;
+      assert.strictEqual((yield* settled(routine)).status, "failed");
+
+      yield* until(
+        sql<{ readonly engine_session_id: string | null; readonly archived: number }>`
+          SELECT engine_session_id, engine_retired_at IS NOT NULL AS archived FROM sessions
+          WHERE id = ${row.id}
+        `.pipe(
+          Effect.orDie,
+          Effect.map(([found]) => found?.engine_session_id === made && found.archived === 1),
+        ),
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

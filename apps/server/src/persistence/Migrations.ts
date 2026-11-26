@@ -47,6 +47,7 @@ import Migration0041 from "./migrations/0041_visibility.ts";
 import Migration0042 from "./migrations/0042_connectors_as_served.ts";
 import Migration0043 from "./migrations/0043_connector_apps.ts";
 import Migration0044 from "./migrations/0044_local_device.ts";
+import Migration0045 from "./migrations/0045_requested_openings.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -95,6 +96,7 @@ const migrations = SqliteMigrator.fromRecord({
   "42_connectors_as_served": Migration0042,
   "43_connector_apps": Migration0043,
   "44_local_device": Migration0044,
+  "45_requested_openings": Migration0045,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

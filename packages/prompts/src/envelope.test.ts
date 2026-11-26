@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
+import { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -102,6 +102,8 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         trigger: { type: "schedule", cron: s },
         instruction: s,
       },
+      runId: Schema.decodeSync(RoutineRunId)("run"),
+      recentRunsLeftOut: true,
       recentRuns: [
         { at: now, outcome: { type: "delivered", text: s } },
         { at: now, outcome: { type: "silent", note: s } },
@@ -465,6 +467,8 @@ describe("renderWake", () => {
         timeZone,
         sinceLastTurn: [],
         routine: { ...routine, trigger: { type: "webhook" } },
+        runId: Schema.decodeSync(RoutineRunId)("run-1"),
+        recentRunsLeftOut: false,
         recentRuns: [
           {
             at: at("2026-11-19T11:03:00Z"),
@@ -478,7 +482,7 @@ describe("renderWake", () => {
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="routine" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      <routine id="morning" name="Morning repo check" trigger="webhook">
+      <routine id="morning" name="Morning repo check" run="run-1" trigger="webhook">
       <instruction>
       Check j3-bots for merged PRs and CI status.
       Tell my user only if something changed; otherwise stay quiet.
@@ -507,6 +511,8 @@ describe("renderWake", () => {
         timeZone,
         sinceLastTurn: [],
         routine: { ...routine, trigger: { type: "schedule", cron: "3 8 * * 1-5" } },
+        runId: Schema.decodeSync(RoutineRunId)("run-1"),
+        recentRunsLeftOut: false,
         recentRuns: [],
         triggerData: null,
         // J3 Bots was not running at 08:03.
@@ -514,7 +520,7 @@ describe("renderWake", () => {
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="routine" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      <routine id="morning" name="Morning repo check" trigger="schedule" cron="3 8 * * 1-5" due="2026-11-20T08:03:00-03:00" due-weekday="Friday">
+      <routine id="morning" name="Morning repo check" run="run-1" trigger="schedule" cron="3 8 * * 1-5" due="2026-11-20T08:03:00-03:00" due-weekday="Friday">
       <instruction>
       Check j3-bots for merged PRs and CI status.
       Tell my user only if something changed; otherwise stay quiet.
@@ -527,6 +533,37 @@ describe("renderWake", () => {
       Nobody is waiting: send no progress message. A message is one \`say\` with \`done: true\`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a \`pause\` the instruction asks for may follow it, by the id above; no second \`say\`. Read every date in the instruction against the time the run was due: \`due\` above, or the time above when there is none. Then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a \`say\`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no \`say\` at all, not even to say all is well, unless the work was blocked: then, if \`recent-runs\` already says what blocks it, still end with no \`say\`; if not, say in one sentence what blocks it and what would fix it; that \`say\` is the run's last call, with no pause. Never pause a one-time routine.
       "
     `);
+    // Its earlier runs did not fit beside a large instruction: it is not the first run.
+    const crowded = render({
+      kind: "routine",
+      at: now,
+      timeZone,
+      sinceLastTurn: [],
+      routine: { ...routine, trigger: { type: "schedule", cron: "3 8 * * 1-5" } },
+      runId: Schema.decodeSync(RoutineRunId)("run-1"),
+      recentRunsLeftOut: true,
+      recentRuns: [],
+      triggerData: null,
+      dueAt: null,
+    });
+    expect(crowded).toContain("<recent-runs>\nEarlier runs were left out to fit.\n</recent-runs>");
+    expect(crowded).not.toContain("first run");
+    // Only its newest run fit: the older ones are said to be left out after it.
+    const trimmed = render({
+      kind: "routine",
+      at: now,
+      timeZone,
+      sinceLastTurn: [],
+      routine: { ...routine, trigger: { type: "schedule", cron: "3 8 * * 1-5" } },
+      runId: Schema.decodeSync(RoutineRunId)("run-1"),
+      recentRunsLeftOut: true,
+      recentRuns: [{ at: at("2026-11-19T11:03:00Z"), outcome: { type: "failed" } }],
+      triggerData: null,
+      dueAt: null,
+    });
+    expect(trimmed).toContain(
+      '<run at="2026-11-19 08:03" outcome="failed"/>\nOlder runs were left out to fit.\n</recent-runs>',
+    );
   });
 
   it("renders every system event", () => {

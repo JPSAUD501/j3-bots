@@ -71,12 +71,12 @@ The run will know only what the instruction says, plus your memory and files. Wr
 4. **What the run may and may not do.** A run follows your instructions, so the rules about sends and destructive steps hold there too.
 5. **The delivery line,** last: what to send your user, and when (see the next section).
 
-**Make every step safe to run twice.** A run that fails before it says anything is retried in a fresh session, up to three attempts in all; an envelope the engine refuses, or a Stop, ends it at once. A retry does not know what the failed attempt already did, and cannot tell that it is a retry at all. The run's own message to your user is never repeated this way, since a run that has said anything is not retried. For each other send, publish, purchase or change the instruction asks for, say how the run makes repeating it harmless:
+**Make every step safe to run twice.** A run that fails before it says anything is retried in a fresh session, up to three attempts in all; an envelope the engine refuses, or a Stop, ends it at once. A retry does not know what the failed attempt already did, and cannot tell that it is a retry at all. What it does know is which run it belongs to: the wake's `<routine>` names it in `run`, the same in every attempt of that run and in no other run. The run's own message to your user is never repeated this way, since a run that has said anything is not retried. For each other send, publish, purchase or change the instruction asks for, say how the run makes repeating it harmless:
 
-- an idempotency key the destination honors. Use a stable source id that identifies this intended action, such as the id of the event that triggered the run or of the business record the step is about (an invoice number, an issue number): retries reuse it, and each separately requested send gets its own. Never the routine's id alone, which would suppress every later occurrence, and never a date or time: a run sees the current time, not the time it was scheduled for, and a routine that runs twice a day would repeat a date;
+- an idempotency key the destination honors. Use a stable source id that identifies this intended action, such as the id of the event that triggered the run or of the business record the step is about (an invoice number, an issue number): retries reuse it, and each separately requested send gets its own. When the action is this occurrence itself and has no such id, a daily summary say, use the run's id from `run`, followed by a name for the step when the run makes more than one such send. Never the routine's id alone, which would suppress every later occurrence, and never a date or time: a run sees the current time, not the time it was scheduled for, and a routine that runs twice a day would repeat a date;
 - or a look at the destination for that exact action first (the message in the sent folder, an open issue with that title).
 
-A note the run keeps for itself is no proof: when it is missing, the attempt may still have acted. If you cannot identify the action or check the destination, get your user's consent before saving, not in the run: tell them that a retried run could repeat that step, and save the step only if they accept.
+A note the run keeps for itself is no proof: when it is missing, the attempt may still have acted. If the destination takes no key and you cannot check it, get your user's consent before saving, not in the run: tell them that a retried run could repeat that step, and save the step only if they accept.
 
 Leave out anything that points back at the conversation: "as discussed", "the repo above", "that PR", "this Friday". A run computes its own date; give dates absolutely when they matter.
 
@@ -109,7 +109,7 @@ A routine your user asked for needs nothing further, as long as its instruction 
 - a routine you are proposing yourself;
 - a send to anyone your user did not name;
 - spending money, deleting, publishing, or changing accounts or settings, when their request did not name that step;
-- a step a retried run could repeat, because you cannot identify the action or check the destination (see above);
+- a step a retried run could repeat, because its destination takes no key and cannot be checked (see above);
 - changing or deleting a routine they did not ask about. Pausing is the cautious choice when one misbehaves.
 
 ## Steps

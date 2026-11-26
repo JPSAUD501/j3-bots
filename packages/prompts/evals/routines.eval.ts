@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Routine, RoutineId } from "@j3-bots/contracts";
+import { type Routine, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -107,6 +107,8 @@ const routineWake: RoutineWake = {
     trigger: { type: "schedule", cron: "7 8 * * *" },
     instruction: DOCS_CHECK,
   },
+  runId: Schema.decodeSync(RoutineRunId)("run-1"),
+  recentRunsLeftOut: false,
   recentRuns: quietRuns,
   triggerData: null,
   dueAt: null,
@@ -146,6 +148,8 @@ const reminderWake: RoutineWake = {
     trigger: { type: "once" },
     instruction: REMINDER,
   },
+  runId: Schema.decodeSync(RoutineRunId)("run-1"),
+  recentRunsLeftOut: false,
   recentRuns: [],
   triggerData: null,
   dueAt: null,
@@ -172,6 +176,8 @@ const lateBriefingWake: RoutineWake = {
     trigger: { type: "schedule", cron: "0 23 * * *" },
     instruction: BRIEFING,
   },
+  runId: Schema.decodeSync(RoutineRunId)("run-1"),
+  recentRunsLeftOut: false,
   recentRuns: [
     {
       at: DateTime.subtract(briefingDue, { days: 1 }),
@@ -228,6 +234,8 @@ const pullRequestWake: RoutineWake = {
     trigger: { type: "schedule", cron: "17 8-18 * * *" },
     instruction: `Tell your user about pull requests on the GitHub repository acme/docs that they have not heard about yet. The file ${STATE_FILE} lists, under "reported", the numbers of the open pull requests already reported; read it first. If an open pull request is not in that list, send your user one short message naming each new one by number and title; if there is none, end without saying anything. Do not comment on, review or merge anything. As your last step, once your message is recorded, write the numbers of all open pull requests to "reported" in ${STATE_FILE}; if the message could not be sent, leave the file as it is.`,
   },
+  runId: Schema.decodeSync(RoutineRunId)("run-1"),
+  recentRunsLeftOut: false,
   recentRuns: [
     {
       at: todayAt(9, 17),
@@ -857,6 +865,8 @@ const savedRunWake = (
           : { type: trigger._tag },
       instruction: routine.instruction,
     },
+    runId: Schema.decodeSync(RoutineRunId)("run-1"),
+    recentRunsLeftOut: false,
     recentRuns: recentRuns(next),
     triggerData: null,
     dueAt: null,
@@ -1019,6 +1029,8 @@ const fixedWatchWake = (
     trigger: { type: "schedule", cron: "7,37 9-18 * * *" },
     instruction: FIXED_WATCH,
   },
+  runId: Schema.decodeSync(RoutineRunId)("run-1"),
+  recentRunsLeftOut: false,
   recentRuns,
   triggerData: null,
   dueAt: null,

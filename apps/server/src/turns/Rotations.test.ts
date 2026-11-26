@@ -1306,7 +1306,7 @@ it.effect(
       const archived = yield* mainSessionId(bot.id);
       const observer = yield* Observer;
       assert.isTrue(yield* observer.ready(archived));
-      // Its event stream stays open: only the alignment finds it gone.
+      // Its event stream ends, and the session is recorded lost.
       yield* control.archiveSession(session);
       yield* bots.update({
         commandId: command(),
@@ -1344,12 +1344,23 @@ it.effect("never opens a session on the provider its bot moved away from", () =>
     const session = yield* engineSession(bot.id);
     const model = yield* control.sessionModel(session);
     assert.strictEqual(model.providerId, TestDomain.OTHER_PROVIDER_MODEL.providerId);
-    const opened = yield* sql<{ readonly provider_id: string }>`
-      SELECT provider_id FROM sessions WHERE bot_id = ${bot.id} AND engine_session_id IS NOT NULL
+    const live = yield* sql<{ readonly provider_id: string }>`
+      SELECT provider_id FROM sessions
+      WHERE bot_id = ${bot.id} AND engine_session_id IS NOT NULL AND retired_at IS NULL
     `;
     assert.deepStrictEqual(
-      opened.map((row) => row.provider_id),
+      live.map((row) => row.provider_id),
       [TestDomain.OTHER_PROVIDER_MODEL.providerId],
+    );
+    // The session left behind was asked of the engine, whose answer was lost:
+    // whatever the engine made under its key is archived, never used.
+    const left = yield* sql<{ readonly archived: number }>`
+      SELECT engine_retired_at IS NOT NULL AS archived FROM sessions
+      WHERE bot_id = ${bot.id} AND retired_at IS NOT NULL
+    `;
+    assert.deepStrictEqual(
+      left.map((row) => row.archived),
+      [1],
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );

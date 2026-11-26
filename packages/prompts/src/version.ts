@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a synchronous hash of constant text at load; Effect's Digest is asynchronous and needs a service.
-import { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
+import { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
@@ -126,22 +126,30 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     entries: [{ author: teammate, at, text: "text", mentions: [], files: [] }],
   })),
   { ...base, kind: "bot", messages: [message] },
-  {
-    ...base,
-    kind: "routine",
-    routine: {
-      id: Schema.decodeSync(RoutineId)("routine"),
-      name: "Routine",
-      trigger: { type: "schedule", cron: "3 8 * * *" },
-      instruction: "text",
-    },
-    recentRuns: [
+  // Every way the recent runs read: listed or none, and with runs left out to fit or not.
+  ...[
+    [
       { at, outcome: { type: "delivered", text: "text" } },
       { at, outcome: { type: "silent", note: null } },
-    ],
-    triggerData: "text",
-    dueAt: at,
-  },
+    ] as const,
+    [],
+  ].flatMap((recentRuns) =>
+    [false, true].map((recentRunsLeftOut): Wake => ({
+      ...base,
+      kind: "routine",
+      routine: {
+        id: Schema.decodeSync(RoutineId)("routine"),
+        name: "Routine",
+        trigger: { type: "schedule", cron: "3 8 * * *" },
+        instruction: "text",
+      },
+      runId: Schema.decodeSync(RoutineRunId)("run"),
+      recentRuns,
+      recentRunsLeftOut,
+      triggerData: "text",
+      dueAt: at,
+    })),
+  ),
   ...[false, true].flatMap((askName) =>
     [false, true].map((fromTemplate): Wake => ({
       ...base,

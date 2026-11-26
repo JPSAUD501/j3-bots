@@ -165,6 +165,7 @@ import {
   isDeleted,
   isEnded,
   isEndedTool,
+  isOver,
   isRetired,
   keepFetched,
   knowsDispatch,
@@ -1973,7 +1974,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             ),
             Effect.orElseSucceed(() => "lost" as const),
           );
-          if (outcome === "missing" || isDeleted(mirror)) {
+          if (outcome === "missing" || isOver(mirror)) {
             return yield* new SessionNotFound({ sessionId: input.sessionId });
           }
           if (outcome !== "marked" || lastCursor === null) return yield* new EngineUnavailable();
@@ -1987,7 +1988,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           });
         });
 
-        /** The engine has no record of the session's thread, or deleted it. */
+        /** The engine has no record of the session's thread, or deleted or archived it. */
         const gone = Effect.suspend(() => {
           batches.forget(input.sessionId);
           return toolReads
@@ -2019,7 +2020,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             }
             case "item":
               yield* handle(next.item);
-              if (isDeleted(mirror)) return yield* gone;
+              if (isOver(mirror)) return yield* gone;
               yield* fetchChanges();
               break;
             case "tool":
@@ -2047,7 +2048,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                 }),
                 Effect.raceFirst(Deferred.await(next.abandoned)),
               );
-              if (isDeleted(mirror)) return yield* gone;
+              if (isOver(mirror)) return yield* gone;
               yield* fetchChanges();
               break;
           }
