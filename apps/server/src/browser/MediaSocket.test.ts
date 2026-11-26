@@ -237,7 +237,7 @@ it.layer(server, { excludeTestServices: true })("media socket", (it) => {
 // The client listener as the server runs it, whose socket server bounds what a client sends.
 it.layer(
   Http.serve(Listener.layer, { logAddress: false }).pipe(
-    Layer.provide(WebClient.statusLayer),
+    Layer.provide([WebClient.statusLayer, RefusedNames.layer]),
     Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.servedLayer),
   ),

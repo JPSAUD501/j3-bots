@@ -355,7 +355,7 @@ export const layer = Layer.effect(
       const scope = yield* Scope.make();
       const opened = yield* bridge.openViewer({ tab, ...size }).pipe(
         Scope.provide(scope),
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.raceFirst(auth.revoked(deviceId).pipe(Effect.as(Option.none()))),
         Effect.onExit((exit) =>
           Exit.isSuccess(exit) && Option.isSome(exit.value)
