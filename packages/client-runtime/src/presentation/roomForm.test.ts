@@ -137,6 +137,16 @@ describe("followRoom", () => {
     });
   });
 
+  it("sends the operator's hidden switch even when a bot hid the room meanwhile", () => {
+    const opened = roomFormOf(room);
+    const values = { ...opened, hidden: true };
+    const followed = followRoom(opened, values, { ...room, hidden: true });
+    expect(roomChanges(followed.start, followed.values)).toEqual({
+      _tag: "ready",
+      value: { hidden: true },
+    });
+  });
+
   it("follows the room shown again elsewhere, so Save does not hide it back", () => {
     const hiddenRoom: Room = { ...room, hidden: true };
     const opened = roomFormOf(hiddenRoom);

@@ -848,6 +848,7 @@ export const tools = {
     [
       "Show or hide a bot or a room in your user's list. Hidden, it moves to their hidden conversations, where they can still open it: it keeps working, and still notifies them.",
       "You can change the bots and rooms you made, and, as the primary bot, any but yourself. Never one your user made, showed or hid: their choice stands, so tell them if you think it should change.",
+      "Hide only a helper or a room your user did not ask to see and does not talk to, such as a worker you direct or a room where only bots coordinate. Anything they asked for, by name or role, or talk to themselves stays visible, also when you tidy up later.",
       "When you hide or show something your user has seen, tell them in your `say`.",
       "Returns whether it is hidden now.",
     ],

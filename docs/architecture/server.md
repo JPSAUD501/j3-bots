@@ -567,14 +567,14 @@ A room may already exist with the same members; `start_room` makes another, as t
 
 **Every bot and every room is visible or hidden** ([0050](../decisions/0050-bots-and-rooms-are-visible-or-hidden-and-the-operators-choice-wins.md)). Hidden is a flag the roster carries (`Bot.hidden`, `Room.hidden`) and clients draw: nothing else on the server reads it. A hidden bot's turns, routines, rooms and teammate messages run as any bot's, a hidden room's wakes as any room's, and what they say notifies as anything does ([Notifications](#notifications)).
 
-**Who may change it.** The operator, through `bot.create`, `bot.createFromTemplate`, `room.create`, `bot.update` and `room.update` (also on an archived room): each records the visibility as the operator's choice (`visibility_by_operator`), what they create as well as what they show or hide later. A bot, through `create_bot` and `start_room` (`hidden`), which record it as the caller's choice and the caller as the maker (`made_by_bot_id`, cleared when the maker is deleted), and through `set_visibility`. That one is decided in the transaction that saves it, in this order:
+**Who may change it.** The operator, through `bot.create`, `bot.createFromTemplate`, `room.create`, `bot.update` and `room.update` (also on an archived room): each records the visibility as the operator's choice (`visibility_by_operator`), what they create as well as what they show or hide later. An edit form sends `hidden` whenever the operator moved its switch, also when a bot set the same meanwhile, so the choice is recorded as theirs. A bot, through `create_bot` and `start_room` (`hidden`), which record it as the caller's choice and the caller as the maker (`made_by_bot_id`, cleared when the maker is deleted; `create_bot` claims the maker's turn before it writes the bot, so a maker deleted meanwhile, whose turn went with it, ends the call as any ended turn does), and through `set_visibility`. That one is decided in the transaction that saves it, in this order:
 
 1. the operator's primary bot is refused: only the operator shows or hides it, so the primary bot never hides itself either;
 2. anything whose visibility the operator chose is refused, shown or hidden alike;
 3. the primary bot may change the rest;
 4. any other bot only what it made.
 
-A refusal changes nothing, records nothing, and tells the bot why. The call carries a command receipt keyed by its request, so a retried forward returns the first answer. A bot or room from before migration 41 counts as the operator's choice.
+A refusal changes nothing, records nothing, and tells the bot why. The call carries a command receipt keyed by its request, the same for a bot and a room, so a retried forward returns the first answer, also when the bot it changed was deleted meanwhile. A bot or room from before migration 41 counts as the operator's choice.
 
 ## Deleting a bot
 

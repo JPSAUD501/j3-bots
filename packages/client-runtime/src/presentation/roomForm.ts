@@ -78,7 +78,10 @@ export function withoutDeleted(
  * server changed it and the operator did not: a name that reads the same as
  * before, only with other spaces around it, stays as typed until the server
  * changes it. The form then compares with the room as it is, so it sends
- * only what differs from it.
+ * only what differs from it, but for whether it is hidden: once the operator
+ * moved that switch, it is compared with what it showed then, so their choice
+ * is sent and recorded as theirs even when a bot set the same meanwhile
+ * (decision 0050).
  */
 export function followRoom(
   start: RoomFormValues,
@@ -88,8 +91,9 @@ export function followRoom(
   const live = roomFormOf(room);
   const follows = (field: RoomField) =>
     !sameField(field, start, live) && sameField(field, start, values);
+  const hiddenChosen = !sameField("hidden", start, values);
   return {
-    start: live,
+    start: hiddenChosen ? { ...live, hidden: start.hidden } : live,
     values: {
       name: follows("name") ? live.name : values.name,
       members: follows("members") ? live.members : values.members,

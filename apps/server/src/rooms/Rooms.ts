@@ -26,7 +26,12 @@ import { Flag, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { roomRefusals } from "../turns/modeRefusals.ts";
 import { RoomStates } from "../turns/RoomStates.ts";
-import { VisibilityRefused, visibilityRefusal } from "../roster/visibility.ts";
+import {
+  type Shown,
+  visibilityCommand,
+  VisibilityRefused,
+  visibilityRefusal,
+} from "../roster/visibility.ts";
 import { RoomWork } from "./RoomWork.ts";
 
 const RoomRow = Schema.Struct({
@@ -99,7 +104,7 @@ export class Rooms extends Context.Service<
       readonly caller: BotId;
       readonly roomId: RoomId;
       readonly hidden: boolean;
-    }) => Effect.Effect<Room, CommandError | VisibilityRefused>;
+    }) => Effect.Effect<Shown, CommandError | VisibilityRefused>;
     readonly remove: (input: {
       readonly commandId: CommandId;
       readonly roomId: RoomId;
@@ -376,9 +381,7 @@ export const layer = Layer.effect(
     }) {
       return yield* receipts.once({
         commandId: input.commandId,
-        method: "set_visibility",
-        payload: input,
-        result: Room,
+        ...visibilityCommand({ caller: input.caller, id: input.roomId, hidden: input.hidden }),
         apply: Effect.gen(function* () {
           const room = yield* visibilityOf(input.roomId).pipe(Effect.orDie);
           if (Option.isNone(room)) return yield* new NotFound({ resource: "room" });
@@ -402,7 +405,7 @@ export const layer = Layer.effect(
             `.pipe(Effect.orDie);
             yield* changes.touch({ _tag: "room", roomId: input.roomId });
           }
-          return yield* require(input.roomId).pipe(Effect.orDie);
+          return { id: input.roomId, hidden: input.hidden };
         }),
       });
     });

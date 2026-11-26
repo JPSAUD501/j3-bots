@@ -58,7 +58,10 @@ const decoders = {
 /**
  * The fields the operator changed from `bot`, and only those, so a save never
  * writes back a value another device changed meanwhile. Text is trimmed; an
- * edit back to the saved value sends nothing.
+ * edit back to the saved value sends nothing. Whether the bot is hidden is
+ * sent whenever the operator moved the switch, also when a bot set the same
+ * meanwhile: the server records it as their choice, which no bot changes
+ * (decision 0050).
  */
 export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
   const profile: Types.Mutable<ProfileChanges> = {};
@@ -82,7 +85,7 @@ export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
   if (edits.permissionMode !== null && edits.permissionMode !== bot.permissionMode) {
     changes.permissionMode = edits.permissionMode;
   }
-  if (edits.hidden !== null && edits.hidden !== bot.hidden) changes.hidden = edits.hidden;
+  if (edits.hidden !== null) changes.hidden = edits.hidden;
   return Object.keys(changes).length === 0 ? { _tag: "unchanged" } : { _tag: "changes", changes };
 }
 
@@ -99,6 +102,15 @@ export const withProfileEdit = (
   value: string,
   from: string,
 ): BotEdits => ({ ...edits, [field]: value === from ? null : value });
+
+/**
+ * The edits once the operator moves the hidden switch to `hidden` while the
+ * bot is `from`, as the server has it: moving it back to that drops the edit.
+ */
+export const withHiddenEdit = (edits: BotEdits, hidden: boolean, from: boolean): BotEdits => ({
+  ...edits,
+  hidden: hidden === from ? null : hidden,
+});
 
 /**
  * The edits after a save of `changes` failed: a field the form holds no edit

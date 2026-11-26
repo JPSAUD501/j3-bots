@@ -47,10 +47,15 @@ const call = (sessionId: SessionId, turnId: TurnId, tool: string, args: Schema.J
   });
 
 /** `set_visibility`, which acts for no turn, from any session of the bot. */
-const setVisibility = (sessionId: SessionId, id: string, hidden: boolean) =>
+const setVisibility = (
+  sessionId: SessionId,
+  id: string,
+  hidden: boolean,
+  requestId = `visibility-call-${++calls}`,
+) =>
   Effect.gen(function* () {
     return yield* (yield* BotTools).call({
-      requestId: `visibility-call-${++calls}`,
+      requestId,
       sessionId,
       tool: "set_visibility",
       arguments: { id, hidden },
@@ -242,5 +247,25 @@ it.effect("keeps every bot from changing what the operator made, showed or hid",
     assert.isTrue(yield* botHidden(ledger));
     assert.isFalse(yield* botHidden(wren.bot.id));
     assert.isFalse(yield* roomHidden(operatorRoom.id));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("answers a retried call as it first did, the bot it hid deleted meanwhile", () =>
+  Effect.gen(function* () {
+    const scout = yield* primaryBot("Scout");
+    const { session, turnId } = yield* operatorAsks(scout, "Make me a bot for invoices.");
+    const made = decodeMade(
+      resultOf(
+        yield* call(session, turnId, "create_bot", { name: "Ledger", job: "Keeps invoices." }),
+      ),
+    );
+    assert.isTrue(hiddenNow(yield* setVisibility(session, made.id, true, "hide-ledger")));
+    yield* (yield* Bots).remove({
+      commandId: command(),
+      botId: BotId.make(made.id),
+      deleteFiles: false,
+    });
+    // The bridge forwards the request again: its id no longer names a bot.
+    assert.isTrue(hiddenNow(yield* setVisibility(session, made.id, true, "hide-ledger")));
   }).pipe(Effect.provide(TestDomain.layer)),
 );

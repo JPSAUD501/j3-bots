@@ -56,7 +56,12 @@ import { type BotChanges, BotStore, type Chooser, type StoredBot } from "./BotSt
 import { EngineSessions } from "./EngineSessions.ts";
 import { SKILL_FILE } from "./Templates.ts";
 import { Workspaces } from "./Workspaces.ts";
-import { VisibilityRefused, visibilityRefusal } from "../roster/visibility.ts";
+import {
+  type Shown,
+  visibilityCommand,
+  VisibilityRefused,
+  visibilityRefusal,
+} from "../roster/visibility.ts";
 
 /** What a new bot is given; what is left out takes the server's default. */
 export interface BotDraft {
@@ -101,8 +106,8 @@ export interface MadeBy<E> {
   /** That turn: the bot's hello waits for it to end (`WakePayload`, `first-run`). */
   readonly turn: MadeIn;
   /**
-   * Runs in the transaction that saves the bot, once it has its id: a failure
-   * saves nothing, and leaves no workspace behind.
+   * Runs in the transaction that saves the bot, once it has its id and before
+   * the bot is written: a failure saves nothing, and leaves no workspace behind.
    */
   readonly claim: (botId: BotId) => Effect.Effect<void, E>;
 }
@@ -167,7 +172,7 @@ export class Bots extends Context.Service<
       readonly caller: BotId;
       readonly botId: BotId;
       readonly hidden: boolean;
-    }) => Effect.Effect<Bot, CommandError | VisibilityRefused>;
+    }) => Effect.Effect<Shown, CommandError | VisibilityRefused>;
     /**
      * Moves each bot still waiting for its hello to go out (not yet with the
      * engine), whose model the server chose and whose provider is not ready,
@@ -506,8 +511,10 @@ export const layer = Layer.effect(
      * Saves a new bot, and what `furnish` adds to it in the same transaction,
      * under one receipt. `draft` is decided there, from the engine's status
      * then; a model it leaves out is `serverModel`'s, and a permission mode
-     * `permissionMode`'s, for the model the bot gets. A bot made in a bot's
-     * turn (`madeIn`) has its hello wait for that turn to end.
+     * `permissionMode`'s, for the model the bot gets. A bot another bot makes
+     * (`madeBy`) is claimed on its maker's turn before it is saved, so a maker
+     * deleted meanwhile, whose turn went with it, saves nothing; its hello
+     * waits for that turn to end.
      */
     const insert = <E>(input: {
       readonly commandId: CommandId;
@@ -519,10 +526,9 @@ export const layer = Layer.effect(
       readonly permissionMode: (status: EngineStatus, model: ModelChoice) => PermissionMode;
       /** Who a permission mode is recorded as chosen by. */
       readonly permissionModeChooser: (draft: BotDraft) => Chooser;
-      readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError | E>;
-      readonly madeIn: MadeIn | null;
-      /** The bot whose `create_bot` makes it, or null for the operator's. */
-      readonly madeBy: BotId | null;
+      readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError>;
+      /** The bot whose `create_bot` makes it, in that turn, or null for the operator's. */
+      readonly madeBy: MadeBy<E> | null;
     }): Effect.Effect<Bot, CommandError | E> =>
       Effect.gen(function* () {
         // The bot being saved, once it has an id: a creation that fails leaves
@@ -543,6 +549,7 @@ export const layer = Layer.effect(
               const at = yield* DateTime.now;
               const id = BotIdSchema.make(yield* ids.make("bot"));
               yield* Ref.set(started, Option.some(id));
+              if (input.madeBy !== null) yield* input.madeBy.claim(id);
               if (draft.primary === true) yield* makePrimary(at);
               yield* store.insert({
                 id,
@@ -558,7 +565,7 @@ export const layer = Layer.effect(
                 permissionModeChooser: input.permissionModeChooser(draft),
                 primary: draft.primary === true,
                 hidden: draft.hidden === true,
-                madeBy: input.madeBy,
+                madeBy: input.madeBy?.maker ?? null,
                 workspacePath: layout.workspace(id),
                 at,
               });
@@ -574,9 +581,9 @@ export const layer = Layer.effect(
                   kind: "system",
                   audience: conversation,
                   payload:
-                    input.madeIn === null
+                    input.madeBy === null
                       ? { _tag: "first-run" }
-                      : { _tag: "first-run", madeIn: input.madeIn },
+                      : { _tag: "first-run", madeIn: input.madeBy.turn },
                   sourceEntryId: null,
                   hops: 0,
                   retryOf: null,
@@ -647,9 +654,8 @@ export const layer = Layer.effect(
         permissionMode: defaultPermissionMode,
         permissionModeChooser: (draft) =>
           draft.permissionMode === undefined ? "server" : "operator",
-        furnish: input.madeBy?.claim ?? (() => Effect.void),
-        madeIn: input.madeBy?.turn ?? null,
-        madeBy: input.madeBy?.maker ?? null,
+        furnish: () => Effect.void,
+        madeBy: input.madeBy ?? null,
       });
 
     /** A template's trigger as the operator's routine runs it: a schedule in their time zone. */
@@ -698,7 +704,7 @@ export const layer = Layer.effect(
       readonly from: FromTemplate;
     }) => {
       const { template, model, permissionMode, hidden } = input.from;
-      return insert({
+      return insert<never>({
         commandId: input.commandId,
         method: "bot.createFromTemplate",
         payload: input.from,
@@ -721,7 +727,6 @@ export const layer = Layer.effect(
         // What the operator saw before creating it: a later move to the default model keeps it.
         permissionModeChooser: () => "operator",
         furnish: furnishFrom(template),
-        madeIn: null,
         madeBy: null,
       });
     };
@@ -778,9 +783,7 @@ export const layer = Layer.effect(
     }) {
       return yield* receipts.once({
         commandId: input.commandId,
-        method: "set_visibility",
-        payload: input,
-        result: Bot,
+        ...visibilityCommand({ caller: input.caller, id: input.botId, hidden: input.hidden }),
         apply: Effect.gen(function* () {
           const target = yield* require(input.botId);
           const caller = yield* require(input.caller);
@@ -794,10 +797,11 @@ export const layer = Layer.effect(
             },
           );
           if (refusal !== undefined) return yield* refusal;
-          if (target.bot.hidden === input.hidden) return target.bot;
-          yield* store.setHidden(input.botId, input.hidden, yield* DateTime.now);
-          yield* changes.touch({ _tag: "bot", botId: input.botId });
-          return (yield* require(input.botId).pipe(Effect.orDie)).bot;
+          if (target.bot.hidden !== input.hidden) {
+            yield* store.setHidden(input.botId, input.hidden, yield* DateTime.now);
+            yield* changes.touch({ _tag: "bot", botId: input.botId });
+          }
+          return { id: input.botId, hidden: input.hidden };
         }),
       });
     });

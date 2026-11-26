@@ -405,18 +405,19 @@ export const layer = Layer.effect(
         changing("remove_skill", call, management.removeSkill(callerOf(call), input)),
       ),
       // A bot or a room, by its id: bots are looked up first, as ids of both
-      // kinds are never the same (`Ids`).
+      // kinds are never the same (`Ids`). Both store one receipt
+      // (`visibilityCommand`), so a retry finds its result either way.
       set_visibility: handler(tools.set_visibility.input, (input, call) =>
         Effect.gen(function* () {
           const commandId = commandIdOf(call.requestId);
           const botId = BotId.make(input.id);
           if (Option.isSome(yield* store.find(botId))) {
-            const bot = yield* bots
+            const shown = yield* bots
               .showOrHide({ commandId, caller: call.caller.botId, botId, hidden: input.hidden })
               .pipe(refuseFailure);
-            return { id: bot.id, hidden: bot.hidden } satisfies Schema.Json;
+            return { ...shown } satisfies Schema.Json;
           }
-          const room = yield* rooms
+          const shown = yield* rooms
             .showOrHide({
               commandId,
               caller: call.caller.botId,
@@ -433,7 +434,7 @@ export const layer = Layer.effect(
               ),
               refuseFailure,
             );
-          return { id: room.id, hidden: room.hidden } satisfies Schema.Json;
+          return { ...shown } satisfies Schema.Json;
         }),
       ),
       update_profile: handler(tools.update_profile.input, (input, call) =>

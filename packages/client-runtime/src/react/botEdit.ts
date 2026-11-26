@@ -12,6 +12,7 @@ import {
   type ProfileField,
   sameModel,
   withChanges,
+  withHiddenEdit,
   withProfileEdit,
 } from "../presentation/botEdit.ts";
 import { type SaveProblem, shownSaveProblem } from "../presentation/saves.ts";
@@ -127,7 +128,13 @@ export function useBotEdit(options: {
       setFailureShown(false);
     },
     edit: (change) => {
-      setEdits((current) => ({ ...current, ...change }));
+      setEdits((current) => {
+        const next = { ...current, ...change };
+        const { hidden } = change;
+        return hidden === undefined || hidden === null
+          ? next
+          : withHiddenEdit(next, hidden, bot.hidden);
+      });
       setFailureShown(false);
     },
   };

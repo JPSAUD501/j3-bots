@@ -54,3 +54,22 @@ export const visibilityRefusal = (
     reason: `Nothing changed: you can show or hide only the bots and rooms you made, and ${target.name} is not one of them.`,
   });
 };
+
+/** What a `set_visibility` leaves: the bot or room, and whether it is hidden now. */
+export const Shown = Schema.Struct({ id: Schema.String, hidden: Schema.Boolean });
+export type Shown = typeof Shown.Type;
+
+/**
+ * A `set_visibility` as its receipt stores it, the same for a bot and a room:
+ * a retry of one that went through gets its result back whichever it finds
+ * the id to be then, a bot deleted meanwhile included.
+ */
+export const visibilityCommand = (input: {
+  readonly caller: BotId;
+  readonly id: string;
+  readonly hidden: boolean;
+}) => ({
+  method: "set_visibility",
+  payload: { caller: input.caller, id: input.id, hidden: input.hidden },
+  result: Shown,
+});
