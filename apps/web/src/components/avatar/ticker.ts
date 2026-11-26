@@ -13,10 +13,13 @@
  *   changes;
  * - under reduced motion nothing moves, and every avatar shows its still form.
  *
- * Each frame first reads what it must of the layout (the boxes of the avatars,
- * and only after the pointer moved, the page scrolled or something travelled),
- * then writes, so drawing never forces a layout. The pointer reaches an avatar
- * only from close by (`pointerNear`): past that the avatar is not told of it.
+ * Each frame first reads what it must of the layout, then writes, so drawing
+ * never forces a layout. What it reads are the avatars' boxes, only while a
+ * pointer that moved lately may be near one, and only after the page scrolled
+ * or something travelled, or `RECTS_KEPT` ms after it last read them: the
+ * pointer moving does not move an avatar, so it is no reason to read again.
+ * The pointer reaches an avatar only from close by (`pointerNear`): past that
+ * the avatar is not told of it.
  */
 import { pointerNear, type AvatarNear } from "@j3-bots/client-runtime/presentation";
 
@@ -55,6 +58,12 @@ const LIST_SIZE = 44;
  * it, in ms: a pointer left lying beside a bot stops being interesting.
  */
 const POINTER_HOLD = 3500;
+/**
+ * How long the avatars' boxes are trusted while nothing says they moved, in
+ * ms: a layout that changed with no scroll and nothing travelling, as a pane
+ * opening, is caught up with this soon.
+ */
+const RECTS_KEPT = 500;
 /** The longest a frame counts for, in seconds: a tab that slept does not fast-forward. */
 const LONGEST_FRAME = 0.1;
 
@@ -81,6 +90,7 @@ let raf = 0;
 let last = 0;
 let order = 0;
 let rectsStale = true;
+let rectsAt = 0;
 let listening = false;
 const pointer = { x: 0, y: 0, at: Number.NEGATIVE_INFINITY };
 
@@ -120,7 +130,6 @@ const onPointer = (event: PointerEvent) => {
   pointer.x = event.clientX;
   pointer.y = event.clientY;
   pointer.at = performance.now();
-  rectsStale = true;
 };
 /** The pointer is gone: a finger lifted, or the mouse left the window, which is leaving for nothing. */
 const onPointerGone = (event: PointerEvent) => {
@@ -181,9 +190,10 @@ function loop(now: number) {
 
   // Reads first: the boxes of the avatars, when a pointer that moved lately may be near one.
   const following = now - pointer.at < POINTER_HOLD;
-  if (following && rectsStale) {
+  if (following && (rectsStale || now - rectsAt > RECTS_KEPT)) {
     for (const entry of moving) entry.rect = entry.avatar.measure?.() ?? null;
     rectsStale = false;
+    rectsAt = now;
   }
 
   // Then writes: what travels on its springs, then the avatars.
