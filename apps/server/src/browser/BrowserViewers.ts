@@ -343,17 +343,28 @@ export const layer = Layer.effect(
         Effect.catch((closed) => end(entry, ending(closed))),
       );
 
-    /** Opens the device's viewer of `tab`. */
+    /**
+     * Opens the device's viewer of `tab`; `null` when the device is revoked
+     * before the engine opened it, which then never waits on the engine.
+     */
     const open = Effect.fnUntraced(function* (
       deviceId: DeviceId,
       tab: EngineTabId,
       size: ViewSize,
     ) {
       const scope = yield* Scope.make();
-      const viewer = yield* bridge.openViewer({ tab, ...size }).pipe(
+      const opened = yield* bridge.openViewer({ tab, ...size }).pipe(
         Scope.provide(scope),
-        Effect.onError(() => Scope.close(scope, Exit.void)),
+        Effect.map(Option.some),
+        Effect.raceFirst(auth.revoked(deviceId).pipe(Effect.as(Option.none()))),
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit) && Option.isSome(exit.value)
+            ? Effect.void
+            : Scope.close(scope, Exit.void),
+        ),
       );
+      if (Option.isNone(opened)) return null;
+      const viewer = opened.value;
       const entry: Entry = {
         key: keyOf(deviceId, tab),
         deviceId,
@@ -494,6 +505,7 @@ export const layer = Layer.effect(
               Effect.option,
               Effect.map(Option.getOrUndefined),
             ));
+          if (entry === null) return { _tag: "ended", closing: REVOKED } as const;
           if (entry === undefined) return { _tag: "unavailable" } as const;
           const attached = yield* attach(entry, link);
           return Result.isSuccess(attached)

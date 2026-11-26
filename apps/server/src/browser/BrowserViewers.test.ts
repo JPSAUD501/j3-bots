@@ -362,6 +362,21 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
 
+it.effect("closes a socket as revoked while the engine has not opened its viewer yet", () =>
+  Effect.gen(function* () {
+    const { browser, device, refOf } = yield* scene("one");
+    yield* browser.holdOpens(true);
+    const waiting = yield* fakeLink;
+    const { viewer } = yield* connect(device, refOf("one"), waiting.link, browser.nextViewer);
+    if (viewer === null) return;
+
+    yield* (yield* DeviceAuth).revoke(device);
+
+    assert.deepStrictEqual(yield* waiting.closed, { code: 1008, reason: "revoked" });
+    yield* viewer.released;
+  }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
 it.effect("tells the client a tab is gone, and why a viewer could not go on", () =>
   Effect.gen(function* () {
     const { browser, device, refOf } = yield* scene("one", "two");
