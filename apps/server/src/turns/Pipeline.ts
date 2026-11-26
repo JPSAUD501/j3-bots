@@ -1452,17 +1452,27 @@ export const layer = Layer.effect(
      */
     /**
      * Whether the bot's opening asks what to call the operator: nobody knows
-     * yet, and no other bot's opening has gone to the engine. So only the
-     * first bot to open without a name asks, and a name the operator passed
-     * over there is not asked again. An opening sent again asks again: it is
-     * the same hello. Read in the transaction that writes the dispatch.
+     * yet, and no other bot's opening has gone to the engine and not failed.
+     * So only the first bot to open without a name asks, and a name the
+     * operator passed over there is not asked again. An opening that failed,
+     * was stopped or was lost asked nobody, so it does not count, retried or
+     * not. An opening sent again asks again: it is the same hello. Read in the
+     * transaction that writes the dispatch.
      */
     const opensAsking = Effect.fn("Pipeline.opensAsking")(function* (botId: BotId) {
       if ((yield* settings.get).operatorName !== null) return false;
+      // A finished wake whose dispatch is still open is one whose turn
+      // closed its delivery, by `done` or `ask`: it spoke.
       const opened = yield* sql`
-        SELECT 1 FROM wakes
-        WHERE bot_id <> ${botId} AND json_extract(payload_json, '$._tag') = 'first-run'
-          AND status IN ('dispatched', 'finished')
+        SELECT 1 FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
+        WHERE w.bot_id <> ${botId} AND json_extract(w.payload_json, '$._tag') = 'first-run'
+          AND (
+            w.status = 'dispatched'
+            OR (
+              w.status = 'finished'
+              AND (d.status <> 'finished' OR json_extract(d.outcome_json, '$._tag') = 'completed')
+            )
+          )
         LIMIT 1
       `;
       return opened.length === 0;
