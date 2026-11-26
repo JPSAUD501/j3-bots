@@ -23,6 +23,7 @@ import * as Socket from "../admin/socket.ts";
 import * as Home from "../home/Home.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import * as Ports from "../system/Ports.ts";
+import { runPowerShell } from "../system/PowerShell.ts";
 import { startFailure } from "./serve.ts";
 
 const SERVER = `${import.meta.dirname}/../bin.ts`;
@@ -117,8 +118,8 @@ const spawnChild = Effect.fn("spawnChild")(function* (
   };
 });
 
-/** The ids a stand-in engine writes once it runs: its own, and its harness's. */
-const Started = Schema.Struct({ engine: Schema.Int, harness: Schema.Int });
+/** The ids a stand-in engine's script writes once it runs: its own, and its harness's. */
+const Started = Schema.Struct({ script: Schema.Int, harness: Schema.Int });
 const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started));
 
 /**
@@ -152,13 +153,73 @@ const isRunning = (pid: number) => {
   }
 };
 
+/** Ends process `pid`, if it still runs. */
+const kill = (pid: number) => {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+};
+
+/** How long processes that were ended get to be gone. */
+const ENDS_WITHIN = Duration.seconds(10);
+
+/**
+ * Waits on each process in `J3_PIDS` until it has ended, and fails naming
+ * those that have not within `ENDS_WITHIN`. A process Windows no longer lists
+ * is gone.
+ */
+const WAIT_FOR_ENDS = String.raw`$until = [DateTime]::UtcNow.AddMilliseconds(${Duration.toMillis(ENDS_WITHIN)})
+$left = @()
+foreach ($id in $env:J3_PIDS.Split(',')) {
+  $process = Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue
+  if ($null -eq $process) { continue }
+  $wait = [Math]::Max(0, [int]($until - [DateTime]::UtcNow).TotalMilliseconds)
+  if (-not $process.WaitForExit($wait)) { $left += "$id ($($process.ProcessName))" }
+  $process.Dispose()
+}
+if ($left.Count -gt 0) {
+  [Console]::Error.WriteLine('still running: ' + ($left -join ', '))
+  exit 1
+}
+`;
+
+/**
+ * Waits until each process in `pids` has ended. On Windows it waits on each
+ * process itself, as only that shows a process has ended: Node's check,
+ * `process.kill(pid, 0)`, answers that a process is gone once its exit code is
+ * set (libuv 1.52.1, `uv__kill` in src/win/process.c), and Windows sets that
+ * as it starts to end a process, before its threads have ended and its
+ * program's file is released. Dies naming those still running. Elsewhere that
+ * check is exact, and nothing depends on the wait but the next test.
+ */
+const untilEnded = Effect.fn("untilEnded")(function* (pids: ReadonlyArray<number>) {
+  if (pids.length === 0) return;
+  if (process.platform === "win32") {
+    yield* runPowerShell(WAIT_FOR_ENDS, { J3_PIDS: pids.join(",") }).pipe(
+      Effect.catch((error) => Effect.die(`the stand-in's processes did not end: ${error.message}`)),
+    );
+    return;
+  }
+  yield* Effect.sync(() => pids.filter(isRunning)).pipe(
+    Effect.repeat({
+      while: (running) => running.length > 0,
+      schedule: Schedule.spaced("100 millis"),
+    }),
+    Effect.timeoutOption(ENDS_WITHIN),
+  );
+});
+
 /**
  * A stand-in for the engine in `folder`, for `J3_ENGINE_BINARY`: a Node
  * script that starts a harness that runs until it is ended, writes both ids
  * to `started` (`Started`), and runs until it is ended. Elsewhere `sh` runs
  * it; on Windows a program must, as Node starts no batch file without a
  * shell, so a small C# program, compiled by Windows' own compiler as the job
- * launcher is, starts it and waits for it. That program first writes to
+ * launcher is, starts it and waits for it. Each run of the stand-in first
+ * leaves a file named after its own id in `runs`, so every process that ran
+ * it is known, however many the server started. The C# program then writes to
  * `shared` what it shares with the processes above it (`SharedFiles`),
  * trying every handle value up to 64 Ki, past any a process this small or
  * the server has. It takes no account of its arguments, so the server's
@@ -172,16 +233,16 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
   const path = yield* Path.Path;
   const started = path.join(folder, "started.json");
   const shared = path.join(folder, "shared.json");
+  const runs = path.join(folder, "runs");
   const script = path.join(folder, "engine.cjs");
+  yield* fs.makeDirectory(runs);
   yield* fs.writeFileString(
     script,
     [
       `const { spawn } = require("node:child_process");`,
       `const fs = require("node:fs");`,
       `const harness = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
-      // The program the server started: on Windows the C# program below, elsewhere this one, which sh became.
-      `const engine = process.platform === "win32" ? process.ppid : process.pid;`,
-      `fs.writeFileSync(${JSON.stringify(`${started}.partial`)}, JSON.stringify({ engine, harness: harness.pid }));`,
+      `fs.writeFileSync(${JSON.stringify(`${started}.partial`)}, JSON.stringify({ script: process.pid, harness: harness.pid }));`,
       `fs.renameSync(${JSON.stringify(`${started}.partial`)}, ${JSON.stringify(started)});`,
       `setInterval(() => {}, 1000);`,
     ].join("\n"),
@@ -304,6 +365,7 @@ class Engine {
   }
 
   static int Main() {
+    File.WriteAllText(Path.Combine(${verbatim(runs)}, Process.GetCurrentProcess().Id.ToString()), "");
     File.WriteAllText(${verbatim(`${shared}.partial`)}, Report());
     File.Move(${verbatim(`${shared}.partial`)}, ${verbatim(shared)});
     ProcessStartInfo start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});
@@ -334,12 +396,15 @@ class Engine {
           ),
         ),
     );
-    return { command, started, shared };
+    return { command, started, shared, runs };
   }
   const command = path.join(folder, "engine");
-  yield* fs.writeFileString(command, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
+  yield* fs.writeFileString(
+    command,
+    `#!/bin/sh\n: > '${runs}'/$$\nexec '${process.execPath}' '${script}' "$@"\n`,
+  );
   yield* fs.chmod(command, 0o755);
-  return { command, started, shared };
+  return { command, started, shared, runs };
 });
 
 /** The parent's end of `child`'s descriptor 3, as the admin channel. */
@@ -470,6 +535,33 @@ describe("serve, as the desktop app runs it", () => {
           { ...env, J3_ENGINE_BINARY: engine.command },
           "overlapped",
         );
+        // The server, every process that ran the stand-in, and its script and
+        // harness have ended before their folder is removed: Windows removes
+        // no program's file while a process runs it. The server first, so it
+        // starts no other run.
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            server.child.kill("SIGKILL");
+            yield* server.exited;
+            const runs = yield* fs
+              .readDirectory(engine.runs)
+              .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+            const started = yield* fs
+              .readFileString(engine.started)
+              .pipe(Effect.flatMap(decodeStarted), Effect.option);
+            const pids = [
+              ...new Set([
+                ...runs.map(Number).filter(Number.isSafeInteger),
+                ...Option.match(started, {
+                  onNone: () => [],
+                  onSome: ({ script, harness }) => [script, harness],
+                }),
+              ]),
+            ];
+            yield* Effect.sync(() => pids.forEach(kill));
+            yield* untilEnded(pids);
+          }),
+        );
         const pipe = server.child.stdio[3];
         if (!(pipe instanceof NodeNet.Socket)) return yield* Effect.die("no pipe at fd 3");
         const closed = new Promise<void>((resolve) => pipe.once("close", () => resolve()));
@@ -491,30 +583,6 @@ describe("serve, as the desktop app runs it", () => {
               ),
           }),
         );
-        // Both are ended, and gone, before their folder is removed: Windows
-        // removes no program's file while it runs.
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            for (const pid of [started.engine, started.harness]) {
-              try {
-                process.kill(pid, "SIGKILL");
-              } catch {
-                // Already gone.
-              }
-            }
-          }).pipe(
-            Effect.andThen(
-              Effect.sync(() => isRunning(started.engine) || isRunning(started.harness)).pipe(
-                Effect.repeat({
-                  while: (running) => running,
-                  schedule: Schedule.spaced("100 millis"),
-                }),
-                Effect.timeoutOption(Duration.seconds(10)),
-              ),
-            ),
-          ),
-        );
-
         if (process.platform === "win32") {
           // Written before the engine started its script, which wrote `started`.
           const found = yield* fs
@@ -551,7 +619,7 @@ describe("serve, as the desktop app runs it", () => {
           }),
         );
         if (process.platform !== "win32") {
-          assert.isTrue(isRunning(started.engine), "the stand-in engine ended with the server");
+          assert.isTrue(isRunning(started.script), "the stand-in engine ended with the server");
           assert.isTrue(isRunning(started.harness), "the stand-in harness ended with the server");
         }
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
