@@ -464,6 +464,63 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("stops background work a room turn left that its end did not tell of", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+    const members = [hal, ana];
+    const room = yield* roomWith(hal, [ana]);
+    yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
+    const watching = yield* nextTurn(hal.bot.id);
+    // A monitor the agent does not await: only the engine's report lists it.
+    yield* control.startBackgroundWork({
+      sessionId: hal.session,
+      turnId: watching,
+      announced: false,
+    });
+    yield* finish(hal, watching, members);
+    // The report that follows the room turn's end attributes it to that turn.
+    yield* until(flagged(hal, watching));
+
+    yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+    yield* until(Effect.map(backgroundRuns(hal), (runs) => !runs));
+    yield* TestClock.adjust(RETRY_TICK);
+    yield* stopSettled;
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "stops background work a room turn's end did not tell of before the report that lists it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const stops = yield* Stops;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({
+        sessionId: hal.session,
+        turnId: watching,
+        announced: false,
+      });
+      // The report the room turn's end makes due never comes back, so
+      // nothing flags the monitor before the room is stopped.
+      const lost = yield* control.dropNextMarker;
+      yield* finish(hal, watching, members);
+      yield* lost.requested;
+      assert.isFalse(yield* flagged(hal, watching));
+
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* TestClock.adjust(SYNC_DEADLINE);
+      yield* stops.runPending;
+      yield* until(Effect.map(backgroundRuns(hal), (runs) => !runs));
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** Whether the session's background check is due (`Stops`). */
 const checkDue = (one: Member) =>
   Effect.gen(function* () {

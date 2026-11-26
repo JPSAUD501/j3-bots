@@ -746,12 +746,16 @@ export const layer = Layer.effect(
       }
       // While turns of the session have work flagged, each turn's end is
       // followed by a report taken once nothing runs (`Stops`): a flag lasts
-      // no longer than its work.
+      // no longer than its work. So is a room turn's end, also one that told
+      // of no work: the engine can count work an end did not tell of, as a
+      // monitor the agent does not await, and only the report attributes it,
+      // so a room's Stop finds it (`Stops.record`).
+      const roomTurn = Option.isSome(turn) && turn.value.audience === "room";
       yield* sql`
         UPDATE sessions SET background_check_due = 1
-        WHERE id = ${session.id} AND EXISTS (
+        WHERE id = ${session.id} AND (${roomTurn ? sql`1` : sql`0`} OR EXISTS (
           SELECT 1 FROM turns WHERE session_id = ${session.id} AND background_pending = 1
-        )
+        ))
       `;
       // The provider's conversation could not be resumed: the bot's main
       // session is replaced once it is idle, with a digest of its own. Any

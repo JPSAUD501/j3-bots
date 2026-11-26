@@ -283,7 +283,10 @@ export const layer = Layer.effect(
       // a turn running, a turn whose background work the engine last
       // reported still pending, or a dispatch the engine has or may yet take.
       // So a room's Stop reaches the background work its turns started, by
-      // the turn that started it, never by the session's work as a whole. A
+      // the turn that started it, never by the session's work as a whole;
+      // also while the report that attributes it is still due after a turn
+      // of the room, as for work the turn's end did not tell of: its round is
+      // judged on a report, which settles it unsent when it lists none. A
       // bot Stop reaches every live session too, for background work the
       // server does not see. A session the engine retired has nothing left in
       // it to stop: its retirement ended what ran there.
@@ -298,6 +301,13 @@ export const layer = Layer.effect(
             SELECT 1 FROM turns
             WHERE session_id = s.id AND background_pending = 1 AND ${inScope(scope)}
           )
+          ${
+            scope._tag === "room"
+              ? sql`OR (s.background_check_due = 1 AND EXISTS (
+                  SELECT 1 FROM turns WHERE session_id = s.id AND ${inScope(scope)}
+                ))`
+              : sql``
+          }
           OR EXISTS (
             SELECT 1 FROM dispatches WHERE session_id = s.id AND ${inScope(scope)} AND (
               (status = 'intended' AND attempts > 0) OR status IN ('accepted', 'delivered')

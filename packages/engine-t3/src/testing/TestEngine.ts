@@ -432,12 +432,16 @@ export class TestEngineControl extends Context.Service<
      * wakes it: its turn reports it as `backgroundWork`. The wake it brings is
      * `startEngineTurn`. With `stoppable: false` the engine's stop does not
      * reach it, as an old provider session's work after another client started
-     * a fresh context: it ends by itself or when the session is retired.
+     * a fresh context: it ends by itself or when the session is retired. With
+     * `announced: false` the turn's end says it left none, as for a monitor the
+     * agent does not await: only the engine's report of the session's
+     * background work lists it, as that turn's.
      */
     readonly startBackgroundWork: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
       readonly stoppable?: boolean;
+      readonly announced?: boolean;
     }) => Effect.Effect<void>;
     /**
      * The background work every turn of the session left running ends, and
@@ -546,6 +550,11 @@ interface TurnRecord {
   }>;
   /** It left background work running, which a Stop ends. */
   background: boolean;
+  /**
+   * That work is not one its end tells of, as a monitor the agent does not
+   * await: only the engine's report of the session's background work lists it.
+   */
+  unannounced: boolean;
   /** It left background work running that a Stop does not reach; retiring the session ends it. */
   unstoppable: boolean;
   /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
@@ -863,6 +872,7 @@ const make = Effect.gen(function* () {
       hostSpeech: [],
       closedRequests: [],
       background: false,
+      unannounced: false,
       unstoppable: false,
       contextRecovered: false,
       ended: null,
@@ -873,6 +883,10 @@ const make = Effect.gen(function* () {
 
   /** Whether the turn left background work that still runs, whether or not a Stop reaches it. */
   const leftWork = (turn: TurnRecord) => turn.background || turn.unstoppable;
+
+  /** Whether the turn's end tells of background work it left running (`leftWork`). */
+  const announcesWork = (turn: TurnRecord) =>
+    (turn.background && !turn.unannounced) || turn.unstoppable;
 
   /** Whether background work some turn of the session left still runs. */
   const backgroundRuns = (session: SessionRecord) => [...session.turns.values()].some(leftWork);
@@ -1034,7 +1048,7 @@ const make = Effect.gen(function* () {
       finishedAt: at,
       cause: turn.cause,
       outcome,
-      backgroundWork: leftWork(turn),
+      backgroundWork: announcesWork(turn),
       continuation,
       contextRecovered: turn.contextRecovered,
     }));
@@ -1202,7 +1216,7 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
-          backgroundWork: leftWork(turn),
+          backgroundWork: announcesWork(turn),
           continuation: turn.ended.continuation,
           steps,
           contextRecovered: turn.contextRecovered,
@@ -2169,12 +2183,14 @@ const make = Effect.gen(function* () {
         return speech.speechId;
       }),
 
-    startBackgroundWork: ({ sessionId, turnId, stoppable = true }) =>
+    startBackgroundWork: ({ sessionId, turnId, stoppable = true, announced = true }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        if (stoppable) turn.background = true;
-        else turn.unstoppable = true;
+        if (stoppable) {
+          turn.background = true;
+          turn.unannounced = !announced;
+        } else turn.unstoppable = true;
       }),
 
     recoverContext: ({ sessionId, turnId }) =>
