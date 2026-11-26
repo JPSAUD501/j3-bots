@@ -213,7 +213,7 @@ export const litter = {
   /** A strand of the bot's color holds one to the bot until it is this far from it. */
   strand: 27,
   /** One that ended ducks this long before it jumps home; one that failed stands grey for `failed`, then ducks for `failedDuck`. */
-  duck: 0.1,
+  duck: 0.12,
   failed: 0.95,
   failedDuck: 0.22,
   /** How fast it still rises as it reaches the bot, per second: it bumps the bot. One that failed only just makes it. */

@@ -49,8 +49,8 @@ function run(sim: LitterSim, seconds: number, rate = 60) {
   return { sim: current, pokes, frames };
 }
 
-const empty = () => createLitter([], 0, place);
-const three = () => syncLitter(empty(), ["a", "b", "c"], [], 3, place);
+const empty = () => createLitter([], false, place);
+const three = () => syncLitter(empty(), ["a", "b", "c"], [], false, place);
 const spotOf = (sim: LitterSim, id: string) => {
   const found = sim.ones.find((each) => each.id === id);
   return found === undefined ? null : littleSpot(found);
@@ -133,7 +133,7 @@ describe("a split", () => {
 
   it("does not brace again for one that joins while others are still coming out", () => {
     const first = run(three(), litter.lead / 2).sim;
-    const joined = syncLitter(first, ["a", "b", "c", "d"], [], 4, place);
+    const joined = syncLitter(first, ["a", "b", "c", "d"], [], false, place);
     const { pokes, sim } = run(joined, 3);
     expect(pokes.filter((poke) => poke === "brace")).toEqual([]);
     expect(spotOf(sim, "d")?.y).toBe(rest(3));
@@ -153,7 +153,7 @@ describe("the motion", () => {
   it("is the same at any frame rate", () => {
     const leaves = (rate: number) => {
       const landed = run(three(), 1.5, rate).sim;
-      return run(syncLitter(landed, ["a", "c"], [], 2, place), 0.3, rate).sim;
+      return run(syncLitter(landed, ["a", "c"], [], false, place), 0.3, rate).sim;
     };
     const [slow, fast] = [leaves(30), leaves(240)];
     expect(drawn(slow)).toEqual(drawn(fast));
@@ -171,7 +171,7 @@ describe("the motion", () => {
 
   it("never jumps what is drawn, from the bot to the line and home again", () => {
     const landed = run(three(), 1.5, 240);
-    const home = run(syncLitter(landed.sim, ["a", "c"], [], 2, place), 1.5, 240);
+    const home = run(syncLitter(landed.sim, ["a", "c"], [], false, place), 1.5, 240);
     let before: number | null = null;
     for (const frame of [...landed.frames, ...home.frames]) {
       const spot = spotOf(frame, "b");
@@ -186,13 +186,20 @@ describe("one that ends", () => {
   const landed = () => run(three(), 1.5).sim;
 
   it("jumps back up into the bot, which reaches for it and gulps it", () => {
-    const { sim, pokes } = run(syncLitter(landed(), ["a", "c"], [], 2, place), 1.5);
+    const { sim, pokes } = run(syncLitter(landed(), ["a", "c"], [], false, place), 1.5);
     expect(pokes).toEqual(["reach", "gulp"]);
     expect(sim.ones.map((each) => each.id).sort()).toEqual(["a", "c"]);
   });
 
+  it("keeps its line while it stands grey, so neither the next line nor what follows covers it", () => {
+    const failed = syncLitter(landed(), ["a", "c"], ["b"], false, place);
+    const { sim } = run(failed, litter.failed - 0.1);
+    expect(spotOf(sim, "c")?.y).toBe(rest(2));
+    expect(sim.height.x).toBeCloseTo(3 * place.row + litter.foot, 1);
+  });
+
   it("gives up its line: the ones below close up, and its words go as it sets off", () => {
-    const leaving = syncLitter(landed(), ["a", "c"], [], 2, place);
+    const leaving = syncLitter(landed(), ["a", "c"], [], false, place);
     expect(spotOf(leaving, "b")?.words).toBe(false);
     const { sim } = run(leaving, 1.5);
     expect(spotOf(sim, "c")?.y).toBe(rest(1));
@@ -200,7 +207,7 @@ describe("one that ends", () => {
   });
 
   it("stands grey a while when it failed, then goes home without a gulp", () => {
-    const failed = syncLitter(landed(), ["a", "c"], ["b"], 2, place);
+    const failed = syncLitter(landed(), ["a", "c"], ["b"], false, place);
     const waited = run(failed, litter.failed - 0.1);
     expect(spotOf(waited.sim, "b")).toMatchObject({ failed: true, words: true, y: rest(1) });
     expect(waited.pokes).toEqual([]);
@@ -211,19 +218,19 @@ describe("one that ends", () => {
 
   it("lands first when it ended on its way down", () => {
     const falling = run(three(), litter.lead + 0.05).sim;
-    const { frames, pokes } = run(syncLitter(falling, ["a", "b"], [], 2, place), 2.5, 240);
+    const { frames, pokes } = run(syncLitter(falling, ["a", "b"], [], false, place), 2.5, 240);
     expect(frames.some((frame) => spotOf(frame, "c")?.y === rest(2))).toBe(true);
     expect(pokes.at(-1)).toBe("gulp");
   });
 
   it("never comes out when it ended before its turn to", () => {
-    const { sim, pokes } = run(syncLitter(three(), ["b", "c"], [], 2, place), 2);
+    const { sim, pokes } = run(syncLitter(three(), ["b", "c"], [], false, place), 2);
     expect(pokes.filter((poke) => poke === "pop")).toHaveLength(2);
     expect(sim.ones.map((each) => each.id).sort()).toEqual(["b", "c"]);
   });
 
   it("has its brothers look up after it", () => {
-    const leaving = syncLitter(landed(), ["a", "c"], [], 2, place);
+    const leaving = syncLitter(landed(), ["a", "c"], [], false, place);
     const watching = run(leaving, 0.4).sim;
     const a = watching.ones.find((each) => each.id === "a");
     expect(a === undefined ? 0 : littleFace(a, watching.time).gazeY).toBeLessThan(-0.5);
@@ -232,24 +239,26 @@ describe("one that ends", () => {
 
 describe("a family that is simply there", () => {
   it("stands at its lines when a conversation opens on it, and the bot does nothing", () => {
-    const there = createLitter(["a", "b"], 2, place);
+    const there = createLitter(["a", "b"], false, place);
     expect(there.ones.map((each) => littleSpot(each).y)).toEqual([rest(0), rest(1)]);
     expect(run(there, 1).pokes).toEqual([]);
     expect(litterTravels(there)).toBe(false);
   });
 
   it("settles at once without travel, and keeps one that failed while asked to", () => {
-    const failed = syncLitter(run(three(), 1.5).sim, ["a", "d"], ["b"], 2, place);
+    const failed = syncLitter(run(three(), 1.5).sim, ["a", "d"], ["b"], false, place);
     const held = settleLitter(failed, place, true);
     expect(held.ones.map((each) => [each.id, littleSpot(each).failed]).sort()).toEqual([
       ["a", false],
       ["b", true],
       ["d", false],
     ]);
-    expect(spotOf(held, "d")?.y).toBe(rest(1));
+    // The one that failed keeps its line while it stands there: the new one takes the next.
+    expect(spotOf(held, "d")?.y).toBe(rest(2));
     expect(litterPokes(failed, held)).toEqual([]);
-    const let_go = settleLitter(held, place, false);
-    expect(let_go.ones.map((each) => each.id).sort()).toEqual(["a", "d"]);
-    expect(let_go.height.x).toBe(2 * place.row + litter.foot);
+    const released = settleLitter(held, place, false);
+    expect(released.ones.map((each) => each.id).sort()).toEqual(["a", "d"]);
+    expect(spotOf(released, "d")?.y).toBe(rest(1));
+    expect(released.height.x).toBe(2 * place.row + litter.foot);
   });
 });

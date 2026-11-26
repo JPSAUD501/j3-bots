@@ -7,7 +7,8 @@
  * still:
  *
  * - an avatar scrolled out of view (IntersectionObserver) is not stepped;
- * - an avatar at list size, under 44 px, steps every other frame;
+ * - an avatar at list size, under 44 px, steps every other frame, unless
+ *   something of it travels (`everyFrame`);
  * - at most `MAX_MOVING` avatars move at once, the largest first; the others
  *   hold their still form until one stops, and draw it again when their state
  *   changes;
@@ -35,6 +36,12 @@ export interface Animated {
   readonly step: (dt: number, near: AvatarNear | null) => void;
   /** Draws its still form. */
   readonly still: () => void;
+  /**
+   * Whether it steps on every frame whatever its size: something of it
+   * travels, as a little one on its way out of its bot, which half the frames
+   * would draw in jumps.
+   */
+  readonly everyFrame?: () => boolean;
 }
 
 /** An avatar on the loop, as its owner drives it. */
@@ -206,7 +213,10 @@ function loop(now: number) {
   if (driving) rectsStale = true;
 
   for (const entry of moving) {
-    const half = entry.avatar.size < LIST_SIZE && (frame + entry.order) % 2 === 1;
+    const half =
+      entry.avatar.size < LIST_SIZE &&
+      (frame + entry.order) % 2 === 1 &&
+      entry.avatar.everyFrame?.() !== true;
     if (half) {
       entry.owed += dt;
       continue;

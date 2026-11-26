@@ -137,6 +137,8 @@ export interface LitterSim {
   /** How tall the family's block is: it rides `slide`, so what follows it never jumps. */
   readonly height: SpringState;
   readonly heightTo: number;
+  /** Whether a line under the last one counts those not shown, "+2 more": the block makes room for it. */
+  readonly more: boolean;
   /** When the next one may come out: they follow one another `litter.gap` apart. */
   readonly nextPop: number;
   /** What has happened that the bot answers, counted (`litterPokes`). */
@@ -343,13 +345,57 @@ function heightOf(lines: number, place: LitterPlace): number {
 }
 
 /**
+ * Whether `one` takes a line: from when it is bound for one until it jumps
+ * home. One that failed keeps its line while it stands grey, and one that
+ * ducks before its jump still has it, so its words are gone before the lines
+ * below close up.
+ */
+function takesLine(one: LittleSim): boolean {
+  "worklet";
+  return one.stage !== "rising" && one.stage !== "gone";
+}
+
+/** How many lines the family's little ones take now. */
+export function litterLines(sim: LitterSim): number {
+  "worklet";
+  let lines = 0;
+  for (const one of sim.ones) if (takesLine(one)) lines += 1;
+  return lines;
+}
+
+/**
+ * `sim` with each one that takes a line given its place among them, top to
+ * bottom in the order they stand, and the block as tall as holds them. One
+ * that has yet to come out is bound for its line from the start; the others
+ * travel to theirs.
+ */
+function arrange(sim: LitterSim, place: LitterPlace): LitterSim {
+  "worklet";
+  // A stable order: one that joins comes after those already there.
+  const order = sim.ones
+    .filter(takesLine)
+    .map((one, index) => ({ id: one.id, at: one.slotTo, index }));
+  order.sort((a, b) => a.at - b.at || a.index - b.index);
+  const ones = sim.ones.map((one) => {
+    let line = -1;
+    for (let i = 0; i < order.length; i++) if (order[i]?.id === one.id) line = i;
+    if (line === -1 || !takesLine(one)) return one;
+    const slotTo = line * place.row;
+    return one.stage === "queued"
+      ? { ...one, slotTo, slot: { x: slotTo, v: 0 } }
+      : { ...one, slotTo };
+  });
+  return { ...sim, ones, heightTo: heightOf(order.length + (sim.more ? 1 : 0), place) };
+}
+
+/**
  * A family whose `working` little ones are simply there, at their lines: what
  * a conversation opened on a turn under way shows, and what reduced motion
- * shows. `lines` is how many lines the family takes, a "+N more" line counted.
+ * shows. `more` when a line under them counts those not shown.
  */
 export function createLitter(
   working: ReadonlyArray<string>,
-  lines: number,
+  more: boolean,
   place: LitterPlace,
 ): LitterSim {
   "worklet";
@@ -358,12 +404,13 @@ export function createLitter(
     const id = working[i];
     if (id !== undefined) ones.push(standing(conceive(id, i * place.row, 0, place), 0, place));
   }
-  const height = heightOf(lines, place);
+  const height = heightOf(ones.length + (more ? 1 : 0), place);
   return {
     time: 0,
     ones,
     height: { x: height, v: 0 },
     heightTo: height,
+    more,
     nextPop: 0,
     braces: 0,
     pops: 0,
@@ -373,7 +420,7 @@ export function createLitter(
   };
 }
 
-/** Whether `one` is on its way out: it keeps the line it had, and takes none. */
+/** Whether `one` is on its way out: ducking before its jump, in the air, or home. */
 function leaving(one: LittleSim): boolean {
   "worklet";
   return one.stage === "ducking" || one.stage === "rising" || one.stage === "gone";
@@ -389,13 +436,14 @@ function leaving(one: LittleSim): boolean {
  *   another.
  * - One that no longer works goes home: grey first if it failed. One still on
  *   its way down lands first; one that had not come out yet never does.
- * - The lines close up over one that left, and the block makes room.
+ * - The lines close up over one that left once it has jumped, and the block
+ *   makes room: `more` when a line under them counts those not shown.
  */
 export function syncLitter(
   sim: LitterSim,
   working: ReadonlyArray<string>,
   failed: ReadonlyArray<string>,
-  lines: number,
+  more: boolean,
   place: LitterPlace,
 ): LitterSim {
   "worklet";
@@ -441,20 +489,26 @@ export function syncLitter(
     const index = fresh[n];
     const id = index === undefined ? undefined : working[index];
     if (index === undefined || id === undefined) continue;
-    ones.push(conceive(id, index * place.row, nextPop, place));
+    // Bound for the line after the ones that stand, in its own order among the new.
+    ones.push(conceive(id, (sim.ones.length + index) * place.row, nextPop, place));
     nextPop += litter.gap;
   }
-  // Each one that stays takes the line of its place among those that work.
-  const placed = ones.map((one) => {
-    const index = working.indexOf(one.id);
-    const stays = index !== -1 && !leaving(one) && one.end === "no";
-    const watching =
-      watch && one.stage === "working" && one.end === "no"
-        ? { ...one, watchUntil: at + litter.watch }
-        : one;
-    return stays ? { ...watching, slotTo: index * place.row } : watching;
-  });
-  return { ...sim, ones: placed, heightTo: heightOf(lines, place), nextPop, braces };
+  // Its brothers look up after one that goes home having done its part.
+  const watching = ones.map((one) =>
+    watch && one.stage === "working" && one.end === "no"
+      ? { ...one, watchUntil: at + litter.watch }
+      : one,
+  );
+  return arrange({ ...sim, ones: watching, more, nextPop, braces }, place);
+}
+
+/**
+ * `sim` once the turn is over: the bot's face has left the turn's row, so its
+ * family goes with it, at once, and the block closes behind them on `slide`.
+ */
+export function dismissLitter(sim: LitterSim): LitterSim {
+  "worklet";
+  return { ...sim, ones: [], heightTo: 0, more: false, nextPop: sim.time };
 }
 
 /** `sim` with the little one `id` perked up: the pointer came over it, or a finger. */
@@ -646,11 +700,11 @@ function move(one: LittleSim, from: number, to: number, place: LitterPlace): Lit
   };
 }
 
-/** `sim` after `dt` seconds: every little one moved through whatever stages the time covers. */
-export function stepLitter(sim: LitterSim, dt: number, place: LitterPlace): LitterSim {
+/** `sim` moved on to the time `T`: every little one through whatever stages that covers. */
+function stepTo(sim: LitterSim, T: number, place: LitterPlace): LitterSim {
   "worklet";
   const start = sim.time;
-  const T = start + dt;
+  const dt = T - start;
   const did: Happened = { pops: 0, leaps: 0, gulps: 0, sulks: 0 };
   const ones: Array<LittleSim> = [];
   for (const born of sim.ones) {
@@ -667,7 +721,7 @@ export function stepLitter(sim: LitterSim, dt: number, place: LitterPlace): Litt
     if (one.stage !== "gone") ones.push(one);
   }
   const { frequency, damping } = springs.slide;
-  return {
+  const stepped: LitterSim = {
     ...sim,
     time: T,
     ones,
@@ -677,6 +731,29 @@ export function stepLitter(sim: LitterSim, dt: number, place: LitterPlace): Litt
     gulps: sim.gulps + did.gulps,
     sulks: sim.sulks + did.sulks,
   };
+  // One that jumped gave up its line: the ones below close up, and the block with them.
+  return did.leaps > 0 ? arrange(stepped, place) : stepped;
+}
+
+/**
+ * `sim` after `dt` seconds. A jump home frees a line, which the ones below
+ * start to close at that moment and not at the frame's end: the step is taken
+ * up to each jump in turn, so the lines move the same at any frame rate.
+ */
+export function stepLitter(sim: LitterSim, dt: number, place: LitterPlace): LitterSim {
+  "worklet";
+  const T = sim.time + dt;
+  let current = sim;
+  for (let pass = 0; pass < 6 && current.time < T - 1e-6; pass++) {
+    let until = T;
+    for (const one of current.ones) {
+      if (one.stage === "ducking" && one.due > current.time + 1e-6 && one.due < until) {
+        until = one.due;
+      }
+    }
+    current = stepTo(current, until, place);
+  }
+  return current.time === T ? current : stepTo(current, T, place);
 }
 
 /**
@@ -707,7 +784,16 @@ export function settleLitter(sim: LitterSim, place: LitterPlace, holdFailed: boo
       });
     }
   }
-  return { ...sim, ones, height: { x: sim.heightTo, v: 0 }, nextPop: sim.time };
+  const settled = arrange({ ...sim, ones, nextPop: sim.time }, place);
+  return {
+    ...settled,
+    ones: settled.ones.map((one) => ({
+      ...one,
+      slot: { x: one.slotTo, v: 0 },
+      y: restAt(one.slotTo, place),
+    })),
+    height: { x: settled.heightTo, v: 0 },
+  };
 }
 
 /**

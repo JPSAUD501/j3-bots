@@ -51,7 +51,9 @@ export {
 } from "./avatar.ts";
 export {
   createLitter,
+  dismissLitter,
   type LitterPlace,
+  litterLines,
   litterPokes,
   type LitterSim,
   litterStrands,
@@ -80,6 +82,7 @@ export {
   type PlanWindow,
   shownPlan,
 } from "./plan.ts";
+export { type MemberWork, roomMemberWork, showsTurnWork } from "./roomWork.ts";
 export {
   type BotEdits,
   botPatch,

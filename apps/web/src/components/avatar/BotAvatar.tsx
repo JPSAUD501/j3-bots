@@ -19,6 +19,7 @@ import {
   avatarShapes,
   avatarSignals,
   avatarViewBox,
+  littleFace,
   matrixAttribute,
   resolveAvatar,
   roomAvatarShare,
@@ -76,7 +77,11 @@ export interface BotAvatarProps {
   readonly ref?: Ref<AvatarHandle>;
 }
 
-const VIEW_BOX = `${avatarViewBox.x} ${avatarViewBox.y} ${avatarViewBox.size} ${avatarViewBox.size}`;
+/** The part of the avatar's 100-unit box an avatar's SVG frames, as its `viewBox`. */
+export const AVATAR_VIEW_BOX = `${avatarViewBox.x} ${avatarViewBox.y} ${avatarViewBox.size} ${avatarViewBox.size}`;
+
+/** A body's rim, its stalk and its tip: the body's color, unless a little one sets its own. */
+const RIM = "var(--avatar-rim, var(--avatar-body))";
 
 /** The SVG elements a frame writes to. */
 interface Parts {
@@ -135,7 +140,7 @@ function partsOf(svg: SVGSVGElement): Parts {
 }
 
 const LIGHT = {
-  body: "var(--avatar-body)",
+  body: RIM,
   waiting: "var(--waiting)",
   blocked: "var(--blocked)",
   foreground: "var(--foreground)",
@@ -144,10 +149,16 @@ const LIGHT = {
 const n = (value: number) => String(Math.round(value * 100) / 100);
 
 /**
- * Draws faces into one avatar's SVG, writing only the attributes that changed
- * since the last frame.
+ * Draws faces into one avatar's SVG (`AvatarParts`), writing only the
+ * attributes that changed since the last frame; `little` for one of a bot's
+ * little ones.
  */
-function painter(svg: SVGSVGElement, size: () => number, shape: () => AvatarShapeName) {
+export function painter(
+  svg: SVGSVGElement,
+  size: () => number,
+  shape: () => AvatarShapeName,
+  little = false,
+) {
   const parts = partsOf(svg);
   const written = new WeakMap<Element, Map<string, string>>();
   const set = (element: Element, name: string, value: string) => {
@@ -161,7 +172,7 @@ function painter(svg: SVGSVGElement, size: () => number, shape: () => AvatarShap
     element.setAttribute(name, value);
   };
   return (face: AvatarFace) => {
-    const f = avatarFrame(shape(), face, size());
+    const f = avatarFrame(shape(), face, size(), little);
     const p = parts;
     set(svg, "data-signal", face.signal ?? "none");
     set(svg, "data-asleep", face.asleep ? "true" : "false");
@@ -337,6 +348,90 @@ function mountAvatar(
 }
 
 /**
+ * The parts of an avatar a `painter` draws faces into, inside an SVG framed by
+ * `AVATAR_VIEW_BOX`: the bot's own, or, `little`, one of its little ones',
+ * whose body is the bot's silhouette with a wider rim. The body is filled with
+ * `--avatar-body`; its rim, its stalk and its tip take `--avatar-rim`, which is
+ * the body's color unless set.
+ */
+export function AvatarParts({
+  shape,
+  cutout = false,
+  little = false,
+}: {
+  readonly shape: AvatarShapeName;
+  readonly cutout?: boolean;
+  readonly little?: boolean;
+}) {
+  const body = avatarShapes[shape];
+  return (
+    <g data-part="body">
+      {cutout && (
+        <path
+          d={body.path}
+          fill="none"
+          stroke="var(--avatar-cutout, var(--background))"
+          strokeWidth={body.outline + 12}
+          strokeLinejoin="round"
+        />
+      )}
+      <path data-part="stalk" fill="none" stroke={RIM} strokeLinecap="round" />
+      <path
+        d={body.path}
+        fill="var(--avatar-body)"
+        stroke={RIM}
+        strokeWidth={body.outline + (little ? littleFace.outline : 0)}
+        strokeLinejoin="round"
+      />
+      <g data-part="eye">
+        <g data-part="lens">
+          <circle r={AVATAR_EYE} fill={avatarEye.lens} />
+          <circle data-part="pupil" fill={avatarEye.pupil} />
+          <circle data-part="glint" fill={avatarEye.lens} opacity={0.92} />
+          <path data-part="cheek" fill="var(--avatar-body)" />
+          <path data-part="upper-lid" fill="var(--avatar-body)" />
+          <path data-part="lower-lid" fill="var(--avatar-body)" />
+        </g>
+        <path data-part="arc" fill="none" stroke={avatarEye.lens} strokeLinecap="round" />
+      </g>
+      <ellipse data-part="mouth" rx={5.2} fill={avatarEye.pupil} />
+      <circle data-part="light-cut" fill="var(--avatar-cutout, var(--background))" />
+      <g data-part="signal" fill="none" strokeWidth={avatarSignals.stroke} strokeLinecap="round">
+        <g className="avatar-signal" data-signal-of="ring">
+          <circle
+            data-part="ring"
+            r={avatarSignals.ring.r}
+            stroke="var(--avatar-body)"
+            strokeDasharray={avatarSignals.ring.dash.join(" ")}
+          />
+        </g>
+        <g className="avatar-signal" data-signal-of="ping">
+          <circle data-part="ping" stroke="var(--waiting)" />
+        </g>
+        <g className="avatar-signal" data-signal-of="arcs" stroke="var(--avatar-body)">
+          {avatarSignals.arcs.map((d, i) => (
+            <path key={d} data-part={`arc-${i}`} d={d} />
+          ))}
+        </g>
+        <g className="avatar-signal" data-signal-of="dots" fill="var(--avatar-body)">
+          {avatarSignals.dots.map((dot, i) => (
+            <circle
+              key={`${dot.x} ${dot.y}`}
+              data-part={`dot-${i}`}
+              cx={dot.x}
+              cy={dot.y}
+              r={dot.r}
+            />
+          ))}
+        </g>
+      </g>
+      <circle data-part="halo" fill="none" strokeWidth={1.6} visibility="hidden" />
+      <circle data-part="light" />
+    </g>
+  );
+}
+
+/**
  * A bot's face: its silhouette in its color, one lens eye, and an antenna
  * whose tip is the status light. It lives on the page's shared frame loop
  * (`ticker.ts`): it blinks, glances, breathes and moves the way its state
@@ -391,13 +486,12 @@ export function BotAvatar({
   useImperativeHandle(ref, () => ({ poke: (poke) => controller.current?.poke(poke) }), []);
 
   const style = { "--avatar-body": `var(--bot-${color})` } as CSSProperties;
-  const body = avatarShapes[shape];
   return (
     <svg
       ref={svgRef}
       width={size}
       height={size}
-      viewBox={VIEW_BOX}
+      viewBox={AVATAR_VIEW_BOX}
       className={cn("avatar shrink-0 overflow-visible", className)}
       style={style}
       {...(label === undefined ? { "aria-hidden": true } : { role: "img", "aria-label": label })}
@@ -411,69 +505,7 @@ export function BotAvatar({
       onPointerLeave={() => controller.current?.poke("release")}
       onPointerCancel={() => controller.current?.poke("release")}
     >
-      <g data-part="body">
-        {cutout && (
-          <path
-            d={body.path}
-            fill="none"
-            stroke="var(--avatar-cutout, var(--background))"
-            strokeWidth={body.outline + 12}
-            strokeLinejoin="round"
-          />
-        )}
-        <path data-part="stalk" fill="none" stroke="var(--avatar-body)" strokeLinecap="round" />
-        <path
-          d={body.path}
-          fill="var(--avatar-body)"
-          stroke="var(--avatar-body)"
-          strokeWidth={body.outline}
-          strokeLinejoin="round"
-        />
-        <g data-part="eye">
-          <g data-part="lens">
-            <circle r={AVATAR_EYE} fill={avatarEye.lens} />
-            <circle data-part="pupil" fill={avatarEye.pupil} />
-            <circle data-part="glint" fill={avatarEye.lens} opacity={0.92} />
-            <path data-part="cheek" fill="var(--avatar-body)" />
-            <path data-part="upper-lid" fill="var(--avatar-body)" />
-            <path data-part="lower-lid" fill="var(--avatar-body)" />
-          </g>
-          <path data-part="arc" fill="none" stroke={avatarEye.lens} strokeLinecap="round" />
-        </g>
-        <ellipse data-part="mouth" rx={5.2} fill={avatarEye.pupil} />
-        <circle data-part="light-cut" fill="var(--avatar-cutout, var(--background))" />
-        <g data-part="signal" fill="none" strokeWidth={avatarSignals.stroke} strokeLinecap="round">
-          <g className="avatar-signal" data-signal-of="ring">
-            <circle
-              data-part="ring"
-              r={avatarSignals.ring.r}
-              stroke="var(--avatar-body)"
-              strokeDasharray={avatarSignals.ring.dash.join(" ")}
-            />
-          </g>
-          <g className="avatar-signal" data-signal-of="ping">
-            <circle data-part="ping" stroke="var(--waiting)" />
-          </g>
-          <g className="avatar-signal" data-signal-of="arcs" stroke="var(--avatar-body)">
-            {avatarSignals.arcs.map((d, i) => (
-              <path key={d} data-part={`arc-${i}`} d={d} />
-            ))}
-          </g>
-          <g className="avatar-signal" data-signal-of="dots" fill="var(--avatar-body)">
-            {avatarSignals.dots.map((dot, i) => (
-              <circle
-                key={`${dot.x} ${dot.y}`}
-                data-part={`dot-${i}`}
-                cx={dot.x}
-                cy={dot.y}
-                r={dot.r}
-              />
-            ))}
-          </g>
-        </g>
-        <circle data-part="halo" fill="none" strokeWidth={1.6} visibility="hidden" />
-        <circle data-part="light" />
-      </g>
+      <AvatarParts shape={shape} cutout={cutout} />
     </svg>
   );
 }

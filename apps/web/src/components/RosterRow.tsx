@@ -5,7 +5,7 @@ import type { Avatar, BotId, RosterItem } from "@j3-bots/contracts";
 import { needsOperator } from "@j3-bots/client-runtime";
 import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import { resolveAvatar, stage } from "@j3-bots/design-tokens";
+import { type BotColor, litter, resolveAvatar, stage } from "@j3-bots/design-tokens";
 import type { ComponentProps, CSSProperties, Ref } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
@@ -48,6 +48,32 @@ const entranceStyle = (color: string): CSSProperties & Record<`--row-${string}`,
   "--row-light": `${stage.rowLight}ms`,
   "--row-words": `${stage.rowWords}ms`,
 });
+
+/** Where each of a 40 px avatar's dots stands: along its lower left edge, clear of the primary bot's star at the other corner. */
+const DOT_PLACES = Array.from({ length: litter.most }, (_, i) => {
+  const angle = ((118 + i * 21) * Math.PI) / 180;
+  return { left: 15.5 + Math.cos(angle) * 22, top: 17.5 + Math.sin(angle) * 22 };
+});
+
+/**
+ * While a bot is split, one tiny dot for each of its little ones at work,
+ * by its avatar, four at most. Nothing more: what they do is in its
+ * conversation. A dot pops in as one starts and away as one ends.
+ */
+function LittleDots({ count, color }: { readonly count: number; readonly color: BotColor }) {
+  const { plural } = useI18n();
+  return (
+    <span
+      className="little-dots"
+      style={{ "--avatar-body": `var(--bot-little-${color})` } as CSSProperties}
+    >
+      {DOT_PLACES.map((place, i) => (
+        <span key={place.top} aria-hidden data-on={i < count} style={place} />
+      ))}
+      {count > 0 && <span className="sr-only">{plural("littleOnes.label", count)}</span>}
+    </span>
+  );
+}
 
 /**
  * One bot or room in the roster: avatar, name, time, and one line of status.
@@ -95,6 +121,12 @@ export function RosterRow({
           </PrimaryBadge>
         ) : (
           <RoomAvatar members={memberAvatars} size={40} entrance={entrance} />
+        )}
+        {item._tag === "bot" && (
+          <LittleDots
+            count={item.bot.state._tag === "working" ? item.bot.state.littleOnes : 0}
+            color={resolveAvatar(item.bot.profile.avatar).color}
+          />
         )}
       </span>
       <span className={cn("flex min-w-0 flex-1 flex-col", entrance && "row-words")}>
