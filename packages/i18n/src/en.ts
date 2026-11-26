@@ -800,7 +800,7 @@ export const en = {
   "provider.notInstalled.here": "Not installed on this computer",
   "provider.notInstalled.server": "Not installed on the server",
   "provider.failed": "Found, but it failed to start",
-  "provider.timedOut": "Its check took too long. Checking again {when}",
+  "provider.timedOut": "Its check took too long. J3 Bots checks again on its own",
   "provider.disabled": "Turned off on the server",
   "provider.retry": "Try again",
   "provider.recheckFailed": "Couldn’t reach the engine. Try again in a moment.",

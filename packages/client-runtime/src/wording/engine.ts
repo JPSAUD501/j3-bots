@@ -8,7 +8,6 @@ import type {
   UnavailableReason,
 } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
-import * as DateTime from "effect/DateTime";
 import { usageLimitText } from "./status.ts";
 import { type TimeContext, timeInSentence } from "./time.ts";
 
@@ -107,14 +106,7 @@ export function providerLine(
     case "unavailable":
       if (status.checking) return { text: t("provider.checking"), tone: "waiting" };
       // Its check timed out, and the server checks it again on its own.
-      if (status.retryAt !== undefined) {
-        return DateTime.isLessThanOrEqualTo(status.retryAt, ctx.now)
-          ? { text: t("provider.checking"), tone: "waiting" }
-          : {
-              text: t("provider.timedOut", { when: timeInSentence(status.retryAt, ctx) }),
-              tone: "waiting",
-            };
-      }
+      if (status.retryAt !== undefined) return { text: t("provider.timedOut"), tone: "waiting" };
       return unavailableLine(status.reason, place, ctx);
   }
 }

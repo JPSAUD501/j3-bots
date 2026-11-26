@@ -219,23 +219,22 @@ describe("providerLine", () => {
     expect(line(unavailable("unknown")).text).toBe("Not available right now");
   });
 
-  it("says when the server checks again a provider whose check timed out", () => {
-    const timedOut = (retryAt: string) => ({
+  it("says the server checks again on its own a provider whose check timed out", () => {
+    const timedOut = {
       status: {
         _tag: "unavailable",
         checking: false,
         reason: "failed",
-        retryAt: at(retryAt),
-      } as const,
+        retryAt: at("2026-11-20T17:40:15Z"),
+      },
+    } as const;
+    expect(line(timedOut)).toEqual({
+      text: "Its check took too long. J3 Bots checks again on its own",
+      tone: "waiting",
     });
-    const due = line(timedOut("2026-11-20T17:40:15Z"));
-    expect(plain(due.text)).toBe("Its check took too long. Checking again at 2:40 PM");
-    expect(due.tone).toBe("waiting");
-    expect(providerLine(provider(timedOut("2026-11-20T17:40:15Z")), pt, "server").text).toBe(
-      "A verificação demorou demais. Verificando de novo às 14:40",
+    expect(providerLine(provider(timedOut), pt, "server").text).toBe(
+      "A verificação demorou demais. O J3 Bots verifica de novo sozinho",
     );
-    // Its time has come: that check is under way.
-    expect(line(timedOut("2026-11-20T17:39:50Z"))).toEqual({ text: "Checking…", tone: "waiting" });
   });
 });
 
