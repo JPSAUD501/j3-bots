@@ -93,6 +93,15 @@ const narrowOf = (round: Round): Narrow | null => {
   return null;
 };
 
+/** A steer the engine took for a turn that has ended, and never settled (`Stops.observe`). */
+const Unsettled = Schema.Struct({
+  id: DispatchRowId,
+  bot_id: BotId,
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
+  seq: DispatchSeq,
+});
+
 const Fenced = Schema.Struct({
   id: DispatchRowId,
   bot_id: BotId,
@@ -961,6 +970,44 @@ export const layer = Layer.effect(
      * round's grace passed gets a fresh round (`stopTargets.recheck`): the
      * rule holds by the runner's own deadlines, whatever the events say.
      */
+    /**
+     * The engine settles a steer after the turn it rode ends: taken, dropped
+     * or requeued as a turn of its own. A report that shows nothing it can
+     * run, with every event it had applied, leaves nothing to settle one the
+     * engine took for a turn that has ended and never settled, as an engine
+     * fault can leave it: it would stay accepted, and the session's Stop
+     * unconfirmable. It fails as the engine dropping it would (`wakesAfter`),
+     * cancelled when a Stop covers it and `stopped`, retryable, otherwise,
+     * and as `unresolved`, so a settlement that arrives after all is still
+     * applied to it (`Observer`) and its key's landing reopens a Stop.
+     */
+    const settleOrphanedSteers = Effect.fn("Stops.settleOrphanedSteers")(function* (
+      sessionId: SessionRowId,
+    ) {
+      const orphaned = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Unsettled,
+        execute: () => sql`
+          SELECT os_dispatch.id, os_dispatch.bot_id, os_dispatch.audience,
+            os_dispatch.audience_room_id, os_dispatch.seq
+          FROM dispatches os_dispatch
+          WHERE os_dispatch.session_id = ${sessionId} AND os_dispatch.status = 'accepted'
+            AND os_dispatch.delivery = 'steer' AND EXISTS (
+              SELECT 1 FROM turns os_turn
+              WHERE os_turn.session_id = os_dispatch.session_id
+                AND os_turn.engine_turn_id = COALESCE(
+                  os_dispatch.engine_turn_id, os_dispatch.steer_turn_id
+                )
+                AND os_turn.finished_at IS NOT NULL
+            )
+        `,
+      })(undefined);
+      for (const steer of orphaned) {
+        yield* Effect.logWarning("The engine never settled a steer whose turn ended");
+        yield* ledger.abandon(steer.id, yield* targets.wakesAfter(steer, { _tag: "dropped" }));
+      }
+    }, Effect.orDie);
+
     const observe = Effect.fn("Stops.observe")(function* (
       sessionId: SessionRowId,
       engineSessionId: SessionId,
@@ -1009,6 +1056,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const at = timeText(yield* DateTime.now);
           if (!engineShows) {
+            yield* settleOrphanedSteers(sessionId);
             for (const round of sent) {
               yield* sql`
                 UPDATE stop_targets SET observed_at = ${at}

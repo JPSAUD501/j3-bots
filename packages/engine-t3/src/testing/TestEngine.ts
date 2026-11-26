@@ -319,6 +319,14 @@ export class TestEngineControl extends Context.Service<
      */
     readonly dropNextMarker: Effect.Effect<{ readonly requested: Effect.Effect<void> }>;
     /**
+     * The next turn to end with steers on it settles none of them, as an
+     * engine fault would leave them: no `steered`, `steer-dropped` or
+     * `steer-requeued` reaches the streams, a replacement lists none, and
+     * none becomes a turn. `release` sends each settlement late: `steered`
+     * for a steer the agent read, `steer-dropped` for any other.
+     */
+    readonly withholdNextSteerSettlements: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
      * The next `stop` takes effect before it answers, and then background
      * work starts a turn in the session, which the stop missed: as when a run
      * begins between a Stop's commands. `started` gives that turn once the
@@ -526,7 +534,17 @@ interface SteerRecord {
   readonly key: IdempotencyKey;
   /** Turns waiting when the steer was sent: a follow-up turn runs after these. */
   readonly queuedAhead: ReadonlyArray<TurnId>;
-  state: "unread" | "read" | "dropped" | "requeued";
+  /** `withheld`: its turn ended, and the engine settled it with no event (`withholdNextSteerSettlements`). */
+  state: "unread" | "read" | "dropped" | "requeued" | "withheld";
+}
+
+/** A steer whose settlement the engine kept back, to send late. */
+interface WithheldSteer {
+  readonly session: SessionRecord;
+  readonly turnId: TurnId;
+  readonly steer: SteerRecord;
+  /** Whether the agent read it before its turn ended: it settles as `steered`, else `steer-dropped`. */
+  readonly read: boolean;
 }
 
 interface ToolCallRecord {
@@ -684,6 +702,8 @@ const make = Effect.gen(function* () {
   >();
   let stopEffects: Deferred.Deferred<void> | null = null;
   let droppedMarker: Deferred.Deferred<void> | null = null;
+  /** The steers whose settlements the next turn's end keeps back, once armed. */
+  let withholding: Array<WithheldSteer> | null = null;
   let turnDuringStop: {
     readonly sessionId: SessionId;
     readonly started: Deferred.Deferred<TurnId>;
@@ -1003,7 +1023,13 @@ const make = Effect.gen(function* () {
     clearEmptyHold(session);
     const settlements: Array<(stamp: { cursor: EventCursor; at: DateTime.Utc }) => SessionEvent> =
       [];
+    const withheld = withholding;
     for (const steer of turn.steers) {
+      if (withheld !== null && (steer.state === "read" || steer.state === "unread")) {
+        withheld.push({ session, turnId: turn.turnId, steer, read: steer.state === "read" });
+        steer.state = "withheld";
+        continue;
+      }
       if (steer.state === "read") {
         settlements.push((stamp) => ({
           _tag: "steered",
@@ -1040,6 +1066,8 @@ const make = Effect.gen(function* () {
         }));
       }
     }
+    // Only the first turn to end with steers keeps theirs back.
+    if (withheld !== null && withheld.length > 0) withholding = null;
     turn.ended = { outcome, at, continuation };
     emit(session, at, (stamp) => ({
       _tag: "turn-finished",
@@ -2014,6 +2042,25 @@ const make = Effect.gen(function* () {
       const requested = yield* Deferred.make<void>();
       droppedMarker = requested;
       return { requested: Deferred.await(requested) };
+    }),
+
+    withholdNextSteerSettlements: Effect.sync(() => {
+      const withheld: Array<WithheldSteer> = [];
+      withholding = withheld;
+      return {
+        release: Effect.gen(function* () {
+          const at = yield* DateTime.now;
+          for (const { session, turnId, steer, read } of withheld.splice(0)) {
+            steer.state = read ? "read" : "dropped";
+            emit(session, at, (stamp) => ({
+              _tag: read ? "steered" : "steer-dropped",
+              ...stamp,
+              key: steer.key,
+              turnId,
+            }));
+          }
+        }),
+      };
     }),
 
     startEngineTurnDuringNextStop: (sessionId) =>
