@@ -607,6 +607,57 @@ describe("references to secrets in a connector's settings", () => {
     SLOW,
   );
 
+  const REFUSED = "A command takes a variable that decides which code runs from a secret";
+  it.live(
+    "never starts a saved command whose variable that decides which code runs takes a secret",
+    () =>
+      Effect.gen(function* () {
+        logged.length = 0;
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        yield* connectors.add({
+          id: ID,
+          source: {
+            _tag: "command",
+            name: "Notes",
+            command: process.execPath,
+            args: [Redacted.make(STDIO_SERVER)],
+            env: [
+              {
+                name: EnvName.make("FIXTURE_SECRET"),
+                value: Redacted.make(`\${secret:${TOKEN}}`),
+              },
+            ],
+          },
+          grant: grantTo(ana),
+          by: operator,
+        });
+        yield* awaitConnector(listed);
+        // As a version that took one saved it: the server refuses such a command line now.
+        const sealed = yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID));
+        if (Option.isNone(sealed)) return assert.fail("The connector's secret was not kept");
+        yield* secrets.connectorSecrets.put({
+          ...sealed.value,
+          env: [
+            ...sealed.value.env,
+            { name: "PYTHONPATH", value: Redacted.make(`\${secret:${TOKEN}}`) },
+          ],
+        });
+
+        // The secret's new value stops the process; none starts with it in its place.
+        yield* secrets.update({ id: TOKEN_ID, changes: { value: Redacted.make(NEW_VALUE) } });
+        const refused = connectors
+          .call({ botId: ana, name: "notes__whoami", arguments: {} })
+          .pipe(Effect.map((answer) => answer.isError && JSON.stringify(logged).includes(REFUSED)));
+        yield* eventually(refused);
+        // The operator is told it was refused, not that it stopped.
+        yield* awaitConnector(
+          (connector) =>
+            connector.status._tag === "failing" && connector.status.reason === "command-refused",
+        );
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
   it.live(
     "resolves a bot's session for the bots the connector goes to now, not when the session opened",
     () =>

@@ -1934,6 +1934,10 @@ const sentences = {
     "O programa dele parou sozinho, ou não conseguiu iniciar. O J3 Bots o inicia de novo na próxima vez que um bot o usar, esperando mais a cada vez que ele para.",
   "connector.status.commandExited.next":
     "Confira o comando e as variáveis dele. Executá-lo você mesmo naquele computador mostra por que ele para.",
+  "connector.status.commandRefused":
+    "O J3 Bots não inicia o comando dele como está salvo: uma verificação que ele faz antes de cada início o recusa.",
+  "connector.status.commandRefused.next":
+    "Altere o comando e confirme de novo. Uma variável que decide qual código roda precisa do valor digitado, não de um segredo.",
   "connector.status.since": "Começou {when}.",
   "connector.status.secretsUnavailableDetail":
     "O acesso dele está nos seus segredos, que não podem ser lidos agora. Abra Configurações → Segredos para ver por quê.",

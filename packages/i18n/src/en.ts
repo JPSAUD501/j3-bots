@@ -1905,6 +1905,10 @@ export const en = {
     "Its program stopped on its own, or couldn't start. J3 Bots starts it again the next time a bot uses it, waiting longer each time it stops.",
   "connector.status.commandExited.next":
     "Check the command and its variables. Running it yourself on that computer shows why it stops.",
+  "connector.status.commandRefused":
+    "J3 Bots won't start its command as it's saved: a check it makes before each start refuses it.",
+  "connector.status.commandRefused.next":
+    "Change the command and confirm it again. A variable that decides which code runs needs its value typed in, not a secret.",
   "connector.status.since": "It started {when}.",
   "connector.status.secretsUnavailableDetail":
     "Its sign-in is in your secrets, which can’t be read right now. Open Settings → Secrets to see why.",

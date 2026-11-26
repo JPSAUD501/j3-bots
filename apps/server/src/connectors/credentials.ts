@@ -2,6 +2,7 @@
 import {
   AuthFailing,
   type CallCredentials,
+  CommandFailed,
   type ConnectorCredentials,
   type CredentialsUnavailable,
   NeedsSignIn,
@@ -9,7 +10,7 @@ import {
   SecretsUnavailable,
   Withdrawn,
 } from "@j3-bots/connectors";
-import type { Conflict, ConnectorId } from "@j3-bots/contracts";
+import { codeFromSecret, type Conflict, type ConnectorId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -99,19 +100,30 @@ const resolvedOf = (
   Effect.gen(function* () {
     const secret = yield* secretOf(secrets, connector);
     if (Option.isNone(secret)) return Option.none();
-    const values = yield* secrets
-      .referenceValues({
-        references: referencesOf(secret.value),
-        users: usersOf(connector.grant),
-      })
-      .pipe(Effect.mapError(failureOf));
-    return Option.some(withValues(secret.value, values));
+    return Option.some(yield* resolve(secrets, connector, secret.value));
   });
+
+/** `secret` with its references resolved for the bots `connector` goes to. */
+const resolve = (
+  secrets: typeof Secrets.Service,
+  connector: StoredConnector,
+  secret: ConnectorSecret,
+): Effect.Effect<Resolved, CredentialsUnavailable> =>
+  secrets
+    .referenceValues({ references: referencesOf(secret), users: usersOf(connector.grant) })
+    .pipe(
+      Effect.mapError(failureOf),
+      Effect.map((values) => withValues(secret, values)),
+    );
 
 /**
  * A command connector's command line and environment, as its process is
  * started with them: from its secret alone, which one write replaces
- * whole, never from the program the connector's row shows.
+ * whole, never from the program the connector's row shows. A command whose
+ * variable that decides which code runs takes its value from a secret
+ * (`codeFromSecret`), as one saved before the server refused that, does not
+ * start: the secret's value could change the code with no new confirmation.
+ * It starts again once its command line is confirmed with the value itself.
  */
 export const commandOf = (
   secrets: typeof Secrets.Service,
@@ -124,12 +136,22 @@ export const commandOf = (
       /** The logins' user names in it, which its answers are scrubbed of too. */
       readonly carried: ReadonlyArray<Redacted.Redacted<string>>;
     },
-  CredentialsUnavailable
+  CredentialsUnavailable | CommandFailed
 > =>
   Effect.gen(function* () {
-    const resolved = yield* resolvedOf(secrets, connector);
-    if (Option.isNone(resolved)) return yield* new AuthFailing({ reason: "secret-unusable" });
-    const { secret, values, userNames } = resolved.value;
+    const stored = yield* secretOf(secrets, connector);
+    if (Option.isNone(stored)) return yield* new AuthFailing({ reason: "secret-unusable" });
+    if (
+      stored.value.env.some((variable) =>
+        codeFromSecret(variable.name, Redacted.value(variable.value)),
+      )
+    ) {
+      yield* Effect.logWarning(
+        "A command takes a variable that decides which code runs from a secret",
+      );
+      return yield* new CommandFailed({ reason: "refused" });
+    }
+    const { secret, values, userNames } = yield* resolve(secrets, connector, stored.value);
     const { command } = secret;
     if (command === null) return yield* new AuthFailing({ reason: "secret-unusable" });
     return {

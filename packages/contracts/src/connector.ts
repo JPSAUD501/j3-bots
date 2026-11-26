@@ -334,7 +334,12 @@ export const SIGN_IN_REASONS = ["not-signed-in", "expired", "rejected"] as const
  *   by its path or on the search path the server runs with;
  * - `command-exited`: a command connector's process could not start, or
  *   ended on its own; the next use starts it again, after a pause that grows
- *   while it keeps ending.
+ *   while it keeps ending;
+ * - `command-refused`: the server does not start a command connector's
+ *   command line as it is saved, one a check refuses as it starts (as a
+ *   variable that decides which code runs taking its value from a secret,
+ *   saved before the server refused that); it runs once the operator
+ *   confirms a new command line.
  */
 export const FAILURE_REASONS = [
   "unreachable",
@@ -344,6 +349,7 @@ export const FAILURE_REASONS = [
   "refused-address",
   "command-not-found",
   "command-exited",
+  "command-refused",
 ] as const;
 
 /**

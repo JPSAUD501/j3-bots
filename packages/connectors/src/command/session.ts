@@ -123,13 +123,13 @@ export const openCommandSession = (
     const names = options.variables.map((variable) => variable.name);
     if (Option.isSome(pinRefusal(executable, args, names))) {
       yield* Effect.logWarning("A command runs a package launcher the version check refuses");
-      return yield* new CommandFailed({ reason: "exited" });
+      return yield* new CommandFailed({ reason: "refused" });
     }
     if (interpreterReads(options.platform, executable, args)) {
       yield* Effect.logWarning(
         "A command's arguments would be read by Windows' command interpreter",
       );
-      return yield* new CommandFailed({ reason: "exited" });
+      return yield* new CommandFailed({ reason: "refused" });
     }
     if (debugsChildren(options.serverEnvironment)) {
       yield* Effect.logWarning(
