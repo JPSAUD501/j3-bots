@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  codeFromSecret,
   codeVariable,
   type CommandLine,
   type Connector,
@@ -45,12 +46,14 @@ export interface ClientInput {
  * - `reserved`: its name is one the server reads to find and start the
  *   program, such as `PATH` ({@link reservedVariable});
  * - `twice`: another row has its name, in any case, as Windows reads them;
+ * - `code-secret`: a variable that decides which code runs, whose value is a
+ *   reference to a secret rather than the value itself ({@link codeFromSecret});
  * - `value-again`: a variable left empty in a changed command line, which is
  *   sent whole, so no value is kept ({@link commandEdit}).
  */
 export interface EnvProblem {
   readonly index: number;
-  readonly reason: "invalid" | "reserved" | "twice" | "value-again";
+  readonly reason: "invalid" | "reserved" | "twice" | "code-secret" | "value-again";
 }
 
 /**
@@ -347,6 +350,9 @@ const variables = (
     const folded = name.value.toUpperCase();
     if (reservedVariable(name.value)) problems.push({ index, reason: "reserved" });
     else if (seen.has(folded)) problems.push({ index, reason: "twice" });
+    else if (codeFromSecret(name.value, row.value)) {
+      problems.push({ index, reason: "code-secret" });
+    }
     seen.add(folded);
     decoded.push({ name: name.value, value: Redacted.make(row.value) });
   });

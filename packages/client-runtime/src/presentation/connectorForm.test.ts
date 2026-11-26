@@ -256,6 +256,21 @@ describe("a connector started by command", () => {
     ]);
   });
 
+  it("refuses a secret as the value of a variable that decides which code runs, and takes it elsewhere", () => {
+    const refused = problems(
+      commandSource({
+        name: "Files",
+        command: "python",
+        args: "server.py",
+        env: [
+          { name: "API_KEY", value: "${secret:files-key}" },
+          { name: "PythonPath", value: "/srv/lib:${secret:lib-path}" },
+        ],
+      }),
+    );
+    expect(refused.env).toEqual([{ index: 1, reason: "code-secret" }]);
+  });
+
   it("refuses an argument longer than a command line takes", () => {
     const refused = problems(
       commandSource({ name: "Files", command: "npx", args: "x".repeat(4_001), env: [] }),

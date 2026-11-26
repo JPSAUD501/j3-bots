@@ -2118,6 +2118,8 @@ const sentences = {
     "O nome de uma variável aceita letras, números e _, e não começa com número.",
   "addOwn.env.reserved": "Esta escolhe qual programa roda, então o próprio J3 Bots a define.",
   "addOwn.env.twice": "Outra variável tem este nome. Maiúsculas e minúsculas contam como iguais.",
+  "addOwn.env.codeSecret":
+    "Esta decide qual código roda, então o valor é confirmado com o comando. Digite o próprio valor, não um segredo.",
   "addOwn.env.valueAgain": "Informe o valor de novo: um comando alterado é salvo inteiro.",
   "addOwn.consent.title": "Executar isto no computador que roda o J3 Bots?",
   "addOwn.consent.titleChanged": "Executar o comando alterado no computador que roda o J3 Bots?",

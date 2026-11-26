@@ -239,6 +239,8 @@ export function envProblemText(problem: EnvProblem, { t }: I18n): string {
       return t("addOwn.env.reserved");
     case "twice":
       return t("addOwn.env.twice");
+    case "code-secret":
+      return t("addOwn.env.codeSecret");
     case "value-again":
       return t("addOwn.env.valueAgain");
   }

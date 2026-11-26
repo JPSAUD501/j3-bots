@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MAX_SECRET_NAME_LENGTH, type SecretAccess, SecretName } from "@j3-bots/contracts";
+import {
+  MAX_SECRET_NAME_LENGTH,
+  type SecretAccess,
+  SecretName,
+  secretReferencePattern,
+} from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -19,15 +24,8 @@ export interface SecretReference {
 
 const decodeName = Schema.decodeUnknownOption(SecretName);
 
-/**
- * `${secret:<name>}` or `${secret:<name>.username}` / `.password`, anywhere in
- * a text. A name is what `SecretName` takes; anything else between `${secret:`
- * and `}` is not a reference, and stays as it is.
- */
-const REFERENCE = new RegExp(
-  `\\$\\{secret:([a-z0-9][a-z0-9_-]{0,${MAX_SECRET_NAME_LENGTH - 1}})(?:\\.(username|password))?\\}`,
-  "g",
-);
+/** A reference anywhere in a text; anything else between `${secret:` and `}` stays as it is. */
+const REFERENCE = secretReferencePattern();
 
 /** The references in `text`, in order, each as often as it appears. */
 export const referencesIn = (text: string): ReadonlyArray<SecretReference> =>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Option from "effect/Option";
+import { holdsSecretReference } from "./secrets.ts";
 
 // The rules a command connector's command line keeps (`CommandLine`), which
 // the server enforces and a client's form checks before it sends one.
@@ -43,7 +44,8 @@ type Launcher = "npm-exec" | "uv-run";
 
 const npm = {
   /** Options that take the next word as their value, unless given as `--name=value`. */
-  valued: new Set(["-p", "--package", "--registry", "--cache", "--userconfig", "--loglevel"]),
+  // Not `--userconfig`: a file of the operator's choosing would beat the empty one the server gives npm.
+  valued: new Set(["-p", "--package", "--registry", "--cache", "--loglevel"]),
   /** Options that take no value. */
   flags: new Set([
     "-y",
@@ -63,7 +65,8 @@ const npm = {
 
 /** uv's own options, which it reads before and after its command. */
 const UV_GLOBAL = {
-  valued: ["--cache-dir", "--color", "--directory", "--project", "--config-file"],
+  // Not `--config-file`: a file of the operator's choosing is read whatever `UV_NO_CONFIG` says.
+  valued: ["--cache-dir", "--color", "--directory", "--project"],
   flags: [
     "-q",
     "--quiet",
@@ -307,8 +310,8 @@ export const reservedVariable = (name: string): boolean => RESERVED.has(name.toU
 
 /**
  * Variables whose value decides which code a program runs, or which it
- * trusts to give it code: what Node, Python, Perl, Ruby and Java load before
- * the program, the libraries the system loads into it, what a shell runs
+ * trusts to give it code: what Node, Python, Perl, Ruby, Java and .NET load
+ * before the program, the libraries the system loads into it, what a shell runs
  * first, and the certificates a launcher checks its registry against.
  */
 const CODE = new Set([
@@ -339,10 +342,17 @@ const CODE = new Set([
   "CLASSPATH",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
+  "DOTNET_STARTUP_HOOKS",
+  "DOTNET_ADDITIONAL_DEPS",
+  "DOTNET_SHARED_STORE",
 ]);
 
-/** Families of them: macOS' loader's settings, and the functions bash imports. */
-const CODE_PREFIXES = ["DYLD_", "BASH_FUNC_"];
+/**
+ * Families of them: macOS' loader's settings, the functions bash imports, and
+ * the profilers .NET loads into a program (`CORECLR_PROFILER_PATH` and the
+ * like, and `COR_PROFILER*` on .NET Framework).
+ */
+const CODE_PREFIXES = ["DYLD_", "BASH_FUNC_", "CORECLR_PROFILER", "COR_PROFILER"];
 
 /**
  * Whether a command's variable named `name`, in any case, decides which code
@@ -355,3 +365,11 @@ export const codeVariable = (name: string): boolean => {
   const upper = name.toUpperCase();
   return CODE.has(upper) || CODE_PREFIXES.some((prefix) => upper.startsWith(prefix));
 };
+
+/**
+ * Whether a command's variable named `name` would take `value` from a secret,
+ * where it may not: a variable that decides which code runs is confirmed by
+ * its value, and a secret's value can change with no new confirmation.
+ */
+export const codeFromSecret = (name: string, value: string): boolean =>
+  codeVariable(name) && holdsSecretReference(value);

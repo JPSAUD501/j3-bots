@@ -39,6 +39,7 @@ import {
 import {
   BotId,
   type ChangeAuthor,
+  codeFromSecret,
   codeVariable,
   type CommandError,
   type CommandLine,
@@ -481,9 +482,10 @@ const envFieldsOf = (command: CommandLine): ReadonlyArray<ConnectorField> =>
 
 /**
  * Whether the server takes a command line: every package it runs through
- * `npx` or `uvx` at an exact version, and no variable named twice, in any
- * case, since Windows reads names without it, or by a name the server reads
- * to find and start the program.
+ * `npx` or `uvx` at an exact version, no variable named twice, in any case,
+ * since Windows reads names without it, or by a name the server reads to find
+ * and start the program, and no variable that decides which code runs taking
+ * its value from a secret.
  */
 const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
   const given = command.env.map((variable) => variable.name);
@@ -491,7 +493,10 @@ const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
     return Effect.fail(new Invalid({ reason: "command-unpinned" }));
   }
   const names = given.map((name) => name.toUpperCase());
-  return new Set(names).size === names.length && !given.some(reservedVariable)
+  const fromSecret = command.env.some((variable) =>
+    codeFromSecret(variable.name, Redacted.value(variable.value)),
+  );
+  return new Set(names).size === names.length && !given.some(reservedVariable) && !fromSecret
     ? Effect.void
     : Effect.fail(new Invalid({ reason: "connector-fields" }));
 };

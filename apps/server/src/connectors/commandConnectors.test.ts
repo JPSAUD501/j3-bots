@@ -147,7 +147,7 @@ describe("Connectors started by command", () => {
   );
 
   it.live(
-    "refuses a package launcher with no exact version, and a variable named twice",
+    "refuses a package launcher with no exact version, a variable named twice, and code from a secret",
     () =>
       Effect.gen(function* () {
         const secrets = yield* Secrets;
@@ -189,6 +189,14 @@ describe("Connectors started by command", () => {
           yield* add({
             ...command([]),
             env: [{ name: EnvName.make("Path"), value: Redacted.make("/tmp/elsewhere") }],
+          }),
+          "connector-fields",
+        );
+        // A secret's value can change with no new confirmation, so it never decides which code runs.
+        assert.strictEqual(
+          yield* add({
+            ...command([]),
+            env: [{ name: EnvName.make("NODE_OPTIONS"), value: Redacted.make("${secret:opts}") }],
           }),
           "connector-fields",
         );

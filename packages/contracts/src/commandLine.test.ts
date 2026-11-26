@@ -72,6 +72,9 @@ describe("pinRefusal", () => {
     assert.strictEqual(refusal("npm exe server@latest"), "unclear");
     assert.strictEqual(refusal("npm init server"), "unclear");
     assert.strictEqual(refusal("npm create server@1.0.0"), "unclear");
+    // A configuration file named on the line beats the server's: npm's user file, and uv's own.
+    assert.strictEqual(refusal("npx --userconfig ./npmrc -y server@1.0.0"), "unclear");
+    assert.strictEqual(refusal("uvx --config-file=uv.toml mcp-server-time==1.0.0"), "unclear");
     assert.strictEqual(refusal("npx -c tools@1.0.0"), "shell");
     assert.strictEqual(refusal("npm exec --call=anything"), "shell");
   });

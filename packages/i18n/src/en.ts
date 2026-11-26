@@ -2085,6 +2085,8 @@ export const en = {
     "A variable name takes letters, digits and _, and doesn't start with a digit.",
   "addOwn.env.reserved": "This one chooses which program runs, so J3 Bots sets it itself.",
   "addOwn.env.twice": "Another variable has this name. Names count as the same in any case.",
+  "addOwn.env.codeSecret":
+    "This one decides which code runs, so its value is confirmed with the command. Type the value itself, not a secret.",
   "addOwn.env.valueAgain": "Give its value again: a changed command is saved whole.",
   "addOwn.consent.title": "Run this on the computer that runs J3 Bots?",
   "addOwn.consent.titleChanged": "Run the changed command on the computer that runs J3 Bots?",
