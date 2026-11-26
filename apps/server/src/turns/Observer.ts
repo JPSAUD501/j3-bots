@@ -374,6 +374,15 @@ export const layer = Layer.effect(
     const turnOf = (sessionId: SessionRowId, turnId: TurnId) =>
       turnRow({ sessionId, turnId }).pipe(Effect.orDie);
 
+    /** A turn's work as last kept, for `turnWork`. */
+    const keptWork = SqlSchema.findOne({
+      Request: TurnKey,
+      Result: Schema.Struct({ work_json: WorkColumn }),
+      execute: ({ sessionId, turnId }) => sql`
+        SELECT work_json FROM turns WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+      `,
+    });
+
     const openTurnRows = SqlSchema.findAll({
       Request: SessionRowId,
       Result: TurnRow,
@@ -1121,7 +1130,13 @@ export const layer = Layer.effect(
       const turn = yield* turnOf(session.id, turnId);
       if (Option.isNone(turn)) return;
       if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
+      const kept = (yield* keptWork({ sessionId: session.id, turnId })).work_json;
+      // An ended turn's work is final once nothing of it works on: a later
+      // turn can take a little one up again, and the engine then lists it
+      // under that turn alone (decision 0070).
+      if (turn.value.finished_at !== null && kept !== null && kept.littleOnes.working === 0) return;
       const work = shownWork(engineWork);
+      if (sameWork(kept, work)) return;
       yield* sql`
         UPDATE turns SET work_json = ${yield* encodeWork(work)}
         WHERE session_id = ${session.id} AND engine_turn_id = ${turnId}

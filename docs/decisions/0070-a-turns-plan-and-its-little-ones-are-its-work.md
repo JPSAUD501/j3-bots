@@ -24,7 +24,8 @@ The owner wants to see the plan while a turn runs, and to see the bot's parallel
 - **An older client loses the plan step and gets nothing in its place.** That is a quieter conversation, not an error. A protocol bump to tell it to update was not worth locking every older client out.
 - **A room's plan is gone from the room once the room's work ends.** The room shows what runs now, as its answering members do. The turn keeps its work, and the bot's reply says what was done.
 - **A turn with a very long plan or many little ones** is cut and counted, not shown whole. A plan past 100 steps is not one a person reads anyway.
-- **Labels depend on the harness.** Claude Code gives a short description. Codex and the engine's delegated tasks give only instructions, from which J3 Bots takes the first few words. That is less apt than a description, but never the whole text.
+- **Labels depend on the harness.** Claude Code gives a short description. Codex and the engine's delegated tasks give only instructions, from which J3 Bots takes the first few words. That is less apt than a description, but never the whole text A Codex subagent's title is its agent path, a name, and is never used.
+- **A Codex subagent's own subagents are not shown.** The engine records them in that subagent's thread, which J3 Bots does not follow. Following it would add a stream per subagent for a rare case. Claude Code's nested subagents are in the turn's run, and are flattened into its list.
 
 ## Rejected
 

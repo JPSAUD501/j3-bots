@@ -25,31 +25,53 @@ const endedLast = (a: LittleOne, b: LittleOne) =>
     : DateTime.toEpochMillis(b.finishedAt) - DateTime.toEpochMillis(a.finishedAt);
 
 /**
+ * The little ones a turn's work names, of `all` in the order they started:
+ * every one, up to `MAX_LITTLE_ONES`; past that, every one still working,
+ * then those that ended last.
+ */
+const named = (all: ReadonlyArray<LittleOne>): ReadonlyArray<LittleOne> => {
+  if (all.length <= MAX_LITTLE_ONES) return all;
+  const chosen = new Set(
+    [...all.filter(isWorking), ...all.filter((one) => !isWorking(one)).toSorted(endedLast)]
+      .slice(0, MAX_LITTLE_ONES)
+      .map((one) => one.id),
+  );
+  return all.filter((one) => chosen.has(one.id));
+};
+
+/**
  * A turn's plan and little ones as the engine tells them, as clients are
  * shown them (`TurnWork`): null for a turn with neither. A turn with more
- * little ones than `MAX_LITTLE_ONES` keeps every one still working, then
- * those that ended last, in the order they started, and counts them all.
+ * little ones than `MAX_LITTLE_ONES` names those `named` keeps, and counts
+ * them all.
  */
 export const shownWork = (work: EngineTurnWork): TurnWork | null => {
   const all = work.littleOnes;
   if (work.plan === null && all.length === 0) return null;
-  const working = all.filter(isWorking);
-  const kept =
-    all.length <= MAX_LITTLE_ONES
-      ? all
-      : (() => {
-          const chosen = new Set(
-            [...working, ...all.filter((one) => !isWorking(one)).toSorted(endedLast)]
-              .slice(0, MAX_LITTLE_ONES)
-              .map((one) => one.id),
-          );
-          return all.filter((one) => chosen.has(one.id));
-        })();
   return {
     plan: work.plan,
-    littleOnes: { ones: kept, working: working.length, total: all.length },
+    littleOnes: {
+      ones: named(all),
+      working: all.filter(isWorking).length,
+      total: all.length,
+    },
   };
 };
+
+/**
+ * The work of a member's turns for a room that still run there, `earlier`
+ * started first: the latest plan, and every little one of them, as one
+ * turn's work would show them, since a little one an earlier turn handed off
+ * still works beside the later turn.
+ */
+export const joinedWork = (earlier: TurnWork, later: TurnWork): TurnWork => ({
+  plan: later.plan ?? earlier.plan,
+  littleOnes: {
+    ones: named([...earlier.littleOnes.ones, ...later.littleOnes.ones]),
+    working: earlier.littleOnes.working + later.littleOnes.working,
+    total: earlier.littleOnes.total + later.littleOnes.total,
+  },
+});
 
 /**
  * The work as it stands once nothing runs in the turn's session any more: a

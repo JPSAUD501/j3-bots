@@ -1397,21 +1397,34 @@ const shortLabel = (text: string | null): string | undefined => {
 const littleOneStatus = (item: Subagent): LittleOneStatus =>
   LIVE_ITEM.has(item.status) ? "working" : item.status === "completed" ? "done" : "failed";
 
+/** The engine's driver kind for Claude Code. */
+const CLAUDE_CODE = "claudeAgent";
+
+/**
+ * Whether the item's title describes the subagent. Only Claude Code's does:
+ * it is the subagent's short description (`task_started`'s `description`,
+ * **Read** at `59651c1`, `ClaudeAdapterV2.ts` L11522-11545). A Codex
+ * subagent's title is its agent path, a name (`CodexAdapterV2.ts` L3643),
+ * and a delegated task's is the bot's own title for it, else a thread title
+ * the engine makes up with a count (`Orchestrator.ts` L9860-9865).
+ */
+const describedByTitle = (item: Subagent) =>
+  item.origin === "provider_native" && item.driver === CLAUDE_CODE;
+
 /**
  * A subagent or a task the engine delegated, as a little one. Its label is
- * the title the engine gives the item, which on Claude Code is the short
- * description of the subagent (`task_started`'s `description`, **Read** at
- * `59651c1`, `ClaudeAdapterV2.ts` L11522-11545), else a few words of its
- * instructions; its result is never read. Its progress is the line its
- * running child last reported (`CodexAdapterV2.ts`,
- * `reportSubagentProgress`), while it works.
+ * the title the engine gives the item, when that describes it
+ * (`describedByTitle`), else a few words of its instructions; its result is
+ * never read. Its progress is the line its running child last reported
+ * (`CodexAdapterV2.ts`, `reportSubagentProgress`), while it works.
  */
 const littleOneOf = (item: Subagent): LittleOne => {
   const status = littleOneStatus(item);
   const progress = status === "working" ? oneLine(item.progress ?? "") : "";
+  const described = describedByTitle(item) ? shortLabel(item.title) : undefined;
   return {
     id: LittleOneId.make(localIdFor(item.id)),
-    label: shortLabel(item.title) ?? shortLabel(item.prompt) ?? null,
+    label: described ?? shortLabel(item.prompt) ?? null,
     status,
     startedAt: item.startedAt ?? item.updatedAt,
     finishedAt: status === "working" ? null : (item.completedAt ?? item.updatedAt),

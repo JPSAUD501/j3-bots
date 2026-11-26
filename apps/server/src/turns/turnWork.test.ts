@@ -6,6 +6,7 @@ import {
   MAX_LITTLE_ONES,
   type Plan,
   type Room,
+  type RoomId,
 } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -14,7 +15,7 @@ import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { member, operatorWrites, roomWith, to } from "../testing/rooms.ts";
+import { finish, member, operatorWrites, roomWith, to } from "../testing/rooms.ts";
 import {
   awaitEntry,
   conversation,
@@ -48,6 +49,17 @@ const littleOne = (
   startedAt,
   finishedAt: ended === null ? null : ended.at,
 });
+
+/** The room's work by member, as the roster sends it with the room. */
+const memberWorkIn = (roomId: RoomId) =>
+  Effect.flatMap(Rooms, (rooms) => rooms.find(roomId)).pipe(
+    Effect.map((found) =>
+      Option.match(found, {
+        onNone: () => [],
+        onSome: (one: Room) => (one.status === "active" ? one.memberWork : []),
+      }),
+    ),
+  );
 
 /** The bot's latest work fold's work, once it is there. */
 const foldWork = (botId: Parameters<typeof awaitEntry>[0]) =>
@@ -107,7 +119,6 @@ it.effect("keeps a private turn's latest plan on its fold, and the last one once
 it.effect("shows a room turn's plan by its member in the room, never in its conversation", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
-    const rooms = yield* Rooms;
     const ana = yield* member("Ana");
     const bo = yield* member("Bo");
     const room = yield* roomWith(ana, [bo]);
@@ -121,14 +132,7 @@ it.effect("shows a room turn's plan by its member in the room, never in its conv
       turnId,
       work: { plan: steps, littleOnes: [] },
     });
-    const memberWork = rooms.find(room.id).pipe(
-      Effect.map((found) =>
-        Option.match(found, {
-          onNone: () => [],
-          onSome: (one: Room) => (one.status === "active" ? one.memberWork : []),
-        }),
-      ),
-    );
+    const memberWork = memberWorkIn(room.id);
     yield* until(memberWork.pipe(Effect.map((all) => all.length > 0)));
     assert.deepStrictEqual(yield* memberWork, [
       {
@@ -142,6 +146,84 @@ it.effect("shows a room turn's plan by its member in the room, never in its conv
       [],
     );
     assert.strictEqual(conversationAfter.length, conversationBefore.length);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps an ended turn's little ones when a later turn takes one up again", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const sessionId = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Review the PR.");
+    const first = yield* nextTurn(bot.id);
+    const at = yield* DateTime.now;
+    const done = littleOne("reviewer", at, { status: "done", at });
+    yield* control.turnWork({ sessionId, turnId: first, work: { plan: null, littleOnes: [done] } });
+    yield* control.finishTurn({ sessionId, turnId: first, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+    const firstFold = yield* awaitEntry(bot.id, "work-fold");
+
+    yield* sendToBot(bot.id, "Ask the reviewer about the parser.");
+    const second = yield* nextTurn(bot.id, first);
+    // The engine lists the little one under the later turn alone, the
+    // earlier with none, as it does once a subagent is taken up again.
+    const again = littleOne("reviewer", at, null);
+    yield* control.turnWork({ sessionId, turnId: first, work: { plan: null, littleOnes: [] } });
+    yield* control.turnWork({
+      sessionId,
+      turnId: second,
+      work: { plan: null, littleOnes: [again] },
+    });
+    yield* until(
+      awaitEntry(bot.id, "work-fold").pipe(Effect.map((fold) => fold.id !== firstFold.id)),
+    );
+
+    const folds = (yield* conversation(bot.id)).flatMap((entry) =>
+      entry._tag === "work-fold" ? [entry.work] : [],
+    );
+    assert.deepStrictEqual(folds, [
+      { plan: null, littleOnes: { ones: [done], working: 0, total: 1 } },
+      { plan: null, littleOnes: { ones: [again], working: 1, total: 1 } },
+    ]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("shows a little one a member's room turn handed off beside its next turn's plan", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const ana = yield* member("Ana");
+    const bo = yield* member("Bo");
+    const room = yield* roomWith(ana, [bo]);
+    yield* operatorWrites(room.id, [ana, bo], "Find a venue.", to(ana));
+    const first = yield* nextTurn(ana.bot.id);
+    const at = yield* DateTime.now;
+    const scout = littleOne("scout", at, null);
+    yield* control.turnWork({
+      sessionId: ana.session,
+      turnId: first,
+      work: { plan: null, littleOnes: [scout] },
+    });
+    yield* control.startBackgroundWork({ sessionId: ana.session, turnId: first });
+    yield* finish(ana, first, [ana, bo]);
+
+    yield* operatorWrites(room.id, [ana, bo], "And draft the invite.", to(ana));
+    const second = yield* nextTurn(ana.bot.id, first);
+    const steps = plan(["Draft the invite", "running"], ["Send it", "pending"]);
+    yield* control.turnWork({
+      sessionId: ana.session,
+      turnId: second,
+      work: { plan: steps, littleOnes: [] },
+    });
+    yield* until(
+      memberWorkIn(room.id).pipe(Effect.map((all) => all.some((one) => one.work.plan !== null))),
+    );
+
+    assert.deepStrictEqual(yield* memberWorkIn(room.id), [
+      {
+        botId: ana.bot.id,
+        work: { plan: steps, littleOnes: { ones: [scout], working: 1, total: 1 } },
+      },
+    ]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

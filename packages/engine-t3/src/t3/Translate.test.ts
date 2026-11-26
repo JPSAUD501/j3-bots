@@ -1948,6 +1948,16 @@ describe("a turn's plan and little ones", () => {
       }),
     );
     applyEvent(mirror, subagent("item-c", 12, { prompt: "" }));
+    // A Codex subagent's title is its agent path: a name, never its label.
+    applyEvent(
+      mirror,
+      subagent("item-d", 13, {
+        driver: "codex",
+        providerInstanceId: "codex",
+        title: "/root/explorer",
+        prompt: "Check the build logs.",
+      }),
+    );
     const [told] = works(diff(mirror, view, at, noProviders));
     assert.deepStrictEqual(
       told?.littleOnes.map(({ label, status, finishedAt, progress }) => ({
@@ -1965,6 +1975,12 @@ describe("a turn's plan and little ones", () => {
           progress: "Reading the venue list",
         },
         { label: null, status: "working", finishedAt: null, progress: undefined },
+        {
+          label: "Check the build logs",
+          status: "working",
+          finishedAt: null,
+          progress: undefined,
+        },
       ],
     );
 
@@ -1986,6 +2002,7 @@ describe("a turn's plan and little ones", () => {
         { status: "done", finishedAt: done },
         { status: "working", finishedAt: null },
         { status: "failed", finishedAt: done },
+        { status: "working", finishedAt: null },
       ],
     );
     assert.notInclude(JSON.stringify(after), "parser");

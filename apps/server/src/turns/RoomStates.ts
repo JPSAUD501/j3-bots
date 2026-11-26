@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import type * as Statement from "effect/sql/Statement";
 import { modeRefusedSql } from "./modeRefusals.ts";
-import { WorkJson } from "./turnWork.ts";
+import { joinedWork, WorkJson } from "./turnWork.ts";
 
 const WorkRow = Schema.Struct({ room_id: RoomId, work: RoomWorkState });
 const AnsweringRow = Schema.Struct({ room_id: RoomId, bot_id: BotId });
@@ -59,10 +59,11 @@ export interface RoomActivity {
  * room.
  *
  * `memberWork`, while the work is `running`, is the plan and little ones of
- * each member's latest turn for the room whose work may still run there: not
+ * each member's turns for the room whose work may still run there: not
  * finished, or finished with background work, such as a little one it handed
- * off, pending, in a session the engine still has (decision 0070). A member
- * still `answering` is in that turn; one that is not left work behind it.
+ * off, pending, in a session the engine still has (decision 0070). They show
+ * as one: the latest plan, and every little one of them. A member still
+ * `answering` is in a turn; one that is not left work behind it.
  *
  * All three are read in one transaction, so they agree.
  */
@@ -153,12 +154,11 @@ export const layer = Layer.effect(
     `;
 
     /**
-     * The plan and little ones of each member's latest turn for the rooms
-     * `rooms` selects, as `rw_room`, among its turns of the room whose work
-     * may still run there, as `work` counts them: not finished, or with
-     * background work pending, in a session the engine still has. In member
-     * order, a member's turns in the order they started, so its latest is
-     * last.
+     * The plan and little ones of each member's turns for the rooms `rooms`
+     * selects, as `rw_room`, whose work may still run there, as `work`
+     * counts them: not finished, or with background work pending, in a
+     * session the engine still has. In member order, a member's turns in the
+     * order they started.
      */
     const selectMemberWork = (rooms: Statement.Fragment) => sql`
       SELECT rw_turn.audience_room_id AS room_id, rw_session.bot_id AS bot_id, rw_turn.work_json
@@ -223,12 +223,16 @@ export const layer = Layer.effect(
         if (!queue.includes(row.bot_id)) queue.push(row.bot_id);
         queues.set(row.room_id, queue);
       }
-      // A member's latest turn comes last, and takes its place.
-      const latest = new Map<RoomId, Map<BotId, TurnWork>>();
+      // A member's turns come in the order they started, and show as one.
+      const byMember = new Map<RoomId, Map<BotId, TurnWork>>();
       for (const row of memberWork) {
-        const members = latest.get(row.room_id) ?? new Map<BotId, TurnWork>();
-        members.set(row.bot_id, row.work_json);
-        latest.set(row.room_id, members);
+        const members = byMember.get(row.room_id) ?? new Map<BotId, TurnWork>();
+        const earlier = members.get(row.bot_id);
+        members.set(
+          row.bot_id,
+          earlier === undefined ? row.work_json : joinedWork(earlier, row.work_json),
+        );
+        byMember.set(row.room_id, members);
       }
       return new Map(
         work.map((row) => {
@@ -239,7 +243,7 @@ export const layer = Layer.effect(
               work: row.work,
               answering: running ? (queues.get(row.room_id) ?? []) : [],
               memberWork: running
-                ? [...(latest.get(row.room_id) ?? [])].map(([botId, turnWork]) => ({
+                ? [...(byMember.get(row.room_id) ?? [])].map(([botId, turnWork]) => ({
                     botId,
                     work: turnWork,
                   }))
