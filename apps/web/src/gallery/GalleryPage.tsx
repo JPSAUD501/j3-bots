@@ -1737,6 +1737,7 @@ function ComposerDemo({
   replaced: initialReplaced = null,
   mentionable,
   mentions: initialMentions = [],
+  suggestion = null,
 }: {
   initial: string;
   recipient: string;
@@ -1750,6 +1751,8 @@ function ComposerDemo({
   mentionable?: ReadonlyArray<MentionCandidate>;
   /** The mentions picked in `initial`. */
   mentions?: ReadonlyArray<DraftMention>;
+  /** A reply the AI suggests. */
+  suggestion?: string | null;
 }) {
   const draftKey = useId();
   const [value, setValue] = useState(initial);
@@ -1777,6 +1780,7 @@ function ComposerDemo({
       }}
       onDictate={nothing}
       {...(mentionable === undefined ? {} : { mentionable })}
+      suggestion={suggestion}
       {...(replaced === null
         ? {}
         : {
@@ -1850,6 +1854,15 @@ function ComposerSection() {
             initial="Book the venue for the 14th."
             recipient={team.bots.atlas.profile.name}
             replaced="Book the venue for the 14th, and ask about parking."
+          />
+        </div>
+      </Labeled>
+      <Labeled label="Composer offering a reply the AI suggests after the bot answered: faint in place of the placeholder, with Use (and Tab where there is a keyboard). Use or Tab puts it in the draft to send or change, typing hides it, Escape sets it aside">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-3">
+          <ComposerDemo
+            initial=""
+            recipient={team.bots.scout.profile.name}
+            suggestion="Move the second meeting to Friday morning"
           />
         </div>
       </Labeled>
@@ -3057,15 +3070,15 @@ function EngineSettingsSection() {
         </Frame>
         <Frame
           padded
-          label="The server's own copies: one with a newer version out, one downloading"
+          label="The server's own copies: one with a newer version out, one downloading; then the switches to keep them up to date and to suggest replies"
           width={420}
-          height={380}
+          height={480}
         >
           <EngineSection
             engine={engines.ownCopies}
             stale={false}
             actions={providerActions}
-            autoUpdate={{
+            harnessSettings={{
               settings: team.settings,
               save: { _tag: "idle" },
               connected: true,

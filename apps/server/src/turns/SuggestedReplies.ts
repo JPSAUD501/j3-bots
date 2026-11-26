@@ -150,7 +150,7 @@ export const layer = Layer.effect(
       Stream.runForEach((on) =>
         Effect.gen(function* () {
           enabled = on;
-          for (const botId of [...latest.keys()]) yield* evaluate(botId);
+          for (const botId of latest.keys()) yield* evaluate(botId);
         }),
       ),
       Effect.forkScoped,

@@ -36,6 +36,7 @@ The operator picks a bot in the roster and types.
 - The conversation's header shows the bot's face and name, with no line under the name about what it is doing: that is the conversation's to show, in the row of the turn under way and in its cards.
 - The answer arrives as a short message. Longer material arrives as a file or a card.
 - The operator can send another message at any time. It reaches the bot mid-turn and can redirect it.
+- Once the bot has answered, the empty composer can offer, faintly, a reply the operator might send next, with **Use** beside it ([Suggested replies](../architecture/clients.md#suggested-replies)). Use, or Tab on a computer, puts it in the message box to send or change; it never goes by itself. Typing hides it, and anything new in the conversation takes it away. Only a bot's own conversation offers one, never a room.
 - "Stop" ends the work. It does not undo what was already done, and the bot says what was left running, if anything. It sits in the bot's details, one press from the conversation's header, while there is work to stop; the conversation itself stays about what the bot is doing. On a computer, `Ctrl+.` (`⌘.` on macOS) stops it from the conversation.
 
 ### Being asked
@@ -135,6 +136,7 @@ What a connector is, and what a bot can and cannot do with one, is in [Concepts]
 - A usage view shows each provider's limit windows as the engine reports them, and which bots and routines used turns recently.
 - A routine that fires often shows its run count next to its schedule.
 - When a provider's limit is reached, affected bots show as blocked with the reset time, and their routines wait instead of failing repeatedly.
+- The suggested reply after each answer costs one more small request to the AI account for each turn a bot finishes, and Settings → Providers can turn it off, saying so in those words.
 
 ### Keeping J3 Bots up to date
 

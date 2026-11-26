@@ -644,6 +644,9 @@ export const en = {
   "composer.attach.files": "Files",
   "composer.dictate": "Dictate a message",
   "composer.send": "Send message",
+  "composer.suggestion": "Suggested reply: {text}",
+  "composer.suggestion.use": "Use",
+  "composer.suggestion.useLabel": "Use the suggested reply",
 
   "details.back": "Back to the conversation",
   "details.close": "Close details",
@@ -859,6 +862,9 @@ export const en = {
   "settings.engine.autoUpdate": "Update Claude Code and Codex automatically",
   "settings.engine.autoUpdate.body":
     "J3 Bots keeps the copies it installed up to date. An update waits until the bots using it finish what they’re doing.",
+  "settings.engine.suggestReplies": "Suggest what to say next",
+  "settings.engine.suggestReplies.body":
+    "After a bot answers you, a reply you might send shows faintly in the message box, ready to use. Each suggestion is one more small request to your AI account, so it uses a little of your plan.",
   "firstRun.create.name": "Bot name",
   "firstRun.create.placeholder": "A name, such as Maya",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",

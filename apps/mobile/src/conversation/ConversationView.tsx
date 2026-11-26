@@ -9,6 +9,7 @@ import {
   liveTurn,
   mentionedNames,
   mentionedWhoLeft,
+  offeredReply,
   openingHeld,
   type OpeningHold,
   readThrough,
@@ -529,6 +530,11 @@ export function ConversationView({
                     onSend={send}
                     inView={inView}
                     tint={item._tag === "bot" ? item.bot.profile.avatar : null}
+                    suggestion={
+                      item._tag === "bot"
+                        ? offeredReply(item.bot.suggestedReply, state?.items ?? [])
+                        : null
+                    }
                   />
                 )}
               </View>

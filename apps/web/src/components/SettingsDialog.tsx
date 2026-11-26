@@ -31,7 +31,12 @@ import {
   XIcon,
 } from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
-import { type PairingOffer, qrOrigin, type SettingsSaves } from "@j3-bots/client-runtime";
+import {
+  type HarnessSettingsChanges,
+  type PairingOffer,
+  qrOrigin,
+  type SettingsSaves,
+} from "@j3-bots/client-runtime";
 import {
   aiAccountProvider,
   aiAccounts,
@@ -501,7 +506,7 @@ function PageBody({
           engine={data.engine}
           stale={data.engineStale}
           actions={intents.providerActions}
-          autoUpdate={{
+          harnessSettings={{
             settings: data.settings,
             save: data.settingsSaves.harnesses,
             connected: data.connected,
@@ -582,13 +587,13 @@ export function EngineSection({
   engine,
   stale,
   actions,
-  autoUpdate,
+  harnessSettings,
   connect = { _tag: "server" },
 }: {
   engine: EngineStatus | null;
   stale: boolean;
   actions: ProviderActions;
-  autoUpdate?: AutoUpdateProps;
+  harnessSettings?: HarnessSettingsProps;
   connect?: ConnectPlace;
 }) {
   const i18n = useI18n();
@@ -641,8 +646,11 @@ export function EngineSection({
           ))}
         </ul>
       )}
-      {autoUpdate !== undefined && installsHarnesses(engine) && (
-        <AutoUpdateHarnesses {...autoUpdate} />
+      {harnessSettings !== undefined && installsHarnesses(engine) && (
+        <HarnessSwitch setting="autoUpdateHarnesses" {...harnessSettings} />
+      )}
+      {harnessSettings !== undefined && (
+        <HarnessSwitch setting="suggestReplies" {...harnessSettings} />
       )}
     </Section>
   );
@@ -939,34 +947,56 @@ function NotificationsSection({
   );
 }
 
-interface AutoUpdateProps {
+interface HarnessSettingsProps {
   readonly settings: Settings | null;
   readonly save: SettingsSaves["harnesses"];
   readonly connected: boolean;
   readonly onSave: SettingsIntents["updateSettings"];
 }
 
+/** The harness settings the AI page offers as switches, and the words of each. */
+const harnessSwitches = {
+  autoUpdateHarnesses: {
+    label: "settings.engine.autoUpdate",
+    hint: "settings.engine.autoUpdate.body",
+  },
+  suggestReplies: {
+    label: "settings.engine.suggestReplies",
+    hint: "settings.engine.suggestReplies.body",
+  },
+} as const;
+
 /**
- * Whether the server keeps its own copies of Claude Code and Codex up to
- * date by itself. Saves at once, as the notification switches do.
+ * One of what the harnesses do on their own: whether the server keeps its
+ * own copies of Claude Code and Codex up to date, or whether they guess the
+ * operator's next message. Saves at once, as the notification switches do; a
+ * server that predates the setting shows nothing.
  */
-function AutoUpdateHarnesses({ settings, save, connected, onSave }: AutoUpdateProps) {
+function HarnessSwitch({
+  setting,
+  settings,
+  save,
+  connected,
+  onSave,
+}: HarnessSettingsProps & { readonly setting: keyof HarnessSettingsChanges }) {
   const { t } = useI18n();
   const saving = save._tag === "saving";
-  const [watching, setWatching] = useState(saving);
-  if (settings === null) return null;
-  const checked = saving ? save.changes.autoUpdateHarnesses : settings.autoUpdateHarnesses;
+  // A save under way when Settings opened is followed by the switch it changes.
+  const [watching, setWatching] = useState(saving && save.changes[setting] !== undefined);
+  const current = settings === null ? null : settings[setting];
+  if (current === null) return null;
+  const words = harnessSwitches[setting];
   return (
     <div className="flex flex-col gap-1">
       <SwitchRow
-        label={t("settings.engine.autoUpdate")}
-        hint={t("settings.engine.autoUpdate.body")}
-        checked={checked}
+        label={t(words.label)}
+        hint={t(words.hint)}
+        checked={(saving ? save.changes[setting] : undefined) ?? current}
         readOnly={saving || !connected}
-        onChange={(autoUpdateHarnesses) => {
+        onChange={(on) => {
           if (saving || !connected) return;
           setWatching(true);
-          onSave({ section: "harnesses", changes: { autoUpdateHarnesses } });
+          onSave({ section: "harnesses", changes: { [setting]: on } });
         }}
       />
       <p role="status" className="text-xs text-blocked empty:sr-only">

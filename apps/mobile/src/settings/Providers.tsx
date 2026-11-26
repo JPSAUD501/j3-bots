@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { SettingsSaves } from "@j3-bots/client-runtime";
+import type { HarnessSettingsChanges, SettingsSaves } from "@j3-bots/client-runtime";
 import type { EngineStatus } from "@j3-bots/contracts";
 import {
   aiAccountProvider,
@@ -27,7 +27,8 @@ import { Text } from "../text.tsx";
  * Whether J3 Bots can run bots, and if not, why and what to do; then each AI
  * account, with the same way to connect it as the first run, any other
  * provider, and, on a server that installs its own copies of the harnesses,
- * whether it keeps them up to date by itself. Disconnected, it is what the
+ * whether it keeps them up to date by itself; then whether the harnesses
+ * suggest the operator's next message. Disconnected, it is what the
  * server last reported, muted and said to be so.
  */
 export function ProvidersSection() {
@@ -74,7 +75,10 @@ export function ProvidersSection() {
         .map((provider) => (
           <ProviderRow key={provider.id} provider={provider} stale={stale} />
         ))}
-      {installsHarnesses(engine) && <AutoUpdateHarnesses connected={connected} />}
+      {installsHarnesses(engine) && (
+        <HarnessSwitch setting="autoUpdateHarnesses" connected={connected} />
+      )}
+      <HarnessSwitch setting="suggestReplies" connected={connected} />
     </Section>
   );
 }
@@ -105,30 +109,51 @@ function AiAccounts(props: { readonly engine: EngineStatus; readonly stale: bool
   );
 }
 
+/** The harness settings Providers offers as switches, and the words of each. */
+const harnessSwitches = {
+  autoUpdateHarnesses: {
+    label: "settings.engine.autoUpdate",
+    hint: "settings.engine.autoUpdate.body",
+  },
+  suggestReplies: {
+    label: "settings.engine.suggestReplies",
+    hint: "settings.engine.suggestReplies.body",
+  },
+} as const;
+
 /**
- * Whether the server keeps its own copies of Claude Code and Codex up to
- * date by itself. Saves at once, as the notification switches do.
+ * One of what the harnesses do on their own: whether the server keeps its
+ * own copies of Claude Code and Codex up to date, or whether they guess the
+ * operator's next message. Saves at once, as the notification switches do;
+ * a server that predates the setting shows nothing.
  */
-function AutoUpdateHarnesses(props: { readonly connected: boolean }) {
+function HarnessSwitch(props: {
+  readonly setting: keyof HarnessSettingsChanges;
+  readonly connected: boolean;
+}) {
   const { t } = useI18n();
   const client = useJ3Client();
   const settings = useSettings();
   const save: SettingsSaves["harnesses"] = useReadable(client.settingsSaves.harnesses);
   const saving = save._tag === "saving";
-  const [watching, setWatching] = useState(saving);
+  // A save under way when Settings opened is followed by the switch it changes.
+  const [watching, setWatching] = useState(saving && save.changes[props.setting] !== undefined);
   if (settings._tag !== "ready") return null;
+  const current = settings.value[props.setting];
+  if (current === null) return null;
   const readOnly = saving || !props.connected;
+  const words = harnessSwitches[props.setting];
   return (
     <View className="gap-1">
       <SwitchRow
-        label={t("settings.engine.autoUpdate")}
-        hint={t("settings.engine.autoUpdate.body")}
-        value={saving ? save.changes.autoUpdateHarnesses : settings.value.autoUpdateHarnesses}
+        label={t(words.label)}
+        hint={t(words.hint)}
+        value={(saving ? save.changes[props.setting] : undefined) ?? current}
         readOnly={readOnly}
-        onChange={(autoUpdateHarnesses) => {
+        onChange={(on) => {
           if (readOnly) return;
           setWatching(true);
-          void client.updateSettings({ section: "harnesses", changes: { autoUpdateHarnesses } });
+          void client.updateSettings({ section: "harnesses", changes: { [props.setting]: on } });
         }}
       />
       <Problem>{watching && save._tag === "failed" ? t("settings.saveFailed") : null}</Problem>

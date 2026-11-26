@@ -26,6 +26,7 @@ import {
   buildTimeline,
   canStop,
   liveTurn,
+  offeredReply,
   openingHeld,
   orderRoster,
   pairKeyText,
@@ -676,7 +677,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   })}
               inputRef={composerRef}
               {...(mentionable === undefined ? {} : { mentionable })}
-              {...(item._tag === "bot" ? { prompts: promptMenu(item.bot.id) } : {})}
+              {...(item._tag === "bot"
+                ? {
+                    prompts: promptMenu(item.bot.id),
+                    suggestion: offeredReply(item.bot.suggestedReply, view.items),
+                  }
+                : {})}
             />
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">
