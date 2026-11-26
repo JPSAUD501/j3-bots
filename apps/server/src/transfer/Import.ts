@@ -413,27 +413,43 @@ const putInPlace = Effect.fn("transfer.putInPlace")(function* (home: string, sta
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const at = (root: string, relative: string) => path.join(root, ...relative.split("/"));
+  const present = (file: string) => Effect.map(fs.lstat(file).pipe(Effect.option), Option.isSome);
+  // Only folders that hold a name that changed: one the import neither found nor made does not exist.
   const changed = new Set<string>();
   for (const { entry, beside, keptWhenNotBrought } of PUT_IN_PLACE) {
     const target = at(home, entry);
     const staged = at(staging, entry);
     const brought = yield* fs.exists(staged);
     if (!brought && keptWhenNotBrought) continue;
-    for (const old of beside) yield* fs.remove(at(home, old), { force: true });
-    yield* fs.remove(target, { recursive: true, force: true });
-    changed.add(path.dirname(target));
+    for (const old of [...beside.map((name) => at(home, name)), target]) {
+      if (!(yield* present(old))) continue;
+      yield* fs.remove(old, { recursive: true, force: true });
+      changed.add(path.dirname(old));
+    }
     if (!brought) continue;
     yield* fs.makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 });
     yield* fs.rename(staged, target);
+    changed.add(path.dirname(target));
   }
   changed.delete(home);
   for (const folder of [...changed, home]) yield* flushFolder(folder);
 });
 
-/** Whether `root` holds anything but folders; nothing when it is missing. */
+/**
+ * Whether `root` is a link or a file where the server keeps a folder: the
+ * operator's own arrangement, which an import replaces only when asked.
+ */
+const notOwnFolder = Effect.fn("transfer.notOwnFolder")(function* (root: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.lstat(root).pipe(Effect.option);
+  return Option.isSome(info) && info.value.type !== "Directory";
+});
+
+/** Whether `root` holds anything but folders, or is not a folder itself; nothing when it is missing. */
 const holdsFiles = Effect.fn("transfer.holdsFiles")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  if (yield* notOwnFolder(root)) return true;
   if (!(yield* fs.exists(root))) return false;
   for (const relative of yield* fs.readDirectory(root, { recursive: true })) {
     if ((yield* fs.lstat(path.join(root, relative))).type !== "Directory") return true;
@@ -449,6 +465,7 @@ const holdsFiles = Effect.fn("transfer.holdsFiles")(function* (root: string) {
 const holdsOwnSkills = Effect.fn("transfer.holdsOwnSkills")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  if (yield* notOwnFolder(root)) return true;
   if (!(yield* fs.exists(root))) return false;
   for (const name of yield* fs.readDirectory(root)) {
     const shipped = sharedSkills.find((skill) => skill.name === name);

@@ -282,7 +282,7 @@ Restore onto the version the backup was taken with, or a newer one, into a data 
 
 ## Move to another server
 
-To run the bots somewhere else, export them where they are and import them there. An export goes to any path and any machine, Linux or Windows. A backup restores only at the same path.
+To run the bots somewhere else, export them where they are and import them there. An export comes from a server or from the desktop app, on Linux or Windows, and goes to a server you install ([Install](install.md)), at any path. A backup restores only at the same path. The desktop app has no import.
 
 Where the bots are now:
 
@@ -296,6 +296,14 @@ The bots the desktop app runs on this computer have no service and no `j3-bots` 
 ```sh
 cd ~/.config/"J3 Bots"/server-runtime/<version>
 J3_HOME=~/.config/"J3 Bots"/server/home node/bin/node server/bin.mjs export --output ~/j3-bots-export.tar.gz
+```
+
+On Windows, in PowerShell, from `current`, the copy of the release that runs:
+
+```powershell
+cd "$env:APPDATA\J3 Bots\server-runtime\current"
+$env:J3_HOME = "$env:APPDATA\J3 Bots\server\home"
+.\node\node.exe server\bin.mjs export --output "$HOME\j3-bots-export.tar.gz"
 ```
 
 The export asks for a passphrase for the secrets, twice, at least eight characters. **It cannot be recovered**: without it, the secrets in the export are lost. Without `--output`, it writes `j3-bots-export-<date>.tar.gz` in the folder you are in; it never writes over a file. It tells you how many bots and secrets it holds, and what it left out: links in the bots' folders, files whose name has a `\` in it (each named, to rename and export again), attachments already missing, and secrets it could not read, with the reason.
@@ -316,7 +324,7 @@ The import checks every file against what the export recorded before it changes 
   - Pair every device again with `j3-bots pair`.
   - If the new server has no provider, run `j3-bots provider login` or `j3-bots provider connect`.
   - Each webhook has a new address, on the new server and with a new secret. Give it to whatever calls it: the old one stops working.
-- **A server that already has something the import would delete** refuses it: bots, secrets, files kept from a deleted bot, shared memory, attachments, or shared skills of your own. `j3-bots import <file> --replace` deletes them and puts the export's in their place.
+- **A server that already has something the import would delete** refuses it: bots, secrets, files kept from a deleted bot, shared memory, attachments, shared skills of your own, or a link you put in place of one of those folders. `j3-bots import <file> --replace` deletes them and puts the export's in their place.
 - **A newer release's export** is refused: update J3 Bots on the new server first. An older release's export is updated as it is imported.
 - **If an import stops halfway**, the server refuses to start until you run the same `j3-bots import` with the same file again, which finishes it. Another file is imported in its place only with `--replace`.
 - **For a script,** `--passphrase-stdin` reads the passphrase from the first line of standard input on both commands, instead of asking at the terminal.

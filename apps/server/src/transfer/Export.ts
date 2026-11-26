@@ -92,7 +92,9 @@ const decodeBlobs = Schema.decodeUnknownEffect(Schema.Array(BlobRow));
 /**
  * The database at `source` copied to `destination` as it stands, with no
  * paired device, push registration or delivery in the copy: every device
- * pairs with the server the home moves to.
+ * pairs with the server the home moves to. No command receipt either: they
+ * answer a device's retry on this server, and one of a webhook routine holds
+ * its address, secret included.
  */
 const copyDatabase = Effect.fn("transfer.copyDatabase")(function* (
   source: string,
@@ -113,6 +115,7 @@ const copyDatabase = Effect.fn("transfer.copyDatabase")(function* (
       copy`DELETE FROM push_deliveries`,
       copy`DELETE FROM push_registrations`,
       copy`DELETE FROM devices`,
+      copy`DELETE FROM command_receipts`,
       // A webhook's secret is its credential: none travels, and the import gives each a new one.
       copy`UPDATE routines SET webhook_secret = NULL`,
     ]),

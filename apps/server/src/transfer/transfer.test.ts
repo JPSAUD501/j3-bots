@@ -22,10 +22,12 @@ import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 import { homeLayout } from "../home/entries.ts";
+import { Routines } from "../routines/Routines.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import * as TestDatabase from "../testing/database.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  command,
   conversation,
   createBot,
   deliveryIs,
@@ -50,7 +52,6 @@ const WRONG = Redacted.make("not the passphrase at all");
 const SECRET_VALUE = "weather-token-0f3a9c";
 const SECRET = SecretId.make("sec_0000000000000001");
 const DEVICE = DeviceId.make("device-laptop");
-const WEBHOOK_SECRET = "webhook-secret-of-ana-7c1e";
 
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
@@ -163,7 +164,7 @@ const rewrite = (
 
 /**
  * A home where Ana has a conversation, a session, a memory file and a value
- * secret, a webhook routine, a shared skill, and a paired device: what
+ * secret, a webhook routine made as a client makes it, a shared skill, and a paired device: what
  * moving it must carry or leave behind.
  */
 const populatedHome = Effect.gen(function* () {
@@ -188,15 +189,18 @@ const populatedHome = Effect.gen(function* () {
       INSERT INTO devices (id, name, token_hash, paired_at)
       VALUES ('device-phone', 'Phone', 'token-hash-of-the-phone', '2026-11-01T00:00:00.000Z')
     `;
-    yield* sql`
-      INSERT INTO routines (
-        id, bot_id, name, instruction, trigger_json, webhook_secret, created_at, updated_at
-      ) VALUES (
-        'routine-deploy', ${ana.id}, 'Deploys', 'Say what shipped', '{"_tag":"webhook"}',
-        ${WEBHOOK_SECRET}, '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
-      )
+    // Made as a client makes it, so its receipt holds its address too.
+    const routine = yield* (yield* Routines).create({
+      commandId: command(),
+      botId: ana.id,
+      draft: { name: "Deploys", instruction: "Say what shipped", trigger: { _tag: "webhook" } },
+      author: { _tag: "operator" },
+    });
+    const [hook] = yield* sql<{ readonly webhook_secret: string }>`
+      SELECT webhook_secret FROM routines WHERE id = ${routine.id}
     `;
-    return { ana: ana.id, session };
+    if (hook === undefined) return yield* Effect.die("A webhook routine has a secret");
+    return { ana: ana.id, session, routine: routine.id, webhookSecret: hook.webhook_secret };
   }).pipe(Effect.provide(serverAt(home)));
   yield* fs.writeFileString(
     path.join(layout.botMemory(before.ana), "notes.md"),
@@ -237,7 +241,11 @@ it.effect(
       const exported = yield* exportTo(from.home, file);
       assert.strictEqual(exported.bots, 1);
       assert.deepInclude(exported.secrets, { _tag: "sealed", records: 1 });
-      assert.strictEqual(((yield* fs.stat(file)).mode & 0o777).toString(8), "600");
+      // Only its owner reads it: on Windows, by the access list of the private
+      // folder it was written in, which has no mode bits to show.
+      if (process.platform !== "win32") {
+        assert.strictEqual(((yield* fs.stat(file)).mode & 0o777).toString(8), "600");
+      }
 
       const to = yield* fs.makeTempDirectoryScoped();
       const imported = yield* importFrom(to, file);
@@ -271,10 +279,10 @@ it.effect(
         assert.strictEqual(Redacted.value(revealed), SECRET_VALUE);
         // The webhook works here, under a secret of its own.
         const [hook] = yield* sql<{ readonly webhook_secret: string | null }>`
-          SELECT webhook_secret FROM routines WHERE id = 'routine-deploy'
+          SELECT webhook_secret FROM routines WHERE id = ${from.routine}
         `;
         assert.isString(hook?.webhook_secret);
-        assert.notStrictEqual(hook?.webhook_secret, WEBHOOK_SECRET);
+        assert.notStrictEqual(hook?.webhook_secret, from.webhookSecret);
 
         // The engine here never had Ana's session: the first start finds it
         // lost, and she goes on in a new one.
@@ -306,7 +314,7 @@ it.effect(
       yield* exportTo(from.home, file).pipe(Effect.provide(capture));
       for (const { name, bytes } of yield* entriesOf(file)) {
         assert.notInclude(Buffer.from(bytes).toString("latin1"), SECRET_VALUE, name);
-        assert.notInclude(Buffer.from(bytes).toString("latin1"), WEBHOOK_SECRET, name);
+        assert.notInclude(Buffer.from(bytes).toString("latin1"), from.webhookSecret, name);
       }
 
       const to = yield* fs.makeTempDirectoryScoped();
@@ -488,6 +496,51 @@ it.effect(
         yield* fs.writeFileString(at, skill.text);
       }
       assert.strictEqual((yield* importFrom(fresh, file)).bots, 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  { timeout: MOVE_TIMEOUT },
+);
+
+it.effect(
+  "moves a home that never saved a secret into one where nothing ran yet",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const from = yield* fs.makeTempDirectoryScoped();
+      const ana = yield* createBot("Ana").pipe(Effect.provide(serverAt(from)));
+      const file = path.join(yield* fs.makeTempDirectoryScoped(), "export.tar.gz");
+      assert.deepStrictEqual((yield* exportTo(from, file)).secrets, { _tag: "none" });
+
+      // No secrets folder here, and none in the archive.
+      const to = yield* fs.makeTempDirectoryScoped();
+      assert.strictEqual((yield* importFrom(to, file)).bots, 1);
+      assert.isFalse(yield* fs.exists(importMark(path, to)));
+      yield* Effect.gen(function* () {
+        assert.strictEqual(yield* workspaceOf(ana.id), homeLayout(path, to).workspace(ana.id));
+      }).pipe(Effect.provide(serverAt(to)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  { timeout: MOVE_TIMEOUT },
+);
+
+it.effect.skipIf(process.platform === "win32")(
+  "refuses a home whose shared memory is a link of the operator's unless asked, and keeps the link",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const from = yield* populatedHome;
+      const file = path.join(yield* fs.makeTempDirectoryScoped(), "export.tar.gz");
+      yield* exportTo(from.home, file);
+
+      // Linked to a disk that is empty, or not mounted, right now.
+      const elsewhere = yield* fs.makeTempDirectoryScoped();
+      const to = yield* fs.makeTempDirectoryScoped();
+      const memory = homeLayout(path, to).sharedMemory;
+      yield* fs.makeDirectory(path.dirname(memory), { recursive: true });
+      yield* fs.symlink(elsewhere, memory);
+      const refused = yield* Effect.exit(importFrom(to, file));
+      assert.deepInclude(failedWith(refused), { _tag: "HomeInUse", bots: 0, files: true });
+      assert.strictEqual((yield* fs.lstat(memory)).type, "SymbolicLink");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   { timeout: MOVE_TIMEOUT },
 );
