@@ -65,6 +65,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0066](0066-connecting-an-ai-is-picking-the-account-you-have.md) | Connecting an AI is picking the account you have | Accepted |
 | [0067](0067-a-first-contact-is-a-paced-hello-not-a-setup.md) | A bot's first contact is a hello in a few paced messages, not a setup | Accepted |
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
+| [0069](0069-quick-access-is-a-second-window-on-the-primary-bots-conversation.md) | Quick access is a second window on the primary bot's conversation | Accepted |
 | [0070](0070-a-turns-plan-and-its-little-ones-are-its-work.md) | A turn's plan and its little ones are its work, shown only to its audience | Accepted |
 | [0071](0071-a-bot-splits-into-little-ones-under-its-face-and-its-plan-is-a-quiet-card.md) | A bot splits into little ones under its face, and its plan is a quiet card | Accepted |
 | [0072](0072-errors-say-what-to-do-force-stop-and-whole-questions.md) | Errors say what to do, Stop can be forced, and questions arrive whole | Accepted |

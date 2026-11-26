@@ -22,7 +22,7 @@ export interface CornerOffset {
 export const quickAccessSize = (
   solid: boolean,
 ): { readonly width: number; readonly height: number } =>
-  solid ? { width: 380, height: 580 } : { width: 428, height: 652 };
+  solid ? { width: 380, height: 580 } : { width: 436, height: 642 };
 
 /**
  * Where a window never placed on a display opens: the card a comfortable gap

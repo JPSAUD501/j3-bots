@@ -14,7 +14,7 @@ The server runs the scripted agent ([Server: configuration](../architecture/serv
 3. **The desktop's own surfaces.**
    - A notification's click opens its conversation. The server notifies only about what no paired device has in view, so the phone leaves the conversation first and the desktop opens the other bot. The check records the notification as the main process shows it and delivers the click as Electron reports one: no notification server runs under Xvfb, so the system's banner is not part of it.
    - The tray lists the bot that waits, read from the menu the main process gives the tray.
-   - The global shortcut is registered with the system. Pressing it needs an input tool the check does not assume; the [desktop smoke](../../apps/desktop/test/smoke.test.ts) runs the Show it triggers, which puts the cursor in the composer.
+   - The global shortcut is registered with the system. Pressing it needs an input tool the check does not assume; the [desktop smoke](../../apps/desktop/test/smoke.test.ts) runs what it triggers, from the menu's Quick access item: the main window with the cursor in the composer while there is no primary bot, and quick access once there is one.
    - `xdg-open` with a link to a bot (`j3bots-dev://bot/<id>`, the development build's scheme) opens that bot, through the link handler the app registers in the check's own profile.
 
 Each step leaves captures of both screens in `apps/desktop/every-surface-captures/` (or `J3_EVERY_SURFACE_CAPTURES`).

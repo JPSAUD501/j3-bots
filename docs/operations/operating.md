@@ -67,6 +67,22 @@ journalctl --user -u j3-bots -n 200      # the last 200 lines
 
 The server writes one JSON object per line: wakes, dispatches and outcomes with identifiers, not message text. If `journalctl --user` shows nothing, the journal is not stored on disk; run `sudo mkdir -p /var/log/journal` and `sudo systemctl restart systemd-journald`.
 
+## Quick access in the desktop app
+
+The desktop app's global shortcut (Settings → Devices → This device) opens quick access, a small window on the primary bot's conversation ([Experience](../product/experience.md#a-quick-word-with-the-primary-bot), [Clients: Desktop](../architecture/clients.md#desktop)). What it can do depends on the desktop it runs on:
+
+| Where | What to expect |
+| --- | --- |
+| Windows, macOS, Linux on X11 with a compositing manager | A see-through window around a rounded card, in the bottom-right corner of the screen the pointer is on, above other windows, back where you last dragged it on that screen. |
+| Linux on X11 with no compositing manager (a bare window manager such as Openbox or i3 without picom) | The window is not see-through: the card fills it and its corners are square. The app asks the X server once as it starts, so starting a compositing manager later shows after the app is started again. |
+| Linux on Wayland | The window is see-through. The compositor decides where it opens and whether it stays above other windows: the app cannot put it in a corner, cannot bring it back where you dragged it, and other windows may cover it. Starting the app with `--ozone-platform=x11` runs it through Xwayland, where all of it works. The shortcut itself is the desktop's to allow (Settings says so). |
+| Linux taskbars | Electron documents leaving a window out of the taskbar for Windows and macOS only; a Linux taskbar or window switcher may list quick access while it is open. |
+| macOS, over another app in full screen | macOS switches to the desktop the window is on. |
+
+Only the second row was checked on a running system: the solid window, by the desktop smoke under Xvfb. The rest is what Electron 44's documentation says or is assumed ([Clients: Desktop](../architecture/clients.md#desktop) marks each).
+
+Where the window was last put is kept per screen in the app's settings file, `<userData>/desktop.json`, under `quickAccess`. Deleting that entry puts it back in the corner.
+
 ## The server the desktop app runs
 
 When the desktop app runs the bots on this computer, it runs the server itself, as a child of the app, instead of the service ([Clients: Desktop](../architecture/clients.md#desktop)). Nothing of it is installed: no unit, no `j3-bots` command, no `~/.j3-bots`. Its files are under the app's profile, `<userData>`: `~/.config/J3 Bots` on Linux, `%APPDATA%\J3 Bots` on Windows, `~/Library/Application Support/J3 Bots` on macOS (`J3 Bots Development` for a development build).

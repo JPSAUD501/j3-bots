@@ -30,10 +30,11 @@ import {
 // The development build, launched as the operator launches it, against the
 // server's testing layer (its real routes and socket over the in-memory
 // engine) on loopback: refuse an address that redirects, name the server,
-// pair, open a bot from the roster, send it a message with a file, open quick
-// access on the primary bot (the application menu's item, which the global
-// shortcut also runs), send from it, find its draft in the main window, close
-// it with Escape and go from it to the conversation in the main window, find the
+// pair, open a bot from the roster, send it a message with a file, press the
+// shortcut (the application menu's item for it) with no primary bot, which
+// shows the main window, then with one, which opens quick access: send from
+// it, find its draft in the main window, close it with Escape and go from it
+// to the conversation in the main window, find the
 // token nowhere on disk in the clear, launch again still paired, keep a
 // credential the system will not open, read a damaged one as not paired, and
 // change server from Settings; and follow links to the app, given at launch
@@ -126,9 +127,10 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
     () =>
       Effect.gen(function* () {
         const origin = yield* Server.origin;
-        const bot = yield* (yield* Server.Bots).create({
+        const bots = yield* Server.Bots;
+        const bot = yield* bots.create({
           commandId: CommandId.make("smoke-bot"),
-          draft: { name: "Smoke Bot", job: "", primary: true },
+          draft: { name: "Smoke Bot", job: "" },
         });
         const devices = yield* Server.Devices;
         const entries = yield* Server.Entries;
@@ -242,10 +244,29 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         assert.isTrue(Option.isSome(arrived));
         assert.strictEqual(new URL(page.url()).protocol, "j3bots-dev:");
 
-        // Quick access: the shortcut opens it on the primary bot's conversation once its page
-        // has reached the server, with the cursor in its composer. Until then it shows the
-        // main window, so the shortcut is pressed until quick access shows.
+        // No bot is the primary one yet, so the shortcut shows the main window, as the tray
+        // does: it comes forward with the cursor in the open conversation's composer.
         const messageBox = { name: `Message ${bot.profile.name}` };
+        yield* onPage(page, async () => {
+          await page.getByRole("button", { name: "Settings" }).focus();
+          const composer = await page
+            .getByRole("combobox", messageBox)
+            .elementHandle({ timeout: STEP });
+          await pressShortcut();
+          await page.waitForFunction((element) => element === document.activeElement, composer, {
+            timeout: STEP,
+          });
+          assert.isFalse(await quickAccessShows(), "quick access opened with no primary bot");
+        });
+
+        // Quick access: the shortcut opens it on the primary bot's conversation once its page
+        // has reached the server and read the roster, with the cursor in its composer. Until
+        // then it shows the main window, so the shortcut is pressed until quick access shows.
+        yield* bots.update({
+          commandId: CommandId.make("smoke-bot-primary"),
+          botId: bot.id,
+          changes: { primary: true },
+        });
         yield* Effect.promise(async () => {
           if (!(await quickAccessShows())) await pressShortcut();
           return quickAccessShows();
