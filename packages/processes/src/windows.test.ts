@@ -51,19 +51,28 @@ describe("windowsCommandWord", () => {
 });
 
 describe("windowsNameKey", () => {
-  it("gives names that differ only in case one key, unit by unit, as NTFS compares them", () => {
+  it("gives names that differ only in the case of an ASCII or Latin-1 letter one key", () => {
     assert.strictEqual(
       windowsNameKey(String.raw`C:\Users\Ada\Área`),
       windowsNameKey(String.raw`c:\users\ADA\área`),
     );
-    // The Kelvin sign is not a K, and a sharp s has no one-unit upper case.
-    assert.notStrictEqual(windowsNameKey("\u212a"), windowsNameKey("k"));
-    assert.notStrictEqual(windowsNameKey("straße"), windowsNameKey("STRASSE"));
-    // A dotted capital I is not an i followed by a combining dot.
-    assert.notStrictEqual(windowsNameKey("\u0130"), windowsNameKey("i\u0307"));
-    // Nor are a dotless i and a long s an I and an S, which a path check would take them for.
-    assert.notStrictEqual(windowsNameKey("D:\\\u0131"), windowsNameKey("D:\\I"));
-    assert.notStrictEqual(windowsNameKey("\u017f"), windowsNameKey("S"));
+  });
+
+  it("never gives one key to names a volume can keep apart", () => {
+    const apart: ReadonlyArray<readonly [string, string]> = [
+      // The Kelvin sign is not a K, and a sharp s has no one-unit capital.
+      ["\u212a", "k"],
+      ["straße", "STRASSE"],
+      // A dotted capital I is not an i followed by a combining dot.
+      ["\u0130", "i\u0307"],
+      // Windows' default table keeps these apart from what Unicode makes their capitals.
+      ["D:\\\u0131", "D:\\I"],
+      ["\u017f", "S"],
+      ["D:\\\u00b5Tools\\bin", "D:\\\u03bcTools\\bin"],
+    ];
+    for (const [one, other] of apart) {
+      assert.notStrictEqual(windowsNameKey(one), windowsNameKey(other), `${one} and ${other}`);
+    }
   });
 });
 

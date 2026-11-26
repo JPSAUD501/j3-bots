@@ -81,29 +81,28 @@ export const windowsCommandWord = (word: string): string => {
 };
 
 /**
- * `name`, a path or a part of one, as Windows' file systems compare it: two
- * names that give the same key name the same file. NTFS compares names by
- * its upcase table, which maps each UTF-16 unit to one unit, its upper case,
- * and leaves every other unit as it is: `ß` stays `ß`, and `K`, the Kelvin
- * sign, is not `k`. So each unit is upper-cased on its own, and kept as it is
- * where its upper case would take more than one unit, or where it is not
- * ASCII and its upper case is: Windows' default table leaves the dotless `ı`
- * and the long `ſ` as they are, never `I` and `S` (**Read** in ntfs-3g's
- * `ntfs_upcase_table_build`, which rebuilds that table). Lower-casing the
- * whole name, as `toLowerCase` does, would take `K` for `k` and `İ` for `i̇`.
- * A volume's table is the one of the Windows that formatted it, which can
- * differ from Unicode's, which Node follows, on a few more letters: the Greek
- * letters with a subscript iota, whose one-unit upper case this does not
- * find, among them. Where it differs, two names Windows takes for one are
- * told apart, never the other way round, on the letters above.
+ * `name`, a path or a part of one, as a key that is the same for two names
+ * Windows' file systems take for one only where every NTFS volume agrees:
+ * NTFS compares names by an upcase table, one UTF-16 unit for one, and every
+ * table since Windows NT maps the lowercase ASCII and Latin-1 letters to
+ * their capitals (`a`–`z`, `à`–`þ` but `÷`). Beyond those, the table is the
+ * one of the Windows that formatted the volume, and tables differ from
+ * Unicode's and from each other: Windows' default keeps the dotless `ı`, the
+ * long `ſ` and the micro sign `µ` apart from `I`, `S` and the Greek `Μ`,
+ * which Unicode makes their capitals (**Read** in ntfs-3g's
+ * `ntfs_upcase_table_build`, which rebuilds that table). So every other unit
+ * is kept as it is: two names that differ only in the case of another letter
+ * get different keys, and a caller takes them for two (a path outside a
+ * folder, a search path folder kept twice), never two names a volume keeps
+ * apart for one. Lower-casing the whole name, as `toLowerCase` does, would
+ * take the Kelvin sign `K` for `k`.
  */
 export const windowsNameKey = (name: string): string => {
   let key = "";
   for (let at = 0; at < name.length; at++) {
-    const unit = name[at] ?? "";
-    const upper = unit.toUpperCase();
-    const intoAscii = unit.charCodeAt(0) > 0x7f && upper.charCodeAt(0) <= 0x7f;
-    key += upper.length === 1 && !intoAscii ? upper : unit;
+    const unit = name.charCodeAt(at);
+    const folds = (unit >= 0x61 && unit <= 0x7a) || (unit >= 0xe0 && unit <= 0xfe && unit !== 0xf7);
+    key += folds ? String.fromCharCode(unit - 0x20) : (name[at] ?? "");
   }
   return key;
 };
