@@ -107,6 +107,7 @@ export {
 } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
+export { littleOneText, planStepText, planTitle } from "./plan.ts";
 export { fillDetail, stepText, workFoldTitle } from "./work.ts";
 export {
   type ServerUpdateLine,

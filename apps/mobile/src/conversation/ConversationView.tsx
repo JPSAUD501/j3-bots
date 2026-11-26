@@ -90,6 +90,7 @@ import { ConversationHeader } from "./Header.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
 import { AnsweringLine } from "./AnsweringLine.tsx";
+import { RoomWork } from "./RoomWork.tsx";
 import { EventLine } from "./EventLine.tsx";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
@@ -463,6 +464,7 @@ export function ConversationView({
                   ListFooterComponent={
                     room === null ? null : (
                       <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
+                        <RoomWork room={room} />
                         <AnsweringLine room={room} />
                       </View>
                     )

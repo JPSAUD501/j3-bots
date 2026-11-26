@@ -60,6 +60,20 @@
       --color-bot-bubble-orchid: oklch(0.961 0.023 320);
       --color-bot-bubble-rose: oklch(0.961 0.021 354);
       --color-bot-bubble-slate: oklch(0.945 0.003 262);
+      --color-bot-little-tomato: oklch(0.823 0.092 24);
+      --color-bot-little-tangerine: oklch(0.832 0.075 50);
+      --color-bot-little-honey: oklch(0.825 0.058 84);
+      --color-bot-little-lime: oklch(0.821 0.068 122);
+      --color-bot-little-mint: oklch(0.818 0.06 160);
+      --color-bot-little-teal: oklch(0.798 0.043 199);
+      --color-bot-little-sky: oklch(0.823 0.06 236);
+      --color-bot-little-cobalt: oklch(0.779 0.097 264);
+      --color-bot-little-iris: oklch(0.807 0.097 294);
+      --color-bot-little-orchid: oklch(0.837 0.097 320);
+      --color-bot-little-rose: oklch(0.837 0.087 354);
+      --color-bot-little-slate: oklch(0.77 0.014 262);
+      --color-little-failed: #8e8e96;
+      --color-little-failed-rim: #6a6a73;
     }
 
     @variant dark {
@@ -120,6 +134,20 @@
       --color-bot-bubble-orchid: oklch(0.192 0.059 326);
       --color-bot-bubble-rose: oklch(0.197 0.053 357);
       --color-bot-bubble-slate: oklch(0.167 0.01 262);
+      --color-bot-little-tomato: oklch(0.806 0.11 28);
+      --color-bot-little-tangerine: oklch(0.852 0.091 52);
+      --color-bot-little-honey: oklch(0.898 0.093 86);
+      --color-bot-little-lime: oklch(0.881 0.11 128);
+      --color-bot-little-mint: oklch(0.858 0.087 162);
+      --color-bot-little-teal: oklch(0.817 0.067 200);
+      --color-bot-little-sky: oklch(0.84 0.081 236);
+      --color-bot-little-cobalt: oklch(0.753 0.122 262);
+      --color-bot-little-iris: oklch(0.782 0.119 291);
+      --color-bot-little-orchid: oklch(0.817 0.122 326);
+      --color-bot-little-rose: oklch(0.829 0.105 357);
+      --color-bot-little-slate: oklch(0.765 0.02 262);
+      --color-little-failed: #4a4a52;
+      --color-little-failed-rim: #7a7a84;
     }
   }
 }
@@ -186,6 +214,20 @@
   --color-bot-bubble-orchid: unset;
   --color-bot-bubble-rose: unset;
   --color-bot-bubble-slate: unset;
+  --color-bot-little-tomato: unset;
+  --color-bot-little-tangerine: unset;
+  --color-bot-little-honey: unset;
+  --color-bot-little-lime: unset;
+  --color-bot-little-mint: unset;
+  --color-bot-little-teal: unset;
+  --color-bot-little-sky: unset;
+  --color-bot-little-cobalt: unset;
+  --color-bot-little-iris: unset;
+  --color-bot-little-orchid: unset;
+  --color-bot-little-rose: unset;
+  --color-bot-little-slate: unset;
+  --color-little-failed: unset;
+  --color-little-failed-rim: unset;
   --spacing: 4px;
   --breakpoint-tablet: 768px;
   --breakpoint-wide: 1200px;

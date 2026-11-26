@@ -327,6 +327,303 @@
   }
 }
 
+/*
+ * A bot's little ones (components/LittleOnes.tsx): the small copies of itself it splits into while
+ * part of its turn runs in parallel. Where each one is, how it is squashed and what its face shows
+ * come from the shared model on the page's frame loop, which writes a transform on each little one
+ * and the height of the block; what is here is the block's own layout and what the compositor
+ * plays: a line of words coming in as its little one lands and going as it sets off home, and a
+ * failed one losing its color. A line's row is laid over the block, so one that comes or goes lays
+ * nothing out; the block's height alone moves what follows it.
+ */
+@layer components {
+  .little-ones {
+    position: relative;
+    height: 0;
+  }
+
+  .little-strand {
+    position: absolute;
+    top: 0;
+    inset-inline-start: 0;
+    z-index: 0;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  /* Not there until the model says it has come out of the bot. */
+  .little-row {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 28px;
+    visibility: hidden;
+  }
+
+  .little-row[data-shown="true"] {
+    visibility: visible;
+  }
+
+  .little-row[data-failed="true"] {
+    --avatar-body: var(--little-failed);
+    --avatar-rim: var(--little-failed-rim);
+  }
+
+  .little-line {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    gap: 10px;
+    border-radius: var(--radius-md);
+    text-align: start;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    outline-offset: 2px;
+  }
+
+  .little-line:focus-visible {
+    outline: 2px solid var(--accent);
+  }
+
+  /* As wide as the bot's face above it, so its words line up with the turn's own line. */
+  .little-body {
+    display: block;
+    flex: none;
+    margin-inline: 3px;
+    transform-origin: 50% 100%;
+    will-change: transform;
+  }
+
+  .little-body :is(path, circle) {
+    transition:
+      fill var(--duration-state) var(--ease-out),
+      stroke var(--duration-state) var(--ease-out);
+  }
+
+  .little-words {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateX(-6px);
+    transition:
+      opacity 160ms var(--ease-out),
+      transform 160ms var(--ease-out),
+      color var(--duration-state) var(--ease-out);
+  }
+
+  .little-row[data-words="true"] .little-words {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity var(--duration-soft) var(--ease-soft),
+      transform var(--duration-soft) var(--ease-soft),
+      color var(--duration-state) var(--ease-out);
+  }
+
+  .little-row[data-failed="true"] .little-words {
+    color: var(--muted-foreground);
+  }
+
+  /* "+2 more": two specks of the bot's little ones and a count, under the last line. */
+  .little-more {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    display: flex;
+    height: 28px;
+    align-items: center;
+    gap: 10px;
+    font-size: var(--text-xs);
+    color: var(--muted-foreground);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      transform var(--duration-slide) var(--ease-slide),
+      opacity var(--duration-state) var(--ease-out);
+  }
+
+  .little-more[data-shown="true"] {
+    opacity: 1;
+  }
+
+  .little-more-dots {
+    display: flex;
+    width: 24px;
+    flex: none;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .little-more-dots span {
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid var(--avatar-rim);
+    border-radius: var(--radius-pill);
+    background: var(--avatar-body);
+  }
+
+  /* In the roster: one dot for each little one at work, along the avatar's lower start edge. */
+  .little-dots span {
+    position: absolute;
+    border: 1.5px solid var(--avatar-cutout, var(--background));
+    border-radius: var(--radius-pill);
+    background: var(--avatar-body);
+    scale: 0;
+    transition: scale var(--duration-pop) var(--ease-pop);
+  }
+
+  .little-dots span[data-on="true"] {
+    scale: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .little-words,
+    .little-row[data-words="true"] .little-words {
+      transform: none;
+      transition: opacity var(--duration-state) var(--ease-out);
+    }
+
+    .little-more,
+    .little-dots span {
+      transition: opacity var(--duration-state) var(--ease-out);
+    }
+  }
+}
+
+/*
+ * A turn's plan (components/PlanCard.tsx): a short card of one-line steps under the turn's line.
+ * Each step is `--plan-line` tall, so the one live mark, which the page's frame loop moves on
+ * `slide`, travels by whole lines without measuring anything.
+ */
+@layer components {
+  .plan-card {
+    position: relative;
+    margin-block: 2px 4px;
+    margin-inline-start: 34px;
+    max-width: 30rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    padding: 5px 12px 5px 10px;
+  }
+
+  .plan-step,
+  .plan-count {
+    display: flex;
+    height: 26px;
+    align-items: center;
+    gap: 10px;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    color: var(--muted-foreground);
+    transition: color var(--duration-state) var(--ease-out);
+  }
+
+  .plan-step[data-state="running"] {
+    color: var(--foreground);
+    font-weight: 500;
+  }
+
+  /* Opened from the settled line: every step in full, as tall as its words. */
+  .plan-step-whole {
+    height: auto;
+    min-height: 26px;
+    align-items: flex-start;
+    padding-block: 5px;
+  }
+
+  .plan-count {
+    padding-inline-start: 26px;
+    font-size: var(--text-2xs);
+  }
+
+  .plan-mark {
+    display: flex;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+  }
+
+  .plan-mark-open::before {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+    border-radius: var(--radius-pill);
+    content: "";
+    transition: opacity var(--duration-state) var(--ease-out);
+  }
+
+  /* The live mark stands on it. */
+  .plan-mark-open[data-live]::before {
+    opacity: 0;
+  }
+
+  .plan-mark-done {
+    background: var(--muted);
+    color: var(--foreground);
+  }
+
+  .plan-mark-done svg {
+    stroke-width: 3;
+  }
+
+  /* Over the first step's mark: inside the card's own padding. */
+  .plan-live {
+    position: absolute;
+    top: 5px;
+    inset-inline-start: 10px;
+    display: flex;
+    width: 16px;
+    height: 26px;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .plan-live-ring {
+    display: flex;
+    width: 13px;
+    height: 13px;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--plan-live);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    opacity: 0;
+    scale: 0.3;
+    transition:
+      scale var(--duration-pop) var(--ease-pop),
+      opacity var(--duration-state) var(--ease-out);
+  }
+
+  .plan-live[data-on="true"] .plan-live-ring {
+    opacity: 1;
+    scale: 1;
+  }
+
+  .plan-live-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: var(--radius-pill);
+    background: var(--plan-live);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .plan-live-ring {
+      scale: 1;
+      transition: opacity var(--duration-state) var(--ease-out);
+    }
+  }
+}
+
 @keyframes send-off {
   to {
     opacity: 0;

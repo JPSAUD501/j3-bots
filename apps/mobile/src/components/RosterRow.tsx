@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { needsOperator } from "@j3-bots/client-runtime";
+import { littleOneDots, MAX_SHOWN_LITTLE_ONES } from "@j3-bots/client-runtime/presentation";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
-import type { RosterItem } from "@j3-bots/contracts";
+import type { Avatar, RosterItem } from "@j3-bots/contracts";
+import { littleColors, littleDots, resolveAvatar } from "@j3-bots/design-tokens";
 import { type ComponentRef, type Ref, useRef, useState } from "react";
 import { View } from "react-native";
+import Animated, { ZoomOut } from "react-native-reanimated";
+import { useUniwind } from "uniwind";
 import { feelLongPress } from "../platform/haptics.ts";
 import type { MenuAnchor } from "./Menu.tsx";
 import { Text } from "../text.tsx";
@@ -11,8 +15,15 @@ import { SwapText } from "./SwapText.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
+import { popIn } from "../motion.ts";
 import { PressScale } from "../press.tsx";
-import { type AvatarHandle, RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar.tsx";
+import { useColor } from "../theme.ts";
+import {
+  type AvatarGround,
+  type AvatarHandle,
+  RoomAvatar,
+  roomAvatarMembers,
+} from "./avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "./avatar/mood.tsx";
 
 export const toneClass = {
@@ -22,6 +33,62 @@ export const toneClass = {
   waiting: "text-waiting",
   blocked: "text-blocked",
 } as const satisfies Record<LineTone, string>;
+
+const groundColor = {
+  background: "accent-background",
+  surface: "accent-surface",
+  muted: "accent-muted",
+} as const satisfies Record<AvatarGround, string>;
+
+/** Where each of the row's avatar's dots stands: along its lower start edge, clear of the primary bot's star at the other corner. */
+const DOTS = littleDots(40, MAX_SHOWN_LITTLE_ONES);
+
+/**
+ * While a bot is split, one tiny dot for each of its little ones at work,
+ * by its avatar, four at most. Nothing more: what they do is in its
+ * conversation. A dot pops in as one starts and shrinks away as one ends;
+ * under reduced motion it is there, then gone. The row's label says how many.
+ */
+function LittleDots({
+  count,
+  avatar,
+  ground,
+}: {
+  readonly count: number;
+  readonly avatar: Avatar;
+  readonly ground: AvatarGround;
+}) {
+  const theme = useUniwind().theme === "dark" ? "dark" : "light";
+  const cut = useColor(groundColor[ground]);
+  const { body } = littleColors(resolveAvatar(avatar).color, theme, false);
+  return (
+    <View
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      className="absolute inset-0"
+    >
+      {DOTS.places.slice(0, littleOneDots(count).dots).map((place) => (
+        <Animated.View
+          key={place.y}
+          entering={popIn()}
+          exiting={ZoomOut.duration(160)}
+          style={{
+            position: "absolute",
+            start: place.x,
+            top: place.y,
+            width: DOTS.size,
+            height: DOTS.size,
+            backgroundColor: body,
+            borderColor: cut,
+            borderWidth: 1.5,
+          }}
+          className="rounded-pill"
+        />
+      ))}
+    </View>
+  );
+}
 
 /**
  * One bot or room: avatar, name, time, and one line of status, in a row
@@ -61,7 +128,7 @@ export function RosterRow({
   readonly lifted?: boolean;
 }) {
   const ctx = usePresentation();
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const bots = useBots();
   const line = rosterLine(item, ctx);
   const needs = needsOperator(item);
@@ -71,6 +138,9 @@ export function RosterRow({
   // The row turns muted while pressed or selected: the avatar's light keeps its ring in that color.
   const [pressed, setPressed] = useState(false);
   const ground = selected || pressed ? "muted" : "background";
+  // How many of its little ones are at work, while a bot is split.
+  const split =
+    item._tag === "bot" && item.bot.state._tag === "working" ? item.bot.state.littleOnes : 0;
   const primary = item._tag === "bot" && item.bot.primary;
   const row = useRef<ComponentRef<typeof View>>(null);
   return (
@@ -84,6 +154,7 @@ export function RosterRow({
         primary ? t("roster.primary") : null,
         time,
         line.text,
+        split > 0 ? plural("littleOnes.label", split) : null,
         item.unread ? t("roster.unread") : null,
       ]
         .filter((part) => part !== null)
@@ -105,16 +176,19 @@ export function RosterRow({
       style={{ height }}
     >
       {item._tag === "bot" ? (
-        <LiveBotAvatar
-          bot={item.bot}
-          unread={item.unread}
-          lastEntry={item.lastEntry}
-          size={40}
-          ground={ground}
-          markPrimary
-          entrance={entrance}
-          {...(avatarRef === undefined ? {} : { ref: avatarRef })}
-        />
+        <View>
+          <LiveBotAvatar
+            bot={item.bot}
+            unread={item.unread}
+            lastEntry={item.lastEntry}
+            size={40}
+            ground={ground}
+            markPrimary
+            entrance={entrance}
+            {...(avatarRef === undefined ? {} : { ref: avatarRef })}
+          />
+          <LittleDots count={split} avatar={item.bot.profile.avatar} ground={ground} />
+        </View>
       ) : (
         <RoomAvatar
           size={40}

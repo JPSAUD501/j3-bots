@@ -33,6 +33,8 @@ import {
   RoomId,
   type RosterItem,
   type RosterItemKey,
+  type TurnWork,
+  type WorkFoldEntry,
   type RoutineRun,
   ServerOrigin,
   type Skill,
@@ -157,6 +159,8 @@ import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
 import { HiddenConversations, SectionBlock, useFoldedSections } from "../components/RosterGroups";
 import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
+import { AnsweringLine } from "../components/AnsweringLine";
+import { RoomWork } from "../components/RoomWork";
 import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineRunList } from "../components/RoutineRuns";
@@ -184,6 +188,14 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
+import {
+  longPlan,
+  playedRoom,
+  playedTurn,
+  sampleLittleOnes,
+  samplePlan,
+  unnamedLittleOne,
+} from "./sampleWork";
 import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import {
   connectorsHolder,
@@ -294,6 +306,7 @@ export default function GalleryPage() {
                 <BubblesSection />
                 <CardsSection />
                 <WorkSection />
+                <PlanAndLittleOnesSection />
                 <NoticesSection />
                 <ComposerSection />
                 <DetailsSection />
@@ -1637,6 +1650,196 @@ function WorkSection() {
         </Labeled>
       </Section>
     </AttachmentImagesProvider>
+  );
+}
+
+/** Scout at work on `doing`, with `littleOnes` of its little ones at work. */
+const scoutWorking = (doing: string, littleOnes = 0): Bot => ({
+  ...team.bots.scout,
+  state: {
+    _tag: "working",
+    since: DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) - 72_000),
+    stalled: false,
+    quietSince: null,
+    typing: false,
+    retrying: false,
+    activity: doing,
+    tool: null,
+    littleOnes,
+  },
+});
+
+/** The gallery's running fold, carrying `work`; finished when the turn is not `live`. */
+const foldWith = (id: string, work: TurnWork, live = true): WorkFoldEntry | null => {
+  const running = variants.folds[0]?.entry;
+  const finished = variants.folds[1]?.entry;
+  const base = live ? running : finished;
+  return base === undefined ? null : { ...base, id: EntryId.make(id), work };
+};
+
+/**
+ * One turn played from its first step to its end: the plan moves on, the bot
+ * splits into three little ones, one fails, they go home, and the turn folds
+ * into its two lines. Replay starts it again.
+ */
+function PlayedTurn() {
+  const [run, setRun] = useState(0);
+  return (
+    <div className="flex min-h-64 max-w-(--layout-text-column) flex-col items-start gap-2">
+      <Button variant="outline" size="sm" onClick={() => setRun(run + 1)}>
+        Replay
+      </Button>
+      <PlayedOnce key={run} />
+    </div>
+  );
+}
+
+/** The turn played once, from its first beat, on its own timers. */
+function PlayedOnce() {
+  const [beat, setBeat] = useState(0);
+  useEffect(() => {
+    const timers = playedTurn.map((played, index) =>
+      window.setTimeout(() => setBeat(index), played.at),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, []);
+  const played = playedTurn[beat];
+  if (played === undefined) return null;
+  const working = played.work.littleOnes.ones.filter((one) => one.status === "working").length;
+  return (
+    <WorkFold
+      fold={foldWith("fold-played", played.work, played.live)}
+      live={played.live ? { bot: scoutWorking(played.doing, working), lastEntry: null } : null}
+      steps={null}
+      onOpenChange={nothing}
+      onOpenImage={nothing}
+    />
+  );
+}
+
+/**
+ * A member's turn in a room played whole, with no plan: its place arrives as
+ * it splits into two, one does its part, the other fails, and its place goes
+ * once the last is home. Replay starts it again.
+ */
+function PlayedRoom() {
+  const [run, setRun] = useState(0);
+  return (
+    <div className="flex min-h-48 max-w-(--layout-text-column) flex-col items-start gap-2">
+      <Button variant="outline" size="sm" onClick={() => setRun(run + 1)}>
+        Replay
+      </Button>
+      <PlayedRoomOnce key={run} />
+    </div>
+  );
+}
+
+function PlayedRoomOnce() {
+  const [beat, setBeat] = useState(0);
+  useEffect(() => {
+    const timers = playedRoom.map((played, index) =>
+      window.setTimeout(() => setBeat(index), played.at),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, []);
+  const work = playedRoom[beat]?.work ?? null;
+  const room = {
+    ...team.room,
+    answering: [ids.juniper],
+    memberWork: work === null ? [] : [{ botId: ids.juniper, work }],
+  };
+  return (
+    <div className="flex w-full flex-col">
+      <RoomWork room={room} />
+      <AnsweringLine room={room} />
+    </div>
+  );
+}
+
+function PlanAndLittleOnesSection() {
+  const none = sampleLittleOnes([]);
+  const turn = (id: string, work: TurnWork, live = true) => (
+    <WorkFold
+      fold={foldWith(id, work, live)}
+      live={live ? { bot: scoutWorking("Comparing the three vendors"), lastEntry: null } : null}
+      steps={null}
+      onOpenChange={nothing}
+      onOpenImage={nothing}
+    />
+  );
+  const split = (count: number): RosterItem => ({
+    _tag: "bot",
+    bot: scoutWorking("Comparing the three vendors", count),
+    unread: false,
+    lastEntry: null,
+    lastActivityAt: null,
+  });
+  return (
+    <Section title="A turn's plan and its little ones">
+      <Labeled label="A turn played whole: the plan moves on, the bot splits into three, one fails, they go home, and the turn folds. Hover a little one for its line in full">
+        <PlayedTurn />
+      </Labeled>
+      <Labeled label="The plan while the turn runs: its first step, half way, a long plan around where the bot is">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {turn("fold-plan-first", { plan: samplePlan(0), littleOnes: none })}
+          {turn("fold-plan-half", { plan: samplePlan(2), littleOnes: none })}
+          {turn("fold-plan-long", { plan: longPlan, littleOnes: none })}
+        </div>
+      </Labeled>
+      <Labeled label="The little ones at work: three by the plan, four and more with no plan, one alone, one the engine gave no words for">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {turn("fold-little-three", {
+            plan: samplePlan(1),
+            littleOnes: sampleLittleOnes(["working", "working", "working"]),
+          })}
+          {turn("fold-little-more", {
+            plan: null,
+            littleOnes: sampleLittleOnes(["working", "working", "done", "working", "working"], 2),
+          })}
+          {turn("fold-little-one", { plan: null, littleOnes: sampleLittleOnes(["working"]) })}
+          {turn("fold-little-unnamed", { plan: null, littleOnes: unnamedLittleOne })}
+        </div>
+      </Labeled>
+      <Labeled label="Once the turn is over: the plan done, a plan a stopped turn left half way, and no line for a plan of one step">
+        <div className="flex flex-col gap-2">
+          {turn("fold-plan-done", { plan: samplePlan(4), littleOnes: none }, false)}
+          {turn("fold-plan-partial", { plan: samplePlan(2), littleOnes: none }, false)}
+          {turn("fold-plan-single", { plan: samplePlan(0, ["Reply"]), littleOnes: none }, false)}
+        </div>
+      </Labeled>
+      <Labeled label="In a room: under each member whose turn there has a plan or little ones, above who is answering">
+        <div className="flex max-w-(--layout-text-column) flex-col">
+          <RoomWork
+            room={{
+              ...team.room,
+              memberWork: [
+                {
+                  botId: ids.juniper,
+                  work: {
+                    plan: samplePlan(1),
+                    littleOnes: sampleLittleOnes(["working", "working"]),
+                  },
+                },
+                { botId: ids.scout, work: { plan: samplePlan(2), littleOnes: none } },
+              ],
+            }}
+          />
+          <AnsweringLine room={team.room} />
+        </div>
+      </Labeled>
+      <Labeled label="A member's turn in a room played whole, with no plan: it splits into two, one does its part, one fails, and its place goes once the last is home">
+        <PlayedRoom />
+      </Labeled>
+      <Labeled label="In the roster: a dot by the avatar for each little one at work, four at most">
+        <ul className="flex w-(--layout-roster-width) max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
+          {[1, 3, 6].map((count) => (
+            <li key={count}>
+              <RosterRow item={split(count)} selected={false} />
+            </li>
+          ))}
+        </ul>
+      </Labeled>
+    </Section>
   );
 }
 

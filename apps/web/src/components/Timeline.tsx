@@ -38,6 +38,7 @@ import { ConnectorAuthCard } from "./connectors/ConnectorCards";
 import { ConnectorAskCard } from "./connectors/ConnectorAskCard";
 import { ConnectorInputCard } from "./connectors/ConnectorInputCard";
 import { AnsweringLine } from "./AnsweringLine";
+import { RoomWork } from "./RoomWork";
 import { EventLine, type OpenPair } from "./EventLine";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
@@ -283,6 +284,7 @@ export function Timeline({
           </div>
         );
       })}
+      {room !== null && <RoomWork room={room} />}
       {room !== null && <AnsweringLine room={room} />}
     </div>
   );

@@ -24,10 +24,11 @@ function nextFrame() {
 }
 
 /** An avatar that always may move, and records each time it is drawn and in which state. */
-function avatar(size: number) {
+function avatar(size: number, urgent = false) {
   const avatar = { state: "idle", drawn: [] as Array<string> };
   const running: Running = animate({
     size,
+    urgent: () => urgent,
     moving: () => true,
     measure: null,
     step: () => avatar.drawn.push(`moving ${avatar.state}`),
@@ -50,4 +51,16 @@ it("draws the new state of an avatar it holds over its cap, once", () => {
   expect(held.drawn).toEqual(["still idle", "still working"]);
 
   for (const each of [...large, held]) each.stop();
+});
+
+it("moves one that was asked to do something before the larger ones that only idle", () => {
+  const large = Array.from({ length: 24 }, () => avatar(96));
+  const family = avatar(18, true);
+  // Two frames: one this small steps on every other.
+  nextFrame();
+  nextFrame();
+  expect(family.drawn.at(-1)).toBe("moving idle");
+  expect(large.filter(({ drawn }) => drawn.at(-1) === "moving idle")).toHaveLength(23);
+
+  for (const each of [...large, family]) each.stop();
 });
