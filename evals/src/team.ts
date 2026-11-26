@@ -200,7 +200,7 @@ const row = (index: number, outcome: Run | Broken) => {
   const cells = [
     index,
     failed.length === 0 ? "pass" : `fail (${failed.join("; ")})`,
-    s.made.length,
+    s.made.length === 0 ? 0 : `${s.made.length}: ${cell(s.madeNames.join(", "), 80)}`,
     tally(s.madeOn),
     Option.match(s.room, { onNone: () => "", onSome: (room) => room.members.length }),
     s.kickoffs > 0 ? "yes" : "no",

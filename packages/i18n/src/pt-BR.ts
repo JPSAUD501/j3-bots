@@ -785,7 +785,7 @@ const sentences = {
   "settings.engine.autoUpdate.body":
     "O J3 Bots mantém atualizadas as cópias que instalou. Uma atualização espera os bots que a usam terminarem o que estão fazendo.",
   "firstRun.create.name": "Nome do bot",
-  "firstRun.create.placeholder": "Um nome, como Scout",
+  "firstRun.create.placeholder": "Um nome, como Bia",
   "firstRun.create.primary":
     "Tornar meu bot principal: pedidos que não são de ninguém vão para ele.",
   "firstRun.create.submit": "Criar bot",

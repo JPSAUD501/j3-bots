@@ -350,8 +350,14 @@ const SetRoutineInput = SetRoutineFields.check(
   Schema.makeFilter((input) => routineCallProblem(input) ?? true),
 );
 
+/** A bot's name, as a teammate's or its own: how to choose one, and that a name the operator gave is kept. */
+const BotName = described(
+  Profile.fields.name,
+  "A person's name, as a colleague on your user's team would have: a real first name, or its usual short form, common where your user lives and in the language they write (a Brazilian name for a Brazilian user). Fit it to the bot's character more than its work and, where you can, set it apart from the names of their other bots, those you create with it included: another first letter, and no rhyme with any of them. Never a role or task word, a pun on the job, a made-up product-style word, or Bot, AI or Assistant in any form: the role goes in `title`. A name your user gave is used exactly as given.",
+);
+
 const CreateBotInput = toolInput({
-  name: Profile.fields.name,
+  name: BotName,
   title: Schema.optionalKey(described(Profile.fields.title, "A short role, such as Research.")),
   job: Schema.optionalKey(
     described(Profile.fields.job, "What the bot is for and where its limits are."),
@@ -360,13 +366,13 @@ const CreateBotInput = toolInput({
 
 const UpdateBotInput = toolInput({
   id: described(Id, "The teammate's bot id."),
-  name: Schema.optionalKey(Profile.fields.name),
+  name: Schema.optionalKey(BotName),
   title: Schema.optionalKey(Profile.fields.title),
   job: Schema.optionalKey(Profile.fields.job),
 });
 
 const UpdateProfileInput = toolInput({
-  name: Schema.optionalKey(Profile.fields.name),
+  name: Schema.optionalKey(BotName),
   title: Schema.optionalKey(Profile.fields.title),
   avatar: Schema.optionalKey(
     described(
@@ -612,6 +618,7 @@ export const tools = {
     [
       `Create a new teammate for your user. Only the primary bot can, only in a turn whose message from your user asked for one or agreed to it, and at most ${MAX_BOTS_PER_REQUEST} for one request of theirs, counting those made before a retry of it.`,
       "The job says what the bot is for and where its limits end, in a few sentences; how every bot behaves comes from J3 Bots, not the job.",
+      "Name it as `name` says, and any bot whose name you suggest to your user. Names you choose for bots you create together must be as distinct as two colleagues' are: never two that rhyme or differ by one letter. Names your user gave stay exactly as given, whatever they are.",
       "No tool deletes a bot; your user can delete one in the app.",
       "A bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there.",
       "Returns the new bot's id.",

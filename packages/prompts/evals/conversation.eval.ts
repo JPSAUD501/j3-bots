@@ -3,7 +3,7 @@ import { BotId, RoomId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { DECODE_OPTIONS, tools, type Wake } from "../src/index.ts";
+import { DECODE_OPTIONS, type ToolInput, tools, type Wake } from "../src/index.ts";
 import { github, PASSING_RUNS } from "./acme.ts";
 import { type FixtureEvent, fixtureWorkspace } from "./fixtures.ts";
 import {
@@ -30,6 +30,7 @@ import {
   type EarlierCall,
   type EarlierTurn,
   type EngineInstance,
+  type Operator,
   type Scenario,
   SECRET_FOLDER,
   type Team,
@@ -44,8 +45,8 @@ import { HOME } from "./shell.ts";
 // stops, what it does when the host refuses a step, a secret pasted into the
 // chat, drafting, saving and sending as its user, saving a skill, what it
 // keeps out of a room, a batch of messages whose last one changes the
-// request, and what it says about its user's own T3 Code, which its engine
-// tools cannot reach.
+// request, what it says about its user's own T3 Code, which its engine
+// tools cannot reach, and the names it gives the teammates it creates.
 //
 // Each case is one turn per model and skill column, scored on what its tool
 // calls did; what a message means is read by the judge (`judge.ts`), on
@@ -500,6 +501,102 @@ const quietOpeningWake = opening(false);
 const nameAnswerWake = userWake(NAME_ANSWER);
 const forwardedNameWake = userWake(FORWARDED_NAME);
 const renameWake = userWake(RENAME_ASKED);
+
+// Naming the teammates it creates: as people on a team, in their user's language.
+
+/** Marina, a Brazilian operator who has her own bakery, as the team eval has her. */
+const MARINA: Operator = {
+  name: "Marina",
+  timeZone: "America/Sao_Paulo",
+  shared: "- Marina runs Doce Ponto, a bakery, and is opening its online store.",
+};
+
+/** Juniper as Marina's primary bot, which `create_bot` is for. */
+const MARINAS_PRIMARY: BotSetup = {
+  title: "Store",
+  job: "Help Marina open Doce Ponto's online store and keep it running.",
+  pinned: "",
+};
+
+const TEAM_ASKED =
+  "Oi, Juniper! Cria pra mim dois colegas de equipe: um pra acompanhar o que as confeitarias concorrentes andam fazendo e outro pra escrever os posts do Instagram da loja. Pode escolher os nomes.";
+
+const teamWake: Wake = {
+  ...userWake(TEAM_ASKED),
+  timeZone: DateTime.zoneMakeNamedUnsafe(MARINA.timeZone),
+};
+
+const decodeCreateBot = Schema.decodeUnknownOption(tools.create_bot.input, DECODE_OPTIONS);
+
+/** The bots the turn's `create_bot` calls would make, as the server decodes them. */
+const botsMade = (calls: ReadonlyArray<Call>): ReadonlyArray<ToolInput<"create_bot">> =>
+  named(calls, "create_bot").flatMap((call) => {
+    const decoded = decodeCreateBot(call.input);
+    return decoded._tag === "Some" ? [decoded.value] : [];
+  });
+
+/**
+ * What a name made from a role, the product or this request's work would
+ * hold, in either language: no person's first name holds one of them.
+ */
+const NOT_A_PERSON =
+  /bot|\bai\b|\bia\b|assist|rob[oô]|pesquis|research|analis|escrit|writ|redat|post|insta|concorr|confeit|doce|scout|inator/iu;
+
+/** `name` in lowercase, accents aside, for telling names apart. */
+const folded = (name: string): string =>
+  name.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+
+/**
+ * Problems with the names of the two bots the request asks for: two made,
+ * none a role or a product word, and the two told apart: by their first
+ * letters, and by more than those, so Lia and Bia, which rhyme, are not.
+ */
+const namesMadeProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
+  const names = botsMade(calls).map((made) => made.name);
+  const [first, second] = names.map(folded);
+  return [
+    ...(names.length === 2
+      ? []
+      : [`made ${names.length} bots, named ${JSON.stringify(names)}, not two`]),
+    ...names.flatMap((name) =>
+      NOT_A_PERSON.test(name) ? [`"${name}" is made from a role, the product or the work`] : [],
+    ),
+    ...(first === undefined || second === undefined
+      ? []
+      : [
+          ...(first.at(0) === second.at(0) ? [`${JSON.stringify(names)} start alike`] : []),
+          ...(first.slice(1) === second.slice(1)
+            ? [`${JSON.stringify(names)} differ only in their first letter`]
+            : []),
+        ]),
+  ];
+};
+
+/** The bots made, as the judge reads them: each name with its title. */
+const madeForJudge = (calls: ReadonlyArray<Call>): string =>
+  `Created ${botsMade(calls)
+    .map(
+      (made) =>
+        `${made.name}, titled ${made.title === undefined || made.title === "" ? "(none)" : made.title}`,
+    )
+    .join("; ")}.`;
+
+const NAMED_LIKE_PEOPLE: Check = {
+  question:
+    "Is every bot's name a first name, or a usual nickname, common among people in Brazil, with none of them a role, a product-style word or a play on the bot's work?",
+  what: "every name as a Brazilian person's",
+  asked: TEAM_ASKED,
+  accept: [
+    "Created Bia, titled Pesquisa; Davi, titled Instagram.",
+    "Created Lívia, titled Concorrência; Rafa, titled Conteúdo.",
+  ],
+  reject: [
+    "Created Pesquisador, titled Pesquisa; Redator, titled Instagram.",
+    "Created Scout, titled Pesquisa; Quill, titled Instagram.",
+    "Created Ethan, titled Pesquisa; Madison, titled Instagram.",
+    "Created Bia, titled Pesquisa; Docinho, titled Instagram.",
+  ],
+};
 
 // A step the host refused.
 
@@ -1415,6 +1512,7 @@ const CHECKS: ReadonlyArray<Check> = [
   ASKS_TO_WRITE_IN_ROOM,
   CANCELS_BLINDLY,
   ALREADY_DELIVERED_SAID,
+  NAMED_LIKE_PEOPLE,
 ];
 
 /** Problems with a closing message the judge must read as `check` says, `expected` true or false. */
@@ -1744,6 +1842,26 @@ const cases: ReadonlyArray<Case> = [
     grades: ({ calls }) => [
       gradeFromCalls("saved Rúben", savedName(calls, "Rúben")),
       gradeFromCalls("ends on a `say`", endsOnSay(calls)),
+    ],
+  },
+  {
+    name: "names the teammates it creates as people on its user's team, in their language",
+    scenario: {
+      wake: teamWake,
+      workspace: docsWorkspace(teamWake),
+      bot: MARINAS_PRIMARY,
+      primary: true,
+      operator: MARINA,
+    },
+    grades: ({ calls }) => [
+      gradeFromCalls("made two, with names told apart", namesMadeProblems(calls)),
+      {
+        name: "named like people in Brazil",
+        problems:
+          botsMade(calls).length === 0
+            ? Effect.succeed(["made no bot"])
+            : judged(NAMED_LIKE_PEOPLE, TEAM_ASKED, madeForJudge(calls)),
+      },
     ],
   },
   {

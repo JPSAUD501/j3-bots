@@ -70,47 +70,52 @@ const JUNIPER: BotSetup = {
   pinned: "",
 };
 
-/** Rui, as most scenarios have him, or an operator who has not said what to call them. */
-const operatorOf = (unnamed: boolean) =>
-  unnamed
-    ? { name: null, shared: "" }
-    : { name: "Rui", shared: "- Rui reads messages on his phone; keep them short." };
+/** The operator, as their bot's instructions name them. */
+export interface Operator {
+  readonly name: string;
+  /** An IANA time zone. */
+  readonly timeZone: string;
+  /** What all their bots have learned about them. */
+  readonly shared: string;
+}
+
+/** Rui, as most scenarios have him. */
+const RUI: Operator = {
+  name: "Rui",
+  timeZone: "Europe/Lisbon",
+  shared: "- Rui reads messages on his phone; keep them short.",
+};
 
 /**
- * A fictional operator and bot. An operator who has not said what to call
- * them has no shared facts either: nobody has got to know them yet.
+ * The scenario's fictional operator and bot. An operator who has not said
+ * what to call them has no shared facts either: nobody has got to know them
+ * yet.
  */
-const bot = (
-  model: string,
-  setup: BotSetup,
-  unnamed: boolean,
-  browser: boolean,
-  connectors: boolean,
-): BotInstructionsInput => {
-  const operator = operatorOf(unnamed);
+const bot = (model: string, scenario: Scenario): BotInstructionsInput => {
+  const setup = scenario.bot ?? JUNIPER;
+  const operator = scenario.operator ?? RUI;
+  const unnamed = scenario.unnamed === true;
   return {
-    operator: { name: operator.name, timeZone: "Europe/Lisbon" },
-    profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
+    operator: { name: unnamed ? null : operator.name, timeZone: operator.timeZone },
+    profile: {
+      name: "Juniper",
+      title: setup.title,
+      job: setup.job,
+      primary: scenario.primary === true,
+    },
     runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
-    browser,
-    pinned: { shared: operator.shared, bot: setup.pinned },
-    connectors,
+    browser: scenario.browser !== undefined,
+    pinned: { shared: unnamed ? "" : operator.shared, bot: setup.pinned },
+    connectors: (scenario.connectors ?? NO_CONNECTORS).connected.length > 0,
   };
 };
 
 /** Whether a turn has the shipped skills as already read. */
 export type Skills = "with the skill" | "without the skill";
 
-const systemPrompt = (
-  model: string,
-  skills: Skills,
-  setup: BotSetup,
-  unnamed: boolean,
-  browser: boolean,
-  connectors: boolean,
-): string =>
+const systemPrompt = (model: string, skills: Skills, scenario: Scenario): string =>
   [
-    renderSystemFile(bot(model, setup, unnamed, browser, connectors)),
+    renderSystemFile(bot(model, scenario)),
     ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
@@ -423,9 +428,13 @@ export interface Scenario {
   readonly history?: ReadonlyArray<EarlierTurn>;
   /** The bot, when it is not Juniper as most scenarios have it. */
   readonly bot?: BotSetup;
+  /** Whether the bot is its operator's primary bot, which `create_bot` is for; not by default. */
+  readonly primary?: boolean;
+  /** The operator, when not Rui; the wake's time zone should be theirs. */
+  readonly operator?: Operator;
   /**
    * The operator has not said what to call them: their bots call them "your
-   * user". Rui otherwise.
+   * user".
    */
   readonly unnamed?: boolean;
   /** What `run_command` says about the programs signed in, when not only `gh`. */
@@ -471,6 +480,7 @@ const decodeOperatorName = Schema.decodeUnknownOption(
   tools.set_operator_name.input,
   DECODE_OPTIONS,
 );
+const decodeCreateBot = Schema.decodeUnknownOption(tools.create_bot.input, DECODE_OPTIONS);
 const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
 const decodeMessageBot = Schema.decodeUnknownOption(tools.message_bot.input, DECODE_OPTIONS);
 const decodeReadRoom = Schema.decodeUnknownOption(tools.read_room.input, DECODE_OPTIONS);
@@ -906,6 +916,11 @@ class TeamRooms {
   }
 }
 
+/** Whether the operator wrote in the turn `wake` opens, as the server requires for some tools. */
+const operatorSpoke = (wake: Wake): boolean =>
+  wake.kind === "user" ||
+  (wake.kind === "room" && wake.entries.some((entry) => entry.author === "user"));
+
 /** What the server would answer, as far as these scenarios need, and what a command did. */
 const answer = (
   routines: HeldRoutines,
@@ -944,11 +959,7 @@ const answer = (
     }
     case "set_operator_name": {
       // The server takes it only in a turn the operator spoke in (`Speech.ts`).
-      const spoke =
-        scenario.wake.kind === "user" ||
-        (scenario.wake.kind === "room" &&
-          scenario.wake.entries.some((entry) => entry.author === "user"));
-      if (!spoke) {
+      if (!operatorSpoke(scenario.wake)) {
         return reply(
           json({
             error:
@@ -960,6 +971,16 @@ const answer = (
       return named._tag === "Some"
         ? reply(json({ name: named.value.name }))
         : reply(json({ error: "`name` must be 1 to 200 characters once trimmed." }));
+    }
+    case "create_bot": {
+      // As `Speech.ts` takes it: from the primary bot only, in a turn the operator spoke in.
+      if (scenario.primary !== true || !operatorSpoke(scenario.wake)) {
+        return reply(json({ error: "The call was refused: no bot was created." }));
+      }
+      const made = decodeCreateBot(request.input);
+      return made._tag === "Some"
+        ? reply(json({ id: `bot-${request.step}-${encodeURIComponent(made.value.name)}` }))
+        : reply(json({ error: "The call was refused as invalid." }));
     }
     case "suggest_connector":
       return reply(cards.suggest(request.input));
@@ -1090,14 +1111,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const messages: Array<Message> = [
       {
         role: "system",
-        content: systemPrompt(
-          model,
-          skills,
-          scenario.bot ?? JUNIPER,
-          scenario.unnamed === true,
-          scenario.browser !== undefined,
-          connectors.connected.length > 0,
-        ),
+        content: systemPrompt(model, skills, scenario),
       },
       ...earlierMessages(
         yield* Effect.forEach(scenario.history ?? [], ({ wake, calls }) =>

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus } from "@j3-bots/contracts";
+import type { EngineStatus, Language } from "@j3-bots/contracts";
 import type { VaultView } from "../stores/Vault.ts";
 import { providerGate } from "./engine.ts";
 
@@ -82,9 +82,18 @@ export const makingProgress = (
 export const providerLoginGuide =
   "https://github.com/JPSAUD501/j3-bots/blob/main/docs/operations/install.md#connect-the-providers";
 
-/** Short names that read well in English and Portuguese: one is the first bot's default. */
-const firstNames = ["Nova", "Juno", "Milo", "Iris", "Otto", "Luma", "Pip", "Theo"] as const;
+/**
+ * First names a person on a team would have, common where each language is
+ * spoken, short, and each with its own first letter: one is the first bot's
+ * default, in the operator's language.
+ */
+const firstNames: { readonly [L in Language]: readonly [string, ...Array<string>] } = {
+  en: ["Maya", "Leo", "Nora", "Sam", "Ellie", "Owen", "Ruby", "Jack"],
+  "pt-BR": ["Bia", "Davi", "Lara", "Caio", "Júlia", "Malu", "Rafa", "Tiago"],
+};
 
-/** The first bot's default name, chosen by `seed`, any whole number: a random one gives a random name. */
-export const defaultBotName = (seed: number): string =>
-  firstNames[Math.abs(Math.trunc(seed)) % firstNames.length] ?? firstNames[0];
+/** The first bot's default name in `language`, chosen by `seed`, any whole number: a random one gives a random name. */
+export const defaultBotName = (language: Language, seed: number): string => {
+  const names = firstNames[language];
+  return names[Math.abs(Math.trunc(seed)) % names.length] ?? names[0];
+};

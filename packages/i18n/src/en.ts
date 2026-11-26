@@ -781,7 +781,7 @@ export const en = {
   "settings.engine.autoUpdate.body":
     "J3 Bots keeps the copies it installed up to date. An update waits until the bots using it finish what they’re doing.",
   "firstRun.create.name": "Bot name",
-  "firstRun.create.placeholder": "A name, such as Scout",
+  "firstRun.create.placeholder": "A name, such as Maya",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",
   "firstRun.create.submit": "Create bot",
   "firstRun.create.failed": "The bot wasn’t created. Try again.",
