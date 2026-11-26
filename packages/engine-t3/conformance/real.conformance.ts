@@ -117,6 +117,7 @@ const options = Effect.map(paths, ({ home, agent, sharedSkills }): EngineOptions
   systemPromptFile: ".j3/system.md",
   // Only Codex reads it, and the bench runs no Codex instance.
   basePrompt: Stream.make(""),
+  suggestReplies: Stream.make(false),
   // Only Claude Code and Codex list skills, and the bench runs neither.
   sharedSkills,
   botSkills: "skills",

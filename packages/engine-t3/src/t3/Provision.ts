@@ -55,6 +55,8 @@ export interface ProvisionInput {
   readonly basePrompt: string;
   /** The folder of the skills every bot shares, which each Claude Code and Codex home links. */
   readonly sharedSkills: string;
+  /** Whether the harnesses guess the operator's next message (`promptSuggestionsEnabled`). */
+  readonly suggestReplies: boolean;
   /**
    * The server user's home folder (`HOME`), which the commands a Codex bot
    * runs get back (`codexConfig`), or undefined when the server has none, as
@@ -351,6 +353,7 @@ const engineSettings = (
 ) => ({
   ...existing,
   ...ENGINE_SETTINGS,
+  promptSuggestionsEnabled: input.suggestReplies,
   providerInstances: Object.fromEntries([
     ...ENGINE_DEFAULT_INSTANCES.map((driver) => [driver, { driver, enabled: false }] as const),
     ...input.instances.map(

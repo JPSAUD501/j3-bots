@@ -106,6 +106,7 @@ const setUp = Effect.gen(function* () {
     },
     systemPromptFile: ".j3/system.md",
     basePrompt: 'Say "done" when done.',
+    suggestReplies: true,
     sharedSkills: path.join(home, "shared-skills"),
     userHome: "/home/sam",
   };
@@ -650,6 +651,27 @@ it.effect.skipIf(process.platform === "win32")(
       );
     }).pipe(Effect.scoped, Effect.provide(machine)),
 );
+
+describe("suggested replies", () => {
+  it.effect("follow the operator's switch, whatever the engine's file said", () =>
+    Effect.gen(function* () {
+      const { fs, path, input, userdata } = yield* setUp;
+      const settingsFile = path.join(userdata, "settings.json");
+      const switchOf = Effect.gen(function* () {
+        return (yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Struct({ promptSuggestionsEnabled: Schema.Boolean })),
+        )(yield* fs.readFileString(settingsFile))).promptSuggestionsEnabled;
+      });
+      yield* fs.makeDirectory(userdata, { recursive: true });
+      yield* fs.writeFileString(settingsFile, JSON.stringify({ promptSuggestionsEnabled: true }));
+
+      yield* provision({ ...input, suggestReplies: false });
+      assert.isFalse(yield* switchOf);
+      yield* provision({ ...input, suggestReplies: true });
+      assert.isTrue(yield* switchOf);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
 
 describe("the engine's browser", () => {
   it.effect("is off for every bot, and stays on for a bot the operator turned it on for", () =>

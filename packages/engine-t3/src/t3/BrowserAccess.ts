@@ -40,8 +40,9 @@ export const GetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 /**
  * The engine's `server.updateSettings`, sending only what the adapter
  * changes while the engine runs: projects' overrides, where a project's set
- * replaces the one it had and `null` removes it, which needs
- * `settings:write`; or one provider instance, replaced whole by the entry
+ * replaces the one it had and `null` removes it, or the switch for suggested
+ * replies (`promptSuggestionsEnabled`), each of which needs `settings:write`;
+ * or one provider instance, replaced whole by the entry
  * provisioning writes for it (`instanceEntry`), with an empty patch, which
  * needs `providers:manage` (**Read** at `59651c1`, `RpcAuthorization.ts`,
  * `requiredScopesForSettingsUpdate`). Its answer, the whole settings, is
@@ -53,6 +54,7 @@ export const UpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
       projectSettingsOverrides: Schema.optionalKey(
         Schema.Record(Schema.String, Schema.NullOr(ProjectOverrides)),
       ),
+      promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
     }),
     providerInstanceMutation: Schema.optionalKey(
       Schema.Struct({

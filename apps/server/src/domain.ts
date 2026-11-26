@@ -54,6 +54,7 @@ import * as BotTools from "./tools/BotTools.ts";
 import * as Management from "./tools/Management.ts";
 import * as ToolLists from "./tools/ToolLists.ts";
 import * as BotStates from "./turns/BotStates.ts";
+import * as SuggestedReplies from "./turns/SuggestedReplies.ts";
 import * as Cards from "./turns/Cards.ts";
 import * as Ledger from "./turns/Ledger.ts";
 import * as Observer from "./turns/Observer.ts";
@@ -157,7 +158,13 @@ export const layer = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(
-    Layer.mergeAll(BotStates.layer, RoomStates.layer, Presence.layer, PushDeliveries.layer),
+    Layer.mergeAll(
+      BotStates.layer,
+      RoomStates.layer,
+      Presence.layer,
+      PushDeliveries.layer,
+      SuggestedReplies.layer,
+    ),
   ),
   Layer.provideMerge(Devices.layer),
   Layer.provideMerge(

@@ -302,6 +302,18 @@ export interface EngineOptions {
    */
   readonly basePrompt: Stream.Stream<string>;
   /**
+   * Whether the harnesses guess the operator's next message after each turn
+   * (`suggestedReplies`): the current value, then every change. Each guess is
+   * one more request on the operator's plan, for every turn a session
+   * completes, whoever woke it. The engine reads it as its
+   * `promptSuggestionsEnabled`, which every provisioning writes and a change
+   * while the engine runs updates. Codex follows a change at its next turn;
+   * Claude Code when a session next starts its harness process (**Read** at
+   * `59651c1`, `ProviderSessionManager.ts`, `promptSuggestionsEnabled`, read
+   * per Codex turn and per Claude Code query).
+   */
+  readonly suggestReplies: Stream.Stream<boolean>;
+  /**
    * The folder of the skills every bot shares, one folder per skill with a
    * `SKILL.md`. Each Claude Code and Codex instance lists them as its own
    * user-level skills: the adapter links each one into the harness home's
@@ -325,6 +337,17 @@ export interface EngineOptions {
    * `@j3-bots/engine-t3/live`), for the caller to check at start too.
    */
   readonly isPrivate: (location: string) => Effect.Effect<boolean>;
+}
+
+/**
+ * The harness's guess at the operator's next message, after `turnId` of the
+ * session completed: one short line, unpersisted. The harness guesses from the
+ * session's whole context, envelopes and working text included, not only what
+ * the operator saw.
+ */
+export interface SessionSuggestedReply {
+  readonly turnId: TurnId;
+  readonly text: string;
 }
 
 /**
@@ -796,5 +819,25 @@ export class Engine extends Context.Service<
       readonly sessionId: SessionId;
       readonly token: SyncToken;
     }) => Effect.Effect<void, EngineDown | SessionNotFound>;
+
+    /**
+     * The session's suggested reply: the current one, then every change, and
+     * `null` while it has none. The harness makes one after a turn it
+     * completed, while `suggestReplies` is on and the harness can (Claude
+     * Code, Codex 0.165 and later), and may make none; a newer one replaces
+     * it, whatever turn it follows. The
+     * engine keeps them in memory only, so an engine restart loses them. It
+     * keeps none for a deleted session (**Read** at `59651c1`,
+     * `ProviderSessionManager.ts`, `subscribePromptSuggestion`;
+     * `ClaudeAdapterV2.ts`, `prompt_suggestion`; `CodexAdapterV2.ts`,
+     * `samplePromptSuggestion`).
+     *
+     * The stream survives engine restarts and dropped connections: it
+     * subscribes again once the engine is ready, and goes on with what the
+     * engine has then. It never fails.
+     */
+    readonly suggestedReplies: (
+      sessionId: SessionId,
+    ) => Stream.Stream<SessionSuggestedReply | null>;
   }
 >()("@j3-bots/engine-t3/Engine") {}

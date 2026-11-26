@@ -146,6 +146,7 @@ export function sampleTeam(now: DateTime.Utc) {
       state,
       settingsHeld: false,
       opening: false,
+      suggestedReply: null,
       createdAt: ago(60 * 24 * 30),
     };
   }
@@ -874,6 +875,7 @@ export function sampleTeam(now: DateTime.Utc) {
     notifications: { enabled: true, previews: true },
     updateChannel: "stable",
     autoUpdateHarnesses: true,
+    suggestReplies: true,
   };
 
   const devices: ReadonlyArray<Device> = [

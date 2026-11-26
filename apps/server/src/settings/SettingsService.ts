@@ -21,6 +21,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { BasePrompt } from "./BasePrompt.ts";
+import { SuggestReplies } from "./SuggestReplies.ts";
 import { SettingsStore } from "./SettingsStore.ts";
 
 /** The changes `settings.update` may ask for. */
@@ -102,6 +103,7 @@ export const layer = Layer.effect(
     const receipts = yield* CommandReceipts;
     const workspaces = yield* Workspaces;
     const basePrompt = yield* BasePrompt;
+    const suggestReplies = yield* SuggestReplies;
     const current = yield* SubscriptionRef.make(yield* store.get);
     const channel = yield* Semaphore.make(1);
     const channelSteady = Effect.fn("SettingsService.channelSteady")(function* <A, E, R>(
@@ -134,6 +136,7 @@ export const layer = Layer.effect(
         notifications: { ...saved.notifications, ...changes.notifications },
         updateChannel: changes.updateChannel ?? saved.updateChannel,
         autoUpdateHarnesses: changes.autoUpdateHarnesses ?? saved.autoUpdateHarnesses,
+        suggestReplies: changes.suggestReplies ?? saved.suggestReplies,
       };
       yield* store.save(next, yield* DateTime.now, { zoneChosen: changes.timeZone !== undefined });
       return next;
@@ -141,6 +144,7 @@ export const layer = Layer.effect(
 
     const applied = Effect.fn("SettingsService.applied")(function* (changes: SettingsChanges) {
       if (changes.operatorName !== undefined) yield* basePrompt.refresh;
+      if (changes.suggestReplies !== undefined) yield* suggestReplies.refresh;
       if (changes.operatorName !== undefined || changes.timeZone !== undefined) {
         yield* workspaces.renderAll;
       }

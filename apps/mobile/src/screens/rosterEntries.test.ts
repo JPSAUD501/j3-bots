@@ -40,6 +40,7 @@ const bot = (name: string): BotItem => ({
     settingsHeld: false,
     opening: false,
     browser: false,
+    suggestedReply: null,
     createdAt: DateTime.makeUnsafe(0),
   },
   lastEntry: null,

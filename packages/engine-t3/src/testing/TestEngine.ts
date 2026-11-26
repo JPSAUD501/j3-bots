@@ -28,6 +28,7 @@ import {
   type Delivery,
   type RequestResponse,
   type SecretAnswer,
+  type SessionSuggestedReply,
 } from "../Engine.ts";
 import {
   AnswerRejected,
@@ -171,6 +172,15 @@ export class TestEngineControl extends Context.Service<
         readonly version: string | null;
       }>
     >;
+    /**
+     * The harness guesses the operator's next message after `turnId` of the
+     * session, replacing the guess it had there; `null` takes it away. An
+     * engine restart loses every guess, as the engine's memory does.
+     */
+    readonly suggestReply: (input: {
+      readonly sessionId: SessionId;
+      readonly reply: SessionSuggestedReply | null;
+    }) => Effect.Effect<void>;
     /**
      * The next command is applied, and then its reply is lost: it fails with
      * `EngineIndeterminate`.
@@ -692,6 +702,10 @@ const STAGED_USABLE_FOR = Duration.hours(12);
 const make = Effect.gen(function* () {
   const status = yield* SubscriptionRef.make(initialStatus);
   let reachable = true;
+  /** Each session's suggested reply, kept in memory only, as the engine keeps it. */
+  const suggestions = yield* SubscriptionRef.make<ReadonlyMap<SessionId, SessionSuggestedReply>>(
+    new Map(),
+  );
   /** The engine's starts: one more each time it becomes reachable again. */
   let start = 1;
   const started = yield* SubscriptionRef.make<number | null>(start);
@@ -1850,6 +1864,12 @@ const make = Effect.gen(function* () {
         }),
       ),
 
+    suggestedReplies: (sessionId) =>
+      SubscriptionRef.changes(suggestions).pipe(
+        Stream.map((current) => current.get(sessionId) ?? null),
+        Stream.changes,
+      ),
+
     synchronize: ({ sessionId, token }) =>
       door(
         "synchronize",
@@ -1909,6 +1929,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const restarted = value && !reachable;
       if (restarted) start++;
+      if (restarted) yield* SubscriptionRef.set(suggestions, new Map());
       reachable = value;
       if (restarted && startNoticeHeld === "next") {
         startNoticeHeld = "held";
@@ -1951,6 +1972,14 @@ const make = Effect.gen(function* () {
         }),
       };
     }),
+
+    suggestReply: ({ sessionId, reply }) =>
+      SubscriptionRef.update(suggestions, (current) => {
+        const next = new Map(current);
+        if (reply === null) next.delete(sessionId);
+        else next.set(sessionId, reply);
+        return next;
+      }),
 
     loseNextReply: Effect.sync(() => {
       loseReply = true;

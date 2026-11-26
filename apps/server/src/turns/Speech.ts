@@ -83,6 +83,7 @@ import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
 import { type RoomReader, roomReads } from "./roomReads.ts";
 import { routineSpeech } from "./routineSpeech.ts";
+import { saidInConversation } from "./saidInConversation.ts";
 import { type Once, routineTool } from "./routineTool.ts";
 import {
   ADMISSION_DEADLINE,
@@ -1095,6 +1096,9 @@ export const layer = Layer.effect(
                   entryId: entry.id,
                   text: input.text,
                 });
+                if (target._tag === "conversation") {
+                  yield* saidInConversation(sql, found.sessionId, found.turnId, entry.id);
+                }
                 const routed =
                   Option.isSome(room) && entry._tag === "message"
                     ? yield* routeRoomMessage(found, room.value, entry, "bot")

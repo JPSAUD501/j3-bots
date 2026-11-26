@@ -19,6 +19,7 @@ import * as Domain from "../domain.ts";
 import * as Listener from "../listener.ts";
 import type { PushSender } from "../push/PushSender.ts";
 import * as BasePrompt from "../settings/BasePrompt.ts";
+import * as SuggestReplies from "../settings/SuggestReplies.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
 import * as TestOAuth from "./oauth.ts";
@@ -151,7 +152,7 @@ const storesOver = (
 ) =>
   Layer.mergeAll(
     engineWith(starting),
-    BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
+    Layer.merge(BasePrompt.layer, SuggestReplies.layer).pipe(Layer.provide(SettingsStore.layer)),
     TestOAuth.layer,
     TestHarnesses.layer,
     repositories,
