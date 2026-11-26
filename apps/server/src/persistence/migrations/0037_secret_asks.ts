@@ -22,7 +22,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 // A login's fill, in a work fold's step, names the secret it filled
 // (`secretId`, which a login moved from the vault keeps as its id), and a
 // fill can no longer find the vault locked: a step or a stored answer that
-// said so says the secrets were unavailable, as it would now.
+// said so says the secrets were unavailable, as it would now. Nor can two
+// logins answer to one name, which is unique now: one refused as
+// `ambiguous` is refused as no login by that name the bot may use.
 //
 // A bot no longer has a switch for filling logins: a secret's own grant is
 // the permission (`bots.vault` goes).
@@ -150,8 +152,17 @@ export default Effect.gen(function* () {
     WHERE json_extract(step_json, '$.fill.outcome._tag') = 'locked'
   `;
   yield* sql`
+    UPDATE work_steps
+    SET step_json = json_set(step_json, '$.fill.outcome.reason', 'unknown-login')
+    WHERE json_extract(step_json, '$.fill.outcome.reason') = 'ambiguous'
+  `;
+  yield* sql`
     UPDATE tool_calls SET result_json = ${UNAVAILABLE}
     WHERE tool = 'fill_credential' AND json_extract(result_json, '$._tag') = 'locked'
+  `;
+  yield* sql`
+    UPDATE tool_calls SET result_json = json_set(result_json, '$.reason', 'unknown-login')
+    WHERE tool = 'fill_credential' AND json_extract(result_json, '$.reason') = 'ambiguous'
   `;
 
   yield* sql`ALTER TABLE bots DROP COLUMN vault`;

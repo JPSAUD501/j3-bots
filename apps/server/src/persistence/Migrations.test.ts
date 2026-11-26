@@ -645,7 +645,8 @@ it.effect(
         yield* sql`
         INSERT INTO work_steps (entry_id, step_id, position, step_json) VALUES
           ('fold-1', 'step-1', 0, ${fill("step-1", { _tag: "filled", submitted: true })}),
-          ('fold-1', 'step-2', 1, ${fill("step-2", { _tag: "locked" })})
+          ('fold-1', 'step-2', 1, ${fill("step-2", { _tag: "locked" })}),
+          ('fold-1', 'step-3', 2, ${fill("step-3", { _tag: "refused", reason: "ambiguous" })})
       `;
         yield* sql`
         INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
@@ -657,6 +658,9 @@ it.effect(
         ) VALUES (
           'call-1', 'session-1', 'turn-1', 'engine-call-1', 'conversation', 'fill_credential',
           '{"_tag":"locked"}', ${now}
+        ), (
+          'call-2', 'session-1', 'turn-1', 'engine-call-2', 'conversation', 'fill_credential',
+          '{"_tag":"refused","reason":"ambiguous"}', ${now}
         )
       `;
       }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
@@ -686,15 +690,27 @@ it.effect(
               origin: SiteOrigin.make("https://example.com"),
               outcome: { _tag: "refused", reason: "unavailable" },
             },
+            {
+              name: "example",
+              secretId: SecretId.make("cred_aaaaaaaaaaaaaaaa"),
+              field: "password",
+              origin: SiteOrigin.make("https://example.com"),
+              outcome: { _tag: "refused", reason: "unknown-login" },
+            },
           ],
         );
-        // A retry of the locked call is answered as a fill refused now would be.
-        const [answer] = yield* sql<{ readonly result_json: string }>`
-        SELECT result_json FROM tool_calls WHERE id = 'call-1'
+        // A retry of either call is answered as a fill refused now would be.
+        const answers = yield* sql<{ readonly result_json: string }>`
+        SELECT result_json FROM tool_calls ORDER BY id
       `;
         assert.deepStrictEqual(
-          yield* Schema.decodeUnknownEffect(json(FillOutcome))(answer?.result_json),
-          { _tag: "refused", reason: "unavailable" },
+          yield* Effect.forEach(answers, (row) =>
+            Schema.decodeEffect(json(FillOutcome))(row.result_json),
+          ),
+          [
+            { _tag: "refused", reason: "unavailable" },
+            { _tag: "refused", reason: "unknown-login" },
+          ],
         );
       }).pipe(
         Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
