@@ -121,6 +121,14 @@ const spawnChild = Effect.fn("spawnChild")(function* (
 const Started = Schema.Struct({ engine: Schema.Int, harness: Schema.Int });
 const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started));
 
+/**
+ * The pipes a stand-in engine holds on Windows, as it reports them before it
+ * starts anything: how many of its standard handles it found among them, and,
+ * for each other pipe, the id of the process that serves it.
+ */
+const HeldPipes = Schema.Struct({ standard: Schema.Int, servers: Schema.Array(Schema.Int) });
+const decodeHeldPipes = Schema.decodeUnknownEffect(Schema.fromJsonString(HeldPipes));
+
 const isRunning = (pid: number) => {
   try {
     process.kill(pid, 0);
@@ -133,16 +141,20 @@ const isRunning = (pid: number) => {
 /**
  * A stand-in for the engine in `folder`, for `J3_ENGINE_BINARY`: a Node
  * script that starts a harness that runs until it is ended, writes both ids
- * to `pids` (`Started`), and runs until it is ended. Elsewhere `sh` runs it;
- * on Windows a program must, as Node starts no batch file without a shell, so
- * a small C# program, compiled by Windows' own compiler as the job launcher
- * is, starts it and waits for it. It never answers, so the server never
- * finds it ready, and starts it as it starts the engine: on Windows, through
- * the job launcher.
+ * to `started` (`Started`), and runs until it is ended. Elsewhere `sh` runs
+ * it; on Windows a program must, as Node starts no batch file without a
+ * shell, so a small C# program, compiled by Windows' own compiler as the job
+ * launcher is, starts it and waits for it. That program first writes to
+ * `pipes` the pipes it holds (`HeldPipes`), found by trying every handle value
+ * up to 64 Ki, past any a process this small has. It never answers, so the
+ * server never finds it ready, and starts it as it starts the engine: on
+ * Windows, through the job launcher.
  */
-const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids: string) {
+const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const started = path.join(folder, "started.json");
+  const pipes = path.join(folder, "pipes.json");
   const script = path.join(folder, "engine.cjs");
   yield* fs.writeFileString(
     script,
@@ -152,8 +164,8 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids
       `const harness = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
       // The program the server started: on Windows the C# program below, elsewhere this one, which sh became.
       `const engine = process.platform === "win32" ? process.ppid : process.pid;`,
-      `fs.writeFileSync(${JSON.stringify(`${pids}.partial`)}, JSON.stringify({ engine, harness: harness.pid }));`,
-      `fs.renameSync(${JSON.stringify(`${pids}.partial`)}, ${JSON.stringify(pids)});`,
+      `fs.writeFileSync(${JSON.stringify(`${started}.partial`)}, JSON.stringify({ engine, harness: harness.pid }));`,
+      `fs.renameSync(${JSON.stringify(`${started}.partial`)}, ${JSON.stringify(started)});`,
       `setInterval(() => {}, 1000);`,
     ].join("\n"),
   );
@@ -164,18 +176,44 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids
     yield* fs.writeFileString(
       source,
       [
+        "using System;",
+        "using System.Collections.Generic;",
+        "using System.Diagnostics;",
+        "using System.IO;",
+        "using System.Runtime.InteropServices;",
+        "",
         "class Engine {",
+        '  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);',
+        '  [DllImport("kernel32.dll")] static extern bool GetHandleInformation(IntPtr handle, out uint flags);',
+        '  [DllImport("kernel32.dll")] static extern uint GetFileType(IntPtr handle);',
+        '  [DllImport("kernel32.dll")] static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint process);',
+        "  const uint PipeType = 3;",
+        "",
         "  static int Main() {",
-        `    var start = new System.Diagnostics.ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});`,
+        "    var standard = new List<long>();",
+        "    foreach (int which in new int[] { -10, -11, -12 }) standard.Add(GetStdHandle(which).ToInt64());",
+        "    int standardFound = 0;",
+        "    var servers = new List<string>();",
+        "    for (long value = 4; value < 0x10000; value += 4) {",
+        "      IntPtr handle = new IntPtr(value);",
+        "      uint flags;",
+        "      if (!GetHandleInformation(handle, out flags) || GetFileType(handle) != PipeType) continue;",
+        "      if (standard.Contains(value)) { standardFound++; continue; }",
+        "      uint server;",
+        "      if (GetNamedPipeServerProcessId(handle, out server)) servers.Add(server.ToString());",
+        "    }",
+        `    File.WriteAllText(${verbatim(`${pipes}.partial`)}, "{\\"standard\\":" + standardFound + ",\\"servers\\":[" + string.Join(",", servers) + "]}");`,
+        `    File.Move(${verbatim(`${pipes}.partial`)}, ${verbatim(pipes)});`,
+        `    var start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});`,
         "    start.UseShellExecute = false;",
-        "    var script = System.Diagnostics.Process.Start(start);",
+        "    var script = Process.Start(start);",
         "    script.WaitForExit();",
         "    return script.ExitCode;",
         "  }",
         "}",
       ].join("\n"),
     );
-    const engine = path.join(folder, "engine.exe");
+    const command = path.join(folder, "engine.exe");
     const compiler = path.join(
       yield* Config.String("SystemRoot").pipe(Config.withDefault("C:\\Windows")),
       "Microsoft.NET",
@@ -188,18 +226,18 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids
         new Promise<void>((resolve, reject) =>
           NodeChildProcess.execFile(
             compiler,
-            ["/nologo", "/target:exe", `/out:${engine}`, source],
+            ["/nologo", "/target:exe", `/out:${command}`, source],
             { windowsHide: true },
             (error) => (error === null ? resolve() : reject(error)),
           ),
         ),
     );
-    return engine;
+    return { command, started, pipes };
   }
-  const engine = path.join(folder, "engine");
-  yield* fs.writeFileString(engine, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
-  yield* fs.chmod(engine, 0o755);
-  return engine;
+  const command = path.join(folder, "engine");
+  yield* fs.writeFileString(command, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
+  yield* fs.chmod(command, 0o755);
+  return { command, started, pipes };
 });
 
 /** The parent's end of `child`'s descriptor 3, as the admin channel. */
@@ -298,19 +336,25 @@ describe("serve, as the desktop app runs it", () => {
     { timeout: Duration.toMillis(WITHIN) * 2 },
   );
 
+  // On Linux and macOS a process the server started outlives it, so the pipe
+  // closing once the server is killed, while the engine and its harness still
+  // run, shows that neither holds it. On Windows Node puts every child it does
+  // not detach in a job that ends with it, and the engine's own job ends with
+  // the launcher: the engine ends with the server. There the engine says what
+  // it holds instead. Every inheritable handle of the launcher reaches it, the
+  // pipe the server reads the launcher's output on among them, so the pipe at
+  // fd 3 would too, and none of the pipes it holds is one this process serves.
   it.live(
-    "hands the pipe to none of the processes it starts: it closes when the server ends, while its engine and the engine's harness still run",
+    "hands the pipe to none of the processes it starts",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const { scratch, env } = yield* newHome;
-        const pids = path.join(scratch, "engine.json");
-        const engine = yield* standInEngine(scratch, pids);
+        const engine = yield* standInEngine(scratch);
         const server = yield* spawnChild(
           process.execPath,
           [SERVER, "serve", "--admin-fd", "3", "--exit-with-stdin"],
-          { ...env, J3_ENGINE_BINARY: engine },
+          { ...env, J3_ENGINE_BINARY: engine.command },
           "overlapped",
         );
         const pipe = server.child.stdio[3];
@@ -318,7 +362,7 @@ describe("serve, as the desktop app runs it", () => {
         const closed = new Promise<void>((resolve) => pipe.once("close", () => resolve()));
         pipe.resume();
 
-        const started = yield* fs.readFileString(pids).pipe(
+        const started = yield* fs.readFileString(engine.started).pipe(
           Effect.flatMap(decodeStarted),
           Effect.retry(Schedule.spaced("100 millis")),
           Effect.timeoutOrElse({
@@ -351,7 +395,24 @@ describe("serve, as the desktop app runs it", () => {
           ),
         );
 
-        // Only the server ends, as in a crash: what it started keeps running.
+        if (process.platform === "win32") {
+          // Written before the engine started its script, which wrote `started`.
+          const held = yield* fs.readFileString(engine.pipes).pipe(Effect.flatMap(decodeHeldPipes));
+          assert.strictEqual(held.standard, 3, "the engine did not find its own standard handles");
+          const serverPid = server.child.pid;
+          if (serverPid === undefined) return yield* Effect.die("the server has no id");
+          assert.include(
+            held.servers,
+            serverPid,
+            "no pipe the server gave the launcher reached the engine",
+          );
+          assert.notInclude(
+            held.servers,
+            process.pid,
+            "the engine holds a pipe this process gave the server",
+          );
+        }
+
         server.child.kill("SIGKILL");
         yield* Effect.promise(() => closed).pipe(
           Effect.timeoutOrElse({
@@ -362,8 +423,10 @@ describe("serve, as the desktop app runs it", () => {
               ),
           }),
         );
-        assert.isTrue(isRunning(started.engine), "the stand-in engine ended with the server");
-        assert.isTrue(isRunning(started.harness), "the stand-in harness ended with the server");
+        if (process.platform !== "win32") {
+          assert.isTrue(isRunning(started.engine), "the stand-in engine ended with the server");
+          assert.isTrue(isRunning(started.harness), "the stand-in harness ended with the server");
+        }
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: Duration.toMillis(WITHIN) * 2 },
   );
