@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  fieldValues,
   knownCommand,
+  refillValues,
   sameGrant,
   withoutSecrets,
 } from "@j3-bots/client-runtime/presentation";
@@ -324,7 +324,7 @@ function ReplaceFields({
       onSubmit={(event) => {
         event.preventDefault();
         if (submitting) return;
-        const typed = fieldValues(connector.fields, values);
+        const typed = refillValues(connector.fields, values);
         if (typed._tag === "invalid") {
           setMissing(typed.missing);
           return;

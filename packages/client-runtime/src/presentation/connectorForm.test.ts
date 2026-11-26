@@ -14,6 +14,7 @@ import {
   commandEdit,
   commandSource,
   listingSource,
+  refillValues,
   remoteSource,
   type SourceDraft,
   withoutSecrets,
@@ -98,6 +99,29 @@ describe("a gallery entry's form", () => {
     expect(source.oauthClient.issuer).toBe("https://accounts.example.com");
     expect(source.oauthClient.clientId).toBe("app");
     expect(source.oauthClient.clientSecret && plain(source.oauthClient.clientSecret)).toBe("s");
+  });
+});
+
+describe("a connector's fields given again", () => {
+  it("sends only those given, so one field of several takes a new value alone", () => {
+    const given = refillValues(
+      fields,
+      new Map([
+        [token, "new-key"],
+        [team, ""],
+      ]),
+    );
+    if (given._tag !== "ready") throw new Error("Refused");
+    expect(given.values.map((value) => [value.key, plain(value.value)])).toEqual([
+      [token, "new-key"],
+    ]);
+  });
+
+  it("asks for something when nothing is given", () => {
+    expect(refillValues(fields, new Map([[token, ""]]))).toEqual({
+      _tag: "invalid",
+      missing: [token, team],
+    });
   });
 });
 

@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { ConnectorReach, Connectors } from "../connectors/Connectors.ts";
+import { ConnectorReach, Connectors, MAX_SESSIONS } from "../connectors/Connectors.ts";
 import { connectorSecretIdOf } from "../connectors/credentials.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 
@@ -18,18 +18,24 @@ import { Secrets } from "../secrets/Secrets.ts";
  * The fake answers over plain HTTP on loopback, which no address an operator
  * adds can name. So the service may reach loopback here and resolves no name,
  * so a connector's first listing, at its address, fails; its sealed address
- * is then pointed at the fake, which the next listing reaches.
+ * is then pointed at the fake, which the next listing reaches. At most
+ * `sessions` remote sessions are open at once.
  */
-export const reachFakes = Layer.succeed(ConnectorReach, {
-  limits: {
-    ...DEFAULT_SESSION_LIMITS,
-    guard: {
-      ...DEFAULT_SESSION_LIMITS.guard,
-      resolve: () => Promise.reject(new Error("no such host")),
-    },
-  } satisfies SessionLimits,
-  loopback: "allow-http",
-});
+export const reachFakesWith = (sessions: number) =>
+  Layer.succeed(ConnectorReach, {
+    limits: {
+      ...DEFAULT_SESSION_LIMITS,
+      guard: {
+        ...DEFAULT_SESSION_LIMITS.guard,
+        resolve: () => Promise.reject(new Error("no such host")),
+      },
+    } satisfies SessionLimits,
+    loopback: "allow-http",
+    sessions,
+  });
+
+/** As {@link reachFakesWith}, with as many sessions open at once as the server keeps. */
+export const reachFakes = reachFakesWith(MAX_SESSIONS);
 
 /** A call that reached a fake connector's server. */
 interface FakeCall {

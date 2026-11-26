@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A command connector runs in the system's temporary folder.
 import * as NodeOs from "node:os";
 import { assert, describe, it } from "@effect/vitest";
+import type { CallCredentials } from "@j3-bots/connectors";
 import { type FakeMcpServer, fakeMcpServer } from "@j3-bots/connectors/testing";
 import { sdkHttpServer } from "@j3-bots/connectors/testing/sdk";
 import { eventually, serverEnvironment, STDIO_SERVER } from "@j3-bots/connectors/testing/stdio";
@@ -34,7 +35,11 @@ import { Secrets } from "../secrets/Secrets.ts";
 import { reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { CommandReach, Connectors } from "./Connectors.ts";
-import { connectorSecretIdOf } from "./credentials.ts";
+import { ConnectorSignIns } from "./auth.ts";
+import { ConnectorStore } from "./ConnectorStore.ts";
+import { connectorSecretIdOf, credentialsOf } from "./credentials.ts";
+import type { ConnectorSecret } from "../secrets/ConnectorSecret.ts";
+import { withValues } from "./secretReferences.ts";
 import { connectForm } from "./sources/form.ts";
 
 const ID = ConnectorId.make("conn_secretrefs0000001");
@@ -186,6 +191,39 @@ const refusalOf = (error: ConnectorCommandError): ReadonlyArray<string> | string
 /** What reached the fake's server in the `Authorization` header, request by request. */
 const authorizations = (fake: FakeMcpServer) =>
   fake.requests.map((request) => String(request.headers.authorization));
+
+it("keeps a login's user name apart from its secrets: it is not one, though answers are scrubbed of it", () => {
+  const settings: ConnectorSecret = {
+    connectorId: ID,
+    address: Redacted.make("https://tracker.example/mcp"),
+    oauth: null,
+    headers: [
+      {
+        name: "Authorization",
+        value: Redacted.make(
+          "Basic ${secret:tracker-login.username}:${secret:tracker-login.password}",
+        ),
+      },
+    ],
+    command: null,
+    env: [],
+    formSecrets: [],
+    formValues: [],
+  };
+  const resolved = withValues(
+    settings,
+    new Map([
+      ["${secret:tracker-login.username}", Redacted.make("admin")],
+      ["${secret:tracker-login.password}", Redacted.make("hunter-two")],
+    ]),
+  );
+  assert.deepStrictEqual(resolved.values.map(Redacted.value), ["hunter-two"]);
+  assert.deepStrictEqual(resolved.userNames.map(Redacted.value), ["admin"]);
+  assert.deepStrictEqual(
+    resolved.secret.headers.map((header) => Redacted.value(header.value)),
+    ["Basic admin:hunter-two"],
+  );
+});
 
 describe("references to secrets in a connector's settings", () => {
   it.live(
@@ -686,7 +724,7 @@ describe("references to secrets in a connector's settings", () => {
           values: [
             {
               key: FieldKey.make("Authorization"),
-              value: Redacted.make(`Token \${secret:${TOKEN}}`),
+              value: Redacted.make(`Bearer \${secret:${TOKEN}}`),
             },
           ],
           by: { _tag: "bot", botId: ana },
@@ -694,6 +732,189 @@ describe("references to secrets in a connector's settings", () => {
       );
       assert.deepStrictEqual(refusalOf(refused), [TOKEN, "not-yours"]);
     }).pipe(Effect.provide(domain)),
+  );
+
+  it.live(
+    "lets a bot change only which secrets a command names, never where it sends them",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        const OTHER = SecretName.make("tracker-backup");
+        yield* secrets.add({
+          id: SecretId.make("sec_0000000000000002"),
+          name: OTHER,
+          draft: { _tag: "value", value: Redacted.make(NEW_VALUE) },
+          access: onlyBots(ana),
+        });
+        const variable = (name: string, value: string) => ({
+          name: EnvName.make(name),
+          value: Redacted.make(value),
+        });
+        const line = (args: ReadonlyArray<string>, key: string, base: string) => ({
+          command: process.execPath,
+          args: [STDIO_SERVER, ...args].map((arg) => Redacted.make(arg)),
+          env: [variable("FIXTURE_SECRET", key), variable("FIXTURE_BASE", base)],
+        });
+        const key = (name: SecretName) => `token=\${secret:${name}}`;
+        yield* connectors.add({
+          id: ID,
+          source: {
+            _tag: "command",
+            name: "Notes",
+            ...line([], key(TOKEN), "https://api.example"),
+          },
+          grant: grantTo(ana),
+          by: operator,
+        });
+        const asAna = { _tag: "bot", botId: ana } as const;
+        const value = (name: string, text: string) => ({
+          key: FieldKey.make(name),
+          value: Redacted.make(text),
+        });
+        const refused = (change: Effect.Effect<Connector, ConnectorCommandError>) =>
+          Effect.map(Effect.flip(change), refusalOf);
+        const sealed = Effect.map(
+          secrets.connectorSecrets.get(connectorSecretIdOf(ID)),
+          Option.getOrThrow,
+        );
+
+        // Another address for the plain variable, another argument, or another text around the
+        // reference: each sends the secret elsewhere.
+        for (const change of [
+          { values: [value("FIXTURE_BASE", "https://bot.example")] },
+          { values: [value("FIXTURE_SECRET", `${key(TOKEN)}&to=bot.example`)] },
+          { command: line(["--to", "bot.example"], key(TOKEN), "https://api.example") },
+          { command: { ...line([], key(TOKEN), "https://api.example"), env: [] } },
+        ]) {
+          assert.deepStrictEqual(
+            yield* refused(connectors.update({ connectorId: ID, ...change, by: asAna })),
+            [TOKEN, "destination"],
+          );
+        }
+        assert.deepStrictEqual(
+          (yield* sealed).env.map((each) => Redacted.value(each.value)),
+          [key(TOKEN), "https://api.example"],
+        );
+
+        // Naming another secret it may use, in the same place, is the bot's to do.
+        yield* connectors.update({
+          connectorId: ID,
+          values: [value("FIXTURE_SECRET", key(OTHER))],
+          by: asAna,
+        });
+        assert.strictEqual(
+          Redacted.value((yield* sealed).env[0]?.value ?? Redacted.make("")),
+          key(OTHER),
+        );
+        // The operator changes where it goes.
+        yield* connectors.update({
+          connectorId: ID,
+          values: [value("FIXTURE_BASE", "https://eu.api.example")],
+          by: operator,
+        });
+        assert.strictEqual(
+          Redacted.value((yield* sealed).env[1]?.value ?? Redacted.make("")),
+          "https://eu.api.example",
+        );
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "sends a request refused with a secret's old value again with its new one, and needs the operator only when the new one is refused",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets } = yield* withSecret((a) => onlyBots(a));
+        yield* tracker(grantTo(ana));
+        const store = yield* ConnectorStore;
+        const credentials = credentialsOf(secrets, yield* ConnectorSignIns, store.get(ID));
+        const authorization = (sent: CallCredentials) =>
+          sent.headers.map((header) => Redacted.value(header.value));
+
+        // A request goes out with the old value; the operator changes the secret before its refusal comes back.
+        const old = yield* credentials.current;
+        assert.deepStrictEqual(authorization(old), [`Bearer ${VALUE}`]);
+        yield* secrets.update({ id: TOKEN_ID, changes: { value: Redacted.make(NEW_VALUE) } });
+        // The refusal was of what no longer signs it: the request goes again, with the new value.
+        yield* credentials.rejected(Option.none(), old);
+        const renewed = yield* credentials.current;
+        assert.deepStrictEqual(authorization(renewed), [`Bearer ${NEW_VALUE}`]);
+        // A refusal of the new value is the operator's to fix.
+        const refused = yield* Effect.flip(credentials.rejected(Option.none(), renewed));
+        assert.strictEqual(refused._tag, "NeedsSignIn");
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "lets a bot change only which secrets a server's headers name, never a header that routes them",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        const OTHER = SecretName.make("tracker-backup");
+        yield* secrets.add({
+          id: SecretId.make("sec_0000000000000002"),
+          name: OTHER,
+          draft: { _tag: "value", value: Redacted.make(NEW_VALUE) },
+          access: onlyBots(ana),
+        });
+        const header = (name: string, value: string) => ({
+          name: HeaderName.make(name),
+          value: Redacted.make(value),
+        });
+        yield* connectors.add({
+          id: ID,
+          source: {
+            _tag: "remote",
+            name: "Tracker",
+            url: Redacted.make("https://gateway.example/mcp"),
+            headers: [
+              header("Authorization", `Bearer \${secret:${TOKEN}}`),
+              header("X-Workspace", "team"),
+            ],
+            oauthClient: null,
+            privateNetwork: false,
+          },
+          grant: grantTo(ana),
+          by: operator,
+        });
+        const asAna = { _tag: "bot", botId: ana } as const;
+        const value = (name: string, text: string) => ({
+          key: FieldKey.make(name),
+          value: Redacted.make(text),
+        });
+        const headers = Effect.map(
+          secrets.connectorSecrets.get(connectorSecretIdOf(ID)),
+          (sealed) =>
+            Option.getOrThrow(sealed)
+              .headers.map((each) => Redacted.value(each.value))
+              .toSorted(),
+        );
+
+        // The gateway forwards the secret to whichever workspace the header names.
+        assert.deepStrictEqual(
+          yield* Effect.map(
+            Effect.flip(
+              connectors.update({
+                connectorId: ID,
+                values: [value("X-Workspace", "bot")],
+                by: asAna,
+              }),
+            ),
+            refusalOf,
+          ),
+          [TOKEN, "destination"],
+        );
+        assert.deepStrictEqual(yield* headers, [`Bearer \${secret:${TOKEN}}`, "team"]);
+        // Naming another secret it may use, in the same header, is the bot's to do.
+        yield* connectors.update({
+          connectorId: ID,
+          values: [value("Authorization", `Bearer \${secret:${OTHER}}`)],
+          by: asAna,
+        });
+        assert.deepStrictEqual(yield* headers, [`Bearer \${secret:${OTHER}}`, "team"]);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
   );
 
   it.live(

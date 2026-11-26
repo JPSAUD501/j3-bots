@@ -427,13 +427,15 @@ export const headerFieldKeys = (form: ConnectForm): ReadonlySet<string> =>
 /**
  * The headers `values` gives anew, as for a token the service refused: each
  * header one of whose fields `values` names, rendered from `values` and,
- * for its other fields, their defaults: each needs one or the other. A
- * header `values` does not touch keeps the value it has. Only a header's
- * fields can be given again: a key of the address's is unknown here.
+ * for its other fields, the values they were `kept` with, or their
+ * defaults: each needs one of them. A value given empty clears the one
+ * kept. A header `values` does not touch keeps the value it has. Only a
+ * header's fields can be given again: a key of the address's is unknown here.
  */
 export const refill = (
   form: ConnectForm,
   values: ReadonlyMap<string, Redacted.Redacted<string>>,
+  kept: ReadonlyMap<string, Redacted.Redacted<string>>,
 ): Result.Result<
   ReadonlyArray<{ readonly name: string; readonly value: Redacted.Redacted<string> }>,
   ReadonlyArray<FieldProblem>
@@ -442,7 +444,7 @@ export const refill = (
   const keys = new Set(touched.flatMap(keysOf));
   const { filled, problems } = fill(
     form.fields.filter((field) => inHeader(field) && keys.has(field.key)),
-    values,
+    new Map([...[...kept].filter(([key]) => keys.has(key) && !values.has(key)), ...values]),
   );
   const missing = touched.flatMap((header) =>
     keysOf(header)

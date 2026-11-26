@@ -26,7 +26,7 @@ import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { AS_ORIGIN, TestOAuth } from "../testing/oauth.ts";
 import { Secrets } from "../secrets/Secrets.ts";
-import { ConnectorReach, Connectors } from "./Connectors.ts";
+import { ConnectorReach, Connectors, MAX_SESSIONS } from "./Connectors.ts";
 import { connectorSecretIdOf } from "./credentials.ts";
 import { ConnectorAuth } from "./oauth/ConnectorAuth.ts";
 import { CURATED, curatedEntry } from "./sources/Curated.ts";
@@ -49,6 +49,7 @@ const reach = Layer.succeed(ConnectorReach, {
     },
   } satisfies SessionLimits,
   loopback: "allow-http",
+  sessions: MAX_SESSIONS,
 });
 
 const domain = TestDomain.layer.pipe(Layer.provide(reach));
@@ -89,6 +90,33 @@ const withVault = TestDomain.layerWithRegistry([
     title: "Vault",
     description: null,
     form: vaultForm.success,
+    owner: null,
+  },
+]).pipe(Layer.provide(reach));
+
+// A registry entry whose one header is made of a plain field and a secret one.
+const accountName = RegistryName.make("io.example/account");
+const ACCOUNT_FIELD = FieldKey.make("header:X-Api-Key:account");
+const ACCOUNT_KEY_FIELD = FieldKey.make("header:X-Api-Key:key");
+const accountForm = connectForm({
+  type: "streamable-http",
+  url: "https://mcp.account.example/mcp",
+  headers: [
+    {
+      name: "X-Api-Key",
+      value: "{account}:{key}",
+      isRequired: true,
+      variables: { account: { isRequired: true }, key: { isRequired: true, isSecret: true } },
+    },
+  ],
+});
+if (Result.isFailure(accountForm)) throw new Error(`refused: ${accountForm.failure}`);
+const withAccount = TestDomain.layerWithRegistry([
+  {
+    name: accountName,
+    title: "Account",
+    description: null,
+    form: accountForm.success,
     owner: null,
   },
 ]).pipe(Layer.provide(reach));
@@ -495,5 +523,41 @@ describe("connecting from the gallery", () => {
         }
       }).pipe(Effect.scoped, Effect.provide(withVault)),
     SLOW,
+  );
+  it.effect("gives a header made of several fields again from the one field given", () =>
+    Effect.gen(function* () {
+      yield* setUp;
+      const connectors = yield* Connectors;
+      const id = ConnectorId.make("conn_galleryaccount0001");
+      yield* connectors.add({
+        id,
+        source: {
+          _tag: "listing",
+          ref: { _tag: "registry", name: accountName },
+          language: "en",
+          values: [value(ACCOUNT_FIELD, "acme"), value(ACCOUNT_KEY_FIELD, KEY)],
+          oauthClient: null,
+        },
+        by: { _tag: "operator" },
+      });
+      const header = Effect.map(secretOf(id), (secret) =>
+        Option.getOrThrow(secret).headers.map((each) => Redacted.value(each.value)),
+      );
+      assert.deepStrictEqual(yield* header, [`acme:${KEY}`]);
+
+      // A new key alone keeps the account, and a new account alone keeps the key.
+      yield* connectors.update({
+        by: { _tag: "operator" },
+        connectorId: id,
+        values: [value(ACCOUNT_KEY_FIELD, NEW_KEY)],
+      });
+      assert.deepStrictEqual(yield* header, [`acme:${NEW_KEY}`]);
+      yield* connectors.update({
+        by: { _tag: "operator" },
+        connectorId: id,
+        values: [value(ACCOUNT_FIELD, "globex")],
+      });
+      assert.deepStrictEqual(yield* header, [`globex:${NEW_KEY}`]);
+    }).pipe(Effect.provide(withAccount)),
   );
 });

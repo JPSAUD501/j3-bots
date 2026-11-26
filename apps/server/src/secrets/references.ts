@@ -52,6 +52,13 @@ export const replaceReferences = (
   );
 
 /**
+ * `text` with each reference replaced by one mark: what it says besides
+ * which secrets it names. Two values alike here send the secrets they name
+ * to the same place.
+ */
+export const outsideReferences = (text: string): string => text.replace(REFERENCE, "\0");
+
+/**
  * Whether a secret's `access` lets every one of `users` use it. One every
  * bot may use covers anyone; one some bots may use covers only some of them,
  * never every bot, which takes in the bots still to come.

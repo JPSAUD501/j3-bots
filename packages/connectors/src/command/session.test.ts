@@ -38,6 +38,7 @@ describe("openCommandSession", () => {
         const { session } = yield* openCommandSession({
           ...fixtureOptions(["--tool", "extra", "--key", ARGUMENT_SECRET]),
           hidden: [Redacted.make(ARGUMENT_SECRET)],
+          carried: [],
           onListChanged: () => Effect.void,
         });
         // The line the fixture writes before any message is skipped.

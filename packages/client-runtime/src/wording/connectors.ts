@@ -166,6 +166,8 @@ export function secretRefusalText(failure: ConnectorIntentFailure, { t }: I18n):
       return t("connect.failed.secretNotYours", secret);
     case "in-address":
       return t("connect.failed.secretInAddress");
+    case "destination":
+      return t("connect.failed.secretDestination", secret);
   }
 }
 

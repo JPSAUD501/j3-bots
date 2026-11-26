@@ -68,8 +68,15 @@ export class ResponseTooLarge extends Schema.TaggedError<ResponseTooLarge>()("Re
   }
 }
 
-/** The connector needs the operator to sign in (again) before it can be used. */
-export class NeedsSignIn extends Schema.TaggedError<NeedsSignIn>()("NeedsSignIn", {}) {
+/**
+ * The connector needs the operator to sign in (again) before it can be used.
+ * `renewed`: the credentials refused were read after the request was first
+ * refused with others (a refresh, values given again), so the refusal is of
+ * what signs requests now, however long ago the request began.
+ */
+export class NeedsSignIn extends Schema.TaggedError<NeedsSignIn>()("NeedsSignIn", {
+  renewed: Schema.optionalKey(Schema.Boolean),
+}) {
   override get message(): string {
     return "The connector needs the operator to sign in.";
   }

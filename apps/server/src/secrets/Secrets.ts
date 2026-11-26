@@ -34,7 +34,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Reactivity from "effect/reactivity/Reactivity";
@@ -149,8 +149,19 @@ const CommandJson = json(ConnectorSecret.fields.command);
 
 const decodeName = Schema.decodeUnknownOption(SecretName);
 
-/** The fields a connector's record seals, one value each. */
-const CONNECTOR_FIELDS = ["address", "oauth", "headers", "command", "env", "formSecrets"] as const;
+/**
+ * The fields a connector's record seals, one value each. A record saved
+ * before `formValues` was kept has none, which reads as no value.
+ */
+const CONNECTOR_FIELDS = [
+  "address",
+  "oauth",
+  "headers",
+  "command",
+  "env",
+  "formSecrets",
+  "formValues",
+] as const;
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const bytesOf = (text: string) => Buffer.from(text, "base64");
@@ -190,6 +201,12 @@ export class SecretUnavailable extends Schema.TaggedError<SecretUnavailable>()(
   }
 }
 
+/** The secrets' state, and how many times what a reference resolves to may have changed since the server started. */
+export interface ReferenceStatus {
+  readonly state: SecretsState;
+  readonly revision: number;
+}
+
 /**
  * The operator's secrets (`docs/architecture/server.md`, "Secrets"): logins
  * and single values, sealed under a data key the server keeps in a key file
@@ -203,6 +220,12 @@ export class Secrets extends Context.Service<
   {
     /** The status now, then each change. */
     readonly status: Stream.Stream<SecretsStatus>;
+    /**
+     * The state now, then each change of it or of what a reference to a
+     * secret can resolve to (`referenceValues`): a secret added, changed or
+     * deleted, or given to other bots. A reveal, a fill or a use is none.
+     */
+    readonly referenceStatus: Stream.Stream<ReferenceStatus>;
     /**
      * Opens a vault from before secrets with its master password, once: the
      * data key goes to the key file, each login gets a name, and the
@@ -522,9 +545,16 @@ export const layer = Layer.effect(
     /** The data key in `ready`; zeroed when the server stops. */
     let dataKey: Buffer | null = started.key;
     let revision = 0;
-    const state = yield* SubscriptionRef.make<SecretsStatus>({ state: started.state, revision });
+    /** Moves with `revision` on each change that can change what a reference resolves to. */
+    let referenceRevision = 0;
+    const state = yield* SubscriptionRef.make<SecretsStatus & { readonly references: number }>({
+      state: started.state,
+      revision,
+      references: referenceRevision,
+    });
 
-    const publish = (next: SecretsState) => SubscriptionRef.set(state, { state: next, revision });
+    const publish = (next: SecretsState) =>
+      SubscriptionRef.set(state, { state: next, revision, references: referenceRevision });
 
     /** One request at a time: none reads the key while another replaces it. */
     const exclusive = Semaphore.makeUnsafe(1);
@@ -689,6 +719,7 @@ export const layer = Layer.effect(
           yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`.pipe(Effect.orDie);
           dataKey = key.value;
           revision += 1;
+          referenceRevision += 1;
           yield* Effect.logInfo(
             "The old vault was opened; the server keeps its key from now on",
           ).pipe(Effect.annotateLogs({ logins: names.length }));
@@ -938,10 +969,16 @@ export const layer = Layer.effect(
       return rows;
     });
 
-    const changed = Effect.gen(function* () {
+    /** Tells subscribers the secrets changed; `resolves` when what a reference resolves to may have. */
+    const changedSo = Effect.fn("Secrets.changed")(function* (resolves: boolean) {
       revision += 1;
+      if (resolves) referenceRevision += 1;
       yield* publish((yield* SubscriptionRef.get(state)).state);
     });
+    /** A secret added, changed, deleted or given to other bots. */
+    const changed = changedSo(true);
+    /** A reveal or a use: what a reference resolves to is as it was. */
+    const noted = changedSo(false);
 
     const add = (input: {
       readonly id: SecretId;
@@ -1144,7 +1181,7 @@ export const layer = Layer.effect(
               deviceId: input.deviceId,
             }),
           );
-          yield* changed;
+          yield* noted;
           return Redacted.make(value);
         }),
       );
@@ -1207,7 +1244,7 @@ export const layer = Layer.effect(
         UPDATE records SET used_at = ${timeText(now)}, used_by = ${botId}, used_for = ${where}
         WHERE id = ${id}
       `.pipe(Effect.orDie);
-      yield* changed;
+      yield* noted;
     });
 
     const fillValue = (input: { readonly id: SecretId; readonly field: FillField }) =>
@@ -1320,9 +1357,8 @@ export const layer = Layer.effect(
           if (rows.length === 0) return Option.none<ConnectorSecret>();
           const opened = (field: (typeof CONNECTOR_FIELDS)[number]) => {
             const row = rows.find((candidate) => candidate.field === field);
-            return row === undefined
-              ? damaged(recordId, field)
-              : Effect.map(openRow(key, row), text);
+            if (row !== undefined) return Effect.map(openRow(key, row), text);
+            return field === "formValues" ? Effect.succeed("[]") : damaged(recordId, field);
           };
           const address = yield* readBack(
             recordId,
@@ -1354,6 +1390,11 @@ export const layer = Layer.effect(
             "formSecrets",
             Schema.decodeEffect(NamedSecretsJson)(yield* opened("formSecrets")),
           );
+          const formValues = yield* readBack(
+            recordId,
+            "formValues",
+            Schema.decodeEffect(NamedSecretsJson)(yield* opened("formValues")),
+          );
           return Option.some<ConnectorSecret>({
             connectorId: id,
             address,
@@ -1362,6 +1403,7 @@ export const layer = Layer.effect(
             command,
             env,
             formSecrets,
+            formValues,
           });
         }),
       );
@@ -1377,6 +1419,7 @@ export const layer = Layer.effect(
           const command = yield* Schema.encodeEffect(CommandJson)(secret.command);
           const env = yield* Schema.encodeEffect(NamedSecretsJson)(secret.env);
           const formSecrets = yield* Schema.encodeEffect(NamedSecretsJson)(secret.formSecrets);
+          const formValues = yield* Schema.encodeEffect(NamedSecretsJson)(secret.formValues);
           const rows = [
             yield* sealedRow(key, recordId, "address", utf8(address)),
             yield* sealedRow(key, recordId, "oauth", utf8(oauth)),
@@ -1384,6 +1427,7 @@ export const layer = Layer.effect(
             yield* sealedRow(key, recordId, "command", utf8(command)),
             yield* sealedRow(key, recordId, "env", utf8(env)),
             yield* sealedRow(key, recordId, "formSecrets", utf8(formSecrets)),
+            yield* sealedRow(key, recordId, "formValues", utf8(formValues)),
           ];
           const now = timeText(yield* DateTime.now);
           yield* transactional(sql)(
@@ -1408,7 +1452,13 @@ export const layer = Layer.effect(
       );
 
     return Secrets.of({
-      status: SubscriptionRef.changes(state),
+      status: SubscriptionRef.changes(state).pipe(
+        Stream.map(({ state, revision }): SecretsStatus => ({ state, revision })),
+      ),
+      referenceStatus: SubscriptionRef.changes(state).pipe(
+        Stream.map(({ state, references }): ReferenceStatus => ({ state, revision: references })),
+        Stream.changesWith((a, b) => a.state === b.state && a.revision === b.revision),
+      ),
       openOldVault,
       list,
       usableBy,

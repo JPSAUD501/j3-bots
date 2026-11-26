@@ -43,6 +43,7 @@ const bearer = (token: string): CallCredentials => ({
   bearer: Option.some(Redacted.make(token)),
   headers: [{ name: "X-Api-Key", value: Redacted.make(API_KEY) }],
   hidden: [],
+  carried: [],
 });
 
 const echo: FakeOptions["call"] = (name, args) => ({
@@ -146,7 +147,10 @@ describe("openSession", () => {
           rejected: (wwwAuthenticate, sent) =>
             Ref.update(seen, (all): ReadonlyArray<Refusal> => [
               ...all,
-              [wwwAuthenticate, Option.match(sent, { onNone: () => "", onSome: Redacted.value })],
+              [
+                wwwAuthenticate,
+                Option.match(sent.bearer, { onNone: () => "", onSome: Redacted.value }),
+              ],
             ]).pipe(Effect.andThen(Ref.set(current, RENEWED))),
         };
         const session = yield* open(fake.url, credentials);
@@ -171,6 +175,7 @@ describe("openSession", () => {
             bearer: Option.none(),
             headers: [{ name: header.name, value: Redacted.make(header.value) }],
             hidden: [],
+            carried: [],
           });
           const error = yield* Effect.flip(open(fake.url, credentials));
           assert.deepStrictEqual(
@@ -202,6 +207,55 @@ describe("openSession", () => {
         // The whole answer an app is given is not cut, and has no secret either.
         assert.deepStrictEqual(leaks(JSON.stringify(answer.result), [TOKEN, API_KEY]), []);
         assert.include(JSON.stringify(answer.result), "Bearer [redacted] and [redacted]");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "takes a short secret out of a structured answer value by value, so the bot and an app read it whole",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* fakeMcpServer({
+          tools: [{ name: "lock" }],
+          call: () => ({
+            _tag: "result",
+            text: null,
+            structuredContent: {
+              pin: 4096,
+              note: "PIN:\n4096",
+              page: 2,
+              file: "C:\\reports\\r4096.csv",
+            },
+          }),
+        });
+        const credentials = fixed({ ...bearer(TOKEN), hidden: [Redacted.make("4096")] });
+        const session = yield* open(fake.url, credentials);
+        const answer = yield* session.callTool({ name: "lock", arguments: {} });
+        const scrubbed = {
+          pin: "[redacted]",
+          note: "PIN:\n[redacted]",
+          page: 2,
+          file: "C:\\reports\\r4096.csv",
+        };
+        assert.strictEqual(answer.text, JSON.stringify(scrubbed));
+        assert.deepInclude(answer.result, { structuredContent: scrubbed });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "takes a long user name out of an answer, and leaves a short one as the word it is",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* fakeMcpServer({
+          tools: [{ name: "whoami" }],
+          call: () => ({ _tag: "result", text: "Signed in as someone@example.test; admin panel" }),
+        });
+        const credentials = fixed({
+          ...bearer(TOKEN),
+          carried: [Redacted.make("someone@example.test"), Redacted.make("admin")],
+        });
+        const session = yield* open(fake.url, credentials);
+        const answer = yield* session.callTool({ name: "whoami", arguments: {} });
+        assert.strictEqual(answer.text, "Signed in as [redacted]; admin panel");
       }).pipe(Effect.scoped),
   );
 
@@ -404,5 +458,20 @@ describe("scrubberOf", () => {
     const scrub = scrubberOf([secret]);
     assert.strictEqual(scrub(`token ${secret}`), "token [redacted]");
     assert.strictEqual(scrub(JSON.stringify({ token: secret })), '{"token":"[redacted]"}');
+  });
+
+  it("takes a short secret out only where it stands as a word of its own", () => {
+    const scrub = scrubberOf([], ["4096"]);
+    assert.strictEqual(scrub("PIN 4096, set."), "PIN [redacted], set.");
+    assert.strictEqual(scrub('{"pin":"4096"}'), '{"pin":"[redacted]"}');
+    // A backslash in a path is not a break between words.
+    assert.strictEqual(scrub("C:\\reports\\r4096.csv"), "C:\\reports\\r4096.csv");
+    // Inside a longer number or word it is ordinary text.
+    assert.strictEqual(scrub("order 140960 and v4096b"), "order 140960 and v4096b");
+  });
+
+  it("leaves ordinary text alone: a short value not known to be a secret, and one too short to look for", () => {
+    const scrub = scrubberOf(["info"], ["abc"]);
+    assert.strictEqual(scrub("info: abc"), "info: abc");
   });
 });

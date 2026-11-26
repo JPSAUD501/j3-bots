@@ -224,11 +224,21 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
  *   connector;
  * - `not-yours`: the bot that wrote the settings may not use it itself;
  * - `in-address`: it is in the connector's address, where no reference is
- *   resolved: one goes in a header, an argument or an environment value.
+ *   resolved: one goes in a header, an argument or an environment value;
+ * - `destination`: a bot's change would change where settings that name
+ *   it send it (the program, its arguments, a variable's other text), which
+ *   only the operator may: a bot uses a secret without reading it.
  */
 export class SecretRefused extends Schema.TaggedError<SecretRefused>()("SecretRefused", {
   secret: SecretName,
-  problem: Schema.Literals(["missing", "no-value", "not-shared", "not-yours", "in-address"]),
+  problem: Schema.Literals([
+    "missing",
+    "no-value",
+    "not-shared",
+    "not-yours",
+    "in-address",
+    "destination",
+  ]),
 }) {
   override get message(): string {
     return `The connector cannot use the secret "${this.secret}": ${this.problem}.`;

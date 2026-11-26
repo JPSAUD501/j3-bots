@@ -43,7 +43,7 @@ const NOTES_STDIO = NodeUrl.fileURLToPath(
 );
 const CLIENT = { name: "j3-bots-test", version: "0.0.0" };
 const NO_CREDENTIALS = {
-  current: Effect.succeed({ bearer: Option.none(), headers: [], hidden: [] }),
+  current: Effect.succeed({ bearer: Option.none(), headers: [], hidden: [], carried: [] }),
   rejected: () => Effect.void,
 };
 
@@ -72,6 +72,7 @@ const overStdio = (file: string, args: ReadonlyArray<string> = []) =>
     args: [file, ...args].map((arg) => Redacted.make(arg)),
     variables: [],
     hidden: [],
+    carried: [],
     serverEnvironment,
     cwd: NodeOs.tmpdir(),
     limits: DEFAULT_SESSION_LIMITS,

@@ -54,7 +54,7 @@ export type ConnectorData =
  * - `needs-sign-in`: the operator must sign in again, and was shown a card;
  * - `secrets-unavailable`: the operator's secrets cannot be read now (`SecretsState`);
  * - `needs-secret`: a secret its settings name is missing, or not shared with every bot it goes to;
- * - `busy`: J3 Bots has as many connector sessions open as it keeps.
+ * - `busy`: J3 Bots has as many connector sessions open as it keeps, every one in use.
  */
 export const CONNECTOR_UNAVAILABLE = [
   "needs-sign-in",

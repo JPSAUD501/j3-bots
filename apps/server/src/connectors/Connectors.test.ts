@@ -29,7 +29,7 @@ import { Bots } from "../bots/Bots.ts";
 import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Secrets } from "../secrets/Secrets.ts";
-import { reachFakes } from "../testing/connectors.ts";
+import { reachFakes, reachFakesWith } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { moveKeyFile } from "../testing/secrets.ts";
 import { BotStates } from "../turns/BotStates.ts";
@@ -332,6 +332,187 @@ describe("Connectors", () => {
         const seen = shown(connected, refused, needs, updated, answer);
         assert.notInclude(seen, KEY);
         assert.notInclude(seen, NEW_KEY);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  /** A call on its way with the old key while the operator gives a new one, whose server answers `slow` as `refusing` says. */
+  const keyChangedMidCall = (refusing: (authorization: string | undefined) => boolean) =>
+    Effect.gen(function* () {
+      const arrived = Promise.withResolvers<void>();
+      const answered = Promise.withResolvers<void>();
+      const { connectors, ana } = yield* setUp(
+        {
+          tools: [{ name: "search" }, { name: "slow" }],
+          call: (name, _args, headers) => {
+            if (name !== "slow") return { _tag: "result", text: "found it" };
+            arrived.resolve();
+            return refusing(headers.authorization)
+              ? { _tag: "refuse", after: answered.promise }
+              : { _tag: "result", text: "done" };
+          },
+        },
+        [{ name: "Authorization", value: `Bearer ${KEY}` }],
+      );
+      yield* connectors.toolsFor(ana);
+      yield* awaitConnector(listed);
+      const call = yield* Effect.forkChild(
+        connectors.call({ botId: ana, name: "tracker__slow", arguments: {} }),
+      );
+      yield* Effect.promise(() => arrived.promise);
+      yield* connectors.update({
+        by: { _tag: "operator" },
+        connectorId: ID,
+        values: [
+          { key: FieldKey.make("Authorization"), value: Redacted.make(`Bearer ${NEW_KEY}`) },
+        ],
+      });
+      // The service then refuses the old key the call carried.
+      answered.resolve();
+      const answer = yield* Fiber.join(call);
+      const [now] = (yield* connectors.listed).map((listed) => listed.connector);
+      const latest = yield* (yield* Entries).latest({ _tag: "conversation", botId: ana }, 50);
+      const cards = latest.flatMap((entry) =>
+        entry._tag === "connector-auth" ? [entry.status] : [],
+      );
+      return { answer, status: now?.status, cards };
+    });
+
+  it.effect(
+    "sends a call refused with the old key again with the new one given meanwhile, and asks for nothing",
+    () =>
+      Effect.gen(function* () {
+        const { answer, status, cards } = yield* keyChangedMidCall(
+          (authorization) => authorization === `Bearer ${KEY}`,
+        );
+        assert.include(answer.text, "done");
+        assert.strictEqual(status?._tag, "connected");
+        assert.deepStrictEqual(cards, []);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect(
+    "asks the operator again when the new key given mid-call is refused too",
+    () =>
+      Effect.gen(function* () {
+        const { answer, status, cards } = yield* keyChangedMidCall(() => true);
+        assert.isTrue(answer.isError);
+        assert.deepStrictEqual(status, { _tag: "needs-sign-in", reason: "rejected" });
+        assert.deepStrictEqual(cards, ["pending"]);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect(
+    "closes the session unused the longest for a new one at the cap, and is busy only while every one is in use",
+    () =>
+      Effect.gen(function* () {
+        const { fake, connectors, ana, bea } = yield* setUp(
+          {
+            tools: [{ name: "search" }, { name: "wait" }],
+            call: (name) =>
+              name === "wait" ? { _tag: "hang" } : { _tag: "result", text: "found it" },
+          },
+          [{ name: "X-Api-Key", value: KEY }],
+        );
+        const bots = yield* Bots;
+        const cid = (yield* bots.create({
+          commandId: CommandId.make("cid"),
+          draft: { name: "Cid" },
+        })).id;
+        yield* connectors.setBots({
+          commandId: CommandId.make("every-bot"),
+          connectorId: ID,
+          grant: { _tag: "all-bots" },
+          by: { _tag: "operator" },
+        });
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        const search = (botId: BotId) =>
+          connectors.call({ botId, name: "tracker__search", arguments: {} });
+        const wait = (botId: BotId) =>
+          Effect.forkChild(connectors.call({ botId, name: "tracker__wait", arguments: {} }));
+
+        // Two places: the listing's session and Ana's, then Bea's in place of the listing's.
+        assert.include((yield* search(ana)).text, "found it");
+        assert.include((yield* search(bea)).text, "found it");
+        // Ana's stays in use; Bea's, idle, makes room for Cid's.
+        const ana_ = yield* wait(ana);
+        yield* fake.held(1);
+        const cid_ = yield* wait(cid);
+        yield* fake.held(2);
+        // Both in use: Bea's call finds no room, and goes nowhere.
+        const before = fake.requests.length;
+        const busy = yield* search(bea);
+        assert.isTrue(busy.isError);
+        assert.include(busy.text, "as many connections to connectors open as it allows");
+        assert.strictEqual(fake.requests.length, before);
+        // A new key closes every session, but the calls still under way keep theirs, and their
+        // places: Ana's next call, which would open another, finds no room either.
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          values: [{ key: FieldKey.make("X-Api-Key"), value: Redacted.make(NEW_KEY) }],
+        });
+        const crowded = yield* search(ana);
+        assert.isTrue(crowded.isError);
+        assert.include(crowded.text, "as many connections to connectors open as it allows");
+
+        // A call that ends leaves its session idle, and room for the next.
+        yield* Fiber.interrupt(cid_);
+        assert.include((yield* search(bea)).text, "found it");
+        yield* Fiber.interrupt(ana_);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(TestDomain.layer.pipe(Layer.provide(reachFakesWith(2)))),
+      ),
+    SLOW,
+  );
+
+  it.effect(
+    "closes only the session a failed call used, not the one a new key opened in its place",
+    () =>
+      Effect.gen(function* () {
+        const arrived = Promise.withResolvers<void>();
+        const answered = Promise.withResolvers<void>();
+        const { fake, connectors, ana } = yield* setUp(
+          {
+            tools: [{ name: "search" }, { name: "slow" }],
+            call: (name) => {
+              if (name !== "slow") return { _tag: "result", text: "found it" };
+              arrived.resolve();
+              return { _tag: "fail", after: answered.promise };
+            },
+          },
+          [{ name: "X-Api-Key", value: KEY }],
+        );
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        const search = () =>
+          connectors.call({ botId: ana, name: "tracker__search", arguments: {} });
+        const opened = () =>
+          fake.requests.filter(
+            (request) => request.rpc === "server/discover" || request.rpc === "initialize",
+          ).length;
+
+        // A call goes out on Ana's session; a new key closes it, and her next call opens another.
+        const slow = yield* Effect.forkChild(
+          connectors.call({ botId: ana, name: "tracker__slow", arguments: {} }),
+        );
+        yield* Effect.promise(() => arrived.promise);
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          values: [{ key: FieldKey.make("X-Api-Key"), value: Redacted.make(NEW_KEY) }],
+        });
+        assert.include((yield* search()).text, "found it");
+        // The old call's server then fails: the session it broke was the old one.
+        answered.resolve();
+        assert.isTrue((yield* Fiber.join(slow)).isError);
+        const before = opened();
+        assert.include((yield* search()).text, "found it");
+        assert.strictEqual(opened(), before);
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );

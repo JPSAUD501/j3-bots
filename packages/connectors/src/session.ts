@@ -101,27 +101,50 @@ export interface SecretHeader {
  * operator gave. `hidden` are secrets the request carries only inside
  * another value, as the key a `Bearer {key}` header or a path was made from,
  * each as it may appear: never sent as they are, only taken out of what the
- * server answers.
+ * server answers. Each is known to be a secret, so one too short to look for
+ * inside other text is still taken out where it stands as a word of its own
+ * (`scrubberOf`). `carried` are other values a request carries only inside
+ * another, not known to be secrets, as a login's user name: taken out as the
+ * headers' values are, never as a word, since a short one is ordinary text.
  */
 export interface CallCredentials {
   readonly bearer: Option.Option<Redacted.Redacted<string>>;
   readonly headers: ReadonlyArray<SecretHeader>;
   readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
+  readonly carried: ReadonlyArray<Redacted.Redacted<string>>;
 }
+
+/** Whether two requests carry the same headers, in order. */
+export const sameHeaders = (
+  a: ReadonlyArray<SecretHeader>,
+  b: ReadonlyArray<SecretHeader>,
+): boolean =>
+  a.length === b.length &&
+  a.every(
+    (header, i) =>
+      header.name === b[i]?.name && Redacted.value(header.value) === Redacted.value(b[i].value),
+  );
+
+/** Whether two requests were signed alike: the same token and the same headers. */
+const sameCredentials = (a: CallCredentials, b: CallCredentials): boolean =>
+  Option.makeEquivalence(
+    (x: Redacted.Redacted<string>, y: Redacted.Redacted<string>) =>
+      Redacted.value(x) === Redacted.value(y),
+  )(a.bearer, b.bearer) && sameHeaders(a.headers, b.headers);
 
 /** Where a session reads its credentials, at each request. */
 export interface ConnectorCredentials {
   readonly current: Effect.Effect<CallCredentials, CredentialsUnavailable>;
   /**
-   * The server refused the credentials just sent, with this
-   * `WWW-Authenticate`: renew them (a refresh) or fail. `sent` is the bearer
-   * token that request carried, so a token renewed meanwhile by another
-   * request is not renewed again. The request is sent once more with what
-   * `current` gives next.
+   * The server refused the credentials just sent (`sent`), with this
+   * `WWW-Authenticate`: renew them (a refresh), let the request go again
+   * when they were replaced meanwhile (a token another request renewed, a
+   * header's value given again), or fail. The request is sent once more with
+   * what `current` gives next.
    */
   readonly rejected: (
     wwwAuthenticate: Option.Option<string>,
-    sent: Option.Option<Redacted.Redacted<string>>,
+    sent: CallCredentials,
   ) => Effect.Effect<void, CredentialsUnavailable>;
 }
 
@@ -430,7 +453,7 @@ const signingFetch =
         signal,
         headers: signed(init?.headers, current),
       });
-      return { response, bearer: current.bearer };
+      return { response, sent: current };
     };
     const first = await attempt();
     const answered = async (response: Response) =>
@@ -440,13 +463,13 @@ const signingFetch =
     await run(
       credentials.rejected(
         Option.fromNullishOr(first.response.headers.get("www-authenticate")),
-        first.bearer,
+        first.sent,
       ),
     );
     const second = await attempt();
     if (!refusedCredentials(second.response)) return answered(second.response);
     await second.response.body?.cancel();
-    throw new NeedsSignIn();
+    throw new NeedsSignIn({ renewed: !sameCredentials(first.sent, second.sent) });
   };
 
 const isConnectorFailure = Schema.is(
@@ -525,8 +548,14 @@ export const request = <A>(
 /** Beyond any deadline here, so the SDK's own timer never fires first. */
 export const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
 
-/** Values shorter than this are not searched for: they would match ordinary text. */
-const MIN_SCRUBBED = 8;
+/** A value shorter than this is not looked for inside other text: it would match ordinary text. */
+const MIN_FOUND_INSIDE = 8;
+
+/**
+ * A secret shorter than this is not looked for at all: even as a word of its
+ * own it would match ordinary text, such as a number.
+ */
+const MIN_FOUND_AS_WORD = 4;
 
 /**
  * Values of the connector's address that may be a secret: the whole of its
@@ -542,32 +571,70 @@ const addressValues = (url: URL): ReadonlyArray<string> => [
   ...url.searchParams.values(),
 ];
 
-/** The values of the credentials requests were sent with, and those they were made from. */
+/** The values the credentials requests were sent with carry as they are. */
 const sentValues = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string> =>
   sent.flatMap((credentials) =>
     [
       ...Option.toArray(credentials.bearer),
       ...credentials.headers.map((h) => h.value),
-      ...credentials.hidden,
+      ...credentials.carried,
     ].map(Redacted.value),
+  );
+
+/** The secrets those values were made from. */
+const sentSecrets = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string> =>
+  sent.flatMap((credentials) => credentials.hidden.map(Redacted.value));
+
+const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\]/g;
+
+/** Where `value` stands as a word of its own: no letter, digit or `_` right before or after it. */
+const asWord = (value: string) =>
+  new RegExp(
+    `(?<![\\p{L}\\p{N}_])${value.replace(REGEXP_SYNTAX, "\\$&")}(?![\\p{L}\\p{N}_])`,
+    "gu",
   );
 
 /**
  * Replaces, in a server's text, every exact one of `values`, should the
- * server echo one: the credentials a request was sent with and those they
- * were made from, the address' path and query, a command's environment.
- * Each is also found as a JSON string holds it, since a structured answer is
- * read as JSON. Best effort: a value shorter than {@link MIN_SCRUBBED}, or
- * one the server changed otherwise (encoded, split, cased), is not found.
+ * server echo one: the credentials a request was sent with, the address'
+ * path and query, a command's environment. `secrets` are those known to be
+ * secrets, as the operator's secrets a connector's settings name and a
+ * gallery form's secret values: taken out as `values` are, and one of
+ * {@link MIN_FOUND_AS_WORD} to {@link MIN_FOUND_INSIDE} characters, as a PIN,
+ * wherever it stands as a word of its own. Each is also found as a JSON
+ * string holds it, since a structured answer is read as JSON. Best effort:
+ * a shorter value, a short one inside other text, or one the server changed
+ * otherwise (encoded, split, cased), is not found.
  */
-export const scrubberOf = (values: ReadonlyArray<string>): ((text: string) => string) => {
-  const secrets = [
-    ...new Set(values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)])),
+export const scrubberOf = (
+  values: ReadonlyArray<string>,
+  secrets: ReadonlyArray<string> = [],
+): ((text: string) => string) => {
+  const variants = (value: string) => [value, JSON.stringify(value).slice(1, -1)];
+  const inside = new Set(
+    [...values, ...secrets].flatMap(variants).filter((value) => value.length >= MIN_FOUND_INSIDE),
+  );
+  const words = new Set(
+    secrets
+      .flatMap(variants)
+      .filter((value) => value.length >= MIN_FOUND_AS_WORD && value.length < MIN_FOUND_INSIDE),
+  );
+  const finders = [
+    ...[...inside].map((value) => ({
+      length: value.length,
+      replace: (text: string) => text.replaceAll(value, "[redacted]"),
+    })),
+    ...[...words].map((value) => {
+      const pattern = asWord(value);
+      return {
+        length: value.length,
+        replace: (text: string) => text.replace(pattern, "[redacted]"),
+      };
+    }),
   ]
-    .filter((value) => value.length >= MIN_SCRUBBED)
     // The longest first, so a value that holds another is taken whole.
     .toSorted((a, b) => b.length - a.length);
-  return (text) => secrets.reduce((out, secret) => out.replaceAll(secret, "[redacted]"), text);
+  return (text) => finders.reduce((out, finder) => finder.replace(out), text);
 };
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
@@ -585,25 +652,46 @@ const scrubbedBlob = (blob: string, scrub: (text: string) => string): string =>
     },
   });
 
-/** `value` with every `blob` in it scrubbed as its text: what base64 would hide from `scrub`. */
-const scrubbedBlobs = (value: Schema.Json, scrub: (text: string) => string): Schema.Json => {
-  if (value === null || typeof value !== "object") return value;
-  if (isJsonArray(value)) return value.map((item) => scrubbedBlobs(item, scrub));
+/**
+ * `value` with `scrub` applied to each string and key in it, and to every
+ * `blob` of text as its text, which base64 would hide from `scrub`. A number
+ * `scrub` would change becomes the string it makes, so the value stays JSON.
+ */
+const scrubbedJson = (value: Schema.Json, scrub: (text: string) => string): Schema.Json => {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") return scrub(value);
+  if (typeof value === "number") {
+    const text = String(value);
+    const clean = scrub(text);
+    return clean === text ? value : clean;
+  }
+  if (isJsonArray(value)) return value.map((item) => scrubbedJson(item, scrub));
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
-      key,
+      scrub(key),
       key === "blob" && typeof item === "string"
-        ? scrubbedBlob(item, scrub)
-        : scrubbedBlobs(item, scrub),
+        ? scrubbedBlob(scrub(item), scrub)
+        : scrubbedJson(item, scrub),
     ]),
   );
 };
 
 /**
- * A server's answer as JSON, with `scrub` applied to its text and to every
- * `blob` of text in it (an app's document may come as one), for an app: null
- * when it is larger than `maxBytes`, or no longer JSON once scrubbed (a
- * secret that spanned its structure).
+ * A tool's answer with `scrub` applied to its structured result value by
+ * value, before the bot reads it as JSON text: a short secret is found where
+ * it stands in a string, which escaping would hide (`PIN:\n4096`).
+ */
+const scrubbedStructure = (result: CallResult, scrub: (text: string) => string): CallResult => {
+  if (result.structuredContent === undefined) return result;
+  const decoded = decodeJson(JSON.stringify(result.structuredContent));
+  return Option.isNone(decoded)
+    ? result
+    : { ...result, structuredContent: scrubbedJson(decoded.value, scrub) };
+};
+
+/**
+ * A server's answer as JSON, with `scrub` applied to what it holds (see
+ * {@link scrubbedJson}), for an app: null when it is larger than `maxBytes`.
  */
 const appData = (
   value: unknown,
@@ -612,9 +700,7 @@ const appData = (
 ): Schema.Json | null => {
   const text = JSON.stringify(value);
   if (typeof text !== "string" || !fitsUtf8(text, maxBytes)) return null;
-  return Option.getOrNull(
-    Option.map(decodeJson(scrub(text)), (json) => scrubbedBlobs(json, scrub)),
-  );
+  return Option.getOrNull(Option.map(decodeJson(text), (json) => scrubbedJson(json, scrub)));
 };
 
 const cut = (text: string, max: number): { readonly text: string; readonly cut: boolean } => {
@@ -767,7 +853,10 @@ export const openSession = (
 
     const address = addressValues(options.url);
     return sessionOf(client, transport, limits, context, (sent) =>
-      scrubberOf([...sentValues([...sent, ...recent]), ...address]),
+      scrubberOf(
+        [...sentValues([...sent, ...recent]), ...address],
+        sentSecrets([...sent, ...recent]),
+      ),
     );
   });
 
@@ -1141,7 +1230,10 @@ export const sessionOf = (
             Effect.mapError(() => new NotMcp()),
           );
     const clean = scrub(answer.sent);
-    const text = cut(clean(answerText(result)), limits.maxResultCharacters);
+    const text = cut(
+      clean(answerText(scrubbedStructure(result, clean))),
+      limits.maxResultCharacters,
+    );
     return {
       text: text.text,
       cut: text.cut,

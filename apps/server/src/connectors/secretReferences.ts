@@ -72,7 +72,14 @@ export const referenceInAddress = (
 /** A connector's settings resolved: what it sends, and the secrets' values in it, which its server's answers are scrubbed of. */
 export interface Resolved {
   readonly secret: ConnectorSecret;
+  /** The secret values its references resolved to. */
   readonly values: ReadonlyArray<Redacted.Redacted<string>>;
+  /**
+   * The logins' user names they resolved to: not secrets, since a short one,
+   * such as `admin`, is an ordinary word, but taken out of answers as the
+   * values a request sends are.
+   */
+  readonly userNames: ReadonlyArray<Redacted.Redacted<string>>;
 }
 
 /**
@@ -80,6 +87,8 @@ export interface Resolved {
  * `values`, keyed by the reference's text, which must hold every reference
  * `referencesOf` finds: `Secrets.referenceValues` for them gives it.
  */
+const isUserName = (text: string) => referencesIn(text)[0]?.field === "username";
+
 export const withValues = (
   secret: ConnectorSecret,
   values: ReadonlyMap<string, Redacted.Redacted<string>>,
@@ -97,7 +106,8 @@ export const withValues = (
       env: secret.env.map((variable) => ({ ...variable, value: resolve(variable.value) })),
       formSecrets: secret.formSecrets.map((named) => ({ ...named, value: resolve(named.value) })),
     },
-    values: [...values.values()],
+    values: [...values].filter(([text]) => !isUserName(text)).map(([, value]) => value),
+    userNames: [...values].filter(([text]) => isUserName(text)).map(([, value]) => value),
   };
 };
 

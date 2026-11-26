@@ -5,6 +5,7 @@ import {
   type ConnectorCredentials,
   type CredentialsUnavailable,
   NeedsSignIn,
+  sameHeaders,
   SecretsUnavailable,
   Withdrawn,
 } from "@j3-bots/connectors";
@@ -120,29 +121,37 @@ export const commandOf = (
     Pick<ConnectorSecret, "env"> & {
       /** The operator's secrets' values in it, which the process's answers are scrubbed of. */
       readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
+      /** The logins' user names in it, which its answers are scrubbed of too. */
+      readonly carried: ReadonlyArray<Redacted.Redacted<string>>;
     },
   CredentialsUnavailable
 > =>
   Effect.gen(function* () {
     const resolved = yield* resolvedOf(secrets, connector);
     if (Option.isNone(resolved)) return yield* new AuthFailing({ reason: "secret-unusable" });
-    const { secret, values } = resolved.value;
+    const { secret, values, userNames } = resolved.value;
     const { command } = secret;
     if (command === null) return yield* new AuthFailing({ reason: "secret-unusable" });
-    return { program: command.program, args: command.args, env: secret.env, hidden: values };
+    return {
+      program: command.program,
+      args: command.args,
+      env: secret.env,
+      hidden: values,
+      carried: userNames,
+    };
   });
 
 /**
  * Signs the connector's requests from its secret and, for an OAuth connector,
- * its sign-in. `current` is asked first, right before each request goes out:
- * the connector as stored now, or none once the session's holder may no
- * longer use it, which withdraws the request unsigned. Its references
- * resolve for the bots it goes to now, not those of when the session opened.
+ * its sign-in. `current` is asked right before each request goes out, and
+ * again when its server refuses one: the connector as stored now, or none
+ * once the session's holder may no longer use it, which withdraws the
+ * request unsigned. Its references resolve for the bots it goes to now, not
+ * those of when the session opened.
  */
 export const credentialsOf = (
   secrets: typeof Secrets.Service,
   signIns: typeof ConnectorSignIns.Service,
-  connector: StoredConnector,
   current: Effect.Effect<Option.Option<StoredConnector>>,
 ): ConnectorCredentials => ({
   current: Effect.gen(function* () {
@@ -151,14 +160,27 @@ export const credentialsOf = (
     const resolved = yield* resolvedOf(secrets, now.value);
     const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
     const hidden = Option.match(resolved, { onNone: () => [], onSome: hiddenOfResolved });
+    const carried = Option.match(resolved, {
+      onNone: () => [],
+      onSome: (r) => hiddenOf(r.userNames),
+    });
     const bearer =
       now.value.signIn === "oauth"
         ? Option.some(yield* signIns.accessToken(now.value.id))
         : Option.none();
-    return { bearer, headers, hidden } satisfies CallCredentials;
+    return { bearer, headers, hidden, carried } satisfies CallCredentials;
   }),
-  rejected: (wwwAuthenticate, sent) =>
-    connector.signIn === "oauth"
-      ? signIns.rejected(connector.id, wwwAuthenticate, sent)
-      : Effect.fail(new NeedsSignIn()),
+  rejected: Effect.fn("ConnectorCredentials.rejected")(function* (wwwAuthenticate, sent) {
+    const now = yield* current;
+    if (Option.isNone(now)) return yield* new Withdrawn();
+    if (now.value.signIn === "oauth") {
+      return yield* signIns.rejected(now.value.id, wwwAuthenticate, sent.bearer);
+    }
+    // Headers given again since the request was signed (new values, a secret
+    // they name changed): the refusal was of the old ones, so the request goes
+    // again with the new; only a refusal of what signs it now needs the operator.
+    const resolved = yield* resolvedOf(secrets, now.value);
+    const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
+    if (sameHeaders(headers, sent.headers)) return yield* new NeedsSignIn();
+  }),
 });

@@ -83,6 +83,7 @@ const connectorSecret: ConnectorSecret = {
   command: null,
   env: [],
   formSecrets: [],
+  formValues: [],
 };
 
 /** The secrets' state now. */
@@ -637,5 +638,49 @@ it.effect("keeps a connector's secret sealed, and out of the operator's list", (
 
     yield* secrets.connectorSecrets.remove(CONNECTOR);
     assert.deepStrictEqual(yield* secrets.connectorSecrets.get(CONNECTOR), Option.none());
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tells references of a change only when what one resolves to may have changed", () =>
+  Effect.gen(function* () {
+    const secrets = yield* Secrets;
+    const ana = yield* createBot("Ana");
+    const referencesNow = Effect.map(
+      Stream.runHead(secrets.referenceStatus),
+      (head) => Option.getOrThrow(head).revision,
+    );
+    const statusNow = Effect.map(
+      Stream.runHead(secrets.status),
+      (head) => Option.getOrThrow(head).revision,
+    );
+    const start = yield* referencesNow;
+    yield* secrets.add({
+      id: idOf(1),
+      name: name("weather-api"),
+      draft: value("weather-key-1"),
+      access: everyBot,
+    });
+    const added = yield* referencesNow;
+    assert.isAbove(added, start);
+
+    // A reveal and a use are told to clients, never to references.
+    const clientsBefore = yield* statusNow;
+    yield* secrets.reveal({ id: idOf(1), field: "value", deviceId: DEVICE });
+    yield* secrets.noteUse({
+      names: [name("weather-api")],
+      botId: ana.id,
+      use: { _tag: "connector", name: Label.make("Weather") },
+    });
+    assert.isAbove(yield* statusNow, clientsBefore);
+    assert.strictEqual(yield* referencesNow, added);
+
+    yield* secrets.setAccess(idOf(1), onlyBots(ana.id));
+    const shared = yield* referencesNow;
+    assert.isAbove(shared, added);
+    yield* secrets.update({ id: idOf(1), changes: { value: Redacted.make("weather-key-2") } });
+    const updated = yield* referencesNow;
+    assert.isAbove(updated, shared);
+    yield* secrets.remove(idOf(1));
+    assert.isAbove(yield* referencesNow, updated);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
