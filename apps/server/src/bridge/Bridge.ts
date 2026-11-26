@@ -40,13 +40,16 @@ const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 const FORWARD_DEADLINE = Duration.seconds(30);
 
 /**
- * J3 Bots' own tools that reach outside it: adding or changing an MCP server
- * lists its tools, and installing a skill fetches a repository. They have a
- * connector call's deadline, and an answer that never came is answered as one.
+ * J3 Bots' own tools that reach outside it: a search asks the registry,
+ * adding or changing an MCP server lists its tools, removing one revokes its
+ * sign-in, and installing a skill fetches a repository. They have a connector
+ * call's deadline, and an answer that never came is answered as one.
  */
 const REACHES_OUT: ReadonlySet<string> = new Set<ToolName>([
+  "search_mcp_servers",
   "add_mcp_server",
   "update_mcp_server",
+  "remove_mcp_server",
   "install_skill",
 ]);
 

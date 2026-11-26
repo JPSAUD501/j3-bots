@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -422,38 +423,46 @@ export const layer = Layer.effect(
           const tag = yield* ids.make("skill");
           const staging = path.join(parent, `.j3-new-${name}-${tag}`);
           const old = path.join(parent, `.j3-old-${name}-${tag}`);
-          yield* receipts.once({
-            ...command,
-            result: Schema.Void,
-            apply: Effect.gen(function* () {
-              for (const file of files)
-                yield* writeFile(path.join(staging, ...file.path.split("/")), file.data);
-              if (exists) yield* Effect.orDie(fs.rename(folder, old));
-              // Until the new folder and its record are both in place, the old one can go back.
-              yield* Effect.gen(function* () {
-                yield* Effect.orDie(fs.rename(staging, folder));
-                yield* writeRecord(scope, name, source, by);
-              }).pipe(
-                Effect.onError(() =>
-                  exists
-                    ? Effect.gen(function* () {
-                        yield* fs.remove(folder, { recursive: true }).pipe(Effect.ignore);
-                        yield* fs.rename(old, folder);
-                      }).pipe(Effect.ignore)
-                    : Effect.void,
-                ),
-              );
-            }).pipe(
-              Effect.ensuring(
-                Effect.all(
-                  [fs.remove(staging, { recursive: true }), fs.remove(old, { recursive: true })],
-                  {
-                    discard: true,
-                  },
-                ).pipe(Effect.ignore),
-              ),
-            ),
+          // Which renames took place, so that a failure up to the commit undoes only those, and
+          // an old folder that could not go back is kept rather than removed.
+          const moved = yield* Ref.make({ old: false, placed: false, keepOld: false });
+          const undo = Effect.gen(function* () {
+            const done = yield* Ref.get(moved);
+            if (done.placed) yield* fs.remove(folder, { recursive: true }).pipe(Effect.ignore);
+            if (done.old) {
+              yield* fs
+                .rename(old, folder)
+                .pipe(
+                  Effect.catch(() => Ref.update(moved, (state) => ({ ...state, keepOld: true }))),
+                );
+            }
           });
+          const cleanUp = Effect.gen(function* () {
+            yield* fs.remove(staging, { recursive: true }).pipe(Effect.ignore);
+            if (!(yield* Ref.get(moved)).keepOld) {
+              yield* fs.remove(old, { recursive: true }).pipe(Effect.ignore);
+            }
+          });
+          yield* receipts
+            .once({
+              ...command,
+              result: Schema.Void,
+              apply: Effect.gen(function* () {
+                for (const file of files)
+                  yield* writeFile(path.join(staging, ...file.path.split("/")), file.data);
+                if (exists) {
+                  yield* Effect.orDie(fs.rename(folder, old));
+                  yield* Ref.update(moved, (state) => ({ ...state, old: true }));
+                }
+                yield* Effect.orDie(fs.rename(staging, folder));
+                yield* Ref.update(moved, (state) => ({ ...state, placed: true }));
+                yield* writeRecord(scope, name, source, by);
+              }),
+            })
+            .pipe(
+              Effect.onError(() => undo),
+              Effect.ensuring(cleanUp),
+            );
           yield* changed(scope);
           return yield* written(scope, name);
         }),
@@ -464,8 +473,12 @@ export const layer = Layer.effect(
     const readFolder = Effect.fnUntraced(function* (owner: BotId, relative: string) {
       const found = yield* store.find(owner);
       if (Option.isNone(found)) return yield* new NotFound({ resource: "bot" });
-      const root = Option.getOrElse(found.value.workspaceRoot, () => found.value.workspacePath);
-      const realRoot = yield* fs.realPath(root).pipe(Effect.mapError(privateLocation));
+      // The workspace as provisioning resolved it: resolving `workspacePath` now would follow a
+      // link the bot put in its folder's place.
+      if (Option.isNone(found.value.workspaceRoot)) {
+        return yield* new NotASkill({ reason: "your workspace is not ready" });
+      }
+      const realRoot = found.value.workspaceRoot.value;
       const start = path.resolve(realRoot, relative);
       if (start !== realRoot && !start.startsWith(`${realRoot}${path.sep}`)) {
         return yield* new NotASkill({ reason: "the folder is not in your workspace" });

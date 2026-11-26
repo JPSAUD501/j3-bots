@@ -344,6 +344,14 @@ it.effect(
         MANAGEMENT_REFUSED.notASkill("notes/leak goes through a link"),
       );
       assert.isFalse(yield* fs.exists(yield* skillFile(ben.bot.id, "leak")));
+      // Nor is a folder of a workspace the bot replaced with a link to the primary bot's.
+      const bens = layout.workspace(ben.bot.id);
+      yield* fs.rename(bens, `${bens}-moved`);
+      yield* fs.symlink(layout.workspace(ada.bot.id), bens);
+      assert.strictEqual(
+        refusalOf(yield* call(ben, "save_skill", { name: "leak", folder: "files/notes/leak" })),
+        MANAGEMENT_REFUSED.notASkill("files/notes/leak goes through a link"),
+      );
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );

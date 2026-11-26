@@ -316,29 +316,32 @@ export const layer = Layer.effect(
       input: ToolInput<"search_mcp_servers">,
     ) {
       const found = yield* sources.search({ query: input.query, language: "en", all: false });
-      const listings = yield* Effect.forEach(found.listings.slice(0, 8), (listing) =>
-        sources.connection(listing.ref, "en").pipe(
-          Effect.map(({ fields }) => fields),
-          Effect.orElseSucceed(() => []),
-          Effect.map((fields): Schema.Json => ({
-            id: listingId(listing.ref),
-            name: listing.name,
-            summary: listing.summary,
-            from:
-              listing.publisher._tag === "domain"
-                ? listing.publisher.domain
-                : listing.publisher._tag === "community"
-                  ? `community: ${listing.publisher.namespace}`
-                  : "your user",
-            connects: listing.connect,
-            fields: fields.map((field) => ({
-              key: field.key,
-              label: field.label,
-              secret: field.secret,
-              required: field.required,
+      const listings = yield* Effect.forEach(
+        found.listings.slice(0, 8),
+        (listing) =>
+          sources.connection(listing.ref, "en").pipe(
+            Effect.map(({ fields }) => fields),
+            Effect.orElseSucceed(() => []),
+            Effect.map((fields): Schema.Json => ({
+              id: listingId(listing.ref),
+              name: listing.name,
+              summary: listing.summary,
+              from:
+                listing.publisher._tag === "domain"
+                  ? listing.publisher.domain
+                  : listing.publisher._tag === "community"
+                    ? `community: ${listing.publisher.namespace}`
+                    : "your user",
+              connects: listing.connect,
+              fields: fields.map((field) => ({
+                key: field.key,
+                label: field.label,
+                secret: field.secret,
+                required: field.required,
+              })),
             })),
-          })),
-        ),
+          ),
+        { concurrency: "unbounded" },
       );
       return {
         servers: listings,
