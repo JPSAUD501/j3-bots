@@ -343,6 +343,20 @@ export const isRetired = (mirror: Mirror) =>
 export const isDeleted = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.deletedAt !== null;
 
+/**
+ * Whether the session's event stream is over: the engine deleted its thread,
+ * or archived it, whether J3 Bots retired the session or the operator
+ * archived it from the engine's own console. The archive's dispatch writes
+ * `thread.archived` first, then a `run.updated` that cancels each turn still
+ * queued or preparing; a turn already starting or running gets no end from
+ * it, only perhaps from its provider session's detach (**Read** at
+ * `59651c1`, `Orchestrator.ts`, the `thread.archive` dispatch). So an
+ * archived session's stream ends once none of its turns waits, after the
+ * cancels are told, and whatever is still open there ends with it.
+ */
+export const isOver = (mirror: Mirror) =>
+  isDeleted(mirror) || (isRetired(mirror) && queuedRuns(mirror).length === 0);
+
 // ---------------------------------------------------------------------------
 // Runs as turns
 

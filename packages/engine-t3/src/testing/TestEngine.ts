@@ -8,7 +8,7 @@ import {
   type WorkStep,
   type WorkStepId,
 } from "@j3-bots/contracts";
-import type * as Cause from "effect/Cause";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -484,9 +484,11 @@ export class TestEngineControl extends Context.Service<
      */
     readonly loseSession: (sessionId: SessionId) => Effect.Effect<void>;
     /**
-     * The session is archived from the engine's own console: every command
-     * for it is `SessionNotFound`, while its event streams stay open, as the
-     * adapter's do: only its commands check the thread's archive.
+     * The session is archived from the engine's own console: the turns
+     * waiting there are cancelled, a turn already running or starting gets no
+     * end, every command for it is `SessionNotFound`, and its event streams
+     * end with `SessionNotFound` after the events before it, as the
+     * adapter's do.
      */
     readonly archiveSession: (sessionId: SessionId) => Effect.Effect<void>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
@@ -665,8 +667,8 @@ const make = Effect.gen(function* () {
   >();
   /** Sessions whose new streams stall until released. */
   const withheld = new Map<SessionId, Deferred.Deferred<void>>();
-  /** What the stalled streams of a session have not been given yet, in order. */
-  const stalled = new Map<SessionId, Array<readonly [Subscriber, SessionEvent]>>();
+  /** What the stalled streams of a session have not been given yet, in order: events, and ends. */
+  const stalled = new Map<SessionId, Array<() => void>>();
   /** While set, every dispatch and redispatch dies before it is applied. */
   let brokenDispatches = false;
   /** Dispatches waiting in the startup queue, by key, until they land. */
@@ -787,10 +789,28 @@ const make = Effect.gen(function* () {
     });
 
   /** Hands an event to a stream of the session, or holds it while its streams stall. */
-  const offer = (session: SessionRecord, subscriber: Subscriber, event: SessionEvent) => {
+  /** Gives a stream something now, or once its session's stall is released. */
+  const give = (session: SessionRecord, given: () => void) => {
     const backlog = stalled.get(session.id);
-    if (backlog === undefined) Queue.offerUnsafe(subscriber, event);
-    else backlog.push([subscriber, event]);
+    if (backlog === undefined) given();
+    else backlog.push(given);
+  };
+
+  const offer = (session: SessionRecord, subscriber: Subscriber, event: SessionEvent) =>
+    give(session, () => void Queue.offerUnsafe(subscriber, event));
+
+  /** Ends every stream of the session with `SessionNotFound`, after what they were given. */
+  const endStreams = (session: SessionRecord) => {
+    for (const subscriber of session.subscribers.keys()) {
+      give(
+        session,
+        () =>
+          void Queue.failCauseUnsafe(
+            subscriber,
+            Cause.fail(new SessionNotFound({ sessionId: session.id })),
+          ),
+      );
+    }
   };
 
   const deliver = (session: SessionRecord, event: SessionEvent) => {
@@ -1099,10 +1119,26 @@ const make = Effect.gen(function* () {
       (turn) => turn.background || (turn.ended !== null && turn.ended.continuation !== null),
     );
 
+  /**
+   * The engine archives the session, from its console or after
+   * `retireSession`'s Stop: it cancels the turns still waiting, leaves a turn
+   * already running or starting with no end, and ends the session's streams.
+   */
+  const archive = (session: SessionRecord, at: DateTime.Utc) => {
+    // Ending a turn takes it out of `waiting`, so this walks a copy.
+    const waiting = session.waiting.slice();
+    for (const turnId of waiting) {
+      const turn = session.turns.get(turnId);
+      if (turn !== undefined) endTurn(session, turn, { _tag: "cancelled" }, at, "other");
+    }
+    session.retired = true;
+    endStreams(session);
+  };
+
   const retire = (session: SessionRecord, at: DateTime.Utc) => {
     stopSession(session, at, [...session.waiting]);
     for (const turn of session.turns.values()) turn.unstoppable = false;
-    session.retired = true;
+    archive(session, at);
   };
 
   /**
@@ -1794,7 +1830,7 @@ const make = Effect.gen(function* () {
           release: Effect.sync(() => {
             const backlog = stalled.get(session.id) ?? [];
             stalled.delete(session.id);
-            for (const [subscriber, event] of backlog) Queue.offerUnsafe(subscriber, event);
+            for (const given of backlog) given();
           }).pipe(Effect.andThen(Effect.yieldNow)),
         };
       }),
@@ -2164,15 +2200,13 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         session.retired = true;
-        for (const subscriber of session.subscribers.keys()) {
-          yield* Queue.fail(subscriber, new SessionNotFound({ sessionId }));
-        }
+        endStreams(session);
       }),
 
     archiveSession: (sessionId) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        retire(session, yield* DateTime.now);
+        archive(session, yield* DateTime.now);
       }),
 
     dispatches: (sessionId) =>

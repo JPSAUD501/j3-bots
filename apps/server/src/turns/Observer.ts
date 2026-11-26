@@ -294,7 +294,7 @@ export const layer = Layer.effect(
     const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const spoken = routineSpeech(sql, ids, changes);
-    const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
+    const { sessionLost, sessionArchived } = sessionLoss(sql, entries, ledger, workSteps, signals);
     const { requestRotation } = rotationRequests(sql, signals);
     const records = sessionRecords(sql, entries, workSteps);
     const { endTurn, followBackground, closeCard } = records;
@@ -1494,6 +1494,9 @@ export const layer = Layer.effect(
 
     /**
      * What a stream's end means for the session: whether it is opened again.
+     * The engine's word that the session is gone, also when it was archived,
+     * records it lost, or archived if J3 Bots had retired it: the archive the
+     * rotator asked for, or one from the engine's console that came first.
      * An event that cannot be applied is not skipped: it is logged with its
      * cause, shown once as a notice, and read again.
      */
@@ -1512,9 +1515,17 @@ export const layer = Layer.effect(
       if (Cause.hasInterruptsOnly(exit.cause)) return "forget" as const;
       const error = Cause.findErrorOption(exit.cause);
       if (Option.isSome(error) && error.value._tag === "SessionNotFound") {
-        yield* Effect.logWarning("The engine no longer has a session", error.value);
         yield* transaction(
           Effect.gen(function* () {
+            const retired = yield* sql`
+              SELECT 1 FROM sessions WHERE id = ${session.id} AND retired_at IS NOT NULL
+            `;
+            if (retired.length > 0) {
+              yield* sessionArchived(session.id);
+              yield* changes.touch({ _tag: "bot", botId: session.bot_id });
+              return;
+            }
+            yield* Effect.logWarning("The engine no longer has a session", error.value);
             if (yield* sessionLost(session.id)) {
               yield* changes.touch({ _tag: "bot", botId: session.bot_id });
             }

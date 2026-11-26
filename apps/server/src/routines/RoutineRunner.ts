@@ -10,7 +10,7 @@ import {
   RoutineRunId,
   RoutineTrigger,
 } from "@j3-bots/contracts";
-import { Engine, IdempotencyKey, isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
+import { isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import {
   PROMPT_VERSION,
   renderWake,
@@ -164,7 +164,6 @@ export const layer = Layer.effect(
     const runFailed = recordRunFailure(sql);
     const transaction = transactional(sql);
     const ids = yield* Ids;
-    const engine = yield* Engine;
     const engineState = yield* EngineState;
     const observer = yield* Observer;
     const bots = yield* BotStore;
@@ -316,12 +315,13 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The attempt's envelope: the routine, its trigger data, when the run was
-     * due if that was a while ago or on another day, and as many of its
-     * earlier runs as fit the engine's input limit, newest first. A run was due at its schedule's
-     * time, or when a webhook or the operator asked for it: a run that
-     * started late, or an attempt tried again later, still does the work of
-     * that time.
+     * The attempt's envelope: the routine, the run it belongs to, the same in
+     * every attempt of that run, its trigger data, when the run was due if
+     * that was a while ago or on another day, and as many of its earlier runs
+     * as fit the engine's input limit, newest first, saying so when some were
+     * left out. A run was due at its schedule's time, or when a webhook or the
+     * operator asked for it: a run that started late, or an attempt tried
+     * again later, still does the work of that time.
      */
     const envelopeOf = Effect.fn("RoutineRunner.envelopeOf")(function* (attempt: Attempt) {
       const recent = yield* recentRuns(attempt);
@@ -339,14 +339,23 @@ export const layer = Layer.effect(
           trigger: envelopeTrigger(attempt.trigger_json),
           instruction: attempt.instruction,
         },
+        runId: attempt.run_id,
         triggerData: attempt.trigger_data,
         dueAt: dueToTell(due, now, timeZone),
       } as const;
       for (let count = recent.length; count > 0; count--) {
-        const wake: RoutineWake = { ...base, recentRuns: recent.slice(0, count) };
+        const wake: RoutineWake = {
+          ...base,
+          recentRuns: recent.slice(0, count),
+          recentRunsLeftOut: count < recent.length,
+        };
         if (fitsEngine(wake)) return { wake, fits: true };
       }
-      const alone: RoutineWake = { ...base, recentRuns: [] };
+      const alone: RoutineWake = {
+        ...base,
+        recentRuns: [],
+        recentRunsLeftOut: recent.length > 0,
+      };
       return { wake: alone, fits: fitsEngine(alone) };
     });
 
@@ -406,7 +415,10 @@ export const layer = Layer.effect(
      * Opens the side session in the engine, in the bot's project, with the
      * bot's model and permission mode, on the provider its row names. The
      * row's id is the request's key, so a retried opening returns the same
-     * engine session, with the settings of its first attempt. An opening the
+     * engine session, with the settings of its first attempt. The row records
+     * that the engine was asked: if it is retired before an answer is
+     * recorded, the rotator asks again and archives what the engine made
+     * (`EngineSessions.settleOpening`). An opening the
      * engine refused fails the attempt unsent, and its retry opens a fresh
      * side session, under a key of its own, as every new attempt does. A
      * refusal with a rejected receipt spends the key; one of the bot's
@@ -423,9 +435,8 @@ export const layer = Layer.effect(
       if (synced._tag === "Failure") {
         return synced.failure._tag === "EngineUnavailable" ? "unavailable" : "deferred";
       }
-      const opened = yield* engine
-        .openSession({
-          key: IdempotencyKey.make(sessionId),
+      const opened = yield* sessions
+        .open(sessionId, {
           projectId: found.engineProjectId.value,
           title: `Routine: ${attempt.name}`,
           model: found.bot.model,

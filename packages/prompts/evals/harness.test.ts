@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoutineId } from "@j3-bots/contracts";
+import { RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -24,6 +24,8 @@ const run: RoutineWake = {
     trigger: { type: "schedule", cron: "17 8-18 * * *" },
     instruction: "Once release 2.0 of acme/docs is out, tell your user, then pause this routine.",
   },
+  runId: Schema.decodeSync(RoutineRunId)("run-1"),
+  recentRunsLeftOut: false,
   recentRuns: [],
   triggerData: null,
   dueAt: null,

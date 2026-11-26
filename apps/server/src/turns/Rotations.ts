@@ -75,7 +75,11 @@ const Due = Schema.Struct({
 });
 type Due = typeof Due.Type;
 
-const Retired = Schema.Struct({ id: SessionRowId, bot_id: BotId, engine_session_id: SessionId });
+const Retired = Schema.Struct({
+  id: SessionRowId,
+  bot_id: BotId,
+  engine_session_id: Schema.NullOr(SessionId),
+});
 
 const encodeNote = Schema.encodeEffect(json(CatchUpNote));
 
@@ -234,17 +238,40 @@ export const layer = Layer.effect(
     /**
      * Sessions retired and not yet archived in the engine: main sessions the
      * rotator replaced, and side sessions the routine runner retired once
-     * their attempt ended (`routines/RoutineRunner.ts`).
+     * their attempt ended (`routines/RoutineRunner.ts`). Also those retired
+     * with no engine id recorded after the engine was asked to open them,
+     * whose thread the engine may have made all the same.
      */
     const retiredInUse = SqlSchema.findAll({
       Request: Schema.Void,
       Result: Retired,
       execute: () => sql`
         SELECT id, bot_id, engine_session_id FROM sessions
-        WHERE retired_at IS NOT NULL AND lost_at IS NULL AND engine_session_id IS NOT NULL
-          AND engine_retired_at IS NULL
+        WHERE retired_at IS NOT NULL AND lost_at IS NULL AND engine_retired_at IS NULL
+          AND (engine_session_id IS NOT NULL OR open_requested_at IS NOT NULL)
         ORDER BY rowid
       `,
+    });
+
+    /**
+     * Takes a retired session out of the engine: its thread is archived. One
+     * whose engine id was never recorded is asked for first under its key
+     * (`EngineSessions.settleOpening`); a key the engine refused left no
+     * thread to archive. Whether it is out of the engine now, or was settled
+     * by another path meanwhile.
+     */
+    const archiveRetired = Effect.fn("Rotations.archiveRetired")(function* (
+      session: typeof Retired.Type,
+    ) {
+      let engineSessionId = session.engine_session_id;
+      if (engineSessionId === null) {
+        const settled = yield* sessions.settleOpening(session.id);
+        if (settled._tag === "settled") return false;
+        if (settled._tag === "refused") return true;
+        engineSessionId = settled.sessionId;
+      }
+      yield* engine.retireSession(engineSessionId);
+      return true;
     });
 
     /** Nothing runs in the session or is on its way to it, as far as the server knows. */
@@ -523,19 +550,24 @@ export const layer = Layer.effect(
             outcome.until(failed.at);
             continue;
           }
-          const retired = yield* Effect.exit(engine.retireSession(session.engine_session_id));
+          const retired = yield* Effect.exit(archiveRetired(session));
           if (retired._tag === "Failure") {
             const error = Cause.findErrorOption(retired.cause);
             // An engine that takes no commands ends the pass. A lost answer is
             // asked again on the next pass. A refusal, which the engine makes
             // while work the retirement's Stop has not ended yet runs there,
+            // a model the engine no longer offers to ask for the thread with,
             // and a defect wait with backoff. Each leaves only this session for
             // later, and the others go on.
             if (Option.isSome(error) && error.value._tag === "EngineIndeterminate") {
               outcome.defer();
               continue;
             }
-            if (Option.isSome(error) && error.value._tag !== "RetireRejected") {
+            if (
+              Option.isSome(error) &&
+              (error.value._tag === "EngineUnavailable" ||
+                error.value._tag === "EngineIncompatible")
+            ) {
               return { _tag: "unavailable" } as const;
             }
             const failures = (failed?.failures ?? 0) + 1;
@@ -550,6 +582,7 @@ export const layer = Layer.effect(
             continue;
           }
           retireFailures.delete(session.id);
+          if (!retired.value) continue;
           // Its events are followed no more: what is still open there is settled
           // now, and the work its rooms counted there with it (`RoomStates`).
           yield* transaction(

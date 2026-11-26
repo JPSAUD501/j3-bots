@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
+import type { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -228,8 +228,18 @@ export interface RoutineWake extends WakeBase {
     readonly trigger: RoutineTrigger;
     readonly instruction: string;
   };
+  /**
+   * The run this attempt belongs to: the same in every attempt of the run,
+   * and in no other run. A run uses it as the key of "this occurrence".
+   */
+  readonly runId: RoutineRunId;
   /** Most recent first. */
   readonly recentRuns: ReadonlyArray<RoutineRunSummary>;
+  /**
+   * Whether earlier runs the envelope would list were left out so it fits
+   * the engine's input: an empty `recentRuns` then is not a first run.
+   */
+  readonly recentRunsLeftOut: boolean;
   /** The webhook request body, for a webhook trigger. */
   readonly triggerData: string | null;
   /**
@@ -710,6 +720,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       w.open("routine", [
         ["id", routine.id],
         ["name", routine.name],
+        ["run", wake.runId],
         ["trigger", trigger.type],
         ["cron", trigger.type === "schedule" ? trigger.cron : null],
         ["due", due?.iso ?? null],
@@ -717,7 +728,9 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       ]);
       w.block("instruction", [], routine.instruction);
       w.open("recent-runs");
-      if (wake.recentRuns.length === 0) w.line("None: this is the first run.");
+      if (wake.recentRuns.length === 0 && !wake.recentRunsLeftOut) {
+        w.line("None: this is the first run.");
+      }
       for (const run of wake.recentRuns) {
         const attrs: Attributes = [
           ["at", w.time(run.at)],
@@ -737,6 +750,13 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           w.data([["source", "routine-run"]], text);
           w.close("run");
         }
+      }
+      if (wake.recentRunsLeftOut) {
+        w.line(
+          wake.recentRuns.length === 0
+            ? "Earlier runs were left out to fit."
+            : "Older runs were left out to fit.",
+        );
       }
       w.close("recent-runs");
       w.close("routine");
