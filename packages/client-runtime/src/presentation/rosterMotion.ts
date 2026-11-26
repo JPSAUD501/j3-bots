@@ -115,34 +115,25 @@ export const rowTops = (heights: ReadonlyArray<number>): ReadonlyArray<number> =
 };
 
 /**
- * Where a scrolled list keeps its place as its rows go from `before` to
- * `after`: for each place in `before`, how far the first row from there on
- * that stays listed and does not lift moved. The row first in view keeps
- * where it is on screen by the list scrolling that far, so rows moving above
- * the view do not push what the operator is looking at, and a row that lifts
- * away does not carry the view with it. Distances are in rows, or, for a list
- * whose rows differ in height, in what `tops` (`rowTops`) measures them in.
+ * The row a scrolled list keeps where it is on screen as its rows go from
+ * `before` to `after`: the first row from `first` on, the place in `before`
+ * of the row first in view, that stays listed and does not lift. The list
+ * scrolls as far as that row moves, so rows moving above the view do not push
+ * what the operator is looking at, and a row that lifts away does not carry
+ * the view with it. `null` when no row from there on stays.
  */
-export function keptPlaces(
+export function keptRow(
   before: ReadonlyArray<string>,
   after: ReadonlyArray<string>,
   moves: ReadonlyMap<string, RowMove>,
-  tops?: { readonly before: ReadonlyArray<number>; readonly after: ReadonlyArray<number> },
-): ReadonlyArray<number> {
-  const now = new Map(after.map((key, index) => [key, index]));
-  const kept: number[] = [];
-  let anchored = 0;
-  for (let index = before.length - 1; index >= 0; index--) {
-    const key = before[index] ?? "";
-    const at = now.get(key);
+  first: number,
+): string | null {
+  const listed = new Set(after);
+  const stays = (key: string) => {
     const move = moves.get(key);
-    if (at !== undefined && (move === undefined || !lifts(move))) {
-      anchored =
-        tops === undefined ? at - index : (tops.after[at] ?? 0) - (tops.before[index] ?? 0);
-    }
-    kept[index] = anchored;
-  }
-  return kept;
+    return listed.has(key) && (move === undefined || !lifts(move));
+  };
+  return before.slice(first).find(stays) ?? null;
 }
 
 /**

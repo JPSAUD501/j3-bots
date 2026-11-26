@@ -199,7 +199,7 @@ export {
 } from "./roster.ts";
 export {
   arrivalsSettled,
-  keptPlaces,
+  keptRow,
   lifts,
   moveDelay,
   noArrivals,
