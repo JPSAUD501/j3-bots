@@ -976,7 +976,7 @@ export const layer = Layer.effect(
           yield* routing.botMessage({
             room: room.value,
             botId: session.bot_id,
-            turn: { sessionId: session.id, turnId: speech.turnId },
+            turn: { sessionId: session.id, turnId: speech.turnId, audience },
             message: entry,
             word: "bot",
             seq: work.seq,

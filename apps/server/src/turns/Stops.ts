@@ -388,6 +388,33 @@ export const layer = Layer.effect(
           ${options.keepOpening ? sql`AND NOT (${opening}) AND NOT ${behindOpeningSql(sql, "wakes")}` : sql``}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
+      // A room's Stop also ends what the bot's work there set off in another
+      // room: the wakes its posts there wrote, as it ends the room's own,
+      // also one already in a dispatch never sent, which is released, so the
+      // recipient's other wakes are planned again without it (`Ledger`). One
+      // the engine may have is the recipient's turn. A teammate's message
+      // keeps the rule of a Stop of its sender: only a Stop that reaches its
+      // sending turn while it runs ends it (above).
+      if (scope._tag === "room") {
+        const unsent = yield* SqlSchema.findAll({
+          Request: Schema.Void,
+          Result: Schema.Struct({ id: DispatchRowId }),
+          execute: () => sql`
+            SELECT DISTINCT d.id FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
+            WHERE d.status = 'intended' AND d.attempts = 0 AND d.fenced_by_stop_id IS NULL
+              AND w.status = 'dispatched' AND w.kind = 'room'
+              AND w.cause_room_id = ${scope.roomId} AND w.cause_bot_id = ${botId}
+          `,
+        })(undefined);
+        for (const dispatch of unsent) yield* ledger.release(dispatch.id, { _tag: "pending" });
+        if (unsent.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
+        const caused = yield* sql<{ readonly id: string }>`
+          SELECT id FROM wakes
+          WHERE status = 'pending' AND kind = 'room' AND cause_room_id = ${scope.roomId}
+            AND cause_bot_id = ${botId}
+        `;
+        yield* ledger.cancelWakes(caused.map((wake) => wake.id));
+      }
       yield* sql.afterCommit(signals.stops.fire);
       // A routine run whose attempt waited is settled now, and its side
       // session retired.

@@ -45,6 +45,7 @@ import {
   sawText,
   say,
   settle,
+  stopRoom,
   to,
 } from "../testing/rooms.ts";
 import {
@@ -64,6 +65,7 @@ import {
   turnEnded,
   until,
 } from "../testing/turns.ts";
+import { BotTools } from "../tools/BotTools.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { inboxPath } from "../turns/inbox.ts";
 import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "../turns/model.ts";
@@ -970,6 +972,89 @@ it.effect("sends no room dispatch written for a member that left before it was s
     // Hal still gets its turn.
     yield* operatorWrites(room.id, members, "Hal, wrap up.", to(hal));
     yield* nextTurn(hal.bot.id);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+let posts = 0;
+
+/** The member's running turn posts in a room with `message_bot`, waking whom it mentions. */
+const postIn = (one: Member, turnId: TurnId, roomId: RoomId, text: string, mention: Member) =>
+  Effect.gen(function* () {
+    const input = { to: roomId, text, mention: [mention.bot.id] };
+    yield* (yield* TestEngineControl).toolCall({
+      sessionId: one.session,
+      turnId,
+      tool: "message_bot",
+      input,
+      recorded: "now",
+    });
+    return yield* (yield* BotTools).call({
+      requestId: `post-${++posts}`,
+      sessionId: one.session,
+      tool: "message_bot",
+      arguments: input,
+    });
+  });
+
+it.effect("cancels the wakes a room's work wrote in another room when the operator stops it", () =>
+  Effect.gen(function* () {
+    const [scout, wren, pip, mo] = [
+      yield* member("Scout"),
+      yield* member("Wren"),
+      yield* member("Pip"),
+      yield* member("Mo"),
+    ];
+    const members = [scout, wren, pip, mo];
+    const launch = yield* roomWith(scout, [wren]);
+    const release = yield* roomWith(scout, [pip, mo]);
+    // Pip works in its own conversation, so its wake for the release room waits.
+    yield* sendToBot(pip.bot.id, "Check the logs.");
+    const pipTurn = yield* nextTurn(pip.bot.id);
+    // Mo's start for the release room waits at its gate, written and never sent.
+    const moGate = yield* holdGate(mo.bot.id);
+    yield* operatorWrites(
+      launch.id,
+      [scout, wren, pip],
+      "Scout, tell the release room.",
+      to(scout),
+    );
+    const turn = yield* nextTurn(scout.bot.id);
+    assert.strictEqual(
+      (yield* postIn(scout, turn, release.id, "Pip, the launch moved.", pip))._tag,
+      "result",
+    );
+    assert.strictEqual(
+      (yield* postIn(scout, turn, release.id, "Mo, the launch moved.", mo))._tag,
+      "result",
+    );
+    // The dispatcher waits at Mo's gate: nothing is settled until it opens.
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: scout.session,
+      turnId: turn,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(scout.bot.id);
+    yield* until(Effect.map(roomDispatchStatuses(mo.bot.id, release.id), (all) => all.length > 0));
+
+    yield* stopRoom(launch.id);
+
+    assert.deepStrictEqual(yield* roomWakeStatuses(pip.bot.id, release.id), ["cancelled"]);
+    assert.deepStrictEqual(yield* roomWakeStatuses(mo.bot.id, release.id), ["cancelled"]);
+    assert.deepStrictEqual(yield* roomDispatchStatuses(mo.bot.id, release.id), ["released"]);
+    yield* moGate.release;
+    yield* say(pip, pipTurn, { text: "The logs are clean.", done: true });
+    yield* finish(pip, pipTurn, members);
+    assert.deepStrictEqual(yield* received(mo.session), []);
+    assert.isTrue(Option.isNone(yield* admittedTurn(pip.bot.id)));
+    assert.isFalse(yield* sawText(pip, "the launch moved"));
+
+    // Work the launch room begins after its Stop is new: its post wakes Pip.
+    yield* operatorWrites(launch.id, members, "Scout, try again.", to(scout));
+    const again = yield* nextTurn(scout.bot.id, turn);
+    yield* postIn(scout, again, release.id, "Pip, the launch is back on.", pip);
+    yield* finish(scout, again, members);
+    yield* nextTurn(pip.bot.id, pipTurn);
+    assert.isTrue(yield* sawText(pip, "the launch is back on"));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

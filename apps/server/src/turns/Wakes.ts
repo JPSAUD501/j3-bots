@@ -43,8 +43,11 @@ export interface NewWake {
    * same way; the bot's own work that began with the dispatch written at
    * `seq`, which a Stop covering it ended (`stopTargets.covers`) and an
    * archived or deleted room left with nowhere to go; or a teammate's work
-   * for `audience`, held to the same rule as the teammate's own: `seq` is the
-   * dispatch that began it, `null` for a turn no dispatch began.
+   * for `audience`, the audience its speaking turn spoke for, held to the
+   * same rule as the teammate's own: `seq` is the dispatch that began it,
+   * `null` for a turn no dispatch began. Work for a room is recorded with
+   * the wake (`cause_bot_id`, `cause_room_id`), so a Stop of that room's work
+   * reaches the wakes it caused elsewhere (`Stops.record`, `Ledger`).
    */
   readonly cause:
     | { readonly _tag: "operator" }
@@ -104,10 +107,14 @@ export const layer = Layer.effect(
         // Its own audience was checked above: a conversation is always live.
         case "work":
           return yield* stops.covers(wake.botId, wake.audience, cause.seq);
+        // A Stop of the room the wake goes to covers the post too, from
+        // whatever audience it came.
         case "teammate":
           return (
             (cause.seq !== null &&
-              (yield* stops.covers(cause.senderId, cause.audience, cause.seq))) ||
+              ((yield* stops.covers(cause.senderId, cause.audience, cause.seq)) ||
+                (wake.audience._tag === "room" &&
+                  (yield* stops.covers(cause.senderId, wake.audience, cause.seq))))) ||
             (yield* live(cause.senderId, cause.audience)) === null
           );
       }
@@ -120,17 +127,23 @@ export const layer = Layer.effect(
         if (yield* ended(wake)) continue;
         const id = yield* ids.make("wake");
         const { audience, roomId } = audienceColumns(wake.audience);
+        const { cause } = wake;
+        const causeRoom =
+          cause._tag === "teammate" && cause.audience._tag === "room"
+            ? { botId: cause.senderId, roomId: cause.audience.roomId }
+            : null;
         yield* sql`
           INSERT INTO wakes (
             id, bot_id, kind, priority, audience, audience_room_id, routine_id, hops,
-            payload_json, status, source_entry_id, retry_of, behind_opening_id, created_at,
-            updated_at
+            payload_json, status, source_entry_id, retry_of, behind_opening_id, cause_bot_id,
+            cause_room_id, created_at, updated_at
           ) VALUES (
             ${id}, ${wake.botId}, ${wake.kind},
-            ${priorityOf(wake.kind, wake.cause._tag === "operator")}, ${audience}, ${roomId},
+            ${priorityOf(wake.kind, cause._tag === "operator")}, ${audience}, ${roomId},
             ${wake.payload._tag === "routine" ? wake.payload.routineId : null}, ${wake.hops},
             ${yield* encodePayload(wake.payload)}, 'pending', ${wake.sourceEntryId},
-            ${wake.retryOf}, ${wake.behindOpening ?? null}, ${at}, ${at}
+            ${wake.retryOf}, ${wake.behindOpening ?? null}, ${causeRoom?.botId ?? null},
+            ${causeRoom?.roomId ?? null}, ${at}, ${at}
           )
         `;
         written.push(id);
