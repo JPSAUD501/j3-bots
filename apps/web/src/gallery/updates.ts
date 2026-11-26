@@ -4,10 +4,17 @@
  * what a server says through its update routes, and the app's own update.
  * Development only.
  */
-import type { ServerUpdateView, UpdateResult } from "@j3-bots/client-runtime";
+import type {
+  ServerUpdateView,
+  UpdatePlan,
+  UpdatePromptEntry,
+  UpdateResult,
+  UpdateRun,
+} from "@j3-bots/client-runtime";
 import { DeviceId, type ReceivedUpdateStatus } from "@j3-bots/contracts";
 import { releasePage, type UpdatePhase, type UpdateStatus } from "@j3-bots/desktop-bridge";
 import * as DateTime from "effect/DateTime";
+import type { UpdatePromptView } from "../components/UpdatePrompt";
 import type { DesktopUpdate, RemoteServerUpdate } from "../shell/data";
 import { SAMPLE_NOW } from "./sample";
 
@@ -38,6 +45,11 @@ const release = {
   channel: "stable",
   publishedAt: minutesAgo(90),
   notesUrl: releasePage(NEXT),
+  highlights: [
+    "A bot keeps a garden on a routine",
+    "Rooms remember who spoke last",
+    "Updates ask once, in front of everything",
+  ],
   verified: true,
 } as const;
 
@@ -223,3 +235,82 @@ export const appPhases = {
 
 export const SAMPLE_NIGHTLY = NIGHTLY;
 export const SAMPLE_NEXT = NEXT;
+
+/** The release the prompt offers, on the server and as the app's. */
+const promptRelease = {
+  version: release.version,
+  notesUrl: release.notesUrl,
+  highlights: release.highlights,
+} as const;
+
+const promptPlan = (client: UpdatePlan["client"], app = false): UpdatePlan => ({
+  server: app ? null : promptRelease,
+  app: app ? { ...promptRelease, how: "install" } : null,
+  client,
+});
+
+/** The update prompt as the gallery shows it: nothing it asks does anything. */
+const promptView = (
+  run: UpdateRun,
+  more: Partial<Omit<UpdatePromptView, "run">> = {},
+): UpdatePromptView => ({
+  open: true,
+  run,
+  server: promptRelease,
+  app: null,
+  follow: "install",
+  local: false,
+  serverLine: null,
+  appLine: null,
+  updateNow: nothing,
+  later: nothing,
+  stopWork: nothing,
+  retry: nothing,
+  hide: nothing,
+  ...more,
+});
+
+/** Each state of the update prompt the gallery shows. */
+export const promptViews = {
+  desktop: promptView({ _tag: "idle" }),
+  browser: promptView({ _tag: "idle" }, { follow: "reload" }),
+  appLocal: promptView(
+    { _tag: "idle" },
+    { server: null, app: { ...promptRelease, how: "install", highlights: [] }, local: true },
+  ),
+  updatingServer: promptView(
+    { _tag: "server", plan: promptPlan("install"), hidden: false },
+    {
+      serverLine: {
+        text: `Downloading ${NEXT}… 42%`,
+        tone: "working",
+        hint: null,
+        command: null,
+        offer: null,
+      },
+    },
+  ),
+  updatingApp: promptView(
+    { _tag: "client", plan: promptPlan("install"), hidden: false },
+    { server: null, appLine: `Downloading version ${NEXT}… 64%` },
+  ),
+  workRunning: promptView({
+    _tag: "work-running",
+    side: "server",
+    runningBots: 2,
+    plan: promptPlan("install"),
+  }),
+  serverFailed: promptView({
+    _tag: "server-failed",
+    plan: promptPlan("install"),
+    failure: { _tag: "ended", result: result("rolled-back", "health-check", null) },
+  }),
+  appFailed: promptView(
+    { _tag: "client-failed", plan: promptPlan("install") },
+    { server: null, appLine: "Couldn’t get the latest version. J3 Bots tries again later." },
+  ),
+  done: promptView({ _tag: "done", plan: promptPlan("install") }, { server: null }),
+} satisfies Record<string, UpdatePromptView>;
+
+/** The prompt's quiet entry point after "Later". */
+export const laterEntry: UpdatePromptEntry = { _tag: "offer", version: NEXT };

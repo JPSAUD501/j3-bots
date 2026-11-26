@@ -1638,12 +1638,62 @@ const sentences = {
     "Algo neste celular, como a política de um perfil de trabalho, não deixa instalar apps.",
   "phoneUpdate.failure.installFailed":
     "O Android não conseguiu instalar a atualização. Nada mudou.",
-  "updateNotice.server": "O J3 Bots {version} está pronto para o servidor.",
-  "updateNotice.app": "O J3 Bots {version} está pronto para este app.",
-  "updateNotice.both": "O J3 Bots {version} está pronto para o servidor e este app.",
-  "updateNotice.open": "Abre as atualizações nas Configurações.",
-  "updateNotice.hide": "Ocultar até a próxima versão",
+  "updateNotice.open": "Abre a atualização.",
+  "updateNotice.openSettings": "Abre as atualizações nas Configurações.",
   "updateNotice.ok": "OK",
+  "updatePrompt.title": "O J3 Bots {version} chegou",
+  "updatePrompt.titleApp": "O J3 Bots {version} está pronto para este app",
+  "updatePrompt.plan.serverThenApp":
+    "Atualizar agora atualiza o servidor primeiro. Quando ele responder na {version}, este app se atualiza e abre de novo.",
+  "updatePrompt.plan.serverThenPage":
+    "Atualizar agora atualiza o servidor primeiro. Quando ele responder na {version}, esta página recarrega nela.",
+  "updatePrompt.plan.server":
+    "Atualizar agora atualiza o servidor. Seus bots param por um ou dois minutos, e o servidor volta para a versão que roda se a nova não iniciar.",
+  "updatePrompt.plan.app": "Este app reinicia na nova versão.",
+  "updatePrompt.plan.appLocal":
+    "Este app reinicia na nova versão, e seus bots neste computador junto.",
+  "updatePrompt.plan.download":
+    "Esta versão do app não se atualiza sozinha. Baixe a nova versão e instale.",
+  "updatePrompt.whatsNew": "Novidades",
+  "updatePrompt.notes": "Ler as notas da versão",
+  "updatePrompt.update": "Atualizar agora",
+  "updatePrompt.later": "Depois",
+  "updatePrompt.later.hint": "Pergunta de novo amanhã, ou quando sair uma versão mais nova.",
+  "updatePrompt.hide": "Ocultar",
+  "updatePrompt.close": "Fechar",
+  "updatePrompt.step.server": "O servidor",
+  "updatePrompt.step.app": "Este app",
+  "updatePrompt.step.page": "Esta página",
+  "updatePrompt.step.waiting": "Espera o servidor",
+  "updatePrompt.step.done": "Pronto",
+  "updatePrompt.updating": "Atualizando para a {version}",
+  "updatePrompt.starting": "Pedindo ao servidor que se atualize…",
+  "updatePrompt.reloading": "Recarregando na nova versão…",
+  "updatePrompt.work.title": "Seus bots estão trabalhando",
+  "updatePrompt.work.server.one":
+    "{count} bot tem trabalho em andamento. Atualizar o servidor para esse trabalho.",
+  "updatePrompt.work.server.other":
+    "{count} bots têm trabalho em andamento. Atualizar o servidor para esse trabalho.",
+  "updatePrompt.work.app.one":
+    "{count} bot neste computador tem trabalho em andamento. O reinício do app para esse trabalho.",
+  "updatePrompt.work.app.other":
+    "{count} bots neste computador têm trabalho em andamento. O reinício do app para esse trabalho.",
+  "updatePrompt.work.appUnknown":
+    "Os bots neste computador podem ter trabalho em andamento. O reinício do app para esse trabalho.",
+  "updatePrompt.work.hint": "Atualize depois, quando eles terminarem, ou pare o trabalho agora.",
+  "updatePrompt.work.stop": "Parar e atualizar",
+  "updatePrompt.serverFailed.title": "O servidor não se atualizou",
+  "updatePrompt.serverFailed.unconfirmed":
+    "A atualização terminou, mas o servidor não diz que roda a {version}. Na máquina do servidor, rode isto para ver o motivo:",
+  "updatePrompt.serverFailed.hint": "Nada mais foi mudado: este app fica na versão que roda.",
+  "updatePrompt.appFailed.title": "O servidor roda a {version}, mas este app não se atualizou",
+  "updatePrompt.appFailed.hint":
+    "Tente de novo, ou atualize em Configurações → Sobre e atualizações.",
+  "updatePrompt.done.title": "Seus bots rodam a {version}",
+  "updatePrompt.done.body": "Este app já estava atualizado.",
+  "updatePrompt.retry": "Tentar de novo",
+  "updatePrompt.entry.offer": "Atualizar para a {version}",
+  "updatePrompt.entry.running": "Atualizando…",
 
   "update.version": "J3 Bots {version}",
   "update.unavailable": "Esta versão não se atualiza sozinha.",
@@ -1672,7 +1722,6 @@ const sentences = {
     "O download não bateu com a assinatura da versão, então não foi instalado. Esta versão continua em uso.",
   "updates.app.heading": "Este app",
   "updates.app.local": "Atualizar o app também atualiza os bots deste computador.",
-  "updates.notice": "Atualização disponível",
   "updates.copyCommand": "Copiar o comando",
   "updates.server.reading": "Lendo a versão do servidor…",
   "updateChannel.app": "Atualizações deste app",

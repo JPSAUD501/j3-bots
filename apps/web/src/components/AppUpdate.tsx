@@ -17,9 +17,14 @@ import { Switch } from "./ui/switch";
 export const appUpdateWaiting = ({ status: { phase } }: DesktopUpdate): boolean =>
   phase._tag === "released" || (phase._tag === "downloaded" && phase.restart === "offered");
 
-/** The line that says where updating the app stands, as a sentence; `null` when there is nothing to say. */
-export function useUpdateLine({ status }: DesktopUpdate): string | null {
+/**
+ * The line that says where updating the app stands, as a sentence; `null`
+ * when there is nothing to say, and in a browser (no `update`).
+ */
+export function useUpdateLine(update: DesktopUpdate | undefined): string | null {
   const { t, locale } = useI18n();
+  if (update === undefined) return null;
+  const { status } = update;
   const { phase } = status;
   switch (phase._tag) {
     case "unavailable":

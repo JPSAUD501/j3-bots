@@ -2,6 +2,7 @@
 import {
   NonNegativeInt,
   ReleaseCheckFailure,
+  ReleaseHighlights,
   ReleaseNotesUrl,
   ReleaseVersion,
   type UpdateChannel,
@@ -103,6 +104,8 @@ const CandidateRecord = Schema.Struct({
   channel: UpdateChannelSchema,
   publishedAt: Schema.DateTimeUtc,
   notesUrl: ReleaseNotesUrl,
+  /** Kept since highlights were added; a file from before has none until the release changes. */
+  highlights: ReleaseHighlights.pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   tag: Schema.String,
 });
 
@@ -280,6 +283,7 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
             channel: candidate.channel,
             publishedAt: candidate.publishedAt,
             notesUrl: candidate.notesUrl,
+            highlights: candidate.highlights,
             verified: true,
           })
         : Option.none(),

@@ -173,17 +173,22 @@ function UpdateServerButton({
  * How the server's update stands now, in one line, with what to do: the
  * release on offer with "What's new" and the button (Try again after it
  * rolled back), progress while it runs, or what to run on its machine.
+ * With `onUpdate`, the button opens the update prompt, which updates the
+ * server and then this app; without, it updates the server alone, as on the
+ * screen for a server this app cannot talk to.
  */
 function ServerUpdateNow({
   update,
   line,
   retry = false,
+  onUpdate,
 }: {
   update: RemoteServerUpdate;
   /** The line for `update`'s view; null before the status is read. */
   line: ServerUpdateLine | null;
   /** The release on offer is the one that just rolled back. */
   retry?: boolean;
+  onUpdate?: (() => void) | undefined;
 }) {
   const { t } = useI18n();
   if (line === null) {
@@ -207,11 +212,17 @@ function ServerUpdateNow({
             {t("serverUpdate.whatsNew")}
             <ExternalLinkIcon aria-hidden className="size-3" />
           </a>
-          <UpdateServerButton
-            update={update}
-            version={line.offer.version}
-            label={retry ? t("local.line.update.retry") : t("serverUpdate.update")}
-          />
+          {onUpdate === undefined ? (
+            <UpdateServerButton
+              update={update}
+              version={line.offer.version}
+              label={retry ? t("local.line.update.retry") : t("serverUpdate.update")}
+            />
+          ) : (
+            <Button size="sm" variant="primary" className="self-start" onClick={onUpdate}>
+              {retry ? t("local.line.update.retry") : t("updatePrompt.update")}
+            </Button>
+          )}
         </>
       )}
     </div>
@@ -247,9 +258,12 @@ function Result({ result }: { result: UpdateResult }) {
  */
 export function ServerUpdateRow({
   update,
+  onUpdate,
   className,
 }: {
   update: RemoteServerUpdate;
+  /** Opens the update prompt; see `ServerUpdateNow`. */
+  onUpdate: (() => void) | undefined;
   className?: string;
 }) {
   const i18n = useI18n();
@@ -280,6 +294,7 @@ export function ServerUpdateRow({
             update={update}
             line={serverUpdateLine(update.view, i18n)}
             retry={retry}
+            onUpdate={onUpdate}
           />
         )}
         {checkable && (

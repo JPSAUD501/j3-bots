@@ -27,6 +27,7 @@ export const feedStatus = (available: Option.Option<ReleaseVersion>): FeedStatus
       channel: "stable",
       publishedAt: DateTime.makeUnsafe("2026-11-20T12:00:00Z"),
       notesUrl: `https://example.com/releases/v${version}`,
+      highlights: [],
       verified: true,
     }),
   }),

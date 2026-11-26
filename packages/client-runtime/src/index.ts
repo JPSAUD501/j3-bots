@@ -172,6 +172,32 @@ export {
   type UpdateResult,
 } from "./update/ServerUpdate.ts";
 export {
+  type AppRelease,
+  type ClientFollow,
+  type ClientSide,
+  type Entry as UpdatePromptEntry,
+  entry as updatePromptEntry,
+  type Plan as UpdatePlan,
+  type Prompt as UpdatePromptState,
+  type PromptInput as UpdatePromptInput,
+  type Release,
+  type Run as UpdateRun,
+  type ServerFailure,
+  offeredRelease,
+  type ServerOffer,
+  serverOffer,
+  shown as updatePromptShown,
+  SNOOZE_MS,
+  type Snooze,
+} from "./update/prompt.ts";
+export {
+  makeUpdatePrompt,
+  type PromptClient,
+  type SnoozeStore,
+  snoozeStore,
+  type UpdatePrompt,
+} from "./update/UpdatePrompt.ts";
+export {
   Browser,
   type BrowserControl,
   type BrowserCursor,

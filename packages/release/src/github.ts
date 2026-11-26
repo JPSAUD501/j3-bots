@@ -5,6 +5,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
+import { highlightsOf } from "./notes.ts";
 import { channelOf, compareVersions, isNewer, offeredOn, releaseTag } from "./version.ts";
 
 // Which release a channel offers, from what GitHub's REST API answers for the
@@ -20,6 +21,8 @@ export const GitHubRelease = Schema.Struct({
   /** Null while it is a draft. */
   published_at: Schema.NullOr(Schema.String),
   html_url: Schema.String,
+  /** Its notes, in Markdown; null or absent when it has none. */
+  body: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type GitHubRelease = typeof GitHubRelease.Type;
 
@@ -34,6 +37,8 @@ export interface Candidate {
   readonly channel: UpdateChannel;
   readonly publishedAt: DateTime.Utc;
   readonly notesUrl: ReleaseNotesUrl;
+  /** What it brings, from its notes (`highlightsOf`). */
+  readonly highlights: ReadonlyArray<string>;
   /** The tag it is published under, which names its folder on the releases page. */
   readonly tag: string;
 }
@@ -57,6 +62,7 @@ export const candidateOf = (release: GitHubRelease): Option.Option<Candidate> =>
           channel,
           publishedAt,
           notesUrl: release.html_url,
+          highlights: highlightsOf(release.body),
           tag,
         })),
   );

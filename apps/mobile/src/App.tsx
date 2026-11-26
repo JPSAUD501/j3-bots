@@ -21,6 +21,7 @@ import { i18nFor, usePreferences } from "./preferences.ts";
 import type { SessionState } from "./session.ts";
 import { useColor } from "./theme.ts";
 import { Mismatch } from "./update/Mismatch.tsx";
+import { UpdatePromptModal } from "./update/UpdatePrompt.tsx";
 import { useAppUpdateFollowing } from "./update/UpdatePanels.tsx";
 import { Body, Button, Centered, Title } from "./ui.tsx";
 
@@ -132,6 +133,8 @@ function Root() {
             serverProtocol={shown.serverProtocol}
             serverVersion={shown.serverVersion}
           />
+          {/* An update under way goes on over this screen; nothing new opens here. */}
+          <UpdatePromptModal blocked />
         </J3ClientProvider>
       );
     case "storage-failed":
@@ -150,6 +153,7 @@ function Root() {
           <AvatarConnection>
             <Main />
           </AvatarConnection>
+          <UpdatePromptModal blocked={false} />
         </J3ClientProvider>
       );
   }
