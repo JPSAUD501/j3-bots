@@ -103,12 +103,17 @@ interface LoadingFrameProps {
 /**
  * Loads the client's visual page, in a sandbox with scripts only, and posts
  * it the visual's document; it takes nothing back but the page's height.
+ * The frame loads twice as the client means it to: the empty visual page,
+ * then the document written over it (as Chromium fires them, which the
+ * desktop app runs; Firefox and Safari not tried). A later load is the frame showing
+ * something else, which the visual navigated it to (an error page most
+ * often, since the policy lets it reach nothing), and the visual is shown as
+ * failed.
  */
 function LoadingFrame({ html, title, height: measured, fill }: LoadingFrameProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [state, setState] = useState<FrameState>({ _tag: "loading" });
-  // Writing the document loads the frame again, which is not another start.
-  const posted = useRef(false);
+  const loads = useRef(0);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -137,10 +142,10 @@ function LoadingFrame({ html, title, height: measured, fill }: LoadingFrameProps
         referrerPolicy="no-referrer"
         className={cn("block size-full border-0", state._tag === "loading" && "invisible")}
         onLoad={(event) => {
+          loads.current += 1;
           // The first load is the empty visual page, ready for its document.
-          if (posted.current) return;
-          posted.current = true;
-          event.currentTarget.contentWindow?.postMessage(html, "*");
+          if (loads.current === 1) event.currentTarget.contentWindow?.postMessage(html, "*");
+          else if (loads.current > 2) setState({ _tag: "failed" });
         }}
       />
       {state._tag === "loading" && <span aria-hidden className="skeleton absolute inset-3" />}

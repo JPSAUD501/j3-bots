@@ -6,7 +6,13 @@ import {
 } from "@j3-bots/contracts";
 import { visualColors } from "@j3-bots/design-tokens";
 import { assert, describe, it } from "@effect/vitest";
-import { readVisualHeight, VISUAL_HEIGHT_MESSAGE, visualDocument, visualShell } from "./visual.ts";
+import {
+  readVisualHeight,
+  readVisualReport,
+  VISUAL_HEIGHT_MESSAGE,
+  visualDocument,
+  visualShell,
+} from "./visual.ts";
 
 /** The document built for `page`, which embeds no other. */
 const built = (page: string, appearance: "light" | "dark" = "dark"): string => {
@@ -109,6 +115,26 @@ describe("a visual's height", () => {
       300,
     ]) {
       assert.isNull(readVisualHeight(data), JSON.stringify(data));
+    }
+  });
+});
+
+describe("what a WebView's page for a visual passes to the app", () => {
+  it("is the visual's height, or that its frame shows something else", () => {
+    assert.deepStrictEqual(readVisualReport('{"type":"j3-visual-height","height":5000}'), {
+      _tag: "height",
+      height: MAX_VISUAL_HEIGHT,
+    });
+    assert.deepStrictEqual(readVisualReport('{"type":"j3-visual-gone"}'), { _tag: "gone" });
+  });
+
+  it("is nothing else", () => {
+    for (const data of [
+      '{"type":"j3-visual-gone","url":"https://x.test"}',
+      '{"type":"j3-visual-open","url":"https://x.test"}',
+      "not json",
+    ]) {
+      assert.isNull(readVisualReport(data), data);
     }
   });
 });

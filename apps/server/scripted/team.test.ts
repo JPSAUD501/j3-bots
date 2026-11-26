@@ -201,6 +201,10 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           primary: true,
         });
         const scoutChat = { _tag: "conversation", botId: scout.id } as const;
+        // Its hello, a turn of the scripted agent's with no directive, greets
+        // the operator through `say`, as a bot's does.
+        const hello = yield* entriesWhen(scoutChat, (entries) => botMessages(entries).length > 0);
+        assert.deepStrictEqual(botMessages(hello), [[scout.id, "Scripted reply."]]);
         yield* client["message.send"]({
           commandId: CommandId.make("team-ask"),
           target: scoutChat,
@@ -208,8 +212,7 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           attachments: [],
         });
 
-        // In that turn it made the room, and told the operator so. Its own
-        // hello, a turn of the scripted agent's with no directive, says nothing.
+        // In that turn it made the room, and told the operator so.
         const told = yield* entriesWhen(scoutChat, (entries) =>
           entries.some(
             (entry) =>
@@ -221,7 +224,10 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
         const started = told.map(noticeOf).find((notice) => notice?._tag === "room-started");
         assert.deepStrictEqual(
           botMessages(told),
-          [[scout.id, "I started Support with the team."]],
+          [
+            [scout.id, "Scripted reply."],
+            [scout.id, "I started Support with the team."],
+          ],
           JSON.stringify(told),
         );
         if (started?._tag !== "room-started") return assert.fail("no room-started notice");
