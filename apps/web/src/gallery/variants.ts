@@ -700,6 +700,7 @@ export function galleryVariants(now: DateTime.Utc) {
     turnStartedAt: ago(6),
     stepCount,
     apps: [],
+    work: null,
     status,
   });
   const step = (
@@ -818,10 +819,7 @@ export function galleryVariants(now: DateTime.Utc) {
         },
         2,
       ),
-      steps: [
-        step("read", "invoices/2026-04.json"),
-        step("tool", "Started a background task", "completed", "background-task"),
-      ],
+      steps: [step("read", "invoices/2026-04.json"), step("command", "node reconcile.js --watch")],
       open: true,
     },
     {

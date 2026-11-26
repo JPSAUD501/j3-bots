@@ -27,6 +27,7 @@ const room = (name: string, unread: boolean, hidden = false): RosterItem => ({
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],
+    memberWork: [],
   },
   lastEntry: null,
   lastActivityAt: at("2026-11-20T14:00:00Z"),

@@ -10,8 +10,10 @@ import { OpenLiterals } from "./base.ts";
  * client ever shows one of those names. A tool it cannot name has none
  * (`null`), and its step's label carries the tool's own name, made readable.
  *
- * - `background-task`, `task-status`, `task-stop`: starts work that goes on
- *   after the turn, looks in on it, stops it.
+ * - `task-status`, `task-stop`: looks in on work that goes on after the
+ *   turn, stops it. `background-task`, the start of such work, is no longer
+ *   written: a task the engine delegates is a little one of the turn
+ *   (`TurnWork`, decision 0070). Steps stored before keep it.
  * - `secret`: asks the operator for a credential.
  * - `login`: fills a saved login into the bot's browser tab; the step's
  *   `fill` says how it went.
@@ -22,7 +24,9 @@ import { OpenLiterals } from "./base.ts";
  * - `schedule`: the engine's own scheduled tasks.
  * - `device`: a phone or tablet simulator.
  * - `web-page`: reads a web page.
- * - `plan`: keeps the harness's list of what is left to do.
+ * - `plan`: kept the harness's list of what is left to do. No longer
+ *   written: the list is the turn's plan (`TurnWork`). Steps stored before
+ *   keep it.
  * - `image`: looks at an image.
  * - `built-in`: any other tool the engine itself offers.
  * - `mcp-server-added`, `mcp-server-changed`, `mcp-server-removed`: the bot
@@ -67,3 +71,112 @@ export const StepTool = Schema.NullOr(OpenLiterals(WorkTool.literals)).pipe(
   Schema.withDecodingDefaultKey(Effect.succeed(null)),
 );
 export type StepTool = typeof StepTool.Type;
+
+/** The most steps a plan carries: a longer one keeps its first steps (decision 0070). */
+export const MAX_PLAN_STEPS = 100;
+
+/** The longest a plan step's text is: a longer one is cut, with an ellipsis. */
+export const MAX_PLAN_STEP_LENGTH = 300;
+
+/**
+ * Where a step of a plan stands: still to do, being done now, or done. A
+ * status added after this build decodes as `unknown`, which a client shows
+ * as a step still to do.
+ */
+export const PlanStepStatus = Schema.Literals(["pending", "running", "done"]);
+export type PlanStepStatus = typeof PlanStepStatus.Type;
+
+/** One line of a plan, in the bot's own words. */
+export const PlanStep = Schema.Struct({
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_PLAN_STEP_LENGTH)),
+  status: OpenLiterals(PlanStepStatus.literals),
+});
+export type PlanStep = typeof PlanStep.Type;
+
+/**
+ * A turn's plan as it stands: the checklist the bot keeps of what it is
+ * doing, from its harness's list of what is left to do. A newer plan of the
+ * same turn replaces it whole; a turn that ended keeps the last one. Steps
+ * are in the bot's order, and carry no id: a plan is told whole each time.
+ */
+export const Plan = Schema.Struct({
+  steps: Schema.NonEmptyArray(PlanStep).check(Schema.isMaxLength(MAX_PLAN_STEPS)),
+});
+export type Plan = typeof Plan.Type;
+
+/** The most little ones a turn's work lists by name; `LittleOnes` counts the rest. */
+export const MAX_LITTLE_ONES = 16;
+
+/** The longest a little one's label is: a few words, never its instructions. */
+export const MAX_LITTLE_ONE_LABEL_LENGTH = 80;
+
+/** A little one, stable for its turn. */
+export const LittleOneId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)).pipe(
+  Schema.brand("LittleOneId"),
+);
+export type LittleOneId = typeof LittleOneId.Type;
+
+/**
+ * How a little one's work stands. `failed` covers work that was stopped, as
+ * well as work that went wrong: the bot tells which in its message. A status
+ * added after this build decodes as `unknown`, which a client shows as
+ * ended.
+ */
+export const LittleOneStatus = Schema.Literals(["working", "done", "failed"]);
+export type LittleOneStatus = typeof LittleOneStatus.Type;
+
+/**
+ * Part of a turn's work the bot handed to a copy of itself that works beside
+ * it at the same time (a subagent of its harness, or a task the engine
+ * delegated): what clients draw as one of the bot's little ones. It has no
+ * name and no conversation of its own, and never carries what it found: the
+ * bot tells the result.
+ */
+export const LittleOne = Schema.Struct({
+  id: LittleOneId,
+  /**
+   * What it does, in a few words: the short description the harness gave
+   * the subagent, or a short label made from the start of its instructions,
+   * never the instructions themselves. Null when the engine gave neither,
+   * which a client words in the operator's language.
+   */
+  label: Schema.NullOr(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_LITTLE_ONE_LABEL_LENGTH)),
+  ),
+  status: OpenLiterals(LittleOneStatus.literals),
+  startedAt: Schema.DateTimeUtc,
+  /** Null while it works. */
+  finishedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /**
+   * While it works, the last thing it said of how far it got, when the
+   * engine reports that: one line, cleaned.
+   */
+  progress: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+});
+export type LittleOne = typeof LittleOne.Type;
+
+/**
+ * Every little one of a turn, nested ones flattened into the turn's, in the
+ * order they started. A turn with more than `MAX_LITTLE_ONES` keeps in `ones`
+ * every one still working, then those that ended last. `working` and `total`
+ * count all of them, those left out of `ones` too, so a client that shows a
+ * few says how many more there are.
+ */
+export const LittleOnes = Schema.Struct({
+  ones: Schema.Array(LittleOne).check(Schema.isMaxLength(MAX_LITTLE_ONES)),
+  working: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type LittleOnes = typeof LittleOnes.Type;
+
+/**
+ * A turn's plan and its little ones, shown only to the turn's audience: in
+ * the bot's conversation on the turn's work fold (`WorkFoldEntry.work`), in
+ * a room by the member whose turn it is (`Room.memberWork`). Null `plan` and
+ * no little ones are never sent: a turn with neither has no `TurnWork`.
+ */
+export const TurnWork = Schema.Struct({
+  plan: Schema.NullOr(Plan),
+  littleOnes: LittleOnes,
+});
+export type TurnWork = typeof TurnWork.Type;

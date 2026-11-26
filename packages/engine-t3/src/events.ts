@@ -2,8 +2,10 @@
 import {
   ApprovalEntry,
   FailureClass,
+  LittleOne,
   MAX_CARD_QUESTIONS,
   ModelChoice,
+  Plan,
   Question,
   SecretRequestEntry,
   WorkStep,
@@ -230,6 +232,19 @@ export const EngineStep = Schema.Struct({
 });
 export type EngineStep = typeof EngineStep.Type;
 
+/**
+ * A turn's plan and little ones as they stand (decision 0070). `plan` is the
+ * latest list of what is left to do the harness kept in the turn, null for
+ * none; `littleOnes` is every subagent and delegated task the turn started,
+ * nested ones included, in the order they started, as the engine last
+ * recorded each.
+ */
+export const EngineTurnWork = Schema.Struct({
+  plan: Schema.NullOr(Plan),
+  littleOnes: Schema.Array(LittleOne),
+});
+export type EngineTurnWork = typeof EngineTurnWork.Type;
+
 /** A turn that has not ended. */
 export const OpenTurn = Schema.Struct({
   turnId: TurnId,
@@ -243,6 +258,7 @@ export const OpenTurn = Schema.Struct({
   model: Schema.NullOr(ModelChoice),
   /** Every step so far, in the order they started. */
   steps: Schema.Array(EngineStep),
+  work: EngineTurnWork,
   /** Its `j3` tool calls still in progress. */
   toolCalls: Schema.Array(ToolCall),
   /** The `steered` dispatches it has taken so far, as `steer-taken` tells each. */
@@ -272,6 +288,8 @@ export const EndedTurn = Schema.Struct({
   continuation: Schema.NullOr(PendingContinuation),
   /** Every step, in its final state. */
   steps: Schema.Array(EngineStep),
+  /** As it stands now: a little one the turn handed off may still work. */
+  work: EngineTurnWork,
   /** As on `turn-finished`. */
   contextRecovered: Schema.Boolean,
 });
@@ -331,15 +349,16 @@ export const SessionEvent = Schema.Union([
    *
    * It is complete for reconciliation, which goes by stable ids. Apply it, and
    * store its cursor, in one transaction:
-   * - `openTurns` is every turn that has not ended, with all its steps and
-   *   its `j3` tool calls in progress; anything the server holds as open that
-   *   is not here has ended or never existed;
+   * - `openTurns` is every turn that has not ended, with all its steps, its
+   *   plan and little ones, and its `j3` tool calls in progress; anything the
+   *   server holds as open that is not here has ended or never existed;
    * - `openRequests` is every request still waiting on the operator; a card the
    *   server holds open for any other request has closed;
    * - `endedTurns` is at least every turn that ended after the cursor, with its
-   *   outcome and final steps. It may also hold turns the subscriber already saw
-   *   end, because the engine keeps no sequence for a turn's end: applying one
-   *   of those must change nothing. Empty when subscribing with no cursor;
+   *   outcome, final steps, and plan and little ones as they stand. It may
+   *   also hold turns the subscriber already saw end, because the engine
+   *   keeps no sequence for a turn's end: applying one of those must change
+   *   nothing. Empty when subscribing with no cursor;
    * - `hostSpeech` is at least every use of the host's speech tool after the
    *   cursor, in order, and may repeat ones already applied (by `speechId`);
    * - `closedRequests` is at least every request that closed after the cursor,
@@ -490,6 +509,13 @@ export const SessionEvent = Schema.Union([
    * what the bot is doing right now.
    */
   Schema.TaggedStruct("step", { ...at, turnId: TurnId, step: EngineStep }),
+  /**
+   * The turn's plan or one of its little ones changed: the whole of both, as
+   * they stand. Sent while the turn runs, before its `turn-finished` for what
+   * its end changed, and after it while a little one it handed off still
+   * works, until that one has ended.
+   */
+  Schema.TaggedStruct("turn-work", { ...at, turnId: TurnId, work: EngineTurnWork }),
   /**
    * The bot used the host's own tool for showing text to the user mid-turn
    * (`send_to_user` on Claude Code) instead of `say`. The server delivers the

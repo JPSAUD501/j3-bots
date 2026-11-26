@@ -33,6 +33,7 @@ const working: BotState = {
   typing: false,
   activity: null,
   tool: null,
+  littleOnes: 0,
 };
 const quiet = { unread: false, speaking: false, offline: false };
 

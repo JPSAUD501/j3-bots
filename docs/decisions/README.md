@@ -65,6 +65,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0066](0066-connecting-an-ai-is-picking-the-account-you-have.md) | Connecting an AI is picking the account you have | Accepted |
 | [0067](0067-a-first-contact-is-a-paced-hello-not-a-setup.md) | A bot's first contact is a hello in a few paced messages, not a setup | Accepted |
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
+| [0070](0070-a-turns-plan-and-its-little-ones-are-its-work.md) | A turn's plan and its little ones are its work, shown only to its audience | Accepted |
 | [0073](0073-a-suggested-reply-follows-what-the-operator-saw.md) | A suggested reply follows what the operator saw, in the bot's own conversation only | Accepted |
 | [0075](0075-a-bot-sends-a-picture-as-a-photo-and-shows-what-it-looked-at-in-its-work.md) | A bot sends a picture as a photo, and shows an image it looked at in that step of its work | Accepted |
 

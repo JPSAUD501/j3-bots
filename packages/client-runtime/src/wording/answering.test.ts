@@ -30,6 +30,7 @@ const room = (answering: ReadonlyArray<BotId>): Room => ({
   createdAt: at("2026-11-01T00:00:00Z"),
   work: answering.length === 0 ? "none" : "running",
   answering,
+  memberWork: [],
 });
 
 describe("answeringLine", () => {

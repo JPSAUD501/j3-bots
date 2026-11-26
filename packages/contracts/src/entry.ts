@@ -25,7 +25,7 @@ import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts"
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepTool } from "./work.ts";
+import { StepTool, TurnWork } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -521,6 +521,13 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   apps: Schema.Array(ConnectorAppRef)
     .check(Schema.isMaxLength(MAX_CONNECTOR_APPS_PER_FOLD))
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /**
+   * The turn's plan and little ones, as they stand or as the turn left them,
+   * for a turn whose audience is this conversation. Null for a turn that had
+   * neither, for a room's turn, whose plan and little ones show only in the
+   * room (`Room.memberWork`), and from a server, or a fold, that predates it.
+   */
+  work: Schema.NullOr(TurnWork).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   status: Schema.Union([
     Schema.TaggedStruct("running", {}),
     Schema.TaggedStruct("finished", {
@@ -552,6 +559,10 @@ export type WorkFoldEntry = typeof WorkFoldEntry.Type;
 /** A step replaces an earlier one with the same id: a running command, then its result. */
 export const WorkStep = Schema.Struct({
   id: WorkStepId,
+  /**
+   * `delegation` is no longer written: the work a turn hands off is its
+   * little ones (`TurnWork`, decision 0070). Steps stored before keep it.
+   */
   kind: Schema.Literals([
     "command",
     "edit",

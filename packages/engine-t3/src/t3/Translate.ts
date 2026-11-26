@@ -6,7 +6,19 @@ import type {
   QuestionAnswers,
   WorkStep,
 } from "@j3-bots/contracts";
-import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/contracts";
+import {
+  type LittleOne,
+  LittleOneId,
+  type LittleOneStatus,
+  MAX_CARD_QUESTIONS,
+  MAX_LITTLE_ONE_LABEL_LENGTH,
+  MAX_PLAN_STEP_LENGTH,
+  MAX_PLAN_STEPS,
+  MAX_QUESTION_OPTIONS,
+  type Plan,
+  type PlanStepStatus,
+  WorkStepId,
+} from "@j3-bots/contracts";
 import {
   isOrchestrationV2WorkActive,
   isQueuedProviderThreadPlaceholder,
@@ -46,6 +58,7 @@ import {
   type ToolCall,
   type TurnCause,
   type TurnOutcome,
+  type EngineTurnWork,
 } from "../events.ts";
 import {
   DelegatedResultId,
@@ -1239,16 +1252,15 @@ const stepKind = (item: Item): WorkStep["kind"] | undefined => {
       return "search";
     case "web_search":
       return "web";
-    case "subagent":
-      return "delegation";
     case "dynamic_tool": {
       // Host speech and J3 Bots' own tools are events of their own; a
       // connector's tool, and one that manages MCP servers or skills, is also
-      // a step of the bot's work.
+      // a step of the bot's work. A plan's update and a subagent's launch are
+      // the turn's work (`workOf`).
       const j3Tool = j3ToolOf(item);
       return isHostSpeech(item) || (j3Tool !== undefined && !isStepTool(j3Tool))
         ? undefined
-        : dynamicToolStep(item).kind;
+        : dynamicToolStep(item)?.kind;
     }
     default:
       return undefined;
@@ -1265,10 +1277,8 @@ const stepLabel = (item: Item): string => {
       return label(item.pattern ?? item.title, "Search");
     case "web_search":
       return label(item.patterns?.join(", ") ?? item.title, "Web search");
-    case "subagent":
-      return label(item.title ?? item.prompt, "Delegated task");
     case "dynamic_tool":
-      return label(dynamicToolStep(item).label, "Tool");
+      return label(dynamicToolStep(item)?.label, "Tool");
     default:
       return label(item.title, item.type);
   }
@@ -1295,7 +1305,7 @@ const stepOf = (item: Item): EngineStep | undefined => {
   return {
     id: WorkStepId.make(localIdFor(item.id)),
     kind,
-    tool: item.type === "dynamic_tool" ? dynamicToolStep(item).tool : null,
+    tool: item.type === "dynamic_tool" ? (dynamicToolStep(item)?.tool ?? null) : null,
     label: stepLabel(item),
     status: stepStatus(item),
     startedAt: item.startedAt ?? item.updatedAt,
@@ -1318,6 +1328,140 @@ const stepsOf = (mirror: Mirror, run: Run) =>
 
 const fingerprint = (step: EngineStep) =>
   `${step.status}|${step.tool ?? ""}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}|${step.viewedImage ?? ""}`;
+
+// ---------------------------------------------------------------------------
+// The turn's plan and little ones
+
+type TodoList = Extract<Item, { type: "todo_list" }>;
+type Subagent = Extract<Item, { type: "subagent" }>;
+
+/** Text on one line, its runs of white space made one space. */
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** `text` cut to `max` characters, with an ellipsis where it was cut. */
+const cut = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+
+const PLAN_STATUS: Record<TodoList["steps"][number]["status"], PlanStepStatus> = {
+  pending: "pending",
+  running: "running",
+  completed: "done",
+};
+
+/**
+ * The turn's plan: the latest list of what is left to do its harness kept in
+ * the run. Each list the harness writes is a `todo_list` item, which the
+ * engine records with the plan it updates (`plan.updated`) and in the same
+ * run (**Read** at `59651c1`: `ClaudeAdapterV2.ts`,
+ * `emitClaudePlanProjection`, L8437-8566; `CodexAdapterV2.ts`,
+ * `buildTodoListArtifacts`, L4619-4697; the ACP, Cursor and OpenCode
+ * adapters alike). The latest item by ordinal is the plan that stands, as the
+ * engine's own client picks it, since the plans' ids cannot order the
+ * replacements within a run (`ProjectionStore.ts`, L4045-4070). A subagent's
+ * own list is never one of the run's: Claude Code's is left out by the
+ * adapter (L11735), and Codex's child keeps its in its own thread. A list
+ * with no step is no plan.
+ */
+const planOf = (items: ReadonlyArray<Item>): Plan | null => {
+  const latest = items.findLast((item): item is TodoList => item.type === "todo_list");
+  const [first, ...rest] = (latest?.steps ?? []).slice(0, MAX_PLAN_STEPS).map((step) => ({
+    text: cut(oneLine(step.text), MAX_PLAN_STEP_LENGTH),
+    status: PLAN_STATUS[step.status],
+  }));
+  return first === undefined ? null : { steps: [first, ...rest] };
+};
+
+/** The most words a little one's label made from its instructions keeps. */
+const LABEL_WORDS = 8;
+
+/**
+ * A few words from a subagent's title or instructions: the first sentence of
+ * its first line that is not a heading, else of its first heading, at most
+ * `LABEL_WORDS` words, with any list or heading mark before it dropped.
+ * Undefined for text with no words.
+ */
+const shortLabel = (text: string | null): string | undefined => {
+  const lines = (text ?? "").split("\n").filter((part) => part.trim().length > 0);
+  const chosen = lines.find((part) => !/^\s*#/.test(part)) ?? lines[0] ?? "";
+  const line = chosen.replace(/^[\s#>*\-•\d.)]+/, "").trim();
+  const sentence = /^(.+?[.!?])(?:\s|$)/.exec(line)?.[1] ?? line;
+  const words = sentence.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) return undefined;
+  const kept =
+    words.length > LABEL_WORDS
+      ? `${words.slice(0, LABEL_WORDS).join(" ")}…`
+      : words.join(" ").replace(/[.!?]$/, "");
+  return cut(kept, MAX_LITTLE_ONE_LABEL_LENGTH);
+};
+
+const littleOneStatus = (item: Subagent): LittleOneStatus =>
+  LIVE_ITEM.has(item.status) ? "working" : item.status === "completed" ? "done" : "failed";
+
+/** The engine's driver kind for Claude Code. */
+const CLAUDE_CODE = "claudeAgent";
+
+/**
+ * Whether the item's title describes the subagent. Only Claude Code's does:
+ * it is the subagent's short description (`task_started`'s `description`,
+ * **Read** at `59651c1`, `ClaudeAdapterV2.ts` L11522-11545). A Codex
+ * subagent's title is its agent path, a name (`CodexAdapterV2.ts` L3643),
+ * and a delegated task's is the bot's own title for it, else a thread title
+ * the engine makes up with a count (`Orchestrator.ts` L9860-9865).
+ */
+const describedByTitle = (item: Subagent) =>
+  item.origin === "provider_native" && item.driver === CLAUDE_CODE;
+
+/**
+ * A subagent or a task the engine delegated, as a little one. Its label is
+ * the title the engine gives the item, when that describes it
+ * (`describedByTitle`), else a few words of its instructions; its result is
+ * never read. Its progress is the line its running child last reported
+ * (`CodexAdapterV2.ts`, `reportSubagentProgress`), while it works.
+ */
+const littleOneOf = (item: Subagent): LittleOne => {
+  const status = littleOneStatus(item);
+  const progress = status === "working" ? oneLine(item.progress ?? "") : "";
+  const described = describedByTitle(item) ? shortLabel(item.title) : undefined;
+  return {
+    id: LittleOneId.make(localIdFor(item.id)),
+    label: described ?? shortLabel(item.prompt) ?? null,
+    status,
+    startedAt: item.startedAt ?? item.updatedAt,
+    finishedAt: status === "working" ? null : (item.completedAt ?? item.updatedAt),
+    ...(progress === "" ? {} : { progress: cut(progress, 200) }),
+  };
+};
+
+/**
+ * The turn's plan and its little ones. The engine records every subagent of
+ * a run as an item of that run, a nested one too: Claude Code's runs in the
+ * same run, under the subagent that started it (**Read** at `59651c1`,
+ * `ClaudeAdapterV2.ts`, `updateClaudeSubagentNode`), so they are flattened
+ * into the turn's. A Codex child's own subagents are items of the child's
+ * thread, which J3 Bots does not follow.
+ */
+const workOf = (mirror: Mirror, run: Run): EngineTurnWork => {
+  const items = itemsOf(mirror, run);
+  return {
+    plan: planOf(items),
+    littleOnes: items.filter((item): item is Subagent => item.type === "subagent").map(littleOneOf),
+  };
+};
+
+const workPrint = (work: EngineTurnWork) =>
+  JSON.stringify([
+    work.plan?.steps ?? null,
+    work.littleOnes.map((one) => [
+      one.id,
+      one.status,
+      one.label,
+      one.progress ?? null,
+      one.finishedAt === null ? null : DateTime.formatIso(one.finishedAt),
+    ]),
+  ]);
+
+/** What a turn with no plan and no little ones prints: never told. */
+const NO_WORK = workPrint({ plan: null, littleOnes: [] });
 
 const SpeechInput = Schema.Struct({ message: Schema.String });
 const decodeSpeechInput = Schema.decodeUnknownOption(SpeechInput);
@@ -1834,6 +1978,12 @@ const shownOf = (state: RequestState): OpenView => ({
 export interface View {
   readonly turns: Map<string, TurnView>;
   readonly steps: Map<string, string>;
+  /**
+   * Each turn's plan and little ones as last told (`workPrint`), by run id,
+   * and whether a little one was then still working, which keeps an ended
+   * turn's work told until it has none.
+   */
+  readonly work: Map<string, { readonly print: string; readonly working: boolean }>;
   readonly speech: Set<string>;
   readonly requests: Map<string, RequestView>;
   /** Each `j3` call told, open with the digest it was last told with, or closed. */
@@ -1853,6 +2003,7 @@ export interface View {
 const emptyView = (): View => ({
   turns: new Map(),
   steps: new Map(),
+  work: new Map(),
   speech: new Set(),
   requests: new Map(),
   toolCalls: new Map(),
@@ -1865,6 +2016,7 @@ const emptyView = (): View => ({
 export const copyView = (view: View): View => ({
   turns: new Map([...view.turns].map(([id, turn]) => [id, { ...turn }])),
   steps: new Map(view.steps),
+  work: new Map(view.work),
   speech: new Set(view.speech),
   requests: new Map(view.requests),
   toolCalls: new Map(view.toolCalls),
@@ -2012,6 +2164,18 @@ const delegatedResultEvent = (
  * The events that bring a subscriber from `view` to `mirror`, in order, and
  * `view` updated to match. Applying them to `view` again yields nothing.
  */
+/** The turn's plan and little ones, if they changed since the subscriber was last told. */
+const workEvents = (mirror: Mirror, view: View, run: Run): ReadonlyArray<EventBody> => {
+  const work = workOf(mirror, run);
+  const print = workPrint(work);
+  if (print === (view.work.get(run.id)?.print ?? NO_WORK)) return [];
+  view.work.set(run.id, {
+    print,
+    working: work.littleOnes.some((one) => one.status === "working"),
+  });
+  return [{ _tag: "turn-work", turnId: turnIdOf(run), work }];
+};
+
 export const diff = (
   mirror: Mirror,
   view: View,
@@ -2045,6 +2209,10 @@ export const diff = (
     view.turns.set(run.id, turn);
     if (isSteerCarrier(mirror, run)) continue;
     const cause = causeOf(mirror, run);
+    // A little one the turn handed off goes on after its end, until it ends.
+    if (turn.finished && view.work.get(run.id)?.working === true) {
+      events.push(...workEvents(mirror, view, run));
+    }
     if (!turn.finished) {
       const waiting = !turn.started && !hasStarted(run) && !isEnded(run);
       if (waiting && !turn.queued && wasQueued(mirror, run) && isCauseTold(mirror, run)) {
@@ -2136,6 +2304,7 @@ export const diff = (
           }
         }
       }
+      events.push(...workEvents(mirror, view, run));
       for (const state of requestsOf(mirror, run)) {
         const closed = closeOf(state, run, ended);
         if (closed !== undefined && view.requests.get(state.requestId)?._tag === "open") {
@@ -2238,6 +2407,7 @@ export const replacement = (
         startedAt: hasStarted(run) ? startedAtOf(run) : null,
         model: hasStarted(run) ? providers.modelOf(run.modelSelection) : null,
         steps: stepsOf(mirror, run),
+        work: workOf(mirror, run),
         takenSteers: steers.flatMap((steer) =>
           steer.target === run.id && isTaken(mirror, providers, steer) ? [steer.key] : [],
         ),
@@ -2262,6 +2432,7 @@ export const replacement = (
         backgroundWork: toldHandoffs.get(turnId) ?? hasBackgroundWork(mirror, run),
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
+        work: workOf(mirror, run),
         contextRecovered: hasRecoveredContext(mirror, run),
       });
       // A requeued steer shows as its follow-up turn, whose cause is the dispatch.

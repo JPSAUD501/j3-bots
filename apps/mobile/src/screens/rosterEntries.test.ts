@@ -60,6 +60,7 @@ const room = (name: string): RosterItem => ({
     createdAt: DateTime.makeUnsafe(0),
     work: "none",
     answering: [],
+    memberWork: [],
   },
   lastEntry: null,
   lastActivityAt: null,

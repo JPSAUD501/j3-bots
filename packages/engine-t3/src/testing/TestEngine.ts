@@ -61,6 +61,7 @@ import type {
   ToolCall,
   TurnCause,
   TurnOutcome,
+  EngineTurnWork,
 } from "../events.ts";
 import {
   DelegatedResultId,
@@ -396,6 +397,15 @@ export class TestEngineControl extends Context.Service<
       readonly step: EngineStep;
     }) => Effect.Effect<void>;
     /**
+     * Replaces a turn's plan and little ones, told at once (`turn-work`): of a
+     * running turn, or of an ended one, as a little one it handed off ends.
+     */
+    readonly turnWork: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly work: EngineTurnWork;
+    }) => Effect.Effect<void>;
+    /**
      * The agent takes every steer of the running turn, each told at once
      * (`steer-taken`). Each settles as `steered` when the turn ends.
      */
@@ -601,6 +611,7 @@ interface TurnRecord {
   model: ModelChoice | null;
   startedAt: DateTime.Utc | null;
   readonly steps: Map<WorkStepId, EngineStep>;
+  work: EngineTurnWork;
   readonly steers: Array<SteerRecord>;
   /** Delegated results steered into it, told as it ends (`delegatedResult`). */
   readonly landed: Array<DelegatedResult>;
@@ -945,6 +956,7 @@ const make = Effect.gen(function* () {
       model,
       startedAt: null,
       steps: new Map(),
+      work: { plan: null, littleOnes: [] },
       steers: [],
       landed: [],
       toolCalls: new Map(),
@@ -1297,6 +1309,7 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           model: turn.startedAt === null ? null : turn.model,
           steps,
+          work: turn.work,
           takenSteers: turn.steers.flatMap((steer) => (steer.state === "read" ? [steer.key] : [])),
           toolCalls: [...turn.toolCalls.values()].flatMap((record) =>
             record.state === "open" ? [record.call] : [],
@@ -1316,6 +1329,7 @@ const make = Effect.gen(function* () {
           backgroundWork: announcesWork(turn),
           continuation: turn.ended.continuation,
           steps,
+          work: turn.work,
           contextRecovered: turn.contextRecovered,
         });
         listed.push(turn);
@@ -2221,6 +2235,22 @@ const make = Effect.gen(function* () {
         const turn = yield* runningTurn(session, turnId);
         turn.steps.set(step.id, step);
         emit(session, yield* DateTime.now, (stamp) => ({ _tag: "step", ...stamp, turnId, step }));
+      }),
+
+    turnWork: ({ sessionId, turnId, work }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = session.turns.get(turnId);
+        if (turn === undefined || turn.startedAt === null) {
+          return yield* misuse(`turn ${turnId} has not started`);
+        }
+        turn.work = work;
+        emit(session, yield* DateTime.now, (stamp) => ({
+          _tag: "turn-work",
+          ...stamp,
+          turnId,
+          work,
+        }));
       }),
 
     readSteers: ({ sessionId, turnId }) =>

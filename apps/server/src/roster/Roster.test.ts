@@ -77,7 +77,7 @@ it.effect("orders pinned first, then what calls for the operator, then the lates
 );
 
 it.effect(
-  "previews a bot's work by the step that says what it did, not the plan it updated last",
+  "previews a bot's work by the step that says what it did, not its last look at a background task",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -102,7 +102,7 @@ it.effect(
           },
         });
       yield* step("step-1", "command", null, "pnpm test");
-      yield* step("step-2", "tool", "plan", "Updated its plan");
+      yield* step("step-2", "tool", "task-status", "Checked on a background task");
       yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
       yield* turnEnded(bot.id);
       yield* until(

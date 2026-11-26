@@ -173,6 +173,7 @@ export function sampleTeam(now: DateTime.Utc) {
         typing: false,
         activity: "Checking which of the three the shop has in stock",
         tool: "browser",
+        littleOnes: 0,
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),
@@ -210,6 +211,7 @@ export function sampleTeam(now: DateTime.Utc) {
         typing: false,
         activity: "Comparing prices",
         tool: null,
+        littleOnes: 0,
       },
       home,
     ),
@@ -235,6 +237,7 @@ export function sampleTeam(now: DateTime.Utc) {
     // Juniper and Scout are answering in it, in member order.
     work: "running",
     answering: [ids.juniper, ids.scout],
+    memberWork: [],
   };
 
   const operator = { _tag: "operator" } as const;
@@ -307,8 +310,9 @@ export function sampleTeam(now: DateTime.Utc) {
       author: by(ids.scout),
       createdAt: ago(60 * 26 - 1),
       turnStartedAt: ago(60 * 26),
-      stepCount: 6,
+      stepCount: 5,
       apps: [],
+      work: null,
       status: {
         _tag: "finished",
         finishedAt: ago(60 * 26 - 3),
@@ -372,6 +376,7 @@ export function sampleTeam(now: DateTime.Utc) {
       turnStartedAt: ago(9),
       stepCount: 2,
       apps: [sampleConnectorAppRef],
+      work: null,
       status: { _tag: "running" },
     },
     message(operator, ago(1), "Also check whether any of them fold", {
@@ -446,14 +451,6 @@ export function sampleTeam(now: DateTime.Utc) {
         tool: null,
         label: "memory/log/2026-11.md",
         status: "completed",
-        startedAt: ago(60 * 26 - 3),
-        finishedAt: ago(60 * 26 - 3),
-      }),
-      step(5, {
-        kind: "delegation",
-        tool: null,
-        label: "Asked Juniper whether the shop had replied",
-        status: "failed",
         startedAt: ago(60 * 26 - 3),
         finishedAt: ago(60 * 26 - 3),
       }),

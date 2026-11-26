@@ -314,6 +314,20 @@ export {
   withLiveTurn,
 } from "./turn.ts";
 export {
+  type LittleOneState,
+  littleOneDots,
+  littleOneState,
+  MAX_SHOWN_LITTLE_ONES,
+  memberWorkOf,
+  type PlanProgress,
+  planProgress,
+  type PlanStepState,
+  planStepState,
+  type ShownLittleOnes,
+  shownLittleOnes,
+  shownPlan,
+} from "./turnWork.ts";
+export {
   type BotSpend,
   coverage,
   providerUsage,

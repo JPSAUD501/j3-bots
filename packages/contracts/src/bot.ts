@@ -128,6 +128,14 @@ export const BotState = Schema.Union([
      * of `activity`, which then carries an English phrase for older clients.
      */
     tool: StepTool,
+    /**
+     * How many of its little ones work now (`LittleOnes.working`), in
+     * whichever audience its turn speaks to: a count only, which says
+     * nothing of the work. Zero from a server that predates it.
+     */
+    littleOnes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(0)),
+    ),
   }),
   /** The bot asked a question or needs an approval: the card awaiting the operator. */
   Schema.TaggedStruct("waiting", {

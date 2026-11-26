@@ -42,6 +42,7 @@ const room: Room = {
   createdAt: at("2026-11-01T00:00:00Z"),
   work: "none",
   answering: [],
+  memberWork: [],
 };
 
 describe("withMember", () => {

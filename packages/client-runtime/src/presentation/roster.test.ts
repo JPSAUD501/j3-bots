@@ -50,6 +50,7 @@ const room = (
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],
+    memberWork: [],
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,
@@ -173,9 +174,11 @@ describe("canStop", () => {
 
   it("offers Stop while a turn runs", () => {
     expect(canStop(bot("Scout", { _tag: "thinking", ...since }))).toBe(true);
-    expect(canStop(bot("Scout", { _tag: "working", ...since, activity: null, tool: null }))).toBe(
-      true,
-    );
+    expect(
+      canStop(
+        bot("Scout", { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 }),
+      ),
+    ).toBe(true);
   });
 
   it("offers Stop to a bot at rest whose background work holds a change of its settings", () => {
@@ -198,6 +201,7 @@ describe("roomStop", () => {
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],
+    memberWork: [],
   };
 
   it("offers Stop while the room's work runs, and shows it stopping until the server ends it", () => {

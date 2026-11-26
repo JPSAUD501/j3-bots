@@ -10,9 +10,9 @@ import { json } from "../persistence/columns.ts";
 /**
  * The step that says what a work fold's work is doing or did: one still
  * running first, since steps run in parallel and a later one may finish
- * first; then one that is not housekeeping, such as updating the plan or
- * looking in on a background task, which a turn often ends with; then the
- * newest. Both the roster's preview and a working bot's state show it.
+ * first; then one that is not housekeeping, looking in on a background task,
+ * which a turn often ends with; then the newest. Both the roster's preview
+ * and a working bot's state show it.
  */
 export const shownStep = (sql: SqlClient.SqlClient) => {
   const row = SqlSchema.findOneOption({
@@ -21,7 +21,7 @@ export const shownStep = (sql: SqlClient.SqlClient) => {
     execute: (entryId) => sql`
       SELECT step_json FROM work_steps WHERE entry_id = ${entryId}
       ORDER BY json_extract(step_json, '$.status') = 'running' DESC,
-        coalesce(json_extract(step_json, '$.tool'), '') IN ('plan', 'task-status') ASC,
+        coalesce(json_extract(step_json, '$.tool'), '') = 'task-status' ASC,
         position DESC
       LIMIT 1
     `,
