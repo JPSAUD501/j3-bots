@@ -501,6 +501,7 @@
  */
 @layer components {
   .plan-card {
+    position: relative;
     margin-block: 2px 4px;
     margin-inline-start: 34px;
     max-width: 30rem;
@@ -573,10 +574,11 @@
     stroke-width: 3;
   }
 
+  /* Over the first step's mark: inside the card's own padding. */
   .plan-live {
     position: absolute;
-    top: 0;
-    inset-inline-start: 0;
+    top: 5px;
+    inset-inline-start: 10px;
     display: flex;
     width: 16px;
     height: 26px;

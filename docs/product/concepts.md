@@ -54,6 +54,10 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Turn.** The work a bot does in response to one wake, from the first token to the point where it stops. A turn may deliver zero, one or several messages.
 
+**Plan.** The checklist a bot keeps of what it is doing in a turn, when its work has more than one step: each step to do, being done or done. The operator sees it while the turn runs and, once it is over, as one line that opens it.
+
+**Little one.** A small copy of itself a bot splits into while part of its turn runs in parallel: its own shape and color, smaller and lighter. It works beside the bot and goes back into it. It is not a teammate: it has no name, no conversation and nothing to say, and the bot tells what it found.
+
 **Session.** The engine thread that holds a bot's working context for the model. A session is an implementation detail: it can be compacted, replaced or lost without the conversation or the bot's identity changing. The operator never sees sessions.
 
 **Engine.** The T3 Code server that J3 Bots runs and drives. It owns model processes, subscriptions, tool execution and approvals.

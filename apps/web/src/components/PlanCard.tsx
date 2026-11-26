@@ -101,7 +101,7 @@ export function PlanCard({ plan, tint }: { readonly plan: Plan; readonly tint: B
       className="plan-card arrive origin-top-left"
       style={{ "--plan-live": `var(--bot-${tint})` } as CSSProperties}
     >
-      <ol className="relative flex flex-col">
+      <ol className="flex flex-col">
         {shown.before > 0 && <li className="plan-count">{plural("plan.before", shown.before)}</li>}
         {shown.lines.map((line, at) => (
           <li key={line.index} className="plan-step" data-state={line.state}>
@@ -111,8 +111,8 @@ export function PlanCard({ plan, tint }: { readonly plan: Plan; readonly tint: B
           </li>
         ))}
         {shown.after > 0 && <li className="plan-count">{plural("plan.after", shown.after)}</li>}
-        <LiveMark at={live === null ? null : live + lead} />
       </ol>
+      <LiveMark at={live === null ? null : live + lead} />
     </div>
   );
 }
