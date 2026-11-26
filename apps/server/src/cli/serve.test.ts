@@ -6,6 +6,7 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +14,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Runtime from "effect/Runtime";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { CliError } from "effect/cli";
 import * as Migrator from "effect/sql/Migrator";
 import * as AdminClient from "../admin/AdminClient.ts";
@@ -114,6 +117,395 @@ const spawnChild = Effect.fn("spawnChild")(function* (
   };
 });
 
+/** The ids a stand-in engine's script writes once it runs: its own, and its harness's. */
+const Started = Schema.Struct({ script: Schema.Int, harness: Schema.Int });
+const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started));
+
+/**
+ * What a stand-in engine on Windows finds before it starts anything, by
+ * comparing kernel objects, never asking a file anything: the ids of its
+ * parent and of its parent's parent; how many file objects it holds; and how
+ * many of them it finds again in its own handles, in its parent's, in its
+ * grandparent's, and in its parent's but not its grandparent's. Or why it
+ * could not look.
+ */
+const SharedFiles = Schema.Union([
+  Schema.Struct({
+    parent: Schema.Int,
+    grandparent: Schema.Int,
+    files: Schema.Int,
+    withSelf: Schema.Int,
+    withParent: Schema.Int,
+    withGrandparent: Schema.Int,
+    withParentAlone: Schema.Int,
+  }),
+  Schema.Struct({ error: Schema.String }),
+]);
+const decodeSharedFiles = Schema.decodeUnknownEffect(Schema.fromJsonString(SharedFiles));
+
+const isRunning = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
+};
+
+/** Ends process `pid`, if it still runs. */
+const kill = (pid: number) => {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+};
+
+/** How long processes that were ended get to be gone. */
+const ENDS_WITHIN = Duration.seconds(10);
+
+/**
+ * Ends each process in `pids` and waits until none runs, for at most
+ * `ENDS_WITHIN`. Off Windows only, where Node's check of a process is exact.
+ */
+const endAll = (pids: ReadonlyArray<number>) =>
+  Effect.sync(() => pids.forEach(kill)).pipe(
+    Effect.andThen(
+      Effect.sync(() => pids.filter(isRunning)).pipe(
+        Effect.repeat({
+          while: (running) => running.length > 0,
+          schedule: Schedule.spaced("100 millis"),
+        }),
+        Effect.timeoutOption(ENDS_WITHIN),
+      ),
+    ),
+    Effect.asVoid,
+  );
+
+/**
+ * A stand-in for the engine in `folder`, for `J3_ENGINE_BINARY`: a Node
+ * script that starts a harness that runs until it is ended, writes both ids
+ * to `started` (`Started`), and runs until it is ended. Elsewhere `sh` runs
+ * it; on Windows a program must, as Node starts no batch file without a
+ * shell, so a small C# program, compiled by Windows' own compiler as the job
+ * launcher is, starts it and waits for it. Each run of the stand-in first
+ * leaves a file named after its own id in `runs`, so every process that ran
+ * it is known, however many the server started; on Windows the file holds
+ * when the process was created, so a later process given the same id is not
+ * taken for it. `endRuns` ends them all and waits until each has ended. The
+ * C# program then writes to
+ * `shared` what it shares with the processes above it (`SharedFiles`),
+ * trying every handle value up to 64 Ki, past any a process this small or
+ * the server has. It takes no account of its arguments, so the server's
+ * first run of the engine's binary, its CLI minting the engine's credential,
+ * is the stand-in that reports. It never answers, so the
+ * server never finds it ready, and starts it as it starts the engine: on
+ * Windows, through the job launcher.
+ */
+const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const started = path.join(folder, "started.json");
+  const shared = path.join(folder, "shared.json");
+  const runs = path.join(folder, "runs");
+  const script = path.join(folder, "engine.cjs");
+  yield* fs.makeDirectory(runs);
+  /** Every run recorded: its id, and what it recorded, which on Windows is when it was created. */
+  const recorded = fs.readDirectory(runs).pipe(
+    Effect.flatMap((names) =>
+      Effect.forEach(
+        names.filter((name) => /^\d+$/.test(name)),
+        (name) =>
+          fs
+            .readFileString(path.join(runs, name))
+            .pipe(Effect.map((created) => ({ pid: Number(name), created: created.trim() }))),
+      ),
+    ),
+    Effect.orDie,
+  );
+  yield* fs.writeFileString(
+    script,
+    [
+      `const { spawn } = require("node:child_process");`,
+      `const fs = require("node:fs");`,
+      `const harness = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+      `fs.writeFileSync(${JSON.stringify(`${started}.partial`)}, JSON.stringify({ script: process.pid, harness: harness.pid }));`,
+      `fs.renameSync(${JSON.stringify(`${started}.partial`)}, ${JSON.stringify(started)});`,
+      `setInterval(() => {}, 1000);`,
+    ].join("\n"),
+  );
+  if (process.platform === "win32") {
+    /** `value` as a C# verbatim string. */
+    const verbatim = (value: string) => `@"${value.replaceAll('"', '""')}"`;
+    const source = path.join(folder, "engine.cs");
+    yield* fs.writeFileString(
+      source,
+      String.raw`using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+
+class Engine {
+  [StructLayout(LayoutKind.Sequential)]
+  struct BasicInformation {
+    public IntPtr ExitStatus;
+    public IntPtr Peb;
+    public IntPtr Affinity;
+    public IntPtr BasePriority;
+    public IntPtr Id;
+    public IntPtr ParentId;
+  }
+
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int informationClass, ref BasicInformation information, int length, out int returned);
+  [DllImport("ntdll.dll")] static extern int NtQueryObject(IntPtr handle, int informationClass, IntPtr information, int length, out int returned);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int id);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern bool GetHandleInformation(IntPtr handle, out uint flags);
+  [DllImport("kernel32.dll")] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+  [DllImport("kernelbase.dll")] static extern bool CompareObjectHandles(IntPtr first, IntPtr second);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
+
+  const uint DuplicateAccess = 0x40;
+  const uint QueryLimitedAccess = 0x1000;
+  const uint SameAccess = 2;
+  const int TypeInformation = 2;
+
+  // The process that started 'process', as Windows recorded it.
+  static int ParentOf(IntPtr process) {
+    BasicInformation information = new BasicInformation();
+    int returned;
+    int status = NtQueryInformationProcess(process, 0, ref information, Marshal.SizeOf(typeof(BasicInformation)), out returned);
+    if (status != 0) throw new Exception("NtQueryInformationProcess " + status);
+    return information.ParentId.ToInt32();
+  }
+
+  // Whether 'handle' names a file object, by its type, which the object manager
+  // answers itself: no file system or driver is asked anything.
+  static bool IsFile(IntPtr handle) {
+    IntPtr buffer = Marshal.AllocHGlobal(4096);
+    try {
+      int returned;
+      if (NtQueryObject(handle, TypeInformation, buffer, 4096, out returned) != 0) return false;
+      int length = Marshal.ReadInt16(buffer);
+      return Marshal.PtrToStringUni(Marshal.ReadIntPtr(buffer, IntPtr.Size), length / 2) == "File";
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  static List<IntPtr> OwnFiles() {
+    List<IntPtr> files = new List<IntPtr>();
+    for (long value = 4; value < 0x10000; value += 4) {
+      IntPtr handle = new IntPtr(value);
+      uint flags;
+      if (GetHandleInformation(handle, out flags) && IsFile(handle)) files.Add(handle);
+    }
+    return files;
+  }
+
+  // Which of 'own' process 'id' holds too: each of its handles, copied
+  // here, against each of them, as objects.
+  static List<long> SharedWith(int id, List<IntPtr> own) {
+    IntPtr process = OpenProcess(DuplicateAccess, false, id);
+    if (process == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
+    List<long> shared = new List<long>();
+    try {
+      for (long value = 4; value < 0x10000; value += 4) {
+        IntPtr copy;
+        if (!DuplicateHandle(process, new IntPtr(value), GetCurrentProcess(), out copy, 0, false, SameAccess)) continue;
+        try {
+          foreach (IntPtr handle in own) {
+            if (!shared.Contains(handle.ToInt64()) && CompareObjectHandles(handle, copy)) shared.Add(handle.ToInt64());
+          }
+        } finally {
+          CloseHandle(copy);
+        }
+      }
+    } finally {
+      CloseHandle(process);
+    }
+    return shared;
+  }
+
+  static string Report() {
+    try {
+      List<IntPtr> own = OwnFiles();
+      int parent = ParentOf(GetCurrentProcess());
+      IntPtr parentProcess = OpenProcess(QueryLimitedAccess, false, parent);
+      if (parentProcess == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
+      int grandparent;
+      try {
+        grandparent = ParentOf(parentProcess);
+      } finally {
+        CloseHandle(parentProcess);
+      }
+      List<long> withSelf = SharedWith(Process.GetCurrentProcess().Id, own);
+      List<long> withParent = SharedWith(parent, own);
+      List<long> withGrandparent = SharedWith(grandparent, own);
+      int parentAlone = 0;
+      foreach (long handle in withParent) if (!withGrandparent.Contains(handle)) parentAlone++;
+      return "{\"parent\":" + parent + ",\"grandparent\":" + grandparent + ",\"files\":" + own.Count + ",\"withSelf\":" + withSelf.Count + ",\"withParent\":" + withParent.Count + ",\"withGrandparent\":" + withGrandparent.Count + ",\"withParentAlone\":" + parentAlone + "}";
+    } catch (Exception error) {
+      return "{\"error\":\"" + error.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
+    }
+  }
+
+  // Leaves this run's id, and when Windows created it, in 'runs'.
+  static void Record() {
+    long created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), out created, out exited, out kernel, out user)) throw new Exception("GetProcessTimes " + Marshal.GetLastWin32Error());
+    string run = Path.Combine(${verbatim(runs)}, Process.GetCurrentProcess().Id.ToString());
+    File.WriteAllText(run + ".partial", created.ToString());
+    File.Move(run + ".partial", run);
+  }
+
+  static int Main() {
+    Record();
+    File.WriteAllText(${verbatim(`${shared}.partial`)}, Report());
+    File.Move(${verbatim(`${shared}.partial`)}, ${verbatim(shared)});
+    ProcessStartInfo start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});
+    start.UseShellExecute = false;
+    Process script = Process.Start(start);
+    script.WaitForExit();
+    return script.ExitCode;
+  }
+}
+`,
+    );
+    const endSource = path.join(folder, "end.cs");
+    yield* fs.writeFileString(
+      endSource,
+      String.raw`using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+// Ends each run 'id:created' names and waits until it has ended, for at most
+// as many milliseconds as its first argument says. A run whose id names no
+// process, or a process created at another time, has ended. Writes the runs
+// still running and exits 1 if there are any; exits 2 if it could not look.
+class End {
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int id);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint code);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+
+  const uint Access = 0x00100000 | 0x1000 | 0x1; // synchronize, query limited information, terminate
+  const int NoSuchProcess = 87;
+  const uint Signaled = 0;
+  const uint TimedOut = 0x102;
+
+  static int Main(string[] args) {
+    DateTime until = DateTime.UtcNow.AddMilliseconds(long.Parse(args[0]));
+    List<string> running = new List<string>();
+    for (int i = 1; i < args.Length; i++) {
+      string[] run = args[i].Split(':');
+      IntPtr process = OpenProcess(Access, false, int.Parse(run[0]));
+      if (process == IntPtr.Zero) {
+        int error = Marshal.GetLastWin32Error();
+        if (error == NoSuchProcess) continue;
+        Console.Error.WriteLine("OpenProcess " + args[i] + ": " + error);
+        return 2;
+      }
+      try {
+        long created, exited, kernel, user;
+        if (!GetProcessTimes(process, out created, out exited, out kernel, out user)) {
+          Console.Error.WriteLine("GetProcessTimes " + args[i] + ": " + Marshal.GetLastWin32Error());
+          return 2;
+        }
+        if (created != long.Parse(run[1])) continue;
+        // Fails once the process is ending; the wait tells.
+        TerminateProcess(process, 1);
+        uint waited = WaitForSingleObject(process, (uint)Math.Max(0, (until - DateTime.UtcNow).TotalMilliseconds));
+        if (waited == TimedOut) {
+          running.Add(args[i]);
+        } else if (waited != Signaled) {
+          Console.Error.WriteLine("WaitForSingleObject " + args[i] + ": " + waited + " " + Marshal.GetLastWin32Error());
+          return 2;
+        }
+      } finally {
+        CloseHandle(process);
+      }
+    }
+    if (running.Count == 0) return 0;
+    Console.WriteLine("still running: " + string.Join(", ", running.ToArray()));
+    return 1;
+  }
+}
+`,
+    );
+    const command = path.join(folder, "engine.exe");
+    const ender = path.join(folder, "end.exe");
+    const compiler = path.join(
+      yield* Config.String("SystemRoot").pipe(Config.withDefault("C:\\Windows")),
+      "Microsoft.NET",
+      "Framework64",
+      "v4.0.30319",
+      "csc.exe",
+    );
+    const compile = (input: string, output: string) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            NodeChildProcess.execFile(
+              compiler,
+              ["/nologo", "/target:exe", `/out:${output}`, input],
+              { windowsHide: true },
+              (error) => (error === null ? resolve() : reject(error)),
+            ),
+          ),
+      );
+    yield* Effect.all([compile(source, command), compile(endSource, ender)], {
+      concurrency: "unbounded",
+    });
+    // Windows waits on each run itself, as only that shows it has ended:
+    // Node's `process.kill(pid, 0)` answers that a process is gone once its
+    // exit code is set (libuv 1.52.1, `uv__kill` in src/win/process.c), and
+    // Windows sets that as it starts to end a process, before its threads
+    // have ended and its program's file is released. `end.exe` is itself
+    // waited on by Node, whose exit event comes once Windows signals it ended.
+    const endRuns = Effect.gen(function* () {
+      const records = yield* recorded;
+      if (records.length === 0) return;
+      const ended = yield* Effect.callback<{
+        readonly code: string;
+        readonly output: string;
+      }>((resume) => {
+        NodeChildProcess.execFile(
+          ender,
+          [
+            String(Duration.toMillis(ENDS_WITHIN)),
+            ...records.map(({ pid, created }) => `${pid}:${created}`),
+          ],
+          { windowsHide: true },
+          (error, stdout, stderr) =>
+            resume(
+              Effect.succeed({
+                code: error === null ? "0" : String(error.code),
+                output: `${stdout}${stderr}`,
+              }),
+            ),
+        );
+      });
+      if (ended.code !== "0")
+        return yield* Effect.die(
+          `the stand-in's runs did not all end (exit ${ended.code}):\n${ended.output}`,
+        );
+    });
+    return { command, started, shared, endRuns };
+  }
+  const command = path.join(folder, "engine");
+  yield* fs.writeFileString(
+    command,
+    `#!/bin/sh\n: > '${runs}'/$$\nexec '${process.execPath}' '${script}' "$@"\n`,
+  );
+  yield* fs.chmod(command, 0o755);
+  const endRuns = recorded.pipe(Effect.flatMap((records) => endAll(records.map(({ pid }) => pid))));
+  return { command, started, shared, endRuns };
+});
+
 /** The parent's end of `child`'s descriptor 3, as the admin channel. */
 const pipeOf = (child: NodeChildProcess.ChildProcess) => {
   const end = child.stdio[3];
@@ -207,6 +599,121 @@ describe("serve, as the desktop app runs it", () => {
         assert.strictEqual(yield* server.exited, 0, server.output());
         yield* assertReleased(server.home);
       }).pipe(Effect.scoped, Effect.provide(services)),
+    { timeout: Duration.toMillis(WITHIN) * 2 },
+  );
+
+  // On Linux and macOS a process the server started outlives it, so the pipe
+  // closing once the server is killed, while the engine and its harness still
+  // run, shows that neither holds it. On Windows Node puts every child it does
+  // not detach in a job that ends with it, and the engine's own job ends with
+  // the launcher: the engine ends with the server. There the stand-in that
+  // the server first runs, its CLI, compares its file objects with the
+  // server's and with those of the process that started the server, this
+  // one. A child gets every handle its parent may pass on, since the libuv of
+  // the Node the server pins names no list of them (1.52.1,
+  // src/win/process.c), so the handles this process may pass on reach it
+  // through the server, and are its and the server's both. fd 3 is not: this
+  // process closed its copy of the child's end once the server started, and
+  // the server's Node made it one it does not pass on, as it does every
+  // descriptor it inherits (`uv_disable_stdio_inheritance`,
+  // deps/uv/src/win/process-stdio.c, read in Node v26.13.1). So no file it
+  // shares with the server may be one it does not share with this process.
+  // It asks no file anything: a query on a synchronous file object can wait
+  // in the kernel for as long as another process's I/O holds it, and a
+  // process with a thread waiting there does not end when killed.
+  it.live(
+    "hands the pipe to none of the processes it starts",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scratch, env } = yield* newHome;
+        const engine = yield* standInEngine(scratch);
+        const server = yield* spawnChild(
+          process.execPath,
+          [SERVER, "serve", "--admin-fd", "3", "--exit-with-stdin"],
+          { ...env, J3_ENGINE_BINARY: engine.command },
+          "overlapped",
+        );
+        // The server, and every process that ran the stand-in, have ended
+        // before their folder is removed: Windows removes no program's file
+        // while a process runs it. The server first, so it starts no other
+        // run. Off Windows the script and its harness outlive the server, and
+        // are ended too; on Windows they end with it, in its job, and run no
+        // program from the folder.
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            server.child.kill("SIGKILL");
+            yield* server.exited;
+            yield* engine.endRuns;
+            if (process.platform === "win32") return;
+            const started = yield* fs
+              .readFileString(engine.started)
+              .pipe(Effect.flatMap(decodeStarted), Effect.option);
+            if (Option.isSome(started))
+              yield* endAll([started.value.script, started.value.harness]);
+          }),
+        );
+        const pipe = server.child.stdio[3];
+        if (!(pipe instanceof NodeNet.Socket)) return yield* Effect.die("no pipe at fd 3");
+        const closed = new Promise<void>((resolve) => pipe.once("close", () => resolve()));
+        pipe.resume();
+
+        const started = yield* fs.readFileString(engine.started).pipe(
+          Effect.flatMap(decodeStarted),
+          Effect.retry(Schedule.spaced("100 millis")),
+          Effect.timeoutOrElse({
+            duration: WITHIN,
+            orElse: () =>
+              fs.exists(engine.shared).pipe(
+                Effect.orElseSucceed(() => false),
+                Effect.flatMap((compared) =>
+                  Effect.die(
+                    `the engine did not start${compared ? ", though it wrote what it shares" : ""}; the server wrote:\n${server.output()}`,
+                  ),
+                ),
+              ),
+          }),
+        );
+        if (process.platform === "win32") {
+          // Written before the engine started its script, which wrote `started`.
+          const found = yield* fs
+            .readFileString(engine.shared)
+            .pipe(Effect.flatMap(decodeSharedFiles));
+          if ("error" in found)
+            return yield* Effect.die(`the engine could not look: ${found.error}`);
+          const report = JSON.stringify(found);
+          // The server's own child, which its CLI is.
+          assert.strictEqual(found.parent, server.child.pid, `the engine's parent: ${report}`);
+          assert.strictEqual(found.grandparent, process.pid, `the server's parent: ${report}`);
+          // What the comparison finds when there is something to find.
+          assert.isAbove(found.files, 0, `the engine holds no file: ${report}`);
+          assert.strictEqual(
+            found.withSelf,
+            found.files,
+            `the engine missed its own files: ${report}`,
+          );
+          assert.strictEqual(
+            found.withParentAlone,
+            0,
+            `the engine holds a file the server holds and this process does not: ${report}`,
+          );
+        }
+
+        server.child.kill("SIGKILL");
+        yield* Effect.promise(() => closed).pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(10),
+            orElse: () =>
+              Effect.die(
+                "the pipe stayed open once the server ended: a process it started holds it",
+              ),
+          }),
+        );
+        if (process.platform !== "win32") {
+          assert.isTrue(isRunning(started.script), "the stand-in engine ended with the server");
+          assert.isTrue(isRunning(started.harness), "the stand-in harness ended with the server");
+        }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: Duration.toMillis(WITHIN) * 2 },
   );
 

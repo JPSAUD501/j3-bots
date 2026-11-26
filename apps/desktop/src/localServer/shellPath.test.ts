@@ -47,6 +47,11 @@ describe("merging PATHs", () => {
       ShellPath.mergePaths("win32", ["C:\\Windows;C:\\Tools; ;", "c:\\windows;C:\\Other"]),
       "C:\\Windows;C:\\Tools;C:\\Other",
     );
+    // A micro sign and a Greek mu name two folders, which Windows keeps apart.
+    assert.strictEqual(
+      ShellPath.mergePaths("win32", ["D:\\\u00b5Tools", "D:\\\u03bcTools"]),
+      "D:\\\u00b5Tools;D:\\\u03bcTools",
+    );
   });
 });
 

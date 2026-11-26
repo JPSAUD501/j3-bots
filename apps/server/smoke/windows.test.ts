@@ -5,6 +5,7 @@ import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { CommandId, type EngineStatus, HTTP_PATHS, J3Rpcs } from "@j3-bots/contracts";
+import { windowsNameKey } from "@j3-bots/processes";
 import { assert, describe, it } from "@effect/vitest";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
@@ -154,8 +155,11 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
         const short = (yield* (yield* ChildProcessSpawner.ChildProcessSpawner).string(
           ChildProcess.make(`for %I in ("${long}") do @echo %~sI`, { shell: true }),
         )).trim();
-        assert.notStrictEqual(short.toLowerCase(), long.toLowerCase(), "no 8.3 names here");
+        assert.notStrictEqual(windowsNameKey(short), windowsNameKey(long), "no 8.3 names here");
         const home = path.join(short, "j3");
+        // A process may name the home by either name: the server is given the
+        // short one, and a path it resolves comes back long.
+        const homeNames = [home, path.join(long, "j3")].map(windowsNameKey);
         const marker = `j3-smoke-harness-${path.basename(scratch)}`;
         const agent = path.join(scratch, "agent-with-harness.mjs");
         yield* fs.writeFileString(agent, agentWithHarness(path.resolve(SCRIPTED_AGENT), marker));
@@ -328,7 +332,8 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
             assert.deepStrictEqual(yield* leftRunning([...started, ...harnessesAfter]), []);
             const holdsHome = (yield* processTable).filter(
               ({ commandLine }) =>
-                commandLine !== null && commandLine.toLowerCase().includes(home.toLowerCase()),
+                commandLine !== null &&
+                homeNames.some((name) => windowsNameKey(commandLine).includes(name)),
             );
             assert.deepStrictEqual(holdsHome, []);
           }).pipe(Effect.scoped);

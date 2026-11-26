@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // What J3 Bots needs to start programs on Windows without a shell: command
-// lines split and quoted as the programs it starts read them, and Windows
-// PowerShell 5.1, by its full path, for what Node cannot ask Windows itself.
+// lines split and quoted as the programs it starts read them, names compared
+// as Windows' file systems compare them, and Windows PowerShell 5.1, by its
+// full path, for what Node cannot ask Windows itself.
 
 /**
  * The words of a Windows command line, split as programs built with the
@@ -77,6 +78,33 @@ export const windowsCommandWord = (word: string): string => {
     backslashes = 0;
   }
   return `${quoted}${"\\".repeat(backslashes * 2)}"`;
+};
+
+/**
+ * `name`, a path or a part of one, as a key that is the same for two names
+ * Windows' file systems take for one only where every NTFS volume agrees:
+ * NTFS compares names by an upcase table, one UTF-16 unit for one, and every
+ * table since Windows NT maps the lowercase ASCII and Latin-1 letters to
+ * their capitals (`a`–`z`, `à`–`þ` but `÷`). Beyond those, the table is the
+ * one of the Windows that formatted the volume, and tables differ from
+ * Unicode's and from each other: Windows' default keeps the dotless `ı`, the
+ * long `ſ` and the micro sign `µ` apart from `I`, `S` and the Greek `Μ`,
+ * which Unicode makes their capitals (**Read** in ntfs-3g's
+ * `ntfs_upcase_table_build`, which rebuilds that table). So every other unit
+ * is kept as it is: two names that differ only in the case of another letter
+ * get different keys, and a caller takes them for two (a path outside a
+ * folder, a search path folder kept twice), never two names a volume keeps
+ * apart for one. Lower-casing the whole name, as `toLowerCase` does, would
+ * take the Kelvin sign `K` for `k`.
+ */
+export const windowsNameKey = (name: string): string => {
+  let key = "";
+  for (let at = 0; at < name.length; at++) {
+    const unit = name.charCodeAt(at);
+    const folds = (unit >= 0x61 && unit <= 0x7a) || (unit >= 0xe0 && unit <= 0xfe && unit !== 0xf7);
+    key += folds ? String.fromCharCode(unit - 0x20) : (name[at] ?? "");
+  }
+  return key;
 };
 
 /**

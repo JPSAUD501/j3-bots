@@ -317,18 +317,16 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     .exists(path.join(target, INSTALLED_MARKER))
     .pipe(Effect.orElseSucceed(() => false));
   // A leftover only takes space: the installed engine runs whether or not it goes.
-  const clearLeftovers = Effect.forEach(
-    [partial, staging],
-    (leftover) =>
-      input.files
-        .remove(leftover)
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning(`Removing ${leftover}, left by an earlier install, failed`, cause),
-          ),
+  const clearLeftover = (leftover: string) =>
+    input.files
+      .remove(leftover)
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning(`Removing ${leftover}, left by an install, failed`, cause),
         ),
-    { discard: true },
-  );
+      );
+  const clearLeftovers = Effect.forEach([partial, staging], clearLeftover, { discard: true });
+  const clearStaging = clearLeftover(staging);
   if (yield* published) {
     yield* clearLeftovers;
     return executable;
@@ -412,23 +410,29 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
     yield* remove(staging);
     yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
-    if (!(yield* unpack(format, partial, staging))) return yield* fail("extract");
+    yield* Effect.gen(function* () {
+      if (!(yield* unpack(format, partial, staging))) return yield* fail("extract");
 
-    // The archive holds the server either at its root or in one top-level folder.
-    const entries = yield* fs.readDirectory(staging).pipe(Effect.mapError(storage));
-    const root =
-      entries.includes(binary) || entries.length !== 1 || entries[0] === undefined
-        ? staging
-        : path.join(staging, entries[0]);
-    if (!(yield* fs.exists(path.join(root, binary)).pipe(Effect.orElseSucceed(() => false)))) {
-      return yield* fail("extract");
-    }
-    yield* fs
-      .writeFileString(path.join(root, INSTALLED_MARKER), `${expected}\n`)
-      .pipe(Effect.mapError(storage));
-    yield* remove(target);
-    yield* fs.rename(root, target).pipe(Effect.mapError(storage));
-    yield* remove(staging);
+      // The archive holds the server either at its root or in one top-level folder.
+      const entries = yield* fs.readDirectory(staging).pipe(Effect.mapError(storage));
+      const root =
+        entries.includes(binary) || entries.length !== 1 || entries[0] === undefined
+          ? staging
+          : path.join(staging, entries[0]);
+      if (!(yield* fs.exists(path.join(root, binary)).pipe(Effect.orElseSucceed(() => false)))) {
+        return yield* fail("extract");
+      }
+      yield* fs
+        .writeFileString(path.join(root, INSTALLED_MARKER), `${expected}\n`)
+        .pipe(Effect.mapError(storage));
+      yield* remove(target);
+      yield* fs.rename(root, target).pipe(Effect.mapError(storage));
+    }).pipe(
+      // An unpacking cut short, as by a full disk, can be most of the engine's
+      // size: it goes at once, not at the next install. The download stays,
+      // checked, for that install to unpack again.
+      Effect.ensuring(clearStaging),
+    );
     yield* remove(partial);
     return executable;
   }).pipe(Effect.scoped);

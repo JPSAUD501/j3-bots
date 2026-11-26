@@ -4,13 +4,15 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import { powerShellLiteral } from "@j3-bots/processes";
 import {
   createPrivateFolder,
   type FolderAcl,
   judgeAcl,
   judgeWriteAcl,
-  powerShellWord,
   readFolderAcl,
+  readFolderAcls,
   repairCommand,
 } from "./windowsAcl.ts";
 import { openToOthers, runInPowerShell } from "./testPrivacy.ts";
@@ -267,7 +269,7 @@ describe.runIf(process.platform === "win32")("on Windows", () => {
       yield* createPrivateFolder(folder);
       const { user } = yield* readFolderAcl(folder);
       yield* runInPowerShell(
-        `icacls ${powerShellWord(folder)} /deny ${powerShellWord(`*${user}:(OI)(CI)W`)}`,
+        `icacls ${powerShellLiteral(folder)} /deny ${powerShellLiteral(`*${user}:(OI)(CI)W`)}`,
       );
 
       const closed = yield* readFolderAcl(folder);
@@ -276,6 +278,45 @@ describe.runIf(process.platform === "win32")("on Windows", () => {
       yield* runInPowerShell(repairCommand(folder, closed));
       assert.strictEqual(judgeAcl(yield* readFolderAcl(folder)), "private");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "reads several folders in one run, each for itself, and counts a rule that denies a group of this user's",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const kept = path.join(root, "kept");
+        const opened = path.join(root, "opened");
+        const denied = path.join(root, "denied");
+        const missing = path.join(root, "missing");
+        for (const folder of [kept, opened, denied]) yield* createPrivateFolder(folder);
+        yield* openToOthers(opened);
+        // Everyone, which every token holds; taken off again, or the folder could not be removed.
+        yield* Effect.acquireRelease(
+          runInPowerShell(
+            `icacls ${powerShellLiteral(denied)} /deny ${powerShellLiteral("*S-1-1-0:(OI)(CI)W")}`,
+          ),
+          () =>
+            runInPowerShell(
+              `icacls ${powerShellLiteral(denied)} /remove:d ${powerShellLiteral("*S-1-1-0")}`,
+            ).pipe(Effect.orDie),
+        );
+
+        const reads = yield* readFolderAcls([kept, opened, denied, missing]);
+        assert.deepStrictEqual(
+          reads.map((read) =>
+            Result.isSuccess(read) ? judgeAcl(read.success) : read.failure._tag,
+          ),
+          ["private", "open-to-others", "closed-to-owner", "AclUnreadable"],
+        );
+        const last = reads.at(-1);
+        assert.strictEqual(
+          last !== undefined && Result.isFailure(last) ? last.failure.folder : null,
+          missing,
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("says it cannot read a folder that is not there", () =>

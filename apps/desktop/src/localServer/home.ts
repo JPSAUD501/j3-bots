@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- A trial listen on each address a port is checked on, which only Node's own sockets can make.
 import * as NodeNet from "node:net";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import { powerShellLiteral } from "@j3-bots/processes";
+import { providerFolders } from "@j3-bots/server/home-entries";
 import * as WindowsAclModule from "@j3-bots/server/windows-acl";
 
 // The data home of the server the app runs: `<userData>/server/home`, the
@@ -21,10 +25,11 @@ import * as WindowsAclModule from "@j3-bots/server/windows-acl";
  * judges a home exactly as the server it starts there will.
  */
 export interface WindowsAcl {
+  /** Each of `folders`' lists, in their order, read in one run. */
   readonly read: (
-    folder: string,
+    folders: ReadonlyArray<string>,
   ) => Effect.Effect<
-    WindowsAclModule.FolderAcl,
+    ReadonlyArray<Result.Result<WindowsAclModule.FolderAcl, WindowsAclModule.AclUnreadable>>,
     WindowsAclModule.AclUnreadable,
     ChildProcessSpawner
   >;
@@ -35,7 +40,7 @@ export interface WindowsAcl {
 
 /** Windows' own answer, through PowerShell. */
 export const systemAcl: WindowsAcl = {
-  read: WindowsAclModule.readFolderAcl,
+  read: WindowsAclModule.readFolderAcls,
   createPrivate: WindowsAclModule.createPrivateFolder,
 };
 
@@ -49,10 +54,12 @@ export interface HomeSystem {
 const shellWord = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 /**
- * The home is not one only this user can open, or the app could not look at
- * it (`unreadable`), and how to repair it.
+ * The home, or a folder in it where the harnesses keep their sign-ins, is
+ * not one only this user can open, or the app could not look at it
+ * (`unreadable`), and how to repair it.
  */
 class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
+  /** The folder refused: the home, or a folder in it where the harnesses keep their sign-ins. */
   home: Schema.String,
   platform: Schema.String,
   reason: Schema.Literals([
@@ -92,7 +99,7 @@ class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivat
       return `Make sure your user can open ${this.home} and the folders it is in, then try again.`;
     }
     if (this.platform === "win32") {
-      const home = WindowsAclModule.powerShellWord(this.home);
+      const home = powerShellLiteral(this.home);
       const repair = this.windowsRepair ?? `icacls ${home} /inheritance:r`;
       const takeOwnership = `takeown /F ${home} /R`;
       switch (this.reason) {
@@ -117,22 +124,32 @@ class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivat
   }
 }
 
+/** The refusal of `folder` on `system`. */
+const refusalOn =
+  (system: HomeSystem) =>
+  (
+    folder: string,
+    reason: HomeNotPrivate["reason"],
+    more: { readonly windowsRepair?: string; readonly detail?: string } = {},
+  ) =>
+    new HomeNotPrivate({ home: folder, platform: system.platform, reason, ...more });
+
 /**
  * Whether `home` may hold the server's data, as the server judges it when it
  * starts there, so the app never starts a server that then refuses its home:
  * a folder owned by this user that this user may read, write and search and
  * no group and no other user can open (on Windows, by its access list), or
- * nothing yet (`prepareHome` creates it private).
+ * nothing yet (`prepareHome` creates it private). Each folder in it where
+ * the harnesses keep their sign-ins (`providerFolders`) that exists is
+ * judged the same way, and one the app cannot look at is refused.
  */
 export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
   home: string,
   system: HomeSystem,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const refuse = (
-    reason: HomeNotPrivate["reason"],
-    more: { readonly windowsRepair?: string; readonly detail?: string } = {},
-  ) => new HomeNotPrivate({ home, platform: system.platform, reason, ...more });
+  const path = yield* Path.Path;
+  const refuse = refusalOn(system);
   // Only a home that is not there passes unseen; one the system would not
   // show is refused, never taken for missing.
   const info = yield* fs.stat(home).pipe(
@@ -140,27 +157,77 @@ export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
     Effect.catch((error) =>
       error.reason._tag === "NotFound"
         ? Effect.succeedNone
-        : Effect.fail(refuse("unreadable", { detail: error.message })),
+        : Effect.fail(refuse(home, "unreadable", { detail: error.message })),
     ),
   );
   if (Option.isNone(info)) return;
-  if (info.value.type !== "Directory") return yield* refuse("not-a-folder");
+  const looked: Array<Looked> = [{ folder: home, info: info.value }];
+  for (const folder of providerFolders(path, home)) {
+    const found = yield* fs.stat(folder).pipe(Effect.result);
+    if (Result.isSuccess(found)) {
+      looked.push({ folder, info: found.success });
+      continue;
+    }
+    if (found.failure.reason._tag === "NotFound") continue;
+    // A folder above it that this user may not open is what to repair first.
+    yield* judgeFolders(home, looked, system);
+    return yield* refuse(folder, "unreadable", { detail: found.failure.message });
+  }
+  yield* judgeFolders(home, looked, system);
+});
+
+/** A folder `judgeFolders` judges, with what a stat of it found. */
+interface Looked {
+  readonly folder: string;
+  readonly info: FileSystem.File.Info;
+}
+
+/**
+ * Fails for the first of `folders`, `home` and folders in it, that is not
+ * private, as the server judges it. A link, or on Windows a junction, is
+ * judged by the folder it leads to.
+ */
+const judgeFolders = Effect.fnUntraced(function* (
+  home: string,
+  folders: ReadonlyArray<Looked>,
+  system: HomeSystem,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const refuse = refusalOn(system);
+  for (const { folder, info } of folders) {
+    if (info.type !== "Directory") return yield* refuse(folder, "not-a-folder");
+  }
   if (system.platform === "win32") {
-    const acl = yield* system.acl
-      .read(home)
-      .pipe(Effect.mapError((error) => refuse("unverifiable", { detail: error.detail })));
-    const verdict = WindowsAclModule.judgeAcl(acl);
-    if (verdict !== "private") {
-      return yield* refuse(verdict, { windowsRepair: WindowsAclModule.repairCommand(home, acl) });
+    const looked = yield* Effect.forEach(folders, ({ folder }) =>
+      fs.realPath(folder).pipe(
+        Effect.orElseSucceed(() => folder),
+        Effect.map((real) => ({ folder, real })),
+      ),
+    );
+    const reads = yield* system.acl
+      .read(looked.map(({ real }) => real))
+      .pipe(Effect.mapError((error) => refuse(home, "unverifiable", { detail: error.detail })));
+    for (const [{ folder, real }, read] of Arr.zip(looked, reads)) {
+      if (Result.isFailure(read)) {
+        return yield* refuse(folder, "unverifiable", { detail: read.failure.detail });
+      }
+      const verdict = WindowsAclModule.judgeAcl(read.success);
+      if (verdict !== "private") {
+        return yield* refuse(folder, verdict, {
+          windowsRepair: WindowsAclModule.repairCommand(real, read.success),
+        });
+      }
     }
     return;
   }
   const user = process.getuid?.();
-  if (user !== undefined && Option.isSome(info.value.uid) && info.value.uid.value !== user) {
-    return yield* refuse("not-owned");
+  for (const { folder, info } of folders) {
+    if (user !== undefined && Option.isSome(info.uid) && info.uid.value !== user) {
+      return yield* refuse(folder, "not-owned");
+    }
+    if ((info.mode & 0o077) !== 0) return yield* refuse(folder, "open-to-others");
+    if ((info.mode & 0o700) !== 0o700) return yield* refuse(folder, "closed-to-owner");
   }
-  if ((info.value.mode & 0o077) !== 0) return yield* refuse("open-to-others");
-  if ((info.value.mode & 0o700) !== 0o700) return yield* refuse("closed-to-owner");
 });
 
 /**

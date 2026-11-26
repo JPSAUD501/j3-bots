@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { powerShellLiteral } from "@j3-bots/processes";
 import { runPowerShell } from "../system/PowerShell.ts";
 
 // A private folder on Windows. Mode bits mean nothing there: who may open a
@@ -45,7 +47,12 @@ const AccessRule = Schema.Struct({
 export const FolderAcl = Schema.Struct({
   /** This process's user. */
   user: Schema.String,
-  /** The groups its token holds, such as Everyone and Users: a rule that denies one of them denies the user. */
+  /**
+   * The groups in its token that a rule denying them denies the user: the
+   * enabled ones, such as Everyone and Users, and those it holds for deny
+   * only, as Administrators is in an administrator's token that is not
+   * elevated. Windows checks a deny rule against both.
+   */
   groups: Schema.Array(Schema.String),
   owner: Schema.String,
   /** Whether its rules no longer come from its parent's (inheritance off). */
@@ -132,34 +139,59 @@ export const judgeWriteAcl = (acl: FolderAcl): WriteVerdict => {
     : "own";
 };
 
-const decodeAcl = Schema.decodeUnknownEffect(Schema.fromJsonString(FolderAcl));
+/** The folders' paths reach the script as this variable, a JSON array, never in its text. */
+const FOLDERS_VARIABLE = "J3_PRIVATE_FOLDERS";
 
-/** The folder's path reaches the scripts as this variable, never in their text. */
+/** The path of the folder a script creates reaches it as this variable, never in its text. */
 const PATH_VARIABLE = "J3_PRIVATE_FOLDER";
 
 const SID_TYPE = "[Security.Principal.SecurityIdentifier]";
 
+/**
+ * Reads each folder's list, and this process's user and groups, once for all
+ * of them. `WindowsIdentity.Groups` leaves out the groups held for deny only,
+ * which its claims list (**Read** in .NET Framework's reference source,
+ * `ec9fa9a`, `windowsidentity.cs`, `AddGroupSidClaims`).
+ */
 const INSPECT = `
-$acl = Get-Acl -LiteralPath $env:${PATH_VARIABLE}
-$rules = @($acl.GetAccessRules($true, $true, ${SID_TYPE}) | ForEach-Object {
-  [ordered]@{
-    sid = $_.IdentityReference.Value
-    allow = ($_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow)
-    rights = [long]$_.FileSystemRights
-    inherited = $_.IsInherited
-    inheritOnly = (($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0)
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$denyOnly = @([Security.Claims.ClaimTypes]::DenyOnlySid, [Security.Claims.ClaimTypes]::DenyOnlyPrimaryGroupSid)
+$groups = @(@($identity.Groups | ForEach-Object { $_.Value }) + @($identity.Claims | Where-Object { $denyOnly -contains $_.Type } | ForEach-Object { $_.Value }))
+$folders = ConvertFrom-Json $env:${FOLDERS_VARIABLE}
+$found = @(foreach ($folder in $folders) {
+  try {
+    $acl = Get-Acl -LiteralPath $folder
+    $rules = @($acl.GetAccessRules($true, $true, ${SID_TYPE}) | ForEach-Object {
+      [ordered]@{
+        sid = $_.IdentityReference.Value
+        allow = ($_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow)
+        rights = [long]$_.FileSystemRights
+        inherited = $_.IsInherited
+        inheritOnly = (($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0)
+      }
+    })
+    [ordered]@{
+      read = $true
+      user = $identity.User.Value
+      groups = $groups
+      owner = $acl.GetOwner(${SID_TYPE}).Value
+      protected = $acl.AreAccessRulesProtected
+      rules = $rules
+    }
+  } catch {
+    [ordered]@{ read = $false; detail = $_.Exception.Message }
   }
 })
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$found = [ordered]@{
-  user = $identity.User.Value
-  groups = @($identity.Groups | ForEach-Object { $_.Value })
-  owner = $acl.GetOwner(${SID_TYPE}).Value
-  protected = $acl.AreAccessRulesProtected
-  rules = $rules
-}
-[Console]::Out.Write((ConvertTo-Json -InputObject $found -Depth 4 -Compress))
+[Console]::Out.Write((ConvertTo-Json -InputObject $found -Depth 5 -Compress))
 `;
+
+/** What the script says of one folder: its list, or why it could not read it. */
+const FolderRead = Schema.Union([
+  Schema.Struct({ read: Schema.Literal(true), ...FolderAcl.fields }),
+  Schema.Struct({ read: Schema.Literal(false), detail: Schema.String }),
+]);
+const decodeReads = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(FolderRead)));
+const encodeFolders = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 /** Unreadable, or not decodable: what `Get-Acl` said of the folder could not be used. */
 export class AclUnreadable extends Schema.TaggedError<AclUnreadable>()("AclUnreadable", {
@@ -171,13 +203,46 @@ export class AclUnreadable extends Schema.TaggedError<AclUnreadable>()("AclUnrea
   }
 }
 
+/**
+ * What Windows says of each of `folders`' owner and access, by SID, in their
+ * order, read in one Windows PowerShell run: each run takes about a second to
+ * start. A folder whose list could not be read is its `AclUnreadable`; a run
+ * that failed as a whole fails, naming every folder.
+ */
+export const readFolderAcls = Effect.fn("windowsAcl.readAll")(function* (
+  folders: ReadonlyArray<string>,
+) {
+  if (folders.length === 0) return [];
+  const unreadable = (detail: string) => new AclUnreadable({ folder: folders.join(", "), detail });
+  const output = yield* runPowerShell(INSPECT, {
+    [FOLDERS_VARIABLE]: encodeFolders(folders),
+  }).pipe(Effect.mapError((error) => unreadable(error.detail)));
+  const reads = yield* decodeReads(output).pipe(
+    Effect.mapError((error) => unreadable(error.message)),
+  );
+  return folders.map((folder, at): Result.Result<FolderAcl, AclUnreadable> => {
+    const read = reads[at];
+    if (read === undefined) {
+      return Result.fail(new AclUnreadable({ folder, detail: "it gave no answer" }));
+    }
+    if (!read.read) return Result.fail(new AclUnreadable({ folder, detail: read.detail }));
+    return Result.succeed({
+      user: read.user,
+      groups: read.groups,
+      owner: read.owner,
+      protected: read.protected,
+      rules: read.rules,
+    });
+  });
+});
+
 /** What Windows says of `folder`'s owner and access, by SID. */
 export const readFolderAcl = Effect.fn("windowsAcl.read")(function* (folder: string) {
-  const unreadable = (detail: string) => new AclUnreadable({ folder, detail });
-  const output = yield* runPowerShell(INSPECT, { [PATH_VARIABLE]: folder }).pipe(
-    Effect.mapError((error) => unreadable(error.detail)),
-  );
-  return yield* decodeAcl(output).pipe(Effect.mapError((error) => unreadable(error.message)));
+  const [read] = yield* readFolderAcls([folder]);
+  if (read === undefined) {
+    return yield* new AclUnreadable({ folder, detail: "it gave no answer" });
+  }
+  return yield* Effect.fromResult(read);
 });
 
 /**
@@ -214,14 +279,6 @@ foreach ($sid in $everyone) {
 });
 
 /**
- * `value` as one literal PowerShell word: in single quotes, where nothing is
- * expanded (`$`, `%`, `&` and `^` included), each quote in it doubled.
- * PowerShell counts the typographic single quotes as quotes too.
- */
-export const powerShellWord = (value: string) =>
-  `'${value.replaceAll(/['\u2018\u2019\u201a\u201b]/gu, (quote) => quote + quote)}'`;
-
-/**
  * The `icacls` command that makes `folder` private as `judgeAcl` wants it,
  * for the operator to run in PowerShell: inheritance off, every rule that
  * denies this user, SYSTEM or Administrators removed (`/grant:r` replaces
@@ -236,10 +293,12 @@ export const repairCommand = (folder: string, acl: FolderAcl) => {
     ...new Set(acl.rules.filter((rule) => !trusted.includes(rule.sid)).map((rule) => rule.sid)),
   ];
   return [
-    `icacls ${powerShellWord(folder)} /inheritance:r`,
+    `icacls ${powerShellLiteral(folder)} /inheritance:r`,
     "/remove:d",
-    ...trusted.map((sid) => powerShellWord(`*${sid}`)),
-    ...trusted.map((sid) => `/grant:r ${powerShellWord(`*${sid}:(OI)(CI)F`)}`),
-    ...(others.length === 0 ? [] : ["/remove", ...others.map((sid) => powerShellWord(`*${sid}`))]),
+    ...trusted.map((sid) => powerShellLiteral(`*${sid}`)),
+    ...trusted.map((sid) => `/grant:r ${powerShellLiteral(`*${sid}:(OI)(CI)F`)}`),
+    ...(others.length === 0
+      ? []
+      : ["/remove", ...others.map((sid) => powerShellLiteral(`*${sid}`))]),
   ].join(" ");
 };

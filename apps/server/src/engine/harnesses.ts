@@ -2,6 +2,7 @@
 import { signInHarnesses } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { windowsNameKey } from "@j3-bots/processes";
 import type { PROVIDER_HOMES } from "../home/entries.ts";
 import { readCurrent } from "../harnesses/layout.ts";
 import { Host } from "../system/Host.ts";
@@ -93,12 +94,7 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
 export const withFolders = (searchPath: string, more: string, platform: string): string => {
   const separator = platform === "win32" ? ";" : ":";
   const key = (folder: string) =>
-    platform === "win32"
-      ? folder
-          .trim()
-          .replace(/^"+|"+$/g, "")
-          .toLowerCase()
-      : folder;
+    platform === "win32" ? windowsNameKey(folder.trim().replace(/^"+|"+$/g, "")) : folder;
   const folders = searchPath.split(separator).filter((folder) => folder !== "");
   const seen = new Set(folders.map(key));
   for (const folder of more.split(separator)) {

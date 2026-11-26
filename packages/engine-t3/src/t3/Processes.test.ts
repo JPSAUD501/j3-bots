@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics processEnvInEffect:off -- One test puts a decoy `taskkill` first on the search path, which Node reads from this process's environment when it starts a child.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { system32 } from "@j3-bots/processes";
 import { makeProcesses, servesHome } from "./Processes.ts";
 
 describe("servesHome", () => {
@@ -67,8 +71,11 @@ const endWithTest = (pids: ReadonlyArray<number>) =>
     }),
   );
 
-/** Starts PARENT_SCRIPT with `marker` among its arguments; its pid and its child's. */
-const startParent = (marker: string) =>
+/**
+ * Starts PARENT_SCRIPT with `marker` among its arguments, in the scope, which
+ * stops it as the spawner stops what it started; its pid and its child's.
+ */
+const spawnParent = (marker: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const handle = yield* spawner.spawn(
@@ -86,9 +93,12 @@ const startParent = (marker: string) =>
       Effect.map(Number),
       Effect.timeout("30 seconds"),
     );
-    yield* endWithTest([parent, child]);
     return { parent, child };
   });
+
+/** `spawnParent`, both ended at the latest when the test ends. */
+const startParent = (marker: string) =>
+  spawnParent(marker).pipe(Effect.tap(({ parent, child }) => endWithTest([parent, child])));
 
 describe("makeProcesses", () => {
   it.live(
@@ -125,6 +135,44 @@ describe("makeProcesses", () => {
             );
           assert.isTrue(Option.isSome(childGone));
         }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    { timeout: 60_000 },
+  );
+
+  it.live.runIf(process.platform === "win32")(
+    "on Windows, the spawner ends what it started with Windows' own taskkill, whatever the search path puts first",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const processes = yield* makeProcesses(process.platform, process.env);
+        // A `taskkill` that ends nothing, first on the search path.
+        const decoy = yield* fs.makeTempDirectoryScoped();
+        yield* fs.copyFile(system32(process.env, "whoami.exe"), path.join(decoy, "taskkill.exe"));
+        const searched = process.env["PATH"];
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            process.env["PATH"] = `${decoy};${searched ?? ""}`;
+          }),
+          () =>
+            Effect.sync(() => {
+              if (searched === undefined) delete process.env["PATH"];
+              else process.env["PATH"] = searched;
+            }),
+        );
+
+        const { parent, child } = yield* Effect.scoped(
+          spawnParent(`j3-processes-taskkill-${process.pid}`),
+        );
+        yield* endWithTest([parent, child]);
+        // The decoy would have failed, and the spawner then ends the parent alone.
+        const childGone = yield* processes
+          .isAlive(child)
+          .pipe(
+            Effect.repeat({ schedule: Schedule.spaced("100 millis"), until: (alive) => !alive }),
+            Effect.timeoutOption("10 seconds"),
+          );
+        assert.isTrue(Option.isSome(childGone));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: 60_000 },
   );

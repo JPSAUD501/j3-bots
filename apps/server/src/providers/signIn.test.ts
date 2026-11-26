@@ -196,23 +196,81 @@ it("reads only the harness's own sign-in page in what it prints", () => {
   }
 });
 
-/** A stand-in harness: a shell script in `folder`, which `PATH` finds as `name`. */
+/**
+ * What a stand-in harness's script starts with: `hand(url)` hands a page to
+ * `BROWSER`, which only a sign-in off Windows gives a harness; `page(url)`
+ * does so where there is one and prints the page otherwise, as the harnesses
+ * do; `waitFor(file)` waits until the test creates `file`; `forever()` keeps
+ * the process running until it is ended.
+ */
+const PRELUDE = `
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawn, spawnSync } = require("node:child_process");
+const hand = (url) => {
+  if (process.env.BROWSER) spawnSync(process.env.BROWSER, [url], { stdio: "ignore" });
+};
+const page = (url) => {
+  if (process.env.BROWSER) hand(url);
+  else console.log("Visit " + url + " to sign in");
+};
+const waitFor = (file) =>
+  new Promise((resolve) => {
+    const poll = () => (fs.existsSync(file) ? resolve() : setTimeout(poll, 50));
+    poll();
+  });
+const forever = () => setInterval(() => {}, 1000);
+`;
+
+/**
+ * A stand-in harness in `folder`, which `PATH` finds as `name`: `body`, a
+ * Node script after `PRELUDE` that may `await`, started by a `.cmd` shim on
+ * Windows, as npm installs a harness there, and by `sh` elsewhere.
+ */
 const harness = Effect.fn(function* (folder: string, name: string, body: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const script = path.join(folder, `${name}.cjs`);
+  yield* fs.writeFileString(script, `${PRELUDE}\n(async () => {\n${body}\n})();\n`);
+  if (process.platform === "win32") {
+    const shim = path.join(folder, `${name}.cmd`);
+    yield* fs.writeFileString(shim, `@"${process.execPath}" "${script}" %*\r\n`);
+    return shim;
+  }
   const file = path.join(folder, name);
-  yield* fs.writeFileString(file, `#!/bin/sh\n${body}\n`);
+  yield* fs.writeFileString(file, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
   yield* fs.chmod(file, 0o755);
   return file;
 });
 
-/** A file the test creates to let a stand-in harness finish, once the page has been given. */
-const waitFor = (go: string) => `while [ ! -e '${go}' ]; do sleep 0.05; done`;
+/** A string as a literal in a stand-in's script. */
+const literal = (value: string) => JSON.stringify(value);
 
-// Real processes, on the real clock. The stand-in harnesses are sh scripts,
-// which Windows cannot run: there, the cmd.exe test above checks how a
-// harness is started.
-describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
+/**
+ * What a sign-in started here gets of this process's environment: the search
+ * path, and on Windows the variables Windows' own programs need, which the
+ * sign-in keeps (`engineEnvironment`).
+ */
+const SIGN_IN_ENVIRONMENT: Readonly<Record<string, string | undefined>> =
+  process.platform === "win32" ? { ...process.env } : { PATH: "/usr/bin:/bin" };
+
+/**
+ * Whether a sign-in hands the harness a `BROWSER`: never on Windows, where
+ * the harnesses do not honour it and print the page instead.
+ */
+const HANDS_BROWSER = process.platform !== "win32";
+
+const isRunning = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Real processes, on the real clock, on every system.
+describe("with stand-in harnesses", () => {
   it.layer(NodeServices.layer, { excludeTestServices: true })(
     "a sign-in with no terminal",
     (it) => {
@@ -230,9 +288,9 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
             harness: harnessName,
             executable,
             home,
-            environment: { PATH: "/usr/bin:/bin" },
+            environment: SIGN_IN_ENVIRONMENT,
             deviceAuth: false,
-            platform: "linux",
+            platform: process.platform,
             io: {
               _tag: "app",
               report: (status) =>
@@ -245,7 +303,8 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
           return { result, reported };
         });
 
-      it.effect(
+      // Windows gives a harness no `BROWSER`: the printed page is the one it has.
+      it.effect.runIf(HANDS_BROWSER)(
         "hands the client the page BROWSER is given, then signs in, never passing on what the harness printed",
         () =>
           Effect.gen(function* () {
@@ -259,11 +318,11 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
               root,
               "claude",
               [
-                `echo "Opening browser to sign in… ${SECRET}"`,
-                `"$BROWSER" "https://claude.com/cai/oauth/authorize?state=abc"`,
-                `echo "If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=abc"`,
-                waitFor(go),
-                `printf '{"accessToken":"${SECRET}"}' > "$CLAUDE_CONFIG_DIR/.credentials.json"`,
+                `console.log("Opening browser to sign in… ${SECRET}");`,
+                `hand("https://claude.com/cai/oauth/authorize?state=abc");`,
+                `console.log("If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=abc");`,
+                `await waitFor(${literal(go)});`,
+                `fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, ".credentials.json"), '{"accessToken":"${SECRET}"}');`,
               ].join("\n"),
             );
             const { result, reported } = yield* runApp("claude-code", claude, home, (status) =>
@@ -286,24 +345,27 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
       );
 
       it.effect(
-        "offers the printed page to open when the harness hands BROWSER none, and no other URL it printed",
+        "offers the printed page to open when the harness hands BROWSER none, and no other URL it printed, then signs in",
         () =>
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const root = yield* fs.makeTempDirectoryScoped();
+            const home = path.join(root, "claude-code");
+            yield* fs.makeDirectory(home, { mode: 0o700 });
             const go = path.join(root, "go");
             const claude = yield* harness(
               root,
               "claude",
               [
-                `echo "Diagnostics at https://status.example.com/report?token=${SECRET}"`,
-                `echo "Or https://ada:${SECRET}@claude.ai/oauth/authorize?code=true"`,
-                `echo "Visit https://claude.ai/oauth/authorize?code=true&state=xyz to sign in"`,
-                waitFor(go),
+                `console.log("Diagnostics at https://status.example.com/report?token=${SECRET}");`,
+                `console.log("Or https://ada:${SECRET}@claude.ai/oauth/authorize?code=true");`,
+                `console.log("Visit https://claude.ai/oauth/authorize?code=true&state=xyz to sign in");`,
+                `await waitFor(${literal(go)});`,
+                `fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, ".credentials.json"), '{"accessToken":"${SECRET}"}');`,
               ].join("\n"),
             );
-            const { result, reported } = yield* runApp("claude-code", claude, root, (status) =>
+            const { result, reported } = yield* runApp("claude-code", claude, home, (status) =>
               status._tag === "waiting-for-browser"
                 ? fs.writeFileString(go, "").pipe(Effect.orDie)
                 : Effect.void,
@@ -314,10 +376,12 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
               {
                 _tag: "waiting-for-browser",
                 url: "https://claude.ai/oauth/authorize?code=true&state=xyz",
-                opened: false,
+                // Where it had no `BROWSER` to hand the page to, the harness opened it.
+                opened: !HANDS_BROWSER,
               },
             ]);
             assert.notInclude(JSON.stringify(reported), SECRET);
+            assert.include(yield* fs.readFileString(path.join(home, ".credentials.json")), SECRET);
           }).pipe(Effect.scoped),
         // The printed page waits two seconds for one handed to `BROWSER`.
         10_000,
@@ -330,7 +394,12 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
           const refused = yield* harness(
             root,
             "refused",
-            `"$BROWSER" "https://claude.com/cai/oauth/authorize"\nsleep 0.5\necho "${SECRET}" >&2\nexit 1`,
+            [
+              `page("https://claude.com/cai/oauth/authorize");`,
+              `await new Promise((resolve) => setTimeout(resolve, 500));`,
+              `console.error(${literal(SECRET)});`,
+              `process.exit(1);`,
+            ].join("\n"),
           );
           const ended = yield* runApp("claude-code", refused, root);
           assert.deepStrictEqual(
@@ -343,7 +412,10 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
           const tty = yield* harness(
             root,
             "tty",
-            `echo "Error: Raw mode is not supported on the current process.stdin" >&2\nexit 1`,
+            [
+              `console.error("Error: Raw mode is not supported on the current process.stdin");`,
+              `process.exit(1);`,
+            ].join("\n"),
           );
           const needsTerminal = yield* runApp("claude-code", tty, root);
           assert.deepStrictEqual(
@@ -354,54 +426,56 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
         }).pipe(Effect.scoped),
       );
 
-      it.effect("stops the harness and keeps the stored sign-in when it is cancelled", () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped();
-          const home = path.join(root, "codex");
-          yield* fs.makeDirectory(home, { mode: 0o700 });
-          const credential = path.join(home, "auth.json");
-          yield* fs.writeFileString(credential, "stored\n");
-          const pid = path.join(root, "pid");
-          // Codex's own sign-in revokes what is stored in its folder first.
-          const codex = yield* harness(
-            root,
-            "stand-in",
-            [
-              `echo $$ > '${pid}'`,
-              `printf 'revoked\\n' > "$CODEX_HOME/auth.json"`,
-              `mkdir "$CODEX_HOME/log" && printf 'waiting\\n' > "$CODEX_HOME/log/codex-login.log"`,
-              `"$BROWSER" "https://auth.openai.com/oauth/authorize"`,
-              "exec sleep 60",
-            ].join("\n"),
-          );
-          const waiting = yield* Deferred.make<void>();
-          const fiber = yield* runApp("codex", codex, home, (status) =>
-            status._tag === "waiting-for-browser" ? Deferred.succeed(waiting, void 0) : Effect.void,
-          ).pipe(Effect.forkChild);
-          yield* Deferred.await(waiting);
-          yield* Fiber.interrupt(fiber);
-          assert.strictEqual(yield* fs.readFileString(credential), "stored\n");
-          // The new folder is gone with the sign-in that used it, and what Codex logged of it stays.
-          assert.deepStrictEqual((yield* fs.readDirectory(home)).toSorted(), ["auth.json", "log"]);
-          assert.strictEqual(
-            yield* fs.readFileString(path.join(home, "log", "codex-login.log")),
-            "waiting\n",
-          );
-          const signedIn = Number((yield* fs.readFileString(pid)).trim());
-          const alive = () => {
-            try {
-              process.kill(signedIn, 0);
-              return true;
-            } catch {
-              return false;
-            }
-          };
-          // Stopped once its scope closed: SIGTERM, then SIGKILL.
-          for (let waited = 0; waited < 100 && alive(); waited++) yield* Effect.sleep("50 millis");
-          assert.isFalse(alive());
-        }).pipe(Effect.scoped),
+      it.effect(
+        "stops the harness and keeps the stored sign-in when it is cancelled",
+        () =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const root = yield* fs.makeTempDirectoryScoped();
+            const home = path.join(root, "codex");
+            yield* fs.makeDirectory(home, { mode: 0o700 });
+            const credential = path.join(home, "auth.json");
+            yield* fs.writeFileString(credential, "stored\n");
+            const pid = path.join(root, "pid");
+            // Codex's own sign-in revokes what is stored in its folder first.
+            const codex = yield* harness(
+              root,
+              "stand-in",
+              [
+                `fs.writeFileSync(${literal(pid)}, String(process.pid));`,
+                `fs.writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "revoked\\n");`,
+                `fs.mkdirSync(path.join(process.env.CODEX_HOME, "log"), { recursive: true });`,
+                `fs.writeFileSync(path.join(process.env.CODEX_HOME, "log", "codex-login.log"), "waiting\\n");`,
+                `page("https://auth.openai.com/oauth/authorize");`,
+                `forever();`,
+              ].join("\n"),
+            );
+            const waiting = yield* Deferred.make<void>();
+            const fiber = yield* runApp("codex", codex, home, (status) =>
+              status._tag === "waiting-for-browser"
+                ? Deferred.succeed(waiting, void 0)
+                : Effect.void,
+            ).pipe(Effect.forkChild);
+            yield* Deferred.await(waiting);
+            yield* Fiber.interrupt(fiber);
+            assert.strictEqual(yield* fs.readFileString(credential), "stored\n");
+            // The new folder is gone with the sign-in that used it, and what Codex logged of it stays.
+            assert.deepStrictEqual((yield* fs.readDirectory(home)).toSorted(), [
+              "auth.json",
+              "log",
+            ]);
+            assert.strictEqual(
+              yield* fs.readFileString(path.join(home, "log", "codex-login.log")),
+              "waiting\n",
+            );
+            const signedIn = Number((yield* fs.readFileString(pid)).trim());
+            // Stopped once its scope closed: SIGTERM, then SIGKILL; on Windows, at once.
+            for (let waited = 0; waited < 100 && isRunning(signedIn); waited++)
+              yield* Effect.sleep("50 millis");
+            assert.isFalse(isRunning(signedIn));
+          }).pipe(Effect.scoped),
+        10_000,
       );
 
       it.effect(
@@ -411,9 +485,10 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const root = yield* fs.makeTempDirectoryScoped();
+            // Longer than the two seconds a printed page waits for one handed to `BROWSER`.
             const limits = {
-              pageWait: Duration.seconds(1),
-              signInWait: Duration.seconds(2),
+              pageWait: Duration.seconds(3),
+              signInWait: Duration.seconds(4),
               stopWithin: Duration.millis(300),
             };
             /** A sign-in of a stand-in that ignores SIGTERM, as do the child it starts, and how it ended. */
@@ -430,14 +505,13 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
                   root,
                   `${path.basename(home)}-stand-in`,
                   [
-                    "trap '' TERM",
-                    `echo $$ >> '${pids}'`,
-                    "sleep 600 &",
-                    `echo $! >> '${pids}'`,
+                    `process.on("SIGTERM", () => {});`,
+                    `const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+                    `fs.writeFileSync(${literal(pids)}, process.pid + "\\n" + child.pid + "\\n");`,
                     ...(page
-                      ? [`"$BROWSER" "${HARNESSES[harnessName].signInPages[0]}?state=s"`]
+                      ? [`page(${literal(`${HARNESSES[harnessName].signInPages[0]}?state=s`)});`]
                       : []),
-                    "wait",
+                    `forever();`,
                   ].join("\n"),
                 );
                 const waiting = yield* Deferred.make<void>();
@@ -461,14 +535,7 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
                   .trim()
                   .split("\n")
                   .map(Number)
-                  .filter((pid) => {
-                    try {
-                      process.kill(pid, 0);
-                      return true;
-                    } catch {
-                      return false;
-                    }
-                  });
+                  .filter(isRunning);
                 // Nothing the sign-in made is left: not the page's folder, not Codex's new folder.
                 const left = [
                   ...(yield* fs.readDirectory(root)),
@@ -492,15 +559,15 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
               [noPage.reason, noPage.running, noPage.left],
               ["needs-terminal", [], []],
             );
-            assert.isBelow(noPage.took, 3_000);
+            assert.isBelow(noPage.took, 5_000);
             const timedOut = yield* stubborn("codex", true, false);
             assert.deepStrictEqual(
               [timedOut.reason, timedOut.running, timedOut.left],
               ["timed-out", [], []],
             );
-            assert.isBelow(timedOut.took, 4_000);
+            assert.isBelow(timedOut.took, 6_000);
           }).pipe(Effect.scoped),
-        20_000,
+        30_000,
       );
 
       it.effect("refuses a Codex sign-in that left no credential file, replacing nothing", () =>
@@ -518,9 +585,10 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
             root,
             "stand-in",
             [
-              `mkdir "$CODEX_HOME/log" && printf 'keyring\\n' > "$CODEX_HOME/log/codex-login.log"`,
-              `"$BROWSER" "https://auth.openai.com/oauth/authorize"`,
-              "exit 0",
+              `fs.mkdirSync(path.join(process.env.CODEX_HOME, "log"), { recursive: true });`,
+              `fs.writeFileSync(path.join(process.env.CODEX_HOME, "log", "codex-login.log"), "keyring\\n");`,
+              `page("https://auth.openai.com/oauth/authorize");`,
+              `process.exit(0);`,
             ].join("\n"),
           );
           const { result } = yield* runApp("codex", keyring, home);
@@ -540,6 +608,15 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
   );
 });
 
+/** The server's search path with `bin` first, as its environment names it on this system. */
+const searchPathWith = (bin: string): Record<string, string> =>
+  process.platform === "win32"
+    ? {
+        PATH: `${bin};${process.env["SystemRoot"] ?? "C:\\Windows"}\\System32`,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      }
+    : { PATH: `${bin}:/usr/bin:/bin` };
+
 /**
  * The sign-ins service over the in-memory engine, in a private test home,
  * with the stand-in harnesses `bin` holds as the server's `PATH`.
@@ -552,145 +629,135 @@ const signInsIn = (home: string, bin: string) =>
         Layer.provideMerge(TestEngine.layer),
         Layer.provide(Layer.succeed(ServerConfig, configFor(path, home))),
         Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer))),
-        Layer.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnvRecord({ PATH: `${bin}:/usr/bin:/bin` })),
-        ),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(searchPathWith(bin)))),
       );
     }),
   );
 
-// sh stand-ins, as above.
-describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
-  it.layer(NodeServices.layer, { excludeTestServices: true })(
-    "the sign-ins clients follow",
-    (it) => {
-      it.effect(
-        "says a stored endpoint connection still wins, and has the engine check the provider again",
-        () =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const home = yield* fs.makeTempDirectoryScoped();
-            const bin = path.join(home, "bin");
-            yield* fs.makeDirectory(bin);
-            const go = path.join(bin, "go");
-            yield* harness(
-              bin,
-              "claude",
-              [`"$BROWSER" "https://claude.com/cai/oauth/authorize"`, waitFor(go)].join("\n"),
-            );
-            const statuses = yield* Effect.gen(function* () {
-              const engine = yield* Engine;
-              yield* engine.connectProviders({
-                baseUrl: "https://proxy.example",
-                key: Redacted.make("not-a-real-key"),
-              });
-              const signIns = yield* SignIns.SignIns;
-              const locations = yield* signIns.locations;
-              assert.deepStrictEqual(locations, [
-                { harness: "claude-code", path: path.join(bin, "claude") },
-                { harness: "codex", path: null },
-              ]);
-              const followed = yield* signIns.follow("claude-code", true).pipe(
-                Stream.tap((status) =>
-                  status._tag === "waiting-for-browser"
-                    ? fs.writeFileString(go, "").pipe(Effect.orDie)
-                    : Effect.void,
-                ),
-                Stream.runCollect,
-              );
-              assert.deepStrictEqual(followed.at(-1), {
-                _tag: "succeeded",
-                endpoint: "https://proxy.example",
-              });
-              assert.deepStrictEqual(
-                yield* (yield* TestEngine.TestEngineControl).recheckedProviders,
-                [ProviderId.make("claude-code")],
-              );
-              // A harness not on the PATH says so.
-              const missing = yield* signIns.follow("codex", true).pipe(Stream.runCollect);
-              return { followed, missing };
-            }).pipe(Effect.provide(signInsIn(home, bin)));
-            assert.deepStrictEqual(statuses.followed.at(-1), {
-              _tag: "succeeded",
-              endpoint: "https://proxy.example",
-            });
-            assert.deepStrictEqual(statuses.missing.at(-1), {
-              _tag: "failed",
-              reason: "not-installed",
-            });
-          }).pipe(Effect.scoped),
-      );
+it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins clients follow", (it) => {
+  it.effect(
+    "says a stored endpoint connection still wins, and has the engine check the provider again",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const bin = path.join(home, "bin");
+        yield* fs.makeDirectory(bin);
+        const go = path.join(bin, "go");
+        const claude = yield* harness(
+          bin,
+          "claude",
+          [
+            `page("https://claude.com/cai/oauth/authorize");`,
+            `await waitFor(${literal(go)});`,
+          ].join("\n"),
+        );
+        const statuses = yield* Effect.gen(function* () {
+          const engine = yield* Engine;
+          yield* engine.connectProviders({
+            baseUrl: "https://proxy.example",
+            key: Redacted.make("not-a-real-key"),
+          });
+          const signIns = yield* SignIns.SignIns;
+          const locations = yield* signIns.locations;
+          assert.deepStrictEqual(locations, [
+            { harness: "claude-code", path: claude },
+            { harness: "codex", path: null },
+          ]);
+          const followed = yield* signIns.follow("claude-code", true).pipe(
+            Stream.tap((status) =>
+              status._tag === "waiting-for-browser"
+                ? fs.writeFileString(go, "").pipe(Effect.orDie)
+                : Effect.void,
+            ),
+            Stream.runCollect,
+          );
+          assert.deepStrictEqual(followed.at(-1), {
+            _tag: "succeeded",
+            endpoint: "https://proxy.example",
+          });
+          assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).recheckedProviders, [
+            ProviderId.make("claude-code"),
+          ]);
+          // A harness not on the PATH says so.
+          const missing = yield* signIns.follow("codex", true).pipe(Stream.runCollect);
+          return { followed, missing };
+        }).pipe(Effect.provide(signInsIn(home, bin)));
+        assert.deepStrictEqual(statuses.followed.at(-1), {
+          _tag: "succeeded",
+          endpoint: "https://proxy.example",
+        });
+        assert.deepStrictEqual(statuses.missing.at(-1), {
+          _tag: "failed",
+          reason: "not-installed",
+        });
+      }).pipe(Effect.scoped),
+  );
 
-      it.effect(
-        "ends a cancel of a harness that ignores SIGTERM in time, and can sign in again",
-        () =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const home = yield* fs.makeTempDirectoryScoped();
-            const bin = path.join(home, "bin");
-            yield* fs.makeDirectory(bin);
-            yield* harness(
-              bin,
-              "claude",
-              `trap '' TERM\n"$BROWSER" "https://claude.com/cai/oauth/authorize"\nsleep 600 &\nwait`,
-            );
-            yield* Effect.gen(function* () {
-              const signIns = yield* SignIns.SignIns;
-              const untilPage = signIns.follow("claude-code", true).pipe(
-                Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
-                Stream.runCollect,
-              );
-              assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
-              // SIGTERM, then SIGKILL three seconds later.
-              const [stopping] = yield* Effect.timed(signIns.cancel("claude-code"));
-              assert.isBelow(Duration.toMillis(stopping), 6_000);
-              assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
-              yield* signIns.cancel("claude-code");
-            }).pipe(Effect.provide(signInsIn(home, bin)));
-          }).pipe(Effect.scoped),
-        20_000,
-      );
+  it.effect(
+    "ends a cancel of a harness that ignores SIGTERM in time, and can sign in again",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const bin = path.join(home, "bin");
+        yield* fs.makeDirectory(bin);
+        yield* harness(
+          bin,
+          "claude",
+          [
+            `process.on("SIGTERM", () => {});`,
+            `spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+            `page("https://claude.com/cai/oauth/authorize");`,
+            `forever();`,
+          ].join("\n"),
+        );
+        yield* Effect.gen(function* () {
+          const signIns = yield* SignIns.SignIns;
+          const untilPage = signIns.follow("claude-code", true).pipe(
+            Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
+            Stream.runCollect,
+          );
+          assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
+          // SIGTERM, then SIGKILL three seconds later.
+          const [stopping] = yield* Effect.timed(signIns.cancel("claude-code"));
+          assert.isBelow(Duration.toMillis(stopping), 6_000);
+          assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
+          yield* signIns.cancel("claude-code");
+        }).pipe(Effect.provide(signInsIn(home, bin)));
+      }).pipe(Effect.scoped),
+    20_000,
+  );
 
-      it.effect(
-        "lets a second client follow the sign-in under way, and a cancel end it for both",
-        () =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const home = yield* fs.makeTempDirectoryScoped();
-            const bin = path.join(home, "bin");
-            yield* fs.makeDirectory(bin);
-            yield* harness(
-              bin,
-              "claude",
-              `"$BROWSER" "https://claude.com/cai/oauth/authorize"\nexec sleep 60`,
-            );
-            yield* Effect.gen(function* () {
-              const signIns = yield* SignIns.SignIns;
-              const first = yield* signIns
-                .follow("claude-code", true)
-                .pipe(Stream.runCollect, Effect.forkChild);
-              const second = yield* signIns.follow("claude-code", true).pipe(
-                Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
-                Stream.runCollect,
-              );
-              assert.deepStrictEqual(second.at(-1)?._tag, "waiting-for-browser");
-              yield* signIns.cancel("claude-code");
-              assert.deepStrictEqual((yield* Fiber.join(first)).at(-1), { _tag: "cancelled" });
-              // A client back on a new socket learns how it ended, and starts nothing.
-              assert.deepStrictEqual(
-                yield* signIns.follow("claude-code", false).pipe(Stream.runCollect),
-                [{ _tag: "cancelled" }],
-              );
-              assert.deepStrictEqual(
-                yield* signIns.follow("codex", false).pipe(Stream.runCollect),
-                [],
-              );
-            }).pipe(Effect.provide(signInsIn(home, bin)));
-          }).pipe(Effect.scoped),
-      );
-    },
+  it.effect("lets a second client follow the sign-in under way, and a cancel end it for both", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const bin = path.join(home, "bin");
+      yield* fs.makeDirectory(bin);
+      yield* harness(bin, "claude", `page("https://claude.com/cai/oauth/authorize");\nforever();`);
+      yield* Effect.gen(function* () {
+        const signIns = yield* SignIns.SignIns;
+        const first = yield* signIns
+          .follow("claude-code", true)
+          .pipe(Stream.runCollect, Effect.forkChild);
+        const second = yield* signIns.follow("claude-code", true).pipe(
+          Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
+          Stream.runCollect,
+        );
+        assert.deepStrictEqual(second.at(-1)?._tag, "waiting-for-browser");
+        yield* signIns.cancel("claude-code");
+        assert.deepStrictEqual((yield* Fiber.join(first)).at(-1), { _tag: "cancelled" });
+        // A client back on a new socket learns how it ended, and starts nothing.
+        assert.deepStrictEqual(
+          yield* signIns.follow("claude-code", false).pipe(Stream.runCollect),
+          [{ _tag: "cancelled" }],
+        );
+        assert.deepStrictEqual(yield* signIns.follow("codex", false).pipe(Stream.runCollect), []);
+      }).pipe(Effect.provide(signInsIn(home, bin)));
+    }).pipe(Effect.scoped),
   );
 });

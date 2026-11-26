@@ -16,6 +16,10 @@
       "types": "./src/system/Network.ts",
       "import": "./src/system/Network.ts"
     },
+    "./home-entries": {
+      "types": "./src/home/entries.ts",
+      "import": "./src/home/entries.ts"
+    },
     "./transfer-report": {
       "types": "./src/transfer/report.ts",
       "import": "./src/transfer/report.ts"

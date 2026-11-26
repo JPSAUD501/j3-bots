@@ -9,6 +9,7 @@ import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { windowsNameKey } from "@j3-bots/processes";
 
 // Unpacks a zip archive in this process: Windows has no `tar` J3 Bots can
 // count on, and T3 Code ships its Windows engine as a zip. It reads what the
@@ -202,7 +203,7 @@ const readEntries = (
     }
     // Two files at one name would let the second replace the first, and
     // Windows names that differ only in case are one name.
-    const key = name.toLowerCase();
+    const key = windowsNameKey(name);
     if (!isDirectory && names.has(key)) return fail("corrupt", `${name} is listed twice`);
     names.add(key);
     entries.push({

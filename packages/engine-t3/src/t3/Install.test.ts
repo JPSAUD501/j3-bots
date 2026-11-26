@@ -210,7 +210,7 @@ describe("ensureInstalled", () => {
       const fs = yield* FileSystem.FileSystem;
       const requests: Array<string> = [];
 
-      const { partial, events, reason } = yield* install(requests, {
+      const { partial, staging, events, reason } = yield* install(requests, {
         prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       });
 
@@ -221,8 +221,10 @@ describe("ensureInstalled", () => {
         downloaded(ARCHIVE.length, ARCHIVE.length),
       ]);
       // The resumed file matched the pinned digest; only unpacking it failed.
+      // What was unpacked is gone at once; the download stays for the next try.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
+      assert.isFalse(yield* fs.exists(staging));
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
@@ -255,10 +257,11 @@ describe("ensureInstalled", () => {
         prepare: ({ staging }) => fs.symlink(outside, staging),
       });
 
-      // The download matched; only unpacking it failed, in a folder of its own.
+      // The download matched; only unpacking it failed, in a folder of its
+      // own, which is gone with the failure, while the link's target is not.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readDirectory(outside), ["owner-file"]);
-      assert.strictEqual((yield* fs.lstat(staging)).type, "Directory");
+      assert.isFalse(yield* fs.exists(staging));
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 

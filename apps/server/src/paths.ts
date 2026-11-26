@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { windowsNameKey } from "@j3-bots/processes";
 
 /**
  * Where `location` really is, symbolic links resolved. A path that does not
@@ -29,13 +30,16 @@ export const realLocation = Effect.fn("realLocation")(function* (location: strin
 /**
  * Whether `inner` is `outer` or inside it. Both absolute and normalized, as
  * `platform` writes paths: Windows separates segments with `\\` and, on its
- * file systems as they come, compares names without case, so a path that
- * differs from another only in case names the same place there.
+ * file systems as they come, compares names without case, as NTFS folds it
+ * (`windowsNameKey`), so a path that differs from another only in case names
+ * the same place there.
  */
 export const isWithin = (outer: string, inner: string, platform: string = process.platform) => {
   const windows = platform === "win32";
   const separator = windows ? "\\" : "/";
-  const [within, without] = windows ? [inner.toLowerCase(), outer.toLowerCase()] : [inner, outer];
+  const [within, without] = windows
+    ? [windowsNameKey(inner), windowsNameKey(outer)]
+    : [inner, outer];
   return (
     within === without ||
     within.startsWith(without.endsWith(separator) ? without : `${without}${separator}`)

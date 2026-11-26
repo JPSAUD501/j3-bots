@@ -53,8 +53,12 @@ packageExtensions:
     dependencies:
       vite-plus: "catalog:"
 
-# From T3 Code (MIT): points @effect/vitest at the Vitest that Vite+ bundles.
 patchedDependencies:
+  # Its spawner stops a child on Windows with `taskkill` from the search path,
+  # where one the operator's PATH puts first would be run instead; the patch
+  # runs Windows' own, in System32. Still so in 4.1.6.
+  "@effect/platform-node-shared@4.1.2": patches/@effect__platform-node-shared@4.1.2.patch
+  # From T3 Code (MIT): points @effect/vitest at the Vitest that Vite+ bundles.
   "@effect/vitest@4.1.2": patches/@effect__vitest@4.1.2.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is

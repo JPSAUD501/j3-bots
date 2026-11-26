@@ -2,6 +2,7 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { windowsNameKey } from "@j3-bots/processes";
 import * as Probe from "./probe.ts";
 
 // The PATH a new terminal of the operator's would have, for the server the
@@ -51,7 +52,7 @@ export const mergePaths = (platform: NodeJS.Platform, paths: ReadonlyArray<strin
     for (const entry of path.split(separator)) {
       const folder = platform === "win32" ? entry.trim() : entry;
       if (folder.length === 0) continue;
-      const key = platform === "win32" ? folder.toLowerCase() : folder;
+      const key = platform === "win32" ? windowsNameKey(folder) : folder;
       if (seen.has(key)) continue;
       seen.add(key);
       merged.push(folder);
