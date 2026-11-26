@@ -7,7 +7,6 @@
 export { resendLabel } from "./addressee.ts";
 export { type AnsweringLine, answeringLine } from "./answering.ts";
 export {
-  connectedText,
   connectFailureText,
   connectorStatusText,
   type ConnectorStatusText,

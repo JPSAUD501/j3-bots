@@ -8,11 +8,7 @@ import type {
   ConnectorAppViewId,
   ConnectorGrant,
   ConnectorId,
-  ConnectorListing,
-  ConnectorListingDetails,
   ConnectorPrompt,
-  Language,
-  ListingRef,
   PromptArguments,
   SignInRedirect,
   SignInStarted,
@@ -228,21 +224,6 @@ export interface ConnectorsClient {
     readonly name: string;
     readonly arguments: PromptArguments;
   }) => Promise<Actions.IntentResult<{ readonly text: string; readonly cut: boolean }>>;
-  readonly featured: (
-    language: Language,
-  ) => Promise<Actions.IntentResult<ReadonlyArray<ConnectorListing>>>;
-  readonly search: (input: {
-    readonly query: string;
-    readonly language: Language;
-    readonly all: boolean;
-  }) => Promise<Actions.IntentResult<Connectors.ConnectorSearch>>;
-  readonly listing: (
-    ref: ListingRef,
-    language: Language,
-  ) => Promise<Actions.IntentResult<ConnectorListingDetails>>;
-  readonly add: (
-    addition: Connectors.ConnectorAddition,
-  ) => Promise<Actions.IntentResult<Connector, Actions.ConnectorIntentFailure>>;
   readonly update: (
     connectorId: ConnectorId,
     changes: Connectors.ConnectorChanges,
@@ -283,7 +264,6 @@ export interface SkillsClient {
     name: SkillName,
     text: SkillText,
   ) => Promise<Actions.IntentResult<Skill>>;
-  readonly install: (install: Skills.SkillInstall) => Promise<Actions.IntentResult<Skill>>;
   readonly remove: (scope: SkillScope, name: SkillName) => Promise<Actions.IntentResult>;
 }
 
@@ -917,10 +897,6 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       state: services.connectors.state,
       prompts: (botId) => run.promise(services.connectors.prompts(botId)),
       renderPrompt: (input) => run.promise(services.connectors.renderPrompt(input)),
-      featured: (language) => run.promise(services.connectors.featured(language)),
-      search: (input) => run.promise(services.connectors.search(input)),
-      listing: (ref, language) => run.promise(services.connectors.listing(ref, language)),
-      add: (addition) => run.promise(services.connectors.add(addition)),
       update: (connectorId, changes) =>
         run.promise(services.connectors.update(connectorId, changes)),
       remove: (connectorId) => run.promise(services.connectors.remove(connectorId)),
@@ -940,7 +916,6 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       state: services.skills.state,
       read: (scope, name) => run.promise(services.skills.read(scope, name)),
       save: (scope, name, text) => run.promise(services.skills.save(scope, name, text)),
-      install: (install) => run.promise(services.skills.install(install)),
       remove: (scope, name) => run.promise(services.skills.remove(scope, name)),
     },
     connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),

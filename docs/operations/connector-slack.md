@@ -2,6 +2,8 @@
 
 **Draft.** Connectors are new in 0.4.0, and no step below has been run against Slack yet. What this page says about Slack comes from Slack's documentation and is **Assumed** until a sign-in confirms it.
 
+**Not reachable in 0.10.0.** The apps of this release have no screen that takes your app's client, and a bot refuses a server that needs one, so a Slack connector can't be added now ([decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md)). The steps below stay for the release that brings that screen back; a Slack connector added before 0.10.0 keeps working.
+
 Slack's MCP server does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to it on its own. You create a Slack app and give J3 Bots its client ID and secret when you add the connector. J3 Bots keeps them in its secrets and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
 
 ## Where your sign-ins return

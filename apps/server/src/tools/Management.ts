@@ -291,7 +291,7 @@ export const layer = Layer.effect(
           url: input.url,
           headers: pairs(input.headers, "name"),
           oauthClient: null,
-          // An address in the operator's own network takes their word, in Settings.
+          // An address in the operator's own network takes their word, which no current client asks for.
           privateNetwork: false,
         });
       }

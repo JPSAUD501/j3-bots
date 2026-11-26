@@ -49,42 +49,31 @@ export {
   siteOf,
 } from "./browser.ts";
 export {
-  addedFrom,
-  addedPlace,
   applyConnectorChange,
   connectorNeedsYou,
-  type ConnectorsOpening,
   connectorsOf,
   type ConnectorsPlace,
   connectorTone,
   type ConnectorTone,
   grantsBot,
-  initialGrant,
-  listingKey,
-  listingPlace,
   sameGrant,
   type SignInProblem,
   withBot,
 } from "./connectors.ts";
 export {
   type ArgumentsDraft,
-  type ClientInput,
   type CommandConsent,
   type CommandEdit,
   commandConsent,
   commandEdit,
-  commandSource,
   type EnvProblem,
   type FormProblems,
   keepsLine,
   type KnownCommand,
   knownCommand,
-  listingSource,
   refillValues,
   withoutSecrets,
   type PairInput,
-  remoteSource,
-  type SourceDraft,
 } from "./connectorForm.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
@@ -328,17 +317,7 @@ export {
   type VisualReport,
   visualShell,
 } from "./visual.ts";
-export {
-  type InstallDraft,
-  type InstallProblem,
-  installedName,
-  newSkillText,
-  sameScope,
-  skillDraft,
-  type SkillGroup,
-  skillGroups,
-  skillInstall,
-} from "./skills.ts";
+export { sameScope, skillDraft, type SkillGroup, skillGroups } from "./skills.ts";
 export {
   type InputDraft,
   type InputProblem,

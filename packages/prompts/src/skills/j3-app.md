@@ -53,7 +53,7 @@ Ten pages, each saying in one line what it holds:
 - **Appearance:** theme and language, for this device only.
 - **Providers:** the engine and each provider's status, why one cannot run, and updates to the coding tools behind the bots.
 - **Usage:** how close each provider is to its limit, and which bots and routines used it.
-- **MCP and skills:** the connectors (the gallery, a search of it, "Add your own"), who may use each, and the skills every bot shares or one bot keeps. A connector's page signs in again, changes who uses it, or disconnects it.
+- **MCP and skills:** the connectors the bots added, who may use each, and the skills bots saved, every bot's or one bot's. A connector's page signs in again, changes who uses it, or disconnects it. Nothing there adds a connector or a skill: your user asks a bot. J3 Bots' own skills (`j3-…`) aren't listed there.
 - **Secrets:** saved logins and values, which bots may use each, and the bots' browser with its sign-ins.
 - **Devices:** this device, every paired one, pairing another, and signing out.
 - **Where your bots live:** in the desktop app, on this computer or on a server; in the Android app, the server it uses, and "Change server". A browser has no such page. Bots run on a computer, never on the phone.

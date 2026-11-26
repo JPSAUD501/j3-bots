@@ -1,14 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  Bot,
-  BotId,
-  Connector,
-  ConnectorGlyph,
-  ConnectorGrant,
-  ConnectorId,
-  ConnectorListing,
-  ListingRef,
-} from "@j3-bots/contracts";
+import type { Bot, BotId, Connector, ConnectorGrant, ConnectorId } from "@j3-bots/contracts";
 
 /**
  * The operator's connectors once `upsert` and `remove` are applied: each
@@ -40,15 +31,6 @@ export const connectorsOf = (
   connectors: ReadonlyArray<Connector>,
   botId: BotId,
 ): ReadonlyArray<Connector> => connectors.filter((connector) => grantsBot(connector.grant, botId));
-
-/**
- * Who a new connector is for until the operator says otherwise: the bot whose
- * details it is added from, else every bot, as the server would grant it.
- */
-export const initialGrant = (bots: ReadonlyArray<Bot>, asking: BotId | null): ConnectorGrant => {
-  const bot = asking === null ? undefined : bots.find((candidate) => candidate.id === asking);
-  return bot === undefined ? { _tag: "all-bots" } : { _tag: "bots", ids: [bot.id] };
-};
 
 /**
  * `grant` with `botId` let in or taken out. Taking one bot out of "all bots"
@@ -95,23 +77,6 @@ export const connectorTone = (connector: Connector): ConnectorTone => {
 export const connectorNeedsYou = (connector: Connector): boolean =>
   connectorTone(connector) === "needs-you";
 
-/** The connector the operator added from `listing`, if they did. */
-export const addedFrom = (
-  connectors: ReadonlyArray<Connector>,
-  listing: ConnectorListing["ref"],
-): Connector | undefined =>
-  connectors.find(
-    (connector) =>
-      connector.listing !== null &&
-      (connector.listing._tag === "curated"
-        ? listing._tag === "curated" && listing.key === connector.listing.key
-        : listing._tag === "registry" && listing.name === connector.listing.name),
-  );
-
-/** A gallery entry's key, for lists and for what a screen shows. */
-export const listingKey = (ref: ConnectorListing["ref"]): string =>
-  ref._tag === "curated" ? `curated:${ref.key}` : `registry:${ref.name}`;
-
 /**
  * Why a sign-in did not finish:
  * - `start-failed`: it did not start, or the server did not answer;
@@ -135,51 +100,12 @@ export type SignInProblem =
   | "secrets-unavailable"
   | "not-paired";
 
-/** A page of the connectors screen. */
+/** A page of the connectors screen: its first, or one connector's. */
 export type ConnectorsPlace =
   | { readonly _tag: "home" }
-  | {
-      readonly _tag: "listing";
-      readonly ref: ListingRef;
-      /** Its name and glyph, shown while its page loads. */
-      readonly name: string;
-      readonly glyph: ConnectorGlyph | null;
-    }
   | {
       readonly _tag: "connector";
       readonly connectorId: ConnectorId;
       /** Start its sign-in as the page opens, as a card's Sign in asks. */
       readonly signIn: boolean;
-      /** It was just added here: the page says who can use it from now. */
-      readonly added: boolean;
-    }
-  | { readonly _tag: "add-own" };
-
-/**
- * What opens the connectors screen: where it opens, and the bot a new
- * connector is for at first (the one whose details opened it; null for
- * every bot).
- */
-export interface ConnectorsOpening {
-  readonly at: ConnectorsPlace;
-  readonly forBot: BotId | null;
-}
-
-/** The page a connector just added opens on: its sign-in started, when it has one to do. */
-export const addedPlace = (connector: Connector): ConnectorsPlace => ({
-  _tag: "connector",
-  connectorId: connector.id,
-  signIn: connector.signIn === "oauth" && connector.status._tag === "needs-sign-in",
-  added: true,
-});
-
-/** The page a gallery entry opens: the connector added from it, if any, else its own. */
-export const listingPlace = (
-  connectors: ReadonlyArray<Connector>,
-  listing: Pick<ConnectorListing, "ref" | "name" | "glyph">,
-): ConnectorsPlace => {
-  const added = addedFrom(connectors, listing.ref);
-  return added === undefined
-    ? { _tag: "listing", ref: listing.ref, name: listing.name, glyph: listing.glyph }
-    : { _tag: "connector", connectorId: added.id, signIn: false, added: false };
-};
+    };

@@ -19,7 +19,7 @@ import type {
   UpdatePromptEntry,
   UpdateResult,
 } from "@j3-bots/client-runtime";
-import type { ConnectorsOpening, SettingsPage } from "@j3-bots/client-runtime/presentation";
+import type { ConnectorsPlace, SettingsPage } from "@j3-bots/client-runtime/presentation";
 import type {
   AvatarChoice,
   Bot,
@@ -283,7 +283,7 @@ export interface ShellIntents extends TimelineIntents {
   readonly setSettingsOpen: (open: boolean) => void;
   readonly showSettingsPage: (page: SettingsPage | null) => void;
   /** Opens the connectors screen, closing Settings if it is open. */
-  readonly openConnectors: (opening: ConnectorsOpening) => void;
+  readonly openConnectors: (opening: ConnectorsPlace) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**
    * Resolves `false` unless the server confirmed it within ten seconds; the

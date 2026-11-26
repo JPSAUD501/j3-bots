@@ -11,12 +11,7 @@ import {
   type ConnectorFieldValue,
   type ConnectorGrant,
   ConnectorId,
-  type ConnectorListing,
-  type ConnectorListingDetails,
   type ConnectorPrompt,
-  type ConnectorSource,
-  type Language,
-  type ListingRef,
   type PromptArguments,
   type SignInRedirect,
   type SignInStarted,
@@ -27,7 +22,6 @@ import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import { Connection, type NotPaired } from "../connection/Connection.ts";
 import {
   Actions,
@@ -40,19 +34,6 @@ import { applyConnectorChange } from "../presentation/connectors.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
-/** What a search of the gallery found, and whether the MCP Registry answered in time. */
-export interface ConnectorSearch {
-  readonly listings: ReadonlyArray<ConnectorListing>;
-  readonly registry: "answered" | "unavailable";
-}
-
-/** A connector to add: where from, and which bots may use it. */
-export interface ConnectorAddition {
-  readonly source: ConnectorSource;
-  /** Left out: every bot. */
-  readonly grant?: ConnectorGrant;
-}
-
 /**
  * What changes in a connector the operator added: its name, values its form
  * took, or a command connector's whole command line, once the operator
@@ -64,11 +45,9 @@ export interface ConnectorChanges {
   readonly command?: CommandLine;
 }
 
-const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
-
 /**
- * The operator's connectors, kept live on every socket, and the gallery to
- * find more in. A request that carries a value or a sign-in has no command
+ * The operator's connectors, kept live on every socket, and the operator's
+ * changes to them. A request that carries a value or a sign-in has no command
  * id (`ConnectorRpcs`): each is safe to send again as it stands, so a socket
  * that drops sends it again.
  */
@@ -85,24 +64,6 @@ export class Connectors extends Context.Service<
       readonly name: string;
       readonly arguments: PromptArguments;
     }) => Effect.Effect<IntentResult<{ readonly text: string; readonly cut: boolean }>>;
-    /** What the gallery features, in `language`. */
-    readonly featured: (
-      language: Language,
-    ) => Effect.Effect<IntentResult<ReadonlyArray<ConnectorListing>>>;
-    /** Without `all`, only listings every client can connect. */
-    readonly search: (input: {
-      readonly query: string;
-      readonly language: Language;
-      readonly all: boolean;
-    }) => Effect.Effect<IntentResult<ConnectorSearch>>;
-    readonly listing: (
-      ref: ListingRef,
-      language: Language,
-    ) => Effect.Effect<IntentResult<ConnectorListingDetails>>;
-    /** Adds it under an id of this client's, so a retry finds the connector it added. */
-    readonly add: (
-      addition: ConnectorAddition,
-    ) => Effect.Effect<IntentResult<Connector, ConnectorIntentFailure>>;
     readonly update: (
       connectorId: ConnectorId,
       changes: ConnectorChanges,
@@ -141,7 +102,6 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const connection = yield* Connection;
     const actions = yield* Actions;
-    const random = yield* SecureRandom.SecureRandom;
     const state = new Cell<Synced<ReadonlyArray<Connector>>>(loading);
 
     yield* connection
@@ -183,31 +143,6 @@ export const layer = Layer.effect(
     /** A command that sets what a connector sends or which bots it goes to, which a secret it names can refuse. */
     const settled = <A>(effect: Effect.Effect<A, ConnectorCommandError | NotPaired>) =>
       effect.pipe(Effect.exit, Effect.map(connectorIntentResult));
-
-    const connectorId = random
-      .randomBytes(24)
-      .pipe(
-        Effect.map((bytes) =>
-          ConnectorId.make(
-            `conn_${Array.from(bytes, (byte) => ID_ALPHABET[byte % ID_ALPHABET.length]).join("")}`,
-          ),
-        ),
-      );
-
-    const add = Effect.fn("Connectors.add")(function* (addition: ConnectorAddition) {
-      const id = yield* connectorId;
-      return yield* settled(
-        connection
-          .call((client) =>
-            client["connector.add"]({
-              id,
-              source: addition.source,
-              ...(addition.grant === undefined ? {} : { grant: addition.grant }),
-            }),
-          )
-          .pipe(Effect.tap(show)),
-      );
-    });
 
     const setBots = Effect.fn("Connectors.setBots")(function* (
       connectorId: ConnectorId,
@@ -251,27 +186,6 @@ export const layer = Layer.effect(
       readonly arguments: PromptArguments;
     }) {
       return yield* answered(connection.call((client) => client["connector.renderPrompt"](input)));
-    });
-
-    const featured = Effect.fn("Connectors.featured")(function* (language: Language) {
-      return yield* answered(connection.call((client) => client["connectors.list"]({ language })));
-    });
-
-    const search = Effect.fn("Connectors.search")(function* (input: {
-      readonly query: string;
-      readonly language: Language;
-      readonly all: boolean;
-    }) {
-      return yield* answered(connection.call((client) => client["connectors.search"](input)));
-    });
-
-    const listing = Effect.fn("Connectors.listing")(function* (
-      ref: ListingRef,
-      language: Language,
-    ) {
-      return yield* answered(
-        connection.call((client) => client["connectors.get"]({ ref, language })),
-      );
     });
 
     const update = Effect.fn("Connectors.update")(function* (
@@ -332,10 +246,6 @@ export const layer = Layer.effect(
       state,
       prompts,
       renderPrompt,
-      featured,
-      search,
-      listing,
-      add,
       update,
       remove,
       setBots,

@@ -1,13 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  GitRef,
-  GitRepository,
-  RepositoryPath,
-  Skill,
-  SkillName,
-  SkillScope,
-  SkillText,
-} from "@j3-bots/contracts";
+import type { Skill, SkillName, SkillScope, SkillText } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,15 +8,6 @@ import { Connection } from "../connection/Connection.ts";
 import { Actions, type IntentResult, intentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
-
-/** A skill to install: the folder of a public git repository, at a branch, tag or commit. */
-export interface SkillInstall {
-  readonly scope: SkillScope;
-  readonly name: SkillName;
-  readonly repository: GitRepository;
-  readonly path: RepositoryPath;
-  readonly ref: GitRef;
-}
 
 /**
  * The skills every bot and each bot has, kept live on every socket, and the
@@ -44,7 +27,6 @@ export class Skills extends Context.Service<
       name: SkillName,
       text: SkillText,
     ) => Effect.Effect<IntentResult<Skill>>;
-    readonly install: (install: SkillInstall) => Effect.Effect<IntentResult<Skill>>;
     readonly remove: (scope: SkillScope, name: SkillName) => Effect.Effect<IntentResult>;
   }
 >()("@j3-bots/client-runtime/stores/Skills") {}
@@ -82,13 +64,6 @@ export const layer = Layer.effect(
         .pipe(Effect.exit, Effect.map(intentResult));
     });
 
-    const install = Effect.fn("Skills.install")(function* (input: SkillInstall) {
-      const commandId = yield* actions.commandId;
-      return yield* connection
-        .call((client) => client["skill.install"]({ commandId, ...input }))
-        .pipe(Effect.exit, Effect.map(intentResult));
-    });
-
     const remove = Effect.fn("Skills.remove")(function* (scope: SkillScope, name: SkillName) {
       const commandId = yield* actions.commandId;
       return yield* connection
@@ -96,6 +71,6 @@ export const layer = Layer.effect(
         .pipe(Effect.exit, Effect.map(intentResult));
     });
 
-    return Skills.of({ state, read, save, install, remove });
+    return Skills.of({ state, read, save, remove });
   }),
 );

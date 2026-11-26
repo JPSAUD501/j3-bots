@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectorsClient } from "@j3-bots/client-runtime";
-import type { ConnectorsOpening } from "@j3-bots/client-runtime/presentation";
+import type { ConnectorsPlace } from "@j3-bots/client-runtime/presentation";
 import { type SignInRoute, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { useNavigation } from "@react-navigation/native";
 import { Linking } from "react-native";
@@ -41,31 +41,16 @@ export function useConnectorsIntents(): ConnectorsIntents {
   };
 }
 
-/** Opens the connectors screens where `opening` says, over the screen shown now. */
-export function useOpenConnectors(): (opening: ConnectorsOpening) => void {
+/** Opens the connectors screens at `place`, over the screen shown now. */
+export function useOpenConnectors(): (place: ConnectorsPlace) => void {
   const navigation = useNavigation<Navigation>();
-  return ({ at, forBot }) => {
-    switch (at._tag) {
+  return (place) => {
+    switch (place._tag) {
       case "home":
-        navigation.push("connectors", { forBot });
-        return;
-      case "listing":
-        navigation.push("connectorListing", {
-          ref: at.ref,
-          name: at.name,
-          glyph: at.glyph,
-          forBot,
-        });
+        navigation.push("connectors");
         return;
       case "connector":
-        navigation.push("connector", {
-          connectorId: at.connectorId,
-          signIn: at.signIn,
-          added: at.added,
-        });
-        return;
-      case "add-own":
-        navigation.push("addConnector", { forBot });
+        navigation.push("connector", { connectorId: place.connectorId, signIn: place.signIn });
         return;
     }
   };

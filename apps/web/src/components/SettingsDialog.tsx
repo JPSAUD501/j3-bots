@@ -523,7 +523,7 @@ function PageBody({
       return (
         <ConnectorsSection
           connectors={data.connectors}
-          onOpen={() => intents.openConnectors({ at: { _tag: "home" }, forBot: null })}
+          onOpen={() => intents.openConnectors({ _tag: "home" })}
         />
       );
     case "secrets":

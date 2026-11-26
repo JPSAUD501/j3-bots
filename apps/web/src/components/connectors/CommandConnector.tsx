@@ -24,27 +24,24 @@ import { textField } from "../ui/field";
 import { type KeyedPair, LineField, PageSection, PairRows } from "./parts";
 import type { ConnectorsIntents } from "./screen";
 
-// A connector the server starts by command, as the web and desktop apps add
-// and change one: its command line, the confirmation it runs under, and an
-// edit that asks for that confirmation again whenever the command line or a
-// variable's name changes. A variable's value is masked as it is typed, and
-// leaves the form once the server has it.
+// A connector the server starts by command, as the web and desktop apps change
+// one a bot added: its command line, and the confirmation it runs under, asked
+// again whenever the command line or a variable's name changes. A variable's
+// value is masked as it is typed, and leaves the form once the server has it.
 
 /**
  * A command line's fields: the program, its arguments, one per line, and its
- * environment. `args` is `kept` in an edit until the operator types them
- * again, since the server never shows them; `keptNames` are the variables
- * whose values an empty field keeps, none once the edit sends a new line.
+ * environment. `args` is `kept` until the operator types them again, since
+ * the server never shows them; `keptNames` are the variables whose values an
+ * empty field keeps, none once the edit sends a new line.
  */
-export function CommandFields({
+function CommandFields({
   command,
   args,
   env,
   problems,
   readOnly,
-  editing,
   keptNames,
-  autoFocus,
   onCommand,
   onArgs,
   onEnv,
@@ -54,10 +51,7 @@ export function CommandFields({
   env: ReadonlyArray<KeyedPair>;
   problems: FormProblems | null;
   readOnly: boolean;
-  /** False when adding: every argument and value is typed. */
-  editing: boolean;
   keptNames: ReadonlyArray<string>;
-  autoFocus: boolean;
   onCommand: (command: string) => void;
   onArgs: (args: ArgumentsDraft) => void;
   onEnv: (env: ReadonlyArray<KeyedPair>) => void;
@@ -81,7 +75,7 @@ export function CommandFields({
         value={command}
         onChange={onCommand}
         readOnly={readOnly}
-        autoFocus={autoFocus}
+        autoFocus
         mono
       />
       <div className="flex flex-col gap-1">
@@ -117,17 +111,15 @@ export function CommandFields({
             <p id={argsHintId} className="text-xs text-muted-foreground">
               {t("addOwn.args.hint")}
             </p>
-            {editing && (
-              <Button
-                size="sm"
-                variant="ghost-muted"
-                className="self-start"
-                disabled={readOnly}
-                onClick={() => onArgs({ _tag: "kept" })}
-              >
-                {t("connector.editCommand.args.keep")}
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="ghost-muted"
+              className="self-start"
+              disabled={readOnly}
+              onClick={() => onArgs({ _tag: "kept" })}
+            >
+              {t("connector.editCommand.args.keep")}
+            </Button>
           </>
         )}
         {problems?.args && (
@@ -168,14 +160,13 @@ export function CommandFields({
 }
 
 /**
- * Asks the operator to confirm a command line before it runs: the program
- * and every argument as they will run, the name of every variable and never
- * its value, and that it runs as their user on the computer that runs J3
- * Bots. For a change, what is new since the command they confirmed before.
+ * Asks the operator to confirm a changed command line before it runs: the
+ * program and every argument as they will run, the name of every variable and
+ * never its value, what is new since the command they confirmed before, and
+ * that it runs as their user on the computer that runs J3 Bots.
  */
-export function CommandConsentDialog({
+function CommandConsentDialog({
   consent,
-  changed,
   onAnswer,
 }: {
   /**
@@ -183,7 +174,6 @@ export function CommandConsentDialog({
    * Run it answered yes, so a second answer must do nothing.
    */
   consent: CommandConsent | null;
-  changed: boolean;
   onAnswer: (accepted: boolean) => void;
 }) {
   const { t } = useI18n();
@@ -201,7 +191,7 @@ export function CommandConsentDialog({
         <AlertDialog.Backdrop className={cn(dialogBackdrop, "z-50")} />
         <AlertDialog.Popup className={cn(alertDialog, "z-50 max-h-[85vh] max-w-md gap-3 p-5")}>
           <AlertDialog.Title className={dialogTitle}>
-            {changed ? t("addOwn.consent.titleChanged") : t("addOwn.consent.title")}
+            {t("addOwn.consent.titleChanged")}
           </AlertDialog.Title>
           <AlertDialog.Description className="text-sm text-muted-foreground">
             {t("addOwn.consent.body")}
@@ -361,9 +351,7 @@ export function EditCommand({
         env={env}
         problems={problems}
         readOnly={submitting}
-        editing
         keptNames={keepsLine(known, { command, args, env }) ? known.names : []}
-        autoFocus
         onCommand={setCommand}
         onArgs={setArgs}
         onEnv={setEnv}
@@ -383,7 +371,6 @@ export function EditCommand({
       </div>
       <CommandConsentDialog
         consent={asking?.consent ?? null}
-        changed
         onAnswer={(accepted) => {
           if (asking === null) return;
           setAsking(null);

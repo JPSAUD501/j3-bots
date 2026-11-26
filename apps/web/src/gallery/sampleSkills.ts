@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  Conflict,
   Invalid,
   type Skill,
   type SkillScope,
@@ -20,7 +19,7 @@ const text = (name: string, description: string) =>
 const sameScope = (a: SkillScope, b: SkillScope) =>
   a._tag === "all-bots" ? b._tag === "all-bots" : b._tag === "bot" && b.botId === a.botId;
 
-/** The sample team's skills: J3 Bots' own, one the operator wrote, one installed, and a bot's. */
+/** The sample team's skills: J3 Bots' own, which no list shows, one the operator wrote, one installed, and a bot's. */
 export const sampleSkills: ReadonlyArray<Skill> = [
   {
     name: "j3-routines",
@@ -77,7 +76,7 @@ const ANSWER_DELAY = 450;
 const later = <A>(value: A): Promise<A> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ANSWER_DELAY));
 const done = <A>(value: A) => later({ _tag: "done", value } as const);
-const refused = (error: Conflict | Invalid) =>
+const refused = (error: Invalid) =>
   later({ _tag: "failed", failure: { _tag: "refused", error } } as const);
 
 /** What the skills pages ask of the sample's server, which keeps what the operator writes. */
@@ -114,23 +113,6 @@ export function sampleSkillsIntents(holder: SkillsHolder): SkillsIntents {
         lastChange: { by: { _tag: "operator" }, at: SAMPLE_NOW },
       });
     },
-    install: ({ scope, name, repository, path }) =>
-      repository.includes("example")
-        ? put({
-            name,
-            scope,
-            description: "Installed from the sample's repository.",
-            files: 2,
-            shipped: false,
-            source: {
-              _tag: "git",
-              repository,
-              path,
-              commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
-            },
-            lastChange: { by: { _tag: "operator" }, at: SAMPLE_NOW },
-          })
-        : refused(new Conflict({ reason: "skill-fetch" })),
     remove: (scope, name) => {
       holder.set(
         holder.get().filter((each) => !(each.name === name && sameScope(each.scope, scope))),

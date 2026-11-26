@@ -214,17 +214,6 @@ export function signInProblemText(problem: SignInProblem, { t }: I18n): string {
   }
 }
 
-/** What the connector's page says once it is added: who can use it from their next turn. */
-export function connectedText(grant: ConnectorGrant, bots: ReadonlyArray<Bot>, i18n: I18n): string {
-  if (grant._tag === "all-bots") return i18n.t("connect.done.all");
-  const named = bots.filter((bot) => grant.ids.includes(bot.id));
-  const [only] = named;
-  if (only === undefined) return i18n.t("connect.done.none");
-  return named.length === 1
-    ? i18n.t("connect.done.one", { name: only.profile.name })
-    : i18n.t("connect.done.many");
-}
-
 /** Why a command's package would be refused, as its form says before it is sent. */
 export function pinRefusalText(refusal: PinRefusal, { t }: I18n): string {
   switch (refusal) {

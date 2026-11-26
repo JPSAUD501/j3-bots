@@ -978,7 +978,7 @@ export const tools = {
       "A command runs as J3 Bots' own user on its machine, with what that user can reach: add only one your user would run themselves.",
       MANAGES,
       "A server that needs a sign-in is added, and your user signs in from a card in your conversation; its tools come once they have.",
-      "An address in your user's own network, and a gallery server that needs an app they register, are theirs to add from Settings.",
+      "J3 Bots can't add an address in your user's own network, or a gallery server that needs an app they register, for now.",
       "Returns the server, with its status.",
     ],
     AddMcpServerInput,
@@ -1126,13 +1126,13 @@ export const MANAGEMENT_REFUSED = {
   secretNotYours: (name: string) =>
     `You may not use the secret ${name} yourself, so you can't write it into a server's settings. Nothing changed.`,
   secretInAddress: (name: string) =>
-    `The secret ${name} is referenced in the address, where J3 Bots does not resolve it: a reference goes in a header, an argument or a variable. If the service takes its key only in the address, your user adds the server from Settings → MCP and skills. Nothing changed.`,
+    `The secret ${name} is referenced in the address, where J3 Bots does not resolve it: a reference goes in a header, an argument or a variable. A service that takes its key only in the address can't be added for now. Nothing changed.`,
   secretDestination: (name: string) =>
-    `This server sends the secret ${name}, so only your user can change where it sends it: its address, headers, command, arguments and other variables, in Settings → MCP and skills. You may change which secrets it names. Or remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
+    `This server sends the secret ${name}, so you can't change where it sends it: its address, headers, command, arguments and other variables. You may change which secrets it names. Your user can change a command server's command line on its page in Settings → MCP and skills, on the web or the desktop app. For anything else, remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
   privateNetwork:
-    "That address is in your user's own network, which only they can allow: they add it from Settings → MCP and skills. Nothing changed.",
+    "That address is in your user's own network, which J3 Bots can't add for now. Nothing changed.",
   ownApp:
-    "That server signs in only with an app your user registers at the service: they add it from Settings → MCP and skills. Nothing changed.",
+    "That server signs in only with an app your user registers at the service, which J3 Bots can't add for now. Nothing changed.",
   unknownSkill: (name: string) => `There is no skill ${name} there. Check \`list_skills\`.`,
   skillShipped: "Skills named j3-… are J3 Bots' own: nobody changes them. Nothing changed.",
   skillNameTaken: (name: string) =>
