@@ -2,7 +2,7 @@
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { BotId, Label, Language, OpenLiterals } from "./base.ts";
+import { BotId, Label, Language, NonNegativeInt, OpenLiterals } from "./base.ts";
 import { OptionalLastChange } from "./skill.ts";
 
 // ---------------------------------------------------------------------------
@@ -371,42 +371,20 @@ export const ConnectorStatus = Schema.Union([
 export type ConnectorStatus = typeof ConnectorStatus.Type;
 
 /**
- * A change to a connector's tools the operator has not accepted, which no bot
- * gets until they do: a tool it added, or one whose description or input
- * changed (`inputChanged` when what it takes changed, whatever its words
- * say). A changed tool cannot be kept as it was, since its server answers only
- * as it now is: while its change is held, no bot gets the tool at all. A tool
- * the connector took away goes at once, and is never held.
+ * What the connector's server said of itself when this server last reached
+ * it, and how much it offers: the MCP revision they speak (such as
+ * `2026-07-28`), its name and version as it gives them (cleaned, or null),
+ * and how many tools, resources (templates included) and prompts it lists.
  */
-export const HeldToolChange = Schema.Union([
-  Schema.TaggedStruct("added", { tool: ConnectorTool }),
-  Schema.TaggedStruct("changed", {
-    tool: ConnectorTool,
-    previous: ConnectorTool,
-    inputChanged: Schema.Boolean,
-  }),
-]);
-export type HeldToolChange = typeof HeldToolChange.Type;
-
-/** Which held changes the operator saw, so accepting them never covers one that came after. */
-export const ToolReviewRevision = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(128),
-).pipe(Schema.brand("ToolReviewRevision"));
-export type ToolReviewRevision = typeof ToolReviewRevision.Type;
-
-/**
- * The held changes of a connector's tools, at a revision. `kept`: the operator
- * answered `keep`, so the changes stay held, with no badge, until they accept
- * them from the connector's page or the tools change again, which makes a new
- * revision that waits on them as any does.
- */
-export const ToolReview = Schema.Struct({
-  revision: ToolReviewRevision,
-  changes: Schema.NonEmptyArray(HeldToolChange),
-  kept: Schema.Boolean,
+export const ConnectorServer = Schema.Struct({
+  protocolVersion: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  name: Schema.NullOr(Label),
+  version: Schema.NullOr(Label),
+  tools: NonNegativeInt,
+  resources: NonNegativeInt,
+  prompts: NonNegativeInt,
 });
-export type ToolReview = typeof ToolReview.Type;
+export type ConnectorServer = typeof ConnectorServer.Type;
 
 /**
  * What a client is shown of how bots reach a connector: the origin of its
@@ -434,6 +412,38 @@ export const remoteTransport = (url: URL): ConnectorTransport => ({
 export const ConnectorSignIn = Schema.Literals(["oauth", "fields", "none"]);
 export type ConnectorSignIn = typeof ConnectorSignIn.Type;
 
+/** The longest prompt description or argument description kept, in characters. */
+const PromptText = Schema.String.check(Schema.isMaxLength(1_024));
+
+/**
+ * A prompt a connector's server offers (MCP prompts): a message it writes from
+ * the arguments the operator gives, for the composer's `/` menu. Its texts are
+ * the server's, cleaned and capped.
+ */
+export const ConnectorPrompt = Schema.Struct({
+  connectorId: ConnectorId,
+  /** Its name at its server, which renders it. */
+  name: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_./-]{1,128}$/)),
+  title: Schema.NullOr(Label),
+  description: PromptText,
+  arguments: Schema.Array(
+    Schema.Struct({
+      name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+      title: Schema.NullOr(Label),
+      description: PromptText,
+      required: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(20)),
+});
+export type ConnectorPrompt = typeof ConnectorPrompt.Type;
+
+/** The arguments the operator gave a prompt, by name. */
+export const PromptArguments = Schema.Record(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  Schema.String.check(Schema.isMaxLength(10_000)),
+).check(Schema.isMaxProperties(20));
+export type PromptArguments = typeof PromptArguments.Type;
+
 /** A connector the operator added, as every client sees it. It carries none of its secrets. */
 export const Connector = Schema.Struct({
   id: ConnectorId,
@@ -452,10 +462,10 @@ export const Connector = Schema.Struct({
   account: Schema.NullOr(Label),
   /** When the operator last signed in, or gave its token; null before. */
   signedInAt: Schema.NullOr(Schema.DateTimeUtc),
-  /** The tools bots may use: those the operator accepted that the connector still offers. */
+  /** The tools bots get: those its server lists, as it lists them now. */
   tools: Schema.Array(ConnectorTool),
-  /** Changes to its tools that wait on the operator, and that no bot gets until then. */
-  review: Schema.NullOr(ToolReview),
+  /** What its server said of itself; null until this server reached it since it started. */
+  server: Schema.NullOr(ConnectorServer),
   createdAt: Schema.DateTimeUtc,
   /** Who last added, changed or granted it, and when: null for one changed before 0.9.0 kept it. */
   lastChange: OptionalLastChange,

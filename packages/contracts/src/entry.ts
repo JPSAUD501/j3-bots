@@ -19,6 +19,7 @@ import {
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ConnectorId } from "./connector.ts";
+import { Elicitation } from "./elicitation.ts";
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
@@ -424,6 +425,31 @@ export const ConnectorAuthEntry = Schema.TaggedStruct("connector-auth", {
 });
 export type ConnectorAuthEntry = typeof ConnectorAuthEntry.Type;
 
+/**
+ * A connector's server asks the operator for something in the middle of a
+ * bot's call (MCP elicitation, decision 0047): a short form, or a page of its
+ * own to open on the operator's device. It is in the conversation of the bot
+ * whose call asked, authored by that bot, and the call waits on it. The
+ * answer goes to the server only (`card.answer` with `connector-input`); the
+ * bot never reads it. It closes as `expired` when the call ends first: the
+ * bot's turn stopped, or the call ran out of time.
+ */
+export const ConnectorInputEntry = Schema.TaggedStruct("connector-input", {
+  ...entry,
+  author: BotAuthor,
+  connectorId: ConnectorId,
+  /** The connector's name and glyph when the card was written, which it keeps. */
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  request: Elicitation,
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("answered", { action: Schema.Literals(["accept", "decline", "cancel"]) }),
+    Schema.TaggedStruct("expired", {}),
+  ]),
+});
+export type ConnectorInputEntry = typeof ConnectorInputEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -504,6 +530,18 @@ export const WorkStep = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** For a `login` step, the fill it made or refused. */
   fill: Schema.optionalKey(CredentialFill),
+  /**
+   * For a call to a connector's tool: the connector, and the tool's `_meta.ui`
+   * as its server listed it (MCP Apps), null when it has none.
+   */
+  connector: Schema.optionalKey(
+    Schema.Struct({ connectorId: ConnectorId, ui: Schema.NullOr(Schema.JsonObject) }),
+  ),
+  /**
+   * While the step runs, what it last said of how far it got: a connector's
+   * progress or its task's status, cleaned, on one line.
+   */
+  progress: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
 });
 export type WorkStep = typeof WorkStep.Type;
 
@@ -713,6 +751,7 @@ export const Entry = Schema.Union([
   BrowserHelpEntry,
   SecretAskEntry,
   ConnectorAuthEntry,
+  ConnectorInputEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -767,6 +806,7 @@ export const ReceivedEntry = Schema.Union([
   BrowserHelpEntry,
   SecretAskEntry,
   ConnectorAuthEntry,
+  ConnectorInputEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -801,6 +841,7 @@ export const entryText = (entry: Entry): string => {
     case "secret-ask":
       return entry.name;
     case "connector-auth":
+    case "connector-input":
       return entry.name;
     case "routine-change":
       return entry.name;

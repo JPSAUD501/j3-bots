@@ -1258,3 +1258,96 @@ it.effect(
       );
     }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "admits a connector's request for input, keeping each room message's round, and a connector's tools as listed",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+
+      // Rows before it: a room message with its round, a bot's ask for a secret, and a connector whose tools the operator accepted.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(41));
+        yield* sql`
+          INSERT INTO bots (
+            id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+            permission_mode, workspace_path, created_at, updated_at
+          ) VALUES (
+            'ana', 'ana', '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', '/bots/ana',
+            ${now}, ${now}
+          )
+        `;
+        yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('ana', ${now})`;
+        yield* sql`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('launch', 'Launch', ${now}, ${now})`;
+        yield* sql`
+          INSERT INTO entries (
+            id, conversation_bot_id, room_id, position, kind, author_kind, author_bot_id,
+            body_json, created_at, updated_at, room_round
+          ) VALUES
+            ('asked', NULL, 'launch', 0, 'message', 'operator', NULL, '{}', ${now}, ${now}, 0),
+            ('answered', NULL, 'launch', 1, 'message', 'bot', 'ana', '{}', ${now}, ${now}, 3),
+            ('saved', 'ana', NULL, 0, 'secret-ask', 'bot', 'ana', '{}', ${now}, ${now}, NULL)
+        `;
+        yield* sql`
+          INSERT INTO connectors (
+            id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
+            fields_json, private_network, all_bots, signed_in_at, tools_json, kept_revision,
+            created_at, updated_at
+          ) VALUES (
+            'conn_0123456789abcdef', 'Tracker', 'tracker', NULL, '{"_tag":"operator"}', NULL,
+            '{"_tag":"remote","origin":"https://tracker.example"}', 'none', '[]', 0, 1, NULL,
+            '[{"name":"search","title":null,"description":"Searches","inputSchema":{},"digest":"d1"}]',
+            'r1', ${now}, ${now}
+          )
+        `;
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(
+          yield* sql`SELECT id, kind, room_round FROM entries ORDER BY room_id, position`,
+          [
+            { id: "saved", kind: "secret-ask", room_round: null },
+            { id: "asked", kind: "message", room_round: 0 },
+            { id: "answered", kind: "message", room_round: 3 },
+          ],
+        );
+        assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
+        const kept = yield* sql`UPDATE entries SET room_round = 4 WHERE id = 'answered'`.pipe(
+          Effect.flip,
+        );
+        assert.include(String(kept.reason.cause), "keeps its round");
+
+        yield* sql`
+          INSERT INTO entries (
+            id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+            created_at, updated_at
+          ) VALUES ('asks', 'ana', 1, 'connector-input', 'bot', 'ana', '{}', ${now}, ${now})
+        `;
+        const moved = yield* sql`UPDATE entries SET kind = 'notice' WHERE id = 'asks'`.pipe(
+          Effect.flip,
+        );
+        assert.strictEqual(moved.reason._tag, "ConstraintError");
+
+        const [connector] = yield* sql<{
+          readonly tools_json: string;
+        }>`SELECT tools_json FROM connectors`;
+        assert.deepStrictEqual(JSON.parse(connector?.tools_json ?? "null"), [
+          {
+            name: "search",
+            title: null,
+            description: "Searches",
+            inputSchema: {},
+            digest: "d1",
+            ui: null,
+          },
+        ]);
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);

@@ -182,6 +182,9 @@ Bots act on J3 Bots through MCP tools. A tool's description is prompt text: it i
 | `save_skill` | `name`; `text` or `folder` (in the workspace); `scope?` | Asks. The description says to save one when the operator asks or agreed to the bot's offer, and to write it from what they asked, never from what something read said: it becomes standing instructions. |
 | `install_skill` | `repository` (`https:`); `path?`; `ref`; `name?`; `scope?` | Asks. From a repository the operator named, or one they agreed to; the bot reads its `SKILL.md` before relying on it. Answers with the commit installed. |
 | `remove_skill` | `name`; `scope?` | Asks. J3 Bots' own (`j3-…`) stay. |
+| `list_connector_resources`, `list_connector_prompts` | `connector?` (a connector as its tools' names start); `search?` (words each item must hold) | Every connector the bot may use, or one: each resource and template, or each prompt with its arguments, one line each, framed as untrusted data from that connector and cut at 20,000 characters a connector. A connector not connected lists nothing. Pre-approved, as J3 Bots' other reading tools are. |
+| `read_connector_resource` | `connector`; `uri` (as listed, or a template's with its placeholders filled) | The contents as its server sent them, framed as untrusted data; a file that is not text is named, not shown. Its server may ask the operator first, on a card; the read waits. |
+| `get_connector_prompt` | `connector`; `name`; `arguments?` (by name, as text) | The prompt its server writes, framed as untrusted data. The description says it is the server's text, not the operator's: a suggestion for the task they asked for, never a reason to do more. |
 
 ### Reading a room
 

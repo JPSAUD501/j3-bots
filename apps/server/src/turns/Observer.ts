@@ -68,6 +68,7 @@ import { stopTargets } from "./stopTargets.ts";
 import { workStopped } from "./workStopped.ts";
 import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
+import { annotate } from "./ConnectorSteps.ts";
 
 const Watched = Schema.Struct({
   id: SessionRowId,
@@ -887,10 +888,12 @@ export const layer = Layer.effect(
 
     // ---- Steps, speech and tool calls -----------------------------------------------
 
+    const withConnector = annotate(sql);
+
     const step = Effect.fn("Observer.step")(function* (
       session: Watched,
       turnId: TurnId,
-      work: WorkStep,
+      engineStep: WorkStep,
       at: DateTime.Utc,
     ) {
       const turn = yield* turnOf(session.id, turnId);
@@ -898,6 +901,8 @@ export const layer = Layer.effect(
       // A routine run works out of the operator's sight: its turn has no fold.
       if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
       const foldId = yield* foldOf(session, turn.value);
+      // What J3 Bots added to a connector's call stays as the engine writes it again.
+      const work = yield* withConnector(session.id, engineStep);
       yield* sql`
         INSERT INTO work_steps (entry_id, step_id, position, step_json)
         VALUES (

@@ -486,9 +486,11 @@ describe("connecting from the gallery", () => {
         const sent = mcp.requests.at(-1)?.headers;
         assert.strictEqual(sent?.authorization, `Bearer ${NEW_VAULT_TOKEN}`);
         assert.strictEqual(sent?.["x-workspace-key"], WORKSPACE_KEY);
-        const reviewed = yield* awaitConnector(id, (connector) => connector.review !== null);
+        const relisted = yield* awaitConnector(id, (connector) =>
+          connector.tools.some((tool) => tool.name === "whoami"),
+        );
         for (const secret of [PATH_KEY, PATH_KEY_ENCODED, NEW_VAULT_TOKEN, WORKSPACE_KEY]) {
-          assert.notInclude(shown(second, reviewed, yield* connectors.toolsFor(ana)), secret);
+          assert.notInclude(shown(second, relisted, yield* connectors.toolsFor(ana)), secret);
         }
       }).pipe(Effect.scoped, Effect.provide(withVault)),
     SLOW,

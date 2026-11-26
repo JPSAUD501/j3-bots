@@ -210,8 +210,9 @@ describe("provision with a provider connection", () => {
           ),
         );
       assert.deepStrictEqual(yield* variables("j3-claude"), [
+        { name: "ENABLE_TOOL_SEARCH", value: "true", sensitive: false },
+        { name: "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH", value: "8192", sensitive: false },
         { name: "J3_PROVIDER_KEY", value: "", sensitive: true },
-        { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false },
       ]);
       assert.deepStrictEqual(yield* variables("j3-codex"), [
         {

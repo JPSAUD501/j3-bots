@@ -23,7 +23,7 @@ const connector = (id: string, name = id): Connector => ({
   account: null,
   signedInAt: null,
   tools: [],
-  review: null,
+  server: null,
   createdAt: at("2026-11-01T00:00:00Z"),
   lastChange: null,
 });

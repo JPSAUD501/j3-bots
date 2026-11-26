@@ -30,14 +30,16 @@ import {
   ConnectorId,
   ConnectorListing,
   ConnectorListingDetails,
+  ConnectorPrompt,
   ConnectorSource,
   ListingRef,
+  PromptArguments,
   SignInCallback,
   SignInRedirect,
   SignInStarted,
-  ToolReviewRevision,
 } from "./connector.ts";
 import { Device, PairingCode, PushRegistration } from "./device.ts";
+import { ElicitationAnswer } from "./elicitation.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
@@ -281,6 +283,13 @@ export const EntryRpcs = RpcGroup.make(
    * A bot's ask for a secret (`secret-ask`) takes only a dismissal, its
    * Decline, which closes it as declined and wakes the bot to say so; it is
    * saved with `secrets.add`.
+   *
+   * A connector's request for input is answered `connector-input`: the
+   * answer goes to the connector's server only, never to the bot, and the
+   * call that asked goes on with it. An accepted form must answer its fields
+   * (`answersFields`), or it fails with `Invalid("connector-input")`, leaving
+   * the card open. Fails with `Conflict("card-closed")` once the call that
+   * asked ended.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -291,6 +300,7 @@ export const EntryRpcs = RpcGroup.make(
         Schema.TaggedStruct("dismiss", {}),
         Schema.TaggedStruct("approval", { decision: ApprovalDecision }),
         Schema.TaggedStruct("browser-help", { outcome: Schema.Literals(["done", "declined"]) }),
+        Schema.TaggedStruct("connector-input", { answer: ElicitationAnswer }),
       ]),
     },
     error: CommandError,
@@ -790,10 +800,11 @@ export type NotificationKind = typeof NotificationKind.Type;
 
 /**
  * Which connector card a `connector` notification is about: a connector a bot
- * called or added that needs a sign-in. A server before 0.9.0 also sent
+ * called or added that needs a sign-in, or a connector's server asking the
+ * operator something. Each is worded apart. A server before 0.9.0 also sent
  * `suggestion`, for a card that is gone.
  */
-export const ConnectorNotice = Schema.Literals(["sign-in"]);
+export const ConnectorNotice = Schema.Literals(["sign-in", "input"]);
 export type ConnectorNotice = typeof ConnectorNotice.Type;
 
 /** An entry worth the operator's attention, added where no connected client has it in view. */
@@ -1191,24 +1202,32 @@ export const ConnectorRpcs = RpcGroup.make(
     error: CommandError,
   }),
   /**
-   * Answers the connector's held tool changes, as the review at `revision`
-   * showed them. `accept` gives bots those tools as they now are. `keep`
-   * leaves the changes held: bots keep every tool that did not change, and
-   * get none that the review holds, a changed one included, since its server
-   * answers only as it now is; a tool the connector removed is gone either
-   * way. The review then stays, `kept`, with no badge, and `accept` at the
-   * same revision still takes it, until the tools change again. Fails with
-   * `Conflict("tool-review-stale")`, changing nothing, when they changed
-   * after that review or none wait.
+   * The prompts of the connectors `botId` may use that are connected, for the
+   * composer's `/` menu in that bot's conversation. A connector whose server
+   * could not list them now is left out. Fails with `NotFound("bot")`.
    */
-  Rpc.make("connector.acceptToolChanges", {
+  Rpc.make("connector.prompts", {
+    payload: { botId: BotId },
+    success: Schema.Array(ConnectorPrompt),
+    error: CommandError,
+  }),
+  /**
+   * The prompt rendered by its server with the arguments the operator gave,
+   * as text: the client puts it in the composer, where the operator reads it
+   * and sends it as their own message. Its server wrote it, so it is never
+   * sent unseen. Fails with `NotFound("connector")` for a connector `botId`
+   * may not use, `Invalid("prompt-arguments")` for a required argument
+   * missing or one the prompt does not take, and
+   * `Conflict("connector-unavailable")` when its server did not render it.
+   */
+  Rpc.make("connector.renderPrompt", {
     payload: {
-      ...command,
+      botId: BotId,
       connectorId: ConnectorId,
-      revision: ToolReviewRevision,
-      decision: Schema.Literals(["accept", "keep"]),
+      name: ConnectorPrompt.fields.name,
+      arguments: PromptArguments,
     },
-    success: Connector,
+    success: Schema.Struct({ text: Schema.String, cut: Schema.Boolean }),
     error: CommandError,
   }),
 );

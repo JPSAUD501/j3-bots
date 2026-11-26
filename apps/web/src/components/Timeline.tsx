@@ -6,6 +6,7 @@ import type {
   BrowserTabRef,
   CommandId,
   ConnectorAuthEntry,
+  ElicitationAnswer,
   Mentions,
   EntryId,
   QuestionAnswers,
@@ -30,6 +31,7 @@ import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConnectorAuthCard } from "./connectors/ConnectorCards";
+import { ConnectorInputCard } from "./connectors/ConnectorInputCard";
 import { AnsweringLine } from "./AnsweringLine";
 import { EventLine, type OpenPair } from "./EventLine";
 import { MessageBubble } from "./MessageBubble";
@@ -72,6 +74,10 @@ export interface TimelineIntents {
   readonly openConversation: (botId: BotId) => void;
   /** Opens the connector's page with its sign-in started. */
   readonly signInConnector: (entry: ConnectorAuthEntry) => void;
+  /** The operator's answer to a connector's request, for its server only. */
+  readonly answerConnectorInput: (entryId: EntryId, answer: ElicitationAnswer) => void;
+  /** Opens the page a connector's server asked the operator to open. */
+  readonly openConnectorPage: (url: string) => void;
 }
 
 interface TimelineProps {
@@ -325,6 +331,15 @@ function Card({
       );
     case "connector-auth":
       return <ConnectorAuthCard entry={entry} onSignIn={() => intents.signInConnector(entry)} />;
+    case "connector-input":
+      return (
+        <ConnectorInputCard
+          entry={entry}
+          onAnswer={(answer) => intents.answerConnectorInput(entry.id, answer)}
+          onOpenPage={intents.openConnectorPage}
+          submitting={submitting(entry.id)}
+        />
+      );
     case "notice":
       return (
         <NoticeLine

@@ -3,7 +3,7 @@ import type { CardEntry as TimelineCard } from "@j3-bots/client-runtime/presenta
 import type { BrowserHelpEntry, NoticeEntry } from "@j3-bots/contracts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { BrowserHelpCard } from "./BrowserHelpCard.tsx";
-import { ConnectorAuthCard } from "./ConnectorCards.tsx";
+import { ConnectorAuthCard, ConnectorInputCard } from "./ConnectorCards.tsx";
 import { QuestionCard } from "./QuestionCard.tsx";
 import { SecretAskCard } from "./SecretAskCard.tsx";
 import { SecretRequestCard } from "./SecretRequestCard.tsx";
@@ -33,5 +33,7 @@ export function Card({
       return <SecretAskCard entry={entry} />;
     case "connector-auth":
       return <ConnectorAuthCard entry={entry} />;
+    case "connector-input":
+      return <ConnectorInputCard entry={entry} />;
   }
 }

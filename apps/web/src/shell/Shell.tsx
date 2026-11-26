@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  BotId,
   BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
@@ -45,6 +46,7 @@ import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer, type MentionCandidate } from "../components/Composer";
+import type { PromptMenu } from "../components/PromptPicker";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import {
@@ -481,6 +483,18 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     // An archived room takes no messages: no composer, and a way to unarchive it.
     const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
+    // In a bot's conversation, `/` offers its connectors' prompts, each by its connector's name.
+    const promptMenu = (botId: BotId): PromptMenu => ({
+      load: () =>
+        intents.connectorPrompts(botId).then(
+          (prompts) =>
+            prompts?.flatMap((prompt) => {
+              const connector = data.connectors?.find((one) => one.id === prompt.connectorId);
+              return connector === undefined ? [] : [{ ...prompt, connector: connector.name }];
+            }) ?? null,
+        ),
+      render: (prompt, given) => intents.renderPrompt(botId, prompt, given),
+    });
     // In a room, `@` mentions its members, by the names the roster shows.
     const mentionable: ReadonlyArray<MentionCandidate> | undefined =
       item._tag === "room"
@@ -650,6 +664,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   })}
               inputRef={composerRef}
               {...(mentionable === undefined ? {} : { mentionable })}
+              {...(item._tag === "bot" ? { prompts: promptMenu(item.bot.id) } : {})}
             />
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">

@@ -1,6 +1,6 @@
 # 0027: Connector tools reach a bot through the `j3` bridge, under the bot's permission mode
 
-**Status:** Accepted
+**Status:** Accepted. Its bridge lists every tool a connector's server lists now, with no accepted set, and its deadline follows a connector's task, by [0047](0047-j3-bots-is-a-complete-mcp-host-at-the-current-specification.md).
 
 ## Context
 
@@ -17,11 +17,11 @@ What the pieces allow:
 
 **A bot's connector tools are tools of the `j3` server, listed per session, and only J3 Bots' own tools are pre-approved.**
 
-- **One server, listed per session.** The bridge answers `tools/list` from the server for its session: J3 Bots' own tools, then the accepted tools of every connector the bot is granted. A change of grant, or of a connector's accepted tools or status, makes the bridge send `notifications/tools/list_changed`. A tool taken from a bot drops out of its list the same way, and the server refuses a call to it at once. No harness configuration names a connector, so connecting one restarts nothing.
+- **One server, listed per session.** The bridge answers `tools/list` from the server for its session: J3 Bots' own tools, then the tools every connector the bot is granted lists now. A change of grant, or of a connector's tools or status, makes the bridge send `notifications/tools/list_changed`. A tool taken from a bot drops out of its list the same way, and the server refuses a call to it at once. No harness configuration names a connector, so connecting one restarts nothing.
 - **Names in the `j3` namespace.** A connector tool is `<connector>__<tool>` inside `j3`, which the harness shows as `mcp__j3__<connector>__<tool>`. The server keeps every name within the shorter harness limit, Claude Code's 64 characters with `[a-zA-Z0-9_-]` (**Read** in the Claude Code 2.1.328 bundle), shortening a long one with a stable hash, so a tool keeps its name across sessions.
 - **Every call is matched to the bot's turn**, as J3 Bots' own tools are, with no weaker path: a call that matches no open call of the session's running turn is refused, and the grant is checked for the session's bot on that call.
 - **Pre-approval narrows to J3 Bots' own names.** Claude Code is given the exact list of J3 Bots' own tool names in place of `mcp__j3__*`; Codex keeps the `j3` server, drops its default approval mode and approves each of J3 Bots' own tools by name. A connector tool then falls under the bot's permission mode like any other harness tool: an approval card in Supervised, the provider's reviewer in Auto, and a run in Full access. The base prompt's rules on acting for the operator still hold in every mode.
-- **Calls that take time.** A connector call has a deadline of its own at the bridge, eleven minutes, far longer than the 30 seconds of J3 Bots' own tools and past the connector client's deadline, and each harness's tool timeout for `j3` is set a minute above it. Progress is not relayed: neither harness extends its timeout for it. A call the harness gives up on is cancelled to the bridge, which abandons it at the server and, from there, at the connector.
+- **Calls that take time.** A connector call has a deadline of its own at the bridge, 61 minutes, far longer than the 30 seconds of J3 Bots' own tools and past the connector client's, which follows a task its server answers with for up to an hour, and each harness's tool timeout for `j3` is set a minute above it. Progress is not relayed: neither harness extends its timeout for it. A call the harness gives up on is cancelled to the bridge, which abandons it at the server and, from there, at the connector.
 - **Results are data.** The server frames each result's text as untrusted content from that connector, as it frames anything else a bot reads, so a result can neither close the frame nor pass for J3 Bots or the operator.
 - **One upstream session per connector and bot.** A connector's server may keep state per session, such as a cursor, which must not pass from one bot to another.
 

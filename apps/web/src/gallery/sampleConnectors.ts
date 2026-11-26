@@ -10,6 +10,7 @@ import {
   type ConnectorListing,
   type ConnectorListingDetails,
   type ConnectorSource,
+  type ConnectorPrompt,
   type ConnectorTool,
   ConnectorToolName,
   CuratedKey,
@@ -18,7 +19,6 @@ import {
   type ListingRef,
   RegistryName,
   SetupPageUrl,
-  ToolReviewRevision,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
@@ -188,17 +188,48 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
 
 const connectorId = (suffix: string) => ConnectorId.make(`conn_sample${suffix.padEnd(11, "0")}`);
 
+/** The prompts the sample's Notion offers, for the `/` menu, each with how its server writes it. */
+const SAMPLE_PROMPTS: ReadonlyArray<
+  ConnectorPrompt & { readonly render: (given: Readonly<Record<string, string>>) => string }
+> = [
+  {
+    connectorId: connectorId("notion"),
+    name: "weekly-review",
+    title: "Weekly review",
+    description: "Sums up the pages changed this week.",
+    arguments: [
+      {
+        name: "team",
+        title: "Team",
+        description: "Whose pages to look at",
+        required: true,
+      },
+      { name: "since", title: "Since", description: "A date, if not this week", required: false },
+    ],
+    render: (given) =>
+      `Review the pages ${given["team"] ?? ""} changed ${given["since"] === undefined ? "this week" : `since ${given["since"]}`}: what moved, what is stuck, and what needs a decision.`,
+  },
+  {
+    connectorId: connectorId("notion"),
+    name: "meeting-notes",
+    title: "Meeting notes",
+    description: "Turns a page of notes into decisions and next steps.",
+    arguments: [],
+    render: () => "Read my latest meeting page and list the decisions, the owners and the dates.",
+  },
+];
+
 const base = {
   glyph: null,
   fields: [],
   account: null,
   signedInAt: null,
-  review: null,
+  server: null,
   createdAt: ago(60 * 24 * 12),
   lastChange: null,
 } as const;
 
-/** The sample team's connectors: one of each status, and one with tool changes to review. */
+/** The sample team's connectors: one of each status. */
 export const sampleConnectors: ReadonlyArray<Connector> = [
   {
     ...base,
@@ -215,6 +246,14 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     signedInAt: ago(60 * 24 * 12),
     tools: notesTools,
     lastChange: { by: { _tag: "operator" }, at: ago(60 * 24 * 12) },
+    server: {
+      protocolVersion: "2026-07-28",
+      name: "Notes",
+      version: "3.2.0",
+      tools: notesTools.length,
+      resources: 12,
+      prompts: SAMPLE_PROMPTS.length,
+    },
   },
   {
     ...base,
@@ -245,29 +284,13 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     grant: { _tag: "bots", ids: [ids.atlas] },
     signedInAt: ago(60 * 24 * 3),
     tools: [tool("search_issues", "Search errors", "Finds errors by message, release or tag.")],
-    review: {
-      revision: ToolReviewRevision.make("r2"),
-      changes: [
-        {
-          _tag: "added",
-          tool: tool("resolve_issue", "Resolve an error", "Marks an error resolved in a release."),
-        },
-        {
-          _tag: "changed",
-          tool: tool(
-            "search_issues",
-            "Search errors",
-            "Finds errors and the events of each, by message, release, tag or user.",
-          ),
-          previous: tool(
-            "search_issues",
-            "Search errors",
-            "Finds errors by message, release or tag.",
-          ),
-          inputChanged: true,
-        },
-      ],
-      kept: false,
+    server: {
+      protocolVersion: "2025-11-25",
+      name: null,
+      version: null,
+      tools: 1,
+      resources: 0,
+      prompts: 0,
     },
   },
   {
@@ -297,6 +320,16 @@ const later = <A>(value: A): Promise<A> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ANSWER_DELAY));
 const done = <A>(value: A) => later({ _tag: "done", value } as const);
 const failed = () => later({ _tag: "failed", failure: { _tag: "unexpected" } } as const);
+
+/** How the sample's servers answer the composer's `/` menu: Notion offers two prompts. */
+export const samplePromptIntents: Pick<ConnectorsIntents, "prompts" | "renderPrompt"> = {
+  prompts: () => done(SAMPLE_PROMPTS),
+  renderPrompt: ({ name, arguments: given }) => {
+    const prompt = SAMPLE_PROMPTS.find((one) => one.name === name);
+    if (prompt === undefined) return failed();
+    return done({ text: prompt.render(given), cut: false });
+  },
+};
 
 let added = 0;
 
@@ -342,6 +375,7 @@ export function sampleConnectorsIntents(
   };
   let signingIn: ConnectorId | null = null;
   return {
+    ...samplePromptIntents,
     featured: () => done(sampleListings.slice(0, 4)),
     search: ({ query, all }) => {
       const words = query.toLocaleLowerCase();
@@ -373,17 +407,6 @@ export function sampleConnectorsIntents(
       const connector = find(id);
       return connector === undefined ? failed() : save({ ...connector, grant });
     },
-    answerToolReview: (id, _revision, decision) => {
-      const connector = find(id);
-      if (connector === undefined || connector.review === null) return failed();
-      if (decision === "keep")
-        return save({ ...connector, review: { ...connector.review, kept: true } });
-      const tools = applyTools(
-        connector.tools,
-        connector.review.changes.map((change) => change.tool),
-      );
-      return save({ ...connector, tools, review: null });
-    },
     beginSignIn: (id) => {
       signingIn = id;
       return done({
@@ -403,20 +426,6 @@ export function sampleConnectorsIntents(
     openSecrets: () => {},
   };
 }
-
-/** `tools` with each of `changed` in place of the one of its name, or after them. */
-const applyTools = (
-  tools: ReadonlyArray<ConnectorTool>,
-  changed: ReadonlyArray<ConnectorTool>,
-): ReadonlyArray<ConnectorTool> => {
-  const kept = tools.map(
-    (current) => changed.find((next) => next.name === current.name) ?? current,
-  );
-  return [
-    ...kept,
-    ...changed.filter((next) => !tools.some((current) => current.name === next.name)),
-  ];
-};
 
 /** A holder of its own, for a gallery frame: it starts from `initial` and keeps its changes. */
 export function connectorsHolder(

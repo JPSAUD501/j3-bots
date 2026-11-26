@@ -18,7 +18,13 @@ import type { ListenerStatus } from "../../admin/protocol.ts";
 import { ServerConfig } from "../../config.ts";
 import { Listener } from "../../listener.ts";
 import * as TestDomain from "../../testing/domain.ts";
-import { AS_ORIGIN, FakeAuthorizationServer, MCP_URL, requestGate } from "../../testing/oauth.ts";
+import {
+  AS_ORIGIN,
+  FakeAuthorizationServer,
+  MCP_URL,
+  PUBLIC_ORIGIN,
+  requestGate,
+} from "../../testing/oauth.ts";
 import { ConnectorId } from "../../secrets/ConnectorSecret.ts";
 import { Secrets } from "../../secrets/Secrets.ts";
 import * as ConnectorAuth from "./ConnectorAuth.ts";
@@ -57,7 +63,7 @@ const withPublicOrigin = Layer.effect(
   ServerConfig,
   Effect.map(Effect.service(ServerConfig), (config) => ({
     ...config,
-    publicOrigin: Option.some(ServerOrigin.make("https://bots.example.test")),
+    publicOrigin: Option.some(ServerOrigin.make(PUBLIC_ORIGIN)),
   })),
 );
 
@@ -177,6 +183,69 @@ it.effect(
       }),
     );
   },
+);
+
+it.effect(
+  "signs in with its client metadata document where the provider reads one, and registers nothing",
+  () => {
+    const fake = new FakeAuthorizationServer({ metadataDocuments: true });
+    return run(
+      fake,
+      Effect.gen(function* () {
+        const document = `${PUBLIC_ORIGIN}/oauth/client/auth.example.test`;
+        // A relayed sign-in returns to loopback on its own port, which the document lists without one.
+        const relayed = yield* (yield* auth).begin({
+          connectorId: NOTION,
+          deviceId: LAPTOP,
+          redirect: { _tag: "relay", port: 41234 },
+        });
+        assert.strictEqual(
+          new URL(relayed.authorizationUrl).searchParams.get("client_id"),
+          document,
+        );
+        const { authorizationUrl } = yield* signIn(fake);
+        assert.strictEqual(new URL(authorizationUrl).searchParams.get("client_id"), document);
+        // The server read its own document as the internet does before naming it.
+        assert.isTrue(fake.received.some((request) => request.url === document));
+        assert.isFalse(fake.received.some((request) => request.url === `${AS_ORIGIN}/register`));
+        const form = new URLSearchParams(tokenRequests(fake)[0]?.body);
+        assert.strictEqual(form.get("client_id"), document);
+        assert.strictEqual((yield* stateOf)?._tag, "signed-in");
+      }),
+      { publicOrigin: true },
+    );
+  },
+);
+
+it.effect(
+  "registers instead where no authorization server could read the document, saying what it is",
+  () =>
+    Effect.gen(function* () {
+      // A public origin only the operator's network reaches, then none at all.
+      const cases = [
+        {
+          fake: new FakeAuthorizationServer({ metadataDocuments: true, publicOrigin: "private" }),
+          publicOrigin: true,
+        },
+        { fake: new FakeAuthorizationServer({ metadataDocuments: true }), publicOrigin: false },
+      ];
+      for (const { fake, publicOrigin } of cases) {
+        yield* run(
+          fake,
+          Effect.gen(function* () {
+            const { authorizationUrl } = yield* signIn(fake);
+            assert.match(new URL(authorizationUrl).searchParams.get("client_id") ?? "", /^client-/);
+            const registration = fake.received.find(
+              (request) => request.url === `${AS_ORIGIN}/register`,
+            );
+            // It returns to loopback, as a native app does.
+            assert.include(registration?.body ?? "", `"application_type":"native"`);
+            assert.strictEqual((yield* stateOf)?._tag, "signed-in");
+          }),
+          { publicOrigin },
+        );
+      }
+    }),
 );
 
 it.effect("reads the resource metadata the challenge names, and nothing before it", () => {

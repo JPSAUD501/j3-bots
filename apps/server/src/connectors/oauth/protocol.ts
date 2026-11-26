@@ -229,6 +229,8 @@ export const AuthorizationServerMetadata = Schema.Struct({
   code_challenge_methods_supported: Schema.optionalKey(Strings),
   token_endpoint_auth_methods_supported: Schema.optionalKey(Strings),
   authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
+  /** Whether it takes the address of a client metadata document as a client id. */
+  client_id_metadata_document_supported: Schema.optionalKey(Schema.Boolean),
 });
 export type AuthorizationServerMetadata = typeof AuthorizationServerMetadata.Type;
 

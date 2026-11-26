@@ -51,6 +51,7 @@ import {
 } from "./ChipField";
 import { FileKindIcon } from "./FileCard";
 import { MentionChip } from "./MentionChip";
+import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./PromptPicker";
 import { Button } from "./ui/button";
 
 /**
@@ -133,6 +134,12 @@ interface ComposerProps {
    * a pick mentions one; a name typed or pasted addresses nobody.
    */
   readonly mentionable?: ReadonlyArray<MentionCandidate>;
+  /**
+   * In a bot's conversation, the prompts its connectors offer: a draft that is
+   * `/` and a word offers those that match it, and what a prompt's server
+   * writes replaces the draft.
+   */
+  readonly prompts?: PromptMenu;
 }
 
 /**
@@ -160,7 +167,10 @@ interface ComposerProps {
  * move through it, keeping the active option in view, Enter or Tab picks, so
  * a second Enter sends, Escape closes it until the next `@`, and a tap picks
  * without taking the focus from the field. Only a pick mentions a member; a
- * quiet line under the composer says who the message wakes.
+ * quiet line under the composer says who the message wakes. In a bot's
+ * conversation, `/` opens the prompts its connectors offer the same way; a
+ * prompt with arguments asks for them above the composer, and what its server
+ * writes becomes the draft, which the operator reads and sends as their own.
  */
 export function Composer({
   draftKey,
@@ -181,6 +191,7 @@ export function Composer({
   replaced,
   inputRef,
   mentionable,
+  prompts,
 }: ComposerProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -237,6 +248,13 @@ export function Composer({
     field: fieldRef,
     members: frozen ? undefined : mentionable,
   });
+  const prompt = usePromptPicker({
+    draftKey,
+    value,
+    onValueChange: (text) => onValueChange(text, []),
+    field: fieldRef,
+    menu: frozen ? undefined : prompts,
+  });
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
     setNotTaken(false);
@@ -258,6 +276,7 @@ export function Composer({
     );
     selection.current = change.selection;
     mention.follow(change.text, change.selection);
+    prompt.edited();
   };
   // Where the caret goes once files attached at it are in the text: after them.
   const caretAfter = useRef<{ readonly marks: number; readonly at: number } | null>(null);
@@ -383,6 +402,25 @@ export function Composer({
           />
         </div>
       )}
+      {prompt.open && (
+        <div className="relative">
+          <PromptList
+            id={prompt.listId}
+            options={prompt.options}
+            active={prompt.active}
+            optionId={prompt.optionId}
+            onPick={prompt.pick}
+          />
+        </div>
+      )}
+      {prompt.chosen !== null && (
+        <PromptForm
+          chosen={prompt.chosen}
+          onFill={prompt.fill}
+          onUse={prompt.use}
+          onCancel={prompt.cancel}
+        />
+      )}
       <div
         ref={boxRef}
         className="flex items-end gap-1 rounded-composer border border-input bg-surface p-1 shadow-raised transition-[border-color,box-shadow] duration-(--duration-state) focus-within:border-(--tint) focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--tint)_22%,transparent)]"
@@ -443,8 +481,12 @@ export function Composer({
             remember(field);
             const at = fieldSelection(field);
             if (at !== null) mention.follow(fieldText(field), at);
+            prompt.follow();
           }}
-          onBlur={mention.leave}
+          onBlur={() => {
+            mention.leave();
+            prompt.leave();
+          }}
           onCut={(event) => remember(event.currentTarget)}
           onDragStart={(event) => {
             dragged.current = draggedText(
@@ -466,7 +508,7 @@ export function Composer({
           }}
           onKeyDown={(event) => {
             remember(event.currentTarget);
-            if (mention.onKeyDown(event)) return;
+            if (mention.onKeyDown(event) || prompt.onKeyDown(event)) return;
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               send();
@@ -481,6 +523,7 @@ export function Composer({
           placeholder={label}
           aria-label={label}
           {...mention.fieldProps}
+          {...prompt.fieldProps}
           data-composer=""
           className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
         />
@@ -518,6 +561,11 @@ export function Composer({
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
       </span>
+      {prompt.cut && (
+        <p role="status" className="px-3 text-xs text-muted-foreground">
+          {t("prompt.cut")}
+        </p>
+      )}
       {/* Quiet: it clears by itself once the device keeps the draft. */}
       {notSaved && (
         <p role="status" className="px-3 text-xs text-muted-foreground">

@@ -183,7 +183,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           await page.getByText(/^Uploading/).waitFor({ state: "detached", timeout: STEP });
           // Typed after the file's chip: filling the field would replace the chip, and so the file.
           await page
-            .getByRole("textbox", { name: `Message ${bot.profile.name}` })
+            .getByRole("combobox", { name: `Message ${bot.profile.name}` })
             .focus({ timeout: STEP });
           await page.keyboard.press("ControlOrMeta+End");
           await page.keyboard.insertText("Hello from the desktop");
@@ -214,7 +214,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         yield* onPage(page, async () => {
           await page.getByRole("button", { name: "Settings" }).focus();
           const composer = await page
-            .getByRole("textbox", { name: `Message ${bot.profile.name}` })
+            .getByRole("combobox", { name: `Message ${bot.profile.name}` })
             .elementHandle({ timeout: STEP });
           await app.evaluate(({ Menu }) => {
             Menu.getApplicationMenu()?.getMenuItemById("show")?.click();
@@ -362,7 +362,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         yield* Effect.promise(async () => {
           await page.waitForURL(`j3bots-dev://app/bots/${bot.id}`, { timeout: STEP });
           await page
-            .getByRole("textbox", { name: `Message ${bot.profile.name}` })
+            .getByRole("combobox", { name: `Message ${bot.profile.name}` })
             .waitFor({ timeout: STEP });
         });
         assert.strictEqual(

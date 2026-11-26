@@ -66,7 +66,7 @@ import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
 import { sampleSecrets } from "./sampleSecrets";
 import { galleryVariants } from "./variants";
-import { sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
+import { sampleConnectors, sampleConnectorsIntents, samplePromptIntents } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
@@ -385,6 +385,26 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
         at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
         forBot: entry.author.botId,
       }),
+    answerConnectorInput: (entryId, answer) =>
+      inFlight(entryId, (e) =>
+        e._tag === "connector-input"
+          ? { ...e, status: { _tag: "answered", action: answer._tag } }
+          : e,
+      ),
+    openConnectorPage: () => {},
+    connectorPrompts: (botId) =>
+      samplePromptIntents
+        .prompts(botId)
+        .then((result) => (result._tag === "done" ? result.value : null)),
+    renderPrompt: (botId, prompt, given) =>
+      samplePromptIntents
+        .renderPrompt({
+          botId,
+          connectorId: prompt.connectorId,
+          name: prompt.name,
+          arguments: given,
+        })
+        .then((result) => (result._tag === "done" ? result.value : null)),
     setDraftText: (target, text, mentions, order) =>
       changeDraft(target, (draft) => {
         const files =

@@ -39,7 +39,7 @@ const BotRow = Schema.Struct({ id: BotId, provider_id: Schema.String });
  * What each bot is doing, for the roster (`docs/architecture/server.md`, 4. The
  * turn is observed): read from what the observer applied, never from a
  * client's timer. An engine request waiting on the operator comes first, then
- * a running turn, then a turn blocked until a usage limit resets, then an
+ * a connector's request for input a call waits on, then a running turn, then a turn blocked until a usage limit resets, then an
  * `ask` card or a browser help card the bot is waiting on.
  */
 export class BotStates extends Context.Service<
@@ -80,6 +80,18 @@ export const layer = Layer.effect(
           AND t.finished_at IS NULL
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND r.closed_at IS NULL
         ORDER BY r.rowid LIMIT 1
+      `,
+    });
+
+    /** A connector's request for input that a call of the bot's waits on, in its conversation. */
+    const inputCard = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: Card,
+      execute: (botId) => sql`
+        SELECT id AS entry_id FROM entries
+        WHERE conversation_bot_id = ${botId} AND kind = 'connector-input'
+          AND json_extract(body_json, '$.status._tag') = 'pending'
+        ORDER BY seq LIMIT 1
       `,
     });
 
@@ -170,6 +182,14 @@ export const layer = Layer.effect(
 
       // The turn in the bot's own conversation first, then a routine's.
       const turn = yield* runningTurn(botId);
+      const input = yield* inputCard(botId);
+      if (Option.isSome(input)) {
+        return {
+          _tag: "waiting",
+          entryId: input.value.entry_id,
+          since: Option.isSome(turn) ? turn.value.started_at : null,
+        } as const;
+      }
       if (Option.isSome(turn)) {
         const now = yield* DateTime.now;
         const quiet = turn.value.last_activity_at;

@@ -11,6 +11,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { readText } from "../../body.ts";
+import { CLIENT_NAME, ClientMetadataDocument } from "./clientMetadata.ts";
 import { OAuthFailure } from "./errors.ts";
 import {
   type AuthMethod,
@@ -19,6 +20,7 @@ import {
   type BearerChallenge,
   parseBearerChallenge,
   ProtectedResourceMetadata,
+  redirectMatches,
   RegistrationResponse,
   sameIssuer,
   secureUrl,
@@ -57,9 +59,6 @@ const ANSWER_LIMIT = 64 * 1024;
 
 /** How long one call may take, from connecting to the last byte of its answer read. */
 const CALL_TIMEOUT = Duration.seconds(15);
-
-/** The client's name at registration, which a provider shows on its consent page. */
-const CLIENT_NAME = "J3 Bots";
 
 /**
  * Sends `request` and reads what `read` needs of its answer, all within the
@@ -211,10 +210,42 @@ interface Registered {
 }
 
 /**
+ * The server's own client metadata document at `url`, read as an
+ * authorization server on the internet reads it: through the client
+ * sign-ins use, which reaches public addresses only. Read, and naming itself
+ * and `redirectUri` (a loopback one at any port, as a relayed sign-in's
+ * has), it can be J3 Bots' client id there; an address only the
+ * operator's network reaches is refused before anything is asked of it.
+ */
+export const clientDocument = Effect.fn("OAuth.clientDocument")(function* (
+  url: string,
+  redirectUri: string,
+) {
+  const document = yield* call(
+    HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson),
+    (response) =>
+      response.status === 200
+        ? decode(response, ClientMetadataDocument)
+        : Effect.fail(new OAuthFailure({ reason: "invalid-response" })),
+  );
+  if (
+    document.client_id !== url ||
+    !document.redirect_uris.some((listed) => redirectMatches(listed, redirectUri))
+  ) {
+    return yield* new OAuthFailure({ reason: "invalid-response" });
+  }
+  return document;
+});
+
+/**
  * Registers J3 Bots as a client (RFC 7591), for the code grant with refresh,
  * with `redirectUri` and the authentication method asked for. A server may
  * answer another method; a client that needs a secret it was not given, or
  * that is not registered for `redirectUri`, cannot sign in, and is refused.
+ * It says it is a native app when it returns to loopback, and a web app when
+ * it returns to the server's own `https` address (OpenID Connect Dynamic
+ * Client Registration's `application_type`, which MCP asks for from
+ * 2026-07-28): a provider that checks redirects against it takes either.
  */
 export const register = Effect.fn("OAuth.register")(function* (input: {
   readonly endpoint: string;
@@ -227,6 +258,7 @@ export const register = Effect.fn("OAuth.register")(function* (input: {
       HttpClientRequest.acceptJson,
       HttpClientRequest.bodyJsonUnsafe({
         client_name: CLIENT_NAME,
+        application_type: new URL(input.redirectUri).protocol === "https:" ? "web" : "native",
         redirect_uris: [input.redirectUri],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],

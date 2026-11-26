@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type BotId,
   type CommandError,
   type CommandLine,
   type Connector,
@@ -8,12 +9,13 @@ import {
   ConnectorId,
   type ConnectorListing,
   type ConnectorListingDetails,
+  type ConnectorPrompt,
   type ConnectorSource,
   type Language,
   type ListingRef,
+  type PromptArguments,
   type SignInRedirect,
   type SignInStarted,
-  type ToolReviewRevision,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -63,6 +65,15 @@ export class Connectors extends Context.Service<
   Connectors,
   {
     readonly state: Readable<Synced<ReadonlyArray<Connector>>>;
+    /** The prompts the connectors `botId` may use offer, for the `/` menu of its conversation. */
+    readonly prompts: (botId: BotId) => Effect.Effect<IntentResult<ReadonlyArray<ConnectorPrompt>>>;
+    /** A prompt as its server writes it from the operator's arguments, for their draft. */
+    readonly renderPrompt: (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly name: string;
+      readonly arguments: PromptArguments;
+    }) => Effect.Effect<IntentResult<{ readonly text: string; readonly cut: boolean }>>;
     /** What the gallery features, in `language`. */
     readonly featured: (
       language: Language,
@@ -87,11 +98,6 @@ export class Connectors extends Context.Service<
     readonly setBots: (
       connectorId: ConnectorId,
       grant: ConnectorGrant,
-    ) => Effect.Effect<IntentResult<Connector>>;
-    readonly answerToolReview: (
-      connectorId: ConnectorId,
-      revision: ToolReviewRevision,
-      decision: "accept" | "keep",
     ) => Effect.Effect<IntentResult<Connector>>;
     /** A sign-in only this device can finish, which it opens in the system browser. */
     readonly beginSignIn: (
@@ -203,19 +209,17 @@ export const layer = Layer.effect(
       );
     });
 
-    const answerToolReview = Effect.fn("Connectors.answerToolReview")(function* (
-      connectorId: ConnectorId,
-      revision: ToolReviewRevision,
-      decision: "accept" | "keep",
-    ) {
-      const commandId = yield* actions.commandId;
-      return yield* answered(
-        connection
-          .call((client) =>
-            client["connector.acceptToolChanges"]({ commandId, connectorId, revision, decision }),
-          )
-          .pipe(Effect.tap(show)),
-      );
+    const prompts = Effect.fn("Connectors.prompts")(function* (botId: BotId) {
+      return yield* answered(connection.call((client) => client["connector.prompts"]({ botId })));
+    });
+
+    const renderPrompt = Effect.fn("Connectors.renderPrompt")(function* (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly name: string;
+      readonly arguments: PromptArguments;
+    }) {
+      return yield* answered(connection.call((client) => client["connector.renderPrompt"](input)));
     });
 
     const featured = Effect.fn("Connectors.featured")(function* (language: Language) {
@@ -269,6 +273,8 @@ export const layer = Layer.effect(
 
     return Connectors.of({
       state,
+      prompts,
+      renderPrompt,
       featured,
       search,
       listing,
@@ -276,7 +282,6 @@ export const layer = Layer.effect(
       update,
       remove,
       setBots,
-      answerToolReview,
       beginSignIn,
       completeSignIn,
     });

@@ -8,14 +8,13 @@ import type {
   ConnectorTool,
 } from "@j3-bots/contracts";
 import {
-  awaitsReview,
   type ConnectorTone,
   connectorTone,
   grantsBot,
   type PairInput,
   withBot,
 } from "@j3-bots/client-runtime/presentation";
-import { connectorStatusText } from "@j3-bots/client-runtime/wording";
+import { connectorStatusText, serverText } from "@j3-bots/client-runtime/wording";
 import { CONNECTOR_GLYPHS, isConnectorGlyphName } from "@j3-bots/design-tokens";
 import { PlusIcon, XIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
@@ -97,7 +96,21 @@ export function StatusWord({ connector }: { connector: Connector }) {
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-xs", toneText[tone])}>
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", toneDot[tone])} />
-      {awaitsReview(connector) ? `${label} · ${ctx.i18n.t("connector.review.badge")}` : label}
+      {label}
+    </span>
+  );
+}
+
+/** A connector's status, then what its server speaks and offers once it was reached: for its row in the list. */
+export function ServerLine({ connector }: { connector: Connector }) {
+  const { i18n } = usePresentation();
+  const server = serverText(connector, i18n);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <StatusWord connector={connector} />
+      {server !== null && (
+        <span className="truncate text-xs text-muted-foreground">· {server}</span>
+      )}
     </span>
   );
 }
@@ -351,7 +364,7 @@ function ChoiceField({
 }
 
 /** What a field's control takes from its frame: its id, and what describes it. */
-interface FieldControl {
+export interface FieldControl {
   readonly id: string;
   readonly "aria-invalid": true | undefined;
   readonly "aria-describedby": string | undefined;

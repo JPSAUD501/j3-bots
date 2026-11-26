@@ -47,10 +47,11 @@ export interface StoredConnector {
   readonly grant: ConnectorGrant;
   /** When the operator last gave its form's values; an OAuth sign-in's time is the sign-in's own. */
   readonly signedInAt: DateTime.Utc | null;
-  /** The tools the operator accepted; null until its server first listed them. */
-  readonly accepted: ReadonlyArray<CatalogTool> | null;
-  /** The review the operator answered with "keep", which stays closed until the tools change again. */
-  readonly keptRevision: string | null;
+  /**
+   * The tools its server listed last, kept so bots get them after a restart
+   * before it lists them again; null until it first listed them.
+   */
+  readonly tools: ReadonlyArray<CatalogTool> | null;
   readonly createdAt: DateTime.Utc;
   /** Who last added, changed or granted it; null for one last changed before 0.9.0. */
   readonly lastChange: LastChange | null;
@@ -75,15 +76,7 @@ export interface PendingRemoval {
 export type ConnectorChanges = Partial<
   Pick<
     StoredConnector,
-    | "name"
-    | "grant"
-    | "signedInAt"
-    | "accepted"
-    | "keptRevision"
-    | "transport"
-    | "fields"
-    | "signIn"
-    | "lastChange"
+    "name" | "grant" | "signedInAt" | "tools" | "lastChange" | "transport" | "fields" | "signIn"
   >
 >;
 
@@ -101,7 +94,6 @@ const Row = Schema.Struct({
   all_bots: Flag,
   signed_in_at: Schema.NullOr(Time),
   tools_json: Schema.NullOr(json(Schema.Array(CatalogTool))),
-  kept_revision: Schema.NullOr(Schema.String),
   created_at: Time,
   changed_by_json: Schema.NullOr(json(ChangeAuthor)),
   changed_at: Schema.NullOr(Time),
@@ -113,8 +105,8 @@ const GrantRow = Schema.Struct({ connector_id: ConnectorId, bot_id: BotId });
 const RemovalRow = Schema.Struct({ connector_id: ConnectorId, revoke: Flag });
 
 const COLUMNS = `id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
-  fields_json, private_network, all_bots, signed_in_at, tools_json, kept_revision, created_at,
-  changed_by_json, changed_at`;
+  fields_json, private_network, all_bots, signed_in_at, tools_json, created_at, changed_by_json,
+  changed_at`;
 
 const encodePublisher = Schema.encodeSync(json(ConnectorPublisher));
 const encodeListing = Schema.encodeSync(json(ListingRef));
@@ -136,8 +128,7 @@ const toStored = (row: Row, bots: ReadonlyArray<BotId>): StoredConnector => ({
   privateNetwork: row.private_network,
   grant: row.all_bots ? { _tag: "all-bots" } : { _tag: "bots", ids: bots },
   signedInAt: row.signed_in_at,
-  accepted: row.tools_json,
-  keptRevision: row.kept_revision,
+  tools: row.tools_json,
   createdAt: row.created_at,
   lastChange:
     row.changed_by_json === null || row.changed_at === null
@@ -271,7 +262,7 @@ export const layer = Layer.effect(
         INSERT INTO connectors (
           id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
           fields_json, private_network, all_bots, signed_in_at, tools_json,
-          kept_revision, created_at, updated_at, changed_by_json, changed_at
+          created_at, updated_at, changed_by_json, changed_at
         ) VALUES (
           ${connector.id}, ${connector.name}, ${connector.slug}, ${connector.glyph},
           ${encodePublisher(connector.publisher)},
@@ -280,8 +271,7 @@ export const layer = Layer.effect(
           ${encodeFields(connector.fields)}, ${connector.privateNetwork ? 1 : 0},
           ${connector.grant._tag === "all-bots" ? 1 : 0},
           ${connector.signedInAt === null ? null : timeText(connector.signedInAt)},
-          ${connector.accepted === null ? null : encodeTools(connector.accepted)},
-          ${connector.keptRevision}, ${at}, ${at},
+          ${connector.tools === null ? null : encodeTools(connector.tools)}, ${at}, ${at},
           ${connector.lastChange === null ? null : encodeAuthor(connector.lastChange.by)},
           ${connector.lastChange === null ? null : timeText(connector.lastChange.at)}
         )
@@ -306,8 +296,7 @@ export const layer = Layer.effect(
             fields_json = ${encodeFields(next.fields)},
             all_bots = ${next.grant._tag === "all-bots" ? 1 : 0},
             signed_in_at = ${next.signedInAt === null ? null : timeText(next.signedInAt)},
-            tools_json = ${next.accepted === null ? null : encodeTools(next.accepted)},
-            kept_revision = ${next.keptRevision},
+            tools_json = ${next.tools === null ? null : encodeTools(next.tools)},
             changed_by_json = ${next.lastChange === null ? null : encodeAuthor(next.lastChange.by)},
             changed_at = ${next.lastChange === null ? null : timeText(next.lastChange.at)},
             updated_at = ${timeText(at)}

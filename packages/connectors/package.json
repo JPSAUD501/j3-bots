@@ -13,6 +13,10 @@
       "types": "./src/testing/fakeMcpServer.ts",
       "import": "./src/testing/fakeMcpServer.ts"
     },
+    "./testing/sdk": {
+      "types": "./src/testing/sdkHttpServer.ts",
+      "import": "./src/testing/sdkHttpServer.ts"
+    },
     "./testing/stdio": {
       "types": "./src/testing/stdioFixture.ts",
       "import": "./src/testing/stdioFixture.ts"
@@ -31,6 +35,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@modelcontextprotocol/server": "2.4.0",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

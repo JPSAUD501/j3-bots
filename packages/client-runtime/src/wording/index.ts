@@ -15,6 +15,7 @@ export {
   grantText,
   pinRefusalText,
   publisherText,
+  serverText,
   signedInText,
   signInProblemText,
 } from "./connectors.ts";

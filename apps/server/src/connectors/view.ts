@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type CatalogTool,
-  compareCatalog,
   type Failing,
+  type Prompt,
+  type Resource,
+  type ServerInfo,
   type SignInNeed,
   statusOf,
 } from "@j3-bots/connectors";
 import {
   type Connector,
+  type ConnectorServer,
   ConnectorToolName,
   type ConnectorTool,
   type ConnectorStatus,
-  type HeldToolChange,
-  type ToolReview,
-  ToolReviewRevision,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import type { SignInState } from "./auth.ts";
@@ -28,25 +28,33 @@ import type { StoredConnector } from "./ConnectorStore.ts";
 export interface Seen {
   /** What its server listed last; none until a session listed its tools. */
   readonly listed: Option.Option<ReadonlyArray<CatalogTool>>;
+  /** What its server said of itself, and the resources and prompts it listed last. */
+  readonly served: Option.Option<Served>;
   readonly failing: Option.Option<Failing>;
   /** Its server refused the credentials it was sent, and nothing has worked since. */
   readonly refused: boolean;
 }
 
-export const NOTHING_SEEN: Seen = { listed: Option.none(), failing: Option.none(), refused: false };
+interface Served {
+  readonly info: ServerInfo;
+  readonly resources: ReadonlyArray<Resource>;
+  readonly prompts: ReadonlyArray<Prompt>;
+}
+
+export const NOTHING_SEEN: Seen = {
+  listed: Option.none(),
+  served: Option.none(),
+  failing: Option.none(),
+  refused: false,
+};
 
 /**
- * The tools bots get: the accepted ones whose listing still matches. Until
- * its server lists them again after a restart, the accepted ones as they
- * are; a call opens a session, which lists them, before it goes out.
+ * The tools bots get: what its server listed last. Until it lists them again
+ * after a restart, those it listed before; a call opens a session, which
+ * lists them, before it goes out.
  */
-export const offeredOf = (connector: StoredConnector, seen: Seen): ReadonlyArray<CatalogTool> => {
-  const accepted = connector.accepted ?? [];
-  return Option.match(seen.listed, {
-    onNone: () => accepted,
-    onSome: (listed) => compareCatalog(accepted, listed).offered,
-  });
-};
+export const offeredOf = (connector: StoredConnector, seen: Seen): ReadonlyArray<CatalogTool> =>
+  Option.getOrElse(seen.listed, () => connector.tools ?? []);
 
 const toolOf = (tool: CatalogTool): ConnectorTool => ({
   name: ConnectorToolName.make(tool.name),
@@ -54,28 +62,19 @@ const toolOf = (tool: CatalogTool): ConnectorTool => ({
   description: tool.description,
 });
 
-/** The changes held for the operator, as the connector's page shows them; null when none are. */
-const reviewOf = (connector: StoredConnector, seen: Seen): ToolReview | null => {
-  if (connector.accepted === null || Option.isNone(seen.listed)) return null;
-  const state = compareCatalog(connector.accepted, seen.listed.value);
-  const changes = state.held.map((held): HeldToolChange =>
-    held.change === "added"
-      ? { _tag: "added", tool: toolOf(held.tool) }
-      : {
-          _tag: "changed",
-          tool: toolOf(held.tool),
-          previous: toolOf(held.previous),
-          inputChanged: held.inputChanged,
-        },
-  );
-  const [first, ...rest] = changes;
-  if (first === undefined) return null;
-  return {
-    revision: ToolReviewRevision.make(state.revision),
-    changes: [first, ...rest],
-    kept: connector.keptRevision === state.revision,
-  };
-};
+/** What the operator sees of the connector's server. Its name and version are cleaned titles already. */
+const serverOf = (connector: StoredConnector, seen: Seen): ConnectorServer | null =>
+  Option.match(seen.served, {
+    onNone: () => null,
+    onSome: ({ info, resources, prompts }) => ({
+      protocolVersion: info.protocolVersion.slice(0, 32),
+      name: info.name,
+      version: info.version,
+      tools: offeredOf(connector, seen).length,
+      resources: resources.length,
+      prompts: prompts.length,
+    }),
+  });
 
 const signInNeedOf = (
   connector: StoredConnector,
@@ -141,7 +140,7 @@ export const connectorOf = (
           })
         : connector.signedInAt,
     tools: offeredOf(connector, seen).map(toolOf),
-    review: reviewOf(connector, seen),
+    server: serverOf(connector, seen),
     createdAt: connector.createdAt,
     lastChange: connector.lastChange,
   };

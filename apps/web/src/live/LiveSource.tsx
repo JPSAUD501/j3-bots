@@ -1501,7 +1501,25 @@ function LiveShell({
         at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
         forBot: entry.author.botId,
       }),
+    answerConnectorInput: (entryId, answer) =>
+      void j3.answerCard(entryId, { _tag: "connector-input", answer }).then((result) => {
+        if (refusedWith(result, "connector-input")) say(t("connectorInput.refused"));
+      }),
+    openConnectorPage: (url) => {
+      window.open(url, "_blank", "noopener");
+    },
     openConnectors,
+    connectorPrompts: (botId) =>
+      j3.connectors.prompts(botId).then((result) => (result._tag === "done" ? result.value : null)),
+    renderPrompt: (botId, prompt, given) =>
+      j3.connectors
+        .renderPrompt({
+          botId,
+          connectorId: prompt.connectorId,
+          name: prompt.name,
+          arguments: given,
+        })
+        .then((result) => (result._tag === "done" ? result.value : null)),
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
     attachFiles: (asked, picked, at) =>

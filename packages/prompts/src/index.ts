@@ -84,9 +84,16 @@ export {
   tools,
 } from "./tools.ts";
 export {
+  CONNECTOR_UNAVAILABLE,
+  type ConnectorData,
   type ConnectorResult,
   type ConnectorUnavailable,
   connectorToolDescription,
+  type ListedPrompt,
+  type ListedResource,
+  listingText,
+  MAX_LISTING_CHARACTERS,
+  NOTHING_LISTED,
   renderConnectorResult,
 } from "./connectorResult.ts";
 export {

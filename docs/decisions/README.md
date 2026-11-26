@@ -52,6 +52,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0044](0044-j3-bots-installs-and-updates-the-harnesses.md) | J3 Bots installs and updates the harnesses | Accepted |
 | [0045](0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md) | J3 Bots keeps its own copies of the harnesses, checked against the makers' checksums | Accepted |
 | [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md) | Secrets: the operator types, a bot uses a reference | Accepted |
+| [0047](0047-j3-bots-is-a-complete-mcp-host-at-the-current-specification.md) | J3 Bots is a complete MCP host at the current specification | Accepted |
 | [0049](0049-the-bots-manage-mcp-servers-and-skills.md) | The bots manage MCP servers and skills | Accepted |
 | [0050](0050-bots-and-rooms-are-visible-or-hidden-and-the-operators-choice-wins.md) | Bots and rooms are visible or hidden, and the operator's choice wins | Accepted |
 | [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |

@@ -111,6 +111,22 @@ export function connectorStatusText(
   }
 }
 
+/**
+ * What a connector's server offers, in one line, for its row and its page:
+ * "MCP 2026-07-28 · 4 tools · 2 resources · 1 prompt", the kinds it offers
+ * none of left out. Null until this server reached it since it started.
+ */
+export function serverText(connector: Connector, { t, plural }: I18n): string | null {
+  const { server } = connector;
+  if (server === null) return null;
+  return [
+    t("connector.server.protocol", { version: server.protocolVersion }),
+    ...(server.tools > 0 ? [plural("connector.server.tools", server.tools)] : []),
+    ...(server.resources > 0 ? [plural("connector.server.resources", server.resources)] : []),
+    ...(server.prompts > 0 ? [plural("connector.server.prompts", server.prompts)] : []),
+  ].join(" · ");
+}
+
 /** When the operator last signed the connector in, or gave its key: "Signed in yesterday at 4:12 PM". */
 export function signedInText(connector: Connector, ctx: TimeContext): string | null {
   return connector.signedInAt === null

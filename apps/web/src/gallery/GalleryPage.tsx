@@ -103,6 +103,7 @@ import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { ConnectorAuthCard } from "../components/connectors/ConnectorCards";
+import { ConnectorInputCard } from "../components/connectors/ConnectorInputCard";
 import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
@@ -982,6 +983,8 @@ const timelineIntents: TimelineIntents = {
   openRoutine: nothing,
   openConversation: nothing,
   signInConnector: nothing,
+  answerConnectorInput: nothing,
+  openConnectorPage: nothing,
   resendMessage: nothing,
   discardMessage: nothing,
   closeWorkFold: nothing,
@@ -1179,6 +1182,18 @@ function CardsSection() {
         <div className="flex flex-col gap-3">
           {variants.connectorAuths.map((entry) => (
             <ConnectorAuthCard key={entry.id} entry={entry} onSignIn={nothing} />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="A service asks: a form, a page to open, answered, declined, no longer needed">
+        <div className="flex flex-col gap-3">
+          {variants.connectorInputs.map((entry) => (
+            <ConnectorInputCard
+              key={entry.id}
+              entry={entry}
+              onAnswer={nothing}
+              onOpenPage={nothing}
+            />
           ))}
         </div>
       </Labeled>
@@ -2090,13 +2105,6 @@ const listingAt = (key: string, name: string, glyph: string | null): ConnectorsP
   glyph: glyph === null ? null : ConnectorGlyph.make(glyph),
 });
 
-/** The sample's connectors with the tool changes waiting on one answered "Not now". */
-const keptReview = sampleConnectors.map((connector) =>
-  connector.review === null
-    ? connector
-    : { ...connector, review: { ...connector.review, kept: true } },
-);
-
 const connectorAt = (index: number, signIn = false): ConnectorsPlace => ({
   _tag: "connector",
   connectorId: sampleConnectorId(index),
@@ -2106,7 +2114,7 @@ const connectorAt = (index: number, signIn = false): ConnectorsPlace => ({
 
 function ConnectorsGallerySection() {
   return (
-    <Section title="Connectors">
+    <Section title="MCP and skills">
       <Labeled label="Settings: the connectors, how many work and how many need you">
         <ConnectorsSection connectors={sampleConnectors} onOpen={nothing} />
       </Labeled>
@@ -2149,12 +2157,7 @@ function ConnectorsGallerySection() {
           at={connectorAt(1, true)}
           route={relay}
         />
-        <ConnectorsVariant label="Can't reach, with tool changes to review" at={connectorAt(2)} />
-        <ConnectorsVariant
-          label="Tool changes answered Not now: held, with no badge"
-          at={connectorAt(2)}
-          initial={keptReview}
-        />
+        <ConnectorsVariant label="Can't reach, on an older revision" at={connectorAt(2)} />
         <ConnectorsVariant label="Secrets unavailable" at={connectorAt(3)} />
         <ConnectorsVariant label="Add your own" at={{ _tag: "add-own" }} />
       </div>

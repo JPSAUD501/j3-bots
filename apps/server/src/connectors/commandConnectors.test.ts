@@ -198,7 +198,7 @@ describe("Connectors started by command", () => {
   );
 
   it.live(
-    "starts the command again with new values, and holds the tools a new command line adds for review",
+    "starts the command again with new values, and offers the tools a new command line adds",
     () =>
       Effect.gen(function* () {
         const { connectors, ana } = yield* setUp;
@@ -235,24 +235,16 @@ describe("Connectors started by command", () => {
         });
         assert.notInclude(echoed.text, "new-secret-8899");
 
-        // A command line the operator confirmed again: the tool it adds waits on them.
+        // A command line the operator confirmed again: its process starts anew, with the tool it adds.
         yield* connectors.update({
           by: { _tag: "operator" },
           connectorId: ID,
           command: command(["--tool", "extra"]),
         });
-        const reviewed = yield* awaitConnector((connector) => connector.review !== null);
-        assert.deepStrictEqual(
-          reviewed.review?.changes.map((change) => [change._tag, change.tool.name]),
-          [["added", "extra"]],
-        );
-        assert.notInclude(
-          (yield* connectors.toolsFor(ana)).map((tool) => tool.name),
-          "notes__extra",
-        );
+        yield* awaitConnector((connector) => connector.tools.some((t) => t.name === "extra"));
         yield* eventually(Effect.sync(() => !alive(second)));
-        const held = yield* connectors.call({ botId: ana, name: "notes__extra", arguments: {} });
-        assert.isTrue(held.isError);
+        const extra = yield* connectors.call({ botId: ana, name: "notes__extra", arguments: {} });
+        assert.isFalse(extra.isError);
 
         const unpinned = yield* Effect.flip(
           connectors.update({

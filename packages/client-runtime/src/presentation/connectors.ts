@@ -90,16 +90,9 @@ export const connectorTone = (connector: Connector): ConnectorTone => {
   }
 };
 
-/**
- * Whether the connector's tool changes wait on the operator's first answer. A
- * review they answered "not now" stays held, but no longer asks for them.
- */
-export const awaitsReview = (connector: Connector): boolean =>
-  connector.review !== null && !connector.review.kept;
-
-/** Whether the operator has something to do for the connector: sign in, open Secrets, or review its tools. */
+/** Whether the operator has something to do for the connector: sign in, or open Secrets. */
 export const connectorNeedsYou = (connector: Connector): boolean =>
-  connectorTone(connector) === "needs-you" || awaitsReview(connector);
+  connectorTone(connector) === "needs-you";
 
 /** The connector the operator added from `listing`, if they did. */
 export const addedFrom = (

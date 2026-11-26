@@ -6,9 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 /**
- * A Streamable HTTP MCP server for tests, on loopback: enough of the protocol
- * for a session to open, list tools (in pages), call them and hear that its
- * tools changed. Each tool answers with what its handler returns, and the
+ * A Streamable HTTP MCP server for tests, on loopback, of the 2025-11-25
+ * revision: enough of it for a session to open (refusing `server/discover`
+ * as a server of that revision does), list tools (in pages), call them and
+ * hear that its tools changed. Each tool answers with what its handler returns, and the
  * server records every request's headers. Like a server that ignores
  * cancellation, it keeps a request it holds open until the client closes it.
  */
@@ -110,6 +111,16 @@ export const fakeMcpServer = (options: FakeOptions) =>
           });
           response.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
         };
+        const refuse = (response: NodeHttp.ServerResponse, id: string | number) => {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32601, message: "Method not found" },
+            }),
+          );
+        };
         const server = NodeHttp.createServer((request, response) => {
           let body = "";
           request.on("data", (chunk: Buffer) => {
@@ -159,6 +170,8 @@ export const fakeMcpServer = (options: FakeOptions) =>
             }
             if (options.hold?.(rpc.method) === true) return hold(response);
             switch (rpc.method) {
+              case "server/discover":
+                return refuse(response, rpc.id);
               case "initialize":
                 return reply(response, rpc.id, {
                   protocolVersion: rpc.params?.protocolVersion ?? "2025-11-25",

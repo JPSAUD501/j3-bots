@@ -22,9 +22,11 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * fixed limit since the operator last wrote there (`chain-stopped` with
  * `limit: "room"`). 11 is 0.9.0's, once for all its changes: the skills
  * (`SkillRpcs`), who changed a connector last (`Connector.lastChange`), no
- * connector suggestion card, and the vault became secrets (`SecretsRpcs` in
+ * connector suggestion card, the vault became secrets (`SecretsRpcs` in
  * place of the vault's requests, the `secret-ask` card in place of the
- * save-login card, no `Bot.vault`).
+ * save-login card, no `Bot.vault`), and no review of a connector's changed
+ * tools (`Connector` has no `review`, and `connector.acceptToolChanges` is
+ * gone).
  * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
 export const PROTOCOL_VERSION = 11;

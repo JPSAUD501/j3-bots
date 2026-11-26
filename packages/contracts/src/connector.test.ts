@@ -44,18 +44,13 @@ const connector = {
   account: "operator@example.com",
   signedInAt: "2026-11-22T09:00:00.000Z",
   tools: [{ name: "search", title: "Search", description: "Searches pages." }],
-  review: {
-    revision: "r2",
-    kept: false,
-    changes: [
-      {
-        _tag: "changed",
-        tool: { name: "search", title: "Search", description: "Searches pages and comments." },
-        previous: { name: "search", title: "Search", description: "Searches pages." },
-        inputChanged: false,
-      },
-      { _tag: "added", tool: { name: "delete", title: null, description: "Deletes a page." } },
-    ],
+  server: {
+    protocolVersion: "2026-07-28",
+    name: "Notion MCP",
+    version: "2.1.0",
+    tools: 1,
+    resources: 0,
+    prompts: 2,
   },
   createdAt: "2026-11-22T08:59:00.000Z",
   lastChange: { by: { _tag: "bot", botId: "b1" }, at: "2026-11-23T09:30:00.000Z" },
@@ -238,15 +233,42 @@ describe("a connector card", () => {
     glyph: "notion",
     status: "pending",
   };
+  const input = {
+    _tag: "connector-input",
+    ...placed(3),
+    author: { _tag: "bot", botId: "b1" },
+    connectorId: "conn_0123456789abcdef",
+    name: "Notion",
+    glyph: "notion",
+    request: {
+      _tag: "form",
+      message: "Which workspace?",
+      fields: [
+        {
+          _tag: "choice",
+          key: "workspace",
+          label: "Workspace",
+          description: null,
+          required: true,
+          multiple: false,
+          options: [{ value: "home", label: "Home" }],
+          minItems: null,
+          maxItems: null,
+          default: [],
+        },
+      ],
+    },
+    status: { _tag: "answered", action: "accept" },
+  };
 
   it("reaches a client of this build as the server wrote it", () => {
     const Entries = json(Schema.Array(ReceivedEntry));
-    const decoded = Schema.decodeSync(Entries)([auth]);
+    const decoded = Schema.decodeSync(Entries)([auth, input]);
     assert.deepStrictEqual(
       decoded.map((entry) => entry._tag),
-      ["connector-auth"],
+      ["connector-auth", "connector-input"],
     );
-    assert.deepStrictEqual(Schema.encodeSync(Entries)(decoded), [auth]);
+    assert.deepStrictEqual(Schema.encodeSync(Entries)(decoded), [auth, input]);
   });
 
   it("is never authored by anyone but a bot", () => {

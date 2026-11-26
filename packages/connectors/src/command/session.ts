@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { pinRefusal } from "@j3-bots/contracts";
-import { Client } from "@modelcontextprotocol/client";
+import type { PriorDiscovery } from "@modelcontextprotocol/client";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import { CommandFailed, type ConnectorFailure, NotMcp, ResponseTooLarge } from "../errors.ts";
 import {
+  type ClientSetup,
   type McpSession,
+  makeClient,
   request,
   type SessionLimits,
   scrubberOf,
   sdkTimeout,
-  toolsOf,
+  sessionOf,
 } from "../session.ts";
 import { type CommandVariable, commandEnvironment } from "./environment.ts";
 import { startProcess } from "./process.ts";
@@ -47,7 +50,7 @@ const debugsChildren = (environment: Readonly<Record<string, string | undefined>
       ).test("child_process"),
     );
 
-export interface CommandSessionOptions {
+export interface CommandSessionOptions extends ClientSetup {
   readonly platform: NodeJS.Platform;
   /** The program as the operator gave it: a name to find on the search path, or a path. */
   readonly program: string;
@@ -59,9 +62,6 @@ export interface CommandSessionOptions {
   /** The folder the process runs in. */
   readonly cwd: string;
   readonly limits: SessionLimits;
-  readonly client: { readonly name: string; readonly version: string };
-  /** The server said its tools changed (`notifications/tools/list_changed`). */
-  readonly onToolsChanged: Effect.Effect<void>;
 }
 
 export interface CommandSession {
@@ -119,71 +119,114 @@ export const openCommandSession = (
       );
       return yield* new CommandFailed({ reason: "exited" });
     }
-    const running = yield* startProcess({
-      platform: options.platform,
-      executable,
-      args,
-      environment,
-      cwd: options.cwd,
-    });
-    const fork = Effect.runForkWith(yield* Effect.context<never>());
-    const broken = yield* Deferred.make<void>();
-    const transport = new ProcessTransport(running.input, running.output, MAX_MESSAGE_BYTES, () =>
-      fork(Deferred.succeed(broken, undefined)),
-    );
-    const client = new Client(options.client, {
-      capabilities: {},
-      listChanged: {
-        tools: { autoRefresh: false, debounceMs: 0, onChanged: () => fork(options.onToolsChanged) },
-      },
-    });
+    const scrub = scrubberOf(options.variables.map((variable) => Redacted.value(variable.value)));
+    const context = yield* Effect.context<never>();
+    const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);
 
-    let ended = false;
-    yield* running.ended.pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          ended = true;
-        }),
-      ),
-      Effect.forkScoped,
-    );
-    /**
-     * A failure as the process explains it: one that came because it ended
-     * is its ending, and one because a message was too long is that. One
-     * that does not read what it is sent is not speaking MCP.
-     */
-    const explained = <A>(effect: Effect.Effect<A, ConnectorFailure>) =>
-      effect.pipe(
-        Effect.mapError((failure): ConnectorFailure =>
-          transport.tooLarge
-            ? new ResponseTooLarge({ limit: MAX_MESSAGE_BYTES })
-            : transport.stalled
-              ? new NotMcp()
-              : ended || failure._tag === "Unreachable"
-                ? new CommandFailed({ reason: "exited" })
-                : failure,
+    /** Starts the process and connects to it, as `prior` says or by asking it which revision it speaks. */
+    const connect = Effect.fn("openCommandSession.connect")(function* (
+      prior: PriorDiscovery | undefined,
+    ) {
+      const running = yield* startProcess({
+        platform: options.platform,
+        executable,
+        args,
+        environment,
+        cwd: options.cwd,
+      });
+      const broken = yield* Deferred.make<void>();
+      const transport = new ProcessTransport(
+        running.pid,
+        running.input,
+        running.output,
+        MAX_MESSAGE_BYTES,
+        () => fork(Deferred.succeed(broken, undefined)),
+      );
+      const client = makeClient(options, limits, fork);
+
+      let ended = false;
+      yield* running.ended.pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            ended = true;
+          }),
         ),
+        Effect.forkScoped,
+      );
+      /**
+       * A failure as the process explains it: one that came because it
+       * ended is its ending, and one because a message was too long is
+       * that. One that does not read what it is sent is not speaking MCP.
+       */
+      const explained = <A>(effect: Effect.Effect<A, ConnectorFailure>) =>
+        effect.pipe(
+          Effect.mapError((failure): ConnectorFailure =>
+            transport.tooLarge
+              ? new ResponseTooLarge({ limit: MAX_MESSAGE_BYTES })
+              : transport.stalled
+                ? new NotMcp()
+                : ended || failure._tag === "Unreachable"
+                  ? new CommandFailed({ reason: "exited" })
+                  : failure,
+          ),
+        );
+
+      yield* Effect.acquireRelease(
+        explained(
+          request(limits.listDeadline, (signal) =>
+            client.connect(transport, {
+              signal,
+              timeout: sdkTimeout(limits.listDeadline),
+              ...(prior === undefined ? {} : { prior }),
+            }),
+          ).pipe(
+            // A process that ends under the handshake may be heard of after the
+            // handshake fails: its ending is what failed it.
+            Effect.catch((failure) =>
+              running.ended.pipe(
+                Effect.as<ConnectorFailure>(new CommandFailed({ reason: "exited" })),
+                Effect.timeoutOrElse({
+                  duration: Duration.seconds(1),
+                  orElse: () => Effect.succeed(failure),
+                }),
+                Effect.flatMap(Effect.fail),
+              ),
+            ),
+          ),
+        ),
+        () =>
+          Effect.promise(() => client.close().catch(() => undefined)).pipe(
+            Effect.timeoutOrElse({ duration: Duration.seconds(5), orElse: () => Effect.void }),
+          ),
       );
 
-    yield* Effect.acquireRelease(
-      explained(
-        request(limits.listDeadline, (signal) =>
-          client.connect(transport, { signal, timeout: sdkTimeout(limits.listDeadline) }),
-        ),
-      ),
-      () =>
-        Effect.promise(() => client.close().catch(() => undefined)).pipe(
-          Effect.timeoutOrElse({ duration: Duration.seconds(5), orElse: () => Effect.void }),
-        ),
-    );
+      const session = sessionOf(client, transport, limits, context, () => scrub);
+      return {
+        session: {
+          info: session.info,
+          listTools: explained(session.listTools),
+          listResources: explained(session.listResources),
+          listPrompts: explained(session.listPrompts),
+          callTool: (input) => explained(session.callTool(input)),
+          readResource: (input) => explained(session.readResource(input)),
+          getPrompt: (input) => explained(session.getPrompt(input)),
+        },
+        ended: Effect.raceFirst(running.ended, Deferred.await(broken)),
+      } satisfies CommandSession;
+    });
 
-    const scrub = scrubberOf(options.variables.map((variable) => Redacted.value(variable.value)));
-    const tools = toolsOf(client, limits, () => scrub);
-    return {
-      session: {
-        listTools: explained(tools.listTools),
-        callTool: (input) => explained(tools.callTool(input)),
-      },
-      ended: Effect.raceFirst(running.ended, Deferred.await(broken)),
-    } satisfies CommandSession;
+    // A server built on an SDK that predates 2026-07-28 may end at the first
+    // request it does not know, as `server/discover` is to it: such a server
+    // is started again and spoken to as it expects.
+    const scope = yield* Effect.scope;
+    const attempt = yield* Scope.fork(scope);
+    const first = yield* connect(undefined).pipe(Scope.provide(attempt), Effect.exit);
+    if (Exit.isSuccess(first)) return first.value;
+    yield* Scope.close(attempt, first);
+    const exited = Option.match(Exit.findErrorOption(first), {
+      onNone: () => false,
+      onSome: (failure) => failure._tag === "CommandFailed",
+    });
+    if (!exited) return yield* first;
+    return yield* connect({ kind: "legacy" });
   });

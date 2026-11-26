@@ -25,7 +25,7 @@ import { Switch } from "../ui/switch";
 import { AddOwnConnector } from "./AddOwnConnector";
 import { ConnectorPage } from "./ConnectorPage";
 import { ListingPage } from "./ListingPage";
-import { ConnectorTile, StatusWord } from "./parts";
+import { ConnectorTile, ServerLine, StatusWord } from "./parts";
 import { type ConnectorsIntents, Failed } from "./screen";
 import {
   NewSkill,
@@ -400,7 +400,7 @@ function Home({
                         <ConnectorTile name={connector.name} glyph={connector.glyph} />
                         <span className="flex min-w-0 flex-1 flex-col">
                           <span className="truncate text-sm font-medium">{connector.name}</span>
-                          <StatusWord connector={connector} />
+                          <ServerLine connector={connector} />
                         </span>
                         <span className="flex shrink-0 flex-col items-end text-xs text-muted-foreground">
                           <span>{grantText(connector.grant, bots, i18n)}</span>

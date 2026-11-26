@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Where the fixture server is, and whether a process still runs, are Node's to say.
 import * as NodeOs from "node:os";
 import * as NodeUrl from "node:url";
+import { InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -33,7 +34,7 @@ export const serverEnvironment: Readonly<Record<string, string | undefined>> = {
 /** What the supervisor's tests start: the fixture, with a secret, and `args` after its file. */
 export const fixtureOptions = (
   args: ReadonlyArray<string> = [],
-): Omit<CommandSessionOptions, "onToolsChanged"> => ({
+): Omit<CommandSessionOptions, "onListChanged"> => ({
   platform: process.platform,
   program: process.execPath,
   args: [STDIO_SERVER, ...args].map((arg) => Redacted.make(arg)),
@@ -42,6 +43,7 @@ export const fixtureOptions = (
   cwd: NodeOs.tmpdir(),
   limits: DEFAULT_SESSION_LIMITS,
   client: { name: "j3-bots-test", version: "0.0.0" },
+  cache: new InMemoryResponseCacheStore(),
 });
 
 /** The text of the tool's answer. */

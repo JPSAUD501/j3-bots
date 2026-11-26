@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
+import { InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +14,7 @@ import {
   type CallCredentials,
   type ConnectorCredentials,
   DEFAULT_SESSION_LIMITS,
+  type ListKind,
   openSession,
   type SessionLimits,
   scrubberOf,
@@ -50,7 +52,7 @@ const open = (
   url: string,
   credentials: ConnectorCredentials,
   limits: Partial<SessionLimits> = {},
-  onToolsChanged: Effect.Effect<void> = Effect.void,
+  onListChanged: (kind: ListKind) => Effect.Effect<void> = () => Effect.void,
 ) =>
   openSession({
     url: new URL(url),
@@ -58,7 +60,8 @@ const open = (
     credentials,
     limits: { ...DEFAULT_SESSION_LIMITS, ...limits },
     client: { name: "j3-bots-test", version: "0.0.0" },
-    onToolsChanged,
+    cache: new InMemoryResponseCacheStore(),
+    onListChanged,
   });
 
 /** Everything an error could leak through: its message, its fields and its JSON. */
@@ -259,7 +262,7 @@ describe("openSession", () => {
       );
       assert.strictEqual(pages(), 5);
 
-      // Three tools' worth: the second page passes it, and the third is never asked for.
+      // About three tools' worth of answers: the second page passes it, and the third is never asked for.
       const bounded = yield* open(fake.url, fixed(bearer(TOKEN)), { maxCatalogBytes: 15_000 });
       const error = yield* Effect.flip(bounded.listTools);
       assert.strictEqual(error._tag, "ResponseTooLarge");
@@ -310,11 +313,8 @@ describe("openSession", () => {
     Effect.gen(function* () {
       const changed = yield* Deferred.make<void>();
       const fake = yield* fakeMcpServer({ tools: [{ name: "search" }], call: echo });
-      const session = yield* open(
-        fake.url,
-        fixed(bearer(TOKEN)),
-        {},
-        Deferred.succeed(changed, undefined),
+      const session = yield* open(fake.url, fixed(bearer(TOKEN)), {}, (kind) =>
+        kind === "tools" ? Deferred.succeed(changed, undefined) : Effect.void,
       );
       yield* session.listTools;
       // The session opens its stream for server messages after the handshake.

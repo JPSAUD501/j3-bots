@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type ApprovalDecision,
+  type ElicitationAnswer,
   Attachment,
   AttachmentOffsets,
   BotId,
@@ -282,7 +283,9 @@ export type CardAnswer =
   | { readonly _tag: "dismiss" }
   | { readonly _tag: "approval"; readonly decision: ApprovalDecision }
   /** The operator did the bot's step in its browser, or could not. */
-  | { readonly _tag: "browser-help"; readonly outcome: "done" | "declined" };
+  | { readonly _tag: "browser-help"; readonly outcome: "done" | "declined" }
+  /** What the operator answered a connector's request for input: the server's alone, never the bot's. */
+  | { readonly _tag: "connector-input"; readonly answer: ElicitationAnswer };
 
 /** The value travels redacted from the input to the socket and is kept nowhere. */
 export type SecretAnswer =

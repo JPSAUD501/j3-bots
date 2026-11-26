@@ -76,6 +76,13 @@ const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
         preview: "Ship it? precisa que você entre",
       },
     },
+    input: {
+      en: { bare: "A service asks you something", preview: "Ship it? asks you something" },
+      "pt-BR": {
+        bare: "Um serviço pede uma resposta sua",
+        preview: "Ship it? pede uma resposta sua",
+      },
+    },
   },
   handoff: {
     en: { bare: "Sent a teammate an urgent message", preview: "To a teammate: Ship it?" },

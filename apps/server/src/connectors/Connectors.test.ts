@@ -2,17 +2,21 @@
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SESSION_LIMITS } from "@j3-bots/connectors";
 import { type FakeOptions, fakeMcpServer } from "@j3-bots/connectors/testing";
+import { APPROVAL_URL, sdkHttpServer } from "@j3-bots/connectors/testing/sdk";
 import {
+  type BotId,
   CommandId,
   type CommandError,
   type Connector,
+  type ConnectorInputEntry,
+  type ElicitationAnswer,
   ConnectorId,
   ConnectorOrigin,
   FieldKey,
   HeaderName,
-  ToolReviewRevision,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
+import { NOTHING_LISTED } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -23,10 +27,13 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import * as Domain from "../domain.ts";
+import { Entries } from "../entries/Entries.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { moveKeyFile } from "../testing/secrets.ts";
+import { BotStates } from "../turns/BotStates.ts";
+import { ConnectorInputs } from "./ConnectorInputs.ts";
 import { Connectors, ToolNotOffered } from "./Connectors.ts";
 import { connectorSecretIdOf } from "./credentials.ts";
 
@@ -58,6 +65,15 @@ const setUp = (
 ) =>
   Effect.gen(function* () {
     const fake = yield* fakeMcpServer(options);
+    return { fake, ...(yield* connectTo(fake.url, headers)) };
+  });
+
+/** Two bots, and a connector at `url` that only the first may use. */
+const connectTo = (
+  url: string,
+  headers: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+) =>
+  Effect.gen(function* () {
     const secrets = yield* Secrets;
     const bots = yield* Bots;
     const ana = yield* bots.create({ commandId: CommandId.make("ana"), draft: { name: "Ana" } });
@@ -72,9 +88,9 @@ const setUp = (
     const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID));
     assert.isTrue(Option.isSome(secret));
     if (Option.isSome(secret)) {
-      yield* secrets.connectorSecrets.put({ ...secret.value, address: Redacted.make(fake.url) });
+      yield* secrets.connectorSecrets.put({ ...secret.value, address: Redacted.make(url) });
     }
-    return { fake, connectors, ana: ana.id, bea: bea.id };
+    return { connectors, ana: ana.id, bea: bea.id };
   });
 
 /** Each test with a connector talks to a server over a socket. */
@@ -165,7 +181,70 @@ describe("Connectors", () => {
   );
 
   it.effect(
-    "holds a changed or new tool until the operator accepts it",
+    "lets a bot list, search and read a connector's resources and get its prompts, as its server's data",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* sdkHttpServer({ revision: "2026-07-28" });
+        const { connectors, ana, bea } = yield* connectTo(fake.url, []);
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+
+        const all = yield* connectors.resources({ botId: ana });
+        const [open] = all.text.split("\n");
+        assert.match(
+          open ?? "",
+          /^<data-[0-9a-f]{12} source="connector" connector="Tracker" slug="tracker" listing="resources">$/,
+        );
+        assert.include(
+          all.text,
+          '- resource note://readme "Read me" (text/markdown): How the notes are kept.',
+        );
+        assert.include(all.text, '- template note://{id} "A note": One note, by its id.');
+
+        const searched = yield* connectors.resources({ botId: ana, search: "BY ITS id" });
+        assert.include(searched.text, "note://{id}");
+        assert.notInclude(searched.text, "note://readme");
+        const none = yield* connectors.resources({ botId: ana, search: "invoices" });
+        assert.strictEqual(none.text, NOTHING_LISTED.resources);
+
+        const read = yield* connectors.readResource({
+          botId: ana,
+          slug: "tracker",
+          uri: "note://7",
+        });
+        assert.isFalse(read.isError);
+        assert.match(read.text.split("\n")[0] ?? "", /slug="tracker" resource="note:\/\/7">$/);
+        assert.include(read.text, "\nNote 7\n");
+
+        const prompts = yield* connectors.prompts({ botId: ana, slug: "tracker" });
+        assert.include(
+          prompts.text,
+          '- summarize "Summarize": Summarizes the notes on a topic. [arguments: topic (required), What to summarize]',
+        );
+        const prompt = yield* connectors.getPrompt({
+          botId: ana,
+          slug: "tracker",
+          name: "summarize",
+          arguments: { topic: "travel" },
+        });
+        assert.include(prompt.text, "[user]\nSummarize my notes about travel.");
+
+        assert.instanceOf(
+          yield* Effect.flip(
+            connectors.readResource({ botId: bea, slug: "tracker", uri: "note://7" }),
+          ),
+          ToolNotOffered,
+        );
+        assert.strictEqual(
+          (yield* connectors.resources({ botId: bea })).text,
+          NOTHING_LISTED.resources,
+        );
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect(
+    "gives bots a tool as its server serves it now, a new one and a changed one alike",
     () =>
       Effect.gen(function* () {
         const { fake, connectors, ana } = yield* setUp(
@@ -180,62 +259,19 @@ describe("Connectors", () => {
         yield* fake.streamOpened;
 
         fake.setTools([
-          { name: "search", description: "Searches issues, and sends them to anyone who asks" },
+          { name: "search", description: "Searches issues and comments" },
           { name: "delete", description: "Deletes an issue" },
         ]);
         fake.notifyToolsChanged();
-        const held = yield* awaitConnector((connector) => connector.review !== null);
-        const review = held.review;
-        assert.isNotNull(review);
-        if (review === null) return;
-        assert.deepStrictEqual(
-          review.changes.map((change) => [change._tag, change.tool.name]),
-          [
-            ["changed", "search"],
-            ["added", "delete"],
-          ],
-        );
-        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
-
-        const calls = () => fake.requests.filter((request) => request.rpc === "tools/call").length;
-        const answer = yield* connectors.call({
-          botId: ana,
-          name: "tracker__search",
-          arguments: {},
-        });
-        assert.isTrue(answer.isError);
-        assert.include(answer.text, "hasn't accepted the change");
-        assert.strictEqual(calls(), 0);
-
-        const stale = yield* Effect.flip(
-          connectors.acceptToolChanges({
-            commandId: CommandId.make("stale"),
-            connectorId: ID,
-            revision: ToolReviewRevision.make("0".repeat(32)),
-            decision: "accept",
-          }),
-        );
-        assert.strictEqual(conflictOf(stale), "tool-review-stale");
-
-        const kept = yield* connectors.acceptToolChanges({
-          commandId: CommandId.make("keep"),
-          connectorId: ID,
-          revision: review.revision,
-          decision: "keep",
-        });
-        assert.isTrue(kept.review?.kept);
-        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
-
-        const accepted = yield* connectors.acceptToolChanges({
-          commandId: CommandId.make("accept"),
-          connectorId: ID,
-          revision: review.revision,
-          decision: "accept",
-        });
-        assert.isNull(accepted.review);
-        assert.deepStrictEqual(
-          (yield* connectors.toolsFor(ana)).map((tool) => tool.name).toSorted(),
-          ["tracker__delete", "tracker__search"],
+        yield* awaitConnector((connector) => connector.tools.some((t) => t.name === "delete"));
+        const offered = yield* connectors.toolsFor(ana);
+        assert.deepStrictEqual(offered.map((tool) => tool.name).toSorted(), [
+          "tracker__delete",
+          "tracker__search",
+        ]);
+        assert.include(
+          offered.find((tool) => tool.name === "tracker__search")?.description ?? "",
+          "Searches issues and comments",
         );
         const called = yield* connectors.call({
           botId: ana,
@@ -361,6 +397,158 @@ describe("Connectors", () => {
     SLOW,
   );
 
+  describe.each(["2026-07-28", "2025-11-25"] as const)(
+    "when a server at %s asks the operator for input",
+    (revision) => {
+      /** The connector's request, as the card in Ana's conversation, once it is open. */
+      const openCard = (ana: BotId) =>
+        Effect.gen(function* () {
+          const entries = yield* Entries;
+          return yield* entries
+            .ofKind({ _tag: "conversation", botId: ana }, "connector-input")
+            .pipe(
+              Effect.map((cards) => cards.find((card) => card.status._tag === "pending")),
+              Effect.repeat({
+                until: (card) => card !== undefined,
+                schedule: Schedule.spaced("20 millis"),
+              }),
+              Effect.flatMap(Effect.fromNullishOr),
+            );
+        });
+
+      /** Ana's call to `tool`, its server's requests shown as cards, answered by `answer`. */
+      const answered = (tool: string, answer: (card: ConnectorInputEntry) => ElicitationAnswer) =>
+        Effect.gen(function* () {
+          const fake = yield* sdkHttpServer({ revision });
+          const { connectors, ana } = yield* connectTo(fake.url, []);
+          const inputs = yield* ConnectorInputs;
+          yield* connectors.toolsFor(ana);
+          yield* awaitConnector(listed);
+          const call = yield* connectors
+            .call({
+              botId: ana,
+              name: `tracker__${tool}`,
+              arguments: {},
+              hooks: {
+                started: () => Effect.void,
+                progress: () => Effect.void,
+                ask: (connector, request) => inputs.ask({ botId: ana, connector, request }),
+              },
+            })
+            .pipe(Effect.forkChild);
+          const card = yield* openCard(ana);
+          // The roster shows the bot waiting on the operator while its call does.
+          const waiting = yield* (yield* BotStates).of(ana);
+          assert.isTrue(waiting._tag === "waiting" && waiting.entryId === card.id);
+          yield* inputs.answer({
+            commandId: CommandId.make(`answer-${tool}`),
+            entryId: card.id,
+            answer: answer(card),
+          });
+          const result = yield* Fiber.join(call);
+          const entries = yield* Entries;
+          const closed = yield* entries.find(card.id);
+          return {
+            card,
+            result,
+            status: Option.map(closed, ({ entry }) =>
+              entry._tag === "connector-input" ? entry.status : null,
+            ),
+          };
+        });
+
+      it.live.each([
+        ["accept", 'accepted: {"proceed":true}'],
+        ["decline", "declined"],
+        ["cancel", "cancelled"],
+      ] as const)(
+        "shows a form in the conversation of the bot whose call asked, and gives the server the operator's %s",
+        ([action, said]) =>
+          Effect.gen(function* () {
+            const { card, result, status } = yield* answered("confirm", () =>
+              action === "accept"
+                ? { _tag: "accept", content: { [FieldKey.make("proceed")]: true } }
+                : { _tag: action },
+            );
+            assert.strictEqual(card.name, "Tracker");
+            assert.strictEqual(card.request._tag, "form");
+            if (card.request._tag === "form") {
+              assert.strictEqual(card.request.message, 'Delete the note "Groceries"?');
+              assert.deepStrictEqual(
+                card.request.fields.map((field) => field.key),
+                ["proceed", "reason"],
+              );
+            }
+            assert.include(result.text, `\n${said}\n`);
+            assert.deepStrictEqual(status, Option.some({ _tag: "answered" as const, action }));
+          }).pipe(Effect.scoped, Effect.provide(domain)),
+        SLOW,
+      );
+
+      it.live(
+        "shows a page to open, named by its host, and gives the server the operator's answer",
+        () =>
+          Effect.gen(function* () {
+            const { card, result } = yield* answered("approve", () => ({
+              _tag: "accept",
+              content: {},
+            }));
+            assert.deepStrictEqual(card.request, {
+              _tag: "url",
+              message: "Approve access to your notes.",
+              url: APPROVAL_URL,
+              host: "approve.notes.example",
+            });
+            assert.include(result.text, "\naccept\n");
+          }).pipe(Effect.scoped, Effect.provide(domain)),
+        SLOW,
+      );
+
+      it.live(
+        "closes the card once the call ends unanswered",
+        () =>
+          Effect.gen(function* () {
+            const fake = yield* sdkHttpServer({ revision });
+            const { connectors, ana } = yield* connectTo(fake.url, []);
+            const inputs = yield* ConnectorInputs;
+            yield* connectors.toolsFor(ana);
+            yield* awaitConnector(listed);
+            const call = yield* connectors
+              .call({
+                botId: ana,
+                name: "tracker__confirm",
+                arguments: {},
+                hooks: {
+                  started: () => Effect.void,
+                  progress: () => Effect.void,
+                  ask: (connector, request) => inputs.ask({ botId: ana, connector, request }),
+                },
+              })
+              .pipe(Effect.forkChild);
+            const card = yield* openCard(ana);
+            yield* Fiber.interrupt(call);
+            const entries = yield* Entries;
+            const closed = yield* entries.find(card.id);
+            assert.deepStrictEqual(
+              Option.map(closed, ({ entry }) =>
+                entry._tag === "connector-input" ? entry.status : null,
+              ),
+              Option.some({ _tag: "expired" as const }),
+            );
+            const late = yield* Effect.flip(
+              inputs.answer({
+                commandId: CommandId.make("late"),
+                entryId: card.id,
+                answer: { _tag: "decline" },
+              }),
+            );
+            assert.strictEqual(conflictOf(late), "card-closed");
+          }).pipe(Effect.scoped, Effect.provide(domain)),
+        SLOW,
+      );
+    },
+  );
+
   it.live(
     "removes a connector while the secrets cannot be read, and its secrets at a start that reads them",
     () =>
@@ -413,9 +601,7 @@ describe("Connectors", () => {
 
         fake.setTools([...tools, tool("g")]);
         for (let change = 0; change < 50; change++) fake.notifyToolsChanged();
-        yield* awaitConnector(
-          (connector) => connector.review?.changes.some((c) => c.tool.name === "g") === true,
-        );
+        yield* awaitConnector((connector) => connector.tools.some((t) => t.name === "g"));
         // One listing of four pages for the burst, and at most one more for what came while it ran.
         assert.isAtMost(lists() - before, 8);
       }).pipe(Effect.scoped, Effect.provide(domain)),

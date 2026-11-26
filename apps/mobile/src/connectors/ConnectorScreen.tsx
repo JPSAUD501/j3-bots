@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { refusedWith } from "@j3-bots/client-runtime";
 import {
   clockTime,
   fieldValues,
@@ -17,10 +16,11 @@ import {
   connectFailureText,
   grantText,
   publisherText,
+  serverText,
   signedInText,
   signInProblemText,
 } from "@j3-bots/client-runtime/wording";
-import type { Connector, ConnectorGrant, FieldKey, ToolReview } from "@j3-bots/contracts";
+import type { Connector, ConnectorGrant, FieldKey } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
   type ReactNode,
@@ -53,9 +53,9 @@ type Props = NativeStackScreenProps<Screens, "connector">;
 
 /**
  * A connector the operator added: whether bots can use it now, and the one
- * thing that fixes it when they cannot; tool changes held for the operator;
- * the bots that may use it, changed in place; who it is signed in as, where
- * it is reached, what it lets bots do; and Disconnect. A connector that runs
+ * thing that fixes it when they cannot; the bots that may use it, changed in
+ * place; who it is signed in as, where it is reached, what it lets bots do and
+ * what its server speaks; and Disconnect. A connector that runs
  * a command on the server is only shown here: it is looked after from the
  * computer.
  */
@@ -124,6 +124,7 @@ export function ConnectorScreen({ navigation, route }: Props) {
   const account =
     connector.account === null ? null : t("connector.signedInAs", { account: connector.account });
   const signedIn = signedInText(connector, ctx);
+  const server = serverText(connector, ctx.i18n);
 
   return (
     <Page>
@@ -157,15 +158,6 @@ export function ConnectorScreen({ navigation, route }: Props) {
         <ReplaceFields connector={connector} intents={intents} onDone={() => setReplacing(false)} />
       )}
       {onComputer && <Quiet>{t("connector.onComputer")}</Quiet>}
-      {connector.review !== null && !onComputer && (
-        <ToolReviewBlock
-          key={connector.review.revision}
-          connector={connector}
-          review={connector.review}
-          connected={connected}
-          intents={intents}
-        />
-      )}
 
       <PageSection title={t("connector.bots")}>
         {onComputer ? (
@@ -197,6 +189,7 @@ export function ConnectorScreen({ navigation, route }: Props) {
 
       <PageSection title={t("connector.tools")}>
         <ToolList tools={connector.tools} />
+        {server !== null && <Quiet>{server}</Quiet>}
       </PageSection>
 
       {!onComputer && (
@@ -379,107 +372,6 @@ function GrantEditor({
         </Text>
       )}
       <Problem>{failed ? t("connector.bots.failed") : null}</Problem>
-    </View>
-  );
-}
-
-/**
- * The tools a connector changed, held until the operator says: each one new
- * or changed, with what it said before and whether it takes other input now.
- * Until they accept, bots get none of these. "Not now" stops it asking, and
- * Accept still works here. Changes that came after the operator looked are
- * never accepted unseen: the server refuses the answer, and the new list
- * shows here.
- */
-function ToolReviewBlock({
-  connector,
-  review,
-  connected,
-  intents,
-}: {
-  readonly connector: Connector;
-  readonly review: ToolReview;
-  readonly connected: boolean;
-  readonly intents: ConnectorsIntents;
-}) {
-  const { t } = useI18n();
-  const [sending, setSending] = useState<"accept" | "keep" | null>(null);
-  const [problem, setProblem] = useState<"stale" | "failed" | null>(null);
-  const answer = (decision: "accept" | "keep") => {
-    if (sending !== null || !connected) return;
-    setSending(decision);
-    setProblem(null);
-    void intents.answerToolReview(connector.id, review.revision, decision).then((result) => {
-      setSending(null);
-      if (result._tag === "failed") {
-        setProblem(refusedWith(result, "tool-review-stale") ? "stale" : "failed");
-      }
-    });
-  };
-  return (
-    <View
-      className={`gap-3 rounded-lg border p-3 ${review.kept ? "border-border" : "border-waiting/45 bg-waiting-surface"}`}
-    >
-      <Text accessibilityRole="header" className="text-base font-semibold text-foreground">
-        {review.kept ? t("connector.review.kept.title") : t("connector.review.title")}
-      </Text>
-      <Text className="text-sm text-muted-foreground">
-        {review.kept
-          ? t("connector.review.kept.body")
-          : t("connector.review.body", { name: connector.name })}
-      </Text>
-      {review.changes.map((change) => (
-        <View key={change.tool.name} className="gap-0.5">
-          <View className="flex-row flex-wrap items-center gap-2">
-            <Text className="text-sm font-medium text-foreground">
-              {change.tool.title ?? change.tool.name}
-            </Text>
-            <Text className="rounded-pill bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
-              {change._tag === "added"
-                ? t("connector.review.added")
-                : t("connector.review.changed")}
-            </Text>
-            {change._tag === "changed" && change.inputChanged && (
-              <Text className="rounded-pill bg-waiting-surface px-2 py-0.5 text-xs font-medium text-waiting">
-                {t("connector.review.inputChanged")}
-              </Text>
-            )}
-          </View>
-          {change.tool.description !== "" && (
-            <Text className="text-sm text-foreground">{change.tool.description}</Text>
-          )}
-          {change._tag === "changed" && change.previous.description !== change.tool.description && (
-            <Text className="text-sm text-muted-foreground">
-              {t("connector.review.before", { description: change.previous.description })}
-            </Text>
-          )}
-        </View>
-      ))}
-      <Problem>
-        {problem === null
-          ? null
-          : problem === "stale"
-            ? t("connector.review.stale")
-            : t("connector.review.failed")}
-      </Problem>
-      <View className="flex-row flex-wrap gap-2">
-        <Button
-          variant="primary"
-          label={t("connector.review.accept")}
-          onPress={() => answer("accept")}
-          held={sending !== null}
-          disabled={!connected}
-        />
-        {!review.kept && (
-          <Button
-            variant="outline"
-            label={t("connector.review.keep")}
-            onPress={() => answer("keep")}
-            held={sending !== null}
-            disabled={!connected}
-          />
-        )}
-      </View>
     </View>
   );
 }

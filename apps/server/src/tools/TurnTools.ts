@@ -7,6 +7,7 @@ import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { MadeBy } from "../bots/Bots.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
+import type { CallPlace } from "../turns/ConnectorSteps.ts";
 
 /** The tools whose effect belongs to the turn that called them. */
 const TurnToolName = Schema.Literals([
@@ -183,6 +184,6 @@ export class TurnTools extends Context.Service<
      */
     readonly claimConnectorCall: (
       call: ClaimedCall,
-    ) => Effect.Effect<void, TurnEnded | TurnToolRetry | CallCutOff>;
+    ) => Effect.Effect<CallPlace, TurnEnded | TurnToolRetry | CallCutOff>;
   }
 >()("@j3-bots/server/tools/TurnTools") {}

@@ -16,23 +16,44 @@
 //
 // It writes a line that is not MCP to its output before anything else, and
 // its whole environment to its standard error, as careless servers do. An
-// argument `--tool <name>` adds a tool that does nothing.
+// argument `--tool <name>` adds a tool that does nothing; `--exit-on-unknown`
+// makes it end at a request it does not know, as `server/discover` is to it.
+//
+// It imports nothing but Node's own modules: a test starts it many times, and
+// a library to read its lines would take most of each start.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeReadline from "node:readline";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
-const Request = Schema.Struct({
-  id: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
-  method: Schema.String,
-  params: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-});
-const decodeRequest = Schema.decodeUnknownOption(Schema.fromJsonString(Request));
-const CallParams = Schema.Struct({
-  name: Schema.String,
-  arguments: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-});
-const decodeCall = Schema.decodeUnknownOption(CallParams);
+type Fields = Readonly<Record<string, unknown>>;
+
+const isFields = (value: unknown): value is Fields =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A JSON-RPC request with an id, or none for anything else (a notification, a line that is not JSON). */
+const decodeRequest = (
+  line: string,
+): { readonly id: string | number; readonly method: string; readonly params: Fields } | null => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!isFields(parsed)) return null;
+  const { id, method, params } = parsed;
+  if ((typeof id !== "string" && typeof id !== "number") || typeof method !== "string") return null;
+  if (params !== undefined && !isFields(params)) return null;
+  return { id, method, params: params ?? {} };
+};
+
+/** A tool call's name and arguments, or none when they are not those. */
+const decodeCall = (
+  params: Fields,
+): { readonly name: string; readonly arguments: Fields } | null => {
+  const { name, arguments: args } = params;
+  if (typeof name !== "string" || (args !== undefined && !isFields(args))) return null;
+  return { name, arguments: args ?? {} };
+};
 
 const extra = process.argv.flatMap((word, index) =>
   process.argv[index - 1] === "--tool" ? [word] : [],
@@ -95,15 +116,15 @@ process.stderr.write(`${JSON.stringify(process.env)}\n`);
 const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const request = decodeRequest(line);
-  if (Option.isNone(request) || request.value.id === undefined) return;
-  const { id, method, params } = request.value;
+  if (request === null) return;
+  const { id, method, params } = request;
   switch (method) {
     case "initialize":
       send({
         jsonrpc: "2.0",
         id,
         result: {
-          protocolVersion: String(params?.["protocolVersion"] ?? "2025-11-25"),
+          protocolVersion: String(params["protocolVersion"] ?? "2025-11-25"),
           capabilities: { tools: { listChanged: true } },
           serverInfo: { name: "fixture", version: "1.0.0" },
         },
@@ -117,18 +138,20 @@ lines.on("line", (line) => {
       return;
     case "tools/call": {
       const call = decodeCall(params);
-      if (Option.isNone(call)) {
+      if (call === null) {
         send({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } });
         return;
       }
       send({
         jsonrpc: "2.0",
         id,
-        result: text(answer(call.value.name, call.value.arguments ?? {})),
+        result: text(answer(call.name, call.arguments)),
       });
       return;
     }
     default:
+      // As servers on SDKs that end at a request they do not know.
+      if (process.argv.includes("--exit-on-unknown")) process.exit(1);
       send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
   }
 });

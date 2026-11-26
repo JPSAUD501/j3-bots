@@ -8,11 +8,13 @@ import * as Schema from "effect/Schema";
 
 /**
  * How long the bridge waits for the answer to a connector tool's call: past
- * the connector client's own deadline, so an answer for a call that ran out
- * arrives first. A harness waits a minute longer for the bridge
- * (`ToolBridge.callTimeoutSeconds`).
+ * the longest the connector client lets one run, which is a call its server
+ * runs as a task (`SessionLimits.taskDeadline`, an hour), so an answer for a
+ * call that ran out arrives first. A call its server answers at once is cut
+ * off by the client well before (`SessionLimits.callDeadline`). A harness
+ * waits a minute longer for the bridge (`ToolBridge.callTimeoutSeconds`).
  */
-export const CONNECTOR_CALL_DEADLINE = Duration.minutes(11);
+export const CONNECTOR_CALL_DEADLINE = Duration.minutes(61);
 
 /** Where the bridge forwards a call: `POST` a `ToolCallRequest`, answered with a `ToolCallResponse`. */
 export const TOOL_CALL_PATH = "/tools/call";
@@ -61,6 +63,8 @@ export const ListedTool = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   inputSchema: Schema.Json,
+  /** For J3 Bots' own tools, what keeps them loaded when the harness defers MCP tools. */
+  _meta: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 });
 export type ListedTool = typeof ListedTool.Type;
 
