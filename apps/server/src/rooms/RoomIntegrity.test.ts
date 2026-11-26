@@ -353,6 +353,8 @@ it.effect(
       const turn = yield* nextTurn(ana.bot.id);
       const card = yield* askInRoom(ana, turn);
 
+      // Ana speaks while the removal's Stop is still reaching her turn.
+      const effects = yield* (yield* TestEngineControl).delayNextStopEffects;
       yield* (yield* Rooms).update({
         commandId: command(),
         roomId: room.id,
@@ -360,6 +362,7 @@ it.effect(
       });
       const response = yield* say(ana, turn, { text: "Europe it is." });
       assert.include(JSON.stringify(response), "removed you from this room");
+      yield* effects.release;
       yield* stopSettled;
       yield* turnEnded(ana.bot.id);
 
