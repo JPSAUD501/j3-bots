@@ -133,7 +133,6 @@ export {
   isHidden,
   needsOperator,
   Roster,
-  rosterRows,
   type SectionChanges,
 } from "./stores/Roster.ts";
 export {

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { rosterRows } from "@j3-bots/client-runtime";
-import { rosterKeyOf, rosterKeyText, rosterTarget } from "@j3-bots/client-runtime/presentation";
+import { isHidden } from "@j3-bots/client-runtime";
+import {
+  orderRoster,
+  rosterKeyOf,
+  rosterKeyText,
+  rosterTarget,
+} from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText } from "@j3-bots/client-runtime/wording";
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
@@ -50,7 +55,9 @@ const shareEntries = (items: ReadonlyArray<RosterItem>): ReadonlyArray<ShareEntr
   const header: ShareEntry = { kind: "hidden" };
   const hidden = hiddenItems(items);
   return [
-    ...rosterRows(items).map(row),
+    ...orderRoster(items)
+      .filter((item) => !isHidden(item))
+      .map(row),
     ...(hidden.length === 0 ? [] : [header, ...hidden.map(row)]),
   ];
 };

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * How the roster's rows travel when its order changes. The order itself is
- * the roster's (`orderRoster`, `rosterRows`): this only says which rows move
+ * the roster's (`orderRoster`): this only says which rows move
  * and how, so every client draws a reorder the same way.
  */
 
