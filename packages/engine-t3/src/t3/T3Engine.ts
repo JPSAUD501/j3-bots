@@ -371,7 +371,7 @@ interface SyncTarget {
 /** What the engine's browser needs from this host, as the engine status says it. */
 const browserHostStatus = (needs: BrowserHostNeeds): BrowserHostStatus => {
   const missing = [
-    ...(needs.sandboxBlocked ? (["sandbox"] as const) : []),
+    ...(needs.sandbox === "none" ? [] : (["sandbox"] as const)),
     ...(needs.missingLibraries.length > 0 ? (["libraries"] as const) : []),
     ...(needs.noFonts ? (["fonts"] as const) : []),
   ];
@@ -635,12 +635,30 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   );
 
   const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
+  /**
+   * Whether the engine found the browser's sandbox blocked when it last
+   * started the browser for a viewer, until a viewer sees it start: what the
+   * host check cannot see without root (`SandboxBlock`).
+   */
+  const sandboxRefused = yield* Ref.make(false);
+  /** Asks for the host check (`checkBrowserHost`) to run again. */
+  const browserHostChecks = yield* Queue.sliding<void>(1);
+  const recheckBrowserHost = Queue.offer(browserHostChecks, undefined).pipe(Effect.asVoid);
   const browser = makeBrowserBridge({
     rpc,
     state,
     port: options.port,
     token: currentToken,
     http,
+    reportStart: (start) =>
+      start._tag === "started"
+        ? Ref.getAndSet(sandboxRefused, false).pipe(
+            Effect.flatMap((refused) => (refused ? recheckBrowserHost : Effect.void)),
+          )
+        : Effect.andThen(
+            start.need === "sandbox" ? Ref.set(sandboxRefused, true) : Effect.void,
+            recheckBrowserHost,
+          ),
   });
 
   /** What every session's streams emitted, for resuming one by replay or by replacement. */
@@ -1040,15 +1058,19 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * Whether the engine's browser can run on this host, checked each time the
    * engine becomes ready and each time a bot is given the browser: an
    * administrator may have set the host up, or the engine downloaded the
-   * browser, since. Nothing to check off Linux, where it needs no setup.
+   * browser, since. Checked again each time a viewer finds the browser could
+   * not start for what the host lacks, which also counts a sandbox the files
+   * here do not show blocked, and once one sees it start after that. Nothing
+   * to check off Linux, where it needs no setup.
    */
   const browserHost = yield* SubscriptionRef.make(Option.none<BrowserHostStatus>());
-  const browserHostChecks = yield* Queue.sliding<void>(1);
   const checkBrowserHost = Effect.gen(function* () {
     if (process.platform !== "linux") {
       return yield* SubscriptionRef.set(browserHost, Option.some({ _tag: "ready" }));
     }
-    const needs = yield* platformServices(inspectBrowserHost({ home: options.home }));
+    const needs = yield* platformServices(
+      inspectBrowserHost({ home: options.home, sandboxRefused: yield* Ref.get(sandboxRefused) }),
+    );
     yield* SubscriptionRef.set(browserHost, Option.some(browserHostStatus(needs)));
   });
   yield* Stream.merge(
@@ -1066,7 +1088,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const current = (yield* projectOverrides)[input.projectId];
     const next = withBrowserAccess(current, input.enabled);
     if (next !== null) yield* writeOverrides(input.projectId, next);
-    if (input.enabled) yield* Queue.offer(browserHostChecks, undefined);
+    if (input.enabled) yield* recheckBrowserHost;
   }, overridesLock.withPermits(1));
 
   /** Every thread of the project the engine has, archived ones and other agents' children included. */

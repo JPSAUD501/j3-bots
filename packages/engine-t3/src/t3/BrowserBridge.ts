@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -176,12 +177,51 @@ export const viewerOf = Effect.fnUntraced(function* (socket: Socket.Socket) {
   } satisfies BrowserViewer;
 });
 
+/**
+ * What a viewer showed of the engine's start of the browser: the engine
+ * started it for the tab, or could not for what the host lacks.
+ */
+export type BrowserStart =
+  | { readonly _tag: "started" }
+  | { readonly _tag: "setup-needed"; readonly need: "sandbox" | "libraries" };
+
+/**
+ * `viewer`, telling `report` what it shows of the browser's start. The engine
+ * attaches a viewer only to a tab it started the browser for, and otherwise
+ * closes the stream for what the host lacks when that is the cause (**Read**
+ * at `59651c1`, `preview/ServerBrowserStream.ts` L85-127): so the first output
+ * is a start, and a `setup-needed` close is the host's failure, by its type.
+ */
+export const reportingStart = Effect.fnUntraced(function* (
+  viewer: BrowserViewer,
+  report: (start: BrowserStart) => Effect.Effect<void>,
+) {
+  const started = yield* Ref.make(false);
+  return {
+    ...viewer,
+    output: viewer.output.pipe(
+      Stream.tap(() =>
+        Ref.getAndSet(started, true).pipe(
+          Effect.flatMap((already) => (already ? Effect.void : report({ _tag: "started" }))),
+        ),
+      ),
+      Stream.tapError((closed) =>
+        closed.reason === "setup-needed" && closed.need !== undefined
+          ? report({ _tag: "setup-needed", need: closed.need })
+          : Effect.void,
+      ),
+    ),
+  } satisfies BrowserViewer;
+});
+
 export const makeBrowserBridge = (input: {
   readonly rpc: EngineRpc;
   readonly state: SubscriptionRef.SubscriptionRef<ProcessState>;
   readonly port: number;
   readonly token: Effect.Effect<Redacted.Redacted<string>>;
   readonly http: HttpClient.HttpClient;
+  /** Told what each viewer shows of the browser's start (`reportingStart`). */
+  readonly reportStart: (start: BrowserStart) => Effect.Effect<void>;
 }) => {
   const { rpc } = input;
 
@@ -304,7 +344,8 @@ export const makeBrowserBridge = (input: {
     const socket = yield* Socket.makeWebSocket(url, { openTimeout: OPEN_TIMEOUT }).pipe(
       Effect.provide(Socket.layerWebSocketConstructorGlobal),
     );
-    return yield* viewerOf(socket).pipe(Effect.mapError(() => new EngineUnavailable()));
+    const viewer = yield* viewerOf(socket).pipe(Effect.mapError(() => new EngineUnavailable()));
+    return yield* reportingStart(viewer, input.reportStart);
   });
 
   return BrowserBridge.of({ tabs, readTab, openViewer });

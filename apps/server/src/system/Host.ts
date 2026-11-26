@@ -78,10 +78,12 @@ export class Host extends Context.Service<
      * What the engine's headless browser needs from this Linux host, for the
      * engine's data directory `home`: it reads the AppArmor settings, and
      * runs the downloaded browser, `ldd`, `fc-match` and `apt-cache` to ask
-     * about libraries, fonts and packages.
+     * about libraries, fonts and packages. `sandboxRefused`: the running
+     * server says the engine found the sandbox blocked.
      */
     readonly browserNeeds: (input: {
       readonly home: string;
+      readonly sandboxRefused: boolean;
     }) => Effect.Effect<EngineLive.BrowserHostNeeds>;
   }
 >()("@j3-bots/server/system/Host") {}
@@ -246,7 +248,8 @@ export const layer = Layer.effect(
         ),
       ),
       browserNeeds: Effect.fn("Host.browserNeeds")(
-        (input: { readonly home: string }) => EngineLive.inspectBrowserHost(input),
+        (input: { readonly home: string; readonly sandboxRefused: boolean }) =>
+          EngineLive.inspectBrowserHost(input),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
