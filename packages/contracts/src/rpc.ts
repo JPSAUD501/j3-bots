@@ -33,6 +33,7 @@ import {
   ConnectorPrompt,
   ConnectorSource,
   ListingRef,
+  OAuthClientInput,
   PromptArguments,
   SignInCallback,
   SignInRedirect,
@@ -309,6 +310,20 @@ export const EntryRpcs = RpcGroup.make(
         Schema.TaggedStruct("approval", { decision: ApprovalDecision }),
         Schema.TaggedStruct("browser-help", { outcome: Schema.Literals(["done", "declined"]) }),
         Schema.TaggedStruct("connector-input", { answer: ElicitationAnswer }),
+        /**
+         * The operator's yes to a bot's `connector-ask`: with the client they
+         * registered for an own app, null for an address in their own network.
+         * The secret goes to the server's secrets only, never to a receipt or
+         * the bot.
+         */
+        Schema.TaggedStruct("connector-ask", {
+          client: Schema.NullOr(
+            Schema.Struct({
+              clientId: OAuthClientInput.fields.clientId,
+              clientSecret: OAuthClientInput.fields.clientSecret,
+            }),
+          ),
+        }),
       ]),
     },
     error: CommandError,

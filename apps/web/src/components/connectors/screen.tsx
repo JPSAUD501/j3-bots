@@ -9,7 +9,7 @@ import { Button } from "../ui/button";
  * how a sign-in's browser comes back here (`signInRoute`), opening a page in
  * the system browser, and opening Settings → Secrets.
  */
-export interface ConnectorsIntents extends Omit<ConnectorsClient, "state" | "app"> {
+export interface ConnectorsIntents extends Omit<ConnectorsClient, "state" | "app" | "listing"> {
   readonly signInRoute: SignInRoute;
   readonly openPage: (url: string) => void;
   readonly openSecrets: () => void;

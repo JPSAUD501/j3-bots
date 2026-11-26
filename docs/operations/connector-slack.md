@@ -2,9 +2,7 @@
 
 **Draft.** Connectors are new in 0.4.0, and no step below has been run against Slack yet. What this page says about Slack comes from Slack's documentation and is **Assumed** until a sign-in confirms it.
 
-**Not reachable in 0.10.0.** The apps of this release have no screen that takes your app's client, and a bot refuses a server that needs one, so a Slack connector can't be added now ([decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md)). The steps below stay for the release that brings that screen back; a Slack connector added before 0.10.0 keeps working.
-
-Slack's MCP server does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to it on its own. You create a Slack app and give J3 Bots its client ID and secret when you add the connector. J3 Bots keeps them in its secrets and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
+Slack's MCP server does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to it on its own. You create a Slack app and give J3 Bots its client ID and secret on the card a bot shows when it adds the connector ([decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md)). J3 Bots keeps them in its secrets and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
 
 ## Where your sign-ins return
 
@@ -26,7 +24,7 @@ The first row is the one to prefer. Whether Slack accepts a plain-`http` loopbac
 
 ## Add the connector
 
-Open Slack in the gallery. Its page shows these steps and the redirect address for the way you are signing in, and names Slack's issuer (**Assumed** `https://slack.com`, the one Slack's metadata names): give it the client ID and the secret, then sign in. J3 Bots uses the app only with that issuer, so the secret never reaches another server, and sends it only to Slack's token and revocation endpoints.
+Ask a bot to connect Slack. It adds the gallery's entry, and since that needs your app, it asks you first, with a card in its conversation. The card shows these steps and the redirect address for the way you are signing in, and the entry names Slack's issuer (**Assumed** `https://slack.com`, the one Slack's metadata names): give the card the client ID and the secret and press **Allow**. They go to J3 Bots' server only; the bot never sees them, and is told only that you allowed it. A sign-in card follows. J3 Bots uses the app only with that issuer, so the secret never reaches another server, and sends it only to Slack's token and revocation endpoints.
 
 ## What to expect
 

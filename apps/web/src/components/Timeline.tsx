@@ -9,6 +9,7 @@ import type {
   ElicitationAnswer,
   Mentions,
   EntryId,
+  ListingRef,
   QuestionAnswers,
   Room,
   RoomId,
@@ -17,13 +18,15 @@ import type {
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
 import type { ReactNode, RefObject } from "react";
-import type { MentionLabel } from "@j3-bots/client-runtime";
+import type { IntentResult, MentionLabel } from "@j3-bots/client-runtime";
 import {
   type CardEntry,
   latestOfLine,
   mentionedNames,
   mentionedWhoLeft,
   type OpeningHold,
+  type OwnAppClient,
+  type OwnAppSetup,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
@@ -31,6 +34,7 @@ import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConnectorAuthCard } from "./connectors/ConnectorCards";
+import { ConnectorAskCard } from "./connectors/ConnectorAskCard";
 import { ConnectorInputCard } from "./connectors/ConnectorInputCard";
 import { AnsweringLine } from "./AnsweringLine";
 import { EventLine, type OpenPair } from "./EventLine";
@@ -79,6 +83,11 @@ export interface TimelineIntents {
   readonly answerConnectorInput: (entryId: EntryId, answer: ElicitationAnswer) => void;
   /** Opens the page a connector's server asked the operator to open. */
   readonly openConnectorPage: (url: string) => void;
+  /** An own app's setup, for a bot's ask to add a gallery entry that signs in with one. */
+  readonly connectorAskSetup: (listing: ListingRef) => Promise<IntentResult<OwnAppSetup>>;
+  /** The operator's yes to a bot's ask to add a connector, with their app's client when it takes one. */
+  readonly allowConnectorAsk: (entryId: EntryId, client: OwnAppClient | null) => void;
+  readonly declineConnectorAsk: (entryId: EntryId) => void;
   /** The apps connectors' tools opened, which turns' work shows. */
   readonly connectorApp: ConnectorAppAccess;
 }
@@ -340,6 +349,17 @@ function Card({
         <ConnectorInputCard
           entry={entry}
           onAnswer={(answer) => intents.answerConnectorInput(entry.id, answer)}
+          onOpenPage={intents.openConnectorPage}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "connector-ask":
+      return (
+        <ConnectorAskCard
+          entry={entry}
+          setup={intents.connectorAskSetup}
+          onAllow={(client) => intents.allowConnectorAsk(entry.id, client)}
+          onDecline={() => intents.declineConnectorAsk(entry.id)}
           onOpenPage={intents.openConnectorPage}
           submitting={submitting(entry.id)}
         />

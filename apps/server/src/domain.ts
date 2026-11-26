@@ -15,6 +15,7 @@ import * as CommandReceipts from "./commands/CommandReceipts.ts";
 import * as ConnectorStore from "./connectors/ConnectorStore.ts";
 import * as ConnectorApps from "./connectors/ConnectorApps.ts";
 import * as Connectors from "./connectors/Connectors.ts";
+import * as ConnectorAsks from "./connectors/ConnectorAsks.ts";
 import * as ConnectorInputs from "./connectors/ConnectorInputs.ts";
 import * as ConnectorSteps from "./turns/ConnectorSteps.ts";
 import * as ConnectorAuth from "./connectors/oauth/ConnectorAuth.ts";
@@ -123,6 +124,7 @@ export const layer = Layer.mergeAll(
       Connectors.layer,
       Skills.layer,
       SecretAsks.layer,
+      ConnectorAsks.layer,
       ConnectorInputs.layer,
       ConnectorSteps.layer,
     ),

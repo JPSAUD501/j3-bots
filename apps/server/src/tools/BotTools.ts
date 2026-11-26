@@ -471,8 +471,25 @@ export const layer = Layer.effect(
       list_mcp_servers: handler(tools.list_mcp_servers.input, (_input, call) =>
         managed(management.listServers(callerOf(call))),
       ),
+      // A server that needs the operator's yes asks it on a card, which wakes
+      // the bot for the audience of the turn that asked.
       add_mcp_server: handler(tools.add_mcp_server.input, (input, call) =>
-        changing("add_mcp_server", call, management.addServer(callerOf(call), input)),
+        Effect.flatMap(claim("add_mcp_server", call), (place) =>
+          managed(
+            management.addServer(
+              {
+                ...callerOf(call),
+                turn: {
+                  sessionId: place.sessionId,
+                  botId: call.caller.botId,
+                  turnId: place.turnId,
+                  audience: place.audience,
+                },
+              },
+              input,
+            ),
+          ),
+        ),
       ),
       update_mcp_server: handler(tools.update_mcp_server.input, (input, call) =>
         changing("update_mcp_server", call, management.updateServer(callerOf(call), input)),

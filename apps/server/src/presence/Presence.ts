@@ -71,6 +71,9 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     // Android's channel for them included.
     case "secret-ask":
       return "secret-request";
+    // The operator's yes before a bot adds a connector notifies as approvals do.
+    case "connector-ask":
+      return "approval";
     case "connector-auth":
     case "connector-input":
       return "connector";

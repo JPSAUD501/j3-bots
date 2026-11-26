@@ -35,6 +35,9 @@ const intents: TimelineIntents = {
   signInConnector: nothing,
   answerConnectorInput: nothing,
   openConnectorPage: nothing,
+  connectorAskSetup: () => Promise.resolve({ _tag: "failed", failure: { _tag: "unexpected" } }),
+  allowConnectorAsk: nothing,
+  declineConnectorAsk: nothing,
   connectorApp: {
     server: new URL("https://bots.example.com"),
     open: () => Promise.resolve(null),

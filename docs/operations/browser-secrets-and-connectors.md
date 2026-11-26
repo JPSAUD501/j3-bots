@@ -99,10 +99,12 @@ Ask a bot: "connect my notes", "add this MCP server". It searches J3 Bots' galle
 
 **Settings → Connectors → Manage connectors**, or **Connectors** in a bot's details, lists the connectors your bots added and the skills they saved. It adds none itself: with nothing there yet, it says to ask a bot. J3 Bots' own skills (`j3-…`) aren't listed. See [decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md).
 
-Two kinds can't be added from this release's apps, by a bot or by you:
+Two kinds wait on your yes, on a card in the bot's conversation:
 
-- **An address in your own network**, such as a server on your router's network. It needs your own confirmation, which no screen asks for now.
-- **A service that needs an app you register.** Google and Slack don't let J3 Bots register itself; their drafts, [Google](connector-google.md) and [Slack](connector-slack.md), describe a screen this release doesn't have.
+- **An address in your own network**, such as a server on your router's network. The card names it in plain words ("Ana wants to connect to a service on your own network at 192.168.1.20:8123. Allow?"), and nothing is added until you allow it.
+- **A service that needs an app you register.** Google and Slack don't let J3 Bots register itself. The card shows how to set your app up and the address its sign-ins return to, and takes its client ID and secret, which go to J3 Bots' server only: the bot never sees them. See [Google](connector-google.md) and [Slack](connector-slack.md).
+
+The bot is told what you answered, and carries on. A card nobody answers closes after 24 hours, or when the server restarts; ask the bot again if you still want it.
 
 ### Connect
 

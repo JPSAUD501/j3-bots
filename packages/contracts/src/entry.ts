@@ -18,7 +18,7 @@ import {
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId } from "./connector.ts";
+import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
 import { RoutineTrigger } from "./routine.ts";
@@ -427,6 +427,43 @@ export const ConnectorAuthEntry = Schema.TaggedStruct("connector-auth", {
 export type ConnectorAuthEntry = typeof ConnectorAuthEntry.Type;
 
 /**
+ * A bot asks the operator's word before it adds a connector that needs it
+ * (decision 0068): one at an address in the operator's own network, which
+ * the card names, or a gallery entry that signs in with an app the operator
+ * registers at the service, whose client the card takes, with the steps to
+ * register it. Only the operator's
+ * answer (`card.answer` with `connector-ask`) adds it, as the bot asked; the
+ * client's secret goes to the server's secrets and never to the bot. Decline
+ * is `card.answer` with `dismiss`. Each close wakes the bot with the outcome.
+ */
+export const ConnectorAskEntry = Schema.TaggedStruct("connector-ask", {
+  ...entry,
+  author: BotAuthor,
+  /** The connector's name, as it would be added. */
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  ask: Schema.Union([
+    /** The address's host, and its port when it names one, such as `192.168.1.20:8123`. */
+    Schema.TaggedStruct("private-network", { host: Schema.String.check(Schema.isMaxLength(300)) }),
+    /**
+     * The gallery entry: the client reads its setup steps, in the operator's
+     * language, and where its sign-ins return with `connectors.get`.
+     */
+    Schema.TaggedStruct("own-app", { listing: ListingRef }),
+  ]),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("added", { connectorId: ConnectorId }),
+    Schema.TaggedStruct("declined", {}),
+    /** The operator said yes and the add still failed; the bot is told why. */
+    Schema.TaggedStruct("failed", {}),
+    /** Closed before the operator answered. */
+    Schema.TaggedStruct("expired", {}),
+  ]),
+});
+export type ConnectorAskEntry = typeof ConnectorAskEntry.Type;
+
+/**
  * A connector's server asks the operator for something in the middle of a
  * bot's call (MCP elicitation, decision 0047): a short form, or a page of its
  * own to open on the operator's device. It is in the conversation of the bot
@@ -762,6 +799,7 @@ export const Entry = Schema.Union([
   SecretAskEntry,
   ConnectorAuthEntry,
   ConnectorInputEntry,
+  ConnectorAskEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -817,6 +855,7 @@ export const ReceivedEntry = Schema.Union([
   SecretAskEntry,
   ConnectorAuthEntry,
   ConnectorInputEntry,
+  ConnectorAskEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -852,6 +891,7 @@ export const entryText = (entry: Entry): string => {
       return entry.name;
     case "connector-auth":
     case "connector-input":
+    case "connector-ask":
       return entry.name;
     case "routine-change":
       return entry.name;

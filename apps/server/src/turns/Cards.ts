@@ -10,6 +10,7 @@ import {
   type QuestionAnswers,
   type QuestionEntry,
   RoomId,
+  type ConnectorAskEntry,
   type SecretAskEntry,
 } from "@j3-bots/contracts";
 import {
@@ -35,6 +36,7 @@ import { SettingsStore } from "../settings/SettingsStore.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { Ids } from "../Ids.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { ConnectorAsks } from "../connectors/ConnectorAsks.ts";
 import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { askAnswer, fitsAlone, operatorZone, WIDEST_ROOM_NAME } from "./envelopes.ts";
 import { keyedLock } from "./keyedLock.ts";
@@ -199,6 +201,7 @@ export const layer = Layer.effect(
     const readiness = yield* Readiness;
     const settings = yield* SettingsStore;
     const secretAsks = yield* SecretAsks;
+    const connectorAsks = yield* ConnectorAsks;
     const transaction = transactional(sql);
     const { sessionLost } = sessionLoss(sql, entries, yield* Ledger, yield* WorkSteps, signals);
 
@@ -330,6 +333,21 @@ export const layer = Layer.effect(
       if (!(yield* secretAsks.decline(card))) return yield* new Conflict({ reason: "card-closed" });
     });
 
+    /**
+     * An ask to add a connector takes only a dismissal here, its Decline,
+     * which closes it and wakes the bot; the operator's yes adds what the
+     * bot asked for (`Management.answerAsk`).
+     */
+    const declineConnector = Effect.fn("Cards.declineConnector")(function* (
+      card: ConnectorAskEntry,
+      answer: CardAnswer,
+    ) {
+      if (answer._tag !== "dismiss") return yield* new Invalid({ reason: "answer" });
+      if (!(yield* connectorAsks.decline(card))) {
+        return yield* new Conflict({ reason: "card-closed" });
+      }
+    });
+
     const answer = Effect.fn("Cards.answer")(function* (input: {
       readonly commandId: CommandId;
       readonly entryId: EntryId;
@@ -350,6 +368,7 @@ export const layer = Layer.effect(
             return yield* answerAsk(card, input.answer);
           }
           if (card._tag === "secret-ask") return yield* declineSecret(card, input.answer);
+          if (card._tag === "connector-ask") return yield* declineConnector(card, input.answer);
           return yield* answerRequest(input.entryId, input.commandId, input.answer);
         }),
       });

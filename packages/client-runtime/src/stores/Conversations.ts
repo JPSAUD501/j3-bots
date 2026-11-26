@@ -40,6 +40,7 @@ import * as Stream from "effect/Stream";
 import { RpcClientError } from "effect/rpc/RpcClientError";
 import { Connection, type J3RpcClient, NotPaired } from "../connection/Connection.ts";
 import { InvalidMessage, messageProblem } from "../files/limits.ts";
+import type { OwnAppClient } from "../presentation/connectorAsk.ts";
 import {
   Actions,
   cardAction,
@@ -285,7 +286,13 @@ export type CardAnswer =
   /** The operator did the bot's step in its browser, or could not. */
   | { readonly _tag: "browser-help"; readonly outcome: "done" | "declined" }
   /** What the operator answered a connector's request for input: the server's alone, never the bot's. */
-  | { readonly _tag: "connector-input"; readonly answer: ElicitationAnswer };
+  | { readonly _tag: "connector-input"; readonly answer: ElicitationAnswer }
+  /**
+   * The operator's yes to a bot's ask to add a connector, with their app's
+   * client when it signs in with one; Decline is `dismiss`. No receipt keeps
+   * it: a retry after a lost reply finds the card closed.
+   */
+  | { readonly _tag: "connector-ask"; readonly client: OwnAppClient | null };
 
 /** The value travels redacted from the input to the socket and is kept nowhere. */
 export type SecretAnswer =
