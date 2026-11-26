@@ -9,6 +9,7 @@ import {
   type MentionName,
   type OpeningHold,
   type TimelineMessage,
+  showsImage,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, usePresentation } from "../app/context";
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
@@ -17,7 +18,7 @@ import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { FaceOf } from "./avatar/TeamAvatars";
-import { FileCard } from "./FileCard";
+import { FileCard, PhotoCard } from "./FileCard";
 import { MessageText } from "./MessageText";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
@@ -233,13 +234,21 @@ export function MessageBubble({
       )}
       {/* Files placed in the text stand there; others follow it. */}
       {placed === null &&
-        message.attachments.map((attachment) => (
-          <FileCard
-            key={attachment.id}
-            attachment={attachment}
-            onOpen={() => onOpenAttachment(attachment)}
-          />
-        ))}
+        message.attachments.map((attachment) =>
+          showsImage(attachment) ? (
+            <PhotoCard
+              key={attachment.id}
+              attachment={attachment}
+              onOpen={() => onOpenAttachment(attachment)}
+            />
+          ) : (
+            <FileCard
+              key={attachment.id}
+              attachment={attachment}
+              onOpen={() => onOpenAttachment(attachment)}
+            />
+          ),
+        )}
       {fromOperator && (
         // How the operator's message fares. Its text is a live region from the moment the message
         // is queued, so a change to it, such as a failure, is announced once, and Send again is not

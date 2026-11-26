@@ -17,6 +17,7 @@ import {
   type ServerOrigin,
   SocketTicketGrant,
   UPDATE_API_VERSION,
+  WorkImageId,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../package.json" with { type: "json" };
 import { Attachments } from "./attachments/Attachments.ts";
+import { WorkImages } from "./attachments/WorkImages.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
@@ -187,6 +189,33 @@ const download = HttpRouter.add(
   }),
 );
 
+/**
+ * An image a step of a bot's work looked at, read from the bot's workspace as
+ * it is now, typed by what its bytes hold. A page that opens its address on
+ * its own is told it holds nothing to run.
+ */
+const workImage = HttpRouter.add(
+  "GET",
+  `${HTTP_PATHS.workImages}/:id`,
+  Effect.gen(function* () {
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const params = yield* HttpRouter.schemaPathParams(Schema.Struct({ id: WorkImageId })).pipe(
+      Effect.option,
+    );
+    const images = yield* WorkImages;
+    const image = Option.isSome(params) ? yield* images.open(params.value.id) : Option.none();
+    if (Option.isNone(image)) return HttpServerResponse.empty({ status: 404 });
+    return HttpServerResponse.uint8Array(image.value.bytes, {
+      contentType: image.value.mediaType,
+      headers: {
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "cache-control": "private, no-store",
+      },
+    });
+  }),
+);
+
 const desktopOrigins: ReadonlySet<string> = new Set(Object.values(DESKTOP_APP_ORIGINS));
 const isDesktopOrigin = (origin: string | undefined) =>
   origin !== undefined && desktopOrigins.has(origin);
@@ -290,6 +319,7 @@ export const routes = Layer.mergeAll(
   pair,
   upload,
   download,
+  workImage,
   Webhook.route,
   UpdateRoutes.routes,
   OAuthCallback.route,

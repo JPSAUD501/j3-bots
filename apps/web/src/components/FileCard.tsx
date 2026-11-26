@@ -61,3 +61,27 @@ export function FileCard({
     </button>
   );
 }
+
+/**
+ * An image a message carries, as a photo: large enough to see what it is, in
+ * a frame of fixed size, so the conversation never moves as it arrives.
+ * Opening it shows it whole. An image that cannot be had shows as its card.
+ */
+export function PhotoCard({ attachment, onOpen }: { attachment: Attachment; onOpen: () => void }) {
+  const { t } = useI18n();
+  const image = useAttachmentImage(attachment);
+  if (image === null || image._tag === "failed") {
+    return <FileCard attachment={attachment} onOpen={onOpen} />;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={t("file.open", { name: attachment.name })}
+      title={attachment.name}
+      className="pressable h-44 w-60 max-w-full overflow-hidden rounded-md border border-border bg-muted transition-opacity duration-(--duration-fast) hover:opacity-90"
+    >
+      {image._tag === "shown" && <img src={image.url} alt="" className="size-full object-cover" />}
+    </button>
+  );
+}

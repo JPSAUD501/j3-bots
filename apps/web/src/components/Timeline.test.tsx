@@ -30,6 +30,7 @@ const intents: TimelineIntents = {
   openWorkFold: nothing,
   closeWorkFold: nothing,
   openAttachment: nothing,
+  openWorkImage: nothing,
   openRoutine: nothing,
   openConversation: nothing,
   signInConnector: nothing,

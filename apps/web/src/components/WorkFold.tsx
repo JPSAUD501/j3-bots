@@ -5,6 +5,7 @@ import type {
   CredentialFill,
   EntryPreview,
   WorkFoldEntry,
+  WorkImageId,
   WorkStep,
 } from "@j3-bots/contracts";
 import {
@@ -14,6 +15,7 @@ import {
   EllipsisIcon,
   FileTextIcon,
   GlobeIcon,
+  ImageOffIcon,
   PencilIcon,
   SearchIcon,
   TerminalIcon,
@@ -39,6 +41,7 @@ import {
   turnLine,
   workFoldTitle,
 } from "@j3-bots/client-runtime/wording";
+import { useImage } from "./attachmentImages";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { CodeLines } from "./CodeLines";
 import { toneClass } from "./RosterRow";
@@ -77,6 +80,8 @@ interface WorkFoldProps {
   readonly defaultOpen?: boolean;
   /** While the turn runs, what shows under its line, as the bot's browser. */
   readonly extra?: ReactNode;
+  /** Shows large an image a step looked at. */
+  readonly onOpenImage: (id: WorkImageId) => void;
 }
 
 /**
@@ -92,6 +97,7 @@ export function WorkFold({
   onOpenChange,
   defaultOpen = false,
   extra,
+  onOpenImage,
 }: WorkFoldProps) {
   const ctx = usePresentation();
   const { t, plural } = ctx.i18n;
@@ -169,6 +175,11 @@ export function WorkFold({
                       </span>
                     ) : step.fill !== undefined ? (
                       <FillLine step={step} fill={step.fill} />
+                    ) : step.image !== undefined ? (
+                      <span className="flex min-w-0 flex-1 flex-col items-start gap-1.5 wrap-break-word">
+                        <span>{stepText(step, ctx.i18n)}</span>
+                        <StepImage id={step.image.id} onOpen={onOpenImage} />
+                      </span>
                     ) : (
                       <span className="min-w-0 flex-1 wrap-break-word">
                         {stepText(step, ctx.i18n)}
@@ -202,6 +213,45 @@ function FillLine({ step, fill }: { readonly step: WorkStep; readonly fill: Cred
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * The image a step looked at, small, in a frame of fixed size, so the list
+ * never moves as it arrives; a click shows it large. One that cannot be had
+ * any more says so in place of it.
+ */
+function StepImage({
+  id,
+  onOpen,
+}: {
+  readonly id: WorkImageId;
+  readonly onOpen: (id: WorkImageId) => void;
+}) {
+  const { t } = usePresentation().i18n;
+  const image = useImage({ _tag: "work", id });
+  const frame = "size-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted";
+  if (image?._tag === "failed") {
+    return (
+      <span
+        role="img"
+        aria-label={t("work.image.unavailable")}
+        title={t("work.image.unavailable")}
+        className={cn(frame, "flex items-center justify-center text-muted-foreground")}
+      >
+        <ImageOffIcon aria-hidden className="size-4" />
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(id)}
+      aria-label={t("work.image.open")}
+      className={cn("pressable hover:opacity-90", frame)}
+    >
+      {image?._tag === "shown" && <img src={image.url} alt="" className="size-full object-cover" />}
+    </button>
   );
 }
 

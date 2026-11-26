@@ -105,6 +105,7 @@ import {
 } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
+import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { ConnectorAuthCard } from "../components/connectors/ConnectorCards";
 import { ConnectorAskCard } from "../components/connectors/ConnectorAskCard";
@@ -193,6 +194,7 @@ import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
 import { galleryVariants } from "./variants";
+import { galleryImage } from "./workImages";
 import {
   appPhases,
   appUpdate,
@@ -1206,6 +1208,7 @@ const timelineIntents: TimelineIntents = {
   retryMessage: nothing,
   openWorkFold: nothing,
   openAttachment: nothing,
+  openWorkImage: nothing,
   openRoutine: nothing,
   openConversation: nothing,
   signInConnector: nothing,
@@ -1229,7 +1232,7 @@ function BubblesSection() {
   const { t } = useI18n();
   return (
     <Section title="Bubbles">
-      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, answered with no record on this device, a bot with code, a bot with files">
+      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, answered with no record on this device, a bot with code, a bot with files, a bot with a picture, shown as a photo">
         <div className="flex flex-col gap-2">
           <MessageBubble
             message={bubbles.operator}
@@ -1309,6 +1312,14 @@ function BubblesSection() {
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
+          <AttachmentImagesProvider fetch={galleryImage}>
+            <MessageBubble
+              message={bubbles.withPhoto}
+              position="single"
+              onOpenAttachment={nothing}
+              onRetry={nothing}
+            />
+          </AttachmentImagesProvider>
         </div>
       </Labeled>
       <Labeled label="Mentions in a room: each member's a chip with its face on a tint of its color, in the operator's bubble and in another bot's; @everyone and a deleted bot's name in the bubble's own text">
@@ -1554,35 +1565,39 @@ const turnStates = (() => {
 
 function WorkSection() {
   return (
-    <Section title="A turn's work">
-      <Labeled label="Under way: thinking before any step, typing the next message of a first contact, working on a step (its steps open), waiting on the operator, stalled, past an hour">
-        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
-          {turnStates.map(({ name, bot, fold }) => (
-            <WorkFold
-              key={name}
-              fold={fold}
-              live={{ bot, lastEntry: null }}
-              steps={fold === null ? null : (variants.folds[0]?.steps ?? null)}
-              onOpenChange={nothing}
-            />
-          ))}
-        </div>
-      </Labeled>
-      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
-        <div className="flex flex-col gap-2">
-          {variants.folds.map(({ entry, steps, open }) => (
-            <WorkFold
-              key={entry.id}
-              fold={entry}
-              live={null}
-              steps={steps}
-              defaultOpen={open}
-              onOpenChange={nothing}
-            />
-          ))}
-        </div>
-      </Labeled>
-    </Section>
+    <AttachmentImagesProvider fetch={galleryImage}>
+      <Section title="A turn's work">
+        <Labeled label="Under way: thinking before any step, typing the next message of a first contact, working on a step (its steps open), waiting on the operator, stalled, past an hour">
+          <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+            {turnStates.map(({ name, bot, fold }) => (
+              <WorkFold
+                key={name}
+                fold={fold}
+                live={{ bot, lastEntry: null }}
+                steps={fold === null ? null : (variants.folds[0]?.steps ?? null)}
+                onOpenChange={nothing}
+                onOpenImage={nothing}
+              />
+            ))}
+          </div>
+        </Labeled>
+        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
+          <div className="flex flex-col gap-2">
+            {variants.folds.map(({ entry, steps, open }) => (
+              <WorkFold
+                key={entry.id}
+                fold={entry}
+                live={null}
+                steps={steps}
+                defaultOpen={open}
+                onOpenChange={nothing}
+                onOpenImage={nothing}
+              />
+            ))}
+          </div>
+        </Labeled>
+      </Section>
+    </AttachmentImagesProvider>
   );
 }
 

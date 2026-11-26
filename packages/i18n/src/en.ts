@@ -422,6 +422,10 @@ export const en = {
   "work.live": "{status}, {duration} so far",
   "work.offline": "Last known: {status}",
   "work.showSteps": "Steps so far",
+  "work.image.title": "An image the bot looked at",
+  "work.image.open": "Show the image the bot looked at",
+  "work.image.unavailable":
+    "This image can't be shown. The bot may have changed or removed it since.",
 
   "tool.backgroundTask.did": "Started a background task",
   "tool.backgroundTask.doing": "Starting a background task",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   Attachment,
+  WorkImageId,
   Bot,
   Connector,
   ConnectorAppAnswer,
@@ -305,6 +306,19 @@ export type DownloadResult =
   | { readonly _tag: "done"; readonly value: Files.Download }
   | { readonly _tag: "failed"; readonly reason: "not-found" | "unreachable" | "not-paired" };
 
+/** A download's result as `J3Client` gives it, its failures as data. */
+const downloaded = <R>(
+  transfer: Effect.Effect<Files.Download, Files.AttachmentUnavailable | Connection.NotPaired, R>,
+) =>
+  transfer.pipe(
+    Effect.map((value): DownloadResult => ({ _tag: "done", value })),
+    Effect.catchTags({
+      AttachmentUnavailable: (error) =>
+        Effect.succeed<DownloadResult>({ _tag: "failed", reason: error.reason }),
+      NotPaired: () => Effect.succeed<DownloadResult>({ _tag: "failed", reason: "not-paired" }),
+    }),
+  );
+
 export type PairResult =
   | { readonly _tag: "paired" }
   | { readonly _tag: "failed"; readonly reason: Connection.PairingFailure };
@@ -450,6 +464,8 @@ export interface J3Client {
   readonly dismissDraftOffer: (target: EntryTarget) => void;
   /** A file's bytes, with this device's credential. */
   readonly download: (attachment: Attachment) => Promise<DownloadResult>;
+  /** The bytes of an image a step of a bot's work looked at (`WorkStep.image`). */
+  readonly workImage: (id: WorkImageId) => Promise<DownloadResult>;
 
   readonly openBotFiles: (botId: BotId) => LoadedHandle<ReadonlyArray<BotFile>>;
   readonly openMemory: (scope: MemoryScope) => LoadedHandle<ReadonlyArray<MemoryFile>>;
@@ -811,18 +827,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     draftsSaving: services.drafts.saving,
     restoreDraft: (target) => fire(services.drafts.restore(target)),
     dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
-    download: (attachment) =>
-      run.promise(
-        services.files.download(attachment).pipe(
-          Effect.map((value): DownloadResult => ({ _tag: "done", value })),
-          Effect.catchTags({
-            AttachmentUnavailable: (error) =>
-              Effect.succeed<DownloadResult>({ _tag: "failed", reason: error.reason }),
-            NotPaired: () =>
-              Effect.succeed<DownloadResult>({ _tag: "failed", reason: "not-paired" }),
-          }),
-        ),
-      ),
+    download: (attachment) => run.promise(downloaded(services.files.download(attachment))),
+    workImage: (id) => run.promise(downloaded(services.files.workImage(id))),
 
     openBotFiles: (botId) => {
       const { value, release } = hold(services.details.files(botId));

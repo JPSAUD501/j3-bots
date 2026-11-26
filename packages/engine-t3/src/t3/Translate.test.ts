@@ -1504,6 +1504,38 @@ describe("a Claude Code tool's step", () => {
       [{ kind: "tool", tool: null, label: "Skill: release-notes" }],
     );
   });
+  // The engine names the image a `Read` looked at (**Read** at `59651c1`,
+  // `ClaudeAdapterV2.ts` L7287); the server reads it, so it travels with the step.
+  it("carries the path of an image it looked at, with the step", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1, { providerInstanceId: "claudeAgent" }));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    const read = (status: "running" | "completed") =>
+      item({
+        id: "item-look",
+        type: "dynamic_tool",
+        toolName: "Read",
+        title: "Read files/chart.png",
+        viewedImagePath: "/work/files/chart.png",
+        input: { file_path: "/work/files/chart.png" },
+        status,
+        ...(status === "completed" ? { completedAt: at } : {}),
+      });
+    const looked = (events: ReadonlyArray<EventBody>) =>
+      events.flatMap((event) =>
+        event._tag === "step" ? [{ tool: event.step.tool, image: event.step.viewedImage }] : [],
+      );
+    applyEvent(mirror, read("running"));
+    assert.deepStrictEqual(looked(diff(mirror, view, at, noProviders)), [
+      { tool: "image", image: "/work/files/chart.png" },
+    ]);
+    applyEvent(mirror, read("completed"));
+    assert.deepStrictEqual(looked(diff(mirror, view, at, noProviders)), [
+      { tool: "image", image: "/work/files/chart.png" },
+    ]);
+    // Told once per change.
+    assert.deepStrictEqual(looked(diff(mirror, view, at, noProviders)), []);
+  });
 });
 
 describe("what a running turn takes from outside it", () => {
