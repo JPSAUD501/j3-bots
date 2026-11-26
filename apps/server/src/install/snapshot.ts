@@ -27,7 +27,8 @@ import { isWithin } from "../paths.ts";
 // user's alone: folders 0700, files 0600. It is taken with no server on the
 // home, so the databases and their logs agree, and flushed to the disk
 // before its manifest is written: a folder without a manifest is not a
-// snapshot. Bot files are not in it.
+// snapshot, but a take that was cut off, which pruning removes. Bot files are
+// not in it.
 
 /** The manifest of a snapshot, in its folder. */
 const MANIFEST = "manifest.json";
@@ -88,6 +89,18 @@ export interface Snapshot {
   readonly restoring: Option.Option<RestoreMark>;
 }
 
+/**
+ * What a rollback to `release` that has not finished keeps off the data
+ * directory, as a clause: while the snapshot is not back `whole` every server
+ * is refused there, and once it is, every release but `release`. A server
+ * that runs already, as one does when a rollback is cut off right after its
+ * mark, runs on until the rollback stops it.
+ */
+export const heldOff = (release: string, whole: boolean) =>
+  whole
+    ? `no server but J3 Bots ${release} starts on the data directory`
+    : "no server starts on the data directory";
+
 /** When a snapshot was taken, as the operator reads it: `2026-05-04 09:30:12 UTC`. */
 export const takenAt = (snapshot: Snapshot) =>
   DateTime.formatIso(snapshot.manifest.takenAt)
@@ -96,15 +109,20 @@ export const takenAt = (snapshot: Snapshot) =>
 
 /** A snapshot could not be taken or put back. */
 class SnapshotFailed extends Schema.TaggedError<SnapshotFailed>()("SnapshotFailed", {
-  action: Schema.Literals(["take", "restore"]),
+  action: Schema.Literals(["take", "restore", "abandon"]),
   /** The file or folder it failed on. */
   location: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
-    return this.action === "take"
-      ? `Copying ${this.location} into a snapshot failed, so the snapshot was not kept.`
-      : `Putting ${this.location} back from the snapshot failed.`;
+    switch (this.action) {
+      case "take":
+        return `Copying ${this.location} into a snapshot failed, so the snapshot was not kept.`;
+      case "restore":
+        return `Putting ${this.location} back from the snapshot failed.`;
+      case "abandon":
+        return `Removing ${this.location}, a copy the rollback made from the snapshot, failed.`;
+    }
   }
 }
 
@@ -249,6 +267,9 @@ const foldersUpTo = (path: Path.Path, root: string, files: ReadonlyArray<string>
   }
   return [...folders];
 };
+
+/** The name `takeSnapshot` gives a snapshot's folder: `<taken>-<from>-to-<to>`. */
+const SNAPSHOT_NAME = /^\d{8}T\d{6}Z-.+-to-.+$/;
 
 /** `2026-11-22T10:15:00.000Z` as `20261122T101500Z`: a name that sorts as time does. */
 const compact = (time: DateTime.Utc) =>
@@ -406,6 +427,30 @@ export const unmarkRestoring = Effect.fn("snapshot.unmarkRestoring")(function* (
     Effect.andThen(flushFolder(snapshot.folder)),
     Effect.mapError((cause) => new MarkFailed({ marker, cause })),
   );
+});
+
+/**
+ * Gives up a rollback to `snapshot` that has put nothing back yet, its mark
+ * at `copying`: removes the copies a cut-off copying left beside their place,
+ * then the mark. The home is as the rollback found it. The snapshot stays.
+ */
+export const abandonRestore = Effect.fn("snapshot.abandonRestore")(function* (
+  home: string,
+  snapshot: Snapshot,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const file of snapshot.manifest.files) {
+    const copy = `${path.join(home, file)}${COPY_SUFFIX}`;
+    yield* fs
+      .remove(copy, { force: true })
+      .pipe(
+        Effect.mapError(
+          (cause) => new SnapshotFailed({ action: "abandon", location: copy, cause }),
+        ),
+      );
+  }
+  yield* unmarkRestoring(snapshot);
 });
 
 /**
@@ -577,9 +622,45 @@ export const rollbackSnapshot = Effect.fn("snapshot.rollbackSnapshot")(function*
 });
 
 /**
+ * The folders in `home`'s backups that a take of a snapshot cut off left: a
+ * folder named as a snapshot, not a link, whose manifest is missing or is not
+ * JSON at all, as a cut while it was written leaves it, and with no mark of a
+ * rollback. A manifest that is JSON but does not decode, as a newer
+ * release's may not, and one that cannot be read, are not taken for a cut.
+ */
+const cutOffTakes = Effect.fnUntraced(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const backups = path.join(home, HOME_ENTRIES.backups);
+  const found: Array<string> = [];
+  for (const name of yield* fs.readDirectory(backups).pipe(Effect.orElseSucceed(() => []))) {
+    if (!SNAPSHOT_NAME.test(name)) continue;
+    const folder = path.join(backups, name);
+    const info = yield* fs.lstat(folder).pipe(Effect.option);
+    if (!Option.exists(info, ({ type }) => type === "Directory")) continue;
+    if (yield* fs.exists(path.join(folder, RESTORING)).pipe(Effect.orElseSucceed(() => true))) {
+      continue;
+    }
+    const manifest = yield* Effect.result(fs.readFileString(path.join(folder, MANIFEST)));
+    const cut =
+      manifest._tag === "Failure"
+        ? manifest.failure.reason._tag === "NotFound"
+        : Option.isNone(
+            yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+              manifest.success,
+            ).pipe(Effect.option),
+          );
+    if (cut) found.push(folder);
+  }
+  return found;
+});
+
+/**
  * Removes every snapshot in `home` but the newest `keep`, each with what its
- * rollbacks replaced, in its `replaced-*` folders. A snapshot a rollback to
- * has not finished is kept. Anything else in `backups` stays.
+ * rollbacks replaced, in its `replaced-*` folders, and every take of one that
+ * was cut off before its manifest (`cutOffTakes`). A snapshot a rollback to
+ * has not finished is kept. Anything else in `backups` stays. Run under the
+ * update lock, which every take holds, so no take is under way.
  */
 export const pruneSnapshots = Effect.fn("snapshot.prune")(function* (home: string, keep: number) {
   const fs = yield* FileSystem.FileSystem;
@@ -587,5 +668,6 @@ export const pruneSnapshots = Effect.fn("snapshot.prune")(function* (home: strin
     .slice(keep)
     .filter(({ restoring }) => Option.isNone(restoring));
   for (const { folder } of older) yield* fs.remove(folder, { recursive: true });
+  for (const folder of yield* cutOffTakes(home)) yield* fs.remove(folder, { recursive: true });
   return older;
 });

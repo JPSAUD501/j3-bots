@@ -2,7 +2,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { rollBackOver, type Side, StepFailed, type SwitchSteps, switchOver } from "./switch.ts";
+import {
+  abandonOver,
+  rollBackOver,
+  type Side,
+  StepFailed,
+  type SwitchSteps,
+  switchOver,
+} from "./switch.ts";
 
 type Step = StepFailed["step"];
 
@@ -11,7 +18,8 @@ type Step = StepFailed["step"];
  * unit is enabled (a reboot starts it), the release that runs, the release
  * the host adopted, and the databases. A release that starts migrates them,
  * as a newer one would; a failing start does so too before it fails, the
- * worst case. A failing restore leaves them half put back. `marked`: a
+ * worst case. A failing restore leaves them half put back, but `copy` fails
+ * it while it copies, before it changes anything. `marked`: a
  * rollback has not finished, so a server refuses the home unless it is the
  * old release on the databases put back whole. Each step fails
  * when `failing` names it, or names its nth call as `step@n`. `running` is
@@ -93,9 +101,24 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
       Effect.suspend(() => {
         assert.isTrue(Option.isNone(host.running), "the files are put back with no server on them");
         assert.isFalse(host.enabled, "a reboot during a restore starts nothing");
+        if (failing.includes("copy")) {
+          host.log.push("restore");
+          return Effect.fail(new StepFailed({ step: "restore", reason: "copy" }));
+        }
         host.data = "half";
         return attempt("restore", () => {
           host.data = "as-before";
+        });
+      }),
+    forget: () =>
+      Effect.suspend(() => {
+        assert.notStrictEqual(
+          host.data,
+          "half",
+          "only a rollback that put nothing back is given up",
+        );
+        return attempt("unmark", () => {
+          host.marked = false;
         });
       }),
     adopt: (side) =>
@@ -353,4 +376,49 @@ describe("an update's switch", () => {
       }),
     );
   }
+
+  describe("giving up a rollback that put nothing back", () => {
+    it.effect("starts the new release again on its data, unmarked first, and adopts it", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith(["copy"], true, "new");
+        assert.strictEqual(
+          Option.getOrThrow(yield* rollBackOver(steps, "snapshot")).step,
+          "restore",
+        );
+        assert.isTrue(host.marked);
+
+        assert.isTrue(Option.isNone(yield* abandonOver(steps, "snapshot")));
+        assert.deepStrictEqual(host.log.slice(-4), ["unmark", "start-new", "await-new", "adopt"]);
+        assert.isFalse(host.marked);
+        assert.deepStrictEqual(
+          [host.unit, host.enabled, host.running, host.adopted, host.data],
+          ["new", true, Option.some("new"), "new", "migrated"],
+        );
+      }),
+    );
+
+    it.effect("gives up an update's own rollback, and the new release runs again", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith(["await-new@1", "copy"]);
+        assert.strictEqual((yield* switchOver(steps))._tag, "rollback-failed");
+        assert.isTrue(host.marked);
+
+        assert.isTrue(Option.isNone(yield* abandonOver(steps, "snapshot")));
+        assert.isFalse(host.marked);
+        assert.deepStrictEqual([host.running, host.adopted], [Option.some("new"), "new"]);
+      }),
+    );
+
+    it.effect("keeps the rollback marked, and starts nothing, when forgetting it fails", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith(["copy", "unmark@1"], true, "new");
+        yield* rollBackOver(steps, "snapshot");
+
+        assert.strictEqual(Option.getOrThrow(yield* abandonOver(steps, "snapshot")).step, "unmark");
+        assert.isTrue(host.marked);
+        assert.isTrue(Option.isNone(host.running));
+        assert.notInclude(host.log, "start-new");
+      }),
+    );
+  });
 });

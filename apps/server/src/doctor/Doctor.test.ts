@@ -842,6 +842,23 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     }),
   );
 
+  it.effect("says what runs while a rollback cut off right after its mark has not finished", () =>
+    Effect.gen(function* () {
+      // The service was not stopped yet: it serves, enabled, on the data the rollback left alone.
+      const { checks } = yield* diagnoseIn({ rollbackUnfinished: true });
+      const snapshot = named(checks, "Snapshot");
+      assertFlagged(snapshot, "problem", "no server starts on the data directory");
+      assert.notInclude(snapshot.summary, "disabled");
+      assert.include(
+        Option.getOrElse(snapshot.fix, () => ""),
+        "--rollback --abandon",
+      );
+      for (const name of ["Server", "Service"]) {
+        assert.strictEqual(named(checks, name).status, "ok", name);
+      }
+    }),
+  );
+
   it.effect("says why this user has no systemd manager, and does not check the service then", () =>
     Effect.gen(function* () {
       const healthy = yield* diagnoseIn();

@@ -11,11 +11,17 @@ import * as Ref from "effect/Ref";
 import * as Stdio from "effect/Stdio";
 import { Command, Flag, Prompt } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { takenAt } from "../install/snapshot.ts";
+import { heldOff, takenAt } from "../install/snapshot.ts";
 import { trustedReleaseKeys } from "../releases/keys.ts";
 import type { UpdateFailure } from "@j3-bots/contracts";
 import type { StepFailed } from "../transition/switch.ts";
-import { rollBack, update, type UpdateResult, type UpdateStage } from "../install/update.ts";
+import {
+  abandonRollback,
+  rollBack,
+  update,
+  type UpdateResult,
+  type UpdateStage,
+} from "../install/update.ts";
 import * as ServerConfig from "../config.ts";
 import { updateUnit } from "../update/launch.ts";
 import { advanceRun, endRun, type Ending, isUnderway, readRun } from "../update/run.ts";
@@ -39,6 +45,13 @@ const rollbackFlag = Flag.Boolean("rollback").pipe(
   Flag.withDefault(false),
   Flag.withDescription(
     "Put back the release that ran before the last update, and the databases as they were when it updated. Asks first.",
+  ),
+);
+
+const abandonFlag = Flag.Boolean("abandon").pipe(
+  Flag.withDefault(false),
+  Flag.withDescription(
+    "With --rollback: give up a rollback that stopped before it put any of the snapshot back, as one does every time when a file of the snapshot is lost, and start the release the snapshot was taken for again, on the data as it is. Asks first.",
   ),
 );
 
@@ -71,11 +84,12 @@ const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   );
 
 /**
- * What a rollback that stopped at `step` leaves: from its mark until the old
- * release runs and is recorded, the rollback is unfinished until
- * `--rollback` carries it on. Pointing the command comes after.
+ * What a rollback to `release` that stopped at `step` leaves: from its mark
+ * until the old release runs and is recorded, the rollback is unfinished
+ * until `--rollback` carries it on. Pointing the command comes after. A
+ * rollback that stopped before it put anything back may be given up instead.
  */
-const unfinishedRollback = (step: StepFailed) => {
+const unfinishedRollback = (step: StepFailed, release: string) => {
   switch (step.step) {
     case "mark":
     case "adopt":
@@ -83,11 +97,16 @@ const unfinishedRollback = (step: StepFailed) => {
     case "record":
     case "unmark":
       return [
-        "The service runs the release before again, but the rollback has not finished, so no other release may run on the data directory: `j3-bots update --rollback` finishes it, without copying the databases again.",
+        `The databases are back, but the rollback has not finished, so ${heldOff(release, true)}: \`j3-bots update --rollback\` finishes it, without copying the databases again.`,
+      ];
+    case "start-old":
+    case "await-old":
+      return [
+        `The databases are back, but the rollback has not finished, so ${heldOff(release, true)}: \`j3-bots update --rollback\` finishes it.`,
       ];
     default:
       return [
-        "The rollback has not finished, so the service stays disabled and no other release may run on the data directory: `j3-bots update --rollback` finishes it.",
+        `The rollback has not finished, so ${heldOff(release, false)}: \`j3-bots update --rollback\` finishes it. If it stops again before it puts any of the snapshot back, as it does every time when a file of the snapshot is lost or damaged, \`j3-bots update --rollback --abandon\` gives it up and starts again the release that ran before it.`,
       ];
   }
 };
@@ -234,10 +253,7 @@ const reportOf = (result: UpdateResult): Report => {
       };
     case "cut-off-rollback-failed": {
       const reason = `Rolling back an earlier update that was cut off, to J3 Bots ${from}, failed: ${failure(outcome.rollback)}`;
-      const unfinished =
-        outcome.rollback.step === "mark" || outcome.rollback.step === "adopt"
-          ? []
-          : unfinishedRollback(outcome.rollback);
+      const unfinished = unfinishedRollback(outcome.rollback, from);
       return {
         ending: { _tag: "failed", reason: "other", detail: reason },
         text: [
@@ -302,7 +318,7 @@ const reportOf = (result: UpdateResult): Report => {
     case "rollback-failed": {
       const unfinished = Option.match(outcome.snapshot, {
         onNone: () => [],
-        onSome: () => unfinishedRollback(outcome.rollback),
+        onSome: () => unfinishedRollback(outcome.rollback, from),
       });
       return {
         ending: {
@@ -460,7 +476,7 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
       [
         `The rollback to J3 Bots ${from.version} did not finish: ${failure(result.failed.value)}`,
         `The snapshot is in ${result.snapshot.folder}; what it replaced is beside it, in its replaced-* folder.`,
-        ...unfinishedRollback(result.failed.value),
+        ...unfinishedRollback(result.failed.value, from.version),
         LOG,
       ].join("\n"),
     );
@@ -475,17 +491,62 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
   );
 });
 
+const runAbandon = Effect.fn("update.runAbandon")(function* (yes: boolean) {
+  const result = yield* userFacing(
+    abandonRollback({
+      confirm: (snapshot) => {
+        const { from, to } = snapshot.manifest;
+        const warning = `This gives up the rollback to J3 Bots ${from.version}, from ${snapshot.folder}, which has put none of it back: the data directory is as J3 Bots ${to.version} left it, and J3 Bots ${to.version} starts on it again. Nothing in it is changed, and the snapshot stays in backups/.`;
+        if (yes) return Console.log(warning).pipe(Effect.as(true));
+        return Console.log(warning).pipe(Effect.andThen(ask("Give up the rollback?")));
+      },
+    }),
+  );
+  if (result._tag === "declined") {
+    return yield* refuse(
+      "Nothing was changed. Without a terminal to ask on, --yes answers for you.",
+    );
+  }
+  const { to } = result.snapshot.manifest;
+  if (Option.isSome(result.failed) && result.failed.value.step === "adopt") {
+    return yield* refuse(
+      `The rollback was given up and J3 Bots ${to.version} runs, but ${failure(result.failed.value)} \`j3-bots update --version ${to.version}\` points the command at it.`,
+    );
+  }
+  if (Option.isSome(result.failed)) {
+    const { step } = result.failed.value;
+    return yield* refuse(
+      step === "record" || step === "unmark"
+        ? `Giving up the rollback did not finish: ${failure(result.failed.value)} The rollback is still unfinished: \`j3-bots update --rollback --abandon\` tries again.`
+        : [
+            `The rollback is given up, and the data directory is J3 Bots ${to.version}'s again, but starting it failed: ${failure(result.failed.value)}`,
+            `Once it runs, \`j3-bots update --version ${to.version}\` points the command at it.`,
+            LOG,
+          ].join("\n"),
+    );
+  }
+  yield* Console.log(
+    result.service
+      ? `The rollback is given up. J3 Bots ${to.version} runs again, on the data directory as it was, and its engine is ready.`
+      : `The rollback is given up. J3 Bots ${to.version} is installed again, on the data directory as it was. Start the server with \`j3-bots serve\`.`,
+  );
+});
+
 export const updateCommand = Command.make("update", {
   version: versionFlag,
   yes: yesFlag,
   rollback: rollbackFlag,
+  abandon: abandonFlag,
   run: runFlag,
 }).pipe(
   Command.withDescription(
     "Update J3 Bots, installed with install.sh, to the latest release or to --version. It copies the databases first, and if the new release does not start, puts them and the release before back by itself. --rollback puts them back on request.",
   ),
-  Command.withHandler(({ version, yes, rollback, run }) =>
+  Command.withHandler(({ version, yes, rollback, abandon, run }) =>
     Effect.gen(function* () {
+      if (abandon && !rollback) {
+        return yield* refuse("--abandon gives up a rollback; it goes with --rollback.");
+      }
       if (!rollback) return yield* runUpdate(version, yes, run);
       if (Option.isSome(run)) {
         return yield* refuse("--rollback is asked for on the server's machine; it takes no --run.");
@@ -495,7 +556,7 @@ export const updateCommand = Command.make("update", {
           "--rollback puts back the release before the last update; it takes no --version.",
         );
       }
-      return yield* runRollback(yes);
+      return yield* abandon ? runAbandon(yes) : runRollback(yes);
     }).pipe(carryingOnAfterHangup, Effect.provide(FetchHttpClient.layer)),
   ),
 );

@@ -47,7 +47,7 @@ import {
 import * as AdminClient from "../src/admin/AdminClient.ts";
 import type { AdminStatus } from "../src/admin/protocol.ts";
 import { HARNESSES } from "../src/engine/harnesses.ts";
-import { holdLock } from "../src/home/Home.ts";
+import { holdLock } from "@j3-bots/processes";
 import { HOME_ENTRIES } from "../src/home/entries.ts";
 import { launchedRelease, startedRelease, VERSIONS } from "../src/install/layout.ts";
 import { listSnapshots, UPDATE_LOCK } from "../src/install/snapshot.ts";

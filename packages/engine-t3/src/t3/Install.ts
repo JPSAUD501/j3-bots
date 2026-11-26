@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a 190 MB archive needs an incremental hash; Effect has none.
 import * as NodeCrypto from "node:crypto";
 import type { EngineInstallProgress } from "@j3-bots/contracts";
+import { holdLockWaiting } from "@j3-bots/processes";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,7 +19,6 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { boundedCommand } from "./Command.ts";
-import { holdExclusive } from "./Lock.ts";
 import { type ArchiveFormat, archiveFormat, archiveName, pin, releaseUrl } from "./Pin.ts";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 import type { ProcessState } from "./Supervisor.ts";
@@ -32,8 +32,9 @@ import { extractZip } from "./Unzip.ts";
 //   <home>/j3/runtime/<version>.lock     held by the one install of that version running
 //
 // Two installs of one version can be started at once, as the server's first
-// start and `j3-bots engine fetch` during an update are. The second waits for
-// the first's lock, then finds the version installed.
+// start and `j3-bots engine fetch` during an update are. The second says that
+// it waits (`waiting`), waits for the first's lock, then finds the version
+// installed.
 //
 // The engine's own `runtime/` folder belongs to its service launcher and
 // updater, so J3 Bots keeps its copy under `j3/`, which the engine never reads.
@@ -146,33 +147,42 @@ export const progressText = ({ receivedBytes, totalBytes }: EngineInstallProgres
     : `${megabytes(receivedBytes)} of ${megabytes(totalBytes)} MB`;
 
 /**
- * What a download says as it goes: how far it has come, and, once the whole
- * archive is in hand, `downloaded` with the final count, before the archive
- * is checked and unpacked.
+ * What a download says as it goes: `waiting`, once, when another install of
+ * the version holds its lock, until that one ends; how far it has come; and,
+ * once the whole archive is in hand, `downloaded` with the final count,
+ * before the archive is checked and unpacked.
  */
 export type DownloadEvent =
+  | { readonly _tag: "waiting" }
   | { readonly _tag: "progress"; readonly progress: EngineInstallProgress }
   | { readonly _tag: "downloaded"; readonly progress: EngineInstallProgress };
 
 /** A download's event in words: "Downloading the engine: 42 of 180 MB", "Downloaded the engine: 180 MB". */
-export const downloadText = (event: DownloadEvent): string =>
-  event._tag === "progress"
-    ? `Downloading the engine: ${progressText(event.progress)}`
-    : `Downloaded the engine: ${megabytes(event.progress.receivedBytes)} MB`;
+export const downloadText = (event: DownloadEvent): string => {
+  switch (event._tag) {
+    case "waiting":
+      return "Another install of the engine is under way, such as the server's first start downloading it: waiting for it to end.";
+    case "progress":
+      return `Downloading the engine: ${progressText(event.progress)}`;
+    case "downloaded":
+      return `Downloaded the engine: ${megabytes(event.progress.receivedBytes)} MB`;
+  }
+};
 
 /** How often, at most, a log says how far a download has come, besides at its start and end. */
 const PROGRESS_LOG_INTERVAL_MS = 10_000;
 
 /**
  * Which of one download's events a log keeps, as `downloadText` words them:
- * the first, then one every ten seconds, and its end, whether or not its size
- * is known; never the same count twice. For the server's log and a terminal
+ * a wait for another install, the first count, then one every ten seconds,
+ * and its end, whether or not its size is known; never the same count twice. For the server's log and a terminal
  * that is not one, where a line a second would bury the rest. Make one per
  * download, so a retry's first line is never held back by the attempt before.
  */
 export const makeProgressLog = Effect.fnUntraced(function* () {
   const logged = yield* Ref.make<{ readonly at: number; readonly bytes: number } | null>(null);
   return Effect.fnUntraced(function* (event: DownloadEvent) {
+    if (event._tag === "waiting") return Option.some(downloadText(event));
     const now = yield* Clock.currentTimeMillis;
     const last = yield* Ref.get(logged);
     const bytes = event.progress.receivedBytes;
@@ -278,8 +288,9 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
  *
  * `onDownload`, when given, hears how far a download has come: when it
  * starts, counting what a resumed one had already, and about once a second
- * while it runs; then that it ended (`DownloadEvent`). An install that
- * downloads nothing never calls it.
+ * while it runs; then that it ended (`DownloadEvent`). Before that, it hears
+ * `waiting` once when another install of the version holds the lock. An
+ * install that neither waits nor downloads never calls it.
  */
 export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (input: {
   readonly home: string;
@@ -330,7 +341,10 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   // Checked as the download is: a link or a folder there fails at once.
   yield* input.files.writable(lock).pipe(Effect.mapError(storage));
   return yield* Effect.gen(function* () {
-    yield* holdExclusive(lock).pipe(
+    yield* holdLockWaiting(
+      lock,
+      (input.onDownload ?? (() => Effect.void))({ _tag: "waiting" }),
+    ).pipe(
       Effect.tapError((cause) => Effect.logWarning(`Locking ${lock} failed`, cause)),
       Effect.mapError(storage),
     );

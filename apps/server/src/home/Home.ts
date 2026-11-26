@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The reservation is an SQLite lock, which only node:sqlite takes.
-import * as NodeSqlite from "node:sqlite";
+import { holdLock, LockUnusable } from "@j3-bots/processes";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,7 +12,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as Socket from "../admin/socket.ts";
 import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
 import { publishFile } from "../files.ts";
-import { unfinishedRollback } from "../install/snapshot.ts";
+import { UPDATE_LOCK, unfinishedRollback } from "../install/snapshot.ts";
 import { HOME_ENTRIES } from "./entries.ts";
 import {
   type AclVerdict,
@@ -333,10 +332,15 @@ class ServerAlreadyRunning extends Schema.TaggedError<ServerAlreadyRunning>()(
   }
 }
 
-/** Something in the home is in the way of the reservation or the admin socket, or the home changed under it. */
+/** Something in the home is in the way of a lock or the admin socket, or the home changed under it. */
 class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
   path: Schema.String,
-  reason: Schema.Literals(["lock-unusable", "not-a-socket", "home-replaced"]),
+  reason: Schema.Literals([
+    "server-lock-unusable",
+    "update-lock-unusable",
+    "not-a-socket",
+    "home-replaced",
+  ]),
 }) {
   override get message(): string {
     return `${this.summary} ${this.fix}`;
@@ -345,8 +349,10 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
   /** What is in the way. */
   get summary(): string {
     switch (this.reason) {
-      case "lock-unusable":
+      case "server-lock-unusable":
         return `${this.path}, which keeps a second server off this home, cannot be opened.`;
+      case "update-lock-unusable":
+        return `${this.path}, which keeps a second update or rollback off this home, cannot be opened.`;
       case "not-a-socket":
         return `${this.path} is where the admin socket goes, but something else is there.`;
       case "home-replaced":
@@ -357,7 +363,8 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
   /** How to clear it, for the operator to do. */
   get fix(): string {
     switch (this.reason) {
-      case "lock-unusable":
+      case "server-lock-unusable":
+      case "update-lock-unusable":
         return "Check that this user can write to the folder that holds it.";
       case "not-a-socket":
         return `Move it out of the way (\`mv ${shellWord(this.path)} ${shellWord(`${this.path}.old`)}\`), then try again.`;
@@ -374,37 +381,11 @@ export const checkSocketPath = Effect.fn("Home.checkSocketPath")(function* (admi
   }
 });
 
-const LOCK_FILE = HOME_ENTRIES.lock;
-const SQLITE_BUSY = 5;
-
-const isBusy = (error: unknown) =>
-  Predicate.hasProperty(error, "errcode") && error.errcode === SQLITE_BUSY;
-
-/**
- * Holds an exclusive lock on `file` for as long as the scope lives, or fails
- * with `held()` at once while another process holds it. The lock is SQLite's,
- * which the kernel releases when its process ends, so a process that crashed
- * never leaves it held, and two that take it at once cannot both get it.
- */
-export const holdLock = <E>(file: string, held: () => E) =>
-  Effect.acquireRelease(
-    Effect.try({
-      try: () => {
-        const database = new NodeSqlite.DatabaseSync(file, { timeout: 0 });
-        try {
-          // No journal file: the lock never writes, and a crash then leaves nothing beside it.
-          database.exec("PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE");
-        } catch (error) {
-          database.close();
-          throw error;
-        }
-        return database;
-      },
-      catch: (error) =>
-        isBusy(error) ? held() : new HomeBlocked({ path: file, reason: "lock-unusable" }),
-    }),
-    (database) => Effect.sync(() => database.close()),
-  );
+/** A lock of the home that cannot be opened, told as what that lock keeps off the home. */
+const unusableAs =
+  (reason: "server-lock-unusable" | "update-lock-unusable") =>
+  <E>(error: E | LockUnusable): E | HomeBlocked =>
+    Schema.is(LockUnusable)(error) ? new HomeBlocked({ path: error.file, reason }) : error;
 
 /**
  * Holds `<home>/server.lock`, which one server holds while it runs, and an
@@ -412,7 +393,28 @@ export const holdLock = <E>(file: string, held: () => E) =>
  */
 export const holdHome = Effect.fn("Home.holdHome")(function* (home: string) {
   const path = yield* Path.Path;
-  yield* holdLock(path.join(home, LOCK_FILE), () => new ServerAlreadyRunning({ home }));
+  yield* holdLock(
+    path.join(home, HOME_ENTRIES.lock),
+    () => new ServerAlreadyRunning({ home }),
+  ).pipe(Effect.mapError(unusableAs("server-lock-unusable")));
+});
+
+/**
+ * Holds `<home>/backups/update.lock`, which one update or rollback holds from
+ * start to end, and `j3-bots uninstall` while it removes the install, or
+ * fails with `busy()` at once while another holds it.
+ */
+export const holdUpdateLock = Effect.fn("Home.holdUpdateLock")(function* <E>(
+  home: string,
+  busy: () => E,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const backups = path.join(home, HOME_ENTRIES.backups);
+  yield* fs.makeDirectory(backups, { recursive: true, mode: 0o700 });
+  yield* holdLock(path.join(backups, UPDATE_LOCK), busy).pipe(
+    Effect.mapError(unusableAs("update-lock-unusable")),
+  );
 });
 
 /**

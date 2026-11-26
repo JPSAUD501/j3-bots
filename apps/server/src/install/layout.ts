@@ -191,7 +191,12 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
   "InstallFolderExposed",
   {
     folder: Schema.String,
-    reason: Schema.Literals(["not-owned", "writable-by-all", "unverifiable"]),
+    reason: Schema.Literals(["not-owned", "writable-by-all", "writable-by-group", "unverifiable"]),
+    /**
+     * The install's own folder that `folder` holds, when `folder` is one above
+     * it: an account that may change `folder` could move it away.
+     */
+    holds: Schema.optionalKey(Schema.String),
     /**
      * On Windows, the `icacls` command that leaves the folder to this user,
      * SYSTEM and the Administrators: a mode does not say who may write there.
@@ -202,6 +207,20 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
   },
 ) {
   override get message(): string {
+    const holds = this.holds;
+    if (holds !== undefined) {
+      const risk = `which could move ${holds} away and put a folder of its own in its place`;
+      switch (this.reason) {
+        case "not-owned":
+          return `${this.folder}, a folder ${holds} is in, belongs to another account, ${risk}. Nothing was changed.`;
+        case "writable-by-all":
+          return `${this.folder}, a folder ${holds} is in, can be written by every account, ${risk}. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`;
+        case "writable-by-group":
+          return `${this.folder}, a folder ${holds} is in, can be written by its group, which is not this user's own, ${risk}. Take that away with \`chmod g-w ${this.folder}\`, then run this again. Nothing was changed.`;
+        case "unverifiable":
+          break;
+      }
+    }
     switch (this.reason) {
       case "not-owned":
         return `${this.folder} belongs to another account, which could change what runs from it. Nothing was changed.`;
@@ -209,6 +228,8 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
         return this.windowsRepair === undefined
           ? `${this.folder} can be written by every account, which could change what runs from it. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`
           : `${this.folder} can be written by other accounts, which could change what runs from it. In PowerShell, run \`${this.windowsRepair}\`, then run this again. Nothing was changed.`;
+      case "writable-by-group":
+        return `${this.folder} can be written by its group, which is not this user's own, so other accounts could change what runs from it. Take that away with \`chmod g-w ${this.folder}\`, then run this again. Nothing was changed.`;
       case "unverifiable":
         return `Windows did not say who may change ${this.folder} (${this.detail ?? "no answer"}), so what runs from it cannot be trusted. Check that Windows PowerShell runs, then run this again. Nothing was changed.`;
     }
@@ -216,21 +237,69 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
 }
 
 /**
- * Fails unless `folder` is this user's and not writable by every account, as
- * install.sh checks the install folder, its `versions/` and the command's
- * folder: what is in them runs as this user. Its group may write. On Windows,
- * where a mode means nothing, its access list is judged instead.
+ * Fails unless `folder` is this user's and no other account may write to it,
+ * as install.sh checks the install folder, its `versions/` and the command's
+ * folder: what is in them runs as this user. Its group may write when that is
+ * this user's own group, as under umask 002.
+ *
+ * Every folder above it, up to the root, on the path as given and on the one
+ * its links lead to, must be this user's or root's and written by no other
+ * account, unless it is sticky, as /tmp is: an account that may write to one
+ * could move `folder` away and put its own in its place. On Windows, where a
+ * mode means nothing, the folder's access list is judged instead, and the
+ * folders above it are not.
  */
 export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (folder: string) {
   if (process.platform === "win32") return yield* checkOwnFolderOnWindows(folder);
   const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(folder);
+  const path = yield* Path.Path;
   const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  const info = yield* fs.stat(folder);
   if (uid !== undefined && !Option.contains(info.uid, uid)) {
     return yield* new InstallFolderExposed({ folder, reason: "not-owned" });
   }
   if ((info.mode & 0o002) !== 0) {
     return yield* new InstallFolderExposed({ folder, reason: "writable-by-all" });
+  }
+  if ((info.mode & 0o020) !== 0 && gid !== undefined && !Option.contains(info.gid, gid)) {
+    return yield* new InstallFolderExposed({ folder, reason: "writable-by-group" });
+  }
+  const resolved = yield* fs.realPath(folder);
+  for (const start of new Set([folder, resolved])) {
+    for (let below = start, above = path.dirname(start); above !== below;) {
+      const parent = yield* fs.stat(above);
+      if (
+        uid !== undefined &&
+        !Option.contains(parent.uid, uid) &&
+        !Option.contains(parent.uid, 0)
+      ) {
+        return yield* new InstallFolderExposed({
+          folder: above,
+          reason: "not-owned",
+          holds: folder,
+        });
+      }
+      // Sticky: only the owner of a folder in it may move that folder.
+      if ((parent.mode & 0o1000) === 0) {
+        if ((parent.mode & 0o002) !== 0) {
+          return yield* new InstallFolderExposed({
+            folder: above,
+            reason: "writable-by-all",
+            holds: folder,
+          });
+        }
+        if ((parent.mode & 0o020) !== 0 && gid !== undefined && !Option.contains(parent.gid, gid)) {
+          return yield* new InstallFolderExposed({
+            folder: above,
+            reason: "writable-by-group",
+            holds: folder,
+          });
+        }
+      }
+      below = above;
+      above = path.dirname(above);
+    }
   }
 });
 

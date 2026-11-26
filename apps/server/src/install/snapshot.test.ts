@@ -298,6 +298,46 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
       }),
   );
 
+  it.effect("cut off before its manifest is removed by pruning, and nothing else is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* writeAll(home, { "config.json": "{}", "j3.sqlite": "data" });
+      const kept = yield* takeSnapshot({
+        home,
+        from: { version: "0.1.0" },
+        to: { version: "0.2.0" },
+      });
+      const backups = path.dirname(kept.folder);
+      // Takes cut off before the manifest, and while it was written.
+      yield* writeAll(backups, {
+        "20261122T000100Z-0.2.0-to-0.3.0/j3.sqlite": "data",
+        "20261122T000200Z-0.2.0-to-0.3.0/j3.sqlite": "data",
+        "20261122T000200Z-0.2.0-to-0.3.0/manifest.json": '{"takenAt":"2026-11',
+      });
+      // What is not one: another folder of the operator's, a newer release's
+      // manifest, and a folder a rollback marked.
+      yield* writeAll(backups, {
+        "mine/notes.txt": "kept",
+        "20261122T000300Z-0.3.0-to-0.4.0/manifest.json": '{"format":"newer"}',
+        "20261122T000400Z-0.3.0-to-0.4.0/restoring": "",
+      });
+
+      assert.deepStrictEqual(yield* pruneSnapshots(home, 2), []);
+
+      assert.deepStrictEqual(
+        (yield* fs.readDirectory(backups)).sort(),
+        [
+          "20261122T000300Z-0.3.0-to-0.4.0",
+          "20261122T000400Z-0.3.0-to-0.4.0",
+          path.basename(kept.folder),
+          "mine",
+        ].sort(),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("to copy back counts only what is left to copy against free space", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

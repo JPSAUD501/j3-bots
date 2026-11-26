@@ -193,14 +193,43 @@ installed_version() {
 }
 
 # Refuses the folder $1 when another account could change what is in it: it
-# must be this user's, and not writable by everyone. Its group may write, as a
-# folder made under umask 002 lets the user's own group. What is in these
-# folders runs as this user.
+# must be this user's, and no account but this user may write to it. Its
+# group may, when that is this user's own group, as a folder made under
+# umask 002 lets it. What is in these folders runs as this user.
+#
+# Then every folder above it, up to /, both on the path as given and on the
+# one its links lead to: another account that may write to one could move
+# what it holds away, $1 with it, and put a folder of its own there. Each
+# must be this user's or root's, and written by no other account, unless it
+# is sticky, as /tmp is, where only the owner of what it holds may move that.
 private_folder() {
   [ -n "$(find -H "$1" -prune -user "$(id -u)")" ] ||
     fail "$1 belongs to another account, which could change what runs from it. Choose a folder of your own, such as one under $HOME."
   [ -n "$(find -H "$1" -prune ! -perm -o+w)" ] ||
     fail "$1 can be written by every account, which could change what runs from it. Take that away with \`chmod o-w $1\`, then run this again."
+  [ -n "$(find -H "$1" -prune \( ! -perm -g+w -o -group "$(id -g)" \))" ] ||
+    fail "$1 can be written by its group, which is not this user's own, so other accounts could change what runs from it. Take that away with \`chmod g-w $1\`, then run this again."
+  private_parents "$1" "$1"
+  resolved="$(cd -P -- "$1" && pwd -P)" || fail "Could not open $1 to see where it leads. Check that this user may open it, then run this again."
+  private_parents "$resolved" "$1"
+}
+
+# Checks every folder above $1 as private_folder says; $2 is the folder they
+# lead to, for the message.
+private_parents() {
+  above="$1"
+  while [ "$above" != / ]; do
+    above="${above%/*}"
+    [ -n "$above" ] || above=/
+    [ -n "$(find -H "$above" -prune \( -user "$(id -u)" -o -user 0 \))" ] ||
+      fail "$above, a folder $2 is in, belongs to another account, which could move $2 away and put a folder of its own in its place. Choose a folder of your own, such as one under $HOME."
+    # Sticky: only the owner of a folder in it may move that folder.
+    [ -z "$(find -H "$above" -prune -perm -1000)" ] || continue
+    [ -n "$(find -H "$above" -prune ! -perm -o+w)" ] ||
+      fail "$above, a folder $2 is in, can be written by every account, which could move $2 away and put a folder of its own in its place. Take that away with \`chmod o-w $above\`, or choose another folder, then run this again."
+    [ -n "$(find -H "$above" -prune \( ! -perm -g+w -o -group "$(id -g)" \))" ] ||
+      fail "$above, a folder $2 is in, can be written by its group, which is not this user's own, so another account could move $2 away and put a folder of its own in its place. Take that away with \`chmod g-w $above\`, or choose another folder, then run this again."
+  done
 }
 
 recorded=
