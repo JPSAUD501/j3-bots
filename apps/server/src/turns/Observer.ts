@@ -249,12 +249,6 @@ export class Observer extends Context.Service<
     /** Follows every session that is live or still has work to settle. */
     readonly watchAll: Effect.Effect<void>;
     /**
-     * Stops following a session the engine took out of use: its stream ends,
-     * and nothing opens it again, since a session retired in the engine is no
-     * longer one to watch.
-     */
-    readonly close: (sessionId: SessionRowId) => Effect.Effect<void>;
-    /**
      * Returns once every event the engine had recorded for the session when it
      * was called has been applied. Fails with `NotObserved`, to be retried,
      * when the stream closes first or the deadline passes.
@@ -1649,6 +1643,7 @@ export const layer = Layer.effect(
       return Exit.isSuccess(yield* Effect.exit(caughtUp.value));
     });
 
+    /** Stops following the session: its stream ends, and nothing opens it again. */
     const close = (sessionId: SessionRowId) =>
       Effect.suspend(() => {
         const current = following.get(sessionId);
@@ -1658,6 +1653,28 @@ export const layer = Layer.effect(
         shown.delete(sessionId);
         return current?._tag === "open" ? Deferred.succeed(current.closed, undefined) : Effect.void;
       }).pipe(Effect.asVoid, Effect.withSpan("Observer.close"));
+
+    /**
+     * Each session recorded lost or archived in the engine is followed no
+     * more (`watchedRow`), whichever worker recorded it: a stream otherwise
+     * reads on until its next event, and an engine thread archived from the
+     * engine's own console sends none.
+     */
+    const closeUnwatched = Effect.gen(function* () {
+      for (const sessionId of [...following.keys()]) {
+        if (Option.isNone(yield* watchedRow(sessionId).pipe(Effect.orDie))) yield* close(sessionId);
+      }
+    }).pipe(Effect.withSpan("Observer.closeUnwatched"));
+    yield* signals.unwatched.next.pipe(
+      Effect.andThen(closeUnwatched),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logError("Streams of sessions no longer watched could not be closed", cause),
+      ),
+      Effect.forever,
+      Effect.forkIn(scope),
+    );
 
     const watchAll = Effect.gen(function* () {
       for (const { id } of yield* sessionsToWatch(undefined).pipe(Effect.orDie)) yield* watch(id);
@@ -1708,7 +1725,6 @@ export const layer = Layer.effect(
     return Observer.of({
       watch,
       ready,
-      close,
       watchAll,
       synchronize,
       serverStep,

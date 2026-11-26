@@ -266,10 +266,10 @@ export const nextTurn = (botId: BotId, previous: TurnId | null = null) =>
   eventually(admittedTurn(botId).pipe(Effect.map(Option.filter((turnId) => turnId !== previous))));
 
 /**
- * The bot's next turn says it is done and ends, so no `undelivered` wake
- * follows it.
+ * The bot's next turn says it is done, which closes its delivery while the
+ * engine still runs it. Returns that turn.
  */
-export const finishRunning = (botId: BotId, previous: Parameters<typeof nextTurn>[1] = null) =>
+export const saysDone = (botId: BotId, previous: TurnId | null = null) =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const session = yield* engineSession(botId);
@@ -288,7 +288,22 @@ export const finishRunning = (botId: BotId, previous: Parameters<typeof nextTurn
       tool: "say",
       arguments: args,
     });
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    return turnId;
+  });
+
+/**
+ * The bot's next turn says it is done and ends, so no `undelivered` wake
+ * follows it.
+ */
+export const finishRunning = (botId: BotId, previous: TurnId | null = null) =>
+  Effect.gen(function* () {
+    const turnId = yield* saysDone(botId, previous);
+    const session = yield* engineSession(botId);
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "completed" },
+    });
     return turnId;
   });
 

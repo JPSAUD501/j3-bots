@@ -353,6 +353,15 @@ export class Engine extends Context.Service<
     readonly status: Stream.Stream<EngineStatus>;
 
     /**
+     * Which start of the engine is ready: `null` while it is not, and
+     * otherwise a number that grows each time it becomes ready again, so a
+     * restart is seen even when no `null` came between. Starting with the
+     * current value. An answer that depends on what the engine read when it
+     * started names the start that gave it (`PermissionModeRefused`).
+     */
+    readonly starts: Stream.Stream<number | null>;
+
+    /**
      * Points the Claude Code and Codex instances at `connection`. It is
      * stored, URL and key in one write, in the engine's secret store and
      * nowhere else: not in a settings or configuration file, not in a log.

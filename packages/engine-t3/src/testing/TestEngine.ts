@@ -132,8 +132,17 @@ export interface ReceivedDispatch {
 export class TestEngineControl extends Context.Service<
   TestEngineControl,
   {
-    /** While false, every command fails with `EngineUnavailable` and applies nothing. */
+    /**
+     * While false, every command fails with `EngineUnavailable` and applies
+     * nothing. Reachable again, the engine counts as a new start (`starts`).
+     */
     readonly setReachable: (reachable: boolean) => Effect.Effect<void>;
+    /**
+     * The next time the engine becomes reachable, `starts` tells of the new
+     * start only at `release`, as when the caller is slow to see it: commands
+     * reach that start meanwhile.
+     */
+    readonly holdNextStartNotice: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
     /** The base URL of the provider connection last set; never its key. */
     readonly providerConnection: Effect.Effect<Option.Option<string>>;
     /** The providers `recheckProvider` was asked to check again, in order. */
@@ -491,6 +500,8 @@ export class TestEngineControl extends Context.Service<
      * adapter's do.
      */
     readonly archiveSession: (sessionId: SessionId) => Effect.Effect<void>;
+    /** How many event streams of the session are open. */
+    readonly openStreams: (sessionId: SessionId) => Effect.Effect<number>;
     readonly dispatches: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<ReceivedDispatch>>;
     readonly responses: (
       sessionId: SessionId,
@@ -615,6 +626,13 @@ const STAGED_USABLE_FOR = Duration.hours(12);
 const make = Effect.gen(function* () {
   const status = yield* SubscriptionRef.make(initialStatus);
   let reachable = true;
+  /** The engine's starts: one more each time it becomes reachable again. */
+  let start = 1;
+  const started = yield* SubscriptionRef.make<number | null>(start);
+  /** Set by `holdNextStartNotice`; taken by the next start. */
+  let startNoticeHeld: "next" | "held" | null = null;
+  /** Tells `starts` where the engine stands now. */
+  const noticeStart = Effect.suspend(() => SubscriptionRef.set(started, reachable ? start : null));
   /** The base URL of the provider connection, once one is set. */
   let connection = Option.none<string>();
   const rechecked: Array<ProviderId> = [];
@@ -644,7 +662,9 @@ const make = Effect.gen(function* () {
       return Option.none<PermissionModeRefused>();
     }
     modeRefusals++;
-    return Option.some(new PermissionModeRefused({ permissionMode: mode, allowed: modeCeiling }));
+    return Option.some(
+      new PermissionModeRefused({ permissionMode: mode, allowed: modeCeiling, engineStart: start }),
+    );
   };
   let rejectingRetirements = 0;
   let rejectStop = false;
@@ -1295,6 +1315,7 @@ const make = Effect.gen(function* () {
 
   const engine = Engine.of({
     status: SubscriptionRef.changes(status),
+    starts: SubscriptionRef.changes(started).pipe(Stream.changes),
 
     connectProviders: (input) =>
       Effect.sync(() => {
@@ -1776,12 +1797,29 @@ const make = Effect.gen(function* () {
 
     setReachable: (value) =>
       Effect.gen(function* () {
+        const restarted = value && !reachable;
+        if (restarted) start++;
         reachable = value;
+        if (restarted && startNoticeHeld === "next") {
+          startNoticeHeld = "held";
+        } else if (startNoticeHeld !== "held") {
+          yield* noticeStart;
+        }
         yield* SubscriptionRef.update(status, (current): EngineStatus => ({
           ...current,
           state: value ? { _tag: "ready" } : { _tag: "unavailable", reason: "down" },
         }));
       }),
+
+    holdNextStartNotice: Effect.sync(() => {
+      startNoticeHeld = "next";
+      return {
+        release: Effect.suspend(() => {
+          startNoticeHeld = null;
+          return noticeStart;
+        }),
+      };
+    }),
 
     loseNextReply: Effect.sync(() => {
       loseReply = true;
@@ -2202,6 +2240,8 @@ const make = Effect.gen(function* () {
         session.retired = true;
         endStreams(session);
       }),
+
+    openStreams: (sessionId) => Effect.sync(() => sessions.get(sessionId)?.subscribers.size ?? 0),
 
     archiveSession: (sessionId) =>
       Effect.gen(function* () {

@@ -25,7 +25,9 @@ import {
   deliveryIs,
   engineSession,
   failedAs,
+  finishRunning,
   flushed,
+  gateSettled,
   mainSessionId,
   nextTurn,
   noticesOf,
@@ -162,11 +164,10 @@ const modeNotices = (botId: BotId) =>
 
 /**
  * The engine stops and starts again, under a policy allowing up to `ceiling`,
- * and the server has taken it in: its turn machinery was released again, and
- * the refusals of permission modes met before were cleared
+ * and the server has taken it in: its turn machinery was released for the new
+ * start, and the refusals of permission modes earlier starts gave were cleared
  * (`EngineSessions.engineStarted`). So what is sent next goes to the engine as
- * it runs now, and no refusal from before the restart is read again. A bot
- * refused anew was asked again, which only a cleared refusal allows.
+ * it runs now, and no refusal from before the restart is read again.
  */
 const engineRestarts = (ceiling: PermissionMode) =>
   Effect.gen(function* () {
@@ -174,18 +175,19 @@ const engineRestarts = (ceiling: PermissionMode) =>
     const readiness = yield* Readiness;
     const sql = yield* SqlClient.SqlClient;
     const before = yield* readiness.generation;
-    const refusedBefore = yield* control.modeRefusals;
     yield* control.setReachable(false);
     yield* control.limitPermissionModes(ceiling);
     yield* control.setReachable(true);
     yield* until(Effect.map(readiness.generation, (now) => now > before));
     yield* until(
-      Effect.gen(function* () {
-        const [held] = yield* sql<{ readonly n: number }>`
-          SELECT COUNT(*) AS n FROM bots WHERE mode_refused_revision IS NOT NULL
-        `.pipe(Effect.orDie);
-        return held?.n === 0 || (yield* control.modeRefusals) > refusedBefore;
-      }),
+      sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM bots
+        WHERE mode_refused_revision IS NOT NULL
+          AND (mode_refused_engine_start IS NULL OR mode_refused_engine_start <= ${before})
+      `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.n === 0),
+      ),
     );
   });
 
@@ -642,6 +644,47 @@ it.effect(
       yield* deliveryIs(waiting, "delivered");
       assert.strictEqual(yield* timesSent(session, "Plan the launch."), 1);
       assert.deepStrictEqual(yield* modeNotices(bot.id), [["full-access", "auto"]]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps the refusal of a send the engine's new start answered before the server caught up",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* (yield* Bots).create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", permissionMode: "full-access" },
+      });
+      yield* finishRunning(bot.id);
+      yield* turnEnded(bot.id);
+
+      // A send is under way when the engine starts again under a policy that
+      // refuses the bot's mode, and the new start answers it before the
+      // server has seen that start.
+      const sending = yield* control.holdNext("dispatch");
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* sending.entered;
+      const notice = yield* control.holdNextStartNotice;
+      yield* control.setReachable(false);
+      yield* control.limitPermissionModes("auto");
+      yield* control.setReachable(true);
+      yield* sending.release;
+      yield* gateSettled(bot.id);
+      assert.isTrue(yield* refusalRecorded(bot.id));
+
+      // The server's startup for the new start follows.
+      const readiness = yield* Readiness;
+      const before = yield* readiness.generation;
+      yield* notice.release;
+      yield* until(Effect.map(readiness.generation, (now) => now > before));
+      yield* anHourOfPasses;
+
+      // Asked once: no startup cleared what the new start said.
+      assert.strictEqual(yield* control.modeRefusals, 1);
+      assert.isTrue(yield* refusalRecorded(bot.id));
+      assert.deepStrictEqual(yield* modeNotices(bot.id), [["full-access", "auto"]]);
+      assert.deepStrictEqual(yield* delivery(waiting), { _tag: "pending" });
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

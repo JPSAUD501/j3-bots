@@ -965,3 +965,23 @@ it.effect("ends a fold's background work, and its steps' stream, when its sessio
     assert.isFalse(yield* backgroundOf);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "closes the event stream of a session a send found archived from the engine's console",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createNewBot("Ana");
+      yield* finishRunning(bot.id);
+      yield* turnEnded(bot.id);
+      const session = yield* engineSession(bot.id);
+      assert.strictEqual(yield* control.openStreams(session), 1);
+
+      // Archived there, its stream stays open with nothing more to say; the
+      // send finds it gone, and the server records it lost.
+      yield* control.archiveSession(session);
+      yield* sendToBot(bot.id, "Book the venue.");
+      yield* flushed(bot.id);
+      yield* until(Effect.map(control.openStreams(session), (open) => open === 0));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

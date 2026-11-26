@@ -34,17 +34,34 @@ export const openingUnsentSql = (sql: SqlClient.SqlClient, of: OpeningOf) => sql
 `;
 
 /**
+ * Whether the opening in the `wakes` row aliased `opening` has not ended: its
+ * wake pending or dispatched, or the turn that delivers it still running. A
+ * `say` or `ask` that closes the turn finishes the wake while the engine still
+ * runs that turn (`Ledger.closeDelivery`), so its dispatch decides until the
+ * turn's end finishes or drops it, or a lost session interrupts it.
+ */
+export const openingOpenSql = (sql: SqlClient.SqlClient, opening: string) => sql`
+  (
+    ${sql.literal(opening)}.status IN ('pending', 'dispatched') OR EXISTS (
+      SELECT 1 FROM dispatches oo_dispatch
+      WHERE oo_dispatch.id = ${sql.literal(opening)}.dispatch_id
+        AND oo_dispatch.status = 'delivered'
+    )
+  )
+`;
+
+/**
  * Whether the wake in the `wakes` row aliased `wake` waits behind its bot's
- * opening (`behind_opening_id`) and that opening has not ended: pending, or
- * dispatched and not yet finished, failed or cancelled. Once it has ended, the
- * wake is ordinary work, in the order it was written.
+ * opening (`behind_opening_id`) and that opening has not ended
+ * (`openingOpenSql`). Once it has ended, the wake is ordinary work, in the
+ * order it was written.
  */
 export const behindOpeningSql = (sql: SqlClient.SqlClient, wake: string) => sql`
   (
     ${sql.literal(wake)}.behind_opening_id IS NOT NULL AND EXISTS (
       SELECT 1 FROM wakes bo_opening
       WHERE bo_opening.id = ${sql.literal(wake)}.behind_opening_id
-        AND bo_opening.status IN ('pending', 'dispatched')
+        AND ${openingOpenSql(sql, "bo_opening")}
     )
   )
 `;

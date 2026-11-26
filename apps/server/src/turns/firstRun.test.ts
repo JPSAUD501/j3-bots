@@ -43,6 +43,7 @@ import {
   nextTurn,
   providerIs,
   providerLists,
+  saysDone,
   sendToBot,
   sessionAfter,
   timesSent,
@@ -512,6 +513,41 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("keeps the held messages out of a hello that said it is done until its turn ends", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { providerId } = OTHER_PROVIDER_MODEL;
+    yield* providerIs(providerId, signedOut);
+    const bot = yield* createNewBot("Ana", OTHER_PROVIDER_MODEL);
+    const session = yield* engineSession(bot.id);
+    const first = yield* sendToBot(bot.id, "Book the venue.");
+    yield* flushed(bot.id);
+    yield* providerIs(providerId, { _tag: "ready" });
+
+    // The hello says it is done; its turn has not ended when the dispatcher
+    // looks, nor when the operator writes again.
+    const hello = yield* saysDone(bot.id);
+    yield* flushed(bot.id);
+    const second = yield* sendToBot(bot.id, "And the caterer.");
+    yield* flushed(bot.id);
+    assert.lengthOf(yield* control.dispatches(session), 1);
+    assert.deepStrictEqual(yield* delivery(first), { _tag: "pending" });
+
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: hello,
+      outcome: { _tag: "completed" },
+    });
+    yield* finishRunning(bot.id, hello);
+    yield* deliveredBoth(first, second);
+    assert.deepStrictEqual(
+      yield* sentInOrder(session, [FIRST_RUN, "Book the venue.", "And the caterer."]),
+      [FIRST_RUN, "Book the venue.", "And the caterer."],
+    );
+    assert.lengthOf(yield* control.dispatches(session), 2);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("keeps every message behind a hello its provider turned ready for, in order", () =>
   Effect.gen(function* () {
     const { providerId } = OTHER_PROVIDER_MODEL;
@@ -536,6 +572,38 @@ it.effect("keeps every message behind a hello its provider turned ready for, in 
       [FIRST_RUN, "Book the venue.", "And the caterer."],
     );
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "shows a held message behind the hello again when the engine goes before the hello is sent",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { providerId } = OTHER_PROVIDER_MODEL;
+      yield* providerIs(providerId, signedOut);
+      const bot = yield* createNewBot("Ana", OTHER_PROVIDER_MODEL);
+      const session = yield* engineSession(bot.id);
+      const message = yield* sendToBot(bot.id, "Book the venue.");
+      yield* flushed(bot.id);
+
+      // The hello's send is claimed, and the engine goes before it arrives.
+      const sending = yield* control.holdNext("dispatch");
+      yield* providerIs(providerId, { _tag: "ready" });
+      yield* sending.entered;
+      assert.deepStrictEqual(yield* delivery(message), { _tag: "pending" });
+      yield* control.setReachable(false);
+      yield* sending.release;
+      yield* gateSettled(bot.id);
+      assert.deepStrictEqual(yield* delivery(message), behindOpening);
+
+      yield* control.setReachable(true);
+      yield* helloThenNext(bot.id);
+      yield* deliveryIs(message, "delivered");
+      assert.deepStrictEqual(yield* sentInOrder(session, [FIRST_RUN, "Book the venue."]), [
+        FIRST_RUN,
+        "Book the venue.",
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("sends a written hello only once its provider is ready again", () =>

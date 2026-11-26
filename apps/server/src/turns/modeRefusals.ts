@@ -114,8 +114,8 @@ export const roomRefusals = (sql: SqlClient.SqlClient, entries: Entries["Service
 /**
  * The engine's refusals of a bot's permission mode: to open its main session
  * in, to change it to, or to run a turn there in. Each is recorded with the
- * bot's settings revision it was refused at, and stamped with the engine's
- * start generation (`Readiness.generation`) read before the call that met it.
+ * bot's settings revision it was refused at, and the engine start that
+ * refused it (`PermissionModeRefused.engineStart`).
  */
 export const modeRefusals = (
   sql: SqlClient.SqlClient,
@@ -133,13 +133,15 @@ export const modeRefusals = (
    * settings revision `revision`, so it is not asked again until the bot's
    * settings change or the engine becomes ready again. A change committed
    * since that revision was read is recorded nothing for: the rotator, which
-   * the change nudged, tries it. Nor is a refusal from an engine that was
-   * ready under an older `generation`: the engine became ready again since,
-   * perhaps under another policy, and cleared every refusal then
+   * the change nudged, tries it. Nor is a refusal from an engine start older
+   * than the one the machinery was last released for (`Readiness.generation`):
+   * the engine started again since, perhaps under another policy, and that
+   * start cleared the refusals of the starts before it
    * (`EngineSessions.engineStarted`), so the bot's main session is asked
-   * again under the engine that is ready now. The generation is read in this
-   * transaction, which the clearing never crosses, so a refusal is either
-   * cleared or not written. The bot's conversation is told of a refusal at a
+   * again under the engine that is ready now. One the current start gave, or
+   * a later one the machinery has not caught up with, is recorded with its
+   * start, which no clearing of that start or an earlier one removes. The
+   * bot's conversation is told of a refusal at a
    * revision, or naming an allowed mode, it was not told of yet, so a refusal
    * the engine repeats after a restart is not told twice; each room it is a
    * member of is told once for each refusal its conversation is told of, in
@@ -149,14 +151,15 @@ export const modeRefusals = (
    * longer answers there (`RoomStates`).
    */
   const refused = Effect.fn("modeRefusals.refused")(
-    function* (botId: BotId, revision: number, refusal: PermissionModeRefused, generation: number) {
-      if ((yield* readiness.generation) !== generation) {
+    function* (botId: BotId, revision: number, refusal: PermissionModeRefused) {
+      if (refusal.engineStart < (yield* readiness.generation)) {
         yield* sql.afterCommit(signals.rotations.fire);
         yield* sql.afterCommit(signals.dispatch.fire);
         return;
       }
       const recorded = yield* sql`
-        UPDATE bots SET mode_refused_revision = ${revision}
+        UPDATE bots
+        SET mode_refused_revision = ${revision}, mode_refused_engine_start = ${refusal.engineStart}
         WHERE id = ${botId} AND settings_revision = ${revision}
         RETURNING id
       `;
