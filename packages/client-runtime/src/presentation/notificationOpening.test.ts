@@ -37,6 +37,7 @@ const roster: Synced<ReadonlyArray<RosterItem>> = {
         createdAt: at("2026-11-01T00:00:00Z"),
         work: "none",
         answering: [],
+        memberWork: [],
       },
       lastEntry: null,
       lastActivityAt: null,

@@ -24,6 +24,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   status,
   stepCount: 3,
   apps: [],
+  work: null,
 });
 
 const finished = (

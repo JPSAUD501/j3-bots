@@ -232,6 +232,7 @@ export const sessionRecords = (
         turnStartedAt: turn.started_at,
         stepCount: 0,
         apps: [],
+        work: null,
         status,
       },
     });

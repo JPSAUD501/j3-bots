@@ -118,6 +118,7 @@ it.effect("notifies every socket of what a bot adds where no socket looks, and n
       turnStartedAt: null,
       stepCount: 0,
       apps: [],
+      work: null,
       status: { _tag: "running" },
     });
     const card = yield* add(quill.id, {

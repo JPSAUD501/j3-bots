@@ -700,6 +700,7 @@ export function galleryVariants(now: DateTime.Utc) {
     turnStartedAt: ago(6),
     stepCount,
     apps: [],
+    work: null,
     status,
   });
   const step = (

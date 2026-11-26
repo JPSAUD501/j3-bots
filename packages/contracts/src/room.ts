@@ -2,6 +2,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { BotId, Label, RoomId } from "./base.ts";
+import { TurnWork } from "./work.ts";
 
 /** The most bots a room has. */
 export const MAX_ROOM_MEMBERS = 6;
@@ -76,6 +77,16 @@ export const Room = Schema.Union([
      * `work` is `running`, and from a server that does not send it.
      */
     answering: Schema.Array(BotId)
+      .check(Schema.isMaxLength(MAX_ROOM_MEMBERS))
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+    /**
+     * The plan and little ones of each member's turn for the room, while
+     * that work is under way (`work` is `running`), in member order: a
+     * member whose turn has neither is left out. A room's turn shows them
+     * here only, never in the member's own conversation. Empty from a server
+     * that does not send it.
+     */
+    memberWork: Schema.Array(Schema.Struct({ botId: BotId, work: TurnWork }))
       .check(Schema.isMaxLength(MAX_ROOM_MEMBERS))
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   }),

@@ -16,6 +16,7 @@ const working = (activity: string | null, stalled = false): BotState => ({
   typing: false,
   activity,
   tool: null,
+  littleOnes: 0,
 });
 
 const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
@@ -27,6 +28,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   turnStartedAt: at(started),
   stepCount: 2,
   apps: [],
+  work: null,
   status,
 });
 

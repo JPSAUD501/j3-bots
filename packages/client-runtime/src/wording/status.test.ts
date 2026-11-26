@@ -26,6 +26,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],
+    memberWork: [],
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,
@@ -173,6 +174,7 @@ describe("rosterLine", () => {
               typing: true,
               activity: "Reading",
               tool: null,
+              littleOnes: 0,
             },
       );
     for (const state of ["thinking", "working"] as const) {
@@ -191,6 +193,7 @@ describe("rosterLine", () => {
         typing: false,
         activity: "Reading",
         tool: null,
+        littleOnes: 0,
       });
     expect(rosterLine(row(stalled("2026-11-20T14:48:00Z")), ctx)).toEqual({
       text: "No activity for 12m",

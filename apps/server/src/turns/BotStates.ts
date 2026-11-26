@@ -223,6 +223,7 @@ export const layer = Layer.effect(
           typing,
           activity: running ? latest.label : null,
           tool: running ? latest.tool : null,
+          littleOnes: 0,
         } as const;
       }
 

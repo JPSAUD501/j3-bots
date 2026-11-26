@@ -854,6 +854,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 members: room.members,
                 work: "none",
                 answering: [],
+                memberWork: [],
               },
         ),
       );

@@ -28,6 +28,7 @@ const fold = (
   turnStartedAt: turnStartedAt === null ? null : at(turnStartedAt),
   stepCount: 2,
   apps: [],
+  work: null,
   status,
 });
 
@@ -61,6 +62,7 @@ describe("liveTurn", () => {
       typing: false,
       activity: null,
       tool: null,
+      littleOnes: 0,
     });
     expect(working?.startedAt).toEqual(at(started));
     const waiting = turnOf({ _tag: "waiting", entryId: EntryId.make("card"), since: at(started) });
