@@ -249,8 +249,16 @@ jobs:
       # the job's temporary folder is on the workspace's drive, private to
       # this user as a profile's %TEMP% is: only the user, SYSTEM and the
       # Administrators may open it, which a home made inside it inherits.
+      # That drive makes no 8.3 short names, which a system drive does and
+      # tests of a home named by one need, so it is set to make them.
       - name: Keep temporary files on the workspace's drive
         run: |
+          $drive = Split-Path -Qualifier $env:RUNNER_TEMP
+          fsutil 8dot3name set 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          fsutil 8dot3name set $drive 0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          fsutil 8dot3name query $drive
           $temp = Join-Path $env:RUNNER_TEMP "tmp"
           New-Item -ItemType Directory -Path $temp | Out-Null
           $user = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
