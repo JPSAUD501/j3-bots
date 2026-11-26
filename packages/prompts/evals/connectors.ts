@@ -4,23 +4,22 @@ import {
   connectorToolDescription,
   renderConnectorResultWithNonce,
 } from "../src/connectorResult.ts";
-import { DECODE_OPTIONS, SUGGESTION_REFUSED, SUGGESTION_SHOWN, tools } from "../src/index.ts";
+import { DECODE_OPTIONS, MANAGEMENT_NOTES, tools } from "../src/index.ts";
 import type { FunctionTool } from "./model.ts";
 
 /**
  * The operator's connectors, as far as the connector scenarios need them: the
  * services a bot was given, whose tools it calls through the `j3` bridge, and
- * the gallery `suggest_connector` suggests from.
+ * the gallery `search_mcp_servers` searches and `add_mcp_server` adds from.
  *
  * A connector's tools reach a bot as `<connector>__<tool>` beside J3 Bots'
  * own (`docs/architecture/server.md`, Bot tools), each with the description
  * its server gave, and what one answers comes back framed as untrusted data,
  * as the server frames it (`renderConnectorResult`). The stand-in tools,
  * their descriptions and their answers are this repository's own fictional
- * services. `suggest_connector` answers as the server does
- * (`apps/server/src/turns/Speech.ts`): no card for a service the bot has,
- * one the gallery lacks, one its card there still offers or one the operator
- * said Not now to.
+ * services. The MCP server tools answer as the server does
+ * (`apps/server/src/tools/Management.ts`), in its shape: a gallery entry that
+ * signs in is added waiting on its sign-in, one added by address connects.
  */
 
 /** One tool of a stand-in connector. */
@@ -45,24 +44,24 @@ export interface Connector {
 export interface ConnectorStage {
   /** The connectors the bot was given. With any, the bot has the connector rules. */
   readonly connected: ReadonlyArray<Connector>;
-  /** Services the operator said Not now to in this conversation. */
-  readonly declined?: ReadonlyArray<string>;
-  /** Services a card of the bot's in this conversation still offers. */
-  readonly pending?: ReadonlyArray<string>;
 }
 
 /**
  * The services the stand-in gallery has: a few the curated list ships, by the
- * names its entries go by. Any scenario's bot can suggest one, so a bot that
- * suggests GitHub instead of using `gh` shows in the other evals too.
+ * names and keys its entries go by, each signing in. Any scenario's bot can
+ * add one, so a bot that adds GitHub instead of using `gh` shows in the other
+ * evals too.
  */
-const GALLERY = ["Notion", "Linear", "GitHub", "Slack", "Gmail", "Google Calendar", "Google Drive"];
+const GALLERY = [
+  { name: "Notion", key: "notion" },
+  { name: "Linear", key: "linear" },
+  { name: "GitHub", key: "github" },
+  { name: "Slack", key: "slack" },
+  { name: "Google Calendar", key: "google-calendar" },
+  { name: "Google Drive", key: "google-drive" },
+];
 
 const fold = (value: string) => value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-
-/** The gallery's name for what the bot asked for, matched as the server matches a curated entry's name. */
-const galleryName = (service: string): string | undefined =>
-  GALLERY.find((name) => fold(name) === fold(service));
 
 /** A connector tool's name as the bot sees it. */
 const toolName = (connector: Connector, tool: ConnectorTool): string =>
@@ -114,44 +113,93 @@ export const connectorAnswer = (
   return undefined;
 };
 
-const decodeSuggestion = Schema.decodeUnknownOption(tools.suggest_connector.input, DECODE_OPTIONS);
+const decodeAdd = Schema.decodeUnknownOption(tools.add_mcp_server.input, DECODE_OPTIONS);
+const decodeSearch = Schema.decodeUnknownOption(tools.search_mcp_servers.input, DECODE_OPTIONS);
+
+const refused = (reason: string) => JSON.stringify({ error: reason });
 
 /**
- * The connector cards of one turn, and what `suggest_connector` answers from
- * them: the stage's own, then what the turn shows.
+ * The operator's MCP servers over one turn, as the MCP server tools see and
+ * change them: the stage's, then what the turn adds, each for the calling bot.
  */
-export class ConnectorCards {
+export class McpServers {
   readonly #stage: ConnectorStage;
-  readonly #shown: Array<string> = [];
+  readonly #added: Array<{ readonly id: string; readonly name: string; readonly status: string }> =
+    [];
 
   constructor(stage: ConnectorStage) {
     this.#stage = stage;
   }
 
-  /** What `suggest_connector` answers, keeping a card it shows. */
-  suggest(input: unknown): string {
-    const decoded = decodeSuggestion(input);
+  /** What `search_mcp_servers` answers: the gallery's entries whose name has the query in it. */
+  search(input: unknown): string {
+    const decoded = decodeSearch(input);
+    if (decoded._tag === "None") return refused("`query` must be 1 to 100 characters.");
+    const query = fold(decoded.value.query);
+    const servers = GALLERY.filter(
+      (entry) => fold(entry.name).includes(query) || query.includes(fold(entry.name)),
+    ).map((entry) => ({
+      id: `curated:${entry.key}`,
+      name: entry.name,
+      summary: `${entry.name}, from its maker.`,
+      from: `${entry.key}.example`,
+      connects: "sign-in",
+      fields: [],
+    }));
+    return JSON.stringify({ servers, registry: "answered" });
+  }
+
+  /** What `list_mcp_servers` answers. */
+  list(): string {
+    return JSON.stringify({
+      servers: [
+        ...this.#stage.connected.map((connector) => ({
+          id: `conn_${connector.slug}`,
+          name: connector.name,
+          prefix: connector.slug,
+          status: "connected",
+          bots: "every-bot",
+          mayChange: false,
+          lastChange: null,
+        })),
+        ...this.#added.map((server) => ({
+          ...server,
+          prefix: fold(server.name).replace(/[^a-z0-9]+/g, "_"),
+          bots: ["this-bot"],
+          mayChange: true,
+          lastChange: { by: { bot: "you" }, at: "now" },
+        })),
+      ],
+    });
+  }
+
+  /** What `add_mcp_server` answers, keeping the server it adds. */
+  add(input: unknown): string {
+    const decoded = decodeAdd(input);
     if (decoded._tag === "None") {
-      return JSON.stringify({
-        error: "`connector` must be 1 to 100 characters and `reason` 1 to 500.",
-      });
+      return refused(
+        "Give exactly one of gallery, url and command, with a name for url or command.",
+      );
     }
-    const asked = decoded.value.connector;
-    const own = this.#stage.connected.find(
-      (connector) => fold(connector.name) === fold(asked) || connector.slug === fold(asked),
-    );
-    if (own !== undefined) return JSON.stringify({ error: SUGGESTION_REFUSED.usable(own.name) });
-    const name = galleryName(asked);
-    if (name === undefined) return JSON.stringify({ error: SUGGESTION_REFUSED.unknown(asked) });
-    const among = (names: ReadonlyArray<string> | undefined) =>
-      (names ?? []).some((other) => fold(other) === fold(name));
-    if (among(this.#stage.declined)) {
-      return JSON.stringify({ error: SUGGESTION_REFUSED.declined(name) });
+    const { gallery, url, name } = decoded.value;
+    const entry =
+      gallery === undefined ? undefined : GALLERY.find(({ key }) => gallery === `curated:${key}`);
+    if (gallery !== undefined && entry === undefined) {
+      return refused(`${gallery} is no entry of the gallery. Search for it first.`);
     }
-    if (among(this.#stage.pending) || among(this.#shown)) {
-      return JSON.stringify({ error: SUGGESTION_REFUSED.pending(name) });
-    }
-    this.#shown.push(name);
-    return JSON.stringify({ status: "shown", note: SUGGESTION_SHOWN });
+    const server = {
+      id: `conn_${this.#added.length + 1}`,
+      name: entry?.name ?? name ?? url ?? "Server",
+      status: entry === undefined ? "connected" : "needs-sign-in",
+    };
+    this.#added.push(server);
+    return JSON.stringify({
+      server: {
+        id: server.id,
+        name: server.name,
+        status: entry === undefined ? "connected" : { needsSignIn: "new" },
+      },
+      note: entry === undefined ? MANAGEMENT_NOTES.connected : MANAGEMENT_NOTES.signInPending,
+    });
   }
 }

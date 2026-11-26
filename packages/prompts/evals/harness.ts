@@ -25,12 +25,7 @@ import {
   type Wake,
 } from "../src/index.ts";
 import { type BrowserSetup, browserTools, FixtureBrowser } from "./browser.ts";
-import {
-  ConnectorCards,
-  connectorAnswer,
-  type ConnectorStage,
-  connectorTools,
-} from "./connectors.ts";
+import { McpServers, connectorAnswer, type ConnectorStage, connectorTools } from "./connectors.ts";
 import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
 import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
@@ -455,7 +450,7 @@ export interface Scenario {
    * `list_credentials` and `fill_credential` are then not available.
    */
   readonly browser?: BrowserSetup;
-  /** The operator's connectors and connector cards; none by default. */
+  /** The operator's connectors; none by default. */
   readonly connectors?: ConnectorStage;
   /**
    * The bot's teammates and rooms, which `list_teammates` lists and
@@ -924,7 +919,7 @@ const operatorSpoke = (wake: Wake): boolean =>
 /** What the server would answer, as far as these scenarios need, and what a command did. */
 const answer = (
   routines: HeldRoutines,
-  cards: ConnectorCards,
+  servers: McpServers,
   workspace: Workspace<ProgramEvent>,
   browser: FixtureBrowser | undefined,
   scenario: Scenario,
@@ -982,8 +977,12 @@ const answer = (
         ? reply(json({ id: `bot-${request.step}-${encodeURIComponent(made.value.name)}` }))
         : reply(json({ error: "The call was refused as invalid." }));
     }
-    case "suggest_connector":
-      return reply(cards.suggest(request.input));
+    case "search_mcp_servers":
+      return reply(servers.search(request.input));
+    case "list_mcp_servers":
+      return reply(servers.list());
+    case "add_mcp_server":
+      return reply(servers.add(request.input));
     case "recall":
       return reply(json({ facts: [] }));
     case "remember":
@@ -1097,7 +1096,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
     const connectors = scenario.connectors ?? NO_CONNECTORS;
-    const cards = new ConnectorCards(connectors);
+    const servers = new McpServers(connectors);
     const rooms = new TeamRooms(scenario.team ?? NO_TEAM, scenario.wake);
     const tools = functionTools(
       workspace.commands,
@@ -1150,7 +1149,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
         const call: Call = {
           ...request,
           ...((yield* rooms.answer(request)) ??
-            answer(routines, cards, workspace, browser, scenario, request)),
+            answer(routines, servers, workspace, browser, scenario, request)),
         };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
