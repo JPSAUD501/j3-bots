@@ -60,8 +60,8 @@ jobs:
       # nightly's: its version, with no `v`. A nightly whose run failed was
       # never published, so the next run builds that commit again. A day has
       # one nightly at most: the Android version code numbers a nightly by its
-      # day alone, so a second one that day, from a run by hand, would share
-      # the first one's code; it waits for the next day. A nightly is
+      # patch and its day, not its run, so a second one that day, from a run
+      # by hand, could share the first one's code; it waits for the next day. A nightly is
       # published with no review, so it is built only from a commit whose CI
       # run on `main` passed; one still running, failed or cancelled waits for
       # the next day. The version is the patch after the newest published
