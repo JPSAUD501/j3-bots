@@ -88,9 +88,16 @@ export type ConnectorsScreenProps = Omit<ConnectorsDialogProps, "opening" | "asi
  */
 export function ConnectorsScreen({ titleId, opening, onClose, ...props }: ConnectorsScreenProps) {
   const { t } = useI18n();
-  const [stack, setStack] = useState<ReadonlyArray<ConnectorsPlace | SkillPlace>>(
-    opening._tag === "home" ? [opening] : [{ _tag: "home" }, opening],
-  );
+  const from = (place: ConnectorsPlace): ReadonlyArray<ConnectorsPlace | SkillPlace> =>
+    place._tag === "home" ? [place] : [{ _tag: "home" }, place];
+  const [stack, setStack] = useState(() => from(opening));
+  // Opened at another place while it shows, as from the desktop app's quick
+  // access with this screen already up: it goes there, over its list.
+  const [openedAt, setOpenedAt] = useState(opening);
+  if (openedAt !== opening) {
+    setOpenedAt(opening);
+    setStack(from(opening));
+  }
   const place = stack.at(-1) ?? { _tag: "home" };
   const go = (next: ConnectorsPlace | SkillPlace) => setStack([...stack, next]);
   const back = () => setStack(stack.slice(0, -1));

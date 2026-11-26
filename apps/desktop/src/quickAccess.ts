@@ -5,6 +5,7 @@ import {
   IPC_CHANNELS,
   QUICK_ACCESS_PATH,
   QuickAccessCue,
+  QuickAccessHide,
   QuickAccessOpen,
   QuickAccessReport,
 } from "@j3-bots/desktop-bridge";
@@ -50,6 +51,7 @@ import { DesktopSettings } from "./settings.ts";
 
 const decodeReport = Schema.decodeUnknownOption(QuickAccessReport);
 const decodeOpen = Schema.decodeUnknownOption(QuickAccessOpen);
+const decodeHide = Schema.decodeUnknownOption(QuickAccessHide);
 const encodeCue = Schema.encodeSync(QuickAccessCue);
 
 /** How long the page has to go out before the window is hidden under it. */
@@ -158,9 +160,20 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         fromApp(event) &&
         URL.parse(event.senderFrame?.url ?? "")?.pathname === QUICK_ACCESS_PATH;
 
+      /**
+       * Counts each time the window is shown or brought back to hand. The
+       * page names the one it went out of as it asks to be hidden: an ask
+       * from before the latest, as one a page that was out of sight sends
+       * late, must not put away the window the operator just asked for.
+       */
+      let opening = 0;
       const cue = (what: QuickAccessCue) => {
         if (!window.isDestroyed())
           window.webContents.send(IPC_CHANNELS.quickAccessCue, encodeCue(what));
+      };
+      const opened = () => {
+        opening += 1;
+        cue({ _tag: "open", opening });
       };
       const stay = () => {
         cancel(leaving);
@@ -172,7 +185,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         const focused = window.isFocused();
         window.hide();
         // However it was put away, its page goes out with it, and comes in afresh next time.
-        cue("leave");
+        cue({ _tag: "leave" });
         // macOS leaves the app in front with no window: hiding the app gives
         // the keys back to the one the operator was in (**Assumed**).
         if (process.platform === "darwin" && focused && !main.isDestroyed() && !main.isVisible()) {
@@ -191,7 +204,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         place(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()));
         window.show();
         window.focus();
-        cue("open");
+        opened();
       };
 
       // Where the operator drags it is kept for the display it was dragged on,
@@ -294,8 +307,10 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         if (!fromQuickAccess(event) || Option.isNone(decoded)) return;
         available = decoded.value.available;
       });
-      ipcMain.on(IPC_CHANNELS.quickAccessHide, (event) => {
-        if (fromQuickAccess(event)) hide();
+      ipcMain.on(IPC_CHANNELS.quickAccessHide, (event, request: unknown) => {
+        const decoded = decodeHide(request);
+        if (!fromQuickAccess(event) || Option.isNone(decoded)) return;
+        if (decoded.value.opening === opening) hide();
       });
       ipcMain.on(IPC_CHANNELS.quickAccessOpenMain, (event, request: unknown) => {
         const decoded = decodeOpen(request);
@@ -320,9 +335,9 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
           case "return":
             stay();
             window.focus();
-            return cue("open");
+            return opened();
           case "leave":
-            cue("leave");
+            cue({ _tag: "leave" });
             leaving = after(LEAVE_WITHIN, hide);
         }
       };

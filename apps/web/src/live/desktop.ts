@@ -256,8 +256,12 @@ interface DesktopQuickAccess {
    * page to go out before it hides it (`leave`); answers a function that stops it.
    */
   readonly onCue: (listener: (cue: QuickAccessCue) => void) => () => void;
-  /** Hides the window, once the page has gone out. */
-  readonly hide: () => void;
+  /**
+   * Hides the window, once the page has gone out of the showing `opening`
+   * numbers (the latest `open` cue's). The app leaves up a window it has
+   * shown again since.
+   */
+  readonly hide: (opening: number) => void;
   /** Shows the main window at `target`, under `pairing`, and hides quick access. */
   readonly openInMain: (target: Destination, pairing: DeviceId) => void;
 }
@@ -475,8 +479,8 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
           if (typeof stop === "function") stop();
         };
       },
-      hide: () => {
-        bridge.hideQuickAccess();
+      hide: (opening) => {
+        bridge.hideQuickAccess({ opening });
       },
       openInMain: (target, pairing) => {
         bridge.openFromQuickAccess({ target, pairing });

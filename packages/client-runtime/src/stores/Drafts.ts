@@ -763,8 +763,9 @@ export const layer = Layer.effect(
     // the next write here claims the record as it is. What this window held
     // and the device never kept is offered back, as when its own write finds
     // the change. A window that hears nothing of the others, or hears late,
-    // still finds the change when it writes. It listens from before anything
-    // can be written, so no change made once the drafts are read is missed.
+    // still finds the change when it writes. It listens from before this
+    // window can write anything; a change another window makes between this
+    // one's first read of the drafts and here is one it finds as it writes.
     yield* storage.changes.pipe(
       Stream.filter((table) => table === "drafts"),
       Stream.runForEach(() =>

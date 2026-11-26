@@ -73,7 +73,7 @@ const bridge: DesktopBridge = {
       ipcRenderer.removeListener(IPC_CHANNELS.quickAccessCue, forward);
     };
   },
-  hideQuickAccess: () => ipcRenderer.send(IPC_CHANNELS.quickAccessHide),
+  hideQuickAccess: (request) => ipcRenderer.send(IPC_CHANNELS.quickAccessHide, request),
   openFromQuickAccess: (request) => ipcRenderer.send(IPC_CHANNELS.quickAccessOpenMain, request),
   shortcutStatus: () => ipcRenderer.invoke(IPC_CHANNELS.shortcut),
   setShortcut: (accelerator) => ipcRenderer.invoke(IPC_CHANNELS.setShortcut, { accelerator }),

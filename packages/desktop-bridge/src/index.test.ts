@@ -17,6 +17,7 @@ import {
   LocalServerState,
   OpenRequest,
   QuickAccessCue,
+  QuickAccessHide,
   QuickAccessOpen,
   QuickAccessReport,
   releaseFile,
@@ -405,8 +406,13 @@ describe("the desktop bridge", () => {
     );
     assert.isFalse(opens({ _tag: "conversation", botId: "" }));
     assert.isFalse(opens({ _tag: "pair", botIds: ["bot-wren", "bot-scout"], at: null }));
-    assert.isTrue(decodes(QuickAccessCue, "open"));
-    assert.isFalse(decodes(QuickAccessCue, "close"));
+    assert.isTrue(decodes(QuickAccessCue, { _tag: "open", opening: 3 }));
+    assert.isTrue(decodes(QuickAccessCue, { _tag: "leave" }));
+    assert.isFalse(decodes(QuickAccessCue, { _tag: "open" }));
+    assert.isFalse(decodes(QuickAccessCue, "open"));
+    assert.isTrue(decodes(QuickAccessHide, { opening: 3 }));
+    assert.isFalse(decodes(QuickAccessHide, { opening: -1 }));
+    assert.isFalse(decodes(QuickAccessHide, undefined));
   });
 });
 

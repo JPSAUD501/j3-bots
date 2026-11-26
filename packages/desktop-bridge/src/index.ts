@@ -714,13 +714,28 @@ export const QUICK_ACCESS_PATH = "/quick";
 export const QuickAccessReport = Schema.Struct({ available: Schema.Boolean });
 export type QuickAccessReport = typeof QuickAccessReport.Type;
 
+/** Which showing of the quick access window something belongs to: each one counts one more. */
+const Opening = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
 /**
  * What the app tells the quick access window's page. `open`: the window was
- * just shown, so the page comes in and puts the cursor in its composer.
- * `leave`: the page goes out, then asks for the window to be hidden.
+ * just shown, or brought back to hand, so the page comes in and puts the
+ * cursor in its composer; `opening` numbers that showing. `leave`: the page
+ * goes out, then asks for the window to be hidden.
  */
-export const QuickAccessCue = Schema.Literals(["open", "leave"]);
+export const QuickAccessCue = Schema.Union([
+  Schema.TaggedStruct("open", { opening: Opening }),
+  Schema.TaggedStruct("leave", {}),
+]);
 export type QuickAccessCue = typeof QuickAccessCue.Type;
+
+/**
+ * The page asks for the window to be hidden, having gone out of the showing
+ * `opening` numbers. One the app has shown again since is left up: the ask
+ * is older than what the operator last asked for.
+ */
+export const QuickAccessHide = Schema.Struct({ opening: Opening });
+export type QuickAccessHide = typeof QuickAccessHide.Type;
 
 /**
  * The place quick access asks the main window to open, under the pairing

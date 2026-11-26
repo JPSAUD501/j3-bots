@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment happy-dom
+import { Dialog } from "@base-ui/react/dialog";
 import type { EntryTarget } from "@j3-bots/contracts";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ids } from "../gallery/sample";
+import { Toast } from "../components/Toast";
 import { useSampleSource } from "../gallery/sampleSource";
 import { QuickAccess } from "./QuickAccess";
 
@@ -27,33 +29,61 @@ interface Told {
   readonly attached: Array<{ readonly target: EntryTarget; readonly names: ReadonlyArray<string> }>;
 }
 
-/** Quick access on a bot of the sample team, telling `told` what it asks for. */
-function Harness({ shown, asked, told }: { shown: boolean; asked: number; told: Told }) {
+/**
+ * Quick access on a bot of the sample team, telling `told` what it asks for.
+ * `suggesting`: the bot's AI guesses a reply to its last message. `over`:
+ * what the page shows over the card, with its toast in the card as the live page has it.
+ */
+function Harness({
+  shown,
+  asked,
+  told,
+  suggesting = false,
+  over = null,
+}: {
+  shown: boolean;
+  asked: number;
+  told: Told;
+  suggesting?: boolean;
+  over?: ReactNode;
+}) {
   const source = useSampleSource();
   const row = source.data.roster?.flatMap((item) =>
     item._tag === "bot" && item.bot.id === ids.wren ? [item] : [],
   )[0];
   if (row === undefined) return null;
+  // The entry a suggestion follows: the conversation's newest, past the fold of a turn that ended.
+  const last = source.data
+    .conversation({ _tag: "conversation", botId: row.bot.id })
+    .items.findLast((item) => !(item._tag === "work-fold" && item.status._tag === "finished"));
+  const bot =
+    suggesting && last !== undefined && last._tag !== "outgoing"
+      ? { ...row.bot, suggestedReply: { text: "Sounds good", after: last.id } }
+      : row.bot;
   return (
-    <QuickAccess
-      bot={row.bot}
-      lastEntry={row.lastEntry}
-      data={source.data}
-      intents={{
-        ...source.intents,
-        attachFiles: (target, files) =>
-          told.attached.push({ target, names: files.map((file) => file.name) }),
-        setShown: (target) => told.onScreen.push(target),
-      }}
-      solid={false}
-      shown={shown}
-      asked={asked}
-      onOpenConversation={() => {}}
-      onOpenPair={() => {}}
-      onOpenRoom={() => {}}
-      onClose={() => told.closed.push(true)}
-      onLeft={() => told.left.push(true)}
-    />
+    <>
+      <QuickAccess
+        overlay={<Toast notice={null} onDone={() => {}} />}
+        bot={bot}
+        lastEntry={row.lastEntry}
+        data={source.data}
+        intents={{
+          ...source.intents,
+          attachFiles: (target, files) =>
+            told.attached.push({ target, names: files.map((file) => file.name) }),
+          setShown: (target) => told.onScreen.push(target),
+        }}
+        solid={false}
+        shown={shown}
+        asked={asked}
+        onOpenConversation={() => {}}
+        onOpenPair={() => {}}
+        onOpenRoom={() => {}}
+        onClose={() => told.closed.push(true)}
+        onLeft={() => told.left.push(true)}
+      />
+      {over}
+    </>
   );
 }
 
@@ -130,21 +160,42 @@ describe("quick access", () => {
   });
 
   it("has the conversation on screen only while it shows with nothing over it", async () => {
-    show(true, 1);
+    const withOver = (over: ReactNode) =>
+      act(async () => {
+        root.render(<Harness shown asked={1} told={told} over={over} />);
+        // The dialog marks what it covers once it has opened.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    await withOver(null);
     expect(told.onScreen.at(-1)).toEqual({ _tag: "conversation", botId: ids.wren });
-    // A dialog over the card, as an image opened from it, hides it from what reads it.
-    await act(async () => {
-      container.setAttribute("aria-hidden", "true");
-      await Promise.resolve();
-    });
+    // A dialog over the card, as the image opened from it is, with the page's toast in the card.
+    await withOver(
+      <Dialog.Root open>
+        <Dialog.Portal>
+          <Dialog.Popup>
+            <Dialog.Title>An image</Dialog.Title>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>,
+    );
     expect(told.onScreen.at(-1)).toBeNull();
-    await act(async () => {
-      container.removeAttribute("aria-hidden");
-      await Promise.resolve();
-    });
+    await withOver(null);
     expect(told.onScreen.at(-1)).toEqual({ _tag: "conversation", botId: ids.wren });
     show(false, 1);
     expect(told.onScreen.at(-1)).toBeNull();
+  });
+
+  it("closes on one Escape in the composer though a suggested reply is on offer, which stays", () => {
+    act(() => root.render(<Harness shown asked={1} told={told} suggesting />));
+    const use = () => container.querySelector('button[aria-label="Use the suggested reply"]');
+    expect(use()).not.toBeNull();
+    act(() => {
+      composer()?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(told.closed).toHaveLength(1);
+    expect(use()).not.toBeNull();
   });
 
   it("says it has left only once it is out of sight", () => {

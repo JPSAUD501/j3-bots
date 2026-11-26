@@ -144,8 +144,10 @@ export function QuickAccess({
   const composerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLElement>(null);
   const faceRef = useRef<HTMLSpanElement>(null);
-  // State as well as a ref: what tells whether something covers the card follows the element.
-  const [card, setCard] = useState<HTMLElement | null>(null);
+  // What the card holds of the conversation, apart from its header and from
+  // the toast, whose live region no dialog hides: what tells whether
+  // something covers the conversation follows this element.
+  const [conversation, setConversation] = useState<HTMLElement | null>(null);
   // State, not a ref: what watches the timeline follows the element.
   const [timeline, setTimeline] = useState<HTMLDivElement | null>(null);
   const { rows, arrived, end, waitingOn, waitingPlace } = useConversationView({
@@ -163,7 +165,7 @@ export function QuickAccess({
 
   // The conversation is on screen here while the card shows with nothing over it, as an
   // image opened from it would be: only then is what arrives read, and kept quiet.
-  const covered = useCovered(card);
+  const covered = useCovered(conversation);
   const { setShown } = intents;
   const onScreen = shown && !covered;
   const botId = bot.id;
@@ -231,6 +233,18 @@ export function QuickAccess({
   }, [askedFor]);
 
   const shortcuts = shellShortcuts();
+  // Escape in the composer closes quick access before the composer takes it
+  // to set a suggested reply aside, which it would nearly every time: the
+  // suggestion is there whenever the bot has answered. A list open on the
+  // composer, of members or of prompts, still takes its own Escape.
+  const onEscapeFirst = useEffectEvent((event: KeyboardEvent) => {
+    const field = composerRef.current;
+    if (!shown || event.key !== "Escape" || event.isComposing || event.target !== field) return;
+    if (field?.getAttribute("aria-expanded") === "true") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+  });
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     // A key an input method composes with is the input method's; one a menu or a picker took is its own.
     if (!shown || event.defaultPrevented || event.isComposing) return;
@@ -252,11 +266,14 @@ export function QuickAccess({
     intents.attachFiles(target, [...files]);
   });
   useEffect(() => {
+    const first = (event: KeyboardEvent) => onEscapeFirst(event);
     const key = (event: KeyboardEvent) => onKeyDown(event);
     const paste = (event: ClipboardEvent) => onPaste(event);
+    window.addEventListener("keydown", first, { capture: true });
     window.addEventListener("keydown", key);
     window.addEventListener("paste", paste);
     return () => {
+      window.removeEventListener("keydown", first, { capture: true });
       window.removeEventListener("keydown", key);
       window.removeEventListener("paste", paste);
     };
@@ -299,10 +316,7 @@ export function QuickAccess({
           )}
         >
           <section
-            ref={(element) => {
-              cardRef.current = element;
-              setCard(element);
-            }}
+            ref={cardRef}
             className={cn(
               "flex h-full flex-col overflow-hidden bg-surface [contain:layout_paint]",
               !solid && "rounded-[20px] border border-border shadow-overlay",
@@ -344,7 +358,7 @@ export function QuickAccess({
                 </Button>
               </span>
             </header>
-            <div className="flex min-h-0 flex-1 flex-col">
+            <div ref={setConversation} className="flex min-h-0 flex-1 flex-col">
               {view.phase === "ready" && view.items.length === 0 ? (
                 <p className="flex flex-1 items-center justify-center px-6 text-center text-sm text-pretty text-muted-foreground">
                   {held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}

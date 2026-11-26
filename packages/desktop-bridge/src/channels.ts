@@ -73,7 +73,10 @@ export const IPC_CHANNELS = {
   quickAccess: "j3bots:quick-access",
   /** From the main process, to the quick access window's page: `QuickAccessCue`. */
   quickAccessCue: "j3bots:quick-access-cue",
-  /** From the quick access window's page: it has left the screen, hide the window. Not answered. */
+  /**
+   * `QuickAccessHide`, from the quick access window's page: it has left the
+   * screen, hide the window. Not answered.
+   */
   quickAccessHide: "j3bots:quick-access-hide",
   /**
    * `QuickAccessOpen`, from the quick access window's page: shows the main
@@ -187,8 +190,8 @@ export interface DesktopBridge {
   readonly reportQuickAccess: (report: unknown) => void;
   /** Calls `listener` with each cue for quick access (a `QuickAccessCue`); answers a function that stops it. */
   readonly onQuickAccessCue: (listener: (cue: unknown) => void) => () => void;
-  /** Hides the quick access window, once its page has left the screen. */
-  readonly hideQuickAccess: () => void;
+  /** Hides the quick access window, once its page has left the screen (a `QuickAccessHide`). */
+  readonly hideQuickAccess: (request: unknown) => void;
   /** Shows the main window at a conversation, and hides quick access (a `QuickAccessOpen`). */
   readonly openFromQuickAccess: (request: unknown) => void;
   readonly shortcutStatus: () => Promise<unknown>;

@@ -116,7 +116,8 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   // A restart into an update waits for what this page still saves, as for the main window's.
   useReportSaving(useSavesUnderWay(j3));
 
-  // The app shows the window and asks the page to go out; the page says when it has.
+  // The app shows the window and asks the page to go out; the page says when
+  // it has, naming the showing it went out of (`asked`, the latest one's number).
   const [shown, setShown] = useState(false);
   const [asked, setAsked] = useState(0);
   // With no bot to draw, as once the primary bot is deleted or this device's
@@ -125,8 +126,8 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   const drawable = primary !== null && pairing !== null;
   if (shown && !drawable) setShown(false);
   useEffect(() => {
-    if (!drawable) app.quickAccess.hide();
-  }, [app, drawable]);
+    if (!drawable) app.quickAccess.hide(asked);
+  }, [app, drawable, asked]);
   useQuickPage(solid, shown);
   // What was open over the card, as an image, goes with it: asked for again, it is the conversation.
   const putAway = useEffectEvent(attachments.close);
@@ -136,17 +137,17 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   useEffect(
     () =>
       app.quickAccess.onCue((cue) => {
-        setShown(cue === "open");
-        if (cue === "open") setAsked((times) => times + 1);
+        setShown(cue._tag === "open");
+        if (cue._tag === "open") setAsked(cue.opening);
       }),
     [app],
   );
 
   useEffect(() => {
     if (shown) return;
-    const timer = window.setTimeout(app.quickAccess.hide, LEAVE_WITHIN);
+    const timer = window.setTimeout(() => app.quickAccess.hide(asked), LEAVE_WITHIN);
     return () => window.clearTimeout(timer);
-  }, [app, shown]);
+  }, [app, shown, asked]);
 
   const available = reached(connection) && pairing !== null && botId !== null;
   useEffect(() => {
@@ -232,7 +233,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
           onOpenPair={(botIds, at) => openInMain({ _tag: "pair", botIds, at })}
           onOpenRoom={(roomId) => openInMain({ _tag: "room", roomId })}
           onClose={() => setShown(false)}
-          onLeft={app.quickAccess.hide}
+          onLeft={() => app.quickAccess.hide(asked)}
           overlay={toast}
         />,
       )}

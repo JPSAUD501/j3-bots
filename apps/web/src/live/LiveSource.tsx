@@ -1039,7 +1039,9 @@ function LiveShell({
           search: { details: true, routine: opened.routineId },
         });
       case "connector":
-        return openConnectors({
+        // Whatever the connectors screen showed, it shows this sign-in now: the
+        // operator asked for it from where the screen was not in the way.
+        return setConnectorsOpening({
           _tag: "connector",
           connectorId: opened.connectorId,
           signIn: true,
