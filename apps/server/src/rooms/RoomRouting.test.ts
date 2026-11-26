@@ -63,6 +63,7 @@ import {
   received,
   recoverTimes,
   sendToBot,
+  stopSettled,
   turnEnded,
   until,
 } from "../testing/turns.ts";
@@ -455,9 +456,14 @@ it.effect(
       yield* operatorWrites(room.id, members, "Ana, ask Bo for the date.", to(ana));
       const turn = yield* nextTurn(ana.bot.id);
 
-      // The Stop is recorded while Ana's `say` is still on its way.
+      // The Stop is recorded while Ana's `say` is still on its way: the
+      // engine has not interrupted her turn yet.
+      const effects = yield* (yield* TestEngineControl).delayNextStopEffects;
       yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
       yield* say(ana, turn, { text: "Bo, the date?", mention: [bo.bot.id] });
+      yield* effects.release;
+      yield* stopSettled;
+      yield* turnEnded(ana.bot.id);
 
       assert.deepStrictEqual((yield* roundsIn(room.id)).at(-1), ["Bo, the date?", 1]);
       assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), 0);
