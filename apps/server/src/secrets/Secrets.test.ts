@@ -164,14 +164,18 @@ it.effect("keeps secrets sealed under the key file's key, open from the server's
       assert.strictEqual(Redacted.value(token), "weather-token-value");
     }).pipe(Effect.provide(Domain.layer));
 
-    // Nothing in the file is a value, and the key file and its folder are the server user's alone.
+    // Nothing in the file is a value.
     const stored = JSON.stringify(yield* onSecretsFile((sql) => sql`SELECT * FROM record_fields`));
     for (const plain of ["hunter2", "ana@example.com", "weather-token-value"]) {
       assert.notInclude(stored, plain);
     }
-    const fs = yield* FileSystem.FileSystem;
-    assert.strictEqual(Number((yield* fs.stat(yield* keyFile)).mode) & 0o777, 0o600);
-    assert.strictEqual(Number((yield* fs.stat(yield* secretsFolder)).mode) & 0o777, 0o700);
+    // The key file and its folder are the server user's alone. On Windows a
+    // file has no such mode: they take the private home's list.
+    if (process.platform !== "win32") {
+      const fs = yield* FileSystem.FileSystem;
+      assert.strictEqual(Number((yield* fs.stat(yield* keyFile)).mode) & 0o777, 0o600);
+      assert.strictEqual(Number((yield* fs.stat(yield* secretsFolder)).mode) & 0o777, 0o700);
+    }
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
