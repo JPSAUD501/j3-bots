@@ -292,9 +292,7 @@ const refusedNamesCheck = (status: AdminStatus, configFile: string) => {
     check(
       "Refused names",
       "warning",
-      names.length === 1
-        ? `Since it started, the server refused plain-HTTP requests for ${listed}, a name it does not answer.`
-        : `Since it started, the server refused plain-HTTP requests for ${listed}, names it does not answer.`,
+      `Since it started, the server refused plain-HTTP requests for ${names.length === 1 ? "a name" : "names"} it does not answer: ${listed}.`,
       `If a proxy or tunnel serves J3 Bots at one of these names, set "publicOrigin" in ${configFile} to its https address and restart the server. Otherwise open J3 Bots at localhost or at the address \`j3-bots pair\` prints.`,
     ),
   );
