@@ -6,7 +6,7 @@ import {
   turnClock,
   turnElapsed,
 } from "@j3-bots/client-runtime/presentation";
-import { useWorkSteps } from "@j3-bots/client-runtime/react";
+import { useJ3Client, useWorkSteps } from "@j3-bots/client-runtime/react";
 import {
   fillDetail,
   stepText,
@@ -19,6 +19,7 @@ import type {
   CredentialFill,
   EntryPreview,
   WorkFoldEntry,
+  WorkImageId,
   WorkStep,
 } from "@j3-bots/contracts";
 import {
@@ -28,6 +29,7 @@ import {
   Ellipsis,
   FileText,
   Globe,
+  ImageOff,
   type LucideIcon,
   Pencil,
   Search,
@@ -37,7 +39,7 @@ import {
 } from "lucide-react-native";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Image, Pressable, StyleSheet, View } from "react-native";
 import {
   FadeIn,
   FadeOut,
@@ -54,7 +56,9 @@ import { enteringWhen, settleIn, useReducedMotion, useStep } from "../motion.ts"
 import { useSeconds } from "../seconds.ts";
 import { usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
+import { useImage } from "../platform/images.ts";
 import { AnimatedView } from "./animated.ts";
+import { useFileOpener } from "./FileOpener.tsx";
 
 const stepIcon = {
   command: Terminal,
@@ -280,6 +284,13 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
             </Text>
           ) : step.fill !== undefined ? (
             <FillLine step={step} fill={step.fill} />
+          ) : step.image !== undefined ? (
+            <View className="flex-1 items-start gap-1.5">
+              <Text selectable className="text-xs text-foreground">
+                {stepText(step, i18n)}
+              </Text>
+              <StepImage id={step.image.id} />
+            </View>
           ) : (
             <Text selectable className="flex-1 text-xs text-foreground">
               {stepText(step, i18n)}
@@ -289,6 +300,43 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
         </View>
       ))}
     </View>
+  );
+}
+
+/**
+ * The image a step looked at, small, in a frame of fixed size, so the list
+ * never moves as it arrives; pressing it shows it large. One that cannot be
+ * had any more says so in place of it.
+ */
+function StepImage({ id }: { readonly id: WorkImageId }) {
+  const { t } = usePresentation().i18n;
+  const client = useJ3Client();
+  const opener = useFileOpener();
+  const image = useImage(client, { _tag: "work", id });
+  const frame = "size-16 overflow-hidden rounded-md border border-border bg-muted";
+  if (image._tag === "failed") {
+    return (
+      <View
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={t("work.image.unavailable")}
+        className={`${frame} items-center justify-center`}
+      >
+        <Icon icon={ImageOff} size={16} color="accent-muted-foreground" />
+      </View>
+    );
+  }
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={t("work.image.open")}
+      onPress={() => opener.openWorkImage(id)}
+      className={frame}
+    >
+      {image._tag === "shown" && (
+        <Image source={{ uri: image.uri }} resizeMode="cover" style={{ flex: 1 }} />
+      )}
+    </Pressable>
   );
 }
 

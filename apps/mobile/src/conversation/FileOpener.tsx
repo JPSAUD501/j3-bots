@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { showsImage } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
-import type { Attachment } from "@j3-bots/contracts";
+import type { Attachment, WorkImageId } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { Share2, X } from "lucide-react-native";
 import { createContext, type ReactNode, use, useState } from "react";
@@ -9,7 +9,7 @@ import { Image, Modal, PanResponder, Pressable, StatusBar, View } from "react-na
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
-import { useImageFile } from "../platform/images.ts";
+import { type ImageSource, useImage } from "../platform/images.ts";
 import { openAttachment } from "../platform/openFile.ts";
 import { Text } from "../text.tsx";
 import { useColor } from "../theme.ts";
@@ -19,6 +19,8 @@ import { useSay } from "../toast.tsx";
 interface FileOpener {
   readonly open: (attachment: Attachment) => void;
   readonly opening: (attachment: Attachment) => boolean;
+  /** Shows large an image a step of a bot's work looked at. */
+  readonly openWorkImage: (id: WorkImageId) => void;
 }
 
 const OpenerContext = createContext<FileOpener | null>(null);
@@ -32,7 +34,7 @@ export function FileOpenerProvider({ children }: { readonly children: ReactNode 
   const { t } = useI18n();
   const client = useJ3Client();
   const say = useSay();
-  const [viewing, setViewing] = useState<Attachment | null>(null);
+  const [viewing, setViewing] = useState<ImageSource | null>(null);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const inSystem = (attachment: Attachment) => {
     const { name, id } = attachment;
@@ -63,10 +65,11 @@ export function FileOpenerProvider({ children }: { readonly children: ReactNode 
   const opener: FileOpener = {
     open: (attachment) => {
       if (busy.has(attachment.id)) return;
-      if (showsImage(attachment)) setViewing(attachment);
+      if (showsImage(attachment)) setViewing({ _tag: "file", attachment });
       else inSystem(attachment);
     },
     opening: (attachment) => busy.has(attachment.id),
+    openWorkImage: (id) => setViewing({ _tag: "work", id }),
   };
   return (
     <OpenerContext value={opener}>
@@ -81,10 +84,10 @@ export function FileOpenerProvider({ children }: { readonly children: ReactNode 
       >
         {viewing !== null && (
           <ImageViewer
-            key={viewing.id}
-            attachment={viewing}
+            key={viewing._tag === "file" ? viewing.attachment.id : viewing.id}
+            source={viewing}
             onClose={() => setViewing(null)}
-            onShare={() => inSystem(viewing)}
+            onShare={inSystem}
           />
         )}
       </Modal>
@@ -117,20 +120,24 @@ interface Touch {
 const spread = (one: Touch, other: Touch) =>
   Math.hypot(one.pageX - other.pageX, one.pageY - other.pageY);
 
-/** A file's image over everything, on black, zoomed by pinching or a double tap and moved by a drag. */
+/**
+ * An image over everything, on black, zoomed by pinching or a double tap and
+ * moved by a drag: a file's, which can be shared, or one a bot looked at.
+ */
 function ImageViewer({
-  attachment,
+  source,
   onClose,
   onShare,
 }: {
-  readonly attachment: Attachment;
+  readonly source: ImageSource;
   readonly onClose: () => void;
-  readonly onShare: () => void;
+  readonly onShare: (attachment: Attachment) => void;
 }) {
   const { t } = useI18n();
   const client = useJ3Client();
   const insets = useSafeAreaInsets();
-  const image = useImageFile(client, attachment);
+  const image = useImage(client, source);
+  const name = source._tag === "file" ? source.attachment.name : t("work.image.title");
   const ink = useColor("accent-viewer-foreground");
   const ripple = { color: useColor("accent-viewer-pressed"), borderless: true, radius: 24 };
   const scale = useSharedValue(1);
@@ -226,17 +233,19 @@ function ImageViewer({
           <X size={22} color={ink} {...hidden} />
         </Pressable>
         <Text numberOfLines={1} className="flex-1 text-base font-medium text-viewer-foreground">
-          {attachment.name}
+          {name}
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("file.share", { name: attachment.name })}
-          onPress={onShare}
-          android_ripple={ripple}
-          className="size-12 items-center justify-center rounded-full"
-        >
-          <Share2 size={20} color={ink} {...hidden} />
-        </Pressable>
+        {source._tag === "file" && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("file.share", { name })}
+            onPress={() => onShare(source.attachment)}
+            android_ripple={ripple}
+            className="size-12 items-center justify-center rounded-full"
+          >
+            <Share2 size={20} color={ink} {...hidden} />
+          </Pressable>
+        )}
       </View>
       <View className="flex-1 overflow-hidden" {...responder.panHandlers}>
         {image._tag !== "shown" ? (
@@ -246,7 +255,9 @@ function ImageViewer({
               className="text-center text-sm text-viewer-muted-foreground"
             >
               {image._tag === "failed"
-                ? t("file.unreachable", { name: attachment.name })
+                ? source._tag === "file"
+                  ? t("file.unreachable", { name })
+                  : t("work.image.unavailable")
                 : t("file.opening")}
             </Text>
           </View>
@@ -254,7 +265,7 @@ function ImageViewer({
           <Animated.View style={[{ flex: 1 }, zoomed]}>
             <Image
               source={{ uri: image.uri }}
-              accessibilityLabel={attachment.name}
+              accessibilityLabel={name}
               resizeMode="contain"
               style={{ flex: 1 }}
             />

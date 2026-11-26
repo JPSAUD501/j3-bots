@@ -1715,6 +1715,57 @@ const visualProblems = (
 
 const chartWake = userWake(CHART_ASKED);
 
+// Pictures its user asks for: one already in the workspace, and one it picks.
+
+const PHOTO_ASKED =
+  "can you send me the whiteboard photo from this morning? i need it for the slides";
+const PICK_ASKED =
+  "there are three logo drafts in files/logos. which one reads best small? send me that one";
+const IMAGE_PATH = /\.(?:gif|jpe?g|png|webp)$/i;
+const LOGO_DRAFTS = [
+  "files/logos/draft-a.png",
+  "files/logos/draft-b.png",
+  "files/logos/draft-c.png",
+];
+
+/** A workspace holding `images`, as files of placeholder bytes: only their paths are graded. */
+const imageWorkspace = (wake: Wake, images: ReadonlyArray<string>) => () =>
+  fixtureWorkspace({
+    github: github(wake.at, PASSING_RUNS),
+    files: new Map(images.map((image) => [image, "placeholder image bytes"])),
+  });
+
+/**
+ * Problems with how the turn sent a picture: a `say` must attach an image the
+ * workspace holds, one of `allowed`, and no message may give a path, a
+ * Markdown image or a link in its place.
+ */
+const pictureProblems = (
+  calls: ReadonlyArray<Call>,
+  allowed: ReadonlyArray<string>,
+): ReadonlyArray<string> => {
+  const spoken = says(calls);
+  const attached = spoken.flatMap(({ say }) =>
+    (say.attachments ?? []).filter((path) => IMAGE_PATH.test(path)),
+  );
+  const named = (path: string) => allowed.some((image) => path.endsWith(image));
+  const text = spoken.map(({ say }) => say.text).join("\n\n");
+  return [
+    ...(attached.length === 0 ? ["no `say` attached an image"] : []),
+    ...attached
+      .filter((path) => !named(path))
+      .map((path) => `attached ${path}, not an image it was asked for`),
+    ...(/!\[[^\]]*\]\(/.test(text) ? ["wrote a Markdown image"] : []),
+    ...allowed
+      .filter((image) => text.includes(image))
+      .map((image) => `named the path ${image} in its message`),
+    ...(closingSay(calls) === undefined ? ["no `say` with `done: true` closed the turn"] : []),
+  ];
+};
+
+const photoWake = userWake(PHOTO_ASKED);
+const pickWake = userWake(PICK_ASKED);
+
 const cases: ReadonlyArray<Case> = [
   {
     name: "pastes links as bare addresses and writes no Markdown the app does not show",
@@ -1729,6 +1780,30 @@ const cases: ReadonlyArray<Case> = [
         ...visualProblems(calls, (path) => workspace.file(path)),
         ...(closingSay(calls) === undefined ? ["no `say` with `done: true` closed the turn"] : []),
       ]),
+  },
+  {
+    name: "sends a photo it is asked for as an attachment of `say`, never its path or a Markdown image",
+    scenario: {
+      wake: photoWake,
+      workspace: imageWorkspace(photoWake, ["files/whiteboard-2026-11-26.jpg", "files/notes.md"]),
+    },
+    problems: ({ calls }) =>
+      Effect.succeed(pictureProblems(calls, ["files/whiteboard-2026-11-26.jpg"])),
+  },
+  {
+    name: "attaches the one picture it picked for its user, rather than describing it",
+    scenario: { wake: pickWake, workspace: imageWorkspace(pickWake, LOGO_DRAFTS) },
+    problems: ({ calls }) => {
+      const attached = says(calls).flatMap(({ say }) =>
+        (say.attachments ?? []).filter((path) => IMAGE_PATH.test(path)),
+      );
+      return Effect.succeed([
+        ...pictureProblems(calls, LOGO_DRAFTS),
+        ...(attached.length > 1
+          ? [`attached ${attached.length} drafts, not the one it picked`]
+          : []),
+      ]);
+    },
   },
   {
     name: "changes nothing outside its workspace on its user's machine, and names what it would remove there before asking",

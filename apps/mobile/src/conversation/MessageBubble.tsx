@@ -21,7 +21,7 @@ import Animated, {
 import { Text } from "../text.tsx";
 import { usePresentation } from "../presentation.tsx";
 
-import { FileCard } from "./FileCard.tsx";
+import { MessageFile } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
 import { Speaker, speakerGutter } from "./Speaker.tsx";
 import { VisualCard } from "./VisualCard.tsx";
@@ -227,7 +227,7 @@ export function MessageBubble({
       {/* Files placed in the text stand there; others follow it. */}
       {placed === null &&
         message.attachments.map((attachment) => (
-          <FileCard key={attachment.id} attachment={attachment} />
+          <MessageFile key={attachment.id} attachment={attachment} />
         ))}
     </>
   );
