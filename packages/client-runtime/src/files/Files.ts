@@ -4,7 +4,7 @@ import {
   type DeviceId,
   type DeviceToken,
   HTTP_PATHS,
-  MAX_WORK_IMAGE_SIZE,
+  MAX_INLINE_IMAGE_SIZE,
   NotAuthenticated,
   type WorkImageId,
 } from "@j3-bots/contracts";
@@ -238,7 +238,10 @@ export const layer = Layer.effect(
 
     // Its size is known only as it arrives: it is given the time the largest takes.
     const workImage = Effect.fn("Files.workImage")(function* (id: WorkImageId) {
-      return yield* get(`${HTTP_PATHS.workImages}/${encodeURIComponent(id)}`, MAX_WORK_IMAGE_SIZE);
+      return yield* get(
+        `${HTTP_PATHS.workImages}/${encodeURIComponent(id)}`,
+        MAX_INLINE_IMAGE_SIZE,
+      );
     });
 
     return Files.of({ upload, download, workImage });

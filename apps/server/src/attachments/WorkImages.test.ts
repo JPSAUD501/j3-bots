@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -57,7 +58,7 @@ const stepsOf = (botId: BotId) =>
 /** A bot at work whose turn looks at `given`, once `files/` holds what `write` puts there. */
 const lookingAt = (
   given: (workspace: string) => string,
-  write: (files: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>,
+  write: (files: string) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem>,
 ) =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

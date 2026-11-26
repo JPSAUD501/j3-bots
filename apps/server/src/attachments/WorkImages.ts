@@ -2,7 +2,7 @@
 import {
   BotId,
   EntryId,
-  MAX_WORK_IMAGE_SIZE,
+  MAX_INLINE_IMAGE_SIZE,
   WorkImageId,
   type WorkStepId,
 } from "@j3-bots/contracts";
@@ -82,7 +82,7 @@ export class WorkImages extends Context.Service<
     /**
      * The image `id` names, read from the bot's workspace now: none when no
      * step names it, or its file is gone, has left the workspace, holds more
-     * than `MAX_WORK_IMAGE_SIZE` bytes or is not a GIF, JPEG, PNG or WebP by
+     * than `MAX_INLINE_IMAGE_SIZE` bytes or is not a GIF, JPEG, PNG or WebP by
      * its content.
      */
     readonly open: (id: WorkImageId) => Effect.Effect<Option.Option<WorkImage>>;
@@ -169,7 +169,7 @@ export const layer = Layer.effect(
       const read = yield* readWorkspaceFile(
         row.value.workspace_root,
         row.value.path,
-        MAX_WORK_IMAGE_SIZE,
+        MAX_INLINE_IMAGE_SIZE,
       );
       if (read._tag !== "read") return Option.none<WorkImage>();
       const mediaType = imageTypeOf(read.bytes);

@@ -106,7 +106,7 @@ export function useImage(client: J3Client, source: ImageSource): ImageState {
     void imageFile(client, asking).then((uri) => {
       if (current) {
         setState({
-          key: keyOf(asking),
+          key,
           image: uri === null ? { _tag: "failed" } : { _tag: "shown", uri },
         });
       }

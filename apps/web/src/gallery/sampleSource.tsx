@@ -36,7 +36,6 @@ import {
   ProviderId,
   SectionId,
   ServerOrigin,
-  type Attachment,
   type Bot,
   type BotState,
   type Connector,

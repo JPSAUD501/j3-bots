@@ -98,15 +98,12 @@ export const INLINE_IMAGE_MEDIA_TYPES: ReadonlyArray<string> = [
   "image/webp",
 ];
 
-/** The largest inline image one message may carry, in bytes. */
-export const MAX_INLINE_IMAGE_SIZE = 10 * 1024 * 1024;
-
 /**
- * The largest image a step of a bot's work looked at that the server shows
- * (`HTTP_PATHS.workImages`): an inline image's limit, the largest a model
- * looks at in one piece.
+ * The largest inline image one message may carry, in bytes: the largest a
+ * model looks at in one piece. Also the largest image a step of a bot's work
+ * looked at that the server shows (`HTTP_PATHS.workImages`).
  */
-export const MAX_WORK_IMAGE_SIZE = MAX_INLINE_IMAGE_SIZE;
+export const MAX_INLINE_IMAGE_SIZE = 10 * 1024 * 1024;
 
 /** The most bytes of inline images one message may carry together. */
 export const MAX_INLINE_IMAGES_SIZE = 80 * 1024 * 1024;

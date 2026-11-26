@@ -113,7 +113,7 @@ export function useImage(source: ImageSource | null): ImageState | null {
     void cache.load(asked).then((url) => {
       if (current) {
         setState({
-          key: keyOf(asked),
+          key,
           image: url === null ? { _tag: "failed" } : { _tag: "shown", url },
         });
       }
