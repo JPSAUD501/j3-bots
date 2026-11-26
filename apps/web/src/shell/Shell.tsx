@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
-  BotId,
   BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
@@ -12,7 +11,6 @@ import {
   useEffect,
   useEffectEvent,
   useId,
-  useMemo,
   useRef,
   useState,
   type ReactElement,
@@ -22,22 +20,16 @@ import {
   addressed,
   arrangedOrder,
   arrangeRoster,
-  arrivalCounts,
-  buildTimeline,
   botStop,
-  liveTurn,
   offeredReply,
   openingHeld,
   orderRoster,
   pairKeyText,
-  readThrough,
   rosterKeyOf,
   rosterKeyText,
   rosterTarget,
   teammatesOf,
-  withLiveTurn,
 } from "@j3-bots/client-runtime/presentation";
-import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
@@ -46,8 +38,8 @@ import { BrowserProvider } from "../browser/context";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
-import { Composer, type MentionCandidate } from "../components/Composer";
-import type { PromptMenu } from "../components/PromptPicker";
+import type { MentionCandidate } from "../components/Composer";
+import { DraftComposer } from "../components/DraftComposer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { connectPlaceOf } from "../components/AiConnect";
@@ -67,15 +59,14 @@ import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
-import { scrollToEnd, ToLatest, useScrollFollow } from "../components/ToLatest";
+import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { tintOf } from "../lib/botTint";
 import { Onboarding } from "../onboarding/Onboarding";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
 import { isCovered, useCovered } from "../lib/covered";
-import { useCardPlace } from "../lib/useCardPlace";
-import { useSeenEntries } from "../lib/useSeenEntries";
 import { botModelName } from "@j3-bots/client-runtime/wording";
+import { useConversationView } from "./conversationView";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
@@ -122,7 +113,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const { selected, pair } = navigation;
   const { t } = useI18n();
   const shortcuts = shellShortcuts();
-  const { dictate, editProfile } = intents;
+  const { editProfile } = intents;
   const composerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLButtonElement>(null);
   const pairTitleRef = useRef<HTMLHeadingElement>(null);
@@ -342,43 +333,17 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     };
   }, [keyboard]);
 
-  // What the operator can see of the open conversation, they have read.
+  // The open conversation's timeline: what the operator can see of it, they have read; what
+  // arrives at its end settles in, and is counted while they read above it.
   const shownTarget = item === null ? null : rosterTarget(rosterKeyOf(item));
-  const shownView = shownTarget === null ? null : data.conversation(shownTarget);
-  const shownItems = shownView?.items ?? null;
-  useSeenEntries(timeline, (ids) => {
-    if (shownTarget === null || shownItems === null) return;
-    const order = readThrough(
-      shownItems.map((i) => (i._tag !== "outgoing" && ids.has(i.id) ? i.order : null)),
-    );
-    if (order !== null) intents.markRead(shownTarget, order);
-  });
-
-  // What arrives at the end of the open conversation settles in, and is counted while the
-  // operator reads above it.
-  // In a bot's conversation, its turn under way shows in the timeline, once.
-  const shownBot = item?._tag === "bot" ? item.bot : null;
-  const shownTurn = useMemo(() => (shownBot === null ? null : liveTurn(shownBot)), [shownBot]);
-  const rows = useMemo(
-    () => withLiveTurn(buildTimeline(shownItems ?? []), shownTurn),
-    [shownItems, shownTurn],
-  );
-  const folds = useMemo(
-    () => (shownItems ?? []).flatMap((entry) => (entry._tag === "work-fold" ? [entry] : [])),
-    [shownItems],
-  );
-  const arrived = useArrivals(
+  const { rows, folds, arrived, end, waitingOn, waitingPlace } = useConversationView({
     selectionKey,
-    rows.map((row) => row.key),
-    shownView?.phase === "ready",
-  );
-  const end = useConversationEnd(selectionKey, arrived, arrivalCounts(rows, arrived), () =>
-    scrollToEnd(timeline),
-  );
-  useScrollFollow(timeline, end.follow);
-  // The card the open conversation's bot waits on, and where it is.
-  const waitingOn = shownBot?.state._tag === "waiting" ? shownBot.state.entryId : null;
-  const waitingPlace = useCardPlace(timeline, waitingOn);
+    target: shownTarget,
+    view: shownTarget === null ? null : data.conversation(shownTarget),
+    bot: item?._tag === "bot" ? item.bot : null,
+    timeline,
+    markRead: intents.markRead,
+  });
   // While it is out of view the pill stands over the end: the timeline keeps its last entry clear of it.
   const toCard = waitingPlace === "above" || waitingPlace === "below";
 
@@ -486,22 +451,9 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     const target = rosterTarget(key);
     const view = data.conversation(target);
     const draft = data.draft(target);
-    const offer = data.offer(target);
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     // An archived room takes no messages: no composer, and a way to unarchive it.
     const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
-    // In a bot's conversation, `/` offers its connectors' prompts, each by its connector's name.
-    const promptMenu = (botId: BotId): PromptMenu => ({
-      load: () =>
-        intents.connectorPrompts(botId).then(
-          (prompts) =>
-            prompts?.flatMap((prompt) => {
-              const connector = data.connectors?.find((one) => one.id === prompt.connectorId);
-              return connector === undefined ? [] : [{ ...prompt, connector: connector.name }];
-            }) ?? null,
-        ),
-      render: (prompt, given) => intents.renderPrompt(botId, prompt, given),
-    });
     // In a room, `@` mentions its members, by the names the roster shows.
     const mentionable: ReadonlyArray<MentionCandidate> | undefined =
       item._tag === "room"
@@ -652,41 +604,17 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           )}
         >
           {archivedRoom === null ? (
-            <Composer
-              draftKey={rosterKeyText(rosterKeyOf(item))}
+            <DraftComposer
+              target={target}
               recipient={recipient}
-              value={draft.text}
-              mentions={draft.mentions}
-              onValueChange={(value, picked, order) =>
-                intents.setDraftText(target, value, picked, order)
+              data={data}
+              intents={intents}
+              addressing={addressing}
+              mentionable={mentionable}
+              suggestion={
+                item._tag === "bot" ? offeredReply(item.bot.suggestedReply, view.items) : null
               }
-              files={draft.files}
-              sending={draft.sending}
-              loading={data.draftsLoading}
-              {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
-              notSaved={data.draftNotSaved(target)}
-              onAttachFiles={(files, at) => intents.attachFiles(target, files, at)}
-              onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
-              onOpenFile={intents.openAttachment}
-              onSend={() => intents.sendDraft(target, addressing)}
-              {...(dictate ? { onDictate: () => dictate(target) } : {})}
-              {...(offer === null
-                ? {}
-                : {
-                    replaced: {
-                      revision: offer,
-                      onRestore: () => intents.restoreDraft(target),
-                      onDismiss: () => intents.dismissDraftOffer(target),
-                    },
-                  })}
               inputRef={composerRef}
-              {...(mentionable === undefined ? {} : { mentionable })}
-              {...(item._tag === "bot"
-                ? {
-                    prompts: promptMenu(item.bot.id),
-                    suggestion: offeredReply(item.bot.suggestedReply, view.items),
-                  }
-                : {})}
             />
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">

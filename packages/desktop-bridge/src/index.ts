@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  BotId,
+  BrowserTabRef,
+  ConnectorId,
   DeviceId,
   DeviceToken,
   EntryId,
   EntryTarget,
   Label,
   Language,
+  PairBotIds,
   PairingCode,
   PairingLinkTarget,
+  RoutineId,
   ServerOrigin,
   SIGN_IN_RETURN_MAX,
   UpdateChannel,
@@ -662,11 +667,30 @@ export const TrayReport = Schema.Struct({
 export type TrayReport = typeof TrayReport.Type;
 
 /**
- * Something the app asks the page to do, from its menus or its global
- * shortcut. `focus`: the composer of the open conversation, or the roster.
+ * A place in the main window: a bot's conversation or a room, as the tray
+ * opens one, or what a conversation leads to and quick access hands over: a
+ * bot's browser on a tab (`front`: the one it uses), a teammate conversation
+ * at one of its messages, a routine's runs, a connector's sign-in.
+ */
+export const Destination = Schema.Union([
+  EntryTarget,
+  Schema.TaggedStruct("browser", {
+    botId: BotId,
+    // "front" first: a ref is any non-empty string, which would take "front" too.
+    tab: Schema.Union([Schema.Literal("front"), BrowserTabRef]),
+  }),
+  Schema.TaggedStruct("pair", { botIds: PairBotIds, at: Schema.NullOr(EntryId) }),
+  Schema.TaggedStruct("routine", { botId: BotId, routineId: RoutineId }),
+  Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
+]);
+export type Destination = typeof Destination.Type;
+
+/**
+ * Something the app asks the page to do, from its menus, its tray or quick
+ * access. `focus`: the composer of the open conversation, or the roster.
  * `composer`, `next`, `previous`, `stop` and `closeDetails`: the shell's
- * keyboard shortcuts, by name. `open`: a bot or room the operator chose in
- * the tray, under the pairing whose roster listed it.
+ * keyboard shortcuts, by name. `open`: a place the operator chose in the
+ * tray or in quick access, under the pairing whose roster listed it.
  */
 export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("focus", {}),
@@ -675,9 +699,50 @@ export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("previous", {}),
   Schema.TaggedStruct("stop", {}),
   Schema.TaggedStruct("closeDetails", {}),
-  Schema.TaggedStruct("open", { target: EntryTarget, pairing: DeviceId }),
+  Schema.TaggedStruct("open", { target: Destination, pairing: DeviceId }),
 ]);
 export type ShellCommand = typeof ShellCommand.Type;
+
+/** The path of the app's page the quick access window shows. */
+export const QUICK_ACCESS_PATH = "/quick";
+
+/**
+ * What the quick access window's page tells the app: whether it has what it
+ * shows, a primary bot on a server it reached. Until it has, the global
+ * shortcut shows the main window instead.
+ */
+export const QuickAccessReport = Schema.Struct({ available: Schema.Boolean });
+export type QuickAccessReport = typeof QuickAccessReport.Type;
+
+/** Which showing of the quick access window something belongs to: each one counts one more. */
+const Opening = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/**
+ * What the app tells the quick access window's page. `open`: the window was
+ * just shown, or brought back to hand, so the page comes in and puts the
+ * cursor in its composer; `opening` numbers that showing. `leave`: the page
+ * goes out, then asks for the window to be hidden.
+ */
+export const QuickAccessCue = Schema.Union([
+  Schema.TaggedStruct("open", { opening: Opening }),
+  Schema.TaggedStruct("leave", {}),
+]);
+export type QuickAccessCue = typeof QuickAccessCue.Type;
+
+/**
+ * The page asks for the window to be hidden, having gone out of the showing
+ * `opening` numbers. One the app has shown again since is left up: the ask
+ * is older than what the operator last asked for.
+ */
+export const QuickAccessHide = Schema.Struct({ opening: Opening });
+export type QuickAccessHide = typeof QuickAccessHide.Type;
+
+/**
+ * The place quick access asks the main window to open, under the pairing
+ * whose roster listed it, as a bot chosen in the tray is.
+ */
+export const QuickAccessOpen = Schema.Struct({ target: Destination, pairing: DeviceId });
+export type QuickAccessOpen = typeof QuickAccessOpen.Type;
 
 /** The modifiers that set a global shortcut apart from the ones every app uses. */
 const SET_APART: ReadonlySet<string> = new Set(["Alt", "Super", "Shift"]);
@@ -702,7 +767,7 @@ export const Accelerator = Schema.String.check(
 );
 export type Accelerator = typeof Accelerator.Type;
 
-/** The shortcut that shows the app until the operator chooses another. */
+/** The shortcut that opens quick access until the operator chooses another. */
 export const DEFAULT_SHORTCUT: Accelerator = "CommandOrControl+Shift+J";
 
 /**
@@ -828,6 +893,10 @@ export const HostedBridge = Schema.Struct({
   systemTheme: Callable,
   reportTray: Callable,
   onCommand: Callable,
+  reportQuickAccess: Callable,
+  onQuickAccessCue: Callable,
+  hideQuickAccess: Callable,
+  openFromQuickAccess: Callable,
   shortcutStatus: Callable,
   setShortcut: Callable,
   useThisComputer: Callable,

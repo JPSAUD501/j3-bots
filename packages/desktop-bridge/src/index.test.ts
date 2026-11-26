@@ -16,6 +16,10 @@ import {
   NotificationRequest,
   LocalServerState,
   OpenRequest,
+  QuickAccessCue,
+  QuickAccessHide,
+  QuickAccessOpen,
+  QuickAccessReport,
   releaseFile,
   releasePage,
   SavingReport,
@@ -217,6 +221,10 @@ describe("the desktop bridge", () => {
       systemTheme: call,
       reportTray: call,
       onCommand: call,
+      reportQuickAccess: call,
+      onQuickAccessCue: call,
+      hideQuickAccess: call,
+      openFromQuickAccess: call,
       shortcutStatus: call,
       setShortcut: call,
       useThisComputer: call,
@@ -378,6 +386,33 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(ShellCommand, { _tag: "open", target }));
     assert.isTrue(decodes(ShellCommand, { _tag: "focus" }));
     assert.isFalse(decodes(ShellCommand, { _tag: "quit" }));
+  });
+
+  it("takes from quick access only whether it can show, and a place to open under its pairing", () => {
+    assert.isTrue(decodes(QuickAccessReport, { available: true }));
+    assert.isFalse(decodes(QuickAccessReport, { available: "yes" }));
+    assert.isFalse(decodes(QuickAccessReport, true));
+    const opens = (target: unknown) => decodes(QuickAccessOpen, { target, pairing: "device-1" });
+    assert.isTrue(opens({ _tag: "conversation", botId: "bot-scout" }));
+    assert.isTrue(opens({ _tag: "room", roomId: "room-launch" }));
+    assert.isTrue(opens({ _tag: "browser", botId: "bot-scout", tab: "front" }));
+    assert.isTrue(opens({ _tag: "pair", botIds: ["bot-scout", "bot-wren"], at: null }));
+    assert.isTrue(opens({ _tag: "routine", botId: "bot-scout", routineId: "routine-1" }));
+    assert.isTrue(opens({ _tag: "connector", connectorId: "conn_0123456789abcdef" }));
+    // Nothing but a place: no address, no pairing left out, no bot unnamed.
+    assert.isFalse(opens({ _tag: "page", url: "https://elsewhere.example" }));
+    assert.isFalse(
+      decodes(QuickAccessOpen, { target: { _tag: "conversation", botId: "bot-scout" } }),
+    );
+    assert.isFalse(opens({ _tag: "conversation", botId: "" }));
+    assert.isFalse(opens({ _tag: "pair", botIds: ["bot-wren", "bot-scout"], at: null }));
+    assert.isTrue(decodes(QuickAccessCue, { _tag: "open", opening: 3 }));
+    assert.isTrue(decodes(QuickAccessCue, { _tag: "leave" }));
+    assert.isFalse(decodes(QuickAccessCue, { _tag: "open" }));
+    assert.isFalse(decodes(QuickAccessCue, "open"));
+    assert.isTrue(decodes(QuickAccessHide, { opening: 3 }));
+    assert.isFalse(decodes(QuickAccessHide, { opening: -1 }));
+    assert.isFalse(decodes(QuickAccessHide, undefined));
   });
 });
 

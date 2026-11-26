@@ -1336,3 +1336,56 @@
     scale: 1;
   }
 }
+
+/*
+ * Quick access (the desktop app's small window, `quick/`). Its page shows
+ * nothing but the card: where the window is see-through, so is everything
+ * around the card, and what the page opens over itself, a dialog or an image,
+ * stays inside the card's box rather than cover the see-through part. Where
+ * the window is not see-through the card fills it.
+ */
+html[data-quick="clear"],
+html[data-quick="clear"] body {
+  background: transparent;
+}
+
+html[data-quick="solid"],
+html[data-quick="solid"] body {
+  background: var(--surface);
+}
+
+/* The card's box in the window: the room `QuickAccess` leaves around it. */
+html[data-quick="clear"] [data-base-ui-portal] {
+  position: fixed;
+  inset: 16px 28px 36px;
+  z-index: 40;
+  contain: layout paint;
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+html[data-quick="clear"] [data-base-ui-portal] > * {
+  pointer-events: auto;
+}
+
+/* While the card is out, so is whatever was open over it. */
+html[data-quick][data-quick-out] [data-base-ui-portal] {
+  visibility: hidden;
+}
+
+/* Under reduced motion it comes and goes as a whole, with no travel (`.crossfade` keeps its time). */
+@media (prefers-reduced-motion: reduce) {
+  .quick-access[data-shown="true"] {
+    animation: quick-fade var(--duration-state) var(--ease-out) backwards;
+  }
+
+  .quick-access[data-shown="false"] {
+    animation: quick-fade var(--duration-state) var(--ease-out) reverse forwards;
+  }
+}
+
+@keyframes quick-fade {
+  from {
+    opacity: 0;
+  }
+}

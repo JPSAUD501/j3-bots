@@ -27,6 +27,7 @@ import {
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   powerMonitor,
+  type WebContents,
 } from "electron";
 import {
   AppImageUpdater,
@@ -528,16 +529,33 @@ export const serve = Effect.fn("desktop.updates")(function* (
         if (!fromApp(event)) return null;
         return Option.isSome(decoded) ? runPromise(chooseAutomatic(decoded.value.on)) : status();
       });
+      // Each of the app's pages reports its own saves, the main window's and
+      // quick access's: a save is under way while any of them has one. A page
+      // that loads again, or that went with its renderer or its window, has none.
+      const pagesSaving = new Set<WebContents>();
+      const pagesWatched = new Map<WebContents, () => void>();
+      const savesChanged = () => dispatch({ _tag: "saving", saving: pagesSaving.size > 0 });
       ipcMain.on(IPC_CHANNELS.saving, (event, report: unknown) => {
         const decoded = decodeSaving(report);
-        if (fromApp(event) && Option.isSome(decoded)) {
-          dispatch({ _tag: "saving", saving: decoded.value.saving });
+        if (!fromApp(event) || Option.isNone(decoded)) return;
+        const page = event.sender;
+        if (!pagesWatched.has(page)) {
+          const pageGone = () => {
+            pagesSaving.delete(page);
+            savesChanged();
+          };
+          pagesWatched.set(page, pageGone);
+          page.on("did-navigate", pageGone);
+          page.on("render-process-gone", pageGone);
+          page.once("destroyed", () => {
+            pagesWatched.delete(page);
+            pageGone();
+          });
         }
+        if (decoded.value.saving) pagesSaving.add(page);
+        else pagesSaving.delete(page);
+        savesChanged();
       });
-      // A page that loads again, or whose renderer went, has no save under way.
-      const pageGone = () => dispatch({ _tag: "saving", saving: false });
-      window.webContents.on("did-navigate", pageGone);
-      window.webContents.on("render-process-gone", pageGone);
       // The network may be back after sleep: a check that could not reach the release tries again.
       const resumed = () => {
         if (checkFailed(state)) check();
@@ -547,7 +565,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
       return {
         updater,
         quit,
-        pageGone,
+        pagesWatched,
         resumed,
         check,
         dispatch,
@@ -556,7 +574,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
         cancelRetry,
       };
     }),
-    ({ updater, quit, pageGone, resumed, clearLaunchTimers, cancelRetry }) =>
+    ({ updater, quit, pagesWatched, resumed, clearLaunchTimers, cancelRetry }) =>
       Effect.sync(() => {
         clearLaunchTimers();
         cancelRetry();
@@ -576,9 +594,10 @@ export const serve = Effect.fn("desktop.updates")(function* (
         ipcMain.removeHandler(IPC_CHANNELS.setUpdateChannel);
         ipcMain.removeHandler(IPC_CHANNELS.setAutomaticUpdates);
         ipcMain.removeAllListeners(IPC_CHANNELS.saving);
-        if (!window.isDestroyed()) {
-          window.webContents.off("did-navigate", pageGone);
-          window.webContents.off("render-process-gone", pageGone);
+        for (const [page, pageGone] of pagesWatched) {
+          if (page.isDestroyed()) continue;
+          page.off("did-navigate", pageGone);
+          page.off("render-process-gone", pageGone);
         }
       }),
   );

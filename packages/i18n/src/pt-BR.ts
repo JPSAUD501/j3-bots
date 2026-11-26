@@ -1127,8 +1127,6 @@ const sentences = {
   "composer.filesProblem": "Não dá para enviar estes arquivos. {reason}.",
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
-  "composer.changedElsewhere":
-    "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá.",
   "composer.changedElsewhereWhileSending":
     "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá e não enviou nada.",
   "composer.replaced": "Seu texto anterior foi substituído em outra aba.",
@@ -1717,14 +1715,14 @@ const sentences = {
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":
     "Este computador não tinha um chaveiro que o J3 Bots pudesse usar quando foi pareado, então o acesso deste dispositivo fica guardado sem criptografia. Quem puder ler seus arquivos aqui pode usá-lo. Pareie este dispositivo de novo depois de desbloquear o chaveiro do sistema para guardá-lo com criptografia.",
-  "settings.shortcut": "Atalho para mostrar o J3 Bots",
+  "settings.shortcut": "Atalho do acesso rápido",
   "settings.shortcut.change": "Mudar o atalho",
   "settings.shortcut.reset": "Usar {shortcut}",
   "settings.shortcut.recording": "Pressione o novo atalho, ou Esc para manter {shortcut}.",
   "settings.shortcut.needsModifier":
     "Um atalho precisa de Shift, Alt ou Super junto com outro modificador (⇧ ou ⌥ junto com outro num Mac), com uma letra, um número ou uma tecla de função: um como Ctrl+C é de todos os outros apps.",
   "settings.shortcut.registered":
-    "Pressione {shortcut} em qualquer lugar para mostrar o J3 Bots com o cursor na caixa de mensagem da conversa aberta.",
+    "Pressione {shortcut} em qualquer lugar para abrir o acesso rápido: uma janela pequena para falar com o seu bot principal, pronta para você digitar. Pressione de novo para fechar.",
   "settings.shortcut.taken":
     "{shortcut} não funciona aqui: outro app ou o sistema já o usa. Escolha outro.",
   "settings.shortcut.refused":
@@ -1732,11 +1730,15 @@ const sentences = {
   "settings.shortcut.notSaved":
     "Não foi possível guardar o novo atalho, então {shortcut} continua. Tente de novo.",
   "settings.shortcut.unavailable":
-    "Este desktop não deixa apps usarem um atalho fora da própria janela, então {shortcut} só funciona com o J3 Bots em primeiro plano.",
+    "Este desktop não deixa apps usarem um atalho fora da própria janela, então {shortcut} só abre o acesso rápido com o J3 Bots em primeiro plano.",
   "settings.shortcut.requested":
     "No Wayland, é o seu desktop que decide se o J3 Bots pode usar {shortcut}, e ele pode recusar sem avisar o J3 Bots. Se pressionar o atalho fora do J3 Bots não fizer nada, o seu desktop não permitiu; ele continua funcionando com o J3 Bots em primeiro plano.",
   "desktop.menu.app": "J3 Bots",
   "desktop.menu.show": "Mostrar o J3 Bots",
+  "desktop.menu.quickAccess": "Acesso rápido",
+  "quickAccess.label": "Acesso rápido a {name}",
+  "quickAccess.openConversation": "Abrir conversa",
+  "quickAccess.close": "Fechar o acesso rápido",
   "desktop.menu.hide": "Ocultar o J3 Bots",
   "desktop.menu.hideOthers": "Ocultar os outros",
   "desktop.menu.showAll": "Mostrar todos",

@@ -60,6 +60,9 @@ import * as Appearance from "./appearance.ts";
 import * as AppLinks from "./appLinks.ts";
 import * as Autostart from "./autostart.ts";
 import { inlineScriptSources, policyFor, resolveAsset } from "./assets.ts";
+import { commandSender } from "./commands.ts";
+import { transparencyHere } from "./compositing.ts";
+import { onWayland } from "./displayServer.ts";
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import * as LinkHandler from "./linkHandler.ts";
@@ -70,6 +73,7 @@ import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
+import * as QuickAccess from "./quickAccess.ts";
 import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
@@ -143,14 +147,25 @@ const fromApp = (event: IpcMainEvent | IpcMainInvokeEvent) =>
 const isAborted = (error: unknown): boolean =>
   error instanceof Error && Reflect.get(error, "code") === "ERR_ABORTED";
 
+/**
+ * Takes quick access's page off its window, once there is one: it shares the
+ * main window's storage, and a page left on it would write to what is being
+ * cleared.
+ */
+let unloadQuickAccess: Effect.Effect<void> = Effect.void;
+
 /** The page that sent `event`, as the server choice acts on it. */
 const pageOf = (event: IpcMainInvokeEvent): ServerChoice.Page => ({
   // The credential, drafts and unsent messages, all in IndexedDB. Preferences
   // in local storage (appearance, language) belong to the device and stay.
-  clearStorage: Effect.tryPromise({
-    try: () => event.sender.session.clearStorageData({ storages: ["indexdb"] }),
-    catch: (cause) => new ServerChoice.StorageNotCleared({ cause }),
-  }),
+  clearStorage: Effect.suspend(() => unloadQuickAccess).pipe(
+    Effect.andThen(
+      Effect.tryPromise({
+        try: () => event.sender.session.clearStorageData({ storages: ["indexdb"] }),
+        catch: (cause) => new ServerChoice.StorageNotCleared({ cause }),
+      }),
+    ),
+  ),
   // Not awaited: the page that asked is the one going away. A load the page
   // cuts short by navigating first (`ERR_ABORTED`) leaves it where it went;
   // any other failure is logged.
@@ -276,6 +291,16 @@ const program = Effect.gen(function* () {
     loginShell: computer.loginShell,
   });
   const { supervisor } = localHost;
+  // Asked once, before any window: whether a window can be see-through here,
+  // which the quick access window is made by.
+  const wayland = onWayland();
+  const transparent = yield* transparencyHere({
+    platform: process.platform,
+    wayland,
+    env: process.env,
+    homeDirectory: app.getPath("home"),
+    hostname: computer.hostname,
+  });
   /** The server this computer runs, as the page and the tray are told: `null` outside local mode. */
   const localServerNow = Effect.gen(function* () {
     if ((yield* settings.get).mode !== "local") return null;
@@ -333,6 +358,8 @@ const program = Effect.gen(function* () {
   });
 
   const tokens = makeTokenSeal();
+  /** The main window's page, once the window is made: what only it is given is told apart by it. */
+  let mainContents: WebContents | null = null;
 
   // The main process copies a secret's value, not the page: it alone can read
   // the clipboard back, to take the value off only if it is still there.
@@ -453,7 +480,12 @@ const program = Effect.gen(function* () {
         const { server, mode, startWithSystem, moved } = runSync(settings.get);
         event.returnValue = encodeState({
           server,
-          pairingCode: links.takeCarriedCode(server),
+          // The pairing screen is the main window's: a code carried to it is
+          // not spent on another window's page, as quick access's.
+          pairingCode:
+            mainContents !== null && event.sender === mainContents
+              ? links.takeCarriedCode(server)
+              : null,
           mode,
           localAvailable: localHost.available,
           localServer: runSync(localServerNow),
@@ -580,6 +612,7 @@ const program = Effect.gen(function* () {
       webviewTag: false,
     },
   });
+  mainContents = window.webContents;
   if (placed.maximized) window.maximize();
   yield* Appearance.serve({ window, appearance, fromApp });
   // A restart the page asks for, as once a keyring is unlocked (Chromium
@@ -660,11 +693,30 @@ const program = Effect.gen(function* () {
   yield* links.serve({ window, fromApp, bringForward: forward });
   yield* SignInRelay.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
+  const sendCommand = commandSender(window);
+  const quickAccess = yield* QuickAccess.serve({
+    main: window,
+    appOrigin: APP_ORIGIN,
+    preload: path.join(app.getAppPath(), "dist", "preload.cjs"),
+    fromApp,
+    transparent,
+    wayland,
+    showMain: () => {
+      forward();
+      sendCommand({ _tag: "focus" });
+    },
+    openInMain: (target, pairing) => {
+      forward();
+      sendCommand({ _tag: "open", target, pairing });
+    },
+  });
+  unloadQuickAccess = quickAccess.unload;
   yield* Menus.serve({
     window,
     appearance,
     fromApp,
     bringForward: forward,
+    toggleQuickAccess: quickAccess.toggle,
     localServer: localServerChanges,
     phoneAccess: phone.changes,
   });

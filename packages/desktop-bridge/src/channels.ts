@@ -64,8 +64,25 @@ export const IPC_CHANNELS = {
   systemTheme: "j3bots:system-theme",
   /** `TrayReport`: what the tray lists, each time it changes. Not answered. */
   tray: "j3bots:tray",
-  /** From the main process, from its menus or its global shortcut: `ShellCommand`. */
+  /** From the main process, from its menus or its tray: `ShellCommand`. */
   command: "j3bots:command",
+  /**
+   * `QuickAccessReport`, from the quick access window's page only: whether it
+   * has a primary bot to show. Not answered.
+   */
+  quickAccess: "j3bots:quick-access",
+  /** From the main process, to the quick access window's page: `QuickAccessCue`. */
+  quickAccessCue: "j3bots:quick-access-cue",
+  /**
+   * `QuickAccessHide`, from the quick access window's page: it has left the
+   * screen, hide the window. Not answered.
+   */
+  quickAccessHide: "j3bots:quick-access-hide",
+  /**
+   * `QuickAccessOpen`, from the quick access window's page: shows the main
+   * window at that conversation, and hides quick access. Not answered.
+   */
+  quickAccessOpenMain: "j3bots:quick-access-open-main",
   /** Answers `ShortcutStatus`. */
   shortcut: "j3bots:shortcut",
   /** `ShortcutRequest`, answered with `ShortcutChange`. */
@@ -167,8 +184,16 @@ export interface DesktopBridge {
   readonly systemTheme: () => Promise<unknown>;
   /** Tells the app what the tray lists (a `TrayReport`). */
   readonly reportTray: (report: unknown) => void;
-  /** Calls `listener` with each command from the app's menus or its shortcut; answers a function that stops it. */
+  /** Calls `listener` with each command from the app's menus or its tray; answers a function that stops it. */
   readonly onCommand: (listener: (command: unknown) => void) => () => void;
+  /** Tells the app whether quick access has a primary bot to show (a `QuickAccessReport`). */
+  readonly reportQuickAccess: (report: unknown) => void;
+  /** Calls `listener` with each cue for quick access (a `QuickAccessCue`); answers a function that stops it. */
+  readonly onQuickAccessCue: (listener: (cue: unknown) => void) => () => void;
+  /** Hides the quick access window, once its page has left the screen (a `QuickAccessHide`). */
+  readonly hideQuickAccess: (request: unknown) => void;
+  /** Shows the main window at a conversation, and hides quick access (a `QuickAccessOpen`). */
+  readonly openFromQuickAccess: (request: unknown) => void;
   readonly shortcutStatus: () => Promise<unknown>;
   readonly setShortcut: (accelerator: string) => Promise<unknown>;
   readonly useThisComputer: () => Promise<unknown>;

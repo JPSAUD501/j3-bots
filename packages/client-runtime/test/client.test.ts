@@ -1887,9 +1887,89 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         }).pipe(
           Effect.scoped,
           Effect.ensuring(gate.open),
-          Effect.provide(client(first.credential, device)),
+          // A tab the other hears nothing of: what it sent is found only as the other writes.
+          Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
         );
       }),
+  );
+
+  it.effect("shows in every tab the draft one of them keeps, as it is kept", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return { botId: yield* createBot("Mirrored"), credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+      const key = targetKey(target);
+
+      yield* Effect.gen(function* () {
+        const one = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const two = yield* Drafts;
+          const noticed = yield* Stream.runHead(two.changedElsewhere).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          // What one tab keeps, the other shows, having done nothing itself.
+          yield* one.setText(target, "typed in one");
+          yield* waitFor(two.state, (state) => state.get(key)?.text === "typed in one");
+          assert.deepStrictEqual(
+            yield* Fiber.join(noticed),
+            Option.some({ target, whileSending: false, displaced: false }),
+          );
+
+          // The other goes on from there: nothing is displaced, and the first shows it.
+          yield* two.setText(target, "typed in one, then in two");
+          yield* waitFor(
+            one.state,
+            (state) => state.get(key)?.text === "typed in one, then in two",
+          );
+          assert.isFalse(two.offers.get().has(key));
+          assert.isFalse(one.offers.get().has(key));
+
+          // Emptied in one, it is empty in the other.
+          yield* one.setText(target, "");
+          yield* waitFor(two.state, (state) => !state.has(key));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect("sends from one tab after another tab wrote and sent the same draft", () =>
+    Effect.gen(function* () {
+      const { sends } = yield* Taps;
+      const device = TestPlatform.makeDevice();
+      const first = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return { botId: yield* createBot("Relayed"), credential: yield* savedCredential };
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+      const target: EntryTarget = { _tag: "conversation", botId: first.botId };
+      const key = targetKey(target);
+
+      yield* Effect.gen(function* () {
+        // This tab is open all along, and types only at the end.
+        const two = yield* Drafts;
+        yield* Effect.gen(function* () {
+          const one = yield* Drafts;
+          yield* one.setText(target, "from one");
+          yield* whenStored(device.storage, "drafts", key, holds("from one"));
+          // The tab that only watches has it, before it is sent from the other.
+          yield* waitFor(two.state, (state) => state.get(key)?.text === "from one");
+          assert.strictEqual(yield* one.send(target), "sent");
+          yield* Queue.take(sends);
+          yield* whenStored(device.storage, "drafts", key, noDraft);
+          yield* waitFor(two.state, (state) => !state.has(key));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+
+        // Typed and sent at once, before this tab has kept it: it goes, and nothing is put aside.
+        yield* two.setText(target, "from two");
+        assert.strictEqual(yield* two.send(target), "sent");
+        yield* Queue.take(sends);
+        assert.isFalse(two.offers.get().has(key));
+        yield* whenStored(device.storage, "drafts", key, noDraft);
+      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
   );
 
   it.effect("loses neither tab's text when two tabs change the same draft", () =>
@@ -1925,7 +2005,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* two.restore(first.target);
           yield* whenStored(device.storage, "drafts", key, holds("from two"));
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -1972,7 +2056,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.strictEqual((yield* unsent(device.storage)).length, 0);
           yield* whenStored(device.storage, "drafts", key, holds("from one"));
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2048,7 +2136,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           Effect.scoped,
           Effect.provide(client(first.credential, device, neverAnswers(HTTP_PATHS.attachments))),
         );
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2094,7 +2186,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             (record) => holds("from one")(record) && holds("notes.txt")(record),
           );
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2132,7 +2228,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           );
           assert.strictEqual((yield* unsent(device.storage)).length, 0);
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2170,7 +2270,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.deepStrictEqual(two.state.get().get(key)?.mentions, [picked]);
           yield* whenStored(device.storage, "drafts", key, holds('"label":"Wren"'));
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2224,7 +2328,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             (record) => holds("from two")(record) && holds("later.txt")(record),
           );
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2261,7 +2369,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* two.restore(first.target);
           yield* whenStored(device.storage, "drafts", key, holds("newer, from two"));
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: each change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2297,7 +2409,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* two.restore(first.target);
           assert.strictEqual(two.state.get().get(key)?.text, "from one, and two goes on");
         }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its change is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2463,7 +2579,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           Effect.scoped,
           Effect.provide(client(first.credential, device, neverAnswers(HTTP_PATHS.attachments))),
         );
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }).pipe(
+        Effect.scoped,
+        // A tab the other hears nothing of: its draft is found only as the other writes.
+        Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+      );
     }),
   );
 
@@ -2527,7 +2647,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* whenStored(device.storage, "drafts", key, holds("from two"));
           assert.strictEqual(yield* two.send(target), "sent");
           yield* whenStored(device.storage, "outbox", yield* Queue.take(sends), sent);
-        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+        }).pipe(
+          Effect.scoped,
+          // It closed before it told the other tab of anything.
+          Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
+        );
         const noticed = yield* Stream.runHead(one.changedElsewhere).pipe(
           Effect.forkChild({ startImmediately: true }),
         );
@@ -3992,7 +4116,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* Effect.gen(function* () {
           yield* (yield* Drafts).setText(target, "written in another tab");
           yield* whenStored(device.storage, "drafts", key, holds("written in another tab"));
-        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+        }).pipe(
+          Effect.scoped,
+          // A tab this one hears nothing of: its change is found only as this one writes.
+          Effect.provide(client(credential, { ...device, window: device.unannounced })),
+        );
 
         refusing = true;
         yield* drafts.setText(target, "written here since");

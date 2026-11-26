@@ -65,6 +65,16 @@ const bridge: DesktopBridge = {
       ipcRenderer.removeListener(IPC_CHANNELS.command, forward);
     };
   },
+  reportQuickAccess: (report) => ipcRenderer.send(IPC_CHANNELS.quickAccess, report),
+  onQuickAccessCue: (listener) => {
+    const forward = (_event: unknown, cue: unknown) => listener(cue);
+    ipcRenderer.on(IPC_CHANNELS.quickAccessCue, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.quickAccessCue, forward);
+    };
+  },
+  hideQuickAccess: (request) => ipcRenderer.send(IPC_CHANNELS.quickAccessHide, request),
+  openFromQuickAccess: (request) => ipcRenderer.send(IPC_CHANNELS.quickAccessOpenMain, request),
   shortcutStatus: () => ipcRenderer.invoke(IPC_CHANNELS.shortcut),
   setShortcut: (accelerator) => ipcRenderer.invoke(IPC_CHANNELS.setShortcut, { accelerator }),
   useThisComputer: () => ipcRenderer.invoke(IPC_CHANNELS.useThisComputer),
