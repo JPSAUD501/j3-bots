@@ -41,7 +41,9 @@ export function MentionChip({
         size={MENTION_FACE}
         still
       />
-      <span>@{name}</span>
+      {/* The text stands in the chip itself, not in an element of its own: a flex item is a
+          block, which a browser copies or drags with a line break on either side of it. */}
+      {`@${name}`}
     </span>
   );
 }
