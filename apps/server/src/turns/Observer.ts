@@ -954,13 +954,17 @@ export const layer = Layer.effect(
             UPDATE turns SET background_pending = 1
             WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
           `;
-        } else {
-          // Nothing of the turn runs on: a Force stop of it has nothing to end.
-          yield* sql`
-            UPDATE sessions SET force_stop_turn_id = NULL
-            WHERE id = ${session.id} AND force_stop_turn_id = ${end.turnId}
-          `;
         }
+        // Nothing of the session runs on, of this turn or an earlier one: a
+        // Force stop of it has nothing to end. While work goes on, the engine
+        // still stops the session at this, its latest turn.
+        yield* sql`
+          UPDATE sessions SET force_stop_turn_id = NULL
+          WHERE id = ${session.id} AND force_stop_turn_id = ${end.turnId}
+            AND NOT EXISTS (
+              SELECT 1 FROM turns WHERE session_id = ${session.id} AND background_pending = 1
+            )
+        `;
         // A room turn's end, also one that told of no work, leaves it
         // unreported until the next report: the engine can count work an end
         // did not tell of, as a monitor the agent does not await, and only

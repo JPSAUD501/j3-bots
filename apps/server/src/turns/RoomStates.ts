@@ -38,7 +38,10 @@ export interface RoomActivity {
    * empty unless `work` is `running`.
    */
   readonly memberWork: ReadonlyArray<MemberWork>;
-  /** Whether a member's AI ignores the stop of a turn of the room (`Room.forceStop`). */
+  /**
+   * Whether a member's AI ignores the stop of a turn of the room, or the
+   * room's own Stop of its session (`Room.forceStop`, `roomsIgnoredStopSql`).
+   */
   readonly forceStop: boolean;
 }
 
@@ -74,7 +77,8 @@ export interface RoomActivity {
  * `forceStop` is whether the engine's stop of a turn of the room, or of the
  * background work it left, goes unconfirmed by its AI, in a session the engine
  * still has: the turn a session records as ignoring its stop is the room's,
- * and no Force stop of it waits for the engine yet.
+ * or the room's own Stop went to that session and is not settled
+ * (`roomsIgnoredStopSql`), and no Force stop of it waits for the engine yet.
  *
  * All four are read in one transaction, so they agree.
  */
@@ -92,11 +96,13 @@ export class RoomStates extends Context.Service<
 
 /**
  * Whether the stop a session ignores is room `roomId`'s to force: the turn it
- * ignores, `ignoredTurnId`, answers in the room, or the room's own Stop waits
- * on the session, `sessionId`. An idle session's stop reaches the engine's
- * latest turn, which can be another audience's while work the room's turn
- * left goes on (**Read** at `59651c1`, `Orchestrator.ts`,
- * `dispatchRunInterrupt`). Each is a column or a value.
+ * ignores, `ignoredTurnId`, answers in the room, or the room's own Stop went
+ * to the session, `sessionId`, and is not settled. An idle session's stop
+ * reaches the engine's latest turn, which can be another audience's while
+ * work the room's turn left goes on (**Read** at `59651c1`, `Orchestrator.ts`,
+ * `dispatchRunInterrupt`). A room's Stop that still waits for another
+ * audience's turn to end has asked the engine nothing, so a stop the session
+ * ignores meanwhile is not the room's. Each is a column or a value.
  */
 export const roomsIgnoredStopSql = (
   sql: SqlClient.SqlClient,
@@ -116,6 +122,7 @@ export const roomsIgnoredStopSql = (
     WHERE ri_stop.scope = 'room' AND ri_stop.room_id = ${ids.roomId}
       AND ri_stop.engine_turn_id IS NULL
       AND ri_target.session_id = ${ids.sessionId} AND ri_target.stopped_at IS NULL
+      AND ri_target.issued_at IS NOT NULL
   )
 )`;
 
