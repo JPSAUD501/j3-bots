@@ -116,7 +116,8 @@ export function StatusWord({ connector }: { readonly connector: Connector }) {
 /**
  * A connector's status on its page: the word and its light, why bots cannot
  * use it and since when, and the one thing that fixes it, when the operator
- * can: sign in again (`onReconnect`), or open the secrets (`onOpenSecrets`).
+ * can: sign in again (`onReconnect`), or open the secrets (`onOpenSecrets`),
+ * where they are unlocked, or the one its settings name is saved or shared.
  */
 export function StatusBlock({
   connector,
@@ -132,7 +133,7 @@ export function StatusBlock({
   const tone = connectorTone(connector);
   const text = connectorStatusText(connector.status, ctx);
   const action =
-    connector.status._tag === "secrets-unavailable"
+    connector.status._tag === "secrets-unavailable" || connector.status._tag === "needs-secret"
       ? { label: t("connector.openSecrets"), run: onOpenSecrets }
       : connector.status._tag === "needs-sign-in" && onReconnect !== null
         ? { label: t("connector.reconnect"), run: onReconnect }

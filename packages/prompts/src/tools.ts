@@ -1117,6 +1117,16 @@ export const MANAGEMENT_REFUSED = {
   unknownListing: (id: string) =>
     `The gallery has no server ${id}. Search again with \`search_mcp_servers\` and use the \`id\` it gives. Nothing changed.`,
   unknownBot: (id: string) => `There is no bot ${id}. Check \`list_teammates\`. Nothing changed.`,
+  secretMissing: (name: string) =>
+    `Your user has no secret named ${name}. Ask for it with \`ask_for_secret\`, and add the server once it is saved. Nothing changed.`,
+  secretNoValue: (name: string) =>
+    `The secret ${name} has no such value: a single value has no \`.username\`. Nothing changed.`,
+  secretNotShared: (name: string) =>
+    `Not every bot this server would go to may use the secret ${name}. Ask your user to share it with them in Secrets, or give the server only to bots that may. Nothing changed.`,
+  secretNotYours: (name: string) =>
+    `You may not use the secret ${name} yourself, so you can't write it into a server's settings. Nothing changed.`,
+  secretInAddress:
+    "A secret's reference goes in a header, an argument or a variable, not in the address, where J3 Bots does not resolve it. If the service takes its key only in the address, your user adds the server from Settings → MCP and skills. Nothing changed.",
   privateNetwork:
     "That address is in your user's own network, which only they can allow: they add it from Settings → MCP and skills. Nothing changed.",
   ownApp:

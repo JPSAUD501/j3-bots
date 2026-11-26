@@ -4,10 +4,10 @@ import * as NodeCrypto from "node:crypto";
 import {
   BotId,
   type ChangeAuthor,
-  type CommandError,
   CommandId,
   type Connector,
   CommandLine,
+  type ConnectorCommandError,
   type ConnectorGrant,
   ConnectorFieldValues,
   ConnectorId,
@@ -152,6 +152,8 @@ const statusJson = (connector: Connector): Schema.Json => {
       return { failing: status.reason };
     case "secrets-unavailable":
       return "secrets-unavailable";
+    case "needs-secret":
+      return { needsSecret: { secret: status.secret, reason: status.reason } };
   }
 };
 
@@ -236,12 +238,26 @@ export const layer = Layer.effect(
     });
 
     /** What a connector request's failure tells the bot. */
-    const connectorRefusal = (error: CommandError): ManagementRefused => {
+    const connectorRefusal = (error: ConnectorCommandError): ManagementRefused => {
       if (error._tag === "NotFound" && error.resource === "connector-listing") {
         return refuse(MANAGEMENT_REFUSED.unknownListing("that entry"));
       }
       if (error._tag === "Conflict" && error.reason === "private-network") {
         return refuse(MANAGEMENT_REFUSED.privateNetwork);
+      }
+      if (error._tag === "SecretRefused") {
+        switch (error.problem) {
+          case "missing":
+            return refuse(MANAGEMENT_REFUSED.secretMissing(error.secret));
+          case "no-value":
+            return refuse(MANAGEMENT_REFUSED.secretNoValue(error.secret));
+          case "not-shared":
+            return refuse(MANAGEMENT_REFUSED.secretNotShared(error.secret));
+          case "not-yours":
+            return refuse(MANAGEMENT_REFUSED.secretNotYours(error.secret));
+          case "in-address":
+            return refuse(MANAGEMENT_REFUSED.secretInAddress);
+        }
       }
       return refuse(`${error.message} Nothing changed.`);
     };

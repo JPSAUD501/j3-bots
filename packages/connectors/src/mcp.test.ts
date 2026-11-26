@@ -71,6 +71,7 @@ const overStdio = (file: string, args: ReadonlyArray<string> = []) =>
     program: process.execPath,
     args: [file, ...args].map((arg) => Redacted.make(arg)),
     variables: [],
+    hidden: [],
     serverEnvironment,
     cwd: NodeOs.tmpdir(),
     limits: DEFAULT_SESSION_LIMITS,

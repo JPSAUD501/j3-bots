@@ -59,7 +59,7 @@ import {
   ReceivedEntry,
   WorkStep,
 } from "./entry.ts";
-import { CommandError, Conflict, NotFound } from "./errors.ts";
+import { CommandError, Conflict, ConnectorCommandError, NotFound } from "./errors.ts";
 import { ServerOrigin } from "./link.ts";
 import {
   MemoryDocument,
@@ -1131,7 +1131,10 @@ export const ConnectorRpcs = RpcGroup.make(
    * first used, which may be at once, to list its tools.
    * The connector returned, like every one after it, shows the address only
    * as its origin and the command only as its program (`displayTransport`):
-   * the rest, which can carry a key, stays with the secrets.
+   * the rest, which can carry a key, stays with the secrets. A reference to
+   * one of the operator's secrets (`${secret:<name>}`) in a header, an
+   * argument or a variable must name one every bot of `grant` may use, or it
+   * fails with `SecretRefused`, as one in the address does.
    */
   Rpc.make("connector.add", {
     payload: {
@@ -1140,7 +1143,7 @@ export const ConnectorRpcs = RpcGroup.make(
       grant: Schema.optionalKey(ConnectorGrant),
     },
     success: Connector,
-    error: CommandError,
+    error: ConnectorCommandError,
   }),
   /**
    * Renames the connector, or replaces the values its form took, such as a
@@ -1151,7 +1154,8 @@ export const ConnectorRpcs = RpcGroup.make(
    * it as for an add: its process, if it runs, stops, and the next use runs
    * the new one, whose tools wait on the operator's review where they differ.
    * It fails with `Invalid("connector-unsupported")` for a connector that is
-   * not run by command, and as `connector.add` does for its command.
+   * not run by command, and as `connector.add` does for its command and for
+   * a secret its values name.
    */
   Rpc.make("connector.update", {
     payload: {
@@ -1161,7 +1165,7 @@ export const ConnectorRpcs = RpcGroup.make(
       command: Schema.optionalKey(CommandLine),
     },
     success: Connector,
-    error: CommandError,
+    error: ConnectorCommandError,
   }),
   /**
    * Removes the connector: bots lose its tools at once, its sign-in is
@@ -1173,11 +1177,15 @@ export const ConnectorRpcs = RpcGroup.make(
     payload: { ...command, connectorId: ConnectorId },
     error: CommandError,
   }),
-  /** Replaces which bots may use the connector. A bot that gains it gets its tools from its next model call. */
+  /**
+   * Replaces which bots may use the connector. A bot that gains it gets its
+   * tools from its next model call. It fails with `SecretRefused` when a bot
+   * of `grant` may not use a secret the connector's settings name.
+   */
   Rpc.make("connector.setBots", {
     payload: { ...command, connectorId: ConnectorId, grant: ConnectorGrant },
     success: Connector,
-    error: CommandError,
+    error: ConnectorCommandError,
   }),
   /**
    * Starts a sign-in for the connector, which this device opens in the system

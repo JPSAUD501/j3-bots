@@ -353,7 +353,7 @@ export const layer = Layer.effect(
       // such a gallery entry a sign-in; this holds whatever a server names.
       const hidden = Option.match(secret, {
         onNone: () => [],
-        onSome: ({ formSecrets }) => hiddenOf(formSecrets),
+        onSome: ({ formSecrets }) => hiddenOf(formSecrets.map((named) => named.value)),
       });
       if (hidden.some((value) => resourceUri.includes(Redacted.value(value)))) {
         return yield* fail("secret-in-resource");

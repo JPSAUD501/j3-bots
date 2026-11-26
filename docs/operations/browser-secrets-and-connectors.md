@@ -126,6 +126,7 @@ A connector's page shows its status and what fixes it:
 | Connected | It answers. | Nothing. |
 | Needs sign-in | Its sign-in ended or was refused: some services end one after a fixed time. | Sign in again, or give its key again. |
 | Can't reach | It doesn't answer, or answers with errors, and the page says which. | Check the service; it is tried again on its own. |
+| Needs a secret | Its settings name a secret, as `${secret:<name>}`, that doesn't exist, lacks the value it takes, or isn't shared with every bot that uses the connector. Nothing is sent until it is. | **Open Secrets** to save or share it, or choose fewer bots. |
 | Secrets unavailable | The server's secrets can't be read: an old vault waits for its password, or the key file is missing. | **Open Secrets**. |
 
 When a bot finds its connector signed out, it shows a card in its conversation that reconnects it. You are notified then, not when nobody is using the connector.

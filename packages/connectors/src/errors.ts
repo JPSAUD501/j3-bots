@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { SECRET_NEED_REASONS, SecretName } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 
 /*
@@ -112,8 +113,26 @@ export class Withdrawn extends Schema.TaggedError<Withdrawn>()("Withdrawn", {}) 
   }
 }
 
+/**
+ * A secret the connector's settings name (`${secret:<name>}`) cannot be used
+ * (`SECRET_NEED_REASONS`): nothing was sent. It names the secret, never a value.
+ */
+export class SecretNeeded extends Schema.TaggedError<SecretNeeded>()("SecretNeeded", {
+  secret: SecretName,
+  reason: Schema.Literals(SECRET_NEED_REASONS),
+}) {
+  override get message(): string {
+    return `A connector cannot use the secret "${this.secret}": ${this.reason}.`;
+  }
+}
+
 /** Why a connector's credentials can't sign a request. */
-export type CredentialsUnavailable = NeedsSignIn | SecretsUnavailable | AuthFailing | Withdrawn;
+export type CredentialsUnavailable =
+  | NeedsSignIn
+  | SecretsUnavailable
+  | SecretNeeded
+  | AuthFailing
+  | Withdrawn;
 
 /** A connector's server took longer than the deadline J3 Bots gives it. */
 export class TimedOut extends Schema.TaggedError<TimedOut>()("TimedOut", {}) {

@@ -12,7 +12,7 @@ import {
 } from "@j3-bots/connectors/testing/stdio";
 import {
   CommandId,
-  type CommandError,
+  type ConnectorCommandError,
   type CommandLine,
   type Connector,
   ConnectorId,
@@ -100,7 +100,8 @@ const awaitConnector = (predicate: (connector: Connector) => boolean) =>
 const listed = (connector: Connector) =>
   connector.status._tag === "connected" && connector.tools.length > 0;
 
-const invalidOf = (error: CommandError) => (error._tag === "Invalid" ? error.reason : null);
+const invalidOf = (error: ConnectorCommandError) =>
+  error._tag === "Invalid" ? error.reason : null;
 
 /** Starts, talks to and stops real processes. */
 const SLOW = 30_000;

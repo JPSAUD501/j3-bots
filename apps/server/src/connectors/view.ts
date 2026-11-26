@@ -4,6 +4,7 @@ import {
   type Failing,
   type Prompt,
   type Resource,
+  type SecretNeed,
   type ServerInfo,
   type SignInNeed,
   statusOf,
@@ -96,27 +97,32 @@ const signInNeedOf = (
   }
 };
 
+/** What this server knows of a connector besides its record. */
+export interface ConnectorState {
+  readonly seen: Seen;
+  readonly secretsUnavailable: boolean;
+  /** A secret its settings name and cannot use, if one. */
+  readonly secretNeed: Option.Option<SecretNeed>;
+  readonly signIn: Option.Option<SignInState>;
+}
+
 /** The connector's status, as the operator sees it: a bot is offered its tools only while it is connected. */
 export const statusOfConnector = (
   connector: StoredConnector,
-  seen: Seen,
-  secretsUnavailable: boolean,
-  signIn: Option.Option<SignInState>,
+  state: ConnectorState,
 ): ConnectorStatus =>
   statusOf({
     secretsUnavailable:
-      secretsUnavailable || Option.exists(signIn, (state) => state._tag === "secrets-unavailable"),
-    signIn: signInNeedOf(connector, seen, signIn),
-    failing: seen.failing,
+      state.secretsUnavailable ||
+      Option.exists(state.signIn, (signIn) => signIn._tag === "secrets-unavailable"),
+    secretNeed: state.secretNeed,
+    signIn: signInNeedOf(connector, state.seen, state.signIn),
+    failing: state.seen.failing,
   });
 
-export const connectorOf = (
-  connector: StoredConnector,
-  seen: Seen,
-  secretsUnavailable: boolean,
-  signIn: Option.Option<SignInState>,
-): Connector => {
-  const signedIn = Option.filter(signIn, (state) => state._tag === "signed-in");
+export const connectorOf = (connector: StoredConnector, state: ConnectorState): Connector => {
+  const { seen, signIn } = state;
+  const signedIn = Option.filter(signIn, (current) => current._tag === "signed-in");
   return {
     id: connector.id,
     name: connector.name,
@@ -126,17 +132,17 @@ export const connectorOf = (
     transport: connector.transport,
     signIn: connector.signIn,
     fields: connector.fields,
-    status: statusOfConnector(connector, seen, secretsUnavailable, signIn),
+    status: statusOfConnector(connector, state),
     grant: connector.grant,
     account: Option.match(signedIn, {
       onNone: () => null,
-      onSome: (state) => (state._tag === "signed-in" ? state.account : null),
+      onSome: (current) => (current._tag === "signed-in" ? current.account : null),
     }),
     signedInAt:
       connector.signIn === "oauth"
         ? Option.match(signedIn, {
             onNone: () => null,
-            onSome: (state) => (state._tag === "signed-in" ? state.signedInAt : null),
+            onSome: (current) => (current._tag === "signed-in" ? current.signedInAt : null),
           })
         : connector.signedInAt,
     tools: offeredOf(connector, seen).map(toolOf),

@@ -4,6 +4,7 @@ import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import {
   answerOf,
@@ -13,6 +14,9 @@ import {
   serverEnvironment,
 } from "../testing/stdioFixture.ts";
 import { openCommandSession } from "./session.ts";
+
+/** A secret's value the command line carries, as a reference in its arguments resolves to. */
+const ARGUMENT_SECRET = "argument-secret-value";
 
 const decodeNames = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
@@ -32,7 +36,8 @@ describe("openCommandSession", () => {
             }),
         );
         const { session } = yield* openCommandSession({
-          ...fixtureOptions(["--tool", "extra"]),
+          ...fixtureOptions(["--tool", "extra", "--key", ARGUMENT_SECRET]),
+          hidden: [Redacted.make(ARGUMENT_SECRET)],
           onListChanged: () => Effect.void,
         });
         // The line the fixture writes before any message is skipped.
@@ -55,13 +60,16 @@ describe("openCommandSession", () => {
           );
         }
 
-        // A value the operator gave is scrubbed from what the server answers; its arguments are not.
+        // A value the operator gave is scrubbed from what the server answers, and so is a
+        // secret's value in its arguments; its other arguments are not.
         const echoed = yield* answerOf(session, "echo", { name: "FIXTURE_SECRET" });
         assert.notInclude(echoed, OPERATOR_SECRET);
         assert.include(echoed, "[redacted]");
         assert.deepStrictEqual(decodeNames(yield* answerOf(session, "arguments")), [
           "--tool",
           "extra",
+          "--key",
+          "[redacted]",
         ]);
       }).pipe(Effect.scoped),
     30_000,

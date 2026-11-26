@@ -1,6 +1,6 @@
 # 0049: The bots manage MCP servers and skills
 
-**Status:** Accepted
+**Status:** Accepted. Amended for [#289](https://github.com/JPSAUD501/j3-bots/issues/289): a connector's secret references resolve for the connector, and granting it checks them.
 
 ## Context
 
@@ -21,7 +21,8 @@ What the pieces allow:
 - **Who may do what.** The primary bot manages every server and skill: its own, any other bot's, and those for every bot. Every other bot manages only its own: a server whose bots are itself alone, and the skills in its own workspace. The server checks this on every call, for the bot whose turn the call is matched to. The operator does all of it from Settings → MCP and skills, on every client.
 - **The tools.** `search_mcp_servers` and `list_mcp_servers`, `list_skills`: read only, and pre-approved as J3 Bots' other reading tools are. `add_mcp_server`, `update_mcp_server`, `remove_mcp_server`, `set_mcp_server_bots` (primary only), `save_skill`, `install_skill` and `remove_skill`: not pre-approved. Each call is matched to the bot's running turn as a connector call is, so it acts once and only for that turn, and a call the operator declined does nothing.
 - **A new server is for every bot when the primary bot adds it**, and for the bot that adds it otherwise; the primary bot can name one bot. An address in the operator's own network, and a gallery entry that needs an app the operator registers, are added from Settings only: both need the operator's own word.
-- **A key is a reference, never a value.** A value a server needs (a header, an argument, a variable) may be written `${secret:<name>}`; the server resolves it when it makes the request or starts the process, for the bot the call is for, through Secrets ([decision 0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md)). A bot asks the operator for a secret it lacks with Secrets' own tool; it never types or pastes one.
+- **A key is a reference, never a value.** A value a server needs (a header, an argument, a variable) may be written `${secret:<name>}`, never in its address; the server resolves it when it makes the request or starts the process, through Secrets ([decision 0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md)). A bot asks the operator for a secret it lacks with Secrets' own tool; it never types or pastes one.
+- **A reference resolves for the connector, not for each call.** A connector's listing, its bots' sessions and a command's one process send the same settings, so a connector whose settings reference a secret may go only to bots that may all use it, by the secret's own rule. Every path that grants checks it: the operator in Settings, a bot's add, change and share tools, and the default of every bot, which a secret some bots may use never covers. A refusal names the secret and what is wrong (missing, no value, not shared), and a bot may reference only a secret it may use itself. Granting the secret later makes the connector usable without adding it again. A secret deleted, emptied or narrowed after makes the connector report it as its status and send nothing: no reference reaches a server as text, and no value reaches a client, a log, an error or a bot. A new value restarts the process and reconnects the sessions.
 - **A sign-in is the operator's.** A server that needs an OAuth sign-in is added, and its sign-in goes to the operator as a card in that bot's conversation; the tool answers that it waits for it.
 - **Skills are Agent Skills**: a folder with a `SKILL.md` whose frontmatter names it and says when it applies, and the files beside it. A bot's own live in its workspace's `skills/`, and the server links each one into the folders each harness reads in that workspace; shared ones in the shared skills, linked into each harness home at once, not only at the engine's next start. A skill is saved from text or from a folder of the bot's workspace, or installed from a public git repository at one commit, which is recorded: fetched over HTTPS, with nothing in it run and no link in it followed. The names and sizes are a template's ([decision 0023](0023-a-bot-template-is-a-file.md)), and a bot's skill cannot take the name of a shared one, nor the reverse: Claude Code would list only one.
 - **Every change says who made it and when**: the operator or which bot. A bot's change shows as a step of its work, its removal included, and the last change beside the server or skill in Settings while it exists.
@@ -34,6 +35,8 @@ What the pieces allow:
 - **Two more tables' worth of records** (who changed each server and skill), and the base prompt grows by a section every bot pays for.
 
 ## What was rejected
+
+- **One command process per bot, so each resolves its references for its own bot.** It multiplies what a command server costs, in memory and starts, to keep apart what the grant check already keeps apart.
 
 - **A confirmation card of J3 Bots' own for each change.** The harnesses already ask in Supervised and review in Auto; a second gate would ask twice there and override the operator's choice of Full access.
 - **Every bot manages everything.** A bot the operator made for one task could then reshape what every other bot reaches.

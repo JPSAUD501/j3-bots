@@ -66,13 +66,7 @@ import {
 } from "./ConnectorSecret.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
 import Migration0002 from "./migrations/0002_secrets.ts";
-import {
-  nameFromLabel,
-  referencesIn,
-  referenceText,
-  replaceReferences,
-  type SecretReference,
-} from "./references.ts";
+import { accessCovers, nameFromLabel, referenceText, type SecretReference } from "./references.ts";
 import { parseTotpSetup, TotpConfig, totpAt } from "./totp.ts";
 
 /** The secrets' file, inside their own folder of the home. */
@@ -178,7 +172,7 @@ const notReady = () => new Conflict({ reason: "secrets-unavailable" });
  * value: a connector reports it as its call's failure.
  *
  * - `missing`: no secret has that name;
- * - `not-allowed`: the bot the call is for may not use it;
+ * - `not-allowed`: a bot that would use it may not;
  * - `no-value`: the reference names a value it does not have, such as a
  *   single value's user name;
  * - `unavailable`: the secrets cannot be read now (`SecretsState`), or the
@@ -283,17 +277,25 @@ export class Secrets extends Context.Service<
       readonly use: SecretUse;
     }) => Effect.Effect<void, Conflict>;
     /**
-     * `text`, a connector's header, argument or environment value, with each
-     * reference to a secret (`${secret:<name>}`) replaced by its value, for
-     * a call made for `botId`: every one it names must be a secret that bot
-     * may use. Records each secret's use at `use`. Text without a reference
-     * comes back as it is. Never logs the text or a value.
+     * The value of each of `references`, keyed by its text (`referenceText`),
+     * for a connector that `users` use: each must name a secret every one of
+     * them may use, with the value it names. Records no use: the server
+     * resolves a connector's settings once for all its bots, and records a
+     * bot's use when its call goes out (`noteUse`). Never logs a value.
      */
-    readonly resolve: (input: {
+    readonly referenceValues: (input: {
+      readonly references: ReadonlyArray<SecretReference>;
+      readonly users: SecretAccess;
+    }) => Effect.Effect<ReadonlyMap<string, Redacted.Redacted<string>>, SecretUnavailable>;
+    /**
+     * Records that `botId` used the secrets named `names` at `use`. A name no
+     * secret has is passed over.
+     */
+    readonly noteUse: (input: {
+      readonly names: ReadonlyArray<SecretName>;
       readonly botId: BotId;
-      readonly text: string;
       readonly use: SecretUse;
-    }) => Effect.Effect<Redacted.Redacted<string>, SecretUnavailable>;
+    }) => Effect.Effect<void, Conflict>;
     /**
      * What connectors need to reach their servers: OAuth clients and tokens,
      * headers and environment values. Not a secret of the operator's list,
@@ -1238,13 +1240,12 @@ export const layer = Layer.effect(
         }),
       );
 
-    /** One reference's value, for `botId`. */
+    /** One reference's value, for a connector `users` use. */
     const referenceValue = Effect.fn("Secrets.referenceValue")(function* (
       sql: SqlClient.SqlClient,
       key: Uint8Array,
-      botId: BotId,
+      users: SecretAccess,
       reference: SecretReference,
-      use: SecretUse,
       known: ReadonlySet<string>,
     ) {
       const unavailable = (reason: SecretUnavailable["reason"]) =>
@@ -1254,7 +1255,7 @@ export const layer = Layer.effect(
       const secret = yield* secretById(sql, key, id.value, known).pipe(
         Effect.mapError(() => unavailable("unavailable")),
       );
-      if (!accessAllows(secret.access, botId)) return yield* unavailable("not-allowed");
+      if (!accessCovers(secret.access, users)) return yield* unavailable("not-allowed");
       const field: SealedField | null =
         secret.kind._tag === "value"
           ? reference.field === null
@@ -1267,35 +1268,44 @@ export const layer = Layer.effect(
           unavailable(error._tag === "NotFound" ? "no-value" : "unavailable"),
         ),
       );
-      yield* noteUse(sql, secret.id, botId, use);
-      return text(opened);
+      return Redacted.make(text(opened));
     });
 
-    const resolve = (input: {
-      readonly botId: BotId;
-      readonly text: string;
-      readonly use: SecretUse;
+    const referenceValues = (input: {
+      readonly references: ReadonlyArray<SecretReference>;
+      readonly users: SecretAccess;
     }) =>
       serialKnowing((known) =>
         Effect.gen(function* () {
-          const references = referencesIn(input.text);
-          const [first] = references;
-          if (first === undefined) return Redacted.make(input.text);
+          const values = new Map<string, Redacted.Redacted<string>>();
+          const [first] = input.references;
+          if (first === undefined) return values;
           const { sql, key } = yield* ready.pipe(
             Effect.mapError(
               () => new SecretUnavailable({ secret: first.name, reason: "unavailable" }),
             ),
           );
-          const values = new Map<string, string>();
-          for (const reference of references) {
+          for (const reference of input.references) {
             const found = referenceText(reference);
             if (values.has(found)) continue;
-            values.set(
-              found,
-              yield* referenceValue(sql, key, input.botId, reference, input.use, known),
-            );
+            values.set(found, yield* referenceValue(sql, key, input.users, reference, known));
           }
-          return Redacted.make(replaceReferences(input.text, values));
+          return values;
+        }),
+      );
+
+    const noteUses = (input: {
+      readonly names: ReadonlyArray<SecretName>;
+      readonly botId: BotId;
+      readonly use: SecretUse;
+    }) =>
+      serial(
+        Effect.gen(function* () {
+          const { sql } = yield* ready;
+          for (const name of new Set(input.names)) {
+            const id = yield* idNamed(sql, name);
+            if (Option.isSome(id)) yield* noteUse(sql, id.value, input.botId, input.use);
+          }
         }),
       );
 
@@ -1412,7 +1422,8 @@ export const layer = Layer.effect(
       totpPreview,
       fillValue,
       filled,
-      resolve,
+      referenceValues,
+      noteUse: noteUses,
       connectorSecrets: {
         get: connectorSecret,
         put: putConnectorSecret,

@@ -3,6 +3,7 @@ import {
   type BotId,
   CommandId,
   type CommandError,
+  type ConnectorCommandError,
   type EntryId,
   type RoomId,
 } from "@j3-bots/contracts";
@@ -27,16 +28,28 @@ export type IntentFailure =
   /** The server failed unexpectedly. Its cause is in the server's log. */
   | { readonly _tag: "unexpected" };
 
-export type IntentResult<A = void> =
+export type IntentResult<A = void, F = IntentFailure> =
   | { readonly _tag: "done"; readonly value: A }
-  | { readonly _tag: "failed"; readonly failure: IntentFailure };
+  | { readonly _tag: "failed"; readonly failure: F };
+
+/** A connector command's refusal over a secret its settings name (`SecretRefused`). */
+type SecretRefused = Extract<ConnectorCommandError, { readonly _tag: "SecretRefused" }>;
+
+/**
+ * Why a connector intent that sets what a connector sends, or which bots it
+ * goes to, did not take effect: any intent's reasons, or a secret its
+ * settings name that those bots cannot use.
+ */
+export type ConnectorIntentFailure =
+  | IntentFailure
+  | { readonly _tag: "secret-refused"; readonly error: SecretRefused };
 
 /** A reason the server gives when it refuses a command as it stands (`Conflict`, `Invalid`). */
 export type RefusalReason = Extract<CommandError, { readonly reason: string }>["reason"];
 
 /** Whether the server refused the command for `reason`. */
 export const refusedWith = (
-  outcome: IntentResult<unknown> | IntentFailure | null,
+  outcome: IntentResult<unknown, ConnectorIntentFailure> | ConnectorIntentFailure | null,
   reason: RefusalReason,
 ): boolean => {
   const failure = outcome?._tag === "failed" ? outcome.failure : outcome;
@@ -45,6 +58,32 @@ export const refusedWith = (
     failure.error._tag !== "NotFound" &&
     failure.error.reason === reason
   );
+};
+
+/** The secret the server refused a connector command over, if it did. */
+export const secretRefusal = (
+  outcome: IntentResult<unknown, ConnectorIntentFailure> | ConnectorIntentFailure | null,
+): SecretRefused | null => {
+  const failure = outcome?._tag === "failed" ? outcome.failure : outcome;
+  return failure?._tag === "secret-refused" ? failure.error : null;
+};
+
+/** The result of running a connector command that may be refused over a secret. */
+export const connectorIntentResult = <A>(
+  exit: Exit.Exit<A, ConnectorCommandError | NotPaired>,
+): IntentResult<A, ConnectorIntentFailure> => {
+  if (Exit.isSuccess(exit)) return { _tag: "done", value: exit.value };
+  const error = Cause.findErrorOption(exit.cause);
+  if (error._tag === "None") return { _tag: "failed", failure: { _tag: "unexpected" } };
+  const value = error.value;
+  switch (value._tag) {
+    case "NotPaired":
+      return { _tag: "failed", failure: { _tag: "not-paired" } };
+    case "SecretRefused":
+      return { _tag: "failed", failure: { _tag: "secret-refused", error: value } };
+    default:
+      return { _tag: "failed", failure: { _tag: "refused", error: value } };
+  }
 };
 
 /** Why a command failed, for a UI that shows outcomes rather than causes. */

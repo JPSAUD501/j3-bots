@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { SecretName } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
@@ -9,18 +10,29 @@ const first = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
 const later = DateTime.makeUnsafe("2026-11-20T12:05:00Z");
 
 describe("statusOf", () => {
-  it("puts unreadable secrets before a sign-in, and a sign-in before a failing server", () => {
+  it("puts unreadable secrets before a secret it needs, that before a sign-in, and a sign-in before a failing server", () => {
     const failing = Option.some({ reason: "unreachable" as const, since: first });
-    expect(
-      statusOf({ secretsUnavailable: true, signIn: Option.some("expired"), failing })._tag,
-    ).toBe("secrets-unavailable");
-    expect(
-      statusOf({ secretsUnavailable: false, signIn: Option.some("expired"), failing }),
-    ).toEqual({
+    const need = Option.some({
+      secret: SecretName.make("tracker-token"),
+      reason: "not-shared" as const,
+    });
+    const signIn = Option.some("expired" as const);
+    expect(statusOf({ secretsUnavailable: true, secretNeed: need, signIn, failing })._tag).toBe(
+      "secrets-unavailable",
+    );
+    expect(statusOf({ secretsUnavailable: false, secretNeed: need, signIn, failing })).toEqual({
+      _tag: "needs-secret",
+      secret: "tracker-token",
+      reason: "not-shared",
+    });
+    const none = Option.none();
+    expect(statusOf({ secretsUnavailable: false, secretNeed: none, signIn, failing })).toEqual({
       _tag: "needs-sign-in",
       reason: "expired",
     });
-    expect(statusOf({ secretsUnavailable: false, signIn: Option.none(), failing })).toEqual({
+    expect(
+      statusOf({ secretsUnavailable: false, secretNeed: none, signIn: Option.none(), failing }),
+    ).toEqual({
       _tag: "failing",
       reason: "unreachable",
       since: first,

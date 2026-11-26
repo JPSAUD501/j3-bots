@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
+import { SecretName } from "./secrets.ts";
 
 /**
  * The request carried no device credential, or one that is unknown, expired or
@@ -213,6 +214,35 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
   }
 }
 
+/**
+ * A connector's settings name a secret (`${secret:<name>}`) that cannot be
+ * used as they are written. Nothing changed. `problem`:
+ * - `missing`: no secret has that name;
+ * - `no-value`: the secret has no such value, as a single value's user name;
+ * - `not-shared`: a bot the connector would go to may not use it: the
+ *   operator shares it with that bot in Secrets, or narrows who uses the
+ *   connector;
+ * - `not-yours`: the bot that wrote the settings may not use it itself;
+ * - `in-address`: it is in the connector's address, where no reference is
+ *   resolved: one goes in a header, an argument or an environment value.
+ */
+export class SecretRefused extends Schema.TaggedError<SecretRefused>()("SecretRefused", {
+  secret: SecretName,
+  problem: Schema.Literals(["missing", "no-value", "not-shared", "not-yours", "in-address"]),
+}) {
+  override get message(): string {
+    return `The connector cannot use the secret "${this.secret}": ${this.problem}.`;
+  }
+}
+
 /** What a command can fail with. */
 export const CommandError = Schema.Union([NotFound, Conflict, Invalid]);
 export type CommandError = typeof CommandError.Type;
+
+/**
+ * What a connector command that sets what a connector sends, or which bots
+ * it goes to, can fail with: any command's errors, and a secret its settings
+ * name that those bots cannot use.
+ */
+export const ConnectorCommandError = Schema.Union([NotFound, Conflict, Invalid, SecretRefused]);
+export type ConnectorCommandError = typeof ConnectorCommandError.Type;

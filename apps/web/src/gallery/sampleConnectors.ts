@@ -18,6 +18,7 @@ import {
   FieldKey,
   type ListingRef,
   RegistryName,
+  SecretName,
   SetupPageUrl,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
@@ -304,6 +305,18 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     status: { _tag: "secrets-unavailable" },
     grant: { _tag: "bots", ids: [ids.pip] },
     tools: [tool("lights", "Lights", "Turns the lights in a room on or off.")],
+  },
+  {
+    ...base,
+    id: connectorId("weather"),
+    name: "Weather station",
+    publisher: { _tag: "operator" },
+    listing: null,
+    transport: { _tag: "remote", origin: ConnectorOrigin.make("https://weather.example.net") },
+    signIn: "none",
+    status: { _tag: "needs-secret", secret: SecretName.make("weather-key"), reason: "not-shared" },
+    grant: { _tag: "bots", ids: [ids.atlas, ids.pip] },
+    tools: [tool("forecast", "Forecast", "Tells the forecast for the days ahead.")],
   },
 ];
 

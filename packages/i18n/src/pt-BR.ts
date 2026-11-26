@@ -1895,6 +1895,15 @@ const sentences = {
   "connector.status.needsSignIn": "Precisa entrar",
   "connector.status.failing": "Sem acesso",
   "connector.status.secretsUnavailable": "Segredos indisponíveis",
+  "connector.status.needsSecret": "Precisa de um segredo",
+  "connector.status.secretMissing":
+    "As configurações dele usam o segredo {secret}, e você não tem um segredo com esse nome. Os bots não podem usá-lo até você salvar um em Segredos.",
+  "connector.status.secretNoValue":
+    "As configurações dele usam um valor que o segredo {secret} não tem. Os bots não podem usá-lo até você mudá-las.",
+  "connector.status.secretNotShared":
+    "Nem todo bot que o usa pode usar o segredo {secret}. Compartilhe o segredo com eles em Segredos, ou escolha menos bots aqui.",
+  "connector.status.secretOther":
+    "As configurações dele usam o segredo {secret}, que ele não pode usar agora.",
   "connector.status.notSignedIn": "Você ainda não entrou.",
   "connector.status.expired": "A sessão acabou. Os bots não podem usá-lo até você entrar de novo.",
   "connector.status.rejected":
@@ -2003,6 +2012,15 @@ const sentences = {
     "Este comando roda um pacote sem versão exata. Indique uma, como @scope/server@1.2.3 ou server==1.2.3.",
   "connect.failed.secretsUnavailable":
     "Os conectores guardam o acesso nos seus segredos, que não podem ser lidos agora. Abra Segredos para ver por quê.",
+  "connect.failed.secretMissing":
+    "Você não tem um segredo chamado {secret}. Salve-o em Segredos e tente de novo.",
+  "connect.failed.secretNoValue":
+    "O segredo {secret} não tem esse valor: um valor único não tem nome de usuário.",
+  "connect.failed.secretNotShared":
+    "Nem todo bot que você escolheu pode usar o segredo {secret}. Compartilhe-o com eles em Segredos, ou escolha menos bots.",
+  "connect.failed.secretNotYours": "O bot que faz essa mudança não pode usar o segredo {secret}.",
+  "connect.failed.secretInAddress":
+    "Um segredo vai num cabeçalho ou numa variável, não no endereço, onde o J3 Bots não o preenche.",
   "connect.openSecrets": "Abrir Segredos",
   "connect.failed.offline": "O servidor está offline. Tente de novo quando ele voltar.",
   "connect.done.one": "Conectado. {name} pode usá-lo a partir da próxima vez que trabalhar.",

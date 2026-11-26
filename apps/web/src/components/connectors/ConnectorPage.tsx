@@ -9,6 +9,7 @@ import { useConnectorSignIn } from "@j3-bots/client-runtime/react";
 import {
   connectedText,
   connectFailureText,
+  secretRefusalText,
   publisherText,
   serverText,
   signedInText,
@@ -253,21 +254,27 @@ function GrantEditor({
   connected: boolean;
   intents: ConnectorsIntents;
 }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const [sending, setSending] = useState<ConnectorGrant | null>(null);
-  const [failed, setFailed] = useState(false);
+  // Why the last change did not take, in words: a secret the connector names, or that it failed.
+  const [failed, setFailed] = useState<string | null>(null);
   // The latest change owns the picker: an answer to one before it is not shown.
   const latest = useRef<ConnectorGrant | null>(null);
   const change = (grant: ConnectorGrant) => {
     if (sameGrant(grant, connector.grant) && sending === null) return;
     latest.current = grant;
     setSending(grant);
-    setFailed(false);
+    setFailed(null);
     void intents.setBots(connector.id, grant).then((result) => {
       if (latest.current !== grant) return;
       latest.current = null;
       setSending(null);
-      setFailed(result._tag === "failed");
+      setFailed(
+        result._tag === "failed"
+          ? (secretRefusalText(result.failure, i18n) ?? t("connector.bots.failed"))
+          : null,
+      );
     });
   };
   return (
@@ -283,9 +290,9 @@ function GrantEditor({
           {t("connector.bots.saving")}
         </p>
       )}
-      {failed && (
+      {failed !== null && (
         <p role="alert" className="text-xs text-blocked">
-          {t("connector.bots.failed")}
+          {failed}
         </p>
       )}
     </div>

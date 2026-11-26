@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MAX_SECRET_NAME_LENGTH, SecretName } from "@j3-bots/contracts";
+import { MAX_SECRET_NAME_LENGTH, type SecretAccess, SecretName } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 // How a bot names a secret it may use, and where the server puts its value
@@ -39,8 +40,25 @@ export const referencesIn = (text: string): ReadonlyArray<SecretReference> =>
  * `text` with each reference replaced by its value in `values`, keyed by the
  * reference's text (`referenceText`). One missing there stays as it is.
  */
-export const replaceReferences = (text: string, values: ReadonlyMap<string, string>): string =>
-  text.replace(REFERENCE, (whole: string) => values.get(whole) ?? whole);
+export const replaceReferences = (
+  text: string,
+  values: ReadonlyMap<string, Redacted.Redacted<string>>,
+): Redacted.Redacted<string> =>
+  Redacted.make(
+    text.replace(REFERENCE, (whole: string) => {
+      const value = values.get(whole);
+      return value === undefined ? whole : Redacted.value(value);
+    }),
+  );
+
+/**
+ * Whether a secret's `access` lets every one of `users` use it. One every
+ * bot may use covers anyone; one some bots may use covers only some of them,
+ * never every bot, which takes in the bots still to come.
+ */
+export const accessCovers = (access: SecretAccess, users: SecretAccess): boolean =>
+  access._tag === "every-bot" ||
+  (users._tag === "bots" && users.botIds.every((id) => access.botIds.includes(id)));
 
 /** The text of a reference as it appears, the key `replaceReferences` looks it up by. */
 export const referenceText = (reference: SecretReference): string =>
