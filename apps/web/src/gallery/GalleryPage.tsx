@@ -221,8 +221,24 @@ const shortcuts = shellShortcuts();
 /** The type scale's two sets: the one a page shows depends on its pointer, so both are drawn. */
 const typeInputs: ReadonlyArray<TypeInput> = ["pointer", "touch"];
 
+/**
+ * What the address asks to see alone: one section (`?section=first-run`), in
+ * it one frame by its label (`&frame=Welcome`), and the language it starts in
+ * (`&lang=pt-BR`). So one state can be looked at, measured or captured without
+ * the rest of the gallery moving on the page.
+ */
+const only = (() => {
+  const asked = new URLSearchParams(window.location.search);
+  const lang = asked.get("lang");
+  return {
+    section: asked.get("section"),
+    frame: asked.get("frame"),
+    locale: LANGUAGES.find((language) => language === lang) ?? "en",
+  };
+})();
+
 export default function GalleryPage() {
-  const [locale, setLocale] = useState<Language>("en");
+  const [locale, setLocale] = useState<Language>(only.locale);
   return (
     <I18nProvider locale={locale}>
       <ClockProvider now={SAMPLE_NOW}>
@@ -309,6 +325,7 @@ function Section({
   children: ReactNode | ((theme: keyof Themed) => ReactNode);
   stacked?: boolean;
 }) {
+  if (only.section !== null && only.section !== anchor(title)) return null;
   return (
     <section id={anchor(title)} className="flex scroll-mt-4 flex-col gap-3">
       <h2 className="display-type text-2xl">{title}</h2>
@@ -2521,6 +2538,7 @@ function Frame({
   children: ReactNode;
 }) {
   const [run, setRun] = useState(0);
+  if (only.frame !== null && only.frame !== label) return null;
   return (
     <Labeled label={label} className="max-w-full">
       <div
@@ -2588,6 +2606,15 @@ const noCopy = {
   installable: true,
   task: null,
   last: null,
+} as const;
+
+/** The server's own copies as they arrive: Claude Code half downloaded, Codex being checked. */
+const copiesArriving = {
+  "claude-code": {
+    ...noCopy,
+    task: { _tag: "downloading", receivedBytes: 96_000_000, totalBytes: 200_434_347 },
+  },
+  codex: { ...noCopy, task: { _tag: "verifying" } },
 } as const;
 
 const engines = {
@@ -2730,6 +2757,15 @@ const engines = {
     },
     { status: { _tag: "ready" }, copy: { ...noCopy, source: "j3", version: "0.172.0" } },
   ),
+  /** The engine running, both harnesses on their way: Claude Code half downloaded, Codex being checked. */
+  harnessesArriving: { ...team.engine, providers: [], harnesses: copiesArriving },
+  /** A new machine as its server starts: the engine and both harnesses downloading at once. */
+  allArriving: {
+    ...team.engine,
+    state: { _tag: "starting", install: { receivedBytes: 42_400_000, totalBytes: 180_200_000 } },
+    providers: [],
+    harnesses: copiesArriving,
+  },
   /** Claude Code's update waits for its bots; Codex's install failed its checksum. */
   copyWaitingAndFailed: engineWithCopies(
     {
@@ -3144,10 +3180,13 @@ function FirstRunAt({
   step,
   engine = team.engine,
   providerSetup,
+  starting = false,
 }: {
   step: OnboardingStep;
   engine?: EngineStatus | null;
   providerSetup?: LocalProviderSetup;
+  /** The server on this computer has not answered yet. */
+  starting?: boolean;
 }) {
   return (
     <Onboarding
@@ -3155,9 +3194,29 @@ function FirstRunAt({
       initialStep={step}
       initialName="Maya"
       providerSetup={providerSetup}
+      starting={starting}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
       providerActions={providerActions}
+    />
+  );
+}
+
+/**
+ * The first run on this computer while its harnesses arrive, which they do
+ * after a moment: the quiet line says the computer is ready, once, and goes.
+ */
+function FirstRunGettingReady() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const done = window.setTimeout(() => setReady(true), 3200);
+    return () => window.clearTimeout(done);
+  }, []);
+  return (
+    <FirstRunAt
+      step="mind"
+      engine={ready ? team.engine : engines.harnessesArriving}
+      providerSetup={localSetup(harnessesFound.both)}
     />
   );
 }
@@ -3170,8 +3229,19 @@ function FirstRunSection() {
   return (
     <Section title="First run">
       <div className="flex flex-wrap gap-4">
-        <Frame label="Welcome" width={390} height={760} replay>
+        <Frame label="Welcome: what J3 Bots is" width={390} height={760} replay>
           <FirstRunAt step="welcome" />
+        </Frame>
+        <Frame
+          label="What the bots do: the light goes round, a line each"
+          width={390}
+          height={760}
+          replay
+        >
+          <FirstRunAt step="work" />
+        </Frame>
+        <Frame label="What they think with: the lights down" width={390} height={760} replay>
+          <FirstRunAt step="mind" />
         </Frame>
         <Frame label="The first bot's name, with a default" width={390} height={760} replay>
           <FirstRunAt step="name" />
@@ -3235,6 +3305,26 @@ function FirstRunSection() {
         <Frame label="A provider connected while the step is read" width={390} height={760}>
           <FirstRunAt step="connect" />
         </Frame>
+        <Frame
+          label="Its look, with a provider: create it to see it arrive"
+          width={390}
+          height={760}
+          replay
+        >
+          <Onboarding
+            engine={team.engine}
+            initialStep="look"
+            initialName="Maya"
+            providerSetup={undefined}
+            onCreate={() =>
+              new Promise((resolve) =>
+                window.setTimeout(() => resolve({ _tag: "done", value: ids.scout }), 400),
+              )
+            }
+            onArrived={arrived}
+            providerActions={providerActions}
+          />
+        </Frame>
         <Frame label="The arrival, saying hello" width={390} height={760} replay>
           <FirstRunAt step="arrival" />
         </Frame>
@@ -3286,6 +3376,48 @@ function LocalFirstRunSection() {
   return (
     <Section title="First run on this computer">
       <div className="flex flex-wrap gap-4">
+        <Frame
+          label="Preparing this computer, before its server answers"
+          width={390}
+          height={760}
+          replay
+        >
+          <FirstRunAt
+            step="welcome"
+            engine={null}
+            providerSetup={localSetup(harnessesFound.both)}
+            starting
+          />
+        </Frame>
+        <Frame
+          label="Preparing: the engine and both harnesses downloading as the server starts"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="work"
+            engine={engines.allArriving}
+            providerSetup={localSetup(harnessesFound.both)}
+          />
+        </Frame>
+        <Frame label="Preparing: a download that doesn't say its size" width={390} height={760}>
+          <FirstRunAt
+            step="name"
+            engine={engines.downloadingNoTotal}
+            providerSetup={localSetup(harnessesFound.both)}
+          />
+        </Frame>
+        <Frame
+          label="Preparing: the harnesses arriving, then ready, said once"
+          width={390}
+          height={760}
+          replay
+        >
+          <FirstRunGettingReady />
+        </Frame>
+        <Frame label="Preparing a server elsewhere" width={390} height={760}>
+          <FirstRunAt step="look" engine={engines.harnessesArriving} />
+        </Frame>
         <Frame label="Both harnesses found: sign in with either" width={390} height={760}>
           <FirstRunAt
             step="connect"
@@ -3779,7 +3911,7 @@ function WhereBotsLiveSection() {
             engine={null}
             footer={<ConnectInstead onConnect={nothing} />}
             providerSetup={localSetup(harnessesFound.both)}
-            waiting={t("local.waiting")}
+            starting
             onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
             onArrived={arrived}
             providerActions={providerActions}
@@ -3795,7 +3927,7 @@ function WhereBotsLiveSection() {
             initialStep="look"
             initialName="Maya"
             providerSetup={localSetup(harnessesFound.both)}
-            waiting={t("local.waiting")}
+            starting
             onCreate={() => new Promise(() => {})}
             onArrived={arrived}
             providerActions={providerActions}

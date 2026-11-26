@@ -133,17 +133,30 @@ export {
 } from "./mentions.ts";
 export { type Inline, type MentionName, parseMessageText } from "./messageText.ts";
 export {
+  acrossStage,
   defaultBotName,
+  type Featured,
   FirstRunProgress,
-  makingProgress,
   nextStep,
   type OnboardingFlow,
   type OnboardingStep,
+  type GettingReady,
+  gettingReady,
+  readyingShare,
   previousStep,
   resumedStep,
   showsConnect,
+  type StageActor,
+  stageCast,
+  type StageLight,
+  stageLight,
   type StageScene,
   stageScene,
+  stepProgress,
+  tellsStory,
+  type WorkExample,
+  workExamples,
+  workTurn,
 } from "./onboarding.ts";
 export {
   notificationOpening,

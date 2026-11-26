@@ -57,10 +57,11 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0049](0049-the-bots-manage-mcp-servers-and-skills.md) | The bots manage MCP servers and skills | Accepted |
 | [0050](0050-bots-and-rooms-are-visible-or-hidden-and-the-operators-choice-wins.md) | Bots and rooms are visible or hidden, and the operator's choice wins | Accepted |
 | [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |
-| [0052](0052-motion-follows-palco.md) | Motion follows Palco: a stage for entrances, and motion that carries on | Accepted |
+| [0052](0052-motion-follows-palco.md) | Motion follows Palco: a stage for entrances, and motion that carries on | Accepted; the first run's steps, lights and finale amended by [0065](0065-the-first-run-tells-what-j3-bots-is-before-it-asks.md) |
 | [0055](0055-a-delegated-report-goes-back-to-its-audience.md) | A delegated task's report goes back to the audience that delegated it | Accepted |
 | [0062](0062-a-home-moves-as-an-export.md) | A home moves as an export: secrets sealed under a passphrase, sessions left behind | Accepted |
 | [0064](0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md) | The harnesses install as the server starts, and fail with the true reason | Accepted |
+| [0065](0065-the-first-run-tells-what-j3-bots-is-before-it-asks.md) | The first run tells what J3 Bots is before it asks, in a light drawn as light | Accepted |
 | [0067](0067-a-first-contact-is-a-paced-hello-not-a-setup.md) | A bot's first contact is a hello in a few paced messages, not a setup | Accepted |
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
 

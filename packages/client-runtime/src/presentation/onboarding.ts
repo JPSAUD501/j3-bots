@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { AvatarChoice, type EngineStatus, type Language } from "@j3-bots/contracts";
+import { avatarCast } from "@j3-bots/design-tokens";
 import * as Schema from "effect/Schema";
-import { providerGate } from "./engine.ts";
+import { preparation, type PreparationItem, providerGate } from "./engine.ts";
 
 /**
  * The first run, one thing per screen, from the welcome to the first bot's
  * arrival; its conversation opens after it.
- * - `welcome`: what bots are;
+ * - `welcome`, `work` and `mind`: what J3 Bots is, before anything is asked: a
+ *   small team of bots of the operator's own, what they do day to day, and
+ *   what they think with, which is what J3 Bots installs;
  * - `name` and `look`: the first bot, each with a default, so Continue always works;
  * - `connect`: only while no provider can run the bot. It never holds the bot
  *   back: the bot is created anyway, and says hello once a provider can run it;
  * - `arrival`: the bot is being created, and then it is here.
  */
-export type OnboardingStep = "welcome" | "name" | "look" | "connect" | "arrival";
+const onboardingSteps = ["welcome", "work", "mind", "name", "look", "connect", "arrival"] as const;
+export type OnboardingStep = (typeof onboardingSteps)[number];
 
 /** Which of the steps that come only when needed the first run shows. */
 export interface OnboardingFlow {
@@ -32,13 +36,8 @@ export const showsConnect = (engine: EngineStatus | null, shown: boolean): boole
   engine.state._tag !== "ready" ||
   providerGate(engine)._tag !== "ready";
 
-const order = (flow: OnboardingFlow): ReadonlyArray<OnboardingStep> => [
-  "welcome",
-  "name",
-  "look",
-  ...(flow.connect ? (["connect"] as const) : []),
-  "arrival",
-];
+const order = (flow: OnboardingFlow): ReadonlyArray<OnboardingStep> =>
+  onboardingSteps.filter((step) => step !== "connect" || flow.connect);
 
 /** The step after `at`; null after the arrival, when the conversation opens. */
 export const nextStep = (at: OnboardingStep, flow: OnboardingFlow): OnboardingStep | null => {
@@ -53,16 +52,82 @@ export const previousStep = (at: OnboardingStep, flow: OnboardingFlow): Onboardi
   return steps[steps.indexOf(at) - 1] ?? null;
 };
 
-/** The steps that make the bot, each a dot in the progress: where `at` is among them, and how many. */
-export const makingProgress = (
+/**
+ * Whether `step` is one of the story's: it tells and asks nothing, with the
+ * whole cast on the stage. The steps after it are about the one bot being made.
+ */
+export const tellsStory = (step: OnboardingStep): boolean =>
+  step === "welcome" || step === "work" || step === "mind";
+
+/** Every step before the arrival is a dot in the progress: where `at` is among them, and how many. */
+export const stepProgress = (
   at: OnboardingStep,
   flow: OnboardingFlow,
 ): { readonly index: number; readonly count: number } | null => {
-  const making: ReadonlyArray<OnboardingStep> = order(flow).filter(
-    (step) => step !== "welcome" && step !== "arrival",
-  );
-  const index = making.indexOf(at);
-  return index === -1 ? null : { index, count: making.length };
+  const steps: ReadonlyArray<OnboardingStep> = order(flow).filter((step) => step !== "arrival");
+  const index = steps.indexOf(at);
+  return index === -1 ? null : { index, count: steps.length };
+};
+
+/** One of the bots on the first run's stage. */
+export interface StageActor {
+  readonly look: AvatarChoice;
+  /** In px. */
+  readonly size: number;
+  /** Where it stands across the stage, in % of its width. */
+  readonly x: number;
+  /** How far upstage it stands: each step back is a little higher. */
+  readonly depth: 0 | 1 | 2;
+}
+
+/** The cast's look at `index`: the first is the one the first bot starts with. */
+const castLook = (index: number): AvatarChoice =>
+  avatarCast[index % avatarCast.length] ?? avatarCast[0];
+
+/**
+ * The cast: the lead, which becomes the bot being made, at the front in the
+ * middle, and four more around and behind it, in the order they come in.
+ */
+export const stageCast: readonly [StageActor, ...ReadonlyArray<StageActor>] = [
+  { look: castLook(0), size: 96, x: 50, depth: 0 },
+  { look: castLook(3), size: 60, x: 16, depth: 1 },
+  { look: castLook(1), size: 64, x: 84, depth: 1 },
+  { look: castLook(2), size: 50, x: 31, depth: 2 },
+  { look: castLook(5), size: 46, x: 70, depth: 2 },
+];
+
+/** The cast from one side of the stage to the other, as places in `stageCast`. */
+export const acrossStage: ReadonlyArray<number> = [...stageCast.keys()].sort(
+  (a, b) => (stageCast[a]?.x ?? 0) - (stageCast[b]?.x ?? 0),
+);
+
+/**
+ * What the bots do for the operator day to day, one example each, in the
+ * order the `work` step's light visits them: one bot across the stage for each,
+ * and the whole cast for the last.
+ */
+export const workExamples = [
+  "files",
+  "research",
+  "writing",
+  "routines",
+  "watch",
+  "together",
+] as const;
+export type WorkExample = (typeof workExamples)[number];
+
+/** Who has the light for an example: a place in `stageCast`, or everyone. */
+export type Featured = number | "all";
+
+/**
+ * The `work` step's turn `turn`, counted from 0 as the step shows and going
+ * round: the example it is about, and who has the light for it.
+ */
+export const workTurn = (
+  turn: number,
+): { readonly example: WorkExample; readonly featured: Featured } => {
+  const at = Math.abs(Math.trunc(turn)) % workExamples.length;
+  return { example: workExamples[at] ?? workExamples[0], featured: acrossStage[at] ?? "all" };
 };
 
 /**
@@ -76,8 +141,17 @@ export interface StageScene {
    * made, `finale` pulled back a little past wide as the bot arrives.
    */
   readonly camera: "wide" | "close" | "finale";
-  /** The rest of the cast: in their lights, or standing back in the dark, watching. */
-  readonly cast: "lit" | "dim";
+  /**
+   * The cast's lights:
+   * - `lit`: each bot in its own;
+   * - `turns`: one bot at a time has the light, the others stand in what
+   *   spills from it (`workTurn` says whose turn it is);
+   * - `thinking`: every bot thinks, under the one light the whole cast
+   *   shares, wide and cool, in place of its own;
+   * - `dim`: only the bot being made is lit, the others stand back in the
+   *   dark, watching.
+   */
+  readonly cast: "lit" | "turns" | "thinking" | "dim";
   /** The lead's light: `tight` while the operator fills in a form, so the form has the eye. */
   readonly spot: "open" | "tight";
   /** Whether the bot being made wears its name. */
@@ -89,6 +163,10 @@ export const stageScene = (step: OnboardingStep, created: boolean): StageScene =
   switch (step) {
     case "welcome":
       return { camera: "wide", cast: "lit", spot: "open", named: false };
+    case "work":
+      return { camera: "wide", cast: "turns", spot: "open", named: false };
+    case "mind":
+      return { camera: "wide", cast: "thinking", spot: "open", named: false };
     case "name":
     case "look":
       return { camera: "close", cast: "dim", spot: "open", named: true };
@@ -102,12 +180,39 @@ export const stageScene = (step: OnboardingStep, created: boolean): StageScene =
 };
 
 /**
+ * How a bot on the stage is lit in a scene:
+ * - `key`: in its own light, at full strength;
+ * - `fill`: in its own light, softer, as the cast around the lead;
+ * - `spill`: in no light of its own, only what spills from another's;
+ * - `shared`: under the one light the whole cast shares.
+ */
+export type StageLight = "key" | "fill" | "spill" | "shared";
+
+/**
+ * The light on the bot at `place` in `stageCast`, in `scene`; `featured` is
+ * who has the light while the cast takes turns.
+ */
+export const stageLight = (scene: StageScene, place: number, featured: Featured): StageLight => {
+  const lead = place === 0;
+  switch (scene.cast) {
+    case "lit":
+      return lead ? "key" : "fill";
+    case "turns":
+      return featured === "all" || featured === place ? "key" : "spill";
+    case "thinking":
+      return "shared";
+    case "dim":
+      return lead ? "key" : "spill";
+  }
+};
+
+/**
  * What a first run left off at, kept by the device so that leaving it, a
  * closed tab or an app put away, does not start it over: the step, the name
  * typed if any, and the look picked.
  */
 export const FirstRunProgress = Schema.Struct({
-  step: Schema.Literals(["welcome", "name", "look", "connect", "arrival"]),
+  step: Schema.Literals(onboardingSteps),
   name: Schema.NullOr(Schema.String),
   look: AvatarChoice,
 });
@@ -121,6 +226,79 @@ export type FirstRunProgress = typeof FirstRunProgress.Type;
  */
 export const resumedStep = (step: OnboardingStep, flow: OnboardingFlow): OnboardingStep =>
   step !== "arrival" && order(flow).includes(step) ? step : "look";
+
+/**
+ * What the first run's one line says of what the server installs before a bot
+ * can run on it (`preparation`): the engine it downloads on its first start
+ * and its own copies of the harnesses, which start downloading together as
+ * the server starts.
+ * - `preparing`: something is on its way. `fraction` is how far all of it is,
+ *   from 0 to 1, while something downloads; null while nothing does, as an
+ *   engine that only starts, while a size is not known, or before the server
+ *   has said anything;
+ * - `ready`: the engine runs and nothing the server installs is missing;
+ * - `idle`: neither can be said: the server has not reported, its engine is
+ *   not running for a reason that does not pass by itself, or an install
+ *   failed or was never started, which the connect step says.
+ */
+export type GettingReady =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "preparing"; readonly fraction: number | null }
+  | { readonly _tag: "ready" };
+
+/** How far one thing the server installs is, from 0 to 1; null while it downloads without saying its size. */
+const itemShare = ({ state, receivedBytes, totalBytes }: PreparationItem): number | null =>
+  state !== "downloading"
+    ? 1
+    : totalBytes === null || totalBytes === 0
+      ? null
+      : Math.min(1, receivedBytes / totalBytes);
+
+/**
+ * What the line says now (`GettingReady`), from the status the clients
+ * already read. `starting` is what only the device knows: that its server is
+ * starting and has not answered yet, as on the computer that runs it.
+ */
+export const gettingReady = (engine: EngineStatus | null, starting: boolean): GettingReady => {
+  if (engine === null) return starting ? { _tag: "preparing", fraction: null } : { _tag: "idle" };
+  const { items } = preparation(engine);
+  const underWay = items.some(
+    ({ state }) => state === "starting" || state === "downloading" || state === "installing",
+  );
+  if (!underWay) {
+    // A server older than `EngineStatus.harnesses` says a missing harness only on its provider.
+    const missing = engine.providers.some(
+      ({ copy }) => copy !== undefined && copy.source === "none" && copy.installable,
+    );
+    const ready =
+      engine.state._tag === "ready" && !missing && items.every(({ state }) => state === "ready");
+    return { _tag: ready ? "ready" : "idle" };
+  }
+  if (!items.some(({ state }) => state === "downloading")) {
+    return { _tag: "preparing", fraction: null };
+  }
+  // Of what is on its way and what is there already; one that failed or never started is the
+  // connect step's to say, and holds the share of the rest back by nothing.
+  let sum = 0;
+  let counted = 0;
+  for (const item of items) {
+    if (item.state === "waiting" || item.state === "failed") continue;
+    const share = itemShare(item);
+    if (share === null) return { _tag: "preparing", fraction: null };
+    sum += share;
+    counted += 1;
+  }
+  return { _tag: "preparing", fraction: sum / counted };
+};
+
+/**
+ * The share shown while something is being got ready, from 0 to 0.99: never the whole,
+ * which would say it is done while it is not. Null where there is none to show.
+ */
+export const readyingShare = (now: GettingReady): number | null =>
+  now._tag !== "preparing" || now.fraction === null
+    ? null
+    : Math.min(0.99, Math.max(0, Math.floor(now.fraction * 100) / 100));
 
 /** Where the install guide says how to sign a harness in with its own account (`provider login`). */
 export const providerLoginGuide =

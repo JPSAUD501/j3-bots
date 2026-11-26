@@ -768,7 +768,7 @@ function useLocalHere(origin: URL) {
         engine={engine._tag === "ready" ? engine.value : null}
         footer={connectInstead}
         providerSetup={providerSetup === undefined ? undefined : { ...providerSetup, signIns }}
-        waiting={reached ? null : t("local.waiting")}
+        starting={!reached}
         onCreate={createFirst}
         providerActions={providerActionsOf(j3)}
         onArrived={(botId) => {

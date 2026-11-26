@@ -217,20 +217,22 @@ export const stage = {
    */
   close: 1.18,
   wide: 0.94,
-  /** The finale's sweep of light crosses the stage in this long, on the `out` ease. */
-  sweep: 1100,
-  /** Once the first bot exists it grows by this share, on `pop`. */
-  arrivalGrowth: 0.35,
   /**
-   * Its rings start half a `pop` later, `gap` apart, and spread on the `out`
-   * ease from 0.8 to `reach` times the grown bot as they fade.
+   * While the cast takes turns in the light, each turn lasts this long: long
+   * enough to read its one line.
    */
-  rings: { count: 3, gap: 220, duration: 1400, reach: 1.9 },
-  /** Its name pops in, then the line under it rises, this long after it starts to grow. */
+  turn: 2100,
+  /**
+   * The finale: once the first bot exists its light swells, wider and
+   * brighter, and settles again, in this long on the `out` ease. It is the one
+   * thing that plays, and it ends before the arrival does.
+   */
+  swell: 900,
+  /** Its name pops in, then the line under it rises, this long after the light starts to swell. */
   nameDelay: 260,
   lineDelay: 420,
   /** The arrival stays at least this long, so the bot is seen arriving before its conversation opens. */
-  hold: 1900,
+  hold: 1500,
   /**
    * A bot or a room new to the roster: its row's light stays this long, and
    * its words come in this long after it sets off. More than `burst` new at

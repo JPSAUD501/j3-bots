@@ -1,6 +1,6 @@
 # 0052: Motion follows Palco: a stage for entrances, and motion that carries on
 
-**Status:** Accepted. Amends the motion rules of [0018](0018-the-interface-follows-pips.md).
+**Status:** Accepted. Amends the motion rules of [0018](0018-the-interface-follows-pips.md). The first run's steps, how its lights are drawn and its finale are as [0065](0065-the-first-run-tells-what-j3-bots-is-before-it-asks.md) has them.
 
 ## Context
 
@@ -24,7 +24,7 @@ Three directions were prototyped. The owner chose the first, **Palco**: a dark s
 - **Weight.** On the ground the body rides `pop`. Off it, it falls as a thrown thing does, at one gravity for every size, so a hop hangs a quarter of a second and an entrance a little over half. The landing's squash comes from how fast it came down, which is what "lands with weight" means.
 - **The eye follows the pointer only from close by.** Within two of the avatar's own widths it has the avatar's whole attention; past three it has none; between the two the attention eases in and out, and it eases over time as well, so the eye never snaps. Close by, the body leans a little toward it and the pupil widens. On a phone a finger on the screen is the pointer.
 - **A press is held, a tap is answered.** A press holds the body down, squashed; letting go lets it spring up; a tap gets one of three answers, never the one before.
-- **The stage.** The first run is one stage that stays up while its set changes: the cast comes down into its lights, the camera closes in on the bot being made, each step's lines pull into focus under it, and the finale brings the lights up. On the web it is drawn dark whatever the app's appearance. A bot or a room new to the roster comes down into its row in a light of its own color.
+- **The stage.** The first run is one stage that stays up while its set changes: the cast comes down into its lights, the light goes round it and gathers into one as the first steps say what J3 Bots is, the camera closes in on the bot being made, each step's lines pull into focus under it, and the finale brings the lights up. On the web it is drawn dark whatever the app's appearance. A bot or a room new to the roster comes down into its row in a light of its own color.
 - **What plays in a spring a CSS easing cannot interrupt well moves on the frame loop.** On the web that is the avatars, the stage's camera and the roster's rows, which travel on `translate` from their own springs. A fade, a light, and text that arrives once stay CSS, on the compositor. On Android everything runs on the UI thread through Reanimated, whose springs already carry their speed over.
 
 ### What it changes in 0018

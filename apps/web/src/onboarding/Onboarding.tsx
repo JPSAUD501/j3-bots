@@ -2,22 +2,27 @@
 import {
   cannotRun,
   defaultBotName,
-  makingProgress,
   nextStep,
   type OnboardingFlow,
   type OnboardingStep,
+  gettingReady,
+  readyingShare,
   previousStep,
   providerDetail,
   providerGate,
   resumedStep,
   showsConnect,
   stageScene,
+  stepProgress,
+  tellsStory,
+  workExamples,
+  workTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { avatarCast, stage } from "@j3-bots/design-tokens";
 import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
 import { connectStepText, providerLine } from "@j3-bots/client-runtime/wording";
 import type { AvatarChoice, BotId, EngineStatus } from "@j3-bots/contracts";
-import { ChevronLeftIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon } from "lucide-react";
 import {
   type CSSProperties,
   type ReactNode,
@@ -43,13 +48,8 @@ import { Stage, type StageHandle } from "./Stage";
 
 const after = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
-/**
- * Where the arrival's title starts under the stage, below the farthest ring,
- * so no ring crosses it: how far the ring reaches under the grown bot's feet.
- */
-const ARRIVAL_TITLE_TOP = Math.round(
-  (96 * (1 + stage.arrivalGrowth) * (stage.rings.reach - 1)) / 2 - 20,
-);
+/** How long "ready" stays once what was being prepared is, in ms, before the line goes. */
+const READY_STAYS = 2600;
 
 interface OnboardingProps {
   /** Null until the server has reported it. */
@@ -80,10 +80,11 @@ interface OnboardingProps {
    */
   readonly providerSetup: LocalProviderSetup | undefined;
   /**
-   * What the bot's arrival waits for before the server has it, said under the
-   * bot, as while the server on this computer starts; `null` for nothing.
+   * Whether the server on this computer is still starting and has not answered
+   * yet: the first run goes on meanwhile, says so in its one quiet line, and
+   * only the bot's arrival waits for it.
    */
-  readonly waiting?: string | null;
+  readonly starting?: boolean;
 }
 
 /** Why the bot was not created: the server has no model for it, or anything else. */
@@ -91,12 +92,18 @@ type Failure = "no-model" | "other";
 
 /**
  * The first run, from the welcome to the first bot's arrival, played on a
- * stage (`Stage`): the cast comes down into its lights, the camera closes in
- * on the bot being made, and each step's words arrive under it, out of focus
- * first. The bot answers what the operator does: it looks down at the name as
- * it is typed and wears it, takes each shape and color as it is picked, and
- * when it exists the lights come up, everyone cheers, and it travels on into
- * its conversation.
+ * stage (`Stage`). It opens by saying what J3 Bots is, in three steps the
+ * stage carries: the cast comes down into its lights; the light goes from one
+ * bot to the next as each says what it does for the operator; the lights go
+ * down and they think, under the one light they share. Then the camera closes
+ * in on the bot being made, and each step's words arrive under it, out of
+ * focus first. The bot answers what the operator does: it looks down at the
+ * name as it is typed and wears it, takes each shape and color as it is
+ * picked, and when it exists its light swells, everyone cheers, and it travels
+ * on into its conversation.
+ *
+ * Under every step one quiet line says what the server is still getting ready
+ * (`Preparing`), which holds nothing back.
  *
  * It is a short the operator plays, never one they wait for. Every action is
  * live from the first frame, so pressing on cuts to the next scene from
@@ -114,7 +121,7 @@ export function Onboarding({
   initialName,
   footer,
   providerSetup,
-  waiting = null,
+  starting = false,
 }: OnboardingProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -160,6 +167,14 @@ export function Onboarding({
   const { step } = view;
   const botName = name.trim() === "" ? fallbackName : name.trim();
   const cast = useRef<StageHandle>(null);
+  // Whose turn in the light it is, while the cast says what it does: it goes once round, a line
+  // each, and rests on the last, which is everyone's.
+  const [turn, setTurn] = useState(0);
+  useEffect(() => {
+    if (step !== "work" || reduced || turn >= workExamples.length - 1) return;
+    const next = window.setTimeout(() => setTurn(turn + 1), stage.turn);
+    return () => window.clearTimeout(next);
+  }, [step, reduced, turn]);
 
   // Kept as it goes, so leaving the first run does not start it over.
   useEffect(() => {
@@ -168,9 +183,10 @@ export function Onboarding({
 
   const go = (to: OnboardingStep) => {
     if (to === "connect") setConnectShown(true);
+    if (to === "work") setTurn(0);
     setView((now) => ({ step: to, leaving: { step: now.step }, move: now.move + 1 }));
     // The bot being made takes each step with the operator.
-    if (to !== "welcome") cast.current?.lead(to === "arrival" ? "hover" : "nod");
+    if (!tellsStory(to)) cast.current?.lead(to === "arrival" ? "hover" : "nod");
   };
   // Each new step takes focus at its title, so a screen reader starts there; the name step
   // puts it in its field itself. The first step leaves focus where the page put it.
@@ -230,24 +246,26 @@ export function Onboarding({
     );
   };
 
-  const progress = makingProgress(step, flow);
+  const progress = stepProgress(step, flow);
   const canGoBack = previousStep(step, flow) !== null;
   const arrived = step === "arrival" && created;
+  const here = providerSetup !== undefined;
   const style: CSSProperties & Record<`--stage-${string}` | "--onboarding-bot", string> = {
     "--onboarding-bot": `var(--bot-${look.color})`,
-    "--stage-spot-in": `${stage.spotIn}ms`,
     "--stage-blur": `${stage.focus.blur}px`,
     "--stage-rise": `${stage.focus.rise}px`,
     "--stage-gap": `${stage.focus.gap}ms`,
     "--stage-leave": `${stage.leave}ms`,
-    "--stage-sweep": `${stage.sweep}ms`,
-    "--stage-grown": String(1 + stage.arrivalGrowth),
   };
 
   const screen = (at: OnboardingStep, current: boolean): ReactNode => {
     switch (at) {
       case "welcome":
-        return <Welcome onStart={forward} footer={footer} />;
+        return <Welcome here={here} onContinue={forward} footer={footer} />;
+      case "work":
+        return <WorkStep turn={turn} reduced={reduced} onContinue={forward} />;
+      case "mind":
+        return <MindStep onContinue={forward} />;
       case "name":
         return (
           <NameStep
@@ -288,7 +306,14 @@ export function Onboarding({
           />
         );
       case "arrival":
-        return <Arrival engine={engine} name={botName} created={created} waiting={waiting} />;
+        return (
+          <Arrival
+            engine={engine}
+            name={botName}
+            created={created}
+            waiting={starting ? t("local.waiting") : null}
+          />
+        );
     }
   };
 
@@ -319,6 +344,7 @@ export function Onboarding({
         <Stage
           ref={cast}
           scene={stageScene(step, created)}
+          featured={step === "work" && !reduced ? workTurn(turn).featured : "all"}
           look={look}
           name={botName}
           arrived={arrived}
@@ -333,8 +359,9 @@ export function Onboarding({
             {screen(step, true)}
           </Layer>
         </div>
+        {/* The arrival says what it waits for itself, under the bot. */}
+        <Preparing engine={engine} starting={starting} here={here} quiet={step === "arrival"} />
       </div>
-      {arrived && !reduced && <span aria-hidden className="stage-sweep" />}
     </div>
   );
 }
@@ -407,7 +434,7 @@ function StepFrame({
   readonly actions: ReactNode;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col pb-[max(--spacing(6),env(safe-area-inset-bottom))]">
+    <div className="flex h-full min-h-0 flex-col pb-2">
       {/* The side room is inside the scrolling column, so a focus ring at its edge is not cut off. */}
       <div className="focus-lines flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto px-6 pt-1 text-center">
         {children}
@@ -417,12 +444,108 @@ function StepFrame({
   );
 }
 
-/** The first screen, under the cast as it comes in: what J3 Bots is, and the way in. */
+/**
+ * What the server is still getting ready, in one quiet line under every step:
+ * the engine and the harnesses it downloads, with how far they are when the
+ * server says. It holds nothing back, takes its room whether it says anything
+ * or not, so nothing moves when it does, and says "ready" once, only after it
+ * was seen getting ready. `quiet` keeps it silent, where the step says the
+ * same itself.
+ */
+function Preparing({
+  engine,
+  starting,
+  here,
+  quiet,
+}: {
+  readonly engine: EngineStatus | null;
+  readonly starting: boolean;
+  /** Whether what is prepared is this computer, or a server elsewhere. */
+  readonly here: boolean;
+  readonly quiet: boolean;
+}) {
+  const { t, locale } = useI18n();
+  const now = gettingReady(engine, starting);
+  const [prepared, setPrepared] = useState<"never" | "under-way" | "said">("never");
+  if (now._tag === "preparing" && prepared !== "under-way") setPrepared("under-way");
+  const ready = now._tag === "ready" && prepared === "under-way";
+  useEffect(() => {
+    if (!ready) return;
+    const said = window.setTimeout(() => setPrepared("said"), READY_STAYS);
+    return () => window.clearTimeout(said);
+  }, [ready]);
+  const share = readyingShare(now);
+  const line =
+    quiet || (now._tag !== "preparing" && !ready)
+      ? null
+      : ready
+        ? t(here ? "onboarding.preparedHere" : "onboarding.prepared")
+        : t(here ? "onboarding.preparingHere" : "onboarding.preparing");
+  return (
+    <p
+      role="status"
+      className="flex h-8 shrink-0 items-center justify-center gap-2 pb-[env(safe-area-inset-bottom)] text-xs text-muted-foreground box-content"
+    >
+      {line !== null && (
+        <span
+          key={ready ? "ready" : "preparing"}
+          className="onboarding-fade-in inline-flex items-center gap-2"
+        >
+          {ready ? (
+            <CheckIcon aria-hidden className="size-3.5 text-success" />
+          ) : (
+            <Gauge share={share} />
+          )}
+          {line}
+          {share !== null && (
+            <span aria-hidden className="tabular-nums">
+              {new Intl.NumberFormat(locale, { style: "percent" }).format(share)}
+            </span>
+          )}
+        </span>
+      )}
+    </p>
+  );
+}
+
+const GAUGE_RADIUS = 5.5;
+const GAUGE_LENGTH = 2 * Math.PI * GAUGE_RADIUS;
+
+/** A small ring that fills to `share`, from 0 to 1; with none known, an arc of it turns. */
+function Gauge({ share }: { readonly share: number | null }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 14 14"
+      className={cn("size-3.5 -rotate-90", share === null && "animate-spin")}
+    >
+      <circle cx="7" cy="7" r={GAUGE_RADIUS} fill="none" strokeWidth="2" className="stroke-muted" />
+      <circle
+        cx="7"
+        cy="7"
+        r={GAUGE_RADIUS}
+        fill="none"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray={GAUGE_LENGTH}
+        strokeDashoffset={GAUGE_LENGTH * (1 - (share ?? 0.28))}
+        className="stroke-current transition-[stroke-dashoffset] duration-(--duration-slow) ease-out"
+      />
+    </svg>
+  );
+}
+
+/**
+ * The first screen, under the cast as it comes in: what J3 Bots is, in one
+ * sentence, said for where the bots live.
+ */
 function Welcome({
-  onStart,
+  here,
+  onContinue,
   footer,
 }: {
-  readonly onStart: () => void;
+  readonly here: boolean;
+  readonly onContinue: () => void;
   readonly footer: ReactNode;
 }) {
   const { t } = useI18n();
@@ -430,7 +553,7 @@ function Welcome({
     <StepFrame
       actions={
         <div className="flex flex-col gap-3">
-          <BigButton onClick={onStart}>{t("onboarding.welcome.start")}</BigButton>
+          <BigButton onClick={onContinue}>{t("onboarding.continue")}</BigButton>
           {footer}
         </div>
       }
@@ -439,7 +562,63 @@ function Welcome({
         <span className="display-type text-4xl">J3 Bots</span>
       </StepTitle>
       <p className="max-w-xs text-lg text-pretty text-muted-foreground">
-        {t("onboarding.welcome.body")}
+        {t(here ? "onboarding.welcome.bodyHere" : "onboarding.welcome.body")}
+      </p>
+    </StepFrame>
+  );
+}
+
+/**
+ * What the bots do day to day. Each bot says its own line as the light comes
+ * to it, one line on screen at a time, and the last is everyone's. A screen
+ * reader gets them as one list, and so does reduced motion, with the whole
+ * cast lit.
+ */
+function WorkStep({
+  turn,
+  reduced,
+  onContinue,
+}: {
+  readonly turn: number;
+  readonly reduced: boolean;
+  readonly onContinue: () => void;
+}) {
+  const { t } = useI18n();
+  const { example } = workTurn(turn);
+  const lines = (className: string) => (
+    <ul className={className}>
+      {workExamples.map((each) => (
+        <li key={each}>{t(`onboarding.work.${each}`)}</li>
+      ))}
+    </ul>
+  );
+  return (
+    <StepFrame actions={<BigButton onClick={onContinue}>{t("onboarding.continue")}</BigButton>}>
+      <StepTitle>{t("onboarding.work.title")}</StepTitle>
+      {reduced ? (
+        lines("flex flex-col gap-1 text-base text-muted-foreground")
+      ) : (
+        <>
+          <p aria-hidden className="min-h-[2lh] max-w-xs text-xl text-pretty">
+            <span key={example} className="stage-line block">
+              {t(`onboarding.work.${example}`)}
+            </span>
+          </p>
+          {lines("sr-only")}
+        </>
+      )}
+    </StepFrame>
+  );
+}
+
+/** What the bots think with, which is what J3 Bots installs: the last of the story, and the way to the first bot. */
+function MindStep({ onContinue }: { readonly onContinue: () => void }) {
+  const { t } = useI18n();
+  return (
+    <StepFrame actions={<BigButton onClick={onContinue}>{t("onboarding.meet")}</BigButton>}>
+      <StepTitle>{t("onboarding.mind.title")}</StepTitle>
+      <p className="max-w-xs text-lg text-pretty text-muted-foreground">
+        {t("onboarding.mind.body")}
       </p>
     </StepFrame>
   );
@@ -691,8 +870,9 @@ function ConnectStep({
 /**
  * The bot arriving. Until the server has created it, only the bot above, alone
  * in its light, says something is happening, and a line what it waits for, if
- * anything; then the stage plays its finale, the bot's name pops in under it,
- * and a line says whether it is saying hello or waits for a model.
+ * anything; then the stage plays its finale, its light swelling as everyone
+ * cheers, the bot's name pops in under it, and a line says whether it is
+ * saying hello or waits for a model.
  */
 function Arrival({
   engine,
@@ -710,7 +890,7 @@ function Arrival({
     engine !== null && engine.state._tag === "ready" && providerGate(engine)._tag === "ready";
   return (
     <StepFrame actions={null}>
-      <div className="flex flex-col items-center gap-2" style={{ marginTop: ARRIVAL_TITLE_TOP }}>
+      <div className="mt-6 flex flex-col items-center gap-2">
         {created && (
           <h1
             className="display-type pop-in text-4xl"
