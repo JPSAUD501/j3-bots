@@ -20,15 +20,12 @@ import {
   useRoutineRuns,
   useRoutines,
   useSettings,
-  useWorkSteps,
 } from "@j3-bots/client-runtime/react";
 import type {
-  Attachment,
   AvatarChoice,
   Bot,
   BotId,
   DeviceId,
-  EntryId,
   EntryTarget,
   MemoryPath,
   MemoryScope,
@@ -37,20 +34,12 @@ import type {
   Room,
   RoomId,
   RoutineId,
-  WorkStep,
 } from "@j3-bots/contracts";
-import {
-  INLINE_IMAGE_MEDIA_TYPES,
-  TEMPLATE_FILE_EXTENSION,
-  TEMPLATE_MEDIA_TYPE,
-  templateFileText,
-} from "@j3-bots/contracts";
+import { TEMPLATE_FILE_EXTENSION, TEMPLATE_MEDIA_TYPE, templateFileText } from "@j3-bots/contracts";
 import { Dialog } from "@base-ui/react/dialog";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
-  createContext,
   use,
-  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -61,16 +50,11 @@ import {
 } from "react";
 import {
   behind,
-  cardAction,
-  createJ3Client,
   memorySaveKey,
   refusedWith,
-  retryAction,
   targetKey,
-  type ActionState,
   type BotChanges,
   type ConnectionState,
-  type Draft,
   type DraftChangedElsewhere,
   type IntentFailure,
   type IntentResult,
@@ -84,13 +68,11 @@ import {
   type ConnectorsPlace,
   notificationOpening,
   type OpenedNotification,
-  ownAppSetup,
   pairKeyText,
   ROOM_MEMBERS,
   type RoomFormMode,
   roomStopFailed,
   type SettingsPage,
-  showsImage,
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
@@ -119,10 +101,7 @@ import { writeClipboard } from "../lib/clipboard";
 import { cn } from "../lib/cn";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import type { ConnectorsIntents } from "../components/connectors/screen";
-import type { ConnectorAppAccess } from "../components/ConnectorAppCard";
 import { EditBotDialog } from "../components/EditBotDialog";
-import { AttachmentImagesProvider, type ImageSource } from "../components/attachmentImages";
-import { ImageViewer } from "../components/ImageViewer";
 import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import { NewBotDialog } from "../components/NewBotDialog";
@@ -135,7 +114,6 @@ import {
 } from "../components/TemplateDialogs";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
-import { type Notice, Toast } from "../components/Toast";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { notificationAccess } from "../preferences/notifications";
 import type { PairView } from "../components/PairConversation";
@@ -156,7 +134,14 @@ import {
 } from "./notify";
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { onAppLink } from "./appLinks";
-import { deliverFile, reserveWindow, saveText } from "./openFile";
+import { useAttachments } from "./attachments";
+import { useCardIntents, useCardSubmitting } from "./cardIntents";
+import { client, server } from "./client";
+import { useComposerSource } from "./composer";
+import { isInView, useInView } from "./inView";
+import { Notices, useSay } from "./notices";
+import { saveText } from "./openFile";
+import { useWorkFolds } from "./workFolds";
 import { readTemplate, useTemplateDrop } from "./templateFiles";
 import { updatable, useDesktopUpdate, useLaunchUpdate, useReportSaving } from "./appUpdate";
 import { useRemoteServerUpdate } from "./serverUpdate";
@@ -176,10 +161,8 @@ import {
 } from "./localGate";
 import { askLocalDevice, localMode, useLocalServer } from "./localServer";
 import { LinkedPairingCode } from "./pairingLink";
-import { makePlatform, signInUnencrypted } from "./platform";
+import { signInUnencrypted } from "./platform";
 import { savesUnderWay } from "./savesUnderWay";
-
-let started: Promise<J3Client> | null = null;
 
 /**
  * What the room form is open for. A room is named by id and read from the
@@ -189,13 +172,6 @@ let started: Promise<J3Client> | null = null;
 type RoomFormTarget =
   | { readonly _tag: "create"; readonly members?: ReadonlyArray<BotId> }
   | { readonly _tag: "edit" | "unarchive"; readonly roomId: RoomId };
-
-/**
- * The server this page talks to: the one that serves it in a browser, the one
- * the operator named in the desktop app. `null` in the desktop app until they
- * have named one.
- */
-const server = desktop === null ? new URL(window.location.origin) : desktop.server;
 
 /**
  * A secret's value copied: by the desktop app, which takes it off the
@@ -227,9 +203,6 @@ const serverOf = (app: Desktop, at: URL): DesktopServer => ({
 
 const desktopServer: DesktopServer | undefined =
   desktop === null || server === null || localMode !== null ? undefined : serverOf(desktop, server);
-
-/** One client for the page, made on first use. */
-const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)));
 
 /**
  * The shell's source in a build: the client runtime, connected to the server.
@@ -346,34 +319,6 @@ function Connected({ origin, children }: { origin: URL; children: ReactNode }) {
         <Gate origin={origin}>{children}</Gate>
       </Notices>
     </J3ClientProvider>
-  );
-}
-
-const SayContext = createContext<((text: string) => void) | null>(null);
-
-/** Shows a short sentence in the page's one toast. */
-const useSay = () => {
-  const say = use(SayContext);
-  if (say === null) throw new Error("useSay needs Notices above it.");
-  return say;
-};
-
-/**
- * The page's toast, above the gate: a notice outlives the screen that asked
- * for it, as when signing out leaves the shell and another tab's pairing
- * brings it back.
- */
-function Notices({ children }: { children: ReactNode }) {
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const say = useCallback(
-    (text: string) => setNotice((previous) => ({ id: (previous?.id ?? 0) + 1, text })),
-    [],
-  );
-  return (
-    <SayContext value={say}>
-      {children}
-      <Toast notice={notice} onDone={() => setNotice(null)} />
-    </SayContext>
   );
 }
 
@@ -874,42 +819,9 @@ const loadingPair: PairView = {
   hasOlder: false,
   loadingOlder: false,
 };
-const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
-
-const submitting = (state: ActionState | undefined) => state?._tag === "submitting";
-
 /** A read's value once loaded; a list that is gone reads as empty. */
 const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
   loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
-
-const subscribeInView = (listener: () => void) => {
-  document.addEventListener("visibilitychange", listener);
-  window.addEventListener("focus", listener);
-  window.addEventListener("blur", listener);
-  return () => {
-    document.removeEventListener("visibilitychange", listener);
-    window.removeEventListener("focus", listener);
-    window.removeEventListener("blur", listener);
-  };
-};
-/** Whether the operator is looking at this window: it shows, and it has focus. */
-const isInView = () => document.visibilityState === "visible" && document.hasFocus();
-
-/** Reads one open work fold's steps for as long as it stays open. */
-function FoldReader({
-  foldId,
-  onSteps,
-}: {
-  foldId: EntryId;
-  onSteps: (foldId: EntryId, steps: ReadonlyArray<WorkStep>) => void;
-}) {
-  const state = useWorkSteps(foldId);
-  const report = useEffectEvent(onSteps);
-  useEffect(() => {
-    if (state !== null && state.phase !== "loading") report(foldId, state.steps);
-  }, [foldId, state]);
-  return null;
-}
 
 /** The conversation or room the URL names. */
 const targetOf = (botId: BotId | null, roomId: RoomId | null): EntryTarget | null =>
@@ -970,10 +882,6 @@ function LiveShell({
   const devices = useDevices();
   const actions = useActions();
   const drafts = useReadable(j3.drafts);
-  const draftOffers = useReadable(j3.draftOffers);
-  const draftsLoading = useReadable(j3.draftsSwitching);
-  const draftsFailed = useReadable(j3.draftsReadFailed);
-  const draftsNotSaved = useReadable(j3.draftsNotSaved);
   const draftsSaving = useReadable(j3.draftsSaving);
   const conversation = useConversation(target);
   // The teammate conversation the address names, and every pair the roster lists.
@@ -995,10 +903,9 @@ function LiveShell({
     runsId === null
       ? null
       : (loadedList(routines)?.find((routine) => routine.id === runsId) ?? null);
-  const inView = useSyncExternalStore(subscribeInView, isInView, isInView);
+  const inView = useInView();
 
-  const [openFolds, setOpenFolds] = useState<ReadonlySet<EntryId>>(new Set());
-  const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
+  const folds = useWorkFolds();
   const [newBot, setNewBot] = useState(false);
   // The bot being shared as a template, and the template file opened to make a bot from.
   const [sharing, setSharing] = useState<{
@@ -1020,8 +927,6 @@ function LiveShell({
   const [roomFormUnsaved, setRoomFormUnsaved] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
-  // The image a file shows over everything, opened from a conversation.
-  const [viewing, setViewing] = useState<ImageSource | null>(null);
   // The connectors screen, and what opened it; null while it is closed.
   const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsPlace | null>(null);
   const openConnectors = (opening: ConnectorsPlace) => {
@@ -1077,32 +982,9 @@ function LiveShell({
   const rosterChanged = (result: IntentResult<unknown>) => {
     if (result._tag === "failed" && stillPaired()) say(t("roster.changeFailed"));
   };
-  /** Shows `attachment` in `reserved`, or saves it, once downloaded; or says why it cannot. */
-  const deliverAttachment = (attachment: Attachment, reserved: Window | null) =>
-    void j3.download(attachment).then((result) => {
-      if (result._tag === "done") {
-        deliverFile(attachment, result.value.bytes, reserved);
-        return;
-      }
-      reserved?.close();
-      say(
-        result.reason === "not-found"
-          ? t("file.gone", { name: attachment.name })
-          : t("file.unreachable", { name: attachment.name }),
-      );
-    });
-  // Only the image types a page draws without running anything get here: a
-  // file's by `showsImage`, and one a bot looked at as the server sends only those.
-  const imageOf = (source: ImageSource) =>
-    (source._tag === "file" ? j3.download(source.attachment) : j3.workImage(source.id)).then(
-      (result) => {
-        if (result._tag !== "done") return null;
-        const type = source._tag === "file" ? source.attachment.mediaType : result.value.mediaType;
-        return INLINE_IMAGE_MEDIA_TYPES.includes(type)
-          ? new Blob([result.value.bytes], { type })
-          : null;
-      },
-    );
+  const attachments = useAttachments(j3, say);
+  const composer = useComposerSource(j3, say);
+  const cardSubmitting = useCardSubmitting();
 
   const view: ConversationView =
     conversation.state === null
@@ -1290,6 +1172,7 @@ function LiveShell({
       : window.location.protocol === "https:"
         ? { _tag: "server" }
         : { _tag: "paste" };
+  const cards = useCardIntents(j3, say, origin, signInRoute._tag === "server");
   const { state: _connectorsState, ...connectorsClient } = j3.connectors;
   const { state: _skillsState, ...skillsIntents } = j3.skills;
   const connectorsIntents: ConnectorsIntents = {
@@ -1319,14 +1202,9 @@ function LiveShell({
       pairConversation.state !== null && pairKeyText(asked) === pairKey
         ? pairConversation.state
         : loadingPair,
-    draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
-    offer: (asked) => draftOffers.get(targetKey(asked)) ?? null,
-    draftsLoading,
-    draftsFailed,
-    draftNotSaved: (asked) => draftsNotSaved.has(targetKey(asked)),
-    submitting: (entryId) =>
-      submitting(actions.get(cardAction(entryId))) || submitting(actions.get(retryAction(entryId))),
-    workSteps: (entryId) => steps.get(entryId) ?? null,
+    ...composer.data,
+    submitting: cardSubmitting,
+    workSteps: folds.steps,
     routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
@@ -1522,64 +1400,15 @@ function LiveShell({
     });
   };
 
-  // One for as long as the client is: an app's frame is drawn again only when its view changes.
-  const connectorApp = useMemo<ConnectorAppAccess>(() => {
-    const value = <A,>(
-      result: { readonly _tag: "done"; readonly value: A } | { readonly _tag: "failed" },
-    ) => (result._tag === "done" ? result.value : null);
-    return {
-      server: origin,
-      open: (viewId) => j3.connectors.app.open(viewId).then(value),
-      callTool: (viewId, name, args, allowed) =>
-        j3.connectors.app.callTool(viewId, name, args, allowed).then(value),
-      readResource: (viewId, uri) => j3.connectors.app.readResource(viewId, uri).then(value),
-      sendMessage: (botId, text) =>
-        j3
-          .send({ target: { _tag: "conversation", botId }, text })
-          .then((result) => result._tag === "done"),
-      openLink: (url) => {
-        window.open(url.href, "_blank", "noopener,noreferrer");
-      },
-    };
-  }, [j3, origin]);
-
   const intents: ShellIntents = {
-    connectorApp,
-    // An answer too long to reach the bot leaves the card open, with what was typed, to shorten.
-    answerQuestion: (entryId, answers) =>
-      void j3.answerCard(entryId, { _tag: "question", answers }).then((result) => {
-        if (refusedWith(result, "answer-length")) say(t("question.tooLong"));
-      }),
-    dismissQuestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
-    decideApproval: (entryId, decision) =>
-      void j3.answerCard(entryId, { _tag: "approval", decision }),
-    provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
-    declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
-    answerBrowserHelp: (entryId, outcome) =>
-      void j3.answerCard(entryId, { _tag: "browser-help", outcome }),
+    ...cards,
     // The viewer opens over the bot's conversation, on the tab the address names.
     openBrowser: (botId, tab) =>
       void navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
-    declineSecretAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
-    retryNotice: (entryId) => void j3.retryNotice(entryId),
-    retryMessage: (entryId) => void j3.retryMessage(entryId),
-    resendMessage: (commandId, mentions) =>
-      void j3.resend(commandId, mentions).then((result) => {
-        if (result._tag === "not-kept") say(t("message.changeNotKept"));
-      }),
-    discardMessage: (commandId) =>
-      void j3.discard(commandId).then((discarded) => {
-        if (!discarded) say(t("message.changeNotKept"));
-      }),
-    openWorkFold: (entryId) => setOpenFolds((open) => new Set(open).add(entryId)),
-    closeWorkFold: (entryId) =>
-      setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
-    // An image shows here; any other file opens in its own window, or is saved.
-    openAttachment: (attachment) => {
-      if (showsImage(attachment)) setViewing({ _tag: "file", attachment });
-      else deliverAttachment(attachment, reserveWindow(attachment));
-    },
-    openWorkImage: (id) => setViewing({ _tag: "work", id }),
+    openWorkFold: folds.open,
+    closeWorkFold: folds.close,
+    openAttachment: attachments.open,
+    openWorkImage: attachments.openWorkImage,
     // Over its bot's details, which list it with the bot's other routines.
     openRoutine: (routineId) =>
       void navigate({
@@ -1589,54 +1418,9 @@ function LiveShell({
     openConversation: (botId) => void goToBot(botId),
     signInConnector: (entry) =>
       openConnectors({ _tag: "connector", connectorId: entry.connectorId, signIn: true }),
-    answerConnectorInput: (entryId, answer) =>
-      void j3.answerCard(entryId, { _tag: "connector-input", answer }).then((result) => {
-        if (refusedWith(result, "connector-input")) say(t("connectorInput.refused"));
-      }),
-    openConnectorPage: (url) => {
-      window.open(url, "_blank", "noopener");
-    },
-    connectorAskSetup: (listing) =>
-      j3.connectors
-        .listing(listing, i18n.locale)
-        .then((result) =>
-          result._tag === "done"
-            ? { _tag: "done", value: ownAppSetup(result.value, signInRoute._tag === "server") }
-            : result,
-        ),
-    allowConnectorAsk: (entryId, client) =>
-      void j3.answerCard(entryId, { _tag: "connector-ask", client }).then((result) => {
-        if (refusedWith(result, "answer")) say(t("connectorAsk.refused"));
-      }),
-    declineConnectorAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     openConnectors,
-    connectorPrompts: (botId) =>
-      j3.connectors.prompts(botId).then((result) => (result._tag === "done" ? result.value : null)),
-    renderPrompt: (botId, prompt, given) =>
-      j3.connectors
-        .renderPrompt({
-          botId,
-          connectorId: prompt.connectorId,
-          name: prompt.name,
-          arguments: given,
-        })
-        .then((result) => (result._tag === "done" ? result.value : null)),
+    ...composer.intents,
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
-    setDraftText: j3.setDraftText,
-    attachFiles: (asked, picked, at) =>
-      j3.attachFiles(
-        asked,
-        picked.map((file) => ({ name: file.name, body: file })),
-        at,
-      ),
-    detachFile: j3.detachFile,
-    restoreDraft: j3.restoreDraft,
-    retryDrafts: j3.retryDrafts,
-    dismissDraftOffer: j3.dismissDraftOffer,
-    sendDraft: (asked, addressing) =>
-      void j3.sendDraft(asked, addressing).then((result) => {
-        if (result === "not-kept") say(t("composer.notKept"));
-      }),
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
     },
@@ -1789,21 +1573,8 @@ function LiveShell({
 
   return (
     <ShellSourceProvider source={{ data, intents, browser: j3 }}>
-      <AttachmentImagesProvider fetch={imageOf}>
-        {children}
-        <ImageViewer
-          image={viewing}
-          onClose={() => setViewing(null)}
-          onSave={(attachment) => deliverAttachment(attachment, null)}
-        />
-      </AttachmentImagesProvider>
-      {[...openFolds].map((foldId) => (
-        <FoldReader
-          key={foldId}
-          foldId={foldId}
-          onSteps={(id, list) => setSteps((held) => new Map(held).set(id, list))}
-        />
-      ))}
+      {attachments.host(children)}
+      {folds.readers}
       <NewBotDialog
         bots={bots}
         open={newBot}
