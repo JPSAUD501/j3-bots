@@ -20,7 +20,7 @@ What `j3-bots update --rollback` to the previous release puts back, what is lost
 
 ## What's new
 
-The update prompt shows the bold lead of each top-level item below, in order, as the release's highlights: up to five, each up to 160 characters. Write each lead as a whole short sentence that stands on its own, and put the pull request and the details after it. The whole section also goes, as written, into the `j3-app` skill of the release's server build, which is how a bot knows what changed: write it for the person using J3 Bots, and keep it to what they will see.
+The update prompt shows the bold lead of each top-level item below, in order, as the release's highlights: up to five, each up to 160 characters. Write each lead as a whole short sentence that stands on its own, and put the pull request and the details after it. The whole section also goes, as written, into the `j3-app` skill of the release's server build, which is how a bot knows what changed: write it for the person using J3 Bots, and keep it to what they will see. So the notes are committed as `docs/releases/v<x.y.z>.md` before the release is tagged; the release workflow refuses a tag without them.
 
 - **What changed, in one short sentence** ([#123](https://github.com/JPSAUD501/j3-bots/pull/123)). What it does and why, for the person using it.
 

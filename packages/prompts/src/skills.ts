@@ -55,7 +55,7 @@ const releaseNotes = (release: Option.Option<Release>): string =>
     onNone: () =>
       "This build of J3 Bots carries no release notes: it was built from source, or it is a nightly. If your user asks what changed, say you do not know, and that About and updates in Settings shows the version they run.",
     onSome: ({ version, whatsNew }) =>
-      `Your user's server runs J3 Bots ${version}. Its release notes list what it brought, as below; for an earlier release, say you do not know. An app that has not updated yet may not show all of it.\n\n${whatsNew}`,
+      `These are the release notes of J3 Bots ${version}, the version that installed this skill, and what it brought. About and updates in Settings shows the version your user's server runs: if it is another one, or they ask about an earlier release, say you do not know what it changed. An app that has not updated yet may not show all of it.\n\n${whatsNew}`,
   });
 
 const readSkill = (name: (typeof SKILL_NAMES)[number]): string => {

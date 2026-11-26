@@ -1536,16 +1536,17 @@ const ONE_TEAMMATE: Team = {
 
 const DELETE_PLACE: Check = {
   question:
-    "Does this message tell its reader that a bot is deleted from that bot's own details, where the delete action is, rather than from Settings or the list's menu?",
-  what: "that Ana is deleted from Ana's details, where the delete action is",
+    "Does this message tell its reader that a bot is deleted from that bot's own details or from \"More\" in its row's menu in the list, where the delete action is, rather than from Settings?",
+  what: "that Ana is deleted from Ana's details or from More in Ana's row menu",
   asked: DELETE_ASKED,
   accept: [
     "Open Ana's details from the header of Ana's conversation; \"Delete Ana\" is at the very end, and it asks you to confirm. The conversation, memory and routines go too; the files in the workspace stay.",
     "In Ana's details, scroll to the bottom and press Delete Ana.",
+    "Open the menu on Ana's row in the list, then More, then Delete Ana.",
   ],
   reject: [
     "Go to Settings → Bots, pick Ana and press Delete.",
-    "Right-click Ana in the list and choose Delete.",
+    "Open Ana's conversation and type /delete.",
     "I'm not sure where that is in the app.",
   ],
 };

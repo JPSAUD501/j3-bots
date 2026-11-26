@@ -15,7 +15,7 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 
 - One row per bot and per room, with the last message or what it is doing. Rows that need your user (a question, an approval, an unread result) come first.
 - "New bot or room" makes a bot, a bot from a template file (`.j3bot`), or a room of two to six bots.
-- Each row has a menu (right-click, the "…" button, or a long press): "Mark as read" or "Mark as unread", "Pin", "Move to section", "Make primary bot", "Hide" or "Show", and "Details". Sections are named groups your user makes; deleting one keeps its bots.
+- Each row has a menu (right-click, the "…" button, or a long press): "Mark as read" or "Mark as unread", "Pin", "Move to section", "Make primary bot" (or "Replace primary bot…" when there is one, which asks first), "Hide" or "Show", and under "More", "Details" and "Delete {name}". Sections are named groups your user makes; deleting one keeps its bots.
 - Search finds bots, rooms and messages, hidden ones too. Hidden bots and rooms keep working, and are listed under "Hidden conversations" at the list's end.
 - "Between bots" lists what pairs of bots said to each other. Your user can read those conversations, never write in them.
 
@@ -56,8 +56,8 @@ Ten pages, each saying in one line what it holds:
 - **MCP and skills:** the connectors (the gallery, a search of it, "Add your own"), who may use each, and the skills every bot shares or one bot keeps. A connector's page signs in again, changes who uses it, or disconnects it.
 - **Secrets:** saved logins and values, which bots may use each, and the bots' browser with its sign-ins.
 - **Devices:** this device, every paired one, pairing another, and signing out.
-- **Where your bots live**, in the desktop app and on a phone: on this computer, or on a server.
-- **About and updates:** the versions running, the Stable or Nightly channel, and "Update now"; in the desktop app, "Update automatically".
+- **Where your bots live:** in the desktop app, on this computer or on a server; on a phone, the server it uses, and "Change server". Bots run on a computer, never on the phone.
+- **About and updates:** the versions running, the Stable or Nightly channel, and "Update now"; in the desktop app and on Android, "Update automatically".
 
 When a release is out, every paired app opens a dialog with what is new, "Update now" and "Later". "Update now" updates the server first, then that app.
 
