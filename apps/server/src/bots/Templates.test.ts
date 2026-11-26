@@ -293,12 +293,16 @@ it.effect("creates nothing when a routine's schedule is refused", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-/** A file system whose disk fails to put the `name` skill's file in place. */
+/**
+ * A file system whose disk fails to put the `name` skill's file in place.
+ * The path is matched with `/` whatever the system's separator, which is `\`
+ * on Windows.
+ */
 const failingSkill = (name: string) => (fs: FileSystem.FileSystem) =>
   FileSystem.FileSystem.of({
     ...fs,
     rename: (from, to) =>
-      to.endsWith(`/skills/${name}/SKILL.md`)
+      to.replaceAll("\\", "/").endsWith(`/skills/${name}/SKILL.md`)
         ? Effect.fail(
             PlatformError.systemError({
               _tag: "Unknown",
