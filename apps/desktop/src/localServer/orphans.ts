@@ -255,14 +255,19 @@ export const stopRecorded = Effect.fn("Orphans.stopRecorded")(function* (file: s
   const { pid, started } = recorded.value;
   const ended = yield* powerShell(
     [
-      `$process = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
-      "if (-not $process) { exit 0 }",
-      "$null = $process.Handle",
-      `if ($process.StartTime.ToUniversalTime().Ticks -ne ${started}) { exit 0 }`,
+      // A process this user may not open is not the server it started: the
+      // check fails closed, and nothing after it runs.
+      "$ErrorActionPreference = 'Stop'",
+      "try {",
+      `  $process = Get-Process -Id ${pid}`,
+      "  $null = $process.Handle",
+      "  $ticks = $process.StartTime.ToUniversalTime().Ticks",
+      "} catch { exit 0 }",
+      `if ($ticks -ne ${started}) { exit 0 }`,
       `& taskkill.exe /PID ${pid} /T /F | Out-Null`,
       "[Console]::Out.Write('ended')",
       "$null = $process.WaitForExit(10000)",
-    ].join("; "),
+    ].join("\n"),
     Duration.seconds(30),
   );
   if (Option.contains(ended, "ended")) {
