@@ -26,6 +26,7 @@ import {
   type BrowserHelpEntry,
   type CredentialFill,
   type ConnectorAuthEntry,
+  type ConnectorInputEntry,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -576,6 +577,73 @@ export function galleryVariants(now: DateTime.Utc) {
     auth("ca-signed-in", "signed-in"),
     auth("ca-removed", "removed"),
   ];
+  const input = (
+    name: string,
+    request: ConnectorInputEntry["request"],
+    status: ConnectorInputEntry["status"],
+  ): ConnectorInputEntry => ({
+    _tag: "connector-input",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    connectorId: notion,
+    name: "Notion",
+    glyph: ConnectorGlyph.make("notebook"),
+    request,
+    status,
+  });
+  const form: ConnectorInputEntry["request"] = {
+    _tag: "form",
+    message: "Which workspace should the new page go in?",
+    fields: [
+      {
+        _tag: "choice",
+        key: "workspace",
+        label: "Workspace",
+        description: null,
+        required: true,
+        multiple: false,
+        options: [
+          { value: "team", label: "Team" },
+          { value: "personal", label: "Personal" },
+        ],
+        minItems: null,
+        maxItems: null,
+        default: [],
+      },
+      {
+        _tag: "text",
+        key: "title",
+        label: "Page title",
+        description: "Shown at the top of the page",
+        required: false,
+        format: null,
+        minLength: null,
+        maxLength: 120,
+        default: "Launch notes",
+      },
+      {
+        _tag: "boolean",
+        key: "share",
+        label: "Share it with the team",
+        description: null,
+        required: false,
+        default: null,
+      },
+    ],
+  };
+  const page: ConnectorInputEntry["request"] = {
+    _tag: "url",
+    message: "Approve access to the Launch workspace.",
+    url: "https://approve.example.com/flow/7",
+    host: "approve.example.com",
+  };
+  const connectorInputs: ReadonlyArray<ConnectorInputEntry> = [
+    input("ci-form", form, { _tag: "pending" }),
+    input("ci-page", page, { _tag: "pending" }),
+    input("ci-answered", form, { _tag: "answered", action: "accept" }),
+    input("ci-declined", page, { _tag: "answered", action: "decline" }),
+    input("ci-expired", form, { _tag: "expired" }),
+  ];
 
   const fold = (
     name: string,
@@ -923,6 +991,7 @@ export function galleryVariants(now: DateTime.Utc) {
     browserHelps,
     asks,
     savedSecrets,
+    connectorInputs,
     connectorAuths,
     folds,
     notices,

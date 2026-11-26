@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Which effect a fetch from inside the SDK belongs to is known only through node:async_hooks.
+// @effect-diagnostics nodeBuiltinImport:off -- Which effect a request from inside the SDK belongs to is known only through node:async_hooks, and a call's tag is node:crypto's.
 import * as NodeAsyncHooks from "node:async_hooks";
+import * as NodeCrypto from "node:crypto";
+import type { Elicitation, ElicitationAnswer } from "@j3-bots/contracts";
 import {
-  type CallToolResult,
   Client,
+  InMemoryResponseCacheStore,
   ProtocolError,
+  type ResponseCacheStore,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
   StreamableHTTPClientTransport,
+  type Transport,
 } from "@modelcontextprotocol/client";
+import * as Clock from "effect/Clock";
+import type * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -17,7 +23,9 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { type CatalogTool, catalogOf, ListedTool, toolBytes } from "./catalog.ts";
+import { type CatalogTool, catalogOf, cleanTitle, ListedTool, toolBytes } from "./catalog.ts";
+import { answerText, CallResult, contentText, ResourceContents } from "./content.ts";
+import { elicitationOf, elicitResultOf } from "./elicitation.ts";
 import {
   AuthFailing,
   CommandFailed,
@@ -33,6 +41,7 @@ import {
   SecretsUnavailable,
   Withdrawn,
 } from "./errors.ts";
+import { entryBytes, type Prompt, promptsOf, type Resource, resourcesOf } from "./features.ts";
 import {
   DEFAULT_GUARD,
   type GuardedFetch,
@@ -40,12 +49,28 @@ import {
   makeGuardedFetch,
   type UrlPolicy,
 } from "./guard.ts";
+import {
+  CALL_TAG,
+  DetailedTask,
+  RawRequestClosed,
+  RawRequestError,
+  TASKS_EXTENSION,
+  type Task,
+  type TaskTap,
+  tapTransport,
+} from "./tasks.ts";
 import { codePointsEnd } from "./text.ts";
 
 /**
- * One MCP session with a connector's server, over Streamable HTTP, for one
- * bot (`docs/architecture/server.md`, "Connectors"). A session can hold state
- * at its server (a current page, a cursor), so bots never share one.
+ * A connection to a connector's MCP server (`docs/architecture/server.md`,
+ * "Connectors"), at the current revision of MCP (2026-07-28) or, with a
+ * server that does not speak it, the one it does (2025-11-25 and earlier).
+ *
+ * The client finds which by asking the server (`server/discover`): a server
+ * that answers is spoken to statelessly, each request carrying what the
+ * revision's envelope says; one that refuses, or does not know the method,
+ * gets the earlier `initialize` handshake. Over Streamable HTTP a server
+ * that stays silent is down, not old; over a process's streams it is old.
  *
  * Its credentials are read from their store for every request and added
  * then; nothing here keeps a token or a header's value between requests.
@@ -87,15 +112,20 @@ export interface ConnectorCredentials {
 }
 
 export interface SessionLimits {
-  /** How long opening the session, or listing every page of its tools, may take. */
+  /** How long opening the session, or one listing, may take. */
   readonly listDeadline: Duration.Duration;
-  /** How long one tool call may take. */
+  /**
+   * How long one tool call, resource read or prompt may take before its
+   * server answers it, or answers with a task: each can wait on the operator.
+   */
   readonly callDeadline: Duration.Duration;
-  /** The most characters of a tool's answer a bot reads; the rest is cut. */
+  /** How long a call its server runs as a task may take in all, from the call. */
+  readonly taskDeadline: Duration.Duration;
+  /** The most characters of a tool's answer, a resource or a prompt a reader gets; the rest is cut. */
   readonly maxResultCharacters: number;
-  /** The most a listing's tools may take, in bytes, across its pages, once cleaned: past it, the listing fails. */
+  /** The most one listing's answers may take, in bytes, across its pages: past it, the listing fails. */
   readonly maxCatalogBytes: number;
-  /** The most pages a listing may take. */
+  /** The most pages one listing may take. */
   readonly maxListPages: number;
   readonly guard: GuardOptions;
 }
@@ -103,21 +133,41 @@ export interface SessionLimits {
 export const DEFAULT_SESSION_LIMITS: SessionLimits = {
   listDeadline: Duration.seconds(30),
   callDeadline: Duration.minutes(10),
+  taskDeadline: Duration.minutes(60),
   maxResultCharacters: 100_000,
   maxCatalogBytes: 8 * 1024 * 1024,
   maxListPages: 64,
   guard: DEFAULT_GUARD,
 };
 
-export interface SessionOptions {
+/** What a server lists: its tools, its resources, its prompts. */
+export type ListKind = "tools" | "resources" | "prompts";
+
+/** What a session needs from the connector it serves, whatever the transport. */
+export interface ClientSetup {
+  /** How J3 Bots names itself to the server. */
+  readonly client: { readonly name: string; readonly version: string };
+  /**
+   * Where the server's cacheable answers (its lists, its resources) are kept
+   * for as long as it says they hold: one store for the connector, shared by
+   * its sessions, which are all signed alike.
+   */
+  readonly cache: ResponseCache;
+  /** The server said one of its lists changed. */
+  readonly onListChanged: (kind: ListKind) => Effect.Effect<void>;
+}
+
+/** Where a connector's cacheable answers are kept ({@link ClientSetup.cache}). */
+export type ResponseCache = ResponseCacheStore;
+
+/** A connector's response cache: empty, and kept in memory only. */
+export const responseCache = (): ResponseCache => new InMemoryResponseCacheStore();
+
+export interface SessionOptions extends ClientSetup {
   readonly url: URL;
   readonly policy: UrlPolicy;
   readonly credentials: ConnectorCredentials;
   readonly limits: SessionLimits;
-  /** How J3 Bots names itself to the server. */
-  readonly client: { readonly name: string; readonly version: string };
-  /** The server said its tools changed (`notifications/tools/list_changed`). */
-  readonly onToolsChanged: Effect.Effect<void>;
 }
 
 /** What a tool answered, as a bot may read it: cut to size, with the connector's secrets taken out. */
@@ -128,14 +178,78 @@ export interface ToolAnswer {
   readonly cut: boolean;
 }
 
+/** How far a call has come, as its server says: progress, or the status of the task it runs as. */
+export interface CallProgress {
+  /** What the server says it is doing, cleaned, in a line; null when it says nothing. */
+  readonly message: string | null;
+  /** How much is done, from 0 to 1, when the server gives a total. */
+  readonly fraction: number | null;
+}
+
+/**
+ * What one call can reach while it runs: where its progress goes, and who
+ * answers when its server asks for something. Without them, progress is
+ * dropped and every request for input declined.
+ */
+export interface CallHooks {
+  readonly progress: (progress: CallProgress) => Effect.Effect<void>;
+  /** Shows the request to the operator and waits for their answer; interrupted when the call ends. */
+  readonly elicit: (elicitation: Elicitation) => Effect.Effect<ElicitationAnswer>;
+}
+
+/** Which revision of MCP the server speaks, who it says it is, and what it offers. */
+export interface ServerInfo {
+  /** The protocol revision negotiated, such as `2026-07-28` or `2025-11-25`. */
+  readonly protocolVersion: string;
+  /** Its name and version as it gives them, cleaned; null when it gives none. */
+  readonly name: string | null;
+  readonly version: string | null;
+  readonly offers: {
+    readonly tools: boolean;
+    readonly resources: boolean;
+    readonly prompts: boolean;
+    /** Whether it may run a call as a task (the Tasks extension). */
+    readonly tasks: boolean;
+  };
+}
+
+/** A resource's contents as a reader gets them: the connector's secrets taken out of its text, cut to size. */
+export interface ResourceRead {
+  readonly contents: ReadonlyArray<ResourceContents>;
+  /** Part of it was cut, or binary contents left out, to fit `maxResultCharacters`. */
+  readonly cut: boolean;
+}
+
+/** A prompt as its server wrote it from the arguments given: its messages as text. */
+export interface PromptText {
+  readonly description: string | null;
+  readonly messages: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }>;
+  readonly cut: boolean;
+}
+
 export interface McpSession {
+  readonly info: ServerInfo;
   /** Every tool its server lists, cleaned, with the connector's secrets taken out. */
   readonly listTools: Effect.Effect<ReadonlyArray<CatalogTool>, ConnectorFailure>;
-  /** Interrupting a call aborts its request. */
+  /** Every resource and resource template its server lists, cleaned. */
+  readonly listResources: Effect.Effect<ReadonlyArray<Resource>, ConnectorFailure>;
+  /** Every prompt its server lists, cleaned. */
+  readonly listPrompts: Effect.Effect<ReadonlyArray<Prompt>, ConnectorFailure>;
+  /** Interrupting a call aborts its request, or cancels the task it runs as. */
   readonly callTool: (input: {
     readonly name: string;
     readonly arguments: Readonly<Record<string, unknown>>;
+    readonly hooks?: CallHooks;
   }) => Effect.Effect<ToolAnswer, ConnectorFailure>;
+  readonly readResource: (input: {
+    readonly uri: string;
+    readonly hooks?: CallHooks;
+  }) => Effect.Effect<ResourceRead, ConnectorFailure>;
+  readonly getPrompt: (input: {
+    readonly name: string;
+    readonly arguments: Readonly<Record<string, string>>;
+    readonly hooks?: CallHooks;
+  }) => Effect.Effect<PromptText, ConnectorFailure>;
 }
 
 /** Headers the transport sets itself, or that would change how a request is framed: never taken from the store. */
@@ -165,14 +279,21 @@ const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
 /**
  * The request's headers with the credentials added. A header from the store
  * that is reserved, malformed, or would end its line is refused as a whole:
- * the request is not sent, and nothing says what the value was.
+ * the request is not sent, and nothing says what the value was. A header
+ * whose name starts `Mcp-Param-` is reserved too: 2026-07-28 has a client
+ * mirror a tool's arguments in them.
  */
 const signed = (base: RequestInit["headers"], credentials: CallCredentials): Headers => {
   const headers = new Headers(base);
   for (const header of credentials.headers) {
     const name = header.name.toLowerCase();
     const value = Redacted.value(header.value);
-    if (!HEADER_NAME.test(header.name) || RESERVED_HEADERS.has(name) || !HEADER_VALUE.test(value)) {
+    if (
+      !HEADER_NAME.test(header.name) ||
+      RESERVED_HEADERS.has(name) ||
+      name.startsWith("mcp-param-") ||
+      !HEADER_VALUE.test(value)
+    ) {
       throw new AuthFailing({ reason: "secret-unusable" });
     }
     headers.set(name, value);
@@ -194,8 +315,8 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
 
 /**
  * Whether the server refused the credentials: a `401`, or a `403` whose
- * challenge says the token lacks a scope (MCP 2025-11-25, "Runtime
- * insufficient scope errors"), which a new sign-in with that scope answers.
+ * challenge says the token lacks a scope (MCP 2025-11-25 and 2026-07-28,
+ * "insufficient scope"), which a new sign-in with that scope answers.
  */
 const refusedCredentials = (response: Response): boolean => {
   if (response.status === 401) return true;
@@ -204,18 +325,46 @@ const refusedCredentials = (response: Response): boolean => {
   return /^\s*Bearer\b/i.test(challenge) && /\berror\s*=\s*"?insufficient_scope"?/i.test(challenge);
 };
 
+/** What is left of a listing's byte budget, shared by the answers to its pages. */
+interface Budget {
+  readonly limit: number;
+  left: number;
+}
+
 /**
- * A request one of the session's effects is making, as the fetch the SDK
+ * A request one of the session's effects is making, as the code the SDK
  * calls sees it: the effect's signal, which aborts the request itself when
- * the effect is interrupted or runs out of time, and the credentials each
- * attempt was signed with, which its answer is scrubbed of.
+ * the effect is interrupted or runs out of time; the credentials each
+ * attempt was signed with, which its answer is scrubbed of; the budget its
+ * answers count against; and, for a call, its hooks.
  */
 interface InFlight {
   readonly signal: AbortSignal;
   readonly sent: Array<CallCredentials>;
+  readonly budget: Budget | undefined;
+  readonly hooks: CallHooks | undefined;
 }
 
 const inFlight = new NodeAsyncHooks.AsyncLocalStorage<InFlight>();
+
+/** `response`, failing with {@link ResponseTooLarge} once the answers counted against `budget` pass it. */
+const metered = (response: Response, budget: Budget): Response => {
+  if (response.body === null) return response;
+  const counted = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        budget.left -= chunk.byteLength;
+        if (budget.left < 0) controller.error(new ResponseTooLarge({ limit: budget.limit }));
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  return new Response(counted, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+};
 
 /**
  * A fetch that signs each request with the credentials as they are now. When
@@ -224,11 +373,16 @@ const inFlight = new NodeAsyncHooks.AsyncLocalStorage<InFlight>();
  * in again.
  *
  * A request one of the session's effects makes is aborted when that effect
- * is interrupted or runs out of time. One the SDK sends on its own has the
- * guard's deadline for its answer.
+ * is interrupted or runs out of time. One the SDK sends on its own (the
+ * stream a 2026-07-28 server says its lists changed on) has the guard's
+ * deadline for its answer to begin.
  */
 const signingFetch =
-  (guarded: GuardedFetch, credentials: ConnectorCredentials): GuardedFetch =>
+  (
+    guarded: GuardedFetch,
+    credentials: ConnectorCredentials,
+    seen: (sent: CallCredentials) => void,
+  ): GuardedFetch =>
   async (input, init) => {
     const flight = inFlight.getStore();
     const own = init?.signal ?? null;
@@ -241,6 +395,7 @@ const signingFetch =
     const attempt = async () => {
       const current = await run(credentials.current);
       flight?.sent.push(current);
+      seen(current);
       const response = await guarded(input, {
         ...init,
         signal,
@@ -249,7 +404,9 @@ const signingFetch =
       return { response, bearer: current.bearer };
     };
     const first = await attempt();
-    if (!refusedCredentials(first.response)) return first.response;
+    const answered = async (response: Response) =>
+      flight?.budget === undefined ? response : metered(response, flight.budget);
+    if (!refusedCredentials(first.response)) return answered(first.response);
     await first.response.body?.cancel();
     await run(
       credentials.rejected(
@@ -258,7 +415,7 @@ const signingFetch =
       ),
     );
     const second = await attempt();
-    if (!refusedCredentials(second.response)) return second.response;
+    if (!refusedCredentials(second.response)) return answered(second.response);
     await second.response.body?.cancel();
     throw new NeedsSignIn();
   };
@@ -279,6 +436,9 @@ const isConnectorFailure = Schema.is(
   ]),
 );
 
+const isRawRequestClosed = Schema.is(RawRequestClosed);
+const isRawRequestError = Schema.is(RawRequestError);
+
 /**
  * What the SDK threw, as one of J3 Bots' failures. Our own errors, thrown from
  * the fetch, come back as they were. Nothing of the SDK's message is kept: it
@@ -286,13 +446,18 @@ const isConnectorFailure = Schema.is(
  */
 const failureOf = (error: unknown): ConnectorFailure => {
   if (isConnectorFailure(error)) return error;
+  // Version negotiation wraps what the fetch threw.
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (isConnectorFailure(cause)) return cause;
   if (SdkHttpError.isInstance(error)) return new ServerError({ status: error.status });
   // The connection ended under the request: a server that went away, not one that answered badly.
   if (SdkError.isInstance(error) && error.code === SdkErrorCode.ConnectionClosed) {
     return new Unreachable({ reason: "closed" });
   }
-  if (ProtocolError.isInstance(error)) return new ServerError({ status: null });
-  if (SdkError.isInstance(error)) return new NotMcp();
+  if (isRawRequestClosed(error)) return new Unreachable({ reason: "closed" });
+  if (ProtocolError.isInstance(error) || isRawRequestError(error)) {
+    return new ServerError({ status: null });
+  }
   return new NotMcp();
 };
 
@@ -302,14 +467,24 @@ interface Sent<A> {
   readonly sent: ReadonlyArray<CallCredentials>;
 }
 
-/** One request to the server, with a deadline; interrupting it, or running out of time, aborts it. */
+/**
+ * One request to the server, with a deadline; interrupting it, or running
+ * out of time, aborts it. Its answers count against `budget`, when given,
+ * and what the server asks while it runs reaches `hooks`.
+ */
 export const request = <A>(
   deadline: Duration.Duration,
   send: (signal: AbortSignal) => Promise<A>,
+  context: { readonly budget?: Budget; readonly hooks?: CallHooks } = {},
 ): Effect.Effect<Sent<A>, ConnectorFailure> =>
   Effect.tryPromise({
     try: (signal) => {
-      const flight: InFlight = { signal, sent: [] };
+      const flight: InFlight = {
+        signal,
+        sent: [],
+        budget: context.budget,
+        hooks: context.hooks,
+      };
       return inFlight
         .run(flight, () => send(signal))
         .then((value) => ({ value, sent: flight.sent }));
@@ -319,40 +494,6 @@ export const request = <A>(
 
 /** Beyond any deadline here, so the SDK's own timer never fires first. */
 export const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
-
-const decodeListed = Schema.decodeUnknownResult(ListedTool);
-
-/** What decodes as a listed tool, from one page. */
-const listedOf = (tools: ReadonlyArray<unknown>): ReadonlyArray<ListedTool> =>
-  tools.flatMap((tool) => {
-    const decoded = decodeListed(tool);
-    return Result.isSuccess(decoded) ? [decoded.success] : [];
-  });
-
-/** A tool's answer as text: binary parts are named, not inlined. */
-const answerText = (result: CallToolResult): string => {
-  const parts = result.content.map((block) => {
-    switch (block.type) {
-      case "text":
-        return block.text;
-      case "image":
-      case "audio":
-        return `[${block.type}: ${block.mimeType}, not shown]`;
-      case "resource_link":
-        return `[link: ${block.name} ${block.uri}]`;
-      case "resource":
-        return "text" in block.resource
-          ? block.resource.text
-          : `[file: ${block.resource.mimeType ?? "unknown type"} ${block.resource.uri}, not shown]`;
-      default:
-        return "[content of a kind J3 Bots does not read]";
-    }
-  });
-  if (parts.length === 0 && result.structuredContent !== undefined) {
-    return JSON.stringify(result.structuredContent) ?? "";
-  }
-  return parts.join("\n\n");
-};
 
 /** Values shorter than this are not searched for: they would match ordinary text. */
 const MIN_SCRUBBED = 8;
@@ -404,20 +545,119 @@ const cut = (text: string, max: number): { readonly text: string; readonly cut: 
   return end === null ? { text, cut: false } : { text: text.slice(0, end), cut: true };
 };
 
+/** The client a session speaks through, with what J3 Bots offers a server: elicitation, in both modes, and tasks. Never sampling or roots. */
+export const makeClient = (
+  setup: ClientSetup,
+  limits: SessionLimits,
+  fork: (effect: Effect.Effect<void>) => void,
+): Client => {
+  const changed = (kind: ListKind) => ({
+    autoRefresh: false,
+    debounceMs: 0,
+    onChanged: () => fork(setup.onListChanged(kind)),
+  });
+  return new Client(setup.client, {
+    capabilities: {
+      elicitation: { form: {}, url: {} },
+      extensions: { [TASKS_EXTENSION]: {} },
+    },
+    versionNegotiation: {
+      mode: "auto",
+      probe: { timeoutMs: Duration.toMillis(PROBE_TIMEOUT) },
+    },
+    inputRequired: { autoFulfill: true, maxRounds: MAX_INPUT_ROUNDS },
+    listChanged: {
+      tools: changed("tools"),
+      resources: changed("resources"),
+      prompts: changed("prompts"),
+    },
+    responseCacheStore: setup.cache,
+    listMaxPages: limits.maxListPages,
+  });
+};
+
+/** How long a server may take to answer `server/discover`: over a process's streams, silence past it means an older server. */
+const PROBE_TIMEOUT = Duration.seconds(5);
+
+/** The most rounds of questions one call may ask the operator before it fails. */
+const MAX_INPUT_ROUNDS = 8;
+
+/** How often a call's progress is passed on, at most. */
+const PROGRESS_EVERY = Duration.seconds(1);
+
+/** The most log lines a server's session writes to the server's log in a minute; the rest are dropped. */
+const MAX_LOG_LINES_PER_MINUTE = 30;
+/** The longest log line kept, in characters. */
+const MAX_LOG_CHARACTERS = 500;
+
+/** How often a task is asked how it is doing, unless its server says otherwise, and the bounds on what it says. */
+const TASK_POLL = { default: 2_000, min: 500, max: 10_000 };
+
+const decodeResourceContents = Schema.decodeUnknownResult(Schema.Array(ResourceContents));
+const decodeCallResult = Schema.decodeUnknownResult(CallResult);
+const decodeDetailedTask = Schema.decodeUnknownResult(DetailedTask);
+const decodeListed = Schema.decodeUnknownResult(ListedTool);
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
 /**
- * Opens a session with the connector's server: the guarded connection, the
- * MCP handshake within `listDeadline`. It closes with its scope, ending the
- * session at the server when the server allows.
+ * What a resource's contents say of themselves, as a bot or a client may be
+ * shown it: its address and type with the connector's secrets taken out, and
+ * its `_meta` only when it holds none of them, since a cleaned one would
+ * point nowhere.
+ */
+const scrubbedAbout = (
+  item: ResourceContents,
+  clean: (text: string) => string,
+): Pick<ResourceContents, "uri" | "mimeType" | "_meta"> => {
+  const meta = item._meta;
+  const kept =
+    meta !== undefined &&
+    Option.match(encodeJson(meta), { onNone: () => false, onSome: (text) => clean(text) === text });
+  return {
+    uri: clean(item.uri),
+    ...(item.mimeType === undefined ? {} : { mimeType: clean(item.mimeType) }),
+    ...(meta !== undefined && kept ? { _meta: meta } : {}),
+  };
+};
+const decodeMessages = Schema.decodeUnknownResult(
+  Schema.Array(
+    Schema.Struct({ role: Schema.Literals(["user", "assistant"]), content: Schema.Unknown }),
+  ),
+);
+
+/** What decodes as a listed tool. */
+const listedOf = (tools: ReadonlyArray<unknown>): ReadonlyArray<ListedTool> =>
+  tools.flatMap((tool) => {
+    const decoded = decodeListed(tool);
+    return Result.isSuccess(decoded) ? [decoded.success] : [];
+  });
+
+/** A server's text as one line the operator or a log reads: cleaned, capped. */
+const oneLine = (text: string, max: number): string | null => {
+  const line = cleanTitle(text);
+  return line === null ? null : line.slice(0, max);
+};
+
+/**
+ * Opens a session with the connector's server over Streamable HTTP: the
+ * guarded connection, the revision negotiated within `listDeadline`. It
+ * closes with its scope.
  */
 export const openSession = (
   options: SessionOptions,
 ): Effect.Effect<McpSession, ConnectorFailure, Scope.Scope> =>
   Effect.gen(function* () {
     const { limits } = options;
-    const fork = Effect.runForkWith(yield* Effect.context<never>());
+    const context = yield* Effect.context<never>();
+    const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);
     const guarded = yield* makeGuardedFetch(options.policy, limits.guard);
+    /** The credentials the last few requests were sent with, which an answer served from the cache is scrubbed of. */
+    const recent: Array<CallCredentials> = [];
     const transport = new StreamableHTTPClientTransport(options.url, {
-      fetch: signingFetch(guarded, options.credentials),
+      fetch: signingFetch(guarded, options.credentials, (sent) => {
+        recent.push(sent);
+        if (recent.length > 4) recent.shift();
+      }),
       redirectPolicy: "same-origin",
       reconnectionOptions: {
         initialReconnectionDelay: 1_000,
@@ -426,16 +666,7 @@ export const openSession = (
         maxRetries: 2,
       },
     });
-    const client = new Client(options.client, {
-      capabilities: {},
-      listChanged: {
-        tools: {
-          autoRefresh: false,
-          debounceMs: 0,
-          onChanged: () => fork(options.onToolsChanged),
-        },
-      },
-    });
+    const client = makeClient(options, limits, fork);
     yield* Effect.acquireRelease(
       request(limits.listDeadline, (signal) =>
         client.connect(transport, { signal, timeout: sdkTimeout(limits.listDeadline) }),
@@ -451,66 +682,402 @@ export const openSession = (
     );
 
     const address = addressValues(options.url);
-    return toolsOf(client, limits, (sent) => scrubberOf([...sentValues(sent), ...address]));
+    return sessionOf(client, transport, limits, context, (sent) =>
+      scrubberOf([...sentValues([...sent, ...recent]), ...address]),
+    );
   });
+
+/** Calls in flight on a session, which a request for input that names none goes to when there is one. */
+type Calls = Set<InFlight>;
 
 /**
  * What a session does once its client is connected, over any transport:
- * list the server's tools and call one. `scrub` gives what to take out of
- * the server's text, from the credentials each request was sent with.
+ * list the server's tools, resources and prompts, call a tool, read a
+ * resource and get a prompt. `scrub` gives what to take out of the server's
+ * text, from the credentials each request was sent with.
  */
-export const toolsOf = (
+export const sessionOf = (
   client: Client,
+  transport: Transport,
   limits: SessionLimits,
+  context: Context.Context<never>,
   scrub: (sent: ReadonlyArray<CallCredentials>) => (text: string) => string,
 ): McpSession => {
+  const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);
+  const calls: Calls = new Set();
+  const callsByTag = new Map<string, InFlight>();
+  const tap: TaskTap = tapTransport(transport, (tag, deliver) => {
+    const flight = callsByTag.get(tag);
+    if (flight === undefined) deliver();
+    else inFlight.run(flight, deliver);
+  });
+
   /**
-   * Every page of the server's tools, each cleaned as it comes so a listing
-   * holds no more than {@link SessionLimits.maxCatalogBytes} of them: a
-   * server that lists more, or more than `maxListPages` pages, fails it.
+   * The flight a server's request for input belongs to: the one it arrived
+   * within, or else the session's only call in flight. With several and no
+   * way to tell which asked (an older server over a process's streams), it
+   * is declined.
    */
-  const listTools = Effect.gen(function* () {
-    if (client.getServerCapabilities()?.tools === undefined) return [];
-    const tooLarge = new ResponseTooLarge({ limit: limits.maxCatalogBytes });
-    let tools: ReadonlyArray<CatalogTool> = [];
-    let bytes = 0;
-    let cursor: string | undefined;
-    for (let pages = 0; pages < limits.maxListPages; pages++) {
-      const page = cursor === undefined ? {} : { params: { cursor } };
-      const answer = yield* request(limits.listDeadline, (signal) =>
-        client.request(
-          { method: "tools/list", ...page },
-          { signal, timeout: sdkTimeout(limits.listDeadline) },
+  const askingFlight = (): InFlight | undefined => {
+    const current = inFlight.getStore();
+    if (current !== undefined) return current;
+    if (calls.size !== 1) return undefined;
+    const [only] = calls;
+    return only;
+  };
+
+  client.setRequestHandler("elicitation/create", async (request, ctx) => {
+    const flight = askingFlight();
+    const hooks = flight?.hooks;
+    if (flight === undefined || hooks === undefined) return { action: "decline" };
+    const shown = elicitationOf(request.params);
+    if (Result.isFailure(shown)) {
+      fork(
+        Effect.logInfo("A connector's request for input was declined unseen").pipe(
+          Effect.annotateLogs({ reason: shown.failure }),
         ),
       );
-      const before = tools.length;
-      tools = catalogOf(listedOf(answer.value.tools), {
-        earlier: tools,
-        redact: scrub(answer.sent),
-      });
-      for (const tool of tools.slice(before)) bytes += toolBytes(tool);
-      if (bytes > limits.maxCatalogBytes) return yield* tooLarge;
-      cursor = answer.value.nextCursor;
-      if (cursor === undefined) return tools;
+      return { action: "decline" };
     }
-    return yield* tooLarge;
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: limits.listDeadline,
-      orElse: () => Effect.fail(new TimedOut()),
-    }),
+    // Asked until the server withdraws the request or the call it belongs to ends.
+    const answer = await Effect.runPromiseWith(context)(hooks.elicit(shown.success), {
+      signal: AbortSignal.any([ctx.mcpReq.signal, flight.signal]),
+    });
+    return elicitResultOf(answer);
+  });
+
+  let logWindow = { startedAt: 0, lines: 0 };
+  client.setNotificationHandler("notifications/message", (notification) =>
+    fork(
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (now - logWindow.startedAt > 60_000) logWindow = { startedAt: now, lines: 0 };
+        if (++logWindow.lines > MAX_LOG_LINES_PER_MINUTE) return;
+        const { level, logger, data } = notification.params;
+        const raw = typeof data === "string" ? data : Option.getOrElse(encodeJson(data), () => "");
+        const line = oneLine(scrub([])(raw), MAX_LOG_CHARACTERS);
+        if (line === null) return;
+        yield* Effect.logDebug(`MCP server: ${line}`).pipe(
+          Effect.annotateLogs({
+            serverLevel: level,
+            ...(logger === undefined ? {} : { logger: scrub([])(logger).slice(0, 64) }),
+          }),
+        );
+      }),
+    ),
   );
 
+  const capabilities = client.getServerCapabilities();
+  const server = client.getServerVersion();
+  const info: ServerInfo = {
+    protocolVersion: client.getNegotiatedProtocolVersion() ?? "unknown",
+    name: server === undefined ? null : cleanTitle(server.name),
+    version: server === undefined ? null : cleanTitle(server.version),
+    offers: {
+      tools: capabilities?.tools !== undefined,
+      resources: capabilities?.resources !== undefined,
+      prompts: capabilities?.prompts !== undefined,
+      tasks: capabilities?.extensions?.[TASKS_EXTENSION] !== undefined,
+    },
+  };
+
+  /** One listing, counted against its budget, within the list deadline. */
+  const listing = <A>(send: (signal: AbortSignal) => Promise<A>) =>
+    request(limits.listDeadline, send, {
+      budget: { limit: limits.maxCatalogBytes, left: limits.maxCatalogBytes },
+    });
+  const listOptions = (signal: AbortSignal) => ({
+    signal,
+    timeout: sdkTimeout(limits.listDeadline),
+  });
+  const withinBudget = <A>(entries: ReadonlyArray<A>, bytes: (entry: A) => number) =>
+    entries.reduce((sum, entry) => sum + bytes(entry), 0) > limits.maxCatalogBytes
+      ? Effect.fail(new ResponseTooLarge({ limit: limits.maxCatalogBytes }))
+      : Effect.succeed(entries);
+
+  const listTools = Effect.gen(function* () {
+    if (!info.offers.tools) return [];
+    const answer = yield* listing((signal) => client.listTools(undefined, listOptions(signal)));
+    const tools = catalogOf(listedOf(answer.value.tools), { redact: scrub(answer.sent) });
+    return yield* withinBudget(tools, toolBytes);
+  });
+
+  const listResources = Effect.gen(function* () {
+    if (!info.offers.resources) return [];
+    const resources = yield* listing((signal) =>
+      client.listResources(undefined, listOptions(signal)),
+    );
+    const templates = yield* listing((signal) =>
+      client.listResourceTemplates(undefined, listOptions(signal)),
+    );
+    const listed = resourcesOf(
+      resources.value.resources,
+      templates.value.resourceTemplates,
+      scrub([...resources.sent, ...templates.sent]),
+    );
+    return yield* withinBudget(listed, entryBytes);
+  });
+
+  const listPrompts = Effect.gen(function* () {
+    if (!info.offers.prompts) return [];
+    const answer = yield* listing((signal) => client.listPrompts(undefined, listOptions(signal)));
+    return yield* withinBudget(promptsOf(answer.value.prompts, scrub(answer.sent)), entryBytes);
+  });
+
+  /** Where a call's progress goes: to its hooks, at most every {@link PROGRESS_EVERY}. */
+  const throttled = (hooks: CallHooks | undefined) => {
+    let last = Number.NEGATIVE_INFINITY;
+    return (progress: CallProgress) => {
+      if (hooks === undefined) return;
+      fork(
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          if (now - last < Duration.toMillis(PROGRESS_EVERY) && progress.fraction !== 1) return;
+          last = now;
+          yield* hooks.progress(progress);
+        }),
+      );
+    };
+  };
+
+  /**
+   * Runs `send` as a tagged call: the flight is known by its tag, so an
+   * answer to it reaches its hooks however it arrives, and it counts as in
+   * flight while it runs.
+   */
+  const tagged = <A>(
+    deadline: Duration.Duration,
+    hooks: CallHooks | undefined,
+    send: (tag: string, signal: AbortSignal) => Promise<A>,
+  ) => {
+    const tag = NodeCrypto.randomUUID();
+    return request(
+      deadline,
+      (signal) => {
+        const flight = inFlight.getStore();
+        if (flight !== undefined) {
+          calls.add(flight);
+          callsByTag.set(tag, flight);
+        }
+        return send(tag, signal).finally(() => {
+          if (flight !== undefined) calls.delete(flight);
+          callsByTag.delete(tag);
+          tap.forget(tag);
+        });
+      },
+      hooks === undefined ? {} : { hooks },
+    );
+  };
+
+  const taskRequest = (
+    method: "tasks/get" | "tasks/update" | "tasks/cancel",
+    params: Readonly<Record<string, unknown>>,
+  ) => request(limits.listDeadline, (signal) => tap.request(method, params, signal));
+
+  /**
+   * Follows a call its server runs as a task until it ends: asks how it is
+   * doing as often as it says, passes its status on as progress, puts its
+   * questions to the operator, and gives its result. Interrupting it, or
+   * running out of `left`, what the task deadline leaves of the call,
+   * cancels the task at the server.
+   */
+  const followTask = Effect.fn("McpSession.followTask")(function* (
+    task: Task,
+    hooks: CallHooks | undefined,
+    left: Duration.Duration,
+  ) {
+    const report = throttled(hooks);
+    const answered = new Set<string>();
+    const pollMs = (t: Task) =>
+      Math.min(TASK_POLL.max, Math.max(TASK_POLL.min, t.pollIntervalMs ?? TASK_POLL.default));
+    const loop = Effect.gen(function* () {
+      let current: DetailedTask = task;
+      for (;;) {
+        if (current.statusMessage !== undefined) {
+          report({ message: oneLine(scrub([])(current.statusMessage), 200), fraction: null });
+        }
+        switch (current.status) {
+          case "completed": {
+            if (current.result !== undefined) {
+              const decoded = decodeCallResult(current.result);
+              if (Result.isFailure(decoded)) return yield* new NotMcp();
+              return decoded.success;
+            }
+            break;
+          }
+          case "failed":
+          case "cancelled":
+            return yield* new ServerError({ status: null });
+          case "input_required": {
+            const waiting = Object.entries(current.inputRequests ?? {}).filter(
+              ([key]) => !answered.has(key),
+            );
+            if (waiting.length > 0) {
+              const responses: Record<string, unknown> = {};
+              for (const [key, input] of waiting) {
+                if (input.method !== "elicitation/create") {
+                  return yield* new ServerError({ status: null });
+                }
+                responses[key] = yield* answerInput(input.params, hooks);
+                answered.add(key);
+              }
+              yield* taskRequest("tasks/update", {
+                taskId: task.taskId,
+                inputResponses: responses,
+              });
+            }
+            break;
+          }
+          case "working":
+            break;
+        }
+        yield* Effect.sleep(Duration.millis(pollMs(current)));
+        const got = yield* taskRequest("tasks/get", { taskId: task.taskId });
+        const decoded = decodeDetailedTask(got.value);
+        if (Result.isFailure(decoded) || decoded.success.taskId !== task.taskId) {
+          return yield* new NotMcp();
+        }
+        current = decoded.success;
+      }
+    });
+    const cancel = taskRequest("tasks/cancel", { taskId: task.taskId }).pipe(
+      Effect.timeoutOrElse({ duration: Duration.seconds(5), orElse: () => Effect.void }),
+      Effect.ignore,
+    );
+    return yield* loop.pipe(
+      Effect.onInterrupt(() => cancel),
+      Effect.timeoutOrElse({
+        duration: left,
+        orElse: () => Effect.fail(new TimedOut()),
+      }),
+    );
+  });
+
+  /** The operator's answer to one of a task's requests for input, as the server reads it; declined when no one can answer. */
+  const answerInput = Effect.fn("McpSession.answerInput")(function* (
+    params: unknown,
+    hooks: CallHooks | undefined,
+  ) {
+    if (hooks === undefined) return { action: "decline" } as const;
+    const shown = elicitationOf(params);
+    if (Result.isFailure(shown)) return { action: "decline" } as const;
+    return elicitResultOf(yield* hooks.elicit(shown.success));
+  });
+
   const callTool: McpSession["callTool"] = Effect.fn("McpSession.callTool")(function* (input) {
-    const answer = yield* request(limits.callDeadline, (signal) =>
-      client.callTool(
-        { name: input.name, arguments: { ...input.arguments } },
+    const report = throttled(input.hooks);
+    const began = yield* Clock.currentTimeMillis;
+    const answer = yield* tagged(limits.callDeadline, input.hooks, (tag, signal) =>
+      client
+        .callTool(
+          { name: input.name, arguments: { ...input.arguments }, _meta: { [CALL_TAG]: tag } },
+          {
+            signal,
+            timeout: sdkTimeout(limits.callDeadline),
+            onprogress: (progress) =>
+              report({
+                message:
+                  progress.message === undefined ? null : oneLine(scrub([])(progress.message), 200),
+                fraction:
+                  progress.total === undefined || progress.total <= 0
+                    ? null
+                    : Math.min(1, Math.max(0, progress.progress / progress.total)),
+              }),
+          },
+        )
+        .then(
+          (result) => ({ _tag: "answer", result }) as const,
+          (error: unknown) => {
+            const task = tap.taken(tag);
+            if (
+              task !== undefined &&
+              SdkError.isInstance(error) &&
+              error.code === SdkErrorCode.UnsupportedResultType
+            ) {
+              return { _tag: "task", task } as const;
+            }
+            throw error;
+          },
+        ),
+    );
+    const result =
+      answer.value._tag === "task"
+        ? yield* followTask(
+            answer.value.task,
+            input.hooks,
+            // The hour counts from the call, so the `j3` bridge's wait covers it all.
+            Duration.millis(
+              Math.max(
+                0,
+                Duration.toMillis(limits.taskDeadline) - ((yield* Clock.currentTimeMillis) - began),
+              ),
+            ),
+          )
+        : yield* decodeCallResult(answer.value.result).pipe(
+            Effect.fromResult,
+            Effect.mapError(() => new NotMcp()),
+          );
+    const text = cut(scrub(answer.sent)(answerText(result)), limits.maxResultCharacters);
+    return { text: text.text, cut: text.cut, isError: result.isError === true };
+  });
+
+  const readResource: McpSession["readResource"] = Effect.fn("McpSession.readResource")(
+    function* (input) {
+      const answer = yield* tagged(limits.callDeadline, input.hooks, (tag, signal) =>
+        client.readResource(
+          { uri: input.uri, _meta: { [CALL_TAG]: tag } },
+          { signal, timeout: sdkTimeout(limits.callDeadline) },
+        ),
+      );
+      const decoded = decodeResourceContents(answer.value.contents);
+      if (Result.isFailure(decoded)) return yield* new NotMcp();
+      const clean = scrub(answer.sent);
+      let left = limits.maxResultCharacters;
+      let wasCut = false;
+      const contents: Array<ResourceContents> = [];
+      for (const item of decoded.success) {
+        const size = "text" in item ? item.text.length : item.blob.length;
+        if (left <= 0 || ("blob" in item && size > left)) {
+          wasCut = true;
+          continue;
+        }
+        if ("text" in item) {
+          const text = cut(clean(item.text), left);
+          wasCut ||= text.cut;
+          left -= text.text.length;
+          contents.push({ ...scrubbedAbout(item, clean), text: text.text });
+        } else {
+          left -= size;
+          contents.push({ ...scrubbedAbout(item, clean), blob: item.blob });
+        }
+      }
+      return { contents, cut: wasCut };
+    },
+  );
+
+  const getPrompt: McpSession["getPrompt"] = Effect.fn("McpSession.getPrompt")(function* (input) {
+    const answer = yield* tagged(limits.callDeadline, input.hooks, (tag, signal) =>
+      client.getPrompt(
+        { name: input.name, arguments: { ...input.arguments }, _meta: { [CALL_TAG]: tag } },
         { signal, timeout: sdkTimeout(limits.callDeadline) },
       ),
     );
-    const text = cut(scrub(answer.sent)(answerText(answer.value)), limits.maxResultCharacters);
-    return { text: text.text, cut: text.cut, isError: answer.value.isError === true };
+    const decoded = decodeMessages(answer.value.messages);
+    if (Result.isFailure(decoded)) return yield* new NotMcp();
+    const clean = scrub(answer.sent);
+    let left = limits.maxResultCharacters;
+    let wasCut = false;
+    const messages: Array<{ role: "user" | "assistant"; text: string }> = [];
+    for (const message of decoded.success) {
+      const text = cut(clean(contentText(message.content)), Math.max(0, left));
+      wasCut ||= text.cut;
+      left -= text.text.length;
+      messages.push({ role: message.role, text: text.text });
+    }
+    const description =
+      answer.value.description === undefined ? null : oneLine(clean(answer.value.description), 500);
+    return { description, messages, cut: wasCut };
   });
 
-  return { listTools, callTool };
+  return { info, listTools, listResources, listPrompts, callTool, readResource, getPrompt };
 };

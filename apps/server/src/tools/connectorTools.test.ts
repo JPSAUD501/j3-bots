@@ -95,6 +95,13 @@ it.effect(
         tools.find((tool) => tool.name === "notion__search")?.description,
         connectorToolDescription("Notion", "Search the workspace's pages."),
       );
+      // Where the harness defers MCP tools, a bot's own stay loaded; a connector's are found when needed.
+      assert.deepStrictEqual(
+        tools
+          .filter((tool) => tool._meta?.["anthropic/alwaysLoad"] === true)
+          .map((tool) => tool.name),
+        own,
+      );
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );

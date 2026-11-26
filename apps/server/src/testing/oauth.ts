@@ -12,9 +12,14 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ConnectorReach } from "../connectors/Connectors.ts";
 import { ConnectorStore } from "../connectors/ConnectorStore.ts";
+import {
+  CLIENT_METADATA_PATH,
+  clientMetadataDocument,
+} from "../connectors/oauth/clientMetadata.ts";
 import { OAuthHttp } from "../connectors/oauth/endpoints.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 
@@ -27,6 +32,8 @@ import { Secrets } from "../secrets/Secrets.ts";
 
 export const MCP_URL = "https://mcp.example.test/mcp";
 export const AS_ORIGIN = "https://auth.example.test";
+/** The J3 Bots server's public origin, where its client metadata documents are. */
+export const PUBLIC_ORIGIN = "https://bots.example.test";
 
 /** How the fake behaves; each test changes what it needs. */
 export interface FakeOptions {
@@ -44,6 +51,14 @@ export interface FakeOptions {
   readonly claimedIssuer: string | null;
   readonly s256: boolean;
   readonly registration: boolean;
+  /** Whether it takes a client metadata document's address as a client id, and reads it. */
+  readonly metadataDocuments: boolean;
+  /**
+   * How `PUBLIC_ORIGIN` answers, to the authorization server and to the
+   * server itself: as a public address serving the documents, or as one on
+   * the operator's own network, which neither reaches.
+   */
+  readonly publicOrigin: "public" | "private";
   readonly revocation: boolean;
   /** Whether it sends `iss` on the redirect (RFC 9207) and says so. */
   readonly issParameter: boolean;
@@ -72,6 +87,8 @@ const defaultOptions: FakeOptions = {
   claimedIssuer: null,
   s256: true,
   registration: true,
+  metadataDocuments: false,
+  publicOrigin: "public",
   revocation: true,
   issParameter: false,
   rotate: true,
@@ -219,7 +236,11 @@ export class FakeAuthorizationServer {
     // A client registered with redirects returns only to one of them, on
     // loopback to any port (RFC 8252 §7.3); a provider shows an error page
     // otherwise, and the browser never comes back.
-    const registered = this.clients.get(params.get("client_id") ?? "")?.redirectUris ?? [];
+    const clientId = params.get("client_id") ?? "";
+    if (clientId.startsWith("https://") && this.options.metadataDocuments) {
+      this.readDocument(clientId);
+    }
+    const registered = this.clients.get(clientId)?.redirectUris ?? [];
     if (registered.length > 0 && !registered.some((uri) => sameRedirect(uri, redirectUri))) {
       throw new Error(`The provider refuses the redirect ${redirectUri}`);
     }
@@ -243,12 +264,35 @@ export class FakeAuthorizationServer {
     return back.href;
   }
 
+  /**
+   * Reads the client metadata document at `clientId` as a provider does when
+   * it meets a client id that is an address: a document it cannot read, or
+   * that names another id, leaves the browser on its error page.
+   */
+  private readDocument(clientId: string) {
+    const url = new URL(clientId);
+    if (url.origin !== PUBLIC_ORIGIN || this.options.publicOrigin === "private") {
+      throw new Error(`The provider cannot read the client metadata document ${clientId}`);
+    }
+    const issuer = new URL(`https://${url.pathname.slice(CLIENT_METADATA_PATH.length + 1)}`);
+    const document = clientMetadataDocument(PUBLIC_ORIGIN, issuer);
+    if (document.client_id !== clientId) {
+      throw new Error(`The client metadata document names another client: ${document.client_id}`);
+    }
+    this.clients.set(clientId, {
+      secret: null,
+      method: document.token_endpoint_auth_method,
+      redirectUris: document.redirect_uris,
+    });
+  }
+
   private metadata() {
     return {
       issuer: this.options.claimedIssuer ?? this.issuer,
       authorization_endpoint: `${AS_ORIGIN}/authorize`,
       token_endpoint: `${AS_ORIGIN}/token`,
       ...(this.options.registration ? { registration_endpoint: `${AS_ORIGIN}/register` } : {}),
+      ...(this.options.metadataDocuments ? { client_id_metadata_document_supported: true } : {}),
       ...(this.options.revocation ? { revocation_endpoint: `${AS_ORIGIN}/revoke` } : {}),
       response_types_supported: ["code"],
       code_challenge_methods_supported: this.options.s256 ? ["S256"] : ["plain"],
@@ -329,6 +373,10 @@ export class FakeAuthorizationServer {
         authorization_servers: [this.issuer],
         scopes_supported: ["read", "write"],
       });
+    }
+    if (method === "GET" && url.origin === PUBLIC_ORIGIN) {
+      const issuer = new URL(`https://${url.pathname.slice(CLIENT_METADATA_PATH.length + 1)}`);
+      return json(clientMetadataDocument(PUBLIC_ORIGIN, issuer));
     }
     if (method === "GET" && url.origin === AS_ORIGIN) {
       if (url.pathname === this.metadataPath()) return json(this.metadata());
@@ -444,8 +492,23 @@ export class FakeAuthorizationServer {
                 )
               : Effect.void;
           }),
-          Effect.map(() =>
-            HttpClientResponse.fromWeb(request, this.handle(request.method, url, headers, body)),
+          Effect.flatMap(() =>
+            // The guarded client refuses an address on the operator's own network.
+            url.origin === PUBLIC_ORIGIN && this.options.publicOrigin === "private"
+              ? Effect.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.TransportError({
+                      request,
+                      description: "refused: a private address",
+                    }),
+                  }),
+                )
+              : Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    this.handle(request.method, url, headers, body),
+                  ),
+                ),
           ),
         );
       }),
@@ -497,8 +560,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     grant: { _tag: "all-bots" },
     lastChange: null,
     signedInAt: null,
-    accepted: null,
-    keptRevision: null,
+    tools: null,
     createdAt: yield* DateTime.now,
   });
 });

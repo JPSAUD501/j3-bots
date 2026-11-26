@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
@@ -71,6 +72,12 @@ const post = (
   });
 
 /** Sends a bodiless `method` request to `path` with `headers`, and answers the status, headers and body. */
+/** What a client metadata document says of the client, as these tests read it. */
+const Document = Schema.Struct({
+  client_id: Schema.String,
+  redirect_uris: Schema.Array(Schema.String),
+});
+
 const ask = (method: string, path: string, headers: Record<string, string>) =>
   Effect.gen(function* () {
     const { address } = yield* HttpServer.HttpServer;
@@ -341,6 +348,24 @@ it.layer(
       const lines = logLinesWith("other.example.com");
       assert.lengthOf(lines, 1);
       assert.include(lines[0], "bots.example.com");
+    }),
+  );
+
+  it.effect("serves its OAuth client's metadata document there, one per authorization server", () =>
+    Effect.gen(function* () {
+      const host = { host: "bots.example.com" };
+      const served = yield* ask("GET", "/oauth/client/auth.example.com/tenant", host);
+      assert.strictEqual(served.status, 200);
+      const document = yield* Schema.decodeEffect(Schema.fromJsonString(Document))(served.body);
+      assert.deepInclude(document, {
+        client_id: "https://bots.example.com/oauth/client/auth.example.com/tenant",
+        redirect_uris: [
+          "https://bots.example.com/oauth/callback/auth.example.com/tenant",
+          "http://127.0.0.1/oauth/callback/auth.example.com/tenant",
+        ],
+      });
+      // An address it never names has no document.
+      assert.strictEqual((yield* ask("GET", "/oauth/client/", host)).status, 404);
     }),
   );
 });

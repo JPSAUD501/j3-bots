@@ -35,6 +35,7 @@ const ownTools: ReadonlyArray<ListedTool> = toolList.map((tool) => ({
   inputSchema: decodeJson(tool.inputSchema).pipe(
     Option.getOrElse((): Schema.Json => ({ type: "object" })),
   ),
+  _meta: { ...tool._meta },
 }));
 
 /**

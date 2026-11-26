@@ -52,7 +52,6 @@ export {
   addedFrom,
   addedPlace,
   applyConnectorChange,
-  awaitsReview,
   connectorNeedsYou,
   type ConnectorsOpening,
   connectorsOf,
@@ -317,3 +316,11 @@ export {
   skillGroups,
   skillInstall,
 } from "./skills.ts";
+export {
+  type InputDraft,
+  type InputProblem,
+  inputContent,
+  inputDrafts,
+  inputProblem,
+} from "./connectorInput.ts";
+export { type PromptOption, promptArguments, promptOptions, promptQuery } from "./prompts.ts";

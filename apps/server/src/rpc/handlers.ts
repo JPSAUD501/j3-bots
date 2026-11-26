@@ -53,6 +53,7 @@ import { Connectors } from "../connectors/Connectors.ts";
 import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { Skills } from "../skills/Skills.ts";
+import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
 
 /** The RPCs this server answers: every one of `J3Rpcs`. */
 export const ServedRpcs = J3Rpcs;
@@ -97,6 +98,7 @@ export const handlers = ServedRpcs.toLayer(
     const secrets = yield* Secrets;
     const secretAsks = yield* SecretAsks;
     const connectors = yield* Connectors;
+    const connectorInputs = yield* ConnectorInputs;
     const connectorAuth = yield* ConnectorAuth;
     const connectorSources = yield* ConnectorSources;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
@@ -189,10 +191,17 @@ export const handlers = ServedRpcs.toLayer(
       "message.retry": (input) => pipeline.retryMessage(input),
       "notice.retry": (input) => pipeline.retryNotice(input),
       // Help in the bot's browser is J3 Bots' own card, apart from the engine's requests.
-      "card.answer": ({ answer, ...card }) =>
-        answer._tag === "browser-help"
-          ? browserHelp.answer({ ...card, outcome: answer.outcome })
-          : cards.answer({ ...card, answer }),
+      "card.answer": ({ answer, ...card }) => {
+        switch (answer._tag) {
+          case "browser-help":
+            return browserHelp.answer({ ...card, outcome: answer.outcome });
+          // A connector's request goes back to its server only, never to the engine.
+          case "connector-input":
+            return connectorInputs.answer({ ...card, answer: answer.answer });
+          default:
+            return cards.answer({ ...card, answer });
+        }
+      },
       "secret.provide": (input) => cards.provideSecret(input),
       "bot.stop": (input) => stops.stopBot(input),
       "bot.create": ({ commandId, ...draft }) => bots.create({ commandId, draft }),
@@ -276,7 +285,8 @@ export const handlers = ServedRpcs.toLayer(
       "connector.update": (input) => connectors.update({ ...input, by: operator }),
       "connector.remove": (input) => connectors.remove(input),
       "connector.setBots": (input) => connectors.setBots({ ...input, by: operator }),
-      "connector.acceptToolChanges": (input) => connectors.acceptToolChanges(input),
+      "connector.prompts": ({ botId }) => connectors.menuPrompts(botId),
+      "connector.renderPrompt": (input) => connectors.renderPrompt(input),
       // A sign-in's address and the one it returns to carry its code and
       // `state`: neither is logged, and neither request has a receipt.
       "connector.beginSignIn": ({ connectorId, redirect }) =>

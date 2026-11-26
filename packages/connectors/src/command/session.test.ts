@@ -33,7 +33,7 @@ describe("openCommandSession", () => {
         );
         const { session } = yield* openCommandSession({
           ...fixtureOptions(["--tool", "extra"]),
-          onToolsChanged: Effect.void,
+          onListChanged: () => Effect.void,
         });
         // The line the fixture writes before any message is skipped.
         assert.includeMembers(
@@ -73,7 +73,7 @@ describe("openCommandSession", () => {
         openCommandSession({
           ...fixtureOptions(),
           serverEnvironment: { ...serverEnvironment, NODE_DEBUG: "net,child*" },
-          onToolsChanged: Effect.void,
+          onListChanged: () => Effect.void,
         }),
       );
       assert.strictEqual(

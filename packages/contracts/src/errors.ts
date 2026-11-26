@@ -96,8 +96,8 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * added; the operator confirms it, and the client sends it again saying so.
      */
     "private-network",
-    /** The connector's tools changed again after the review the operator answered. */
-    "tool-review-stale",
+    /** The connector's server did not answer as asked, or cannot be reached now. */
+    "connector-unavailable",
     /**
      * The gallery's search of the MCP Registry, or its read of one entry
      * there, did not answer; the curated list still does.
@@ -179,6 +179,10 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "totp",
     /** A connect form's values: a required one missing, or one the form does not ask for. */
     "connector-fields",
+    /** A connector's prompt was given an argument it does not take, or not one it requires. */
+    "prompt-arguments",
+    /** An answer to a connector's form that does not fit its fields. */
+    "connector-input",
     /** The gallery entry cannot be connected yet (`ConnectKind` `unsupported`). */
     "connector-unsupported",
     /** The address the browser returned to is not one this sign-in expects. */

@@ -26,6 +26,7 @@ import type {
   BotFile,
   BotId,
   Connector,
+  ConnectorPrompt,
   Device,
   DeviceId,
   EngineStatus,
@@ -36,6 +37,7 @@ import type {
   MemoryPath,
   PairBotIds,
   PairSeq,
+  PromptArguments,
   ReleaseVersion,
   RoomId,
   RosterItem,
@@ -62,6 +64,7 @@ import type {
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
+import type { RenderedPrompt } from "../components/PromptPicker";
 import type { RoomPlacement } from "../components/RosterMenu";
 import type { TimelineIntents } from "../components/Timeline";
 import type { SecretsIntents } from "../components/secrets/parts";
@@ -182,6 +185,17 @@ export interface ShellIntents extends TimelineIntents {
     mentions: ReadonlyArray<DraftMention>,
     order?: ReadonlyArray<string>,
   ) => void;
+  /**
+   * The prompts the connectors `botId` may use offer, for the `/` menu of its
+   * conversation; null when they could not be read.
+   */
+  readonly connectorPrompts: (botId: BotId) => Promise<ReadonlyArray<ConnectorPrompt> | null>;
+  /** `prompt` as its server writes it with `given`, for the draft of `botId`'s conversation. */
+  readonly renderPrompt: (
+    botId: BotId,
+    prompt: ConnectorPrompt,
+    given: PromptArguments,
+  ) => Promise<RenderedPrompt>;
   /** Files to place at `at` in the draft's text, or after it. */
   readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>, at?: number) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;

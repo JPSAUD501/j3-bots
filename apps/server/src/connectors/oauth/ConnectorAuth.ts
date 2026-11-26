@@ -34,6 +34,7 @@ import { ServerConfig } from "../../config.ts";
 import type { SignInState } from "../auth.ts";
 import { hiddenOf } from "../credentials.ts";
 import { Listener } from "../../listener.ts";
+import { clientMetadataUrl } from "./clientMetadata.ts";
 import type {
   ConnectorId,
   ConnectorSecret,
@@ -366,6 +367,10 @@ export const layer = Layer.effect(
       };
     });
 
+    /** The server's client metadata document for sign-ins at `issuer`, at its public origin. */
+    const documentUrl = (issuer: string) =>
+      Option.map(config.publicOrigin, (origin) => clientMetadataUrl(origin, new URL(issuer)));
+
     /** Where the server's own callback is, when a browser can reach it. */
     const serverOrigin = Effect.gen(function* () {
       if (Option.isSome(config.publicOrigin)) return Option.some<string>(config.publicOrigin.value);
@@ -652,12 +657,20 @@ export const layer = Layer.effect(
     };
 
     /**
-     * The client to sign in with: the one saved when it belongs to this
-     * authorization server and may return to `redirectUri`, else a new
-     * registration, which is saved with the sign-in for the next. A client
-     * registered for loopback serves every loopback port. The operator's
-     * client is used as it is; a provider that refuses its redirect says so
-     * in the browser.
+     * The client to sign in with (MCP authorization's order): the one saved
+     * when it belongs to this authorization server and may return to
+     * `redirectUri`; else the server's client metadata document, where the
+     * authorization server takes one and the server's public origin serves
+     * it to the internet; else a new registration. The client is saved with
+     * the sign-in for the next. A client registered for loopback serves every
+     * loopback port. The operator's client is used as it is; a provider that
+     * refuses its redirect says so in the browser.
+     *
+     * The document is read first through the client sign-ins use, which
+     * reaches public addresses only: a public origin behind a private name,
+     * as on a private network's own `https` names, is one no authorization
+     * server reads, and a provider that cannot read a client id shows an
+     * error page and never returns. Such a server registers instead.
      */
     const clientFor = Effect.fn("ConnectorAuth.clientFor")(function* (
       id: ConnectorId,
@@ -677,10 +690,34 @@ export const layer = Layer.effect(
         }
         if (
           sameIssuer(client.issuer, found.issuer) &&
-          client.redirectUris.some((registered) => redirectMatches(registered, redirectUri))
+          client.redirectUris.some((registered) => redirectMatches(registered, redirectUri)) &&
+          (client.registration !== "metadata" ||
+            Option.getOrNull(documentUrl(found.issuer)) === client.clientId)
         ) {
           return client;
         }
+      }
+      const document = documentUrl(found.issuer);
+      if (
+        Option.isSome(document) &&
+        found.metadata.client_id_metadata_document_supported === true
+      ) {
+        const served = yield* withHttp(Endpoints.clientDocument(document.value, redirectUri)).pipe(
+          Effect.option,
+        );
+        if (Option.isSome(served)) {
+          return {
+            issuer: found.issuer,
+            registration: "metadata",
+            clientId: document.value,
+            clientSecret: null,
+            authMethod: "none",
+            redirectUris: served.value.redirect_uris,
+          } satisfies OAuthClient;
+        }
+        yield* Effect.logInfo(
+          "The server's client metadata document is not readable from the internet; registering instead",
+        ).pipe(Effect.annotateLogs({ connector: id }));
       }
       const endpoint = found.metadata.registration_endpoint;
       const method = chooseAuthMethod(found.metadata);

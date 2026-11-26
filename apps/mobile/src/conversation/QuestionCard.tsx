@@ -24,7 +24,7 @@ import { PressScale } from "../press.tsx";
 
 /** A chosen option's check, popping in as the choice confirms. */
 /** A bordered row the operator picks; a picked one is filled. */
-const choiceRow = (picked: boolean) =>
+export const choiceRow = (picked: boolean) =>
   `min-h-11 flex-row items-start gap-2.5 rounded-md border px-3 py-2 ${picked ? "border-foreground/60 bg-muted" : "border-input"}`;
 
 /**
@@ -272,7 +272,7 @@ function QuestionFields({
 }
 
 /** The drawn box or circle of a choice, filled once checked. */
-function Indicator({
+export function Indicator({
   shape,
   checked,
 }: {

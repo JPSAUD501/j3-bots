@@ -25,7 +25,9 @@ const supervised = (
     const supervisor = yield* makeSupervisor<string>({
       start: (key) =>
         Ref.update(starts, (all) => [...all, key]).pipe(
-          Effect.andThen(openCommandSession({ ...fixtureOptions(), onToolsChanged: Effect.void })),
+          Effect.andThen(
+            openCommandSession({ ...fixtureOptions(), onListChanged: () => Effect.void }),
+          ),
         ),
       onFailure: (_key, failure) => Ref.update(failures, (all) => [...all, failure]),
       idle: Duration.minutes(1),
@@ -139,7 +141,7 @@ describe("the command connectors' supervisor", () => {
               Effect.flatMap((attempt) =>
                 attempt < 3
                   ? Effect.fail(new CommandFailed({ reason: "exited" }))
-                  : openCommandSession({ ...fixtureOptions(), onToolsChanged: Effect.void }),
+                  : openCommandSession({ ...fixtureOptions(), onListChanged: () => Effect.void }),
               ),
             ),
           onFailure: (_key, failure) => Ref.update(failures, (all) => [...all, failure]),
@@ -189,7 +191,7 @@ describe("the command connectors' supervisor", () => {
               ...fixtureOptions(),
               program: "j3-no-such-program",
               args: [Redacted.make("--version")],
-              onToolsChanged: Effect.void,
+              onListChanged: () => Effect.void,
             }),
           onFailure: () => Effect.void,
           idle: Duration.minutes(1),
@@ -257,7 +259,7 @@ describe("the command connectors' supervisor", () => {
                   ? Deferred.await(gate).pipe(
                       Effect.andThen(Effect.fail(new CommandFailed({ reason: "exited" }))),
                     )
-                  : openCommandSession({ ...fixtureOptions(), onToolsChanged: Effect.void }),
+                  : openCommandSession({ ...fixtureOptions(), onListChanged: () => Effect.void }),
               ),
             ),
           onFailure: () => Effect.void,

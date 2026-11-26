@@ -1,6 +1,6 @@
 # 0026: A bot uses connected services through J3 Bots, which holds the sign-in
 
-**Status:** Accepted. Its "the operator connects; a bot only suggests" is superseded by [0049](0049-the-bots-manage-mcp-servers-and-skills.md): the bots add and manage servers themselves, under their permission mode.
+**Status:** Accepted. Its "the operator connects; a bot only suggests" is superseded by [0049](0049-the-bots-manage-mcp-servers-and-skills.md): the bots add and manage servers themselves, under their permission mode. Its review of a connector's tools, and a new connector going only to the bots the operator names, are superseded by [0047](0047-j3-bots-is-a-complete-mcp-host-at-the-current-specification.md): a connector's tools are what its server lists now, and one added without naming bots goes to every bot.
 
 ## Context
 

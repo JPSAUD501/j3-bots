@@ -6,6 +6,7 @@ export * from "./browser.ts";
 export * from "./commandLine.ts";
 export * from "./connector.ts";
 export * from "./device.ts";
+export * from "./elicitation.ts";
 export * from "./engineStatus.ts";
 export * from "./entry.ts";
 export * from "./errors.ts";

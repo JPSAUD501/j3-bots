@@ -2074,6 +2074,8 @@ export const layer = Layer.effect(
           yield* insertPin(call.tool, matched.pin);
         }),
       );
+      const { sessionId, turnId, callId } = matched.pin;
+      return { sessionId, turnId, callId };
     });
 
     return TurnTools.of({

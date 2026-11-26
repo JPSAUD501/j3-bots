@@ -253,26 +253,37 @@ const secretVariable = (name: string): SettingsVariable => ({
 });
 
 /**
- * The variables the engine gives an instance for the connection: its key,
- * and for Claude Code tool search turned off, which an endpoint other than
- * Anthropic's own may not serve (**Assumed** from the operator's proxy setup,
- * which turns it off for that reason). The URL is not among them: it is in
- * the harness's own configuration, with the name of its key's variable.
+ * The variables the engine gives an instance for the connection: its key.
+ * The URL is not among them: it is in the harness's own configuration, with
+ * the name of its key's variable.
  */
 const connectionVariables = (
   spec: InstanceSpec,
   connected: boolean,
-): ReadonlyArray<SettingsVariable> => {
-  if (spec.kind === "acp-local" || !connected) return [];
-  const key = secretVariable(KEY_VARIABLE);
-  return spec.kind === "claude-code"
-    ? [key, { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false }]
-    : [key];
-};
+): ReadonlyArray<SettingsVariable> =>
+  spec.kind === "acp-local" || !connected ? [] : [secretVariable(KEY_VARIABLE)];
+
+/**
+ * What every Claude Code instance runs with for MCP: tool search on, so a
+ * connector's tools are found when a turn needs them instead of filling each
+ * request (J3 Bots' own tools ask to stay loaded), also through a provider
+ * connection, for which Claude Code leaves it off by default; and room for a
+ * tool description up to 8,192 characters, where Claude Code would cut at
+ * 4,096, since `set_routine`'s is longer. What tool search saves through a
+ * provider connection is **Verified** (`docs/architecture/engine.md`); that
+ * J3 Bots' own tools then stay loaded, and the description limit, are
+ * **Assumed** from Claude Code's documentation (`anthropic/alwaysLoad`,
+ * `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`).
+ */
+const CLAUDE_MCP_VARIABLES: ReadonlyArray<SettingsVariable> = [
+  { name: "ENABLE_TOOL_SEARCH", value: "true", sensitive: false },
+  { name: "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH", value: "8192", sensitive: false },
+];
 
 /**
  * The variables an instance runs with whatever the connection: for Codex, its
- * own home folder; for a Claude Code J3 Bots installed, its own updater
+ * own home folder; for Claude Code, {@link CLAUDE_MCP_VARIABLES}, and for a
+ * Claude Code J3 Bots installed, its own updater
  * turned off, since J3 Bots updates that copy itself and Claude Code's
  * updater would install another into the server user's home (**Assumed**
  * from Claude Code's documented `DISABLE_AUTOUPDATER`).
@@ -289,8 +300,8 @@ const instanceVariables = (
     }
     case "claude-code":
       return spec.executable === undefined
-        ? []
-        : [{ name: "DISABLE_AUTOUPDATER", value: "1", sensitive: false }];
+        ? CLAUDE_MCP_VARIABLES
+        : [...CLAUDE_MCP_VARIABLES, { name: "DISABLE_AUTOUPDATER", value: "1", sensitive: false }];
     case "acp-local":
       return [];
   }

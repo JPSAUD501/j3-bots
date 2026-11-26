@@ -27,7 +27,14 @@ import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { type BotSession, EngineSessions } from "../bots/EngineSessions.ts";
-import { Connectors } from "../connectors/Connectors.ts";
+import {
+  type ConnectorCallHooks,
+  Connectors,
+  type ToolCallAnswer,
+  type ToolNotOffered,
+} from "../connectors/Connectors.ts";
+import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
+import { type CallPlace, ConnectorSteps } from "../turns/ConnectorSteps.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
@@ -109,6 +116,51 @@ export const layer = Layer.effect(
     const secrets = yield* Secrets;
     const connectors = yield* Connectors;
     const management = yield* Management;
+    const inputs = yield* ConnectorInputs;
+    const steps = yield* ConnectorSteps;
+
+    /** What a bot's read of a connector reaches: the operator, when the connector's server asks for something. */
+    const askFor = (botId: BotId): Pick<ConnectorCallHooks, "ask"> => ({
+      ask: (connector, request) => inputs.ask({ botId, connector, request }),
+    });
+
+    /**
+     * What a bot's call to a connector reaches while it runs: its step, which
+     * names the connector and shows how far it got, and the operator, in the
+     * bot's conversation, when the connector's server asks for something.
+     */
+    const hooksFor = (botId: BotId, place: CallPlace): ConnectorCallHooks => ({
+      started: ({ connector, ui }) => steps.started(place, { connectorId: connector.id, ui }),
+      progress: ({ message, fraction }) =>
+        steps.progress(
+          place,
+          message ?? (fraction === null ? "" : `${Math.round(fraction * 100)}%`),
+        ),
+      ...askFor(botId),
+    });
+
+    const asText = ({ text, isError }: ToolCallAnswer): Answered => ({
+      _tag: "text",
+      text,
+      isError,
+    });
+
+    /** A listing's scope as the bot gave it: one connector or every one, and its search. */
+    const scopeOf = (input: { readonly connector?: string; readonly search?: string }) => ({
+      ...(input.connector === undefined ? {} : { slug: input.connector }),
+      ...(input.search === undefined ? {} : { search: input.search }),
+    });
+
+    const refuseUnknownConnector = <A, R>(effect: Effect.Effect<A, ToolNotOffered, R>) =>
+      Effect.catchTag(
+        effect,
+        "ToolNotOffered",
+        () =>
+          new Refused({
+            reason:
+              "You can use no connector by that name. Name it as its tools' names start, or leave it out to list every connector you can use.",
+          }),
+      );
 
     /** A command id for a tool call, the same on every retry of its forward. */
     const commandIdOf = (requestId: string) => CommandId.make(`tool:${requestId}`);
@@ -250,6 +302,43 @@ export const layer = Layer.effect(
               Conflict: (error) => new Refused({ reason: error.message }),
             }),
           ),
+      ),
+      list_connector_resources: framedHandler(
+        tools.list_connector_resources.input,
+        (input, { caller }) =>
+          connectors
+            .resources({ botId: caller.botId, ...scopeOf(input) })
+            .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
+      read_connector_resource: framedHandler(
+        tools.read_connector_resource.input,
+        (input, { caller }) =>
+          connectors
+            .readResource({
+              botId: caller.botId,
+              slug: input.connector,
+              uri: input.uri,
+              hooks: askFor(caller.botId),
+            })
+            .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
+      list_connector_prompts: framedHandler(
+        tools.list_connector_prompts.input,
+        (input, { caller }) =>
+          connectors
+            .prompts({ botId: caller.botId, ...scopeOf(input) })
+            .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
+      get_connector_prompt: framedHandler(tools.get_connector_prompt.input, (input, { caller }) =>
+        connectors
+          .getPrompt({
+            botId: caller.botId,
+            slug: input.connector,
+            name: input.name,
+            arguments: input.arguments ?? {},
+            hooks: askFor(caller.botId),
+          })
+          .pipe(Effect.map(asText), refuseUnknownConnector),
       ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
@@ -467,9 +556,14 @@ export const layer = Layer.effect(
       }
       const tooLarge = inputCapRefusal(input);
       if (tooLarge !== undefined) return yield* new Refused({ reason: tooLarge });
-      yield* claim(tool, call);
+      const place = yield* claim(tool, call);
       return yield* connectors
-        .call({ botId: call.caller.botId, name: tool, arguments: input })
+        .call({
+          botId: call.caller.botId,
+          name: tool,
+          arguments: input,
+          hooks: hooksFor(call.caller.botId, place),
+        })
         .pipe(Effect.catchTag("ToolNotOffered", (error) => new Refused({ reason: error.message })));
     });
 

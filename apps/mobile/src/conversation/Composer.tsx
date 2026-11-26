@@ -47,6 +47,7 @@ import { useFileOpener } from "./FileOpener.tsx";
 import { AnimatedView } from "./animated.ts";
 import { composerButtonFrame, composerButtonSlop } from "./composerButton.ts";
 import { PressScale } from "../press.tsx";
+import { PromptForm, PromptList, usePromptPicker } from "./PromptPicker.tsx";
 import { useTint } from "./tint.ts";
 
 /** A room member the composer offers after `@`, drawn by its shape. */
@@ -64,7 +65,10 @@ export interface MentionCandidate extends Mentionable {
  * or could not be read, the field takes no change, and attaching and removing
  * files are unavailable. In a room, `@` offers its members and `@everyone`
  * above the composer; only a pick mentions one, and a quiet line under it
- * says who the message wakes. While the field has focus the composer's border
+ * says who the message wakes. In a bot's conversation, `/` offers the prompts
+ * its connectors offer the same way; a prompt with arguments asks for them
+ * above the composer, and what its server writes becomes the draft, which the
+ * operator reads and sends as their own. While the field has focus the composer's border
  * takes the conversation's tint (`tint`, the bot's avatar; none in a room).
  * While the draft has no words, the trailing button dictates where the
  * platform has a speech recognizer, beside Send when files wait to go: what is
@@ -175,8 +179,11 @@ export function Composer({
     readonly focus: boolean;
   } | null>(null);
 
+  // A prompt its server wrote cut short says so until the operator edits it.
+  const [cut, setCut] = useState(false);
   const edit = (change: FieldEdit) => {
     setNotTaken(false);
+    setCut(false);
     dictation?.abort();
     dictation?.dismiss();
     const [start, end] = selection.current;
@@ -214,6 +221,20 @@ export function Composer({
       };
     client.setDraftText(target, next.text, next.mentions);
   };
+  const prompt = usePromptPicker({
+    botId: frozen || target._tag !== "conversation" ? null : target.botId,
+    text,
+    focused,
+    onWritten: (written, wasCut) => {
+      setCut(wasCut);
+      placeCaret.current = {
+        reached: (shown) => shown === written,
+        at: written.length,
+        focus: true,
+      };
+      client.setDraftText(target, written, []);
+    },
+  });
   const moveCaret = (at: number) => {
     field.current?.select(at, at);
     selection.current = [at, at];
@@ -320,6 +341,18 @@ export function Composer({
       {query !== null && options.length > 0 && (
         <MentionList options={options} members={mentionable ?? []} onPick={pick} />
       )}
+      {prompt.options.length > 0 && <PromptList options={prompt.options} onPick={prompt.pick} />}
+      {prompt.chosen !== null && (
+        <PromptForm
+          chosen={prompt.chosen}
+          onFill={prompt.fill}
+          onUse={prompt.use}
+          onCancel={() => {
+            prompt.cancel();
+            field.current?.focus();
+          }}
+        />
+      )}
       <AnimatedView
         // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
         style={[settled, focused ? { borderColor: tint.color } : undefined]}
@@ -395,6 +428,7 @@ export function Composer({
         ]}
       />
       {dictation !== null && <DictationLine dictation={dictation} />}
+      {cut && <Text className="px-3 text-xs text-muted-foreground">{t("prompt.cut")}</Text>}
       {/* Quiet: it clears by itself once the device keeps the draft. */}
       {notSaved && (
         <Text className="px-3 text-xs text-muted-foreground">{t("composer.notSaved")}</Text>

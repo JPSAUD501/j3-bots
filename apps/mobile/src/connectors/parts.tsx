@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  awaitsReview,
   type ConnectorTone,
   connectorTone,
   grantsBot,
@@ -109,9 +108,7 @@ export function StatusWord({ connector }: { readonly connector: Connector }) {
   return (
     <View className="flex-row items-center gap-1.5">
       <View className={`size-1.5 rounded-pill ${toneDot[tone]}`} />
-      <Text className={`text-xs ${toneText[tone]}`}>
-        {awaitsReview(connector) ? `${label} · ${ctx.i18n.t("connector.review.badge")}` : label}
-      </Text>
+      <Text className={`text-xs ${toneText[tone]}`}>{label}</Text>
     </View>
   );
 }

@@ -14,6 +14,8 @@ import * as Workspaces from "./bots/Workspaces.ts";
 import * as CommandReceipts from "./commands/CommandReceipts.ts";
 import * as ConnectorStore from "./connectors/ConnectorStore.ts";
 import * as Connectors from "./connectors/Connectors.ts";
+import * as ConnectorInputs from "./connectors/ConnectorInputs.ts";
+import * as ConnectorSteps from "./turns/ConnectorSteps.ts";
 import * as ConnectorAuth from "./connectors/oauth/ConnectorAuth.ts";
 import * as OAuthSignIns from "./connectors/oauth/signIns.ts";
 import * as ConnectorSources from "./connectors/sources/Sources.ts";
@@ -119,6 +121,8 @@ export const layer = Layer.mergeAll(
       Connectors.layer,
       Skills.layer,
       SecretAsks.layer,
+      ConnectorInputs.layer,
+      ConnectorSteps.layer,
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer, Scheduler.layer)),

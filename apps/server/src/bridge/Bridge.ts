@@ -53,6 +53,16 @@ const REACHES_OUT: ReadonlySet<string> = new Set<ToolName>([
   "install_skill",
 ]);
 
+/**
+ * J3 Bots' own tools that ask a connector's server, which can put a question
+ * to the operator before it answers: they wait as a connector's tool does,
+ * and an answer that never came is answered as one.
+ */
+const ASKS_CONNECTOR: ReadonlySet<string> = new Set<ToolName>([
+  "read_connector_resource",
+  "get_connector_prompt",
+]);
+
 /** How long the bridge waits before it forwards a request again, after the server could not be reached. */
 export const FORWARD_RETRY_PAUSE = Duration.millis(250);
 
@@ -104,6 +114,7 @@ const ownTools: ReadonlyArray<ListedTool> = toolList.map((tool) => ({
   inputSchema: decodeOption(Schema.Json)(tool.inputSchema).pipe(
     Option.getOrElse((): Schema.Json => ({ type: "object" })),
   ),
+  _meta: { ...tool._meta },
 }));
 
 /** A request's id as the key of its fiber: `1` and `"1"` are different requests. */
@@ -207,7 +218,7 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     if (Option.isNone(options.session)) {
       return textResult("This bridge was not started by a J3 Bots session.", true);
     }
-    const connector = isConnectorTool(call.value.name);
+    const connector = isConnectorTool(call.value.name) || ASKS_CONNECTOR.has(call.value.name);
     const reachesOut = connector || REACHES_OUT.has(call.value.name);
     const requestId = Base64Url.encode(yield* random.randomBytes(16));
     const answer = yield* forward({

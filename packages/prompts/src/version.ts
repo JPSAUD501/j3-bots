@@ -5,8 +5,11 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
 import {
+  CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
   connectorToolDescription,
+  listingText,
+  NOTHING_LISTED,
   renderConnectorResultWithNonce,
 } from "./connectorResult.ts";
 import { renderWakeWithNonce, type Wake } from "./envelope.ts";
@@ -174,18 +177,63 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
     cut: false,
   },
   { type: "answer", connector: "Connector", tool: "tool", text: "text", isError: true, cut: true },
-  ...(
-    [
-      "needs-sign-in",
-      "held",
-      "secrets-unavailable",
-      "unreachable",
-      "timed-out",
-      "too-large",
-      "failed",
-      "busy",
-    ] as const
-  ).map((reason): ConnectorResult => ({ type: "unavailable", connector: "Connector", reason })),
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "resource", uri: "note://one" },
+    text: "text",
+    cut: false,
+  },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "prompt", name: "prompt" },
+    text: "text",
+    cut: true,
+  },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "listing", of: "resources" },
+    ...listingText({
+      of: "resources",
+      items: [
+        {
+          kind: "template",
+          uri: "note://{id}",
+          name: "note",
+          title: "Note",
+          description: "text",
+          mimeType: "text/plain",
+        },
+      ],
+    }),
+  },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "listing", of: "prompts" },
+    ...listingText({
+      of: "prompts",
+      items: [
+        {
+          name: "prompt",
+          title: "Prompt",
+          description: "text",
+          arguments: [{ name: "topic", description: "text", required: true }],
+        },
+      ],
+    }),
+  },
+  ...CONNECTOR_UNAVAILABLE.map((reason): ConnectorResult => ({
+    type: "unavailable",
+    connector: "Connector",
+    reason,
+  })),
 ];
 
 const SAMPLE_ROOM = { id: Schema.decodeSync(RoomId)("room"), name: "Room" };
@@ -253,6 +301,7 @@ const fingerprint = (): string => {
     ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
     connectorToolDescription("Connector", "text"),
+    ...Object.values(NOTHING_LISTED),
     ...SAMPLE_CONNECTOR_RESULTS.map((result) =>
       renderConnectorResultWithNonce(result, "000000000000"),
     ),

@@ -7,11 +7,12 @@ import type {
   ConnectorId,
   ConnectorListing,
   ConnectorListingDetails,
+  ConnectorPrompt,
   Language,
   ListingRef,
+  PromptArguments,
   SignInRedirect,
   SignInStarted,
-  ToolReviewRevision,
   Skill,
   SkillName,
   SkillScope,
@@ -216,6 +217,13 @@ export interface UsageHandle {
 /** The operator's connectors and the gallery to find more in; see `Connectors`. */
 export interface ConnectorsClient {
   readonly state: Readable<Synced<ReadonlyArray<Connector>>>;
+  readonly prompts: (botId: BotId) => Promise<Actions.IntentResult<ReadonlyArray<ConnectorPrompt>>>;
+  readonly renderPrompt: (input: {
+    readonly botId: BotId;
+    readonly connectorId: ConnectorId;
+    readonly name: string;
+    readonly arguments: PromptArguments;
+  }) => Promise<Actions.IntentResult<{ readonly text: string; readonly cut: boolean }>>;
   readonly featured: (
     language: Language,
   ) => Promise<Actions.IntentResult<ReadonlyArray<ConnectorListing>>>;
@@ -239,11 +247,6 @@ export interface ConnectorsClient {
   readonly setBots: (
     connectorId: ConnectorId,
     grant: ConnectorGrant,
-  ) => Promise<Actions.IntentResult<Connector>>;
-  readonly answerToolReview: (
-    connectorId: ConnectorId,
-    revision: ToolReviewRevision,
-    decision: "accept" | "keep",
   ) => Promise<Actions.IntentResult<Connector>>;
   readonly beginSignIn: (
     connectorId: ConnectorId,
@@ -893,6 +896,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     harnessLocations: () => run.promise(services.providerSetup.harnesses),
     connectors: {
       state: services.connectors.state,
+      prompts: (botId) => run.promise(services.connectors.prompts(botId)),
+      renderPrompt: (input) => run.promise(services.connectors.renderPrompt(input)),
       featured: (language) => run.promise(services.connectors.featured(language)),
       search: (input) => run.promise(services.connectors.search(input)),
       listing: (ref, language) => run.promise(services.connectors.listing(ref, language)),
@@ -901,8 +906,6 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         run.promise(services.connectors.update(connectorId, changes)),
       remove: (connectorId) => run.promise(services.connectors.remove(connectorId)),
       setBots: (connectorId, grant) => run.promise(services.connectors.setBots(connectorId, grant)),
-      answerToolReview: (connectorId, revision, decision) =>
-        run.promise(services.connectors.answerToolReview(connectorId, revision, decision)),
       beginSignIn: (connectorId, redirect) =>
         run.promise(services.connectors.beginSignIn(connectorId, redirect)),
       completeSignIn: (url) => run.promise(services.connectors.completeSignIn(url)),

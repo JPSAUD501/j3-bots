@@ -49,7 +49,12 @@ export function notificationText(
           ? t("notification.browserHelp")
           : t("summary.needsBrowserHelp", { note: preview });
       case "connector":
-        // The one connector card that notifies: a sign-in the bot waits on.
+        // The two connector cards that notify: a sign-in the bot waits on, and
+        // a service's question that holds the bot's call until it is answered.
+        if (notification.connector === "input")
+          return preview === null
+            ? t("notification.connectorInput")
+            : t("summary.connectorAsks", { name: preview });
         return preview === null
           ? t("notification.connectorSignIn")
           : t("summary.connectorSignIn", { name: preview });

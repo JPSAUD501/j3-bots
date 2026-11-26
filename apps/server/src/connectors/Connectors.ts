@@ -3,10 +3,10 @@
 import * as NodeOs from "node:os";
 import {
   type Activity,
-  answerChanges,
+  type CallHooks,
+  type CallProgress,
   type CatalogTool,
   checkUrl,
-  compareCatalog,
   type ConnectorFailure,
   DEFAULT_SESSION_LIMITS,
   makeSupervisor,
@@ -18,9 +18,14 @@ import {
   openCommandSession,
   openSession,
   processCapacity,
+  type Prompt,
+  type PromptText,
+  type ResourceRead,
+  resourceText,
+  type ResponseCache,
+  responseCache,
   type SecretHeader,
   type SessionLimits,
-  type ToolAnswer,
   toolName,
   type UrlPolicy,
   Withdrawn,
@@ -52,12 +57,20 @@ import {
   pinRefusal,
   remoteTransport,
   reservedVariable,
-  type ToolReviewRevision,
+  type ConnectorPrompt,
+  type Elicitation,
+  type ElicitationAnswer,
+  type PromptArguments,
 } from "@j3-bots/contracts";
 import {
+  CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
   type ConnectorUnavailable,
   connectorToolDescription,
+  type ListedPrompt,
+  type ListedResource,
+  listingText,
+  NOTHING_LISTED,
   renderConnectorResult,
 } from "@j3-bots/prompts";
 import * as Cause from "effect/Cause";
@@ -92,6 +105,7 @@ import {
   hiddenOf,
   connectorSecretIdOf,
 } from "./credentials.ts";
+import { makeListings } from "./listings.ts";
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
@@ -109,10 +123,46 @@ export interface OfferedTool {
   readonly connectorId: ConnectorId;
   /** Its name at the connector's server. */
   readonly upstreamName: string;
-  /** As the operator accepted it, cleaned and capped, after J3 Bots' line saying whose it is. */
+  /** As its server listed it, cleaned and capped, after J3 Bots' line saying whose it is. */
   readonly description: string;
   readonly inputSchema: Schema.JsonObject;
 }
+
+/** A connector, as a call's hooks and a bot's listings name it. */
+export interface ConnectorRef {
+  readonly id: ConnectorId;
+  readonly name: string;
+  readonly glyph: ConnectorGlyph | null;
+  /** The prefix of its tools' names, by which a bot names it. */
+  readonly slug: string;
+}
+
+/**
+ * What one bot's call to a connector reaches while it runs: its work step,
+ * and the operator, when the connector's server asks for something.
+ */
+export interface ConnectorCallHooks {
+  /** The call to `tool` is about to go out; `ui` is the tool's `_meta.ui`, for MCP Apps. */
+  readonly started: (call: {
+    readonly connector: ConnectorRef;
+    readonly ui: Schema.JsonObject | null;
+  }) => Effect.Effect<void>;
+  readonly progress: (progress: CallProgress) => Effect.Effect<void>;
+  /** Shows the server's request to the operator, in the bot's conversation, and waits for the answer. */
+  readonly ask: (connector: ConnectorRef, request: Elicitation) => Effect.Effect<ElicitationAnswer>;
+}
+
+/** What one connector lists of a kind, with whose it is. */
+interface Listed<A> {
+  readonly connector: ConnectorRef;
+  readonly items: ReadonlyArray<A>;
+}
+
+/** Why J3 Bots got no answer from a connector, as the bot or the operator is told. */
+class ConnectorUnavailableError extends Schema.TaggedError<ConnectorUnavailableError>()(
+  "ConnectorUnavailableError",
+  { reason: Schema.Literals(CONNECTOR_UNAVAILABLE) },
+) {}
 
 /** What a bot reads back from a connector's tool: framed as untrusted data, or J3 Bots' own line when there was no answer. */
 export interface ToolCallAnswer {
@@ -120,7 +170,7 @@ export interface ToolCallAnswer {
   readonly isError: boolean;
 }
 
-/** The bot is offered no tool by that name: no such connector tool, not granted, or not accepted. */
+/** The bot is offered no tool by that name, or no connector by that slug: none such, or not granted. */
 export class ToolNotOffered extends Schema.TaggedError<ToolNotOffered>()("ToolNotOffered", {}) {
   override get message(): string {
     return "No connector tool by that name is offered to this bot.";
@@ -130,7 +180,7 @@ export class ToolNotOffered extends Schema.TaggedError<ToolNotOffered>()("ToolNo
 export class Connectors extends Context.Service<
   Connectors,
   {
-    /** The tools `botId` is offered now: the accepted tools of granted connectors that are connected. */
+    /** The tools `botId` is offered now: those of granted connectors that are connected. */
     readonly toolsFor: (botId: BotId) => Effect.Effect<ReadonlyArray<OfferedTool>>;
     /** Each bot whose offered tools may have changed, from the moment of subscribing. */
     readonly toolsChanged: Stream.Stream<BotId>;
@@ -143,7 +193,51 @@ export class Connectors extends Context.Service<
       readonly botId: BotId;
       readonly name: string;
       readonly arguments: Readonly<Record<string, unknown>>;
+      readonly hooks?: ConnectorCallHooks;
     }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * The resources and resource templates of the connectors `botId` may use
+     * that are connected, or of the one `slug` names, as their servers list
+     * them now, those that hold every word of `search`; framed for the bot,
+     * one block per connector. A connector that could not list them is left out.
+     */
+    readonly resources: (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /** Reads one resource of the connector `slug` names, for `botId`, framed for the bot. */
+    readonly readResource: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly uri: string;
+      readonly hooks?: Pick<ConnectorCallHooks, "ask">;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /** As {@link resources}, of prompts. */
+    readonly prompts: (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /** One prompt of the connector `slug` names, as its server writes it, for `botId`, framed for the bot. */
+    readonly getPrompt: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly name: string;
+      readonly arguments: Readonly<Record<string, string>>;
+      readonly hooks?: Pick<ConnectorCallHooks, "ask">;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /** The prompts of the connectors `botId` may use, for the operator's `/` menu in its conversation. */
+    readonly menuPrompts: (
+      botId: BotId,
+    ) => Effect.Effect<ReadonlyArray<ConnectorPrompt>, CommandError>;
+    /** Renders a prompt the operator chose from the `/` menu, as text for their composer. */
+    readonly renderPrompt: (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly name: string;
+      readonly arguments: PromptArguments;
+    }) => Effect.Effect<{ readonly text: string; readonly cut: boolean }, CommandError>;
     readonly subscribe: Stream.Stream<ConnectorsEvent>;
     /** Every connector, as clients see it, with the prefix its tools are named under (`<prefix>__<tool>`). */
     readonly listed: Effect.Effect<ReadonlyArray<ListedConnector>>;
@@ -151,6 +245,7 @@ export class Connectors extends Context.Service<
     readonly add: (input: {
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
+      /** Which bots get it; every bot when left out. */
       readonly grant?: ConnectorGrant;
       readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, CommandError>;
@@ -170,12 +265,6 @@ export class Connectors extends Context.Service<
       readonly connectorId: ConnectorId;
       readonly grant: ConnectorGrant;
       readonly by: ChangeAuthor;
-    }) => Effect.Effect<Connector, CommandError>;
-    readonly acceptToolChanges: (input: {
-      readonly commandId: CommandId;
-      readonly connectorId: ConnectorId;
-      readonly revision: ToolReviewRevision;
-      readonly decision: "accept" | "keep";
     }) => Effect.Effect<Connector, CommandError>;
   }
 >()("@j3-bots/server/connectors/Connectors") {}
@@ -399,6 +488,13 @@ interface Prepared {
   ) => ConnectorSignIn;
 }
 
+const refOf = (connector: StoredConnector): ConnectorRef => ({
+  id: connector.id,
+  name: connector.name,
+  glyph: connector.glyph,
+  slug: connector.slug,
+});
+
 export const layer = Layer.effect(
   Connectors,
   Effect.gen(function* () {
@@ -424,10 +520,28 @@ export const layer = Layer.effect(
     const changes = yield* PubSub.unbounded<Change>();
     const toolChanges = yield* PubSub.unbounded<BotId>();
     const scope = yield* Effect.scope;
-    /** The connectors being listed in the background, each with the listing asked for next, if any. */
-    const flights = yield* Ref.make<ReadonlyMap<ConnectorId, Option.Option<Effect.Effect<void>>>>(
-      new Map(),
-    );
+    /** Lists connectors in the background, one listing of each at a time. */
+    const inFlight = yield* makeListings<ConnectorId>(scope);
+
+    /**
+     * Each connector's response cache, shared by its sessions, which are all
+     * signed alike. It goes with the connector's sessions, whenever what they
+     * are signed with may change.
+     */
+    const caches = yield* Ref.make<ReadonlyMap<ConnectorId, ResponseCache>>(new Map());
+    const cacheOf = (id: ConnectorId) =>
+      Ref.modify(caches, (all): [ResponseCache, ReadonlyMap<ConnectorId, ResponseCache>] => {
+        const kept = all.get(id);
+        if (kept !== undefined) return [kept, all];
+        const made = responseCache();
+        return [made, new Map(all).set(id, made)];
+      });
+    const dropCache = (id: ConnectorId) =>
+      Ref.update(caches, (all) => {
+        const next = new Map(all);
+        next.delete(id);
+        return next;
+      });
 
     const seenOf = (id: ConnectorId) =>
       Effect.map(Ref.get(seenRef), (seen) => seen.get(id) ?? NOTHING_SEEN);
@@ -497,24 +611,72 @@ export const layer = Layer.effect(
     });
 
     /**
-     * What the connector's server listed: the catalog the operator accepted,
-     * the first time. A listing is an answer, signed as calls are, so it
-     * clears a failure and a refusal.
+     * What the connector's server listed: the tools bots get, kept for after
+     * a restart when they changed. A listing is an answer, signed as calls
+     * are, so it clears a failure and a refusal.
      */
     const recordListing = (id: ConnectorId, catalog: ReadonlyArray<CatalogTool>) =>
       changing(
         id,
         Effect.gen(function* () {
-          yield* updateSeen(id, () => ({
+          yield* updateSeen(id, (seen) => ({
+            ...seen,
             listed: Option.some(catalog),
             failing: Option.none(),
             refused: false,
           }));
           const connector = yield* store.get(id);
-          if (Option.isSome(connector) && connector.value.accepted === null) {
-            yield* store.update(id, { accepted: catalog }, yield* DateTime.now);
+          if (
+            Option.isSome(connector) &&
+            (connector.value.tools === null ||
+              fingerprint(connector.value.tools) !== fingerprint(catalog))
+          ) {
+            yield* store.update(id, { tools: catalog }, yield* DateTime.now);
           }
         }),
+      );
+
+    /**
+     * What the connector's server said of itself, and the resources and
+     * prompts it lists now: none of a kind it does not offer, or could not
+     * list, which the next listing tries again.
+     */
+    const recordServed = Effect.fn("Connectors.recordServed")(function* (
+      id: ConnectorId,
+      session: McpSession,
+    ) {
+      const listed = <A>(
+        offered: boolean,
+        list: Effect.Effect<ReadonlyArray<A>, ConnectorFailure>,
+      ) =>
+        offered ? list.pipe(Effect.orElseSucceed((): ReadonlyArray<A> => [])) : Effect.succeed([]);
+      const resources = yield* listed(session.info.offers.resources, session.listResources);
+      const prompts = yield* listed(session.info.offers.prompts, session.listPrompts);
+      yield* updateSeen(id, (seen) => ({
+        ...seen,
+        served: Option.some({ info: session.info, resources, prompts }),
+      }));
+      yield* touch(id);
+    });
+
+    /**
+     * The server said one of its lists changed: its tools, resources and
+     * prompts are listed again, the one that changed from its server and the
+     * others from the cache while it holds. However often it says so, one
+     * listing at a time, and one more after it: each listing reads every list,
+     * so the one after it misses none of the changes said meanwhile.
+     */
+    const listChanged = (id: ConnectorId, opened: Effect.Effect<McpSession, ConnectorGone>) => () =>
+      inFlight(
+        id,
+        opened.pipe(
+          Effect.flatMap((session) =>
+            Effect.flatMap(session.listTools, (listed) => recordListing(id, listed)).pipe(
+              Effect.andThen(recordServed(id, session)),
+            ),
+          ),
+          Effect.ignore,
+        ),
       );
 
     /** What an outcome says of the connector: an answer clears a failure, a failure is kept. */
@@ -569,6 +731,7 @@ export const layer = Layer.effect(
         if (Option.isNone(connector)) return yield* new ConnectorGone();
         const url = yield* addressOf(secrets, connector.value);
         const ready = yield* Deferred.make<McpSession, ConnectorGone>();
+        const cache = yield* cacheOf(id.value);
         const session = yield* openSession({
           url,
           policy: policyOf(connector.value.privateNetwork),
@@ -580,18 +743,12 @@ export const layer = Layer.effect(
           ),
           limits: reach.limits,
           client: CLIENT,
-          // However often its server says so, one listing at a time, and one more after it.
-          onToolsChanged: inFlight(
-            id.value,
-            Deferred.await(ready).pipe(
-              Effect.flatMap((opened) => opened.listTools),
-              Effect.flatMap((listed) => recordListing(id.value, listed)),
-              Effect.ignore,
-            ),
-          ),
+          cache,
+          onListChanged: listChanged(id.value, Deferred.await(ready)),
         }).pipe(Effect.tapError(() => Deferred.fail(ready, new ConnectorGone())));
         yield* Deferred.succeed(ready, session);
         yield* recordListing(id.value, yield* session.listTools);
+        yield* recordServed(id.value, session);
         return session;
       }),
       idleTimeToLive: IDLE_CLOSE,
@@ -609,6 +766,7 @@ export const layer = Layer.effect(
       }
       const command = yield* commandOf(secrets, connector.value);
       const ready = yield* Deferred.make<McpSession, ConnectorGone>();
+      const cache = yield* cacheOf(id);
       const started = yield* openCommandSession({
         platform: commandReach.platform,
         program: command.program,
@@ -618,17 +776,12 @@ export const layer = Layer.effect(
         cwd: commandReach.cwd,
         limits: reach.limits,
         client: CLIENT,
-        onToolsChanged: inFlight(
-          id,
-          Deferred.await(ready).pipe(
-            Effect.flatMap((opened) => opened.listTools),
-            Effect.flatMap((listed) => recordListing(id, listed)),
-            Effect.ignore,
-          ),
-        ),
+        cache,
+        onListChanged: listChanged(id, Deferred.await(ready)),
       }).pipe(Effect.tapError(() => Deferred.fail(ready, new ConnectorGone())));
       yield* Deferred.succeed(ready, started.session);
       yield* recordListing(id, yield* started.session.listTools);
+      yield* recordServed(id, started.session);
       return started;
     });
 
@@ -646,8 +799,12 @@ export const layer = Layer.effect(
       id: ConnectorId,
       holder?: Holder,
     ) {
-      // A command connector's one process serves every bot: it stops only for the connector as a whole.
-      if (holder === undefined) yield* processes.stop(id);
+      // A command connector's one process serves every bot: it stops only for
+      // the connector as a whole, which is also when its cache goes.
+      if (holder === undefined) {
+        yield* processes.stop(id);
+        yield* dropCache(id);
+      }
       for (const key of yield* RcMap.keys(sessions)) {
         const own =
           holder === undefined
@@ -688,71 +845,20 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Runs a listing of the connector in the background, one at a time: a
-     * listing asked for while one runs is run once after it, the last asked
-     * for in place of any before.
-     */
-    const inFlight = Effect.fn("Connectors.inFlight")(function* (
-      id: ConnectorId,
-      list: Effect.Effect<void>,
-    ) {
-      const started = yield* Ref.modify(
-        flights,
-        (all): [boolean, ReadonlyMap<ConnectorId, Option.Option<Effect.Effect<void>>>] =>
-          all.has(id)
-            ? [false, new Map(all).set(id, Option.some(list))]
-            : [true, new Map(all).set(id, Option.none())],
-      );
-      if (!started) return;
-      yield* drain(id, list).pipe(
-        Effect.onError(() =>
-          Ref.update(flights, (all) => {
-            const next = new Map(all);
-            next.delete(id);
-            return next;
-          }),
-        ),
-        Effect.forkIn(scope),
-      );
-    });
-
-    const drain = (id: ConnectorId, list: Effect.Effect<void>): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        yield* list;
-        // Taking the next listing and ending the flight are one step, so no request falls between.
-        const next = yield* Ref.modify(
-          flights,
-          (
-            all,
-          ): [
-            Option.Option<Effect.Effect<void>>,
-            ReadonlyMap<ConnectorId, Option.Option<Effect.Effect<void>>>,
-          ] => {
-            const queued = all.get(id) ?? Option.none();
-            const rest = new Map(all);
-            if (Option.isSome(queued)) rest.set(id, Option.none());
-            else rest.delete(id);
-            return [queued, rest];
-          },
-        );
-        if (Option.isSome(next)) yield* drain(id, next.value);
-      });
-
-    /**
      * Lists the tools of a connector this server has not seen listed since it
-     * started, in the background: so its review shows, and a connector that
-     * did not answer when it was added gets its tools. Asked again while a
+     * started, in the background: so it shows what it offers now, and a
+     * connector that did not answer when it was added gets its tools. Asked again while a
      * listing runs, it tries once more after it if the connector is still not
      * listed, since what it was signed with may have changed since it began.
      *
-     * A command connector whose tools the operator accepted is not: listing
-     * would start its process, which waits for a bot to use it. That start
-     * lists its tools, before the call goes out.
+     * A command connector listed before is not: listing would start its
+     * process, which waits for a bot to use it. That start lists its tools,
+     * before the call goes out.
      */
     const ensureListed = Effect.fn("Connectors.ensureListed")(function* (id: ConnectorId) {
       const unlisted = Effect.gen(function* () {
         const connector = yield* store.get(id);
-        if (Option.exists(connector, (c) => isCommand(c) && c.accepted !== null)) return false;
+        if (Option.exists(connector, (c) => isCommand(c) && c.tools !== null)) return false;
         return Option.isNone((yield* seenOf(id)).listed);
       });
       if (!(yield* unlisted)) return;
@@ -761,6 +867,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           if (yield* unlisted) yield* relist(id);
         }),
+        "while-unlisted",
       );
     });
 
@@ -861,102 +968,459 @@ export const layer = Layer.effect(
       );
     });
 
-    const framed = (connector: StoredConnector, result: ConnectorResult) =>
+    const framed = (result: ConnectorResult) =>
       renderConnectorResult(result).pipe(
         Effect.provideService(SecureRandom.SecureRandom, random),
         Effect.map((text): ToolCallAnswer => ({
           text,
-          isError: result.type === "unavailable" || result.isError,
+          isError: result.type === "unavailable" || (result.type === "answer" && result.isError),
         })),
       );
 
-    const unavailable = (connector: StoredConnector, reason: ConnectorUnavailable) =>
-      framed(connector, { type: "unavailable", connector: connector.name, reason });
+    const unavailable = (connector: string, reason: ConnectorUnavailable) =>
+      framed({ type: "unavailable", connector, reason });
 
-    /** The connector a name is one of, and the tool it names now: offered, held for the operator, or neither. */
+    /** The connector a name is one of, and the tool it names now, when the bot is offered it. */
     const lookUp = Effect.fn("Connectors.lookUp")(function* (botId: BotId, name: string) {
       // A slug holds no `__`, so the connector's prefix is unambiguous.
       const connector = (yield* grantedTo(botId)).find((granted) =>
         name.startsWith(`${granted.slug}__`),
       );
       if (connector === undefined) return Option.none();
-      const seen = yield* seenOf(connector.id);
-      const offered = offeredTool(connector, seen, name);
-      if (offered !== undefined) {
-        return Option.some({ connector, tool: Option.some(offered.name) });
-      }
-      const held = Option.exists(seen.listed, (listed) =>
-        compareCatalog(connector.accepted ?? [], listed).held.some(
-          (change) => toolName(connector.slug, change.tool.name) === name,
-        ),
-      );
-      return held ? Option.some({ connector, tool: Option.none<string>() }) : Option.none();
+      const tool = offeredTool(connector, yield* seenOf(connector.id), name);
+      return tool === undefined ? Option.none() : Option.some({ connector, tool });
     });
 
-    const call = Effect.fn("Connectors.call")(function* (input: {
-      readonly botId: BotId;
-      readonly name: string;
-      readonly arguments: Readonly<Record<string, unknown>>;
-    }) {
-      const found = yield* lookUp(input.botId, input.name);
-      if (Option.isNone(found)) return yield* new ToolNotOffered();
-      const { connector } = found.value;
-      if (Option.isNone(found.value.tool)) return yield* unavailable(connector, "held");
-      const key = sessionKey(connector.id, input.botId);
+    /** A session's hooks for one call, from J3 Bots' own. */
+    const sessionHooks = (
+      connector: StoredConnector,
+      hooks: Partial<ConnectorCallHooks> | undefined,
+    ): CallHooks | undefined =>
+      hooks === undefined
+        ? undefined
+        : {
+            progress: hooks.progress ?? (() => Effect.void),
+            elicit: (request) =>
+              hooks.ask === undefined
+                ? Effect.succeed<ElicitationAnswer>({ _tag: "decline" })
+                : hooks.ask(refOf(connector), request),
+          };
+
+    /**
+     * Runs `use` with a session of the connector for `botId`, and keeps what
+     * the outcome says of the connector, as a tool's call does: a failure is
+     * the bot's to read in J3 Bots' words (`ConnectorUnavailableError`), a
+     * connector the bot lost on the way is not offered.
+     */
+    const withSession = Effect.fn("Connectors.withSession")(function* <A>(
+      connector: StoredConnector,
+      botId: BotId,
+      use: (session: McpSession) => Effect.Effect<A, ConnectorFailure>,
+    ) {
       const outcome = yield* Effect.scoped(
         Effect.gen(function* () {
-          const session = yield* openFor(connector, input.botId).pipe(
+          const session = yield* openFor(connector, botId).pipe(
             Effect.mapError((failure) =>
               failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
                 ? failure
                 : ({ activity: "connect", failure } satisfies Stumble),
             ),
           );
-          // Opening the session listed the tools again: the tool must still be one the operator accepted.
-          const now = yield* lookUp(input.botId, input.name);
-          if (Option.isNone(now)) return yield* new ConnectorGone();
-          return yield* Option.match(now.value.tool, {
-            onNone: () => Effect.succeed(Option.none<ToolAnswer>()),
-            onSome: (upstream) =>
-              session.callTool({ name: upstream, arguments: input.arguments }).pipe(
-                Effect.asSome,
-                Effect.mapError((failure): Stumble => ({ activity: "call", failure })),
-              ),
+          return yield* use(session).pipe(
+            Effect.mapError((failure): Stumble => ({ activity: "call", failure })),
+          );
+        }),
+      ).pipe(Effect.result);
+      if (Result.isSuccess(outcome)) {
+        yield* record(connector.id, { _tag: "answered" });
+        return outcome.success;
+      }
+      const stumble = outcome.failure;
+      if (isGone(stumble)) return yield* new ToolNotOffered();
+      // Every session this server keeps open is in use: no fault of the connector's.
+      if (Cause.isExceededCapacityError(stumble)) {
+        return yield* new ConnectorUnavailableError({ reason: "busy" });
+      }
+      // The bot lost the connector before the call went out: it went unsigned.
+      if (stumble.failure._tag === "Withdrawn") {
+        yield* closeSessions(connector.id, botId);
+        return yield* new ToolNotOffered();
+      }
+      yield* record(connector.id, observe(stumble.failure, stumble.activity));
+      if (isCommand(connector)) {
+        if (breaksProcess(stumble.failure)) yield* processes.stop(connector.id);
+      } else if (breaksSession(stumble.failure)) {
+        yield* RcMap.invalidate(sessions, sessionKey(connector.id, botId));
+      }
+      if (stumble.failure._tag === "NeedsSignIn") {
+        yield* signIns.needed({ botId, connectorId: connector.id });
+      }
+      return yield* new ConnectorUnavailableError({ reason: unavailableOf(stumble.failure) });
+    });
+
+    const call = Effect.fn("Connectors.call")(function* (input: {
+      readonly botId: BotId;
+      readonly name: string;
+      readonly arguments: Readonly<Record<string, unknown>>;
+      readonly hooks?: ConnectorCallHooks;
+    }) {
+      const found = yield* lookUp(input.botId, input.name);
+      if (Option.isNone(found)) return yield* new ToolNotOffered();
+      const { connector } = found.value;
+      const outcome = yield* withSession(connector, input.botId, (session) =>
+        Effect.gen(function* () {
+          // Opening the session listed the tools again: the tool must still be offered.
+          const now = yield* lookUp(input.botId, input.name).pipe(
+            Effect.flatMap(Option.match({ onNone: () => new Withdrawn(), onSome: Effect.succeed })),
+          );
+          if (input.hooks !== undefined) {
+            yield* input.hooks.started({ connector: refOf(connector), ui: now.tool.ui });
+          }
+          const hooks = sessionHooks(connector, input.hooks);
+          return yield* session.callTool({
+            name: now.tool.name,
+            arguments: input.arguments,
+            ...(hooks === undefined ? {} : { hooks }),
           });
         }),
       ).pipe(Effect.result);
       if (Result.isFailure(outcome)) {
-        const stumble = outcome.failure;
-        if (isGone(stumble)) return yield* new ToolNotOffered();
-        // Every session this server keeps open is in use: no fault of the connector's.
-        if (Cause.isExceededCapacityError(stumble)) return yield* unavailable(connector, "busy");
-        // The bot lost the connector before the call went out: it went unsigned.
-        if (stumble.failure._tag === "Withdrawn") {
-          yield* closeSessions(connector.id, input.botId);
-          return yield* new ToolNotOffered();
-        }
-        yield* record(connector.id, observe(stumble.failure, stumble.activity));
-        if (isCommand(connector)) {
-          if (breaksProcess(stumble.failure)) yield* processes.stop(connector.id);
-        } else if (breaksSession(stumble.failure)) {
-          yield* RcMap.invalidate(sessions, key);
-        }
-        if (stumble.failure._tag === "NeedsSignIn") {
-          yield* signIns.needed({ botId: input.botId, connectorId: connector.id });
-        }
-        return yield* unavailable(connector, unavailableOf(stumble.failure));
+        if (outcome.failure._tag === "ToolNotOffered") return yield* outcome.failure;
+        return yield* unavailable(connector.name, outcome.failure.reason);
       }
-      if (Option.isNone(outcome.success)) return yield* unavailable(connector, "held");
-      yield* record(connector.id, { _tag: "answered" });
-      const answer = outcome.success.value;
-      return yield* framed(connector, {
+      const answer = outcome.success;
+      return yield* framed({
         type: "answer",
         connector: connector.name,
-        tool: Option.getOrElse(found.value.tool, () => input.name),
+        tool: found.value.tool.name,
         text: answer.text,
         isError: answer.isError,
         cut: answer.cut,
       });
+    });
+
+    /** The connectors `botId` may use that are connected, or the one `slug` names. */
+    const usable = Effect.fn("Connectors.usable")(function* (botId: BotId, slug?: string) {
+      const granted = (yield* grantedTo(botId)).filter(
+        (connector) => slug === undefined || connector.slug === slug,
+      );
+      if (slug !== undefined && granted.length === 0) return yield* new ToolNotOffered();
+      const seen = yield* Ref.get(seenRef);
+      const unavailable = yield* Ref.get(secretsUnavailable);
+      const states = yield* Ref.get(signInStates);
+      return granted.filter(
+        (connector) =>
+          statusOfConnector(
+            connector,
+            seen.get(connector.id) ?? NOTHING_SEEN,
+            unavailable,
+            Option.fromNullishOr(states.get(connector.id)),
+          )._tag === "connected",
+      );
+    });
+
+    /** What each usable connector lists of a kind it offers; one that fails to list is left out. */
+    const listingsOf = <A>(
+      botId: BotId,
+      slug: string | undefined,
+      offered: (session: McpSession) => boolean,
+      list: (session: McpSession) => Effect.Effect<ReadonlyArray<A>, ConnectorFailure>,
+    ) =>
+      Effect.flatMap(usable(botId, slug), (connectors) =>
+        Effect.forEach(
+          connectors,
+          (connector) =>
+            withSession(connector, botId, (session) =>
+              offered(session) ? list(session) : Effect.succeed<ReadonlyArray<A>>([]),
+            ).pipe(
+              Effect.map((items): ReadonlyArray<Listed<A>> =>
+                items.length === 0 ? [] : [{ connector: refOf(connector), items }],
+              ),
+              Effect.orElseSucceed((): ReadonlyArray<Listed<A>> => []),
+            ),
+          { concurrency: 4 },
+        ).pipe(Effect.map((all) => all.flat())),
+      );
+
+    const listedPrompts = (botId: BotId, slug?: string) =>
+      listingsOf(
+        botId,
+        slug,
+        (session) => session.info.offers.prompts,
+        (session) => session.listPrompts,
+      );
+
+    /** Each connector's items that hold every word of `search`, in any case; connectors left with none are left out. */
+    const matching = <A>(
+      listings: ReadonlyArray<Listed<A>>,
+      search: string | undefined,
+      fields: (item: A) => ReadonlyArray<string | null>,
+    ): ReadonlyArray<Listed<A>> => {
+      const words = (search ?? "")
+        .toLowerCase()
+        .split(/\s+/u)
+        .filter((word) => word !== "");
+      return listings.flatMap(({ connector, items }) => {
+        const kept = items.filter((item) => {
+          const haystack = fields(item).join(" ").toLowerCase();
+          return words.every((word) => haystack.includes(word));
+        });
+        return kept.length === 0 ? [] : [{ connector, items: kept }];
+      });
+    };
+
+    /** Each connector's listing framed for the bot, one block each, or J3 Bots' line when there is none. */
+    const framedListings = (
+      of: "resources" | "prompts",
+      listings: ReadonlyArray<{
+        readonly connector: ConnectorRef;
+        readonly listing: Parameters<typeof listingText>[0];
+      }>,
+    ) =>
+      listings.length === 0
+        ? Effect.succeed<ToolCallAnswer>({ text: NOTHING_LISTED[of], isError: false })
+        : Effect.forEach(listings, ({ connector, listing }) =>
+            renderConnectorResult({
+              type: "data",
+              connector: connector.name,
+              slug: connector.slug,
+              about: { kind: "listing", of },
+              ...listingText(listing),
+            }),
+          ).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, random),
+            Effect.map((blocks): ToolCallAnswer => ({ text: blocks.join("\n\n"), isError: false })),
+          );
+
+    const resources = (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) =>
+      listingsOf(
+        input.botId,
+        input.slug,
+        (session) => session.info.offers.resources,
+        (session) => session.listResources,
+      ).pipe(
+        Effect.flatMap((listings) =>
+          framedListings(
+            "resources",
+            matching(listings, input.search, (resource: ListedResource) => [
+              resource.uri,
+              resource.name,
+              resource.title,
+              resource.description,
+            ]).map(({ connector, items }) => ({
+              connector,
+              listing: { of: "resources", items },
+            })),
+          ),
+        ),
+      );
+
+    const prompts = (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) =>
+      listedPrompts(input.botId, input.slug).pipe(
+        Effect.flatMap((listings) =>
+          framedListings(
+            "prompts",
+            matching(listings, input.search, (prompt: ListedPrompt) => [
+              prompt.name,
+              prompt.title,
+              prompt.description,
+            ]).map(({ connector, items }) => ({ connector, listing: { of: "prompts", items } })),
+          ),
+        ),
+      );
+
+    /** Why J3 Bots can't reach `connector` now, from what it last saw of it; none once it is connected. */
+    const unusable = Effect.fn("Connectors.unusable")(function* (connector: StoredConnector) {
+      const status = statusOfConnector(
+        connector,
+        yield* seenOf(connector.id),
+        yield* Ref.get(secretsUnavailable),
+        Option.fromNullishOr((yield* Ref.get(signInStates)).get(connector.id)),
+      );
+      switch (status._tag) {
+        case "connected":
+          return Option.none<ConnectorUnavailable>();
+        case "needs-sign-in":
+        case "secrets-unavailable":
+          return Option.some<ConnectorUnavailable>(status._tag);
+        case "failing":
+          return Option.some<ConnectorUnavailable>("unreachable");
+      }
+    });
+
+    /**
+     * What `use` gets from the connector `slug` names for `botId`, framed by
+     * `frame` as untrusted data, or J3 Bots' own line when it gets nothing.
+     */
+    const readFor = Effect.fn("Connectors.readFor")(function* <A>(
+      botId: BotId,
+      slug: string,
+      use: (
+        connector: StoredConnector,
+      ) => Effect.Effect<A, ConnectorUnavailableError | ToolNotOffered>,
+      frame: (connector: StoredConnector, value: A) => ConnectorResult,
+    ) {
+      const connector = (yield* grantedTo(botId)).find((granted) => granted.slug === slug);
+      if (connector === undefined) return yield* new ToolNotOffered();
+      const blocked = yield* unusable(connector);
+      if (Option.isSome(blocked)) return yield* unavailable(connector.name, blocked.value);
+      const outcome = yield* use(connector).pipe(Effect.result);
+      if (Result.isFailure(outcome)) {
+        if (outcome.failure._tag === "ToolNotOffered") return yield* outcome.failure;
+        return yield* unavailable(connector.name, outcome.failure.reason);
+      }
+      return yield* framed(frame(connector, outcome.success));
+    });
+
+    const fetchResource = (
+      connector: StoredConnector,
+      botId: BotId,
+      uri: string,
+      hooks: Pick<ConnectorCallHooks, "ask"> | undefined,
+    ) => {
+      const session = sessionHooks(connector, hooks);
+      return withSession(connector, botId, (opened) =>
+        opened.readResource({ uri, ...(session === undefined ? {} : { hooks: session }) }),
+      );
+    };
+
+    const fetchPrompt = (
+      connector: StoredConnector,
+      botId: BotId,
+      prompt: { readonly name: string; readonly arguments: Readonly<Record<string, string>> },
+      hooks: Pick<ConnectorCallHooks, "ask"> | undefined,
+    ) => {
+      const session = sessionHooks(connector, hooks);
+      return withSession(connector, botId, (opened) =>
+        opened.getPrompt({ ...prompt, ...(session === undefined ? {} : { hooks: session }) }),
+      );
+    };
+
+    const readResource = (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly uri: string;
+      readonly hooks?: Pick<ConnectorCallHooks, "ask">;
+    }) =>
+      readFor(
+        input.botId,
+        input.slug,
+        (connector) => fetchResource(connector, input.botId, input.uri, input.hooks),
+        (connector, read: ResourceRead): ConnectorResult => ({
+          type: "data",
+          connector: connector.name,
+          slug: connector.slug,
+          about: { kind: "resource", uri: input.uri },
+          text:
+            read.contents.length === 1
+              ? read.contents.map(resourceText).join("")
+              : read.contents
+                  .map((contents) => `[${contents.uri}]\n${resourceText(contents)}`)
+                  .join("\n\n"),
+          cut: read.cut,
+        }),
+      );
+
+    const getPrompt = (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly name: string;
+      readonly arguments: Readonly<Record<string, string>>;
+      readonly hooks?: Pick<ConnectorCallHooks, "ask">;
+    }) =>
+      readFor(
+        input.botId,
+        input.slug,
+        (connector) =>
+          fetchPrompt(
+            connector,
+            input.botId,
+            { name: input.name, arguments: input.arguments },
+            input.hooks,
+          ),
+        (connector, prompt: PromptText): ConnectorResult => ({
+          type: "data",
+          connector: connector.name,
+          slug: connector.slug,
+          about: { kind: "prompt", name: input.name },
+          text: [
+            ...(prompt.description === null ? [] : [prompt.description]),
+            ...prompt.messages.map((message) => `[${message.role}]\n${message.text}`),
+          ].join("\n\n"),
+          cut: prompt.cut,
+        }),
+      );
+
+    const menuPrompts = Effect.fn("Connectors.menuPrompts")(function* (botId: BotId) {
+      if (Option.isNone(yield* bots.find(botId))) return yield* new NotFound({ resource: "bot" });
+      const listed = yield* listedPrompts(botId).pipe(
+        Effect.orElseSucceed((): ReadonlyArray<Listed<Prompt>> => []),
+      );
+      return listed.flatMap(({ connector, items }) =>
+        items.map((prompt): ConnectorPrompt => ({
+          connectorId: connector.id,
+          name: prompt.name,
+          title: prompt.title,
+          description: prompt.description,
+          arguments: prompt.arguments.map((argument) => ({
+            name: argument.name,
+            title: argument.title,
+            description: argument.description,
+            required: argument.required,
+          })),
+        })),
+      );
+    });
+
+    const renderPrompt = Effect.fn("Connectors.renderPrompt")(function* (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly name: string;
+      readonly arguments: PromptArguments;
+    }) {
+      const connector = (yield* grantedTo(input.botId)).find((c) => c.id === input.connectorId);
+      if (connector === undefined) return yield* new NotFound({ resource: "connector" });
+      const listed = yield* listedPrompts(input.botId, connector.slug).pipe(
+        Effect.orElseSucceed((): ReadonlyArray<Listed<Prompt>> => []),
+      );
+      const prompt = listed
+        .flatMap((listing) => listing.items)
+        .find((item) => item.name === input.name);
+      if (prompt === undefined) return yield* new Conflict({ reason: "connector-unavailable" });
+      const names = new Set(prompt.arguments.map((argument) => argument.name));
+      const given = Object.entries(input.arguments).filter(([, value]) => value !== "");
+      if (
+        given.some(([name]) => !names.has(name)) ||
+        prompt.arguments.some(
+          (argument) => argument.required && !given.some(([name]) => name === argument.name),
+        )
+      ) {
+        return yield* new Invalid({ reason: "prompt-arguments" });
+      }
+      const rendered = yield* fetchPrompt(
+        connector,
+        input.botId,
+        { name: input.name, arguments: Object.fromEntries(given) },
+        undefined,
+      ).pipe(
+        Effect.mapError((error) =>
+          error._tag === "ToolNotOffered"
+            ? new NotFound({ resource: "connector" })
+            : new Conflict({ reason: "connector-unavailable" }),
+        ),
+      );
+      return {
+        text: rendered.messages.map((message) => message.text).join("\n\n"),
+        cut: rendered.cut,
+      };
     });
 
     const subscribe = Stream.unwrap(
@@ -1013,7 +1477,8 @@ export const layer = Layer.effect(
             },
             limits: reach.limits,
             client: CLIENT,
-            onToolsChanged: Effect.void,
+            cache: responseCache(),
+            onListChanged: () => Effect.void,
           }),
           (session) => session.listTools,
         ),
@@ -1177,8 +1642,7 @@ export const layer = Layer.effect(
           privateNetwork: prepared.privateNetwork,
           grant,
           signedInAt: signIn === "fields" ? now : null,
-          accepted: Option.getOrNull(catalog),
-          keptRevision: null,
+          tools: Option.getOrNull(catalog),
           createdAt: now,
           lastChange: { by: input.by, at: now },
         })
@@ -1193,6 +1657,7 @@ export const layer = Layer.effect(
       const connector = inserted.value;
       yield* updateSeen(input.id, () => ({
         listed: catalog,
+        served: Option.none(),
         failing: Result.isFailure(listing)
           ? nextFailing(Option.none(), observe(listing.failure, "connect"), now)
           : Option.none(),
@@ -1220,8 +1685,7 @@ export const layer = Layer.effect(
 
     /**
      * Adds a connector started by command, the command line as the operator
-     * confirmed it. Its process starts, in the background, to list its tools,
-     * which become the ones the operator accepted.
+     * confirmed it. Its process starts, in the background, to list its tools.
      */
     const addCommand = Effect.fn("Connectors.addCommand")(function* (input: {
       readonly id: ConnectorId;
@@ -1256,8 +1720,7 @@ export const layer = Layer.effect(
           privateNetwork: false,
           grant: input.grant ?? EVERY_BOT,
           signedInAt: fields.length > 0 ? now : null,
-          accepted: null,
-          keptRevision: null,
+          tools: null,
           createdAt: now,
           lastChange: { by: input.by, at: now },
         })
@@ -1411,8 +1874,7 @@ export const layer = Layer.effect(
     /**
      * Replaces a command connector's command line with one the operator
      * confirmed. Its process stops, what was seen of it is forgotten, and the
-     * new one starts to list its tools: a tool that is new or changed waits
-     * on the operator's review, as for any connector.
+     * new one starts to list its tools, which bots get as for any connector.
      */
     const replaceCommand = Effect.fn("Connectors.replaceCommand")(function* (
       connector: StoredConnector,
@@ -1512,48 +1974,16 @@ export const layer = Layer.effect(
       return yield* render(connector);
     });
 
-    const acceptToolChanges = Effect.fn("Connectors.acceptToolChanges")(function* (input: {
-      readonly commandId: CommandId;
-      readonly connectorId: ConnectorId;
-      readonly revision: ToolReviewRevision;
-      readonly decision: "accept" | "keep";
-    }) {
-      yield* require(input.connectorId);
-      yield* changing(
-        input.connectorId,
-        receipts.once({
-          commandId: input.commandId,
-          method: "connector.acceptToolChanges",
-          payload: input,
-          result: Schema.Void,
-          apply: Effect.gen(function* () {
-            const connector = yield* require(input.connectorId);
-            const seen = yield* seenOf(input.connectorId);
-            const answer =
-              connector.accepted === null || Option.isNone(seen.listed)
-                ? null
-                : answerChanges(
-                    connector.accepted,
-                    seen.listed.value,
-                    input.revision,
-                    input.decision,
-                  );
-            if (answer === null) return yield* new Conflict({ reason: "tool-review-stale" });
-            yield* store.update(
-              input.connectorId,
-              { accepted: answer.accepted, keptRevision: answer.kept },
-              yield* DateTime.now,
-            );
-          }),
-        }),
-      );
-      return yield* render(yield* require(input.connectorId));
-    });
-
     return Connectors.of({
       toolsFor,
       toolsChanged: Stream.fromPubSub(toolChanges),
       call,
+      resources,
+      readResource,
+      prompts,
+      getPrompt,
+      menuPrompts,
+      renderPrompt,
       subscribe,
       listed: Effect.flatMap(store.all, (all) =>
         Effect.forEach(all, (stored) =>
@@ -1564,7 +1994,6 @@ export const layer = Layer.effect(
       update,
       remove,
       setBots,
-      acceptToolChanges,
     });
   }),
 ).pipe(Layer.provide(SecureRandom.layerWebCrypto));

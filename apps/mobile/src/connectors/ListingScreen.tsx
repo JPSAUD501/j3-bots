@@ -173,8 +173,8 @@ export function CommandLine({ text }: { readonly text: string }) {
 /**
  * Connect, as the entry asks for it: the steps that set up an app at the
  * service and its client, any fields the entry takes, masked when secret,
- * and the bots that may use it, at first the bot that asked for it or the
- * primary bot. Connect stays in reach under the form, on the keyboard.
+ * and the bots that may use it, at first every bot, or the bot whose details
+ * it was opened from. Connect stays in reach under the form, on the keyboard.
  */
 function ConnectForm({
   listing,

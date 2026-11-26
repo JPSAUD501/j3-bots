@@ -252,7 +252,7 @@ const enabledButtons = (scope: Locator) =>
   );
 
 const sendOnDesktop = async (page: Page, name: string, text: string) => {
-  await page.getByRole("textbox", { name: `Message ${name}` }).fill(text, { timeout: STEP });
+  await page.getByRole("combobox", { name: `Message ${name}` }).fill(text, { timeout: STEP });
   await page.getByRole("button", { name: "Send message" }).click({ timeout: STEP });
 };
 
@@ -619,7 +619,7 @@ it.layer(
                 .getByRole("status")
                 .getByText("Sending…", { exact: true })
                 .waitFor({ timeout: STEP });
-              await page.getByRole("textbox", { name: composer }).fill(draft);
+              await page.getByRole("combobox", { name: composer }).fill(draft);
               await page.getByText("Not saved yet").waitFor({ state: "hidden", timeout: STEP });
             });
             yield* capture("1-desktop-before-kill");
@@ -629,7 +629,7 @@ it.layer(
           yield* relaunchDesktop;
           yield* onDesktop(async (page) => {
             await page.getByText(name).first().click({ timeout: STEP });
-            const field = page.getByRole("textbox", { name: composer });
+            const field = page.getByRole("combobox", { name: composer });
             await field.waitFor({ timeout: STEP });
             assert.strictEqual(await field.inputValue(), draft, "the draft was lost");
           });
@@ -790,7 +790,7 @@ it.layer(
           yield* onDesktop(async (page) => {
             await page.waitForURL(`j3bots-dev://app/bots/${bot.id}`, { timeout: STEP });
             await page
-              .getByRole("textbox", { name: `Message ${bot.profile.name}` })
+              .getByRole("combobox", { name: `Message ${bot.profile.name}` })
               .waitFor({ timeout: STEP });
           });
           yield* capture("3-notification");
@@ -899,7 +899,7 @@ it.layer(
           yield* onDesktop(async (page) => {
             await page.waitForURL(`j3bots-dev://app/bots/${other.id}`, { timeout: STEP });
             await page
-              .getByRole("textbox", { name: `Message ${other.profile.name}` })
+              .getByRole("combobox", { name: `Message ${other.profile.name}` })
               .waitFor({ timeout: STEP });
           });
           yield* capture("3-link");

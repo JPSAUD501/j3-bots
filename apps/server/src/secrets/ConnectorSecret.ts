@@ -13,18 +13,21 @@ export type ConnectorId = typeof ConnectorId.Type;
 const Secret = Schema.Redacted(Schema.String);
 
 /**
- * The OAuth client J3 Bots signs in as at one authorization server: the one
- * registered there (dynamic registration) or the one the operator gave.
+ * The OAuth client J3 Bots signs in as at one authorization server: the
+ * server's own client metadata document, the one registered there (dynamic
+ * registration) or the one the operator gave.
  */
 const OAuthClient = Schema.Struct({
   /** The authorization server's issuer, as its metadata names it. */
   issuer: Schema.String,
   /**
-   * `dynamic`: J3 Bots registered it (RFC 7591), and may register a new one
-   * in its place. `operator`: the operator gave it, as for their own app,
-   * and nothing replaces it.
+   * `metadata`: its id is the address of the server's client metadata
+   * document, which the authorization server reads. `dynamic`: J3 Bots
+   * registered it (RFC 7591). Either may be replaced by a new one.
+   * `operator`: the operator gave it, as for their own app, and nothing
+   * replaces it.
    */
-  registration: Schema.Literals(["dynamic", "operator"]),
+  registration: Schema.Literals(["metadata", "dynamic", "operator"]),
   clientId: Schema.String,
   /** Only a confidential client has one. */
   clientSecret: Schema.NullOr(Secret),

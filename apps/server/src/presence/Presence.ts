@@ -72,6 +72,7 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "secret-ask":
       return "secret-request";
     case "connector-auth":
+    case "connector-input":
       return "connector";
     case "work-fold":
     case "notice":
@@ -85,6 +86,8 @@ const connectorCard = (entry: Entry): ConnectorNotice | null => {
   switch (entry._tag) {
     case "connector-auth":
       return "sign-in";
+    case "connector-input":
+      return "input";
     default:
       return null;
   }
