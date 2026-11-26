@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- A socket a crashed server left behind takes a listener from node:net.
+// @effect-diagnostics nodeBuiltinImport:off -- A socket a crashed server left behind takes a listener from node:net, and a junction, which Effect cannot make, node:fs.
+import * as NodeFsPromises from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -124,6 +125,52 @@ it.layer(NodeServices.layer)("home", (it) => {
       assert.include(Schema.is(Home.HomeNotPrivate)(error) ? error.fix : "", REPAIR);
       assert.deepStrictEqual(yield* fs.readDirectory(config.home), []);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a home where a provider's home other users can open keeps a sign-in", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* freshHome;
+      const codex = path.join(config.home, "providers", "codex");
+      yield* fs.makeDirectory(path.join(config.home, "providers", "claude-code"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      yield* fs.makeDirectory(codex, { mode: 0o700 });
+      assert.isTrue(Exit.isSuccess(yield* reserveIn(config).pipe(Effect.scoped, Effect.exit)));
+
+      yield* openToOthers(codex);
+      const error = failure(yield* reserveIn(config).pipe(Effect.scoped, Effect.exit));
+      assert.deepInclude(error, {
+        _tag: "HomeNotPrivate",
+        reason: "open-to-others",
+        home: config.home,
+        providerHome: codex,
+      });
+      const refusal = Schema.is(Home.HomeNotPrivate)(error) ? error : undefined;
+      assert.include(refusal?.message, "sign-in");
+      assert.include(refusal?.fix, REPAIR);
+      assert.include(refusal?.fix, "codex");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "judges a home that is a link, or on Windows a junction, by the folder it leads to",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { home: target } = yield* freshHome;
+        const link = path.join(yield* fs.makeTempDirectoryScoped(), "home");
+        yield* Effect.promise(() => NodeFsPromises.symlink(target, link, "junction"));
+        yield* Home.checkPrivate(link);
+
+        // The link's own place stays as private as it was; the folder it leads to does not.
+        yield* openToOthers(target);
+        const error = yield* Home.checkPrivate(link).pipe(Effect.flip);
+        assert.deepInclude(error, { reason: "open-to-others", home: link });
+      }).pipe(Effect.scoped),
   );
 
   // A mode means nothing on Windows; windowsAcl.test.ts judges a list that shuts this user out.

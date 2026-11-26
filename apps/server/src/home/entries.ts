@@ -41,6 +41,15 @@ export const HOME_ENTRIES = {
 /** The engine provider instances that keep a home in `providers`, by J3 Bots provider id. */
 export const PROVIDER_HOMES = ["claude-code", "codex"] as const;
 
+/**
+ * Each provider's home in `home`, where a harness keeps its sign-in, which
+ * must be as private as the home: a rule on a folder reaches it whatever the
+ * folders it is in allow, as Windows lets every user pass through a folder to
+ * what is inside.
+ */
+export const providerHomes = (path: Path.Path, home: string): ReadonlyArray<string> =>
+  PROVIDER_HOMES.map((provider) => path.join(home, HOME_ENTRIES.providers, provider));
+
 /** What a bot's workspace holds, by name. */
 export const WORKSPACE_ENTRIES = {
   /** Generated: `system.md`. */

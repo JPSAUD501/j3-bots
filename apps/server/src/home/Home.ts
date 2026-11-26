@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { holdLock, LockUnusable } from "@j3-bots/processes";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -7,20 +7,21 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { holdLock, LockUnusable, powerShellLiteral } from "@j3-bots/processes";
 import packageJson from "../../package.json" with { type: "json" };
 import * as Socket from "../admin/socket.ts";
 import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
 import { publishFile } from "../files.ts";
 import { UPDATE_LOCK, unfinishedRollback } from "../install/snapshot.ts";
 import { unfinishedImport } from "../transfer/importMark.ts";
-import { HOME_ENTRIES } from "./entries.ts";
+import { HOME_ENTRIES, providerHomes } from "./entries.ts";
 import {
   type AclVerdict,
   createPrivateFolder,
   judgeAcl,
-  powerShellWord,
-  readFolderAcl,
+  readFolderAcls,
   repairCommand,
 } from "./windowsAcl.ts";
 
@@ -33,9 +34,14 @@ import {
 export const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
-/** The home is not a folder only this user can open. */
+/** The home, or a provider's home in it, is not a folder only this user can open. */
 export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
   home: Schema.String,
+  /**
+   * The provider's home in it that is not private, where a harness keeps its
+   * sign-in, when that is what failed; otherwise the home itself did.
+   */
+  providerHome: Schema.optionalKey(Schema.String),
   reason: Schema.Literals([
     "not-a-folder",
     "not-owned",
@@ -45,45 +51,61 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
     "unreadable",
   ]),
   /**
-   * On Windows, the `icacls` command, for PowerShell, that makes the home
+   * On Windows, the `icacls` command, for PowerShell, that makes the folder
    * private, which names the accounts to remove: a mode does not say who may
    * open a folder there.
    */
   windowsRepair: Schema.optionalKey(Schema.String),
   /**
-   * For `unverifiable`, what Windows said instead of who may open the home;
-   * for `unreadable`, what the system said instead of what the home is.
+   * For `unverifiable`, what Windows said instead of who may open the folder;
+   * for `unreadable`, what the system said instead of what the folder is.
    */
   detail: Schema.optionalKey(Schema.String),
 }) {
-  override get message(): string {
+  /** The folder that is not private: the provider's home, or the home. */
+  get folder(): string {
+    return this.providerHome ?? this.home;
+  }
+
+  /** The problem, without the fix. */
+  get summary(): string {
     switch (this.reason) {
       case "not-a-folder":
-        return `${this.home} is not a folder. Move it away, or set J3_HOME to another folder.`;
+        return `${this.folder} is not a folder.`;
       case "not-owned":
-        return `${this.home} belongs to another user, so this user cannot keep it private. ${this.fix}`;
+        return `${this.folder} belongs to another user, so this user cannot keep it private.`;
       case "open-to-others":
-        return `Other users on this machine can open ${this.home}, which holds the database, the engine's credential and the admin socket. ${this.fix}`;
+        return this.providerHome === undefined
+          ? `Other users on this machine can open ${this.home}, which holds the database, the engine's credential and the admin socket.`
+          : `Other users on this machine can open ${this.providerHome}, where a harness keeps its sign-in.`;
       case "closed-to-owner":
-        return `This user's own permissions on ${this.home} do not let it read, write and open the files there. ${this.fix}`;
+        return `This user's own permissions on ${this.folder} do not let it read, write and open the files there.`;
       case "unverifiable":
-        return `Windows did not say who may open ${this.home} (${this.detail ?? "no answer"}), so the server cannot tell that it is private. ${this.fix}`;
+        return `Windows did not say who may open ${this.folder} (${this.detail ?? "no answer"}), so the server cannot tell that it is private.`;
       case "unreadable":
-        return `The system did not let this user look at ${this.home} (${this.detail ?? "no answer"}), so the server cannot tell that it is private. ${this.fix}`;
+        return `The system did not let this user look at ${this.folder} (${this.detail ?? "no answer"}), so the server cannot tell that it is private.`;
     }
+  }
+
+  override get message(): string {
+    return `${this.summary} ${this.fix}`;
   }
 
   /** The command that repairs it, for the operator to run on this system. */
   get fix(): string {
     if (this.reason === "unreadable") {
-      return `Check that ${this.home} and every folder it is in are folders this user can open.`;
+      return `Check that ${this.folder} and every folder it is in are folders this user can open.`;
     }
+    if (this.reason === "not-a-folder") {
+      return this.providerHome === undefined
+        ? "Move it away, or set J3_HOME to another folder."
+        : "Move it away, then start the server again.";
+    }
+    const folder = this.folder;
     if (process.platform === "win32") {
-      const repair = this.windowsRepair ?? `icacls ${powerShellWord(this.home)} /inheritance:r`;
-      const takeOwnership = `takeown /F ${powerShellWord(this.home)} /R`;
+      const repair = this.windowsRepair ?? `icacls ${powerShellLiteral(folder)} /inheritance:r`;
+      const takeOwnership = `takeown /F ${powerShellLiteral(folder)} /R`;
       switch (this.reason) {
-        case "not-a-folder":
-          return "Set J3_HOME to a folder.";
         case "not-owned":
           return `In PowerShell, take it as this user (\`${takeOwnership}\`), then run \`${repair}\`.`;
         case "open-to-others":
@@ -94,14 +116,12 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
       }
     }
     switch (this.reason) {
-      case "not-a-folder":
-        return "Set J3_HOME to a folder.";
       case "not-owned":
-        return `Give it to this user: \`sudo chown -R "$(id -un)": ${shellWord(this.home)} && chmod 700 ${shellWord(this.home)}\`.`;
+        return `Give it to this user: \`sudo chown -R "$(id -un)": ${shellWord(folder)} && chmod 700 ${shellWord(folder)}\`.`;
       case "open-to-others":
       case "closed-to-owner":
       case "unverifiable":
-        return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
+        return `Run \`chmod 700 ${shellWord(folder)}\`.`;
     }
   }
 }
@@ -112,10 +132,19 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
  * not exist yet passes: the server creates it private. One the system would
  * not show is refused (`unreadable`), never taken for missing. On Windows,
  * who may open it is its access list, which `windowsAcl.ts` reads and judges.
+ * A home that is a link, or on Windows a junction, is judged by the folder it
+ * leads to, which is where its files are.
  */
 export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: string) {
+  const info = yield* lookAtHome(home);
+  if (Option.isNone(info)) return;
+  yield* checkFolders(home, [{ folder: home, info: info.value }]);
+});
+
+/** What a stat of `home` found, or none where it does not exist; any other failure is `unreadable`. */
+const lookAtHome = Effect.fnUntraced(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(home).pipe(
+  return yield* fs.stat(home).pipe(
     Effect.asSome,
     Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
     Effect.mapError(
@@ -127,28 +156,68 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
         }),
     ),
   );
-  if (Option.isNone(info)) return;
-  yield* checkPrivateInfo(home, info.value);
 });
 
-/** `checkPrivate` of what a stat of `home` found. */
-const checkPrivateInfo = Effect.fn("Home.checkPrivateInfo")(function* (
-  home: string,
-  info: FileSystem.File.Info,
-) {
-  if (info.type !== "Directory") {
-    return yield* new HomeNotPrivate({ home, reason: "not-a-folder" });
+/**
+ * `checkPrivate` of `home` and of each provider's home in it that exists
+ * (`providerHomes`). On Windows every list is read in one PowerShell run.
+ */
+export const checkPrivateHome = Effect.fn("Home.checkPrivateHome")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* lookAtHome(home);
+  if (Option.isNone(info)) return;
+  const inside = yield* Effect.forEach(providerHomes(path, home), (folder) =>
+    fs
+      .stat(folder)
+      .pipe(Effect.option, Effect.map(Option.map((found) => ({ folder, info: found })))),
+  );
+  yield* checkFolders(home, [
+    { folder: home, info: info.value },
+    ...inside.flatMap(Option.toArray),
+  ]);
+});
+
+/** A folder `checkFolders` judges, with what a stat of it found. */
+interface Looked {
+  readonly folder: string;
+  readonly info: FileSystem.File.Info;
+}
+
+/** What makes a folder not private, as `HomeNotPrivate` says it. */
+interface Finding {
+  readonly reason: HomeNotPrivate["reason"];
+  readonly windowsRepair?: string;
+  readonly detail?: string;
+}
+
+/** The refusal of `folder`, `home` or a provider's home in it, for `found`. */
+type Refusal = (folder: string, found: Finding) => HomeNotPrivate;
+
+/**
+ * Fails for the first of `folders`, `home` or folders in it, that is not
+ * private, as `HomeNotPrivate` names it.
+ */
+const checkFolders = Effect.fnUntraced(function* (home: string, folders: ReadonlyArray<Looked>) {
+  const refusal: Refusal = (folder, found) =>
+    new HomeNotPrivate({ home, ...(folder === home ? {} : { providerHome: folder }), ...found });
+  for (const { folder, info } of folders) {
+    if (info.type !== "Directory") return yield* refusal(folder, { reason: "not-a-folder" });
   }
-  if (process.platform === "win32") return yield* checkPrivateOnWindows(home);
+  if (process.platform === "win32") {
+    return yield* checkOnWindows(
+      home,
+      folders.map(({ folder }) => folder),
+      refusal,
+    );
+  }
   const user = process.getuid?.();
-  if (user !== undefined && Option.isSome(info.uid) && info.uid.value !== user) {
-    return yield* new HomeNotPrivate({ home, reason: "not-owned" });
-  }
-  if ((info.mode & 0o077) !== 0) {
-    return yield* new HomeNotPrivate({ home, reason: "open-to-others" });
-  }
-  if ((info.mode & 0o700) !== 0o700) {
-    return yield* new HomeNotPrivate({ home, reason: "closed-to-owner" });
+  for (const { folder, info } of folders) {
+    if (user !== undefined && Option.isSome(info.uid) && info.uid.value !== user) {
+      return yield* refusal(folder, { reason: "not-owned" });
+    }
+    if ((info.mode & 0o077) !== 0) return yield* refusal(folder, { reason: "open-to-others" });
+    if ((info.mode & 0o700) !== 0o700) return yield* refusal(folder, { reason: "closed-to-owner" });
   }
 });
 
@@ -166,7 +235,7 @@ export interface FolderIdentity {
 export const identifyPrivate = Effect.fn("Home.identifyPrivate")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(home);
-  yield* checkPrivateInfo(home, info);
+  yield* checkFolders(home, [{ folder: home, info }]);
   return { dev: info.dev, ino: info.ino } satisfies FolderIdentity;
 });
 
@@ -185,19 +254,37 @@ export const checkUnchanged = Effect.fn("Home.checkUnchanged")(function* (
   }
 });
 
-const checkPrivateOnWindows = Effect.fnUntraced(function* (home: string) {
-  const acl = yield* readFolderAcl(home).pipe(
-    Effect.mapError(
-      (error) => new HomeNotPrivate({ home, reason: "unverifiable", detail: error.detail }),
+/**
+ * `checkFolders` on Windows: every folder's list, read in one run. A junction
+ * or a link is judged by the folder it leads to: Windows checks access there,
+ * and Get-Acl given the link could read the link's own list instead.
+ */
+const checkOnWindows = Effect.fnUntraced(function* (
+  home: string,
+  folders: ReadonlyArray<string>,
+  refusal: Refusal,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const looked = yield* Effect.forEach(folders, (folder) =>
+    fs.realPath(folder).pipe(
+      Effect.orElseSucceed(() => folder),
+      Effect.map((real) => ({ folder, real })),
     ),
   );
-  const verdict: AclVerdict = judgeAcl(acl);
-  if (verdict !== "private") {
-    return yield* new HomeNotPrivate({
-      home,
-      reason: verdict,
-      windowsRepair: repairCommand(home, acl),
-    });
+  const reads = yield* readFolderAcls(looked.map(({ real }) => real)).pipe(
+    Effect.mapError((error) => refusal(home, { reason: "unverifiable", detail: error.detail })),
+  );
+  for (const [{ folder, real }, read] of Arr.zip(looked, reads)) {
+    if (Result.isFailure(read)) {
+      return yield* refusal(folder, { reason: "unverifiable", detail: read.failure.detail });
+    }
+    const verdict: AclVerdict = judgeAcl(read.success);
+    if (verdict !== "private") {
+      return yield* refusal(folder, {
+        reason: verdict,
+        windowsRepair: repairCommand(real, read.success),
+      });
+    }
   }
 });
 
@@ -355,7 +442,7 @@ const checkNoUnfinishedImport = Effect.fn("Home.checkNoUnfinishedImport")(functi
 export const initialize = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const config = yield* load;
-  yield* checkPrivate(config.home);
+  yield* checkPrivateHome(config.home);
   yield* checkWritable(config.home);
   yield* checkNoUnfinishedRollback(config.home);
   yield* checkNoUnfinishedImport(config.home);
@@ -479,7 +566,7 @@ export const holdUpdateLock = Effect.fn("Home.holdUpdateLock")(function* <E>(
 export const reserve = Effect.gen(function* () {
   const { home, adminSocket } = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
-  yield* checkPrivate(home);
+  yield* checkPrivateHome(home);
   yield* holdHome(home);
   // Again under the lock: a rollback or an import may have started since `initialize`.
   yield* checkNoUnfinishedRollback(home);

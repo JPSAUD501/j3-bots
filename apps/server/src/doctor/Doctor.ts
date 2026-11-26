@@ -81,33 +81,26 @@ const nodeCheck = (version: string) =>
         `Install Node ${TESTED_NODE} and run this again with it.`,
       );
 
-const HOME_SUMMARIES: Record<
-  Home.HomeNotPrivate["reason"],
-  (home: string, detail: string) => string
-> = {
-  "not-a-folder": (home) => `${home} is not a folder.`,
-  "not-owned": (home) =>
-    `${home} belongs to another user. The server refuses to start until this user owns it.`,
-  "open-to-others": (home) =>
-    `Other users on this machine can open ${home}, which holds the database, the engine's credential and the admin socket. The server refuses to start until only this user can.`,
-  "closed-to-owner": (home) =>
-    `This user's own permissions on ${home} do not let it read, write and open the files there. The server refuses to start until they do.`,
-  unverifiable: (home) =>
-    `Windows did not say who may open ${home}. The server refuses to start until it can check that only this user can.`,
-  unreadable: (home, detail) =>
-    `The system did not let this user look at ${home} (${detail}). The server refuses to start until it can check that only this user can open it.`,
+/** What the server waits for, by why the home is not private. */
+const HOME_UNTIL: Record<Home.HomeNotPrivate["reason"], string> = {
+  "not-a-folder": "it is a folder",
+  "not-owned": "this user owns it",
+  "open-to-others": "only this user can",
+  "closed-to-owner": "they do",
+  unverifiable: "it can check that only this user can",
+  unreadable: "it can check that only this user can open it",
 };
 
 const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   // First, so a home the system will not show is reported as one, with its fix.
-  const privacy = yield* Home.checkPrivate(home).pipe(Effect.result);
+  const privacy = yield* Home.checkPrivateHome(home).pipe(Effect.result);
   if (privacy._tag === "Failure") {
-    const { reason, detail, fix } = privacy.failure;
+    const { reason, summary, fix } = privacy.failure;
     return check(
       "Data directory",
       "problem",
-      HOME_SUMMARIES[reason](home, detail ?? "no answer"),
+      `${summary} The server refuses to start until ${HOME_UNTIL[reason]}.`,
       fix,
     );
   }
