@@ -734,14 +734,14 @@ export const layer = Layer.effect(
           // turn, is the operator's to retry too: none has a message of
           // theirs. A teammate's message goes again only while it failed:
           // one a Stop cancelled stays cancelled, as does a post from
-          // another room a Stop of that room's work cancelled. It goes as it
-          // was, its kind and hops kept; the Retry is the operator's, so no
+          // another room a Stop cancelled; one whose turn ran and failed goes
+          // again. It goes as it was, its kind and hops kept; the Retry is the operator's, so no
           // Stop of its sender cancels it (`Stops.record`).
           const again = sent.filter(
             (wake) =>
               (wake.kind === "user" ||
                 (wake.kind === "room" &&
-                  (wake.cause_room_id === null || wake.status === "failed")) ||
+                  (wake.cause_room_id === null || wake.status !== "cancelled")) ||
                 wake.payload_json._tag === "first-run" ||
                 (wake.payload_json._tag === "teammate" && wake.status === "failed")) &&
               !retried.has(wake.id),

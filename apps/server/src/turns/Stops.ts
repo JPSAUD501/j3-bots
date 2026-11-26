@@ -694,9 +694,8 @@ export const layer = Layer.effect(
      * engine has or may be taking; `flagged`, a turn of it whose background
      * work the engine last reported pending, or has not reported since the
      * turn ended, which may have left work its end did not tell of. A
-     * dispatch whose recovery gave
-     * up counts as neither: its fence reopens the Stop if its key lands
-     * (`stopTargets.openRound`).
+     * dispatch whose recovery gave up counts as neither: its fence reopens
+     * the Stop if its key lands (`stopTargets.openRound`).
      */
     const ownWork = (sessionId: SessionRowId, narrow: Narrow) =>
       SqlSchema.findOne({

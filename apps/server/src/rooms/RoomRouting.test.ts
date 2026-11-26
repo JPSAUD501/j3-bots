@@ -1138,6 +1138,51 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("retries a post from another room whose turn ran and failed", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const [scout, wren, hal, pip] = [
+      yield* member("Scout"),
+      yield* member("Wren"),
+      yield* member("Hal"),
+      yield* member("Pip"),
+    ];
+    const members = [scout, wren, hal, pip];
+    const launch = yield* roomWith(scout, [wren]);
+    const release = yield* roomWith(hal, [scout, pip]);
+    yield* operatorWrites(launch.id, [scout, wren], "Scout, tell the release room.", to(scout));
+    const scoutTurn = yield* nextTurn(scout.bot.id);
+    yield* postIn(scout, scoutTurn, release.id, "Pip, the launch moved.", pip);
+    yield* finish(scout, scoutTurn, [scout, wren]);
+    const failing = yield* nextTurn(pip.bot.id);
+    yield* control.finishTurn({
+      sessionId: pip.session,
+      turnId: failing,
+      outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+    });
+    yield* turnEnded(pip.bot.id);
+    yield* until(
+      Effect.map(roomEntries(release.id), (entries) =>
+        entries.some((entry) => entry._tag === "notice" && entry.retryable),
+      ),
+    );
+    const notice = Option.getOrThrow(
+      Option.fromNullishOr(
+        (yield* roomEntries(release.id)).find(
+          (entry): entry is Extract<Entry, { readonly _tag: "notice" }> =>
+            entry._tag === "notice" && entry.retryable,
+        ),
+      ),
+    );
+
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+    yield* settle(members);
+    yield* nextTurn(pip.bot.id, failing);
+    assert.include(yield* lastEnvelope(pip), "the launch moved");
+    assert.strictEqual((yield* roomWakeStatuses(pip.bot.id, release.id)).length, 2);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("keeps the wakes a member's posts wrote in its room when the member leaves it", () =>
   Effect.gen(function* () {
     const [wren, scout, pip, mo] = [
