@@ -217,6 +217,8 @@ interface Setup {
   readonly running: Ref.Ref<number>;
   /** Whether the engine released every session on the provider when asked, after a switch. */
   readonly released: Ref.Ref<boolean>;
+  /** How many switches held every bot's first send. */
+  readonly pauses: Ref.Ref<number>;
   /** The operator's `autoUpdateHarnesses`. */
   readonly autoUpdate: SubscriptionRef.SubscriptionRef<boolean>;
   /** The harnesses the operator has on `PATH`. */
@@ -247,6 +249,7 @@ const setup = Effect.fn(function* (options?: {
   const client = onlyTo(["https://downloads.test", "https://releases.test"])(fakeClient(fake));
   const running = yield* Ref.make(0);
   const released = yield* Ref.make(false);
+  const pauses = yield* Ref.make(0);
   const autoUpdate = yield* SubscriptionRef.make(options?.autoUpdate ?? true);
   const onPath = yield* Ref.make(options?.onPath ?? []);
   const machine = options?.machine ?? MACHINE;
@@ -261,12 +264,16 @@ const setup = Effect.fn(function* (options?: {
     onPath: (harness) => Effect.map(Ref.get(onPath), (found) => found.includes(harness)),
     autoUpdate: SubscriptionRef.changes(autoUpdate),
     work: {
-      paused: (effect) => effect,
+      paused: (effect) =>
+        Effect.andThen(
+          Ref.update(pauses, (count) => count + 1),
+          effect,
+        ),
       running: () => Ref.get(running),
       release: () => Ref.get(released),
     },
   });
-  return { harnesses, fake, home, running, released, autoUpdate, onPath } satisfies Setup;
+  return { harnesses, fake, home, running, released, pauses, autoUpdate, onPath } satisfies Setup;
 });
 
 /** The first state of `harness`'s copy that `until` holds for. */
@@ -536,6 +543,24 @@ describe("J3 Bots' own copies of the harnesses", () => {
       assert.isNull(updated.task);
       assert.lengthOf(yield* switchedTo, 2);
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect(
+    "holds no bot's send while it switches to a first copy, and every one for an update",
+    () =>
+      Effect.gen(function* () {
+        const { harnesses, fake, pauses } = yield* setup({
+          onPath: ["codex"],
+          prepare: (fake) => publishClaude(fake, "2.1.326"),
+        });
+        yield* copyWhen(harnesses, "claude-code", installed("2.1.326"));
+        assert.strictEqual(yield* Ref.get(pauses), 0);
+
+        publishClaude(fake, "2.1.330");
+        yield* harnesses.install("claude-code");
+        yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
+        assert.strictEqual(yield* Ref.get(pauses), 1);
+      }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
   );
 
   it.effect("stops at once while the engine has yet to show it runs a new copy", () =>

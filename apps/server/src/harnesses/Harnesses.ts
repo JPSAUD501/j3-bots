@@ -301,8 +301,8 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
    * Runs the engine's provider on `copy`, once no bot has work running in a
    * session on it, then makes it current: `switched`; `waiting` while that
    * work runs or the engine is not ready, which runs the copy it ran; or
-   * `unwanted`, with why, looked at with first sends held, just before the
-   * engine is given it. An engine that may have taken `copy` without showing
+   * `unwanted`, with why, looked at just before the engine is given it, with
+   * first sends held for an update. An engine that may have taken `copy` without showing
    * it runs it is put back on the copy before, as is one whose
    * `current.json` cannot be written, so the engine and `current.json` name
    * the same copy; one that cannot be shown put back keeps `copy` stranded.
@@ -352,48 +352,50 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
       }),
     );
     if (!begun) return yield* Effect.interrupt;
-    const outcome = yield* options.work
-      .paused(
-        Effect.gen(function* () {
-          const why = yield* unwanted(harness, before, automatic);
-          if (Option.isSome(why)) return { _tag: "unwanted", why: why.value } as const;
-          if ((yield* options.work.running(providerId)) > 0) return { _tag: "waiting" } as const;
-          const taken = yield* engine
-            .setHarnessExecutable({
-              providerId,
-              executable: copy.executable,
-              version: copy.version,
-            })
-            .pipe(
-              Effect.as(true),
-              Effect.catchTags({
-                EngineUnavailable: () => Effect.succeed(false),
-                EngineIncompatible: () => Effect.fail(engineFailed()),
-                EngineIndeterminate: () =>
-                  putBack.pipe(Effect.andThen(Effect.fail(engineFailed()))),
-              }),
-            );
-          if (!taken) return { _tag: "waiting" } as const;
-          yield* currentText(copy).pipe(
-            // An installed copy always encodes: a failure is a defect.
-            Effect.orDie,
-            Effect.flatMap((text) => files.writeFile(layout.current, text)),
-            // The write ends in a rename over the file, which Windows refuses
-            // while another program holds it; it was tried again a while.
-            Effect.catch((error) => fileFailed(options.platform, renameRefused(error))(error)),
-            Effect.tapError(() => putBack),
-          );
-          // Recorded at once: a cancel that landed meanwhile finds the copy
-          // the engine now runs installed, keeps it, and is told so.
-          committed.set(harness, copy);
-          if (stranded.get(harness)?.version === copy.version) stranded.delete(harness);
-          yield* update(harness, (slot) => ({ ...slot, installed: Option.some(copy), task: null }));
-          // Still with first sends held: no turn reaches a session on the copy before.
-          const released = yield* options.work.release(providerId);
-          return { _tag: "switched", released } as const;
-        }),
-      )
-      .pipe(Effect.ensuring(lock.withPermits(1)(Effect.sync(() => switching.delete(harness)))));
+    const switchNow = Effect.gen(function* () {
+      const why = yield* unwanted(harness, before, automatic);
+      if (Option.isSome(why)) return { _tag: "unwanted", why: why.value } as const;
+      if ((yield* options.work.running(providerId)) > 0) return { _tag: "waiting" } as const;
+      const taken = yield* engine
+        .setHarnessExecutable({
+          providerId,
+          executable: copy.executable,
+          version: copy.version,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchTags({
+            EngineUnavailable: () => Effect.succeed(false),
+            EngineIncompatible: () => Effect.fail(engineFailed()),
+            EngineIndeterminate: () => putBack.pipe(Effect.andThen(Effect.fail(engineFailed()))),
+          }),
+        );
+      if (!taken) return { _tag: "waiting" } as const;
+      yield* currentText(copy).pipe(
+        // An installed copy always encodes: a failure is a defect.
+        Effect.orDie,
+        Effect.flatMap((text) => files.writeFile(layout.current, text)),
+        // The write ends in a rename over the file, which Windows refuses
+        // while another program holds it: only then is it `in-use`.
+        Effect.catch((error) => fileFailed(options.platform, renameRefused(error))(error)),
+        Effect.tapError(() => putBack),
+      );
+      // Recorded at once: a cancel that landed meanwhile finds the copy
+      // the engine now runs installed, keeps it, and is told so.
+      committed.set(harness, copy);
+      if (stranded.get(harness)?.version === copy.version) stranded.delete(harness);
+      yield* update(harness, (slot) => ({ ...slot, installed: Option.some(copy), task: null }));
+      // For an update, still with first sends held: no turn reaches a session on the copy before.
+      const released = yield* options.work.release(providerId);
+      return { _tag: "switched", released } as const;
+    });
+    // An update holds every bot's first send while it switches, so none
+    // starts on the copy before. A first install has no copy before, and no
+    // bot's turn could run on its provider: it holds none, so a bot on
+    // another provider answers while it waits for the engine.
+    const outcome = yield* (
+      Option.isSome(before) ? options.work.paused(switchNow) : switchNow
+    ).pipe(Effect.ensuring(lock.withPermits(1)(Effect.sync(() => switching.delete(harness)))));
     if (outcome._tag !== "switched") return outcome;
     if (!outcome.released) {
       yield* Effect.logInfo(
