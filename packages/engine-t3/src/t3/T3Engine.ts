@@ -112,10 +112,12 @@ import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import type { FileChangeItem } from "./approvalDetail.ts";
 import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { PERMISSION_MODES, RUNTIME_MODES } from "./Policy.ts";
+import { recheckWhileTimedOut } from "./Rechecks.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import {
   FIRST_CHECK_BUDGET,
   providerProblems,
+  checkTimedOut,
   providerStatuses,
   redact,
   type UpdateRequest,
@@ -2181,14 +2183,23 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.forkScoped,
   );
 
+  /** When each provider whose check timed out is checked again next (`recheckWhileTimedOut`). */
+  const rechecks = yield* SubscriptionRef.make<ReadonlyMap<ProviderId, DateTime.Utc>>(new Map());
   const engineStatus = Stream.zipLatestAll(
     withFirstCheckBudget(stateChanges(state)),
     SubscriptionRef.changes(reported),
     SubscriptionRef.changes(updates),
     SubscriptionRef.changes(replaced),
+    SubscriptionRef.changes(rechecks),
   ).pipe(
     Stream.map(
-      ([{ state: current, firstCheck }, engineProviders, requests, rebuilt]): EngineStatus => {
+      ([
+        { state: current, firstCheck },
+        engineProviders,
+        requests,
+        rebuilt,
+        nextChecks,
+      ]): EngineStatus => {
         switch (current._tag) {
           case "ready":
             return {
@@ -2199,6 +2210,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                 engineProviders,
                 (providerId) => firstCheck || rebuilt.has(providerId),
                 requests,
+                nextChecks,
               ),
             };
           case "starting":
@@ -2261,6 +2273,43 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       }),
     );
   });
+
+  // A provider whose check timed out, as one run while the machine was busy
+  // starting, is checked again on its own, without restarting the engine
+  // (`RECHECK_DELAYS`), until a check does not time out or the engine stops
+  // being ready, which starts a first check of its own when it is back.
+  yield* Effect.forEach(
+    options.providers,
+    (provider) =>
+      recheckWhileTimedOut(
+        Stream.zipLatestAll(
+          withFirstCheckBudget(stateChanges(state)),
+          SubscriptionRef.changes(reported),
+          SubscriptionRef.changes(replaced),
+        ).pipe(
+          Stream.map(
+            ([{ state: current, firstCheck }, engineProviders, rebuilt]) =>
+              current._tag === "ready" &&
+              checkTimedOut(
+                provider,
+                engineProviders.find(
+                  (candidate) => candidate.instanceId === instanceIdFor(provider.id),
+                ),
+                firstCheck || rebuilt.has(provider.id),
+              ),
+          ),
+        ),
+        recheckProvider(provider.id),
+        (at) =>
+          SubscriptionRef.update(rechecks, (current) => {
+            const next = new Map(current);
+            if (at === null) next.delete(provider.id);
+            else next.set(provider.id, at);
+            return next;
+          }),
+      ),
+    { concurrency: "unbounded", discard: true },
+  ).pipe(Effect.forkScoped);
 
   /** Where an update runs once asked for: the engine's, so it ends with it. */
   const engineScope = yield* Effect.scope;

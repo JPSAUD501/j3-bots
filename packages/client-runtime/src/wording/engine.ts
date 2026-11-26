@@ -104,9 +104,10 @@ export function providerLine(
     case "limited":
       return { text: usageLimitText(status.resetsAt, ctx), tone: "blocked" };
     case "unavailable":
-      return status.checking
-        ? { text: t("provider.checking"), tone: "waiting" }
-        : unavailableLine(status.reason, place, ctx);
+      if (status.checking) return { text: t("provider.checking"), tone: "waiting" };
+      // Its check timed out, and the server checks it again on its own.
+      if (status.retryAt !== undefined) return { text: t("provider.timedOut"), tone: "waiting" };
+      return unavailableLine(status.reason, place, ctx);
   }
 }
 

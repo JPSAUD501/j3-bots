@@ -67,7 +67,14 @@ describe("providerFix", () => {
     expect(
       providerFix({ ...provider("agent", unavailable("not-installed")), harness: "other" }),
     ).toEqual({ _tag: "install", page: null });
-    expect(providerFix(provider("claude", unavailable("failed")))).toEqual({ _tag: "retry" });
+    expect(providerFix(provider("claude", unavailable("failed")))).toEqual({
+      _tag: "retry",
+      rechecking: false,
+    });
+    // Its check timed out, and the server already checks it again on its own.
+    expect(
+      providerFix(provider("claude", { ...unavailable("failed"), retryAt: DateTime.nowUnsafe() })),
+    ).toEqual({ _tag: "retry", rechecking: true });
   });
 
   it("has the server install its own copy where it can, and follows that install", () => {

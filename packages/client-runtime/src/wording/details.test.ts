@@ -218,6 +218,24 @@ describe("providerLine", () => {
     expect(line(unavailable()).text).toBe("Not available right now");
     expect(line(unavailable("unknown")).text).toBe("Not available right now");
   });
+
+  it("says the server checks again on its own a provider whose check timed out", () => {
+    const timedOut = {
+      status: {
+        _tag: "unavailable",
+        checking: false,
+        reason: "failed",
+        retryAt: at("2026-11-20T17:40:15Z"),
+      },
+    } as const;
+    expect(line(timedOut)).toEqual({
+      text: "Its check took too long. J3 Bots checks again on its own",
+      tone: "waiting",
+    });
+    expect(providerLine(provider(timedOut), pt, "server").text).toBe(
+      "A verificação demorou demais. O J3 Bots verifica de novo sozinho",
+    );
+  });
 });
 
 describe("memoryFileName", () => {

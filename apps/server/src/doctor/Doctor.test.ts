@@ -636,6 +636,40 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(disabled, "problem", "turned off");
       assert.include(fixOf(disabled), "names the file");
 
+      // A check that timed out, which the server checks again on its own: a warning, saying when.
+      const timedOut = "Timed out while checking Codex app-server provider status.";
+      const rechecking = named(
+        (yield* diagnoseIn({
+          server: Option.some(
+            running({
+              engine: {
+                state: { _tag: "ready" },
+                pinnedVersion: "0.1.11",
+                providers: [
+                  provider("claude-code", "ready"),
+                  {
+                    ...provider("codex", "unavailable", "failed", timedOut),
+                    status: {
+                      _tag: "unavailable",
+                      checking: false,
+                      reason: "failed",
+                      detail: timedOut,
+                      // The test clock starts at the epoch.
+                      retryAt: "1970-01-01T00:00:25.000Z",
+                    },
+                  },
+                ],
+              },
+            }),
+          ),
+        })).checks,
+        "Codex",
+      );
+      assertFlagged(rechecking, "warning", "did not end in time");
+      assert.include(rechecking.summary, "checks it again on its own in 25 s");
+      assert.include(rechecking.summary, `The engine says: ${timedOut}`);
+      assert.include(fixOf(rechecking), "Run this again in a minute.");
+
       // An older server says no reason: the log is all there is to go on.
       const older = yield* reported();
       assertFlagged(older, "problem", "cannot run Claude Code");

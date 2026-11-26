@@ -7,9 +7,11 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import type { ProviderInstance } from "../Engine.ts";
 import {
+  checkTimedOut,
   CONNECT_COMMAND,
   ConfigStreamEvent,
   providerProblems,
@@ -21,6 +23,7 @@ import {
   withoutSecrets,
 } from "./Providers.ts";
 import { instanceIdFor } from "./Provision.ts";
+import { recheckWhileTimedOut } from "./Rechecks.ts";
 
 const claude: ProviderInstance = {
   id: ProviderId.make("claude-code"),
@@ -524,6 +527,153 @@ describe("withFirstCheckBudget", () => {
         // At 90 seconds it passes: a change of its own, with no new state from the engine.
         yield* TestClock.adjust("30 seconds");
         assert.deepStrictEqual(yield* emitted(4), [true, false, true, false]);
+      }),
+  );
+});
+
+const codex: ProviderInstance = {
+  id: ProviderId.make("codex"),
+  name: "Codex",
+  environment: [],
+  harness: "codex",
+  home: "/j3/providers/codex",
+  executable: undefined,
+};
+const codexTimedOut = {
+  status: "error",
+  message: "Timed out while checking Codex app-server provider status.",
+};
+
+/** Lets forked fibers take their turns, after the clock moved or a value changed. */
+const settle = Effect.gen(function* () {
+  for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+});
+
+describe("checkTimedOut", () => {
+  it("tells a check that timed out from one that failed otherwise", () => {
+    const timedOut = (
+      provider: ProviderInstance,
+      fields: Record<string, unknown>,
+      firstCheck = false,
+    ) => checkTimedOut(provider, reported(provider, fields)[0], firstCheck);
+    // The engine's words when Codex's or Claude Code's check did not answer in time.
+    assert.isTrue(timedOut(codex, codexTimedOut));
+    assert.isTrue(
+      timedOut(claude, {
+        status: "error",
+        message:
+          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+      }),
+    );
+    // A first check still not ended past its budget; within it, it is under way.
+    const placeholder = { installed: false, status: "warning", auth: { status: "unknown" } };
+    assert.isTrue(timedOut(claude, placeholder));
+    assert.isFalse(timedOut(claude, placeholder, true));
+    // Any other failure keeps waiting on the operator.
+    assert.isFalse(
+      timedOut(claude, {
+        status: "error",
+        message: "Claude Agent CLI is installed but failed to run.",
+      }),
+    );
+    assert.isFalse(timedOut(codex, { ...codexTimedOut, installed: false }));
+    assert.isFalse(timedOut(codex, { ...codexTimedOut, enabled: false }));
+    assert.isFalse(timedOut(scripted, { status: "error", message: "Timed out." }));
+    assert.isFalse(checkTimedOut(codex, undefined, false));
+  });
+});
+
+describe("recheckWhileTimedOut", () => {
+  it.effect("checks a provider whose check timed out again on its own, until one passes", () =>
+    Effect.gen(function* () {
+      const report = yield* SubscriptionRef.make(reported(codex, codexTimedOut));
+      const rechecks = yield* SubscriptionRef.make<ReadonlyMap<ProviderId, DateTime.Utc>>(
+        new Map(),
+      );
+      const asked = yield* Ref.make(0);
+      yield* recheckWhileTimedOut(
+        SubscriptionRef.changes(report).pipe(
+          Stream.map((engine) => checkTimedOut(codex, engine[0], false)),
+        ),
+        // The first check again times out once more, as on a machine still busy; the second passes.
+        Effect.gen(function* () {
+          const times = yield* Ref.updateAndGet(asked, (count) => count + 1);
+          yield* SubscriptionRef.set(report, reported(codex, times === 1 ? codexTimedOut : {}));
+        }),
+        (at) =>
+          SubscriptionRef.update(rechecks, (current) => {
+            const next = new Map(current);
+            if (at === null) next.delete(codex.id);
+            else next.set(codex.id, at);
+            return next;
+          }),
+      ).pipe(Effect.forkChild);
+      const status = Effect.gen(function* () {
+        yield* settle;
+        return providerStatuses(
+          [codex],
+          yield* SubscriptionRef.get(report),
+          () => false,
+          new Map(),
+          yield* SubscriptionRef.get(rechecks),
+        )[0]?.status;
+      });
+      const start = yield* DateTime.now;
+      const after = (seconds: number) => DateTime.add(start, { seconds });
+
+      assert.deepStrictEqual(yield* status, {
+        _tag: "unavailable",
+        checking: false,
+        reason: "failed",
+        detail: codexTimedOut.message,
+        retryAt: after(15),
+      });
+      yield* TestClock.adjust("14 seconds");
+      yield* settle;
+      assert.strictEqual(yield* Ref.get(asked), 0);
+      yield* TestClock.adjust("1 second");
+      assert.deepStrictEqual(yield* status, {
+        _tag: "unavailable",
+        checking: false,
+        reason: "failed",
+        detail: codexTimedOut.message,
+        retryAt: after(45),
+      });
+      yield* TestClock.adjust("30 seconds");
+      assert.deepStrictEqual(yield* status, { _tag: "ready" });
+      assert.strictEqual(yield* Ref.get(asked), 2);
+      // Ready: no check is due, and none comes.
+      assert.strictEqual((yield* SubscriptionRef.get(rechecks)).size, 0);
+      yield* TestClock.adjust("1 hour");
+      yield* settle;
+      assert.strictEqual(yield* Ref.get(asked), 2);
+    }),
+  );
+
+  it.effect(
+    "waits longer each time, up to every five minutes, and stops once it no longer times out",
+    () =>
+      Effect.gen(function* () {
+        const timedOut = yield* SubscriptionRef.make(true);
+        const due = yield* Ref.make<ReadonlyArray<number | null>>([]);
+        const start = DateTime.toEpochMillis(yield* DateTime.now);
+        yield* recheckWhileTimedOut(SubscriptionRef.changes(timedOut), Effect.void, (at) =>
+          Ref.update(due, (all) => [
+            ...all,
+            at === null ? null : (DateTime.toEpochMillis(at) - start) / 1000,
+          ]),
+        ).pipe(Effect.forkChild);
+        yield* settle;
+        for (const seconds of [15, 30, 60, 300, 300]) {
+          yield* TestClock.adjust(`${seconds} seconds`);
+          yield* settle;
+        }
+        assert.deepStrictEqual(yield* Ref.get(due), [15, 45, 105, 405, 705, 1005]);
+        yield* SubscriptionRef.set(timedOut, false);
+        yield* settle;
+        yield* TestClock.adjust("1 hour");
+        yield* settle;
+        assert.deepStrictEqual(yield* Ref.get(due), [15, 45, 105, 405, 705, 1005, null]);
       }),
   );
 });

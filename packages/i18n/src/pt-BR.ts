@@ -803,6 +803,7 @@ const sentences = {
   "provider.notInstalled.here": "Não instalado neste computador",
   "provider.notInstalled.server": "Não instalado no servidor",
   "provider.failed": "Encontrado, mas não conseguiu iniciar",
+  "provider.timedOut": "A verificação demorou demais. O J3 Bots verifica de novo sozinho",
   "provider.disabled": "Desativado no servidor",
   "provider.retry": "Tentar de novo",
   "provider.recheckFailed": "Não deu para alcançar o motor. Tente de novo daqui a pouco.",
