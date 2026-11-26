@@ -153,6 +153,8 @@ export const en = {
   "notification.secret": "Needs a credential",
   "notification.handoff": "Sent a teammate an urgent message",
   "notification.browserHelp": "Needs your help in the browser",
+  "notification.browserHelpStep": "Needs your help in the browser: {step}",
+  "notification.browserHelpStepOnSite": "Needs your help in the browser: {step} on {site}",
   "notification.connectorSignIn": "A service needs you to sign in",
   "notification.connectorInput": "A service asks you something",
   "notification.channel.message": "Messages",

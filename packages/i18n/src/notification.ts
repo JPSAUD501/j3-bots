@@ -44,10 +44,15 @@ export function notificationText(
         return preview === null
           ? t("notification.secret")
           : t("summary.needsSecret", { label: preview });
-      case "browser-help":
-        return preview === null
-          ? t("notification.browserHelp")
-          : t("summary.needsBrowserHelp", { note: preview });
+      case "browser-help": {
+        // Fixed words, never the bot's note (`Notification.browserHelp`).
+        const help = notification.browserHelp;
+        if (help === null) return t("notification.browserHelp");
+        const step = t(`browserHelp.reason.${help.reason}`);
+        return help.site === ""
+          ? t("notification.browserHelpStep", { step })
+          : t("notification.browserHelpStepOnSite", { step, site: help.site });
+      }
       case "connector":
         // The two connector cards that notify: a sign-in the bot waits on, and
         // a service's question that holds the bot's call until it is answered.

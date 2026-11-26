@@ -11,6 +11,7 @@ import {
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -134,6 +135,7 @@ it.effect("notifies every socket of what a bot adds where no socket looks, and n
       kind: "question",
       preview: null,
       connector: null,
+      browserHelp: null,
     };
     for (const queue of queues) assert.deepStrictEqual(yield* Queue.take(queue), expected);
 
@@ -147,24 +149,61 @@ it.effect("notifies every socket of what a bot adds where no socket looks, and n
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
 
-it.effect("tells of a bot's request for help in its browser as a kind of its own", () =>
+/** A bot asks for help in its browser, with a note that copies a code it should not have. */
+const asksForHelp = (botId: BotId) =>
+  add(botId, {
+    _tag: "browser-help",
+    author: { _tag: "bot", botId },
+    reason: "two-factor",
+    note: "Type the code 482913 the site sent.",
+    site: "tickets.example.com",
+    tab: BrowserTabRef.make("tab-tickets"),
+    status: { _tag: "pending" },
+  });
+
+const previewsOn = Effect.gen(function* () {
+  yield* (yield* SettingsService).update({
+    commandId: CommandId.make("previews"),
+    changes: { notifications: { enabled: true, previews: true } },
+  });
+});
+
+it.effect("tells of a bot's request for help in its browser by why it asks, never its note", () =>
   Effect.gen(function* () {
+    yield* previewsOn;
     const scout = yield* createBot("Scout");
     const { queues } = yield* twoSockets(scout.id);
-    const card = yield* add(scout.id, {
-      _tag: "browser-help",
-      author: { _tag: "bot", botId: scout.id },
-      reason: "captcha",
-      note: "The ticket site wants to know a person is there.",
-      site: "tickets.example.com",
-      tab: BrowserTabRef.make("tab-tickets"),
-      status: { _tag: "pending" },
-    });
+    const card = yield* asksForHelp(scout.id);
     for (const queue of queues) {
       const notification = yield* Queue.take(queue);
-      assert.deepStrictEqual([notification.entryId, notification.kind], [card.id, "browser-help"]);
+      assert.deepStrictEqual(
+        [notification.entryId, notification.kind, notification.preview, notification.browserHelp],
+        [card.id, "browser-help", null, { reason: "two-factor", site: "tickets.example.com" }],
+      );
     }
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect("pushes a bot's request for help in its browser in fixed words", () =>
+  Effect.gen(function* () {
+    yield* previewsOn;
+    const scout = yield* createBot("Scout");
+    yield* registerPush(yield* pairDevice("Phone"));
+    yield* asksForHelp(scout.id);
+    const sql = yield* SqlClient.SqlClient;
+    const pushed = yield* sql<{
+      readonly title: string;
+      readonly body: string;
+      readonly plain_body: string;
+    }>`SELECT title, body, plain_body FROM push_deliveries`;
+    assert.deepStrictEqual(pushed, [
+      {
+        title: "Scout",
+        body: "Needs your help in the browser: Enter a sign-in code on tickets.example.com",
+        plain_body: "Needs your help in the browser",
+      },
+    ]);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(

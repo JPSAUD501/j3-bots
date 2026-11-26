@@ -151,6 +151,8 @@ const sentences = {
   "notification.secret": "Precisa de uma credencial",
   "notification.handoff": "Mandou uma mensagem urgente a um colega",
   "notification.browserHelp": "Precisa da sua ajuda no navegador",
+  "notification.browserHelpStep": "Precisa da sua ajuda no navegador: {step}",
+  "notification.browserHelpStepOnSite": "Precisa da sua ajuda no navegador: {step} em {site}",
   "notification.connectorSignIn": "Um serviço precisa que você entre",
   "notification.connectorInput": "Um serviço pede uma resposta sua",
   "notification.channel.message": "Mensagens",

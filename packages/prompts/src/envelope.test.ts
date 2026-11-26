@@ -624,7 +624,7 @@ describe("renderWake", () => {
     expect(system({ name: "browser-help", outcome: "done", site: "mail.example.com" }))
       .toMatchInlineSnapshot(`
         "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-        Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task. Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\`.
+        Your user says they did the step you asked for in your browser. Take a fresh snapshot before you act, and check on the page that the step is done. If it is, carry on with the task. If it is not, do not try the step yourself: finish what does not need it. Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` that gives the result, or tells your user what the step still blocks.
         <browser-tab site="mail.example.com"/>
         </j3-wake>
         This is an event, not a message from your user. Respond only as your instructions say for it.

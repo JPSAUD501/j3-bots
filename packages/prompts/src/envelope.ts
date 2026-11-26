@@ -372,7 +372,7 @@ const FROM_TEMPLATE_LINE =
 const BROWSER_HELP_LINES: {
   readonly [O in Extract<SystemEvent, { readonly name: "browser-help" }>["outcome"]]: string;
 } = {
-  done: "Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task. Reply with `say`; nothing else reaches them. Your last call is a `say` with `done: true`.",
+  done: "Your user says they did the step you asked for in your browser. Take a fresh snapshot before you act, and check on the page that the step is done. If it is, carry on with the task. If it is not, do not try the step yourself: finish what does not need it. Reply with `say`; nothing else reaches them. Your last call is a `say` with `done: true` that gives the result, or tells your user what the step still blocks.",
   declined:
     "Your user could not do the step you asked for in your browser, and gave it back. Do not try the step yourself. Finish what does not need it, then end with a `say` with `done: true` that tells your user what the step still blocks; nothing else reaches them.",
   "tab-closed":
