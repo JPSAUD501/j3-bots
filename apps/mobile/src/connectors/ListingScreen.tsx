@@ -211,9 +211,10 @@ function ConnectForm({
   const [clientSecret, setClientSecret] = useState("");
   const [problems, setProblems] = useState<FormProblems | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [failure, setFailure] = useState<{ readonly text: string; readonly vault: boolean } | null>(
-    null,
-  );
+  const [failure, setFailure] = useState<{
+    readonly text: string;
+    readonly secrets: boolean;
+  } | null>(null);
 
   const add = () => {
     if (submitting || !connected) return;
@@ -242,7 +243,7 @@ function ConnectForm({
       }
       setFailure({
         text: connectFailureText(result.failure, i18n),
-        vault: refusedWith(result, "vault-locked") || refusedWith(result, "vault-not-set-up"),
+        secrets: refusedWith(result, "secrets-unavailable"),
       });
     });
   };
@@ -254,11 +255,11 @@ function ConnectForm({
       offline={!connected}
       actions={
         <>
-          {failure?.vault === true && (
+          {failure?.secrets === true && (
             <Button
               variant="secondary"
-              label={t("connect.openVault")}
-              onPress={intents.openVault}
+              label={t("connect.openSecrets")}
+              onPress={intents.openSecrets}
             />
           )}
           <Button

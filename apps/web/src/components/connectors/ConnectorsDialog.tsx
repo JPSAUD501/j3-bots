@@ -40,8 +40,8 @@ interface ConnectorsDialogProps {
   /** Null while it is closed. */
   readonly opening: ConnectorsOpening | null;
   /**
-   * Put aside for another dialog, as Settings when the operator goes to unlock
-   * the vault: closed, with its pages and what they hold kept, to come back as
+   * Put aside for another dialog, as Settings when the operator goes to their
+   * secrets: closed, with its pages and what they hold kept, to come back as
    * they were.
    */
   readonly aside: boolean;

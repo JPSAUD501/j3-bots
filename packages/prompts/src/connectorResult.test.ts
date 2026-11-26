@@ -78,8 +78,12 @@ describe("renderConnectorResult", () => {
   });
 
   it("tells the bot in J3 Bots' own words why there was no answer", () => {
-    const rendered = render({ type: "unavailable", connector: "Linear", reason: "vault-locked" });
+    const rendered = render({
+      type: "unavailable",
+      connector: "Linear",
+      reason: "secrets-unavailable",
+    });
     expect(tags(rendered)).toEqual([]);
-    expect(rendered).toContain("Linear can't be used while J3 Bots' vault is locked.");
+    expect(rendered).toContain("Linear can't be used until your user opens their secrets");
   });
 });

@@ -3,7 +3,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { assert, it } from "@effect/vitest";
-import { Bot, Routine, TimeZone } from "@j3-bots/contracts";
+import {
+  Bot,
+  FillOutcome,
+  Routine,
+  SecretId,
+  SiteOrigin,
+  TimeZone,
+  WorkStep,
+} from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -505,17 +513,19 @@ it.effect("starts the update channel as the one of the release that first runs w
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("admits the save-login card's kind, keeping every entry and what links to it", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+it.effect(
+  "makes a save-login card an ask for a secret, keeping every entry and what links to it",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
 
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`PRAGMA foreign_keys = ON`;
-      yield* migrate(migrationsThrough(22));
-      yield* sql`
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(22));
+        yield* sql`
         INSERT INTO bots (
           id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
           permission_mode, workspace_path, created_at, updated_at
@@ -524,31 +534,23 @@ it.effect("admits the save-login card's kind, keeping every entry and what links
           ${now}, ${now}
         )
       `;
-      yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
-      yield* sql`
+        yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
+        yield* sql`
         INSERT INTO entries (
           id, conversation_bot_id, position, kind, author_kind, body_json, created_at, updated_at
         ) VALUES ('entry-1', 'scout', 0, 'message', 'operator', '{}', ${now}, ${now})
       `;
-      yield* sql`
+        yield* sql`
         INSERT INTO blobs (sha256, size, storage_path, created_at)
         VALUES ('abc', 1, 'blobs/abc', ${now})
       `;
-      yield* sql`
+        yield* sql`
         INSERT INTO attachments (id, sha256, name, media_type, source, entry_id, created_at)
         VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', 'entry-1', ${now})
       `;
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
-
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      // The file still names its entry: the table was never dropped under it.
-      const links = yield* sql`SELECT entry_id FROM attachments WHERE id = 'file-1'`;
-      assert.deepStrictEqual(links, [{ entry_id: "entry-1" }]);
-      const kinds = yield* sql`SELECT id, kind FROM entries`;
-      assert.deepStrictEqual(kinds, [{ id: "entry-1", kind: "message" }]);
-
-      yield* sql`
+        // The release that had the save-login card wrote one.
+        yield* migrate(migrationsThrough(36));
+        yield* sql`
         INSERT INTO entries (
           id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
           created_at, updated_at
@@ -556,19 +558,164 @@ it.effect("admits the save-login card's kind, keeping every entry and what links
           'entry-2', 'scout', 1, 'credential-request', 'bot', 'scout', '{}', ${now}, ${now}
         )
       `;
-      const unknown = yield* sql`
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // The file still names its entry: the table was never dropped under it.
+        const links = yield* sql`SELECT entry_id FROM attachments WHERE id = 'file-1'`;
+        assert.deepStrictEqual(links, [{ entry_id: "entry-1" }]);
+        const kinds = yield* sql`SELECT id, kind FROM entries ORDER BY position`;
+        assert.deepStrictEqual(kinds, [
+          { id: "entry-1", kind: "message" },
+          { id: "entry-2", kind: "secret-ask" },
+        ]);
+
+        yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES (
+          'entry-3', 'scout', 2, 'secret-ask', 'bot', 'scout', '{}', ${now}, ${now}
+        )
+      `;
+        const unknown = yield* sql`
         INSERT INTO entries (
           id, conversation_bot_id, position, kind, author_kind, body_json, created_at, updated_at
-        ) VALUES ('entry-3', 'scout', 2, 'postcard', 'operator', '{}', ${now}, ${now})
+        ) VALUES ('entry-4', 'scout', 3, 'postcard', 'operator', '{}', ${now}, ${now})
       `.pipe(Effect.flip);
-      assert.strictEqual(unknown.reason._tag, "ConstraintError");
-      // An entry still keeps its kind: the check takes `notice`, the trigger does not.
-      const moved = yield* sql`UPDATE entries SET kind = 'notice' WHERE id = 'entry-1'`.pipe(
-        Effect.flip,
+        assert.strictEqual(unknown.reason._tag, "ConstraintError");
+        // An entry still keeps its kind: the check takes `notice`, the trigger does not.
+        const moved = yield* sql`UPDATE entries SET kind = 'notice' WHERE id = 'entry-1'`.pipe(
+          Effect.flip,
+        );
+        assert.strictEqual(moved.reason._tag, "ConstraintError");
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
       );
-      assert.strictEqual(moved.reason._tag, "ConstraintError");
-    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
-  }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "reads the login fills an earlier release recorded, and says a locked one could not be used",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+      const fill = (id: string, outcome: Schema.Json) =>
+        JSON.stringify({
+          id,
+          kind: "tool",
+          tool: "login",
+          label: "Filled a saved login",
+          status: "completed",
+          startedAt: now,
+          finishedAt: now,
+          fill: {
+            name: "example",
+            credentialId: "cred_aaaaaaaaaaaaaaaa",
+            field: "password",
+            origin: "https://example.com",
+            outcome,
+          },
+        });
+
+      // The release with the vault filled a login once, and found it locked once.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(36));
+        yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES (
+          'scout', 'scout', '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', '/bots/scout',
+          ${now}, ${now}
+        )
+      `;
+        yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
+        yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES ('fold-1', 'scout', 0, 'work-fold', 'bot', 'scout', '{}', ${now}, ${now})
+      `;
+        yield* sql`
+        INSERT INTO work_steps (entry_id, step_id, position, step_json) VALUES
+          ('fold-1', 'step-1', 0, ${fill("step-1", { _tag: "filled", submitted: true })}),
+          ('fold-1', 'step-2', 1, ${fill("step-2", { _tag: "locked" })}),
+          ('fold-1', 'step-3', 2, ${fill("step-3", { _tag: "refused", reason: "ambiguous" })})
+      `;
+        yield* sql`
+        INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
+        VALUES ('session-1', 'scout', 'main', 'v1', ${now})
+      `;
+        yield* sql`
+        INSERT INTO tool_calls (
+          id, session_id, engine_turn_id, engine_call_id, audience, tool, result_json, created_at
+        ) VALUES (
+          'call-1', 'session-1', 'turn-1', 'engine-call-1', 'conversation', 'fill_credential',
+          '{"_tag":"locked"}', ${now}
+        ), (
+          'call-2', 'session-1', 'turn-1', 'engine-call-2', 'conversation', 'fill_credential',
+          '{"_tag":"refused","reason":"ambiguous"}', ${now}
+        )
+      `;
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const steps = yield* sql<{ readonly step_json: string }>`
+        SELECT step_json FROM work_steps ORDER BY position
+      `;
+        const decoded = yield* Effect.forEach(steps, (row) =>
+          Schema.decodeEffect(json(WorkStep))(row.step_json),
+        );
+        assert.deepStrictEqual(
+          decoded.map((step) => step.fill),
+          [
+            {
+              name: "example",
+              secretId: SecretId.make("cred_aaaaaaaaaaaaaaaa"),
+              field: "password",
+              origin: SiteOrigin.make("https://example.com"),
+              outcome: { _tag: "filled", submitted: true },
+            },
+            {
+              name: "example",
+              secretId: SecretId.make("cred_aaaaaaaaaaaaaaaa"),
+              field: "password",
+              origin: SiteOrigin.make("https://example.com"),
+              outcome: { _tag: "refused", reason: "unavailable" },
+            },
+            {
+              name: "example",
+              secretId: SecretId.make("cred_aaaaaaaaaaaaaaaa"),
+              field: "password",
+              origin: SiteOrigin.make("https://example.com"),
+              outcome: { _tag: "refused", reason: "unknown-login" },
+            },
+          ],
+        );
+        // A retry of either call is answered as a fill refused now would be.
+        const answers = yield* sql<{ readonly result_json: string }>`
+        SELECT result_json FROM tool_calls ORDER BY id
+      `;
+        assert.deepStrictEqual(
+          yield* Effect.forEach(answers, (row) =>
+            Schema.decodeEffect(json(FillOutcome))(row.result_json),
+          ),
+          [
+            { _tag: "refused", reason: "unavailable" },
+            { _tag: "refused", reason: "unknown-login" },
+          ],
+        );
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(

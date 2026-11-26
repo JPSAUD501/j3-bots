@@ -166,11 +166,15 @@ export function ConnectorPage({
             : t("connector.editCommand.savedValues")}
         </p>
       )}
-      <StatusBlock connector={connector} onReconnect={reconnect} onUnlock={intents.openVault} />
+      <StatusBlock
+        connector={connector}
+        onReconnect={reconnect}
+        onOpenSecrets={intents.openSecrets}
+      />
       <SignInPanel
         signIn={signIn}
         onRetry={() => startSignIn(connector.id)}
-        onUnlock={intents.openVault}
+        onOpenSecrets={intents.openSecrets}
       />
       {replacing && (
         <ReplaceFields connector={connector} intents={intents} onDone={() => setReplacing(false)} />

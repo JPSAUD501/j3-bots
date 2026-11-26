@@ -50,8 +50,9 @@ import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 import { Connectors } from "../connectors/Connectors.ts";
+import { SecretAsks } from "../secrets/SecretAsks.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 import { Skills } from "../skills/Skills.ts";
-import { Vault } from "../vault/Vault.ts";
 
 /** The RPCs this server answers: every one of `J3Rpcs`. */
 export const ServedRpcs = J3Rpcs;
@@ -93,7 +94,8 @@ export const handlers = ServedRpcs.toLayer(
     /** The engine's status as clients get it: each provider with its harness's copy. */
     const served = Stream.zipLatestWith(engine.status, harnesses.copies, withCopies);
     const browserTabs = yield* BrowserTabs;
-    const vault = yield* Vault;
+    const secrets = yield* Secrets;
+    const secretAsks = yield* SecretAsks;
     const connectors = yield* Connectors;
     const connectorAuth = yield* ConnectorAuth;
     const connectorSources = yield* ConnectorSources;
@@ -257,20 +259,16 @@ export const handlers = ServedRpcs.toLayer(
       "provider.connect": (request) =>
         connectProviders(request).pipe(Effect.provideContext(connectContext)),
       "browser.subscribe": ({ botId }) => browserTabs.subscribe(botId, device.id),
-      // The vault's requests carry or answer values: none is logged, and none has a receipt.
-      "vault.status": () => vault.status,
-      "vault.setup": ({ password }) => vault.setup(password),
-      "vault.unlock": ({ password }) => vault.unlock(password),
-      "vault.lock": () => vault.lock,
-      "vault.changePassword": ({ current, next }) => vault.changePassword(current, next),
-      "vault.list": () => vault.list,
-      "vault.reveal": ({ id, field }) => vault.reveal({ id, field, deviceId: device.id }),
-      "vault.save": ({ id, allowedBots, request, ...draft }) =>
-        cards.saveCredential({ id, draft, allowedBots, request }),
-      "vault.update": ({ id, ...changes }) => vault.update({ id, changes }),
-      "vault.delete": ({ id }) => vault.remove(id),
-      "vault.setAllowedBots": ({ id, bots }) => vault.setAllowedBots(id, bots),
-      "vault.totpPreview": ({ id }) => vault.totpPreview(id),
+      // The secrets' requests carry or answer values: none is logged, and none has a receipt.
+      "secrets.status": () => secrets.status,
+      "secrets.openOldVault": ({ password }) => secrets.openOldVault(password),
+      "secrets.list": () => secrets.list,
+      "secrets.reveal": ({ id, field }) => secrets.reveal({ id, field, deviceId: device.id }),
+      "secrets.add": (input) => secretAsks.add(input),
+      "secrets.update": (input) => secrets.update(input),
+      "secrets.delete": ({ id }) => secrets.remove(id),
+      "secrets.setAccess": ({ id, access }) => secrets.setAccess(id, access),
+      "secrets.totpPreview": ({ id }) => secrets.totpPreview(id),
       // A connector's add and update carry its secrets, redacted: none is logged, and neither has a receipt.
       "connectors.subscribe": () => connectors.subscribe,
       // Each change is recorded as the operator's (decision 0049).

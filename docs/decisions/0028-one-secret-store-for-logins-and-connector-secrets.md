@@ -1,6 +1,6 @@
 # 0028: One secret store for logins and connector secrets
 
-**Status:** Proposed
+**Status:** Superseded by [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md). The one store for logins and connector secrets stays; its locked vault, which stopped every connector until the master password was typed, is gone with the password.
 
 ## Context
 

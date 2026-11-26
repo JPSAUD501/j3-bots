@@ -96,7 +96,7 @@ import { PhoneAccessSetting } from "./PhoneAccess";
 import { Section } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
-import { VaultSection } from "./vault/VaultSection";
+import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
@@ -126,7 +126,7 @@ type SettingsIntents = Pick<
   | "updatePrompt"
   | "shortcut"
   | "providerSetup"
-  | "vault"
+  | "secrets"
 >;
 
 type SettingsData = Pick<
@@ -143,7 +143,7 @@ type SettingsData = Pick<
   | "roster"
   | "recentTurns"
   | "signInUnencrypted"
-  | "vault"
+  | "secrets"
   | "connectors"
 >;
 
@@ -172,7 +172,7 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
   providers: CpuIcon,
   usage: GaugeIcon,
   connectors: PlugIcon,
-  vault: KeyRoundIcon,
+  secrets: KeyRoundIcon,
   devices: MonitorSmartphoneIcon,
   where: ServerIcon,
   updates: RefreshCwIcon,
@@ -515,10 +515,10 @@ function PageBody({
           onOpen={() => intents.openConnectors({ at: { _tag: "home" }, forBot: null })}
         />
       );
-    case "vault":
+    case "secrets":
       return (
         <>
-          <VaultSection vault={{ view: data.vault, intents: intents.vault }} />
+          <SecretsSection secrets={{ view: data.secrets, intents: intents.secrets }} />
           <BotBrowserSection connected={data.connected} onSignOut={intents.signOutBrowser} />
         </>
       );

@@ -7,12 +7,12 @@ import { Button } from "../ui/button";
 /**
  * What the connectors screen asks of the client runtime, and of the device:
  * how a sign-in's browser comes back here (`signInRoute`), opening a page in
- * the system browser, and opening where the vault is unlocked or set up.
+ * the system browser, and opening Settings → Secrets.
  */
 export interface ConnectorsIntents extends Omit<ConnectorsClient, "state"> {
   readonly signInRoute: SignInRoute;
   readonly openPage: (url: string) => void;
-  readonly openVault: () => void;
+  readonly openSecrets: () => void;
 }
 
 /** A read that did not answer, and a way to read it again. */

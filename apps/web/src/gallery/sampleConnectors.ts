@@ -278,7 +278,7 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     listing: null,
     transport: { _tag: "remote", origin: ConnectorOrigin.make("https://lab.example.net") },
     signIn: "none",
-    status: { _tag: "vault-locked" },
+    status: { _tag: "secrets-unavailable" },
     grant: { _tag: "bots", ids: [ids.pip] },
     tools: [tool("lights", "Lights", "Turns the lights in a room on or off.")],
   },
@@ -400,7 +400,7 @@ export function sampleConnectorsIntents(
     },
     signInRoute,
     openPage: () => {},
-    openVault: () => {},
+    openSecrets: () => {},
   };
 }
 

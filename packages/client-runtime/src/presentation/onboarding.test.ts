@@ -5,19 +5,16 @@ import {
   ModelId,
   ProviderId,
   type ProviderStatus,
-  type VaultStatus,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
 import { hasDefaultModel, openingHeld } from "./engine.ts";
-import type { VaultView } from "../stores/Vault.ts";
 import {
   defaultBotName,
   makingProgress,
   nextStep,
   previousStep,
   showsConnect,
-  showsVault,
 } from "./onboarding.ts";
 
 const engine = (status: ProviderStatus["status"]): EngineStatus => ({
@@ -39,7 +36,7 @@ const ready = engine({ _tag: "ready" });
 const signedOut = engine({ _tag: "sign-in-required", command: "j3-bots provider connect" });
 
 describe("the first run's steps", () => {
-  const flow = (connect: boolean, vault = false) => ({ connect, vault });
+  const flow = (connect: boolean) => ({ connect });
 
   it("goes from the look straight to the arrival when a provider can run the bot", () => {
     const steps = flow(showsConnect(ready, false));
@@ -65,27 +62,6 @@ describe("the first run's steps", () => {
   it("asks to connect while the engine is not running", () => {
     expect(showsConnect({ ...ready, state: { _tag: "starting" } }, false)).toBe(true);
     expect(showsConnect(null, false)).toBe(true);
-  });
-
-  it("offers the vault's password after the look while the vault has none", () => {
-    const vault = (state: VaultStatus["state"]): VaultView => ({
-      _tag: "ready",
-      status: { state, revision: 0, retryAt: null },
-      credentials: null,
-      listFailure: null,
-      stale: false,
-    });
-    expect(showsVault(vault("uninitialized"), false)).toBe(true);
-    expect(showsVault(vault("locked"), false)).toBe(false);
-    expect(showsVault({ _tag: "unsupported" }, false)).toBe(false);
-    // Set up from the step itself: it stays for Back.
-    expect(showsVault(vault("unlocked"), true)).toBe(true);
-
-    const steps = flow(true, true);
-    expect(nextStep("look", steps)).toBe("vault");
-    expect(nextStep("vault", steps)).toBe("connect");
-    expect(previousStep("connect", steps)).toBe("vault");
-    expect(makingProgress("vault", steps)).toEqual({ index: 2, count: 4 });
   });
 
   it("has no way back from the welcome or from an arrival under way", () => {

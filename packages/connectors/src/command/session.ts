@@ -52,7 +52,7 @@ export interface CommandSessionOptions {
   /** The program as the operator gave it: a name to find on the search path, or a path. */
   readonly program: string;
   readonly args: ReadonlyArray<Redacted.Redacted<string>>;
-  /** The variables the operator gave it, with their values from the vault. */
+  /** The variables the operator gave it, with their values from the secrets. */
   readonly variables: ReadonlyArray<CommandVariable>;
   /** The server's own environment, of which only a few variables reach the process. */
   readonly serverEnvironment: Readonly<Record<string, string | undefined>>;

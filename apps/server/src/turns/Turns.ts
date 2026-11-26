@@ -9,6 +9,7 @@ import { Bots } from "../bots/Bots.ts";
 import { EngineSessions } from "../bots/EngineSessions.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { BrowserHelp } from "../browser/BrowserHelp.ts";
+import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { RoutineRunner } from "../routines/RoutineRunner.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
@@ -43,6 +44,7 @@ export const layer = Layer.effectDiscard(
     const pipeline = yield* Pipeline;
     const cards = yield* Cards;
     const browserHelp = yield* BrowserHelp;
+    const secretAsks = yield* SecretAsks;
     const held = yield* HeldQueues;
     const states = yield* BotStates;
     const routines = yield* RoutineRunner;
@@ -135,6 +137,7 @@ export const layer = Layer.effectDiscard(
         supervised("The Stop runner", stops.run),
         supervised("The responder", cards.run),
         supervised("The browser help watcher", browserHelp.run),
+        supervised("The secret ask watcher", secretAsks.run),
         supervised("The held-queue resumer", held.run),
         supervised("The rotator", rotations.run),
         supervised("The routine runner", routines.run),

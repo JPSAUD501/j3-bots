@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  accessAllows,
   type Attachment,
   BotId,
   Conflict,
@@ -10,6 +11,8 @@ import {
   pairBotIds,
   ROOM_QUIET_ROUND,
   RoomId,
+  type SecretAskEntry,
+  secretReference,
   siteOriginOf,
   type Visual,
   visualEscapesGuard,
@@ -28,6 +31,8 @@ import {
   BROWSER_HELP_REQUESTED,
   MAX_BOTS_PER_REQUEST,
   ROOM_READ_COUNT,
+  SECRET_ASK_EXISTS,
+  SECRET_ASK_SHOWN,
   type ToolInput,
 } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
@@ -52,6 +57,9 @@ import { transactional } from "../persistence/transaction.ts";
 import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
 import { type BotMessageRouted, type BotWord, RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { SECRET_ASK_WAIT } from "../secrets/SecretAsks.ts";
+import { nameFromBot } from "../secrets/references.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
@@ -207,6 +215,46 @@ const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
 const decodeVisualHtml = Schema.decodeUnknownOption(VisualHtml);
 const decodeVisualTitle = Schema.decodeUnknownOption(VisualTitle);
 
+/** What an `ask_for_secret` asks for: a login takes the origin of the page that asks for it. */
+const secretAskOf = (
+  input: ToolInput<"ask_for_secret">,
+): Effect.Effect<SecretAskEntry["secret"], TurnToolRefused> => {
+  if (input.kind === "value") {
+    return input.origin === undefined
+      ? Effect.succeed({ _tag: "value" })
+      : Effect.fail(
+          new TurnToolRefused({
+            reason: "Nothing was shown: origin is only for a login. Leave it out for a value.",
+          }),
+        );
+  }
+  const origin = input.origin === undefined ? Option.none() : siteOriginOf(input.origin);
+  return Option.match(origin, {
+    onNone: () =>
+      Effect.fail(
+        new TurnToolRefused({
+          reason:
+            "Nothing was shown: a login needs origin, the http or https address of the page that asks for it.",
+        }),
+      ),
+    onSome: (value) => Effect.succeed({ _tag: "login", origin: value }),
+  });
+};
+
+/**
+ * Whether a secret of `kind`, for `origins` when a login, is the one an ask
+ * for `asked` wants: a value for a value, a login for one of its sites for a
+ * login.
+ */
+const askFits = (
+  asked: SecretAskEntry["secret"],
+  kind: string,
+  origins: ReadonlyArray<string>,
+): boolean =>
+  asked._tag === "value"
+    ? kind === "value"
+    : kind === "login" && origins.some((origin) => origin === asked.origin);
+
 /** The turn tools a request is pinned for. */
 type PinnedTool =
   | "say"
@@ -216,7 +264,7 @@ type PinnedTool =
   | "read_room"
   | "set_routine"
   | "set_operator_name"
-  | "request_credential"
+  | "ask_for_secret"
   | "fill_credential"
   | "create_bot"
   | "start_room";
@@ -266,6 +314,7 @@ export const layer = Layer.effect(
     const settingsService = yield* SettingsService;
     const wakes = yield* Wakes;
     const browserTabs = yield* BrowserTabs;
+    const secrets = yield* Secrets;
     const ids = yield* Ids;
     const stoppedWork = workStoppedOf(sql);
     const turnStops = yield* Stops;
@@ -1757,43 +1806,113 @@ export const layer = Layer.effect(
       );
     });
 
+    /** The bot's ask for a secret of that name that still waits: what it asks for. */
+    const waitingAsk = (request: { readonly botId: BotId; readonly name: string }) =>
+      SqlSchema.findAll({
+        Request: Schema.Struct({ botId: Schema.String, name: Schema.String }),
+        Result: Schema.Struct({ kind: Schema.String, origin: Schema.NullOr(Schema.String) }),
+        execute: ({ botId, name }) => sql`
+          SELECT json_extract(e.body_json, '$.secret._tag') AS kind,
+            json_extract(e.body_json, '$.secret.origin') AS origin
+          FROM secret_asks a JOIN entries e ON e.id = a.entry_id
+          WHERE a.bot_id = ${botId} AND a.closed_at IS NULL
+            AND json_extract(e.body_json, '$.name') = ${name}
+        `,
+      })(request).pipe(Effect.orDie);
+
     /**
-     * `request_credential` (`docs/architecture/server.md`, The vault): a
-     * save-login card in the bot's own conversation, whatever audience the
-     * turn speaks for, since only the operator types into it. Its values go
-     * from the client to the vault; nothing of them reaches the bot.
+     * `ask_for_secret` (`docs/architecture/server.md`, Secrets): a card in
+     * the bot's own conversation, whatever audience the turn speaks for,
+     * since only the operator types into it, asking for a login or a single
+     * value under the name the bot gave. Its values go from the client to
+     * `Secrets`; the bot gets only the reference, and is woken for the turn's
+     * audience when the operator saves it, declines, or the card waits past
+     * `SECRET_ASK_WAIT` (`SecretAsks`). No card is shown for a secret of that
+     * name the bot may use already, and none twice while one of the bot's
+     * asks for that name waits. Refused, with nothing written, for a name
+     * another secret has, one the bot may use that is not what it asks for
+     * (another kind, or a login for other sites), a waiting ask under that
+     * name for something else, and for work the operator stopped.
      */
-    const requestCredential = Effect.fn("Speech.requestCredential")(function* (
+    const askForSecret = Effect.fn("Speech.askForSecret")(function* (
       found: Pin,
-      input: ToolInput<"request_credential">,
+      input: ToolInput<"ask_for_secret">,
     ) {
-      const origin = siteOriginOf(input.origin);
-      if (Option.isNone(origin)) {
+      const name = nameFromBot(input.name);
+      if (Option.isNone(name)) {
         return yield* new TurnToolRefused({
           reason:
-            "Nothing was shown: origin must be the http or https address of the page that asks for the login.",
+            "Nothing was shown: name must be lower-case letters, digits, `-` and `_`, starting with a letter or a digit, such as `github-work`.",
         });
       }
+      const secret = yield* secretAskOf(input);
+      const reference = secretReference(name.value);
       return yield* once(
-        "request_credential",
+        "ask_for_secret",
         found,
       )(
         Effect.gen(function* () {
+          const existing = yield* secrets.named(name.value).pipe(Effect.option);
+          if (Option.isSome(existing) && Option.isSome(existing.value)) {
+            const saved = existing.value.value;
+            if (!accessAllows(saved.access, found.botId)) {
+              return yield* new TurnToolRefused({
+                reason:
+                  "Nothing was shown: another secret has that name, and it is not one you may use. Ask under another name.",
+              });
+            }
+            if (
+              !askFits(
+                secret,
+                saved.kind._tag,
+                saved.kind._tag === "login" ? saved.kind.origins : [],
+              )
+            ) {
+              return yield* new TurnToolRefused({
+                reason: `Nothing was shown: you may use ${reference} already, but it is ${saved.kind._tag === "login" ? `a login for ${saved.kind.origins.join(", ")}` : "a single value"}, not what you asked for. Use it if it fits; otherwise ask under another name.`,
+              });
+            }
+            return { status: "exists", reference, note: SECRET_ASK_EXISTS } satisfies Schema.Json;
+          }
           const target = yield* requireTarget(found.botId, conversation);
-          yield* entries.append({
+          const work = yield* workStopped(found);
+          if (work.stopped) {
+            return yield* new TurnToolRefused({
+              reason: "Nothing was shown: your user stopped this work. Stop here.",
+            });
+          }
+          const [waiting] = yield* waitingAsk({ botId: found.botId, name: name.value });
+          if (waiting !== undefined) {
+            if (!askFits(secret, waiting.kind, waiting.origin === null ? [] : [waiting.origin])) {
+              return yield* new TurnToolRefused({
+                reason:
+                  "Nothing was shown: your card asking for a different secret under that name still waits. Wait for it, or ask under another name.",
+              });
+            }
+            return { status: "shown", reference, note: SECRET_ASK_SHOWN } satisfies Schema.Json;
+          }
+          const card = yield* entries.append({
             target,
             entry: {
-              _tag: "credential-request",
+              _tag: "secret-ask",
               author: { _tag: "bot", botId: found.botId },
-              origin: origin.value,
+              name: name.value,
+              secret,
               note: input.note,
               status: { _tag: "pending" },
             },
           });
-          return {
-            status: "shown",
-            note: "Your user saves the login from the card when they choose. Its values never reach you, and nothing wakes you when it is saved.",
-          } satisfies Schema.Json;
+          const now = yield* DateTime.now;
+          const columns = audienceColumns(found.audience);
+          yield* sql`
+            INSERT INTO secret_asks (
+              entry_id, bot_id, audience, audience_room_id, origin_seq, expires_at, created_at
+            ) VALUES (
+              ${card.id}, ${found.botId}, ${columns.audience}, ${columns.roomId}, ${work.seq},
+              ${timeText(DateTime.addDuration(now, SECRET_ASK_WAIT))}, ${timeText(now)}
+            )
+          `.pipe(Effect.orDie);
+          return { status: "shown", reference, note: SECRET_ASK_SHOWN } satisfies Schema.Json;
         }),
       );
     });
@@ -1831,8 +1950,8 @@ export const layer = Layer.effect(
           return yield* setRoutine(found, call.input, once("set_routine", found));
         case "set_operator_name":
           return yield* setOperatorName(found, call.input);
-        case "request_credential":
-          return yield* requestCredential(found, call.input);
+        case "ask_for_secret":
+          return yield* askForSecret(found, call.input);
         case "start_room":
           return yield* startRoom(found, call.input);
       }

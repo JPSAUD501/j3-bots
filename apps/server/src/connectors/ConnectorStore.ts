@@ -26,8 +26,8 @@ import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 
 /**
  * A connector as the server keeps it: what the operator added, with none of
- * its secrets, which are in the vault under its id. Its status is not kept:
- * the `Connectors` service works it out from the vault, the sign-in and how
+ * its secrets, which are a connector secret under its id. Its status is not
+ * kept: the `Connectors` service works it out from the secrets, the sign-in and how
  * the connector's server last answered.
  */
 export interface StoredConnector {
@@ -57,9 +57,9 @@ export interface StoredConnector {
 }
 
 /**
- * What is left to do for a connector already removed, which waits for an
- * unlocked vault: revoking its sign-in when `revoke`, then deleting its
- * vault record.
+ * What is left to do for a connector already removed, which waits for the
+ * secrets to be readable: revoking its sign-in when `revoke`, then deleting
+ * its connector secret.
  */
 export interface PendingRemoval {
   readonly id: ConnectorId;
@@ -147,7 +147,7 @@ const toStored = (row: Row, bots: ReadonlyArray<BotId>): StoredConnector => ({
 
 /**
  * The connectors table. It takes what it is given: checking a source, the
- * vault and the bots a grant names is the `Connectors` service's.
+ * secrets and the bots a grant names is the `Connectors` service's.
  */
 export class ConnectorStore extends Context.Service<
   ConnectorStore,

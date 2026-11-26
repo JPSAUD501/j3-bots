@@ -8,8 +8,8 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { ConnectorReach, Connectors } from "../connectors/Connectors.ts";
-import { vaultIdOf } from "../connectors/credentials.ts";
-import { Vault } from "../vault/Vault.ts";
+import { connectorSecretIdOf } from "../connectors/credentials.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 
 /**
  * Connectors through the server's own connectors service, each to a fake MCP
@@ -30,8 +30,6 @@ export const reachFakes = Layer.succeed(ConnectorReach, {
   } satisfies SessionLimits,
   loopback: "allow-http",
 });
-
-const PASSWORD = Redacted.make("correct horse battery");
 
 /** A call that reached a fake connector's server. */
 interface FakeCall {
@@ -65,12 +63,7 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
       return input.answer?.(name, args, headers) ?? { _tag: "result", text: `${name} answered` };
     },
   });
-  const vault = yield* Vault;
-  const status = yield* Stream.runHead(vault.status);
-  // The first connector of a domain sets its vault up.
-  if (Option.isSome(status) && status.value.state === "uninitialized") {
-    yield* vault.setup(PASSWORD);
-  }
+  const secrets = yield* Secrets;
   const service = yield* Connectors;
   const id = ConnectorId.make(`conn_${input.name.toLowerCase().padEnd(16, "0")}`);
   yield* service.add({
@@ -86,9 +79,9 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
     grant: { _tag: "bots", ids: [] },
     by: { _tag: "operator" },
   });
-  const secret = yield* vault.connectorSecrets.get(vaultIdOf(id));
+  const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(id));
   if (Option.isNone(secret)) return yield* Effect.die("The connector's secret was not sealed");
-  yield* vault.connectorSecrets.put({ ...secret.value, address: Redacted.make(fake.url) });
+  yield* secrets.connectorSecrets.put({ ...secret.value, address: Redacted.make(fake.url) });
 
   const listedFor = (bot: BotId) =>
     Effect.gen(function* () {

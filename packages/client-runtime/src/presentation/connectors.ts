@@ -73,7 +73,7 @@ export const sameGrant = (a: ConnectorGrant, b: ConnectorGrant): boolean =>
 
 /**
  * What a connector's status light says: it works (`connected`), it waits on
- * the operator, for a sign-in or the vault (`needs-you`), or it cannot be
+ * the operator, for a sign-in or their secrets (`needs-you`), or it cannot be
  * reached (`failing`).
  */
 export type ConnectorTone = "connected" | "needs-you" | "failing";
@@ -83,7 +83,7 @@ export const connectorTone = (connector: Connector): ConnectorTone => {
     case "connected":
       return "connected";
     case "needs-sign-in":
-    case "vault-locked":
+    case "secrets-unavailable":
       return "needs-you";
     case "failing":
       return "failing";
@@ -97,7 +97,7 @@ export const connectorTone = (connector: Connector): ConnectorTone => {
 export const awaitsReview = (connector: Connector): boolean =>
   connector.review !== null && !connector.review.kept;
 
-/** Whether the operator has something to do for the connector: sign in, unlock, or review its tools. */
+/** Whether the operator has something to do for the connector: sign in, open Secrets, or review its tools. */
 export const connectorNeedsYou = (connector: Connector): boolean =>
   connectorTone(connector) === "needs-you" || awaitsReview(connector);
 
@@ -127,8 +127,7 @@ export const listingKey = (ref: ConnectorListing["ref"]): string =>
  * - `unreachable`: the service did not answer while J3 Bots signed in;
  * - `refused`: the service refused the sign-in, or what came back;
  * - `expired`: the sign-in's time ran out;
- * - `vault-locked`: the vault, which keeps the sign-in, is locked;
- * - `vault-not-set-up`: the vault has no master password yet;
+ * - `secrets-unavailable`: the secrets, which keep the sign-in, cannot be read;
  * - `not-paired`: this device lost its pairing.
  */
 export type SignInProblem =
@@ -139,8 +138,7 @@ export type SignInProblem =
   | "unreachable"
   | "refused"
   | "expired"
-  | "vault-locked"
-  | "vault-not-set-up"
+  | "secrets-unavailable"
   | "not-paired";
 
 /** A page of the connectors screen. */

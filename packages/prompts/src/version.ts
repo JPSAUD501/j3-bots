@@ -29,6 +29,8 @@ import {
   MANAGEMENT_NOTES,
   MANAGEMENT_REFUSED,
   preApprovedTools,
+  SECRET_ASK_EXISTS,
+  SECRET_ASK_SHOWN,
   toolList,
 } from "./tools.ts";
 
@@ -155,6 +157,11 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       event: { name: "browser-help", outcome, site: "text" },
     }),
   ),
+  ...(["saved", "declined", "expired"] as const).map((outcome): Wake => ({
+    ...base,
+    kind: "system",
+    event: { name: "secret-ask", outcome, reference: "secret:name" },
+  })),
 ];
 
 const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
@@ -171,7 +178,7 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
     [
       "needs-sign-in",
       "held",
-      "vault-locked",
+      "secrets-unavailable",
       "unreachable",
       "timed-out",
       "too-large",
@@ -235,6 +242,8 @@ const fingerprint = (): string => {
     CONNECTORS_TEMPLATE,
     JSON.stringify(toolList),
     BROWSER_HELP_REQUESTED,
+    SECRET_ASK_SHOWN,
+    SECRET_ASK_EXISTS,
     ...Object.values(FILL_NOTES),
     ...Object.values(MANAGEMENT_NOTES),
     ...Object.values(MANAGEMENT_REFUSED).map((refusal) =>

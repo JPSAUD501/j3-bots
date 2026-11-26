@@ -9,7 +9,6 @@ import {
   AttachmentId,
   BrowserTabRef,
   CommandId,
-  CredentialId,
   DeviceId,
   ConnectorGlyph,
   ConnectorId,
@@ -17,15 +16,15 @@ import {
   EntryOrder,
   Label,
   RoutineId,
+  SecretId,
+  SecretName,
   SiteOrigin,
   WorkStepId,
   type ApprovalEntry,
   type Author,
-  type BotId,
+  BotId,
   type BrowserHelpEntry,
-  type Credential,
   type CredentialFill,
-  type CredentialRequestEntry,
   type ConnectorAuthEntry,
   type HandoffEntry,
   type MessageEntry,
@@ -33,13 +32,15 @@ import {
   type QuestionEntry,
   type QuestionOption,
   type RoutineChangeEntry,
+  type Secret,
+  type SecretAskEntry,
   type SecretRequestEntry,
   type WorkFoldEntry,
   type WorkStep,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ids } from "./sample";
-import type { SampleValues } from "./sampleVault";
+import type { SampleValues } from "./sampleSecrets";
 import { sampleVisuals } from "./visuals";
 
 export function galleryVariants(now: DateTime.Utc) {
@@ -461,37 +462,53 @@ export function galleryVariants(now: DateTime.Utc) {
     browserHelp("browser-timed-out", { _tag: "expired", cause: "timed-out" }),
   ];
 
-  const login = (
+  const ask = (
     name: string,
-    status: CredentialRequestEntry["status"],
-  ): CredentialRequestEntry => ({
-    _tag: "credential-request",
+    secret: SecretAskEntry["secret"],
+    status: SecretAskEntry["status"],
+  ): SecretAskEntry => ({
+    _tag: "secret-ask",
     ...base(name),
-    origin: SiteOrigin.make("https://billing.example.com"),
-    note: "The billing dashboard asks for a login to export the invoices. Save it, and next month I can export them myself.",
+    author: { _tag: "bot", botId: ids.scout },
+    name: secret._tag === "login" ? "billing-dashboard" : "weather-api",
+    secret,
+    note:
+      secret._tag === "login"
+        ? "The billing dashboard asks for a login to export the invoices. Save it, and next month I can export them myself."
+        : "The weather service needs an API key for the hourly forecast.",
     status,
   });
-  const logins: ReadonlyArray<CredentialRequestEntry> = [
-    login("login", { _tag: "pending" }),
-    login("login-saved", {
-      _tag: "saved",
-      credentialId: CredentialId.make("cred_variantsaved00000"),
-      name: Label.make("Billing dashboard"),
-    }),
-    login("login-dismissed", { _tag: "dismissed" }),
+  const billing = {
+    _tag: "login",
+    origin: SiteOrigin.make("https://billing.example.com"),
+  } as const;
+  const asks: ReadonlyArray<SecretAskEntry> = [
+    ask("ask-login", billing, { _tag: "pending" }),
+    ask("ask-value", { _tag: "value" }, { _tag: "pending" }),
+    ask("ask-saved", billing, { _tag: "saved" }),
+    ask("ask-declined", { _tag: "value" }, { _tag: "declined" }),
+    ask("ask-expired", billing, { _tag: "expired" }),
   ];
 
-  /** Saved logins, with the values the sample vault reveals. */
-  const credentials: ReadonlyArray<readonly [Credential, SampleValues]> = [
+  /** Saved secrets, with the values the sample secrets reveal. */
+  const savedSecrets: ReadonlyArray<readonly [Secret, SampleValues]> = [
     [
       {
-        id: CredentialId.make("cred_variantgithub0000"),
-        name: Label.make("GitHub (work)"),
-        origins: [SiteOrigin.make("https://github.com")],
-        hasTotp: true,
-        allowedBots: [ids.scout],
+        id: SecretId.make("sec_variantsupport0000"),
+        name: SecretName.make("support-desk"),
+        kind: {
+          _tag: "login",
+          origins: [SiteOrigin.make("https://support.example.com")],
+          hasTotp: true,
+        },
+        access: { _tag: "bots", botIds: [ids.scout] },
         createdAt: ago(60 * 24 * 9),
         updatedAt: ago(60 * 24 * 2),
+        lastUse: {
+          at: ago(45),
+          botId: ids.scout,
+          use: { _tag: "browser", origin: SiteOrigin.make("https://support.example.com") },
+        },
         lastReveal: {
           at: ago(60 * 5),
           deviceId: DeviceId.make("variant-laptop"),
@@ -499,6 +516,7 @@ export function galleryVariants(now: DateTime.Utc) {
         },
       },
       {
+        _tag: "login",
         username: "ana@example.com",
         password: "correct-staple-42",
         totp: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
@@ -506,19 +524,40 @@ export function galleryVariants(now: DateTime.Utc) {
     ],
     [
       {
-        id: CredentialId.make("cred_variantbilling000"),
-        name: Label.make("Billing dashboard"),
-        origins: [
-          SiteOrigin.make("https://billing.example.com"),
-          SiteOrigin.make("https://admin.billing.example.com"),
-        ],
-        hasTotp: false,
-        allowedBots: [],
+        id: SecretId.make("sec_variantbilling0000"),
+        name: SecretName.make("billing-dashboard"),
+        kind: {
+          _tag: "login",
+          origins: [
+            SiteOrigin.make("https://billing.example.com"),
+            SiteOrigin.make("https://admin.billing.example.com"),
+          ],
+          hasTotp: false,
+        },
+        access: { _tag: "bots", botIds: [] },
         createdAt: ago(60),
         updatedAt: ago(60),
+        lastUse: null,
         lastReveal: null,
       },
-      { username: "finance", password: "an example password", totp: null },
+      { _tag: "login", username: "finance", password: "an example password", totp: null },
+    ],
+    [
+      {
+        id: SecretId.make("sec_variantweather0000"),
+        name: SecretName.make("weather-api"),
+        kind: { _tag: "value" },
+        access: { _tag: "every-bot" },
+        createdAt: ago(60 * 24 * 30),
+        updatedAt: ago(60 * 24 * 30),
+        lastUse: {
+          at: ago(60 * 3),
+          botId: BotId.make("retired-bot"),
+          use: { _tag: "connector", name: Label.make("Weather") },
+        },
+        lastReveal: null,
+      },
+      { _tag: "value", value: "wx_example_0123456789abcdef" },
     ],
   ];
 
@@ -578,7 +617,7 @@ export function galleryVariants(now: DateTime.Utc) {
     finishedAt: ago(2),
     fill: {
       name: "GitHub (work)",
-      credentialId: null,
+      secretId: null,
       field,
       origin: SiteOrigin.make(origin),
       outcome,
@@ -704,7 +743,7 @@ export function galleryVariants(now: DateTime.Utc) {
         fillStep("username", "https://github.com", { _tag: "filled", submitted: false }),
         fillStep("password", "https://github.com", { _tag: "filled", submitted: true }),
         fillStep("password", "https://xn--gthub-zsa.com", { _tag: "refused", reason: "origin" }),
-        fillStep("totp", "https://github.com", { _tag: "locked" }),
+        fillStep("totp", "https://github.com", { _tag: "refused", reason: "unavailable" }),
       ],
       open: true,
     },
@@ -882,8 +921,8 @@ export function galleryVariants(now: DateTime.Utc) {
     approvalBecomingExact,
     secrets,
     browserHelps,
-    logins,
-    credentials,
+    asks,
+    savedSecrets,
     connectorAuths,
     folds,
     notices,

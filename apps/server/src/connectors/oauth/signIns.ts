@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { VaultLocked } from "@j3-bots/connectors";
+import { SecretsUnavailable } from "@j3-bots/connectors";
 import { BotId, type ConnectorId, EntryId, type OAuthClientInput } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -64,7 +64,7 @@ const decodeOpenCards = Schema.decodeUnknownEffect(
  * conversation, which stays the only one until the operator signs in: then
  * every open card for the connector closes as `signed-in`, or as `removed`
  * with the connector. A state that returns to signed-in by itself, as on
- * unlocking the vault, closes none.
+ * the secrets becoming readable again, closes none.
  */
 export const layer = Layer.effect(
   ConnectorSignIns,
@@ -140,8 +140,8 @@ export const layer = Layer.effect(
       const ended = yield* Effect.result(auth.disconnect(id));
       yield* close(id, "removed");
       if (ended._tag === "Success") return;
-      // Its tokens are in the vault: the removal ends them once it opens.
-      if (ended.failure.reason === "vault-locked") return yield* new VaultLocked();
+      // Its tokens are in the secrets: the removal ends them once they can be read.
+      if (ended.failure.reason === "secrets-unavailable") return yield* new SecretsUnavailable();
       yield* Effect.logWarning("A connector's sign-in could not be ended").pipe(
         Effect.annotateLogs({ connector: id, reason: ended.failure.reason }),
       );

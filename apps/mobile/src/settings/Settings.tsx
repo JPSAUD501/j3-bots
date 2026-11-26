@@ -45,7 +45,7 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
   providers: Cpu,
   usage: Gauge,
   connectors: Plug,
-  vault: KeyRound,
+  secrets: KeyRound,
   devices: MonitorSmartphone,
   where: Server,
   updates: RefreshCw,

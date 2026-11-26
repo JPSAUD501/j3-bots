@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, CommandId, type FillOutcome, Profile, Routine } from "@j3-bots/contracts";
+import {
+  BotId,
+  CommandId,
+  type FillOutcome,
+  Profile,
+  Routine,
+  type Secret,
+  secretReference,
+} from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import {
   DECODE_OPTIONS,
@@ -21,7 +29,8 @@ import { Connectors } from "../connectors/Connectors.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
-import { CredentialFills, type ListAnswer } from "../vault/Fill.ts";
+import { CredentialFills } from "../secrets/Fill.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
@@ -46,38 +55,29 @@ const encodeJson = <S extends Schema.Top>(schema: S) =>
 const isJsonObject = Schema.is(Schema.JsonObject);
 
 /** A fill's outcome as the bot reads it: a status and fixed words, never a value. */
-const fillAnswer = (outcome: FillOutcome): Schema.Json => {
-  switch (outcome._tag) {
-    case "filled":
-      return {
+const fillAnswer = (outcome: FillOutcome): Schema.Json =>
+  outcome._tag === "filled"
+    ? {
         status: "filled",
         submitted: outcome.submitted,
         note: FILL_NOTES[outcome.submitted ? "submitted" : "filled"],
-      };
-    case "refused":
-      return { status: "refused", reason: outcome.reason, note: FILL_NOTES[outcome.reason] };
-    case "locked":
-      return { status: "locked", note: FILL_NOTES.locked };
-  }
-};
+      }
+    : { status: "refused", reason: outcome.reason, note: FILL_NOTES[outcome.reason] };
 
-const listAnswer = (answer: ListAnswer): Schema.Json => {
-  switch (answer._tag) {
-    case "listed":
-      return {
-        status: "listed",
-        credentials: answer.credentials.map((credential) => ({
-          name: credential.name,
-          origins: [...credential.origins],
-        })),
-        note: FILL_NOTES.listed,
-      };
-    case "refused":
-      return { status: "refused", reason: answer.reason, note: FILL_NOTES[answer.reason] };
-    case "locked":
-      return { status: "locked", note: FILL_NOTES.locked };
-  }
-};
+/** The secrets a bot may use as it reads them: references and kinds, never a value. */
+const listAnswer = (secrets: ReadonlyArray<Secret>): Schema.Json => ({
+  status: "listed",
+  secrets: secrets.map((secret) =>
+    secret.kind._tag === "login"
+      ? {
+          reference: secretReference(secret.name),
+          kind: "login",
+          origins: [...secret.kind.origins],
+        }
+      : { reference: secretReference(secret.name), kind: "value" },
+  ),
+  note: FILL_NOTES.listed,
+});
 
 /**
  * The `j3` tools' server side. A call is accepted only from a live session of
@@ -104,6 +104,7 @@ export const layer = Layer.effect(
     const routines = yield* Routines;
     const turnTools = yield* TurnTools;
     const logins = yield* CredentialFills;
+    const secrets = yield* Secrets;
     const connectors = yield* Connectors;
     const management = yield* Management;
 
@@ -214,11 +215,19 @@ export const layer = Layer.effect(
       set_operator_name: handler(tools.set_operator_name.input, (input, call) =>
         admit({ tool: "set_operator_name", input, ...call }),
       ),
-      request_credential: handler(tools.request_credential.input, (input, call) =>
-        admit({ tool: "request_credential", input, ...call }),
+      ask_for_secret: handler(tools.ask_for_secret.input, (input, call) =>
+        admit({ tool: "ask_for_secret", input, ...call }),
       ),
-      list_credentials: handler(tools.list_credentials.input, (_input, { caller }) =>
-        logins.list(caller.botId).pipe(Effect.map(listAnswer)),
+      list_secrets: handler(tools.list_secrets.input, (_input, { caller }) =>
+        secrets.usableBy(caller.botId).pipe(
+          Effect.map(listAnswer),
+          Effect.catchTag("Conflict", () =>
+            Effect.succeed<Schema.Json>({
+              status: "unavailable",
+              note: FILL_NOTES["secrets-unavailable"],
+            }),
+          ),
+        ),
       ),
       fill_credential: handler(tools.fill_credential.input, (input, call) =>
         logins
@@ -226,7 +235,7 @@ export const layer = Layer.effect(
             requestId: call.requestId,
             caller: call.caller,
             engineSessionId: call.sessionId,
-            credential: input.credential,
+            secret: input.secret,
             field: input.field,
             submit: input.submit ?? false,
             arguments: call.arguments,

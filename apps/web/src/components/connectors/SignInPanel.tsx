@@ -13,17 +13,17 @@ import { LineField } from "./parts";
  * a way to open it again, since a browser can block it or the operator close
  * it; then, where the browser comes back to no one (`paste`), the address it
  * lands on, pasted here, with a word on the apps that need none. A sign-in
- * that ended badly says why, and starts again from `onRetry`; one the vault
- * stops, from `onUnlock`.
+ * that ended badly says why, and starts again from `onRetry`; one stopped
+ * because the secrets cannot be used points to them (`onOpenSecrets`).
  */
 export function SignInPanel({
   signIn,
   onRetry,
-  onUnlock,
+  onOpenSecrets,
 }: {
   signIn: ConnectorSignIn;
   onRetry: () => void;
-  onUnlock: () => void;
+  onOpenSecrets: () => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -50,16 +50,16 @@ export function SignInPanel({
         </Panel>
       );
     case "failed": {
-      const vault = phase.problem === "vault-locked" || phase.problem === "vault-not-set-up";
+      const secrets = phase.problem === "secrets-unavailable";
       return (
         <Panel>
           <p role="alert" className="text-sm text-blocked">
             {signInProblemText(phase.problem, ctx.i18n)}
           </p>
           <div className="flex flex-wrap gap-2">
-            {vault ? (
-              <Button size="sm" variant="primary" onClick={onUnlock}>
-                {t("connect.openVault")}
+            {secrets ? (
+              <Button size="sm" variant="primary" onClick={onOpenSecrets}>
+                {t("connect.openSecrets")}
               </Button>
             ) : (
               phase.problem !== "not-paired" && (

@@ -136,7 +136,6 @@ export {
   type OnboardingStep,
   previousStep,
   showsConnect,
-  showsVault,
 } from "./onboarding.ts";
 export {
   notificationOpening,
@@ -286,7 +285,7 @@ export {
   type SignInCatch,
   signInCatch,
 } from "./signInReturn.ts";
-export { typedOrigins } from "./vault.ts";
+export { typedOrigins } from "./secrets.ts";
 export {
   readVisualHeight,
   type VisualAppearance,

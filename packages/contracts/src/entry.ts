@@ -20,7 +20,7 @@ import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ConnectorId } from "./connector.ts";
 import { RoutineTrigger } from "./routine.ts";
-import { CredentialFill, CredentialId, SiteOrigin } from "./vault.ts";
+import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
 import { StepTool } from "./work.ts";
 
@@ -370,27 +370,42 @@ export const BrowserHelpEntry = Schema.TaggedStruct("browser-help", {
 });
 export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
 
+/** The most characters a bot's note on an ask for a secret holds. */
+export const MAX_SECRET_ASK_NOTE_LENGTH = 500;
+
 /**
- * A bot asks the operator to save a login in the vault. The client sends the
- * values the operator types with `vault.save`, naming this card, straight to
- * the vault: they never pass through the bot, and this entry has no field for
- * them. It stays open until the operator saves the login or dismisses it
- * (`card.answer` with `dismiss`); neither wakes the bot.
+ * A bot asks the operator for a secret: a login for a site, or a single value
+ * such as a token. The client sends what the operator types with
+ * `secrets.add`, naming this card, straight to the server: it never passes
+ * through the bot, and this entry has no field for it. Saving, declining
+ * (`card.answer` with `dismiss`) or expiring closes it and wakes the bot with
+ * the outcome, and once saved, with the secret's reference.
  */
-export const CredentialRequestEntry = Schema.TaggedStruct("credential-request", {
+export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   ...entry,
-  /** Where the bot needs to sign in, which the card offers to save the login for. */
-  origin: SiteOrigin,
-  /** What the bot says the login is for, in its own words. */
-  note: Schema.String.check(Schema.isMaxLength(500)),
+  author: BotAuthor,
+  /**
+   * The name the secret is saved under, which the bot asked for and names
+   * it by (`secret:<name>`). A save-login card from before secrets shows the
+   * name it was saved under, or its site.
+   */
+  name: Label,
+  secret: Schema.Union([
+    /** A login for the site at `origin`, where the bot needs to sign in. */
+    Schema.TaggedStruct("login", { origin: SiteOrigin }),
+    Schema.TaggedStruct("value", {}),
+  ]),
+  /** Why the bot needs it, in its own words. */
+  note: Schema.String.check(Schema.isMaxLength(MAX_SECRET_ASK_NOTE_LENGTH)),
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
-    /** Saved as the login `credentialId`, under the name the operator gave it then. */
-    Schema.TaggedStruct("saved", { credentialId: CredentialId, name: Label }),
-    Schema.TaggedStruct("dismissed", {}),
+    Schema.TaggedStruct("saved", {}),
+    Schema.TaggedStruct("declined", {}),
+    /** Closed before the operator answered. */
+    Schema.TaggedStruct("expired", {}),
   ]),
 });
-export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
+export type SecretAskEntry = typeof SecretAskEntry.Type;
 
 /**
  * A connector a bot called needs the operator to sign in again, in that bot's
@@ -696,7 +711,7 @@ export const Entry = Schema.Union([
   ApprovalEntry,
   SecretRequestEntry,
   BrowserHelpEntry,
-  CredentialRequestEntry,
+  SecretAskEntry,
   ConnectorAuthEntry,
   WorkFoldEntry,
   NoticeEntry,
@@ -750,7 +765,7 @@ export const ReceivedEntry = Schema.Union([
   ApprovalEntry,
   SecretRequestEntry,
   BrowserHelpEntry,
-  CredentialRequestEntry,
+  SecretAskEntry,
   ConnectorAuthEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
@@ -766,7 +781,7 @@ export const PREVIEW_LENGTH = 200;
 /**
  * The text an entry leads with, which its preview carries: the message, the
  * first question, the action, what is asked for (a credential's label, a
- * browser step's note), the site a login is asked for, the connector a card is
+ * browser step's note), the name of a secret asked for, the connector a card is
  * about, the routine's name; empty
  * for an entry with no text of its own.
  */
@@ -783,8 +798,8 @@ export const entryText = (entry: Entry): string => {
       return entry.label;
     case "browser-help":
       return entry.note;
-    case "credential-request":
-      return entry.origin;
+    case "secret-ask":
+      return entry.name;
     case "connector-auth":
       return entry.name;
     case "routine-change":

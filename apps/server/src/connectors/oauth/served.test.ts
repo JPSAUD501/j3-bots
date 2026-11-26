@@ -24,7 +24,7 @@ import * as Listener from "../../listener.ts";
 import * as TestDomain from "../../testing/domain.ts";
 import * as TestUpdates from "../../testing/update.ts";
 import { addOAuthConnector, NOTION, TestOAuth, unresolvable } from "../../testing/oauth.ts";
-import { Vault } from "../../vault/Vault.ts";
+import { Secrets } from "../../secrets/Secrets.ts";
 import * as WebClient from "../../web/WebClient.ts";
 
 /** Every line the server logs while these tests run, at any level, as JSON. */
@@ -69,7 +69,6 @@ it.layer(
         );
         const client = yield* RpcClient.make(ConnectorRpcs).pipe(Effect.provide(protocol));
         const fake = yield* TestOAuth;
-        yield* (yield* Vault).setup(Redacted.make("correct horse battery"));
         yield* addOAuthConnector;
 
         // A relayed address: the device's loopback listener caught it.
@@ -130,7 +129,7 @@ it.layer(
         );
         assert.match(absolute, /^HTTP\/1\.1 400/);
 
-        const secret = Option.getOrThrow(yield* (yield* Vault).connectorSecrets.get(NOTION));
+        const secret = Option.getOrThrow(yield* (yield* Secrets).connectorSecrets.get(NOTION));
         assert.isNotNull(secret.oauth?.tokens);
 
         // Nothing of either sign-in reached a log line or a failure.

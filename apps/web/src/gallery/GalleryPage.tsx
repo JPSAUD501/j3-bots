@@ -150,14 +150,14 @@ import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
-import { CredentialRequestCard } from "../components/CredentialRequestCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { ConnectorsSection, EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
-import { VaultSection } from "../components/vault/VaultSection";
+import { SecretAskCard } from "../components/SecretAskCard";
+import { SecretsSection } from "../components/secrets/SecretsSection";
 import { WorkFold } from "../components/WorkFold";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
@@ -176,7 +176,7 @@ import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
-import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
+import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
 import { galleryVariants } from "./variants";
 import {
   appPhases,
@@ -266,7 +266,7 @@ export default function GalleryPage() {
                 <RoomsSection />
                 <SettingsPagesSection />
                 <EngineSettingsSection />
-                <VaultGallerySection />
+                <SecretsGallerySection />
                 <UsageGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
@@ -963,7 +963,7 @@ const timelineIntents: TimelineIntents = {
   declineSecret: nothing,
   answerBrowserHelp: nothing,
   openBrowser: nothing,
-  dismissLogin: nothing,
+  declineSecretAsk: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   openWorkFold: nothing,
@@ -980,7 +980,7 @@ const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
 const notSubmitting = () => false;
 
 function BubblesSection() {
-  const galleryVault = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
+  const gallerySecrets = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
   const { bubbles, visualBubbles, escapingVisual, embeddingVisual } = variants;
   const { t } = useI18n();
   return (
@@ -1111,7 +1111,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
-            vault={galleryVault}
+            secrets={gallerySecrets}
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
             onOpenPair={nothing}
             onOpenRoom={nothing}
@@ -1126,7 +1126,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
-            vault={galleryVault}
+            secrets={gallerySecrets}
             onOpenPair={nothing}
             onOpenRoom={nothing}
           />
@@ -1157,9 +1157,9 @@ function CardsSection() {
         <ApprovalBecomingExact />
       </Labeled>
       <Labeled
-        label={`Save a login: with no vault password, locked (the password is “${SAMPLE_VAULT_PASSWORD}”), unlocked, saved, dismissed`}
+        label={`A bot asks for a secret: a login, a value, either while secrets wait for the old vault's password (“${SAMPLE_OLD_VAULT_PASSWORD}”); saved, declined, expired`}
       >
-        <LoginCards />
+        <AskCards />
       </Labeled>
       <Labeled label="Connector sign-in: pending, signed in, removed">
         <div className="flex flex-col gap-3">
@@ -1197,20 +1197,19 @@ function CardsSection() {
   );
 }
 
-/** A bot's save-login card in each state, each with a vault of its own. */
-function LoginCards() {
-  const uninitialized = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
-  const locked = useSampleVault({ state: "locked", now: () => SAMPLE_NOW });
-  const unlocked = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
-  const [first, ...closed] = variants.logins;
-  if (first === undefined) return null;
+/** A bot's ask for a secret in each state, each with secrets of its own. */
+function AskCards() {
+  const ready = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
+  const oldVault = useSampleSecrets({ state: "old-vault", now: () => SAMPLE_NOW });
+  const [login, value, ...closed] = variants.asks;
+  if (login === undefined || value === undefined) return null;
   return (
     <div className="flex flex-col gap-3">
-      <CredentialRequestCard entry={first} vault={uninitialized} onDismiss={nothing} />
-      <CredentialRequestCard entry={first} vault={locked} onDismiss={nothing} />
-      <CredentialRequestCard entry={first} vault={unlocked} onDismiss={nothing} />
+      <SecretAskCard entry={login} secrets={ready} onDecline={nothing} />
+      <SecretAskCard entry={value} secrets={ready} onDecline={nothing} />
+      <SecretAskCard entry={value} secrets={oldVault} onDecline={nothing} />
       {closed.map((entry) => (
-        <CredentialRequestCard key={entry.id} entry={entry} vault={unlocked} onDismiss={nothing} />
+        <SecretAskCard key={entry.id} entry={entry} secrets={ready} onDecline={nothing} />
       ))}
     </div>
   );
@@ -1288,7 +1287,7 @@ function WorkSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, vault locked)">
+      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
         <div className="flex flex-col gap-2">
           {variants.folds.map(({ entry, steps, open }) => (
             <WorkFold
@@ -1533,7 +1532,6 @@ const detailsIntents = {
   deleteBot: nothing,
   shareTemplate: nothing,
   setBrowser: nothing,
-  setVault: nothing,
   openConnectors: nothing,
   openPair: nothing,
 };
@@ -1624,9 +1622,9 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* The browser and vault access on, and the vault's on with the browser off. */}
+          {/* The browser on. */}
           <BotDetails
-            bot={{ ...atlas, browser: true, vault: true }}
+            bot={{ ...atlas, browser: true }}
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
@@ -1641,7 +1639,7 @@ function DetailsSection() {
         </Pane>
         <Pane>
           <BotDetails
-            bot={{ ...moss, vault: true }}
+            bot={moss}
             routines={[]}
             memory={[]}
             files={[]}
@@ -2092,7 +2090,7 @@ function ConnectorsGallerySection() {
           at={connectorAt(2)}
           initial={keptReview}
         />
-        <ConnectorsVariant label="Vault locked" at={connectorAt(3)} />
+        <ConnectorsVariant label="Secrets unavailable" at={connectorAt(3)} />
         <ConnectorsVariant label="Add your own" at={{ _tag: "add-own" }} />
       </div>
     </Section>
@@ -2647,35 +2645,40 @@ function EngineSettingsSection() {
   );
 }
 
-function VaultGallerySection() {
+function SecretsGallerySection() {
   const now = () => SAMPLE_NOW;
-  const none = useSampleVault({ state: "uninitialized", now });
-  const locked = useSampleVault({ state: "locked", now });
-  const unlocked = useSampleVault({ state: "unlocked", now, credentials: variants.credentials });
-  const empty = useSampleVault({ state: "unlocked", now });
-  const newer = useSampleVault({ state: "newer", now });
+  const saved = useSampleSecrets({ state: "ready", now, secrets: variants.savedSecrets });
+  const empty = useSampleSecrets({ state: "ready", now });
+  const oldVault = useSampleSecrets({ state: "old-vault", now, secrets: variants.savedSecrets });
+  const unreadable = useSampleSecrets({ state: "unreadable", now });
+  const newer = useSampleSecrets({ state: "newer", now });
   return (
-    <Section title="Settings: the vault">
+    <Section title="Settings: secrets">
       <div className="flex flex-wrap gap-4">
-        <Frame padded label="No password yet" width={420} height={360}>
-          <VaultSection vault={none} />
+        <Frame
+          padded
+          label="Saved: two logins and a value; open one for its page"
+          width={420}
+          height={520}
+        >
+          <SecretsSection secrets={saved} />
+        </Frame>
+        <Frame padded label="None saved yet; Add a secret opens the form" width={420} height={640}>
+          <SecretsSection secrets={empty} />
         </Frame>
         <Frame
           padded
-          label={`Locked (the password is “${SAMPLE_VAULT_PASSWORD}”)`}
+          label={`A vault from before secrets (the password is “${SAMPLE_OLD_VAULT_PASSWORD}”)`}
           width={420}
-          height={260}
+          height={420}
         >
-          <VaultSection vault={locked} />
+          <SecretsSection secrets={oldVault} />
         </Frame>
-        <Frame padded label="Unlocked, with saved logins" width={420} height={760}>
-          <VaultSection vault={unlocked} />
+        <Frame padded label="The key file is missing" width={420} height={200}>
+          <SecretsSection secrets={unreadable} />
         </Frame>
-        <Frame padded label="Unlocked, with none saved" width={420} height={220}>
-          <VaultSection vault={empty} />
-        </Frame>
-        <Frame padded label="Changed by a newer release" width={420} height={140}>
-          <VaultSection vault={newer} />
+        <Frame padded label="Changed by a newer release" width={420} height={180}>
+          <SecretsSection secrets={newer} />
         </Frame>
       </div>
     </Section>
@@ -2790,11 +2793,9 @@ function FirstRunAt({
   engine?: EngineStatus | null;
   providerSetup?: LocalProviderSetup;
 }) {
-  const vault = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
   return (
     <Onboarding
       engine={engine}
-      vault={vault}
       initialStep={step}
       initialName="Maya"
       providerSetup={providerSetup}
@@ -2821,13 +2822,6 @@ function FirstRunSection() {
         </Frame>
         <Frame label="Its look" width={390} height={760}>
           <FirstRunAt step="look" />
-        </Frame>
-        <Frame
-          label="The vault's password, skippable; with a provider, this step creates the bot"
-          width={390}
-          height={760}
-        >
-          <FirstRunAt step="vault" />
         </Frame>
         <Frame label="No provider connected: one command, live" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.connect} />

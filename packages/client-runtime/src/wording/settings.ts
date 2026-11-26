@@ -12,7 +12,7 @@ const words: Record<SettingsPage, { readonly title: KeyWith; readonly descriptio
   providers: { title: "settings.providers", description: "settings.providers.description" },
   usage: { title: "settings.usage", description: "settings.usage.description" },
   connectors: { title: "settings.connectors", description: "settings.connectors.description" },
-  vault: { title: "vault.title", description: "settings.vault.description" },
+  secrets: { title: "secrets.title", description: "settings.secrets.description" },
   devices: { title: "settings.devices", description: "settings.devices.description" },
   where: { title: "settings.where", description: "settings.where.description" },
   updates: { title: "settings.about", description: "settings.about.description" },

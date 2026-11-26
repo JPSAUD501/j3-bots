@@ -16,7 +16,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ConnectorReach } from "../connectors/Connectors.ts";
 import { ConnectorStore } from "../connectors/ConnectorStore.ts";
 import { OAuthHttp } from "../connectors/oauth/endpoints.ts";
-import { Vault } from "../vault/Vault.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 
 // A fake MCP server and its authorization server, reached through the client
 // sign-ins use, as a provider would answer them: the 401 challenge, the
@@ -471,11 +471,11 @@ export const NOTION = ConnectorId.make("conn_aaaaaaaaaaaaaaaa");
 
 /**
  * Adds the fake's MCP server as a connector that signs in with OAuth, for
- * every bot, its address in the vault, which must be unlocked.
+ * every bot, its address in its connector secret.
  */
 export const addOAuthConnector = Effect.gen(function* () {
   const store = yield* ConnectorStore;
-  yield* (yield* Vault).connectorSecrets.put({
+  yield* (yield* Secrets).connectorSecrets.put({
     connectorId: NOTION,
     address: Redacted.make(MCP_URL),
     oauth: null,

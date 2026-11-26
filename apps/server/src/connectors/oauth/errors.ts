@@ -39,13 +39,11 @@ export const OAuthFailureReason = Schema.Literals([
   "invalid-client",
   /** The token endpoint refused for another reason, or gave a token that is not a Bearer. */
   "token-refused",
-  /** The vault is locked, so nothing can be read or saved. */
-  "vault-locked",
-  /** The vault has no master password yet, so nothing can be saved. */
-  "vault-not-set-up",
+  /** The operator's secrets cannot be read now, so nothing can be read or saved. */
+  "secrets-unavailable",
   /** No connector has that id. */
   "unknown-connector",
-  /** The connector's address is not in the vault. */
+  /** The connector's address is not in its secret. */
   "no-address",
   /** The connector signs in with its form, or not at all, never with OAuth. */
   "not-oauth",
@@ -73,8 +71,7 @@ export class OAuthFailure extends Schema.TaggedError<OAuthFailure>()("OAuthFailu
 /** What a client is told when a sign-in it asked for fails. */
 export const toCommandError = (error: OAuthFailure): CommandError => {
   switch (error.reason) {
-    case "vault-locked":
-    case "vault-not-set-up":
+    case "secrets-unavailable":
     case "no-server-redirect":
     case "registration-refused":
       return new Conflict({ reason: error.reason });

@@ -3,7 +3,7 @@ import {
   AuthFailing,
   type CredentialsUnavailable,
   NeedsSignIn,
-  VaultLocked,
+  SecretsUnavailable,
 } from "@j3-bots/connectors";
 import {
   type Conflict,
@@ -39,8 +39,8 @@ import type {
   ConnectorSecret,
   OAuthClient,
   OAuthTokens,
-} from "../../vault/ConnectorSecret.ts";
-import { Vault } from "../../vault/Vault.ts";
+} from "../../secrets/ConnectorSecret.ts";
+import { Secrets } from "../../secrets/Secrets.ts";
 import * as Endpoints from "./endpoints.ts";
 import { OAuthFailure, type OAuthFailureReason } from "./errors.ts";
 import {
@@ -103,7 +103,7 @@ const LAST_RETRY = Duration.minutes(15);
  * The connectors that sign in with OAuth, as the connectors' store knows
  * them. The server provides it from the store (`signIns.ts`); nothing else
  * here knows how connectors are kept. Where a connector's server is comes
- * from its record in the vault, since its address can carry a key.
+ * from its connector secret, since its address can carry a key.
  */
 export class OAuthConnectors extends Context.Service<
   OAuthConnectors,
@@ -139,8 +139,8 @@ export interface OperatorClient {
 /**
  * Sign-ins to connectors' servers, done by the server (MCP authorization,
  * revision 2025-11-25): discovery, registration, the code flow with PKCE,
- * `state` and the resource indicator, then the tokens, kept in the vault and
- * refreshed ahead of expiry. No token, code, verifier or `state` leaves this
+ * `state` and the resource indicator, then the tokens, kept in the
+ * connector's secret and refreshed ahead of expiry. No token, code, verifier or `state` leaves this
  * service but the access token a connector's call needs, and that only to
  * the connectors' client.
  */
@@ -237,19 +237,11 @@ const redirectOf = (url: URL) => `${url.protocol}//${url.host}${url.pathname}`;
 const fail = (reason: OAuthFailureReason) => Effect.fail(new OAuthFailure({ reason }));
 
 /**
- * The vault refuses only while it cannot be used: locked, without a master
- * password, or written by a newer release, which is locked as far as a
- * connector can tell.
+ * The secrets refuse only while they cannot be read, or a value of them does
+ * not open: either way, as far as a connector can tell, nothing can be read.
  */
-const fromVault = <A>(effect: Effect.Effect<A, Conflict>) =>
-  effect.pipe(
-    Effect.mapError(
-      (error) =>
-        new OAuthFailure({
-          reason: error.reason === "vault-not-set-up" ? "vault-not-set-up" : "vault-locked",
-        }),
-    ),
-  );
+const fromSecrets = <A>(effect: Effect.Effect<A, Conflict>) =>
+  effect.pipe(Effect.mapError(() => new OAuthFailure({ reason: "secrets-unavailable" })));
 
 /** The client as the token endpoint needs it. */
 const tokenClient = (client: OAuthClient): Endpoints.TokenClient => ({
@@ -261,7 +253,7 @@ const tokenClient = (client: OAuthClient): Endpoints.TokenClient => ({
 export const layer = Layer.effect(
   ConnectorAuth,
   Effect.gen(function* () {
-    const vault = yield* Vault;
+    const secrets = yield* Secrets;
     const connectors = yield* OAuthConnectors;
     const config = yield* ServerConfig;
     const listener = yield* Listener;
@@ -291,13 +283,6 @@ export const layer = Layer.effect(
       generations.set(id, generation);
       return generation;
     };
-    /**
-     * Tokens a refresh got but could not save, the vault having locked while
-     * it waited for them: a server that rotated the refresh token has already
-     * forgotten the saved one. Written before the connector's tokens are next
-     * read; lost only if the server stops first.
-     */
-    const held = new Map<ConnectorId, NonNullable<ConnectorSecret["oauth"]>>();
     const refreshers = yield* FiberMap.make<ConnectorId>();
 
     const setState = (id: ConnectorId, state: Option.Option<SignInState>) =>
@@ -423,9 +408,9 @@ export const layer = Layer.effect(
       } satisfies SignInRedirects;
     });
 
-    const secretOf = (id: ConnectorId) => fromVault(vault.connectorSecrets.get(id));
+    const secretOf = (id: ConnectorId) => fromSecrets(secrets.connectorSecrets.get(id));
 
-    const save = (secret: ConnectorSecret) => fromVault(vault.connectorSecrets.put(secret));
+    const save = (secret: ConnectorSecret) => fromSecrets(secrets.connectorSecrets.put(secret));
 
     /**
      * Saves the connector's OAuth part, keeping its address, headers, command
@@ -454,17 +439,9 @@ export const layer = Layer.effect(
         kept.env.length === 0 &&
         kept.formSecrets.length === 0
       ) {
-        return yield* fromVault(vault.connectorSecrets.remove(id));
+        return yield* fromSecrets(secrets.connectorSecrets.remove(id));
       }
       yield* save({ connectorId: id, oauth, ...kept });
-    });
-
-    /** Writes the tokens a refresh could not save, when there are any. Call it serially. */
-    const saveHeld = Effect.fn("ConnectorAuth.saveHeld")(function* (id: ConnectorId) {
-      const tokens = held.get(id);
-      if (tokens === undefined) return;
-      yield* saveOAuth(id, tokens);
-      held.delete(id);
     });
 
     /**
@@ -517,7 +494,6 @@ export const layer = Layer.effect(
     const refresh = (id: ConnectorId, margin: Option.Option<Duration.Duration>) =>
       serially(id)(
         Effect.gen(function* () {
-          yield* saveHeld(id);
           const secret = yield* secretOf(id);
           const oauth = Option.flatMap(secret, ({ oauth }) => Option.fromNullOr(oauth));
           if (Option.isNone(oauth) || oauth.value.tokens === null)
@@ -572,9 +548,6 @@ export const layer = Layer.effect(
                 const usable =
                   renewed.expiresAt === null || DateTime.isLessThan(now, renewed.expiresAt);
                 return saveOAuth(id, { client, tokens: renewed }).pipe(
-                  Effect.tapError(() =>
-                    Effect.sync(() => held.set(id, { client, tokens: renewed })),
-                  ),
                   Effect.andThen(
                     usable
                       ? Effect.as(setState(id, Option.some(signedIn(renewed))), renewed)
@@ -637,20 +610,23 @@ export const layer = Layer.effect(
     const scheduleRefresh = (id: ConnectorId, tokens: OAuthTokens) =>
       FiberMap.run(refreshers, id)(keepFresh(id, tokens)).pipe(Effect.asVoid);
 
-    /** On unlock, each connector's state from its saved tokens, and its refresh; on lock, nothing can be read. */
-    const followVault = vault.status.pipe(
-      Stream.map(({ state }) => state === "unlocked"),
+    /**
+     * Once the secrets are ready, each connector's state from its saved
+     * tokens, and its refresh; until then, nothing can be read.
+     */
+    const followSecrets = secrets.status.pipe(
+      Stream.map(({ state }) => state === "ready"),
       Stream.changes,
-      Stream.runForEach((unlocked) =>
+      Stream.runForEach((ready) =>
         Effect.gen(function* () {
           const ids = yield* connectors.all;
-          if (!unlocked) {
+          if (!ready) {
             yield* FiberMap.clear(refreshers);
-            for (const id of ids) yield* setState(id, Option.some({ _tag: "vault-locked" }));
+            for (const id of ids) yield* setState(id, Option.some({ _tag: "secrets-unavailable" }));
             return;
           }
           for (const id of ids) {
-            const tokens = yield* serially(id)(Effect.andThen(saveHeld(id), secretOf(id))).pipe(
+            const tokens = yield* serially(id)(secretOf(id)).pipe(
               Effect.map((secret) =>
                 Option.flatMap(secret, ({ oauth }) => Option.fromNullOr(oauth?.tokens ?? null)),
               ),
@@ -666,7 +642,7 @@ export const layer = Layer.effect(
         }),
       ),
     );
-    yield* Effect.forkScoped(followVault);
+    yield* Effect.forkScoped(followSecrets);
 
     /** Ends sign-ins whose time is up; none is kept past it. */
     const prune = (now: DateTime.Utc) => {
@@ -880,8 +856,6 @@ export const layer = Layer.effect(
           // A removed connector is not brought back.
           if (Option.isNone(yield* secretOf(id))) return yield* fail("unknown-connector");
           yield* saveOAuth(id, { client: sign.client, tokens });
-          // Tokens a refresh held are older than these.
-          held.delete(id);
           // A scope a call was refused for, and this grant still lacks, is asked for again.
           const missing = (stepUp.get(id) ?? []).filter((scope) => !tokens.scopes.includes(scope));
           if (missing.length > 0) stepUp.set(id, missing);
@@ -932,7 +906,6 @@ export const layer = Layer.effect(
             },
             tokens: null,
           });
-          held.delete(id);
           yield* FiberMap.remove(refreshers, id);
           yield* setState(id, Option.some({ _tag: "needs-sign-in", reason: "not-signed-in" }));
         }),
@@ -953,18 +926,14 @@ export const layer = Layer.effect(
       return renewed.accessToken;
     }, Effect.mapError(unavailable));
 
-    /** Whether `token` is the connector's access token now, those a refresh holds first. */
+    /** Whether `token` is the connector's access token now. */
     const isCurrent = Effect.fn("ConnectorAuth.isCurrent")(function* (
       id: ConnectorId,
       token: Redacted.Redacted<string>,
     ) {
-      const kept = held.get(id);
-      const tokens =
-        kept === undefined
-          ? Option.flatMap(yield* secretOf(id), ({ oauth }) =>
-              Option.fromNullOr(oauth?.tokens ?? null),
-            )
-          : Option.fromNullOr(kept.tokens);
+      const tokens = Option.flatMap(yield* secretOf(id), ({ oauth }) =>
+        Option.fromNullOr(oauth?.tokens ?? null),
+      );
       return Option.exists(
         tokens,
         ({ accessToken }) => Redacted.value(accessToken) === Redacted.value(token),
@@ -1003,21 +972,9 @@ export const layer = Layer.effect(
       nextGeneration(id);
       yield* serially(id)(
         Effect.gen(function* () {
-          // Tokens a refresh could not save are the latest grant: they are the ones to revoke.
-          const kept = held.get(id);
-          const oauth =
-            kept === undefined
-              ? Option.flatMap(
-                  // Without a vault, no connector has secrets to end.
-                  yield* secretOf(id).pipe(
-                    Effect.catchIf(
-                      (error) => error.reason === "vault-not-set-up",
-                      () => Effect.succeedNone,
-                    ),
-                  ),
-                  ({ oauth }) => Option.fromNullOr(oauth),
-                )
-              : Option.some(kept);
+          const oauth = Option.flatMap(yield* secretOf(id), ({ oauth }) =>
+            Option.fromNullOr(oauth),
+          );
           if (Option.isSome(oauth) && oauth.value.tokens !== null) {
             yield* revokeAll(oauth.value.client, oauth.value.tokens).pipe(
               Effect.catch((error) =>
@@ -1028,7 +985,6 @@ export const layer = Layer.effect(
             );
           }
           if (Option.isSome(oauth)) yield* signedOut(id, oauth.value.client, true);
-          held.delete(id);
           yield* FiberMap.remove(refreshers, id);
           yield* setState(id, Option.none());
         }),
@@ -1092,8 +1048,8 @@ const retryable = (reason: OAuthFailureReason) =>
 /** What a connector's call is told when its sign-in cannot sign the request. */
 const unavailable = (error: OAuthFailure): CredentialsUnavailable => {
   switch (error.reason) {
-    case "vault-locked":
-      return new VaultLocked();
+    case "secrets-unavailable":
+      return new SecretsUnavailable();
     case "not-signed-in":
     case "invalid-grant":
     case "invalid-client":

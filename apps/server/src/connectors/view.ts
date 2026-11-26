@@ -101,11 +101,12 @@ const signInNeedOf = (
 export const statusOfConnector = (
   connector: StoredConnector,
   seen: Seen,
-  vaultLocked: boolean,
+  secretsUnavailable: boolean,
   signIn: Option.Option<SignInState>,
 ): ConnectorStatus =>
   statusOf({
-    vaultLocked: vaultLocked || Option.exists(signIn, (state) => state._tag === "vault-locked"),
+    secretsUnavailable:
+      secretsUnavailable || Option.exists(signIn, (state) => state._tag === "secrets-unavailable"),
     signIn: signInNeedOf(connector, seen, signIn),
     failing: seen.failing,
   });
@@ -113,7 +114,7 @@ export const statusOfConnector = (
 export const connectorOf = (
   connector: StoredConnector,
   seen: Seen,
-  vaultLocked: boolean,
+  secretsUnavailable: boolean,
   signIn: Option.Option<SignInState>,
 ): Connector => {
   const signedIn = Option.filter(signIn, (state) => state._tag === "signed-in");
@@ -126,7 +127,7 @@ export const connectorOf = (
     transport: connector.transport,
     signIn: connector.signIn,
     fields: connector.fields,
-    status: statusOfConnector(connector, seen, vaultLocked, signIn),
+    status: statusOfConnector(connector, seen, secretsUnavailable, signIn),
     grant: connector.grant,
     account: Option.match(signedIn, {
       onNone: () => null,

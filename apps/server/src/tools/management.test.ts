@@ -8,7 +8,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { Bots } from "../bots/Bots.ts";
 import { Connectors } from "../connectors/Connectors.ts";
@@ -19,15 +18,11 @@ import * as TestDomain from "../testing/domain.ts";
 import { TestGitHost } from "../testing/gitHost.ts";
 import { unresolvable } from "../testing/oauth.ts";
 import { command, createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
-import { Vault } from "../vault/Vault.ts";
 import { BotTools } from "./BotTools.ts";
 import type { ToolCallResponse } from "./protocol.ts";
 
 const domain = TestDomain.layer.pipe(Layer.provide(unresolvable));
 const withGitHost = TestDomain.layerWithGitHost.pipe(Layer.provide(unresolvable));
-
-/** Each test sets up a vault, whose key takes a while to derive. */
-const SLOW = 30_000;
 
 /** A bot in a turn answering the operator, whose calls the engine records as it makes them. */
 interface Working {
@@ -98,11 +93,6 @@ const ServerAnswer = Schema.Struct({
 const serverOf = (response: ToolCallResponse) =>
   Schema.decodeUnknownSync(ServerAnswer)(resultOf(response));
 
-const unlockVault = Effect.gen(function* () {
-  const vault = yield* Vault;
-  yield* vault.setup(Redacted.make("correct horse battery"));
-});
-
 const remote = (name: string, extra: Record<string, Schema.Json> = {}) => ({
   url: `https://${name.toLowerCase()}.example/mcp`,
   name,
@@ -112,99 +102,92 @@ const remote = (name: string, extra: Record<string, Schema.Json> = {}) => ({
 const skillText = (name: string, description = "When filing expenses") =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\nThe steps.\n`;
 
-it.effect(
-  "lets the primary bot manage every MCP server, and another bot only its own",
-  () =>
-    Effect.gen(function* () {
-      yield* unlockVault;
-      const ada = yield* working(yield* primary("Ada"));
-      const ben = yield* working(yield* createBot("Ben"));
+it.effect("lets the primary bot manage every MCP server, and another bot only its own", () =>
+  Effect.gen(function* () {
+    const ada = yield* working(yield* primary("Ada"));
+    const ben = yield* working(yield* createBot("Ben"));
 
-      // A bot's server is its own; the primary bot's is every bot's.
-      const bens = serverOf(yield* call(ben, "add_mcp_server", remote("Tracker")));
-      assert.deepStrictEqual(bens.server.bots, [ben.bot.id]);
-      assert.deepStrictEqual(bens.server.lastChange.by, { bot: ben.bot.id });
-      const adas = serverOf(yield* call(ada, "add_mcp_server", remote("Wiki")));
-      assert.strictEqual(adas.server.bots, "every-bot");
+    // A bot's server is its own; the primary bot's is every bot's.
+    const bens = serverOf(yield* call(ben, "add_mcp_server", remote("Tracker")));
+    assert.deepStrictEqual(bens.server.bots, [ben.bot.id]);
+    assert.deepStrictEqual(bens.server.lastChange.by, { bot: ben.bot.id });
+    const adas = serverOf(yield* call(ada, "add_mcp_server", remote("Wiki")));
+    assert.strictEqual(adas.server.bots, "every-bot");
 
-      // Only the primary bot picks who else uses a server.
-      assert.strictEqual(
-        refusalOf(yield* call(ben, "add_mcp_server", remote("Calendar", { scope: "every-bot" }))),
-        MANAGEMENT_REFUSED.primaryOnly,
-      );
-      assert.strictEqual(
-        refusalOf(
-          yield* call(ben, "set_mcp_server_bots", { server: bens.server.id, bots: "every-bot" }),
-        ),
-        MANAGEMENT_REFUSED.primaryOnly,
-      );
-      // Ben uses the primary bot's server, but cannot change or remove it.
-      assert.strictEqual(
-        refusalOf(yield* call(ben, "update_mcp_server", { server: adas.server.id, name: "Mine" })),
-        MANAGEMENT_REFUSED.notYours("Wiki"),
-      );
-      assert.strictEqual(
-        refusalOf(yield* call(ben, "remove_mcp_server", { server: adas.server.id })),
-        MANAGEMENT_REFUSED.notYours("Wiki"),
-      );
-      // His own he changes.
-      assert.strictEqual(
-        resultOf(yield* call(ben, "update_mcp_server", { server: bens.server.id, name: "Issues" }))[
-          "note"
-        ],
-        MANAGEMENT_NOTES.failing,
-      );
+    // Only the primary bot picks who else uses a server.
+    assert.strictEqual(
+      refusalOf(yield* call(ben, "add_mcp_server", remote("Calendar", { scope: "every-bot" }))),
+      MANAGEMENT_REFUSED.primaryOnly,
+    );
+    assert.strictEqual(
+      refusalOf(
+        yield* call(ben, "set_mcp_server_bots", { server: bens.server.id, bots: "every-bot" }),
+      ),
+      MANAGEMENT_REFUSED.primaryOnly,
+    );
+    // Ben uses the primary bot's server, but cannot change or remove it.
+    assert.strictEqual(
+      refusalOf(yield* call(ben, "update_mcp_server", { server: adas.server.id, name: "Mine" })),
+      MANAGEMENT_REFUSED.notYours("Wiki"),
+    );
+    assert.strictEqual(
+      refusalOf(yield* call(ben, "remove_mcp_server", { server: adas.server.id })),
+      MANAGEMENT_REFUSED.notYours("Wiki"),
+    );
+    // His own he changes.
+    assert.strictEqual(
+      resultOf(yield* call(ben, "update_mcp_server", { server: bens.server.id, name: "Issues" }))[
+        "note"
+      ],
+      MANAGEMENT_NOTES.failing,
+    );
 
-      // The primary bot gives Ben's server to itself too: no longer Ben's alone.
-      const shared = serverOf(
-        yield* call(ada, "set_mcp_server_bots", {
-          server: bens.server.id,
-          bots: [ada.bot.id, ben.bot.id],
-        }),
-      );
-      assert.sameMembers([...shared.server.bots], [ada.bot.id, ben.bot.id]);
-      assert.deepStrictEqual(shared.server.lastChange.by, { bot: ada.bot.id });
-      assert.strictEqual(
-        refusalOf(yield* call(ben, "remove_mcp_server", { server: bens.server.id })),
-        MANAGEMENT_REFUSED.notYours("Issues"),
-      );
+    // The primary bot gives Ben's server to itself too: no longer Ben's alone.
+    const shared = serverOf(
+      yield* call(ada, "set_mcp_server_bots", {
+        server: bens.server.id,
+        bots: [ada.bot.id, ben.bot.id],
+      }),
+    );
+    assert.sameMembers([...shared.server.bots], [ada.bot.id, ben.bot.id]);
+    assert.deepStrictEqual(shared.server.lastChange.by, { bot: ada.bot.id });
+    assert.strictEqual(
+      refusalOf(yield* call(ben, "remove_mcp_server", { server: bens.server.id })),
+      MANAGEMENT_REFUSED.notYours("Issues"),
+    );
 
-      // A bot lists only the servers it uses; the primary bot lists every one.
-      const own = serverOf(
-        yield* call(ada, "add_mcp_server", remote("Notes", { scope: { bot: ada.bot.id } })),
+    // A bot lists only the servers it uses; the primary bot lists every one.
+    const own = serverOf(
+      yield* call(ada, "add_mcp_server", remote("Notes", { scope: { bot: ada.bot.id } })),
+    );
+    const listedBy = (bot: Working) =>
+      Effect.map(call(bot, "list_mcp_servers", {}), (response) =>
+        Schema.decodeUnknownSync(
+          Schema.Struct({
+            servers: Schema.Array(Schema.Struct({ id: Schema.String, mayChange: Schema.Boolean })),
+          }),
+        )(resultOf(response)).servers.map(({ id, mayChange }) => [id, mayChange]),
       );
-      const listedBy = (bot: Working) =>
-        Effect.map(call(bot, "list_mcp_servers", {}), (response) =>
-          Schema.decodeUnknownSync(
-            Schema.Struct({
-              servers: Schema.Array(
-                Schema.Struct({ id: Schema.String, mayChange: Schema.Boolean }),
-              ),
-            }),
-          )(resultOf(response)).servers.map(({ id, mayChange }) => [id, mayChange]),
-        );
-      assert.sameDeepMembers(yield* listedBy(ben), [
-        [bens.server.id, false],
-        [adas.server.id, false],
-      ]);
-      assert.sameDeepMembers(yield* listedBy(ada), [
-        [bens.server.id, true],
-        [adas.server.id, true],
-        [own.server.id, true],
-      ]);
+    assert.sameDeepMembers(yield* listedBy(ben), [
+      [bens.server.id, false],
+      [adas.server.id, false],
+    ]);
+    assert.sameDeepMembers(yield* listedBy(ada), [
+      [bens.server.id, true],
+      [adas.server.id, true],
+      [own.server.id, true],
+    ]);
 
-      resultOf(yield* call(ada, "remove_mcp_server", { server: bens.server.id }));
-      const left = (yield* (yield* Connectors).listed).map(({ connector }) => connector.name);
-      assert.sameMembers(left, ["Wiki", "Notes"]);
-    }).pipe(Effect.scoped, Effect.provide(domain)),
-  SLOW,
+    resultOf(yield* call(ada, "remove_mcp_server", { server: bens.server.id }));
+    const left = (yield* (yield* Connectors).listed).map(({ connector }) => connector.name);
+    assert.sameMembers(left, ["Wiki", "Notes"]);
+  }).pipe(Effect.scoped, Effect.provide(domain)),
 );
 
 it.effect(
   "adds a server that needs a sign-in and asks the operator for it in the bot's conversation",
   () =>
     Effect.gen(function* () {
-      yield* unlockVault;
       const ada = yield* working(yield* primary("Ada"));
 
       const added = serverOf(yield* call(ada, "add_mcp_server", { gallery: "curated:linear" }));
@@ -221,7 +204,6 @@ it.effect(
         MANAGEMENT_REFUSED.ownApp,
       );
     }).pipe(Effect.scoped, Effect.provide(domain)),
-  SLOW,
 );
 
 /** Where a skill's `SKILL.md` is, in the shared skills or in a bot's workspace. */
@@ -353,7 +335,6 @@ it.effect(
         MANAGEMENT_REFUSED.notASkill("files/notes/leak goes through a link"),
       );
     }).pipe(Effect.scoped, Effect.provide(domain)),
-  SLOW,
 );
 
 it.effect(
@@ -436,5 +417,4 @@ it.effect(
         "no branch, tag or commit",
       );
     }).pipe(Effect.scoped, Effect.provide(withGitHost)),
-  SLOW,
 );

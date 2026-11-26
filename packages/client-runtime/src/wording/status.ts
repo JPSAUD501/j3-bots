@@ -124,8 +124,8 @@ function previewSummary(
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
     case "browser-help":
       return t(current ? "summary.needsBrowserHelp" : "summary.askedBrowserHelp", { note: text });
-    case "credential-request":
-      return t("summary.askedLogin", { origin: text });
+    case "secret-ask":
+      return t(current ? "summary.needsSecretAsk" : "summary.askedSecretAsk", { name: text });
     case "connector-auth":
       return t("summary.connectorSignIn", { name: text });
     case "work-fold":

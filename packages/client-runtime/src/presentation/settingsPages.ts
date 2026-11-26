@@ -12,7 +12,7 @@ import { providerGate } from "./engine.ts";
  * - `providers`: the engine, each provider, its version and its sign-in;
  * - `usage`: each provider's limits, and the bots that used its turns;
  * - `connectors`: the services bots can use;
- * - `vault`: the logins bots sign in with, and the bots' browser's sign-ins;
+ * - `secrets`: the logins and keys bots use, and the bots' browser's sign-ins;
  * - `devices`: this device (signing it out, the desktop app's shortcut) and
  *   every paired one, with pairing another;
  * - `where`: where the bots live and moving them, in the desktop app and on
@@ -26,7 +26,7 @@ export type SettingsPage =
   | "providers"
   | "usage"
   | "connectors"
-  | "vault"
+  | "secrets"
   | "devices"
   | "where"
   | "updates";
@@ -38,7 +38,7 @@ export type SettingsPage =
  */
 export const settingsGroups: ReadonlyArray<ReadonlyArray<SettingsPage>> = [
   ["you", "notifications", "appearance"],
-  ["providers", "usage", "connectors", "vault"],
+  ["providers", "usage", "connectors", "secrets"],
   ["devices", "where", "updates"],
 ];
 

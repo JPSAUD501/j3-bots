@@ -8,9 +8,9 @@ import type { ProviderActions } from "../components/ProviderFix";
 import type {
   Draft,
   DraftFile,
+  SecretsHandle,
+  SecretsView,
   SettingsSaves,
-  VaultHandle,
-  VaultView,
 } from "@j3-bots/client-runtime";
 import {
   applyConnectorChange,
@@ -64,7 +64,8 @@ import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
-import { sampleVault } from "./sampleVault";
+import { sampleSecrets } from "./sampleSecrets";
+import { galleryVariants } from "./variants";
 import { sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 
@@ -252,7 +253,7 @@ const withoutBots = (state: State): State => ({
   memory: {},
 });
 
-function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents {
+function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellIntents {
   /** The bot thinks for a moment, then says `text` in `key`. */
   const replyLater = (botId: BotId, key: string, text: string) => {
     update((s) =>
@@ -509,12 +510,11 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
       ),
     // The sample has no browser to open.
     openBrowser: nothing,
-    // Neither wakes the bot, which says nothing.
-    dismissLogin: (entryId) =>
-      update((s) =>
-        updateEntry(s, entryId, (e) =>
-          e._tag === "credential-request" ? { ...e, status: { _tag: "dismissed" } } : e,
-        ),
+    declineSecretAsk: (entryId) =>
+      answer(
+        entryId,
+        (e) => (e._tag === "secret-ask" ? { ...e, status: { _tag: "declined" } } : e),
+        "Understood. I’ll ask the inspection office to change the booking by phone.",
       ),
     retryNotice: (entryId) =>
       update((s) =>
@@ -527,8 +527,6 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
     setBrowser: (bot, enabled) =>
       update((s) => updateBot(s, bot.id, (current) => ({ ...current, browser: enabled }))),
-    setVault: (bot, enabled) =>
-      update((s) => updateBot(s, bot.id, (current) => ({ ...current, vault: enabled }))),
     // The sample's members work only for the room, so its Stop ends whatever they run.
     stopRoom: (roomId) => {
       nextRound(roomId);
@@ -591,7 +589,6 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
           permissionMode: "supervised",
           primary,
           browser: false,
-          vault: false,
           pinned: false,
           hidden: false,
           sectionId: null,
@@ -805,7 +802,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
     providerActions: sampleProviderActions,
-    vault,
+    secrets,
     refreshDevices: nothing,
     loadMoreTurns: nothing,
     retryTurns: nothing,
@@ -820,7 +817,7 @@ const messagesOf = (state: State, botIds: PairBotIds): ReadonlyArray<TeammateMes
     return first !== undefined && inPair(botIds, first.from) && inPair(botIds, first.to);
   }) ?? [];
 
-function toData(state: State, vault: VaultView): ShellData {
+function toData(state: State, secrets: SecretsView): ShellData {
   return {
     engine: state.engine,
     engineStale: false,
@@ -864,7 +861,7 @@ function toData(state: State, vault: VaultView): ShellData {
     },
     connected: true,
     signInUnencrypted: false,
-    vault,
+    secrets,
   };
 }
 
@@ -899,27 +896,23 @@ export function useSampleSource({
     const started = firstRun ? withoutBots(team) : team;
     return createStore(engine === undefined ? started : { ...started, engine });
   });
-  // A login saved from a card closes it as the server would.
-  const [vault] = useState(() =>
-    sampleVault({
-      state: firstRun ? "uninitialized" : "locked",
+  // A secret saved from a bot's ask closes its card as the server would.
+  const [secrets] = useState(() =>
+    sampleSecrets({
+      state: "ready",
+      secrets: firstRun ? [] : galleryVariants(SAMPLE_NOW).savedSecrets,
       now,
-      onSaved: (request, credential) =>
+      onSaved: (request) =>
         store.update((s) =>
           updateEntry(s, request, (e) =>
-            e._tag === "credential-request"
-              ? {
-                  ...e,
-                  status: { _tag: "saved", credentialId: credential.id, name: credential.name },
-                }
-              : e,
+            e._tag === "secret-ask" ? { ...e, status: { _tag: "saved" } } : e,
           ),
         ),
     }),
   );
   const state = useSyncExternalStore(store.subscribe, store.get);
-  const vaultView = useSyncExternalStore(vault.view.subscribe, vault.view.get);
-  const intents = useMemo(() => sampleIntents(store, vault), [store, vault]);
+  const secretsView = useSyncExternalStore(secrets.view.subscribe, secrets.view.get);
+  const intents = useMemo(() => sampleIntents(store, secrets), [store, secrets]);
   const connectorsIntents = useMemo(
     () => ({
       ...sampleConnectorsIntents({
@@ -931,7 +924,8 @@ export function useSampleSource({
           })),
       }),
       // As the live source: Settings opens over the connectors, which wait as they were.
-      openVault: () => store.update((s) => ({ ...s, settingsOpen: true, settingsPage: "vault" })),
+      openSecrets: () =>
+        store.update((s) => ({ ...s, settingsOpen: true, settingsPage: "secrets" })),
     }),
     [store],
   );
@@ -946,7 +940,7 @@ export function useSampleSource({
   // Scout shops in its browser.
   const [browser] = useState(() => sampleBrowser([ids.scout]));
   return {
-    data: toData(state, vaultView),
+    data: toData(state, secretsView),
     intents,
     browser,
     overlays: (

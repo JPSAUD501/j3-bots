@@ -21,8 +21,10 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * have neither `hostId` nor `hopLimit`, and a room's bots go quiet past a
  * fixed limit since the operator last wrote there (`chain-stopped` with
  * `limit: "room"`). 11 is 0.9.0's, once for all its changes: the skills
- * (`SkillRpcs`), who changed a connector last (`Connector.lastChange`), and
- * no connector suggestion card.
+ * (`SkillRpcs`), who changed a connector last (`Connector.lastChange`), no
+ * connector suggestion card, and the vault became secrets (`SecretsRpcs` in
+ * place of the vault's requests, the `secret-ask` card in place of the
+ * save-login card, no `Bot.vault`).
  * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
 export const PROTOCOL_VERSION = 11;

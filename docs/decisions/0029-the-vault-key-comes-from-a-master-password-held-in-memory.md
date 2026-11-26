@@ -1,6 +1,6 @@
 # 0029: The vault's key comes from a master password, held in memory
 
-**Status:** Proposed
+**Status:** Superseded by [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md). The password cost every restart and did not keep the key from a bot's shell while the vault was open; the key is now in a key file of the home.
 
 ## Context
 

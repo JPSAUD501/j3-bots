@@ -9,7 +9,6 @@ import {
   previousStep,
   providerGate,
   showsConnect,
-  showsVault,
 } from "@j3-bots/client-runtime/presentation";
 import { avatarCast, firstRun, springs } from "@j3-bots/design-tokens";
 import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
@@ -33,7 +32,6 @@ import { CommandLine } from "../components/CommandLine";
 import { type ProviderActions, ProviderFix } from "../components/ProviderFix";
 import { engineFindings, type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
-import { SetupVaultForm, type VaultAccess } from "../components/vault/VaultForms";
 import { cn } from "../lib/cn";
 import { Cast, type Lead } from "./Cast";
 import { ARRIVING, openArrived } from "./handoff";
@@ -94,8 +92,6 @@ interface OnboardingProps {
    * bot, as while the server on this computer starts; `null` for nothing.
    */
   readonly waiting?: string | null;
-  /** The server's vault: while it has no password, a step offers to set one. */
-  readonly vault?: VaultAccess;
 }
 
 type Direction = "forward" | "back";
@@ -123,7 +119,6 @@ export function Onboarding({
   footer,
   providerSetup,
   waiting = null,
-  vault,
 }: OnboardingProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -145,8 +140,6 @@ export function Onboarding({
   const [failure, setFailure] = useState<Failure | null>(null);
   // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
   const [connectShown, setConnectShown] = useState(initialStep === "connect");
-  // Likewise for the vault's step, which setting the password there must not take away.
-  const [vaultShown, setVaultShown] = useState(initialStep === "vault");
   // Whether the bot exists: the arrival names it only then.
   const [created, setCreated] = useState(initialStep === "arrival");
   // Counts what the operator does to the bot, so it answers each with a hop.
@@ -155,7 +148,6 @@ export function Onboarding({
   const botName = name.trim() === "" ? fallbackName : name.trim();
   const flow: OnboardingFlow = {
     connect: showsConnect(engine, connectShown),
-    vault: vault !== undefined && showsVault(vault.view, vaultShown),
   };
 
   // The cast's first bot is the bot being made: leaving the welcome, it is carried from where
@@ -166,7 +158,6 @@ export function Onboarding({
   const liftOff = useRef<Box | null>(null);
   const go = (to: OnboardingStep, direction: Direction) => {
     if (to === "connect") setConnectShown(true);
-    if (to === "vault") setVaultShown(true);
     if (step === "welcome" && leadRef.current !== null) liftOff.current = boxOf(leadRef.current);
     setView((now) => ({
       step: to,
@@ -305,16 +296,6 @@ export function Onboarding({
               setPokes((count) => count + 1);
             }}
             ready={nextStep("look", flow) === "arrival"}
-            failure={failure}
-            onContinue={forward}
-          />
-        );
-      case "vault":
-        return vault === undefined ? null : (
-          <VaultStep
-            vault={vault}
-            name={botName}
-            creates={nextStep("vault", flow) === "arrival"}
             failure={failure}
             onContinue={forward}
           />
@@ -887,60 +868,6 @@ function ConnectStep({
         />
         {text.status.text}
       </p>
-    </StepFrame>
-  );
-}
-
-/**
- * The vault's master password, which the operator may set now or skip: a
- * password set here stays set, and the step only moves on. Once it is set,
- * Back and forth through it shows that, and Continue.
- */
-function VaultStep({
-  vault,
-  name,
-  creates,
-  failure,
-  onContinue,
-}: {
-  readonly vault: VaultAccess;
-  readonly name: string;
-  /** Whether the next step is the arrival, so moving on creates the bot. */
-  readonly creates: boolean;
-  readonly failure: Failure | null;
-  readonly onContinue: () => void;
-}) {
-  const { t } = useI18n();
-  const set = vault.view._tag === "ready" && vault.view.status.state !== "uninitialized";
-  const next = creates ? t("onboarding.create", { name }) : t("onboarding.continue");
-  return (
-    <StepFrame
-      actions={
-        <>
-          {creates && <FailureLine failure={failure} name={name} />}
-          {set && <BigButton onClick={onContinue}>{next}</BigButton>}
-        </>
-      }
-    >
-      <StepTitle>{t("onboarding.vault.title")}</StepTitle>
-      <p className="text-lg text-pretty text-muted-foreground">{t("onboarding.vault.body")}</p>
-      {set ? (
-        <p role="status" className="flex items-center gap-2 text-sm font-medium text-success">
-          <span aria-hidden className="size-2 rounded-full bg-current" />
-          {t("onboarding.vault.done")}
-        </p>
-      ) : (
-        <SetupVaultForm
-          intents={vault.intents}
-          onDone={onContinue}
-          className="w-full"
-          actions={
-            <Button variant="ghost-muted" size="sm" onClick={onContinue}>
-              {t("onboarding.vault.skip")}
-            </Button>
-          }
-        />
-      )}
     </StepFrame>
   );
 }

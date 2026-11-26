@@ -95,13 +95,13 @@ Done when a conversation started on one device continues on the others with noth
 
 **Status.** Built for 0.3.0 on Linux x64 and Windows x64. On Apple silicon it is built but not offered until it has run on a Mac; an Intel Mac connects to a server only. A phone reaching these bots from outside the home network is a later step.
 
-## The browser, the vault and connectors
+## The browser, secrets and connectors
 
-Decided by the owner on 2026-11-23, after 0.3.0, for 0.4.0. The walkthrough is [A bot's browser, the vault and connectors](operations/browser-vault-and-connectors.md); what guards each part is in [Security](architecture/security.md#the-browser-the-vault-and-connectors).
+Decided by the owner on 2026-11-23, after 0.3.0, for 0.4.0. The walkthrough is [A bot's browser, secrets and connectors](operations/browser-secrets-and-connectors.md); what guards each part is in [Security](architecture/security.md#the-browser-secrets-and-connectors).
 
 - **The bot's browser.** A bot uses the engine's browser on the host only once its switch is on. The operator watches the page it works in from any client, takes control and hands it back, and a bot that meets a check, a sign-in, a second factor, a QR code or a passkey asks for help on a card instead of getting around it. One profile keeps the operator's sign-ins for every bot that has the browser.
-- **The vault.** Logins saved per site, sealed on the server under a master password held only in memory, unlocked from any client after each start, with one-time codes. A bot asks for a login on a card, and the server types a login the bot may use into its page without handing it the value.
-- **Connectors.** MCP servers to find in a curated list and the MCP Registry, or to add by address or by command, for one bot, some or all. The server signs in, OAuth included, keeps the sign-in in the vault, renews it and makes the calls; a connector's tools follow the bot's permission mode, and a change to them waits for the operator.
+- **The vault.** Logins saved per site, with one-time codes, sealed on the server. A bot asks for a login on a card, and the server types a login the bot may use into its page without handing it the value. 0.4.0 sealed them under a master password held only in memory; from 0.9.0 they are Secrets, with no password ([decision 0046](decisions/0046-secrets-the-operator-types-a-bot-uses-a-reference.md)).
+- **Connectors.** MCP servers to find in a curated list and the MCP Registry, or to add by address or by command, for one bot, some or all. The server signs in, OAuth included, keeps the sign-in with the operator's secrets, renews it and makes the calls; a connector's tools follow the bot's permission mode, and a change to them waits for the operator.
 - **Visuals.** A chart, a table, a diagram or a mockup a bot builds, shown in its message on the web, the desktop and Android, shut in a frame with no network.
 
 **Status.** Built for 0.4.0, in review, not released. Not proven yet:

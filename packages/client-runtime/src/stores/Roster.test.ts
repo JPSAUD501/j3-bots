@@ -31,7 +31,6 @@ const bot = (
     permissionMode: "auto",
     primary: false,
     browser: false,
-    vault: false,
     pinned: options.pinned ?? false,
     hidden: options.hidden ?? false,
     sectionId: null,

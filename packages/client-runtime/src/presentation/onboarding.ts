@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus, Language } from "@j3-bots/contracts";
-import type { VaultView } from "../stores/Vault.ts";
 import { providerGate } from "./engine.ts";
 
 /**
@@ -8,17 +7,14 @@ import { providerGate } from "./engine.ts";
  * arrival; its conversation opens after it.
  * - `welcome`: what bots are;
  * - `name` and `look`: the first bot, each with a default, so Continue always works;
- * - `vault`: only while the server's vault has no master password. Setting
- *   one is skippable: Settings sets it later;
  * - `connect`: only while no provider can run the bot. It never holds the bot
  *   back: the bot is created anyway, and says hello once a provider can run it;
  * - `arrival`: the bot is being created, and then it is here.
  */
-export type OnboardingStep = "welcome" | "name" | "look" | "vault" | "connect" | "arrival";
+export type OnboardingStep = "welcome" | "name" | "look" | "connect" | "arrival";
 
 /** Which of the steps that come only when needed the first run shows. */
 export interface OnboardingFlow {
-  readonly vault: boolean;
   readonly connect: boolean;
 }
 
@@ -35,20 +31,10 @@ export const showsConnect = (engine: EngineStatus | null, shown: boolean): boole
   engine.state._tag !== "ready" ||
   providerGate(engine)._tag !== "ready";
 
-/**
- * Whether the first run shows `vault`: while the server's vault, as last
- * heard, has no master password, and, once it was `shown`, until the first
- * run ends, so setting one there keeps the step for Back. A server without a
- * vault, or one not heard from yet, has none to set.
- */
-export const showsVault = (vault: VaultView, shown: boolean): boolean =>
-  shown || (vault._tag === "ready" && vault.status.state === "uninitialized");
-
 const order = (flow: OnboardingFlow): ReadonlyArray<OnboardingStep> => [
   "welcome",
   "name",
   "look",
-  ...(flow.vault ? (["vault"] as const) : []),
   ...(flow.connect ? (["connect"] as const) : []),
   "arrival",
 ];

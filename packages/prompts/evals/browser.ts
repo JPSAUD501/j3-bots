@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { CredentialField, FillOutcome, FillRefusal } from "@j3-bots/contracts";
+import type { FillField, FillOutcome, FillRefusal } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { DECODE_OPTIONS, FILL_NOTES, tools } from "../src/index.ts";
 import type { FunctionTool } from "./model.ts";
 
 // A stand-in for the engine's browser and the server's fill, as far as the
-// browser and vault scenarios need them: a tab the bot opens, reads and acts
+// browser and secrets scenarios need them: a tab the bot opens, reads and acts
 // on, which the operator may hold, and, when the scenario gives saved logins,
-// `list_credentials` and `fill_credential` answered as the server answers
+// `list_secrets` and `fill_credential` answered as the server answers
 // them (`docs/architecture/server.md`, "Filling a login"): the page's origin
 // must equal one of the login's, and the value goes to whichever element the
 // bot last clicked.
@@ -29,7 +29,7 @@ export interface PageElement {
   readonly role: "textbox" | "button" | "link" | "checkbox";
   readonly name: string;
   /** What a field asks for, when it is a sign-in field; a text field asks for nothing of a login. */
-  readonly asks?: CredentialField;
+  readonly asks?: FillField;
   /** A link's address. */
   readonly href?: string;
 }
@@ -65,8 +65,8 @@ export interface BrowserSetup {
 /** One `fill_credential` call, as the server took it. */
 export interface Fill {
   readonly step: number;
-  readonly credential: string;
-  readonly field: CredentialField;
+  readonly secret: string;
+  readonly field: FillField;
   /** The page's address when it was asked for, or null with no tab open. */
   readonly url: string | null;
   /** The element that had focus, or null when the bot had clicked none. */
@@ -192,7 +192,7 @@ export const snapshotOf = (page: FixturePage, focus: PageElement | null = null):
 const NO_TAB = json({ error: "No tab is open. Open a page first." });
 
 /**
- * The browser and the vault through one turn: the page the front tab shows,
+ * The browser and the secrets through one turn: the page the front tab shows,
  * the element the bot last clicked, and every fill and typing it asked for.
  */
 export class FixtureBrowser {
@@ -232,11 +232,15 @@ export class FixtureBrowser {
         if (target._tag === "None") return json({ error: "`url` must be a string." });
         return this.#open(target.value.url);
       }
-      case "list_credentials":
+      case "list_secrets":
         if (this.#setup.logins === undefined) return undefined;
         return json({
           status: "listed",
-          credentials: this.#setup.logins,
+          secrets: this.#setup.logins.map((login) => ({
+            reference: `secret:${login.name}`,
+            kind: "login",
+            origins: login.origins,
+          })),
           note: FILL_NOTES.listed,
         });
       case "fill_credential":
@@ -287,9 +291,10 @@ export class FixtureBrowser {
   #fill(step: number, input: unknown): string {
     const decoded = decodeFill(input);
     if (decoded._tag === "None") return json({ error: "The call did not match its schema." });
-    const { credential, field } = decoded.value;
+    const { secret, field } = decoded.value;
     const refuse = (reason: FillRefusal): FillOutcome => ({ _tag: "refused", reason });
-    const login = this.#setup.logins?.find((candidate) => candidate.name === credential);
+    const name = secret.replace(/^secret:/, "");
+    const login = this.#setup.logins?.find((candidate) => candidate.name === name);
     const url = this.#page?.url ?? null;
     const origin = url === null ? null : originOf(url);
     const outcome: FillOutcome =
@@ -310,7 +315,7 @@ export class FixtureBrowser {
     if (url !== null && outcome._tag === "refused" && outcome.reason === "origin") {
       this.#refused.add(url);
     }
-    this.fills.push({ step, credential, field, url, focus: this.#focus, outcome });
+    this.fills.push({ step, secret, field, url, focus: this.#focus, outcome });
     switch (outcome._tag) {
       case "filled":
         return json({
@@ -324,8 +329,6 @@ export class FixtureBrowser {
           reason: outcome.reason,
           note: FILL_NOTES[outcome.reason],
         });
-      case "locked":
-        return json({ status: "locked", note: FILL_NOTES.locked });
     }
   }
 }

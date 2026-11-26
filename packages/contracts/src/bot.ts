@@ -157,12 +157,6 @@ export const Bot = Schema.Struct({
    */
   browser: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   /**
-   * The bot may have the server type the vault's logins it is allowed into
-   * its browser tab (`fill_credential`). Off unless the operator turns it on.
-   * False from a server that predates it.
-   */
-  vault: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
-  /**
    * The roster section the bot is in, or null for none. Null from a server
    * that predates sections, whose roster sends no `sections`.
    */

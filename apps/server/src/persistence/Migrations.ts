@@ -41,6 +41,7 @@ import Migration0033 from "./migrations/0033_room_relays.ts";
 import Migration0034 from "./migrations/0034_room_rounds.ts";
 import Migration0035 from "./migrations/0035_room_views.ts";
 import Migration0036 from "./migrations/0036_harness_updates.ts";
+import Migration0037 from "./migrations/0037_secret_asks.ts";
 import Migration0040 from "./migrations/0040_bots_manage_mcp_and_skills.ts";
 
 /**
@@ -84,6 +85,7 @@ const migrations = SqliteMigrator.fromRecord({
   "34_room_rounds": Migration0034,
   "35_room_views": Migration0035,
   "36_harness_updates": Migration0036,
+  "37_secret_asks": Migration0037,
   "40_bots_manage_mcp_and_skills": Migration0040,
 });
 

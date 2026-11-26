@@ -4,7 +4,6 @@ import type {
   BrowserTabRef,
   ConnectorGlyph,
   ConnectorId,
-  CredentialId,
   EntryId,
   ListingRef,
   MemoryPath,
@@ -12,6 +11,7 @@ import type {
   RoomId,
   RosterItemKey,
   RoutineId,
+  SecretId,
   SkillName,
   SkillScope,
 } from "@j3-bots/contracts";
@@ -59,9 +59,9 @@ import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
 import { BrowserScreen } from "./browser/BrowserScreen.tsx";
 import { useColor } from "./theme.ts";
-import { CredentialFormScreen } from "./vault/CredentialFormScreen.tsx";
-import { CredentialScreen } from "./vault/CredentialScreen.tsx";
-import { VaultScreen } from "./vault/VaultScreen.tsx";
+import { SecretFormScreen } from "./secrets/SecretFormScreen.tsx";
+import { SecretScreen } from "./secrets/SecretScreen.tsx";
+import { SecretsScreen } from "./secrets/SecretsScreen.tsx";
 import { Toasts } from "./toast.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
 import { FlightHost } from "./onboarding/handoff.tsx";
@@ -77,7 +77,8 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * `share` picks where something another app shared goes, over the rest.
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
- * The vault's saved logins open from Settings, then one login, then its form.
+ * The operator's secrets open from Settings and from a connector that cannot
+ * read them, then one secret, then its form.
  * The connectors' screens open from Settings, a bot's details and a card:
  * their list and the gallery, a gallery entry, one connector, and adding one
  * of the operator's own. `forBot` is the bot a new connector is for at first.
@@ -109,10 +110,10 @@ export type Screens = {
   settings: undefined;
   settingsPage: { readonly page: SettingsPage };
   hidden: undefined;
-  vault: undefined;
-  credential: { readonly id: CredentialId };
-  /** A new login with `id` null; otherwise the one to change. */
-  credentialForm: { readonly id: CredentialId | null };
+  secrets: undefined;
+  secret: { readonly id: SecretId };
+  /** A new secret with `id` null; otherwise the one to change. */
+  secretForm: { readonly id: SecretId | null };
   connectors: { readonly forBot: BotId | null } | undefined;
   connectorListing: {
     readonly ref: ListingRef;
@@ -308,14 +309,10 @@ export function Main() {
                     title: settingsPageWords(route.params.page, i18n).title,
                   })}
                 />
-                {/* The vault's screens set their own titles. */}
-                <Stack.Screen name="vault" component={VaultScreen} />
-                <Stack.Screen name="credential" component={CredentialScreen} />
-                <Stack.Screen
-                  name="credentialForm"
-                  options={sheet}
-                  component={CredentialFormScreen}
-                />
+                {/* The secrets' screens set their own titles. */}
+                <Stack.Screen name="secrets" component={SecretsScreen} />
+                <Stack.Screen name="secret" component={SecretScreen} />
+                <Stack.Screen name="secretForm" options={sheet} component={SecretFormScreen} />
                 {/* The connectors' screens set their own titles. */}
                 <Stack.Screen name="connectors" component={ConnectorsScreen} />
                 <Stack.Screen name="connectorListing" component={ListingScreen} />

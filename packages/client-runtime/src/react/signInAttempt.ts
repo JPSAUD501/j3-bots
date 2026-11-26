@@ -53,8 +53,7 @@ export type SignInPhase =
 
 const startProblem = (failure: IntentFailure): SignInProblem => {
   if (failure._tag === "not-paired") return "not-paired";
-  if (refusedWith(failure, "vault-locked")) return "vault-locked";
-  if (refusedWith(failure, "vault-not-set-up")) return "vault-not-set-up";
+  if (refusedWith(failure, "secrets-unavailable")) return "secrets-unavailable";
   if (refusedWith(failure, "sign-in-unsupported")) return "unsupported";
   if (refusedWith(failure, "registration-refused")) return "registration-refused";
   if (refusedWith(failure, "sign-in-unreachable")) return "unreachable";
@@ -64,8 +63,7 @@ const startProblem = (failure: IntentFailure): SignInProblem => {
 const finishProblem = (failure: IntentFailure): SignInProblem => {
   if (failure._tag === "not-paired") return "not-paired";
   if (failure._tag === "refused" && failure.error._tag === "NotFound") return "expired";
-  if (refusedWith(failure, "vault-locked")) return "vault-locked";
-  if (refusedWith(failure, "vault-not-set-up")) return "vault-not-set-up";
+  if (refusedWith(failure, "secrets-unavailable")) return "secrets-unavailable";
   if (refusedWith(failure, "sign-in-unreachable")) return "unreachable";
   if (failure._tag === "refused") return "refused";
   return "start-failed";

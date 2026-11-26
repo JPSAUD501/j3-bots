@@ -35,7 +35,8 @@ export type ConnectorUnavailable =
   | "needs-sign-in"
   /** The tool changed at its server, and the operator has not accepted the change. */
   | "held"
-  | "vault-locked"
+  /** The operator's secrets cannot be read now (`SecretsState`). */
+  | "secrets-unavailable"
   | "unreachable"
   | "timed-out"
   | "too-large"
@@ -48,8 +49,8 @@ const UNAVAILABLE: { readonly [K in ConnectorUnavailable]: (connector: string) =
     `${c} needs your user to sign in again, and they were shown a card for it. Tell them briefly; don't retry.`,
   held: (c) =>
     `This tool changed at ${c}'s server, and your user hasn't accepted the change yet, so J3 Bots didn't call it. Tell them briefly if you need it; don't retry.`,
-  "vault-locked": (c) =>
-    `${c} can't be used while J3 Bots' vault is locked. Your user can unlock it from any of their devices. Tell them briefly; don't retry.`,
+  "secrets-unavailable": (c) =>
+    `${c} can't be used until your user opens their secrets in J3 Bots' settings. Tell them briefly; don't retry.`,
   unreachable: (c) => `${c}'s server could not be reached. Try again later, or tell your user.`,
   "timed-out": (c) =>
     `${c}'s server did not answer in time, so the call was stopped. It may or may not have taken effect.`,

@@ -5,7 +5,7 @@ import {
   type ConnectorCredentials,
   type CredentialsUnavailable,
   NeedsSignIn,
-  VaultLocked,
+  SecretsUnavailable,
   Withdrawn,
 } from "@j3-bots/connectors";
 import type { Conflict, ConnectorId } from "@j3-bots/contracts";
@@ -16,46 +16,49 @@ import * as Schema from "effect/Schema";
 import {
   type ConnectorSecret,
   type NamedSecret,
-  ConnectorId as VaultConnectorId,
-} from "../vault/ConnectorSecret.ts";
-import type { Vault } from "../vault/Vault.ts";
+  ConnectorId as SecretsConnectorId,
+} from "../secrets/ConnectorSecret.ts";
+import type { Secrets } from "../secrets/Secrets.ts";
 import type { ConnectorSignIns } from "./auth.ts";
 import type { StoredConnector } from "./ConnectorStore.ts";
 
 /**
  * How a connector's requests are signed: the headers and the address from
- * its vault record, and an OAuth connector's token from its sign-in, each
+ * its connector secret, and an OAuth connector's token from its sign-in, each
  * read when a request is made.
  */
 
-/** The vault files a connector's secrets under the connector's own id. */
-export const vaultIdOf: (id: ConnectorId) => VaultConnectorId = Schema.decodeSync(VaultConnectorId);
+/** A connector's secrets are kept under the connector's own id. */
+export const connectorSecretIdOf: (id: ConnectorId) => SecretsConnectorId =
+  Schema.decodeSync(SecretsConnectorId);
 
 const unavailable = (conflict: Conflict): CredentialsUnavailable =>
-  conflict.reason === "vault-locked"
-    ? new VaultLocked()
+  conflict.reason === "secrets-unavailable"
+    ? new SecretsUnavailable()
     : new AuthFailing({ reason: "secret-unusable" });
 
 /**
- * The connector's vault record. Every connector has one: its address is
+ * The connector's secret. Every connector has one: its address is
  * there, since a key can be part of it.
  */
 const secretOf = (
-  vault: typeof Vault.Service,
+  secrets: typeof Secrets.Service,
   connector: StoredConnector,
 ): Effect.Effect<Option.Option<ConnectorSecret>, CredentialsUnavailable> =>
-  vault.connectorSecrets.get(vaultIdOf(connector.id)).pipe(Effect.mapError(unavailable));
+  secrets.connectorSecrets
+    .get(connectorSecretIdOf(connector.id))
+    .pipe(Effect.mapError(unavailable));
 
 /**
- * The URL to reach the connector at, from the vault: the one the operator
+ * The URL to reach the connector at, from its secret: the one the operator
  * typed, or the one a gallery entry's form gave when it was added.
  */
 export const addressOf = (
-  vault: typeof Vault.Service,
+  secrets: typeof Secrets.Service,
   connector: StoredConnector,
 ): Effect.Effect<URL, CredentialsUnavailable> =>
   Effect.gen(function* () {
-    const secret = yield* secretOf(vault, connector);
+    const secret = yield* secretOf(secrets, connector);
     const address = Option.flatMapNullishOr(secret, (s) => s.address);
     const url = Option.flatMapNullishOr(address, (value) => URL.parse(Redacted.value(value)));
     if (Option.isNone(url)) return yield* new AuthFailing({ reason: "secret-unusable" });
@@ -78,18 +81,18 @@ export const hiddenOf = (
 
 /**
  * A command connector's command line and environment, as its process is
- * started with them: from its vault record alone, which one write replaces
+ * started with them: from its secret alone, which one write replaces
  * whole, never from the program the connector's row shows.
  */
 export const commandOf = (
-  vault: typeof Vault.Service,
+  secrets: typeof Secrets.Service,
   connector: StoredConnector,
 ): Effect.Effect<
   NonNullable<ConnectorSecret["command"]> & Pick<ConnectorSecret, "env">,
   CredentialsUnavailable
 > =>
   Effect.gen(function* () {
-    const secret = yield* secretOf(vault, connector);
+    const secret = yield* secretOf(secrets, connector);
     if (Option.isNone(secret) || secret.value.command === null) {
       return yield* new AuthFailing({ reason: "secret-unusable" });
     }
@@ -97,19 +100,19 @@ export const commandOf = (
   });
 
 /**
- * Signs the connector's requests from the vault and, for an OAuth connector,
+ * Signs the connector's requests from its secret and, for an OAuth connector,
  * its sign-in. `allowed` is asked first, right before each request goes out:
  * a request it refuses is withdrawn unsigned.
  */
 export const credentialsOf = (
-  vault: typeof Vault.Service,
+  secrets: typeof Secrets.Service,
   signIns: typeof ConnectorSignIns.Service,
   connector: StoredConnector,
   allowed: Effect.Effect<boolean>,
 ): ConnectorCredentials => ({
   current: Effect.gen(function* () {
     if (!(yield* allowed)) return yield* new Withdrawn();
-    const secret = yield* secretOf(vault, connector);
+    const secret = yield* secretOf(secrets, connector);
     const headers = Option.match(secret, { onNone: () => [], onSome: (s) => s.headers });
     const hidden = Option.match(secret, {
       onNone: () => [],

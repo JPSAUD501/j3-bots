@@ -9,16 +9,18 @@ const first = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
 const later = DateTime.makeUnsafe("2026-11-20T12:05:00Z");
 
 describe("statusOf", () => {
-  it("puts a locked vault before a sign-in, and a sign-in before a failing server", () => {
+  it("puts unreadable secrets before a sign-in, and a sign-in before a failing server", () => {
     const failing = Option.some({ reason: "unreachable" as const, since: first });
-    expect(statusOf({ vaultLocked: true, signIn: Option.some("expired"), failing })._tag).toBe(
-      "vault-locked",
-    );
-    expect(statusOf({ vaultLocked: false, signIn: Option.some("expired"), failing })).toEqual({
+    expect(
+      statusOf({ secretsUnavailable: true, signIn: Option.some("expired"), failing })._tag,
+    ).toBe("secrets-unavailable");
+    expect(
+      statusOf({ secretsUnavailable: false, signIn: Option.some("expired"), failing }),
+    ).toEqual({
       _tag: "needs-sign-in",
       reason: "expired",
     });
-    expect(statusOf({ vaultLocked: false, signIn: Option.none(), failing })).toEqual({
+    expect(statusOf({ secretsUnavailable: false, signIn: Option.none(), failing })).toEqual({
       _tag: "failing",
       reason: "unreachable",
       since: first,

@@ -12,14 +12,14 @@ import { openSignInPage, phoneSignInRoute } from "../platform/signInRelay.ts";
 /**
  * What the connectors screens ask of the client runtime, and of the phone:
  * how a sign-in's browser comes back here (`signInRoute`), opening its page
- * (`openSignIn`) or a service's setup page (`openPage`), and opening where
- * the vault is unlocked or set up.
+ * (`openSignIn`) or a service's setup page (`openPage`), and opening the
+ * operator's secrets (`openSecrets`) when a connector cannot read them.
  */
 export interface ConnectorsIntents extends Omit<ConnectorsClient, "state"> {
   readonly signInRoute: SignInRoute;
   readonly openSignIn: (url: string) => void;
   readonly openPage: (url: string) => void;
-  readonly openVault: () => void;
+  readonly openSecrets: () => void;
 }
 
 export function useConnectorsIntents(): ConnectorsIntents {
@@ -35,9 +35,9 @@ export function useConnectorsIntents(): ConnectorsIntents {
     openPage: (url) => {
       void Linking.openURL(url).catch(() => undefined);
     },
-    // The vault is unlocked and set up on its page of Settings, over the connectors, which wait
-    // as they were under it.
-    openVault: () => navigation.push("settingsPage", { page: "vault" }),
+    // Secrets are on their page of Settings, over the connectors, which wait as they
+    // were under it.
+    openSecrets: () => navigation.push("settingsPage", { page: "secrets" }),
   };
 }
 

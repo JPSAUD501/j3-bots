@@ -133,7 +133,6 @@ export function bot(
     permissionMode: "supervised",
     primary: false,
     browser: false,
-    vault: false,
     pinned: false,
     hidden: false,
     sectionId: null,

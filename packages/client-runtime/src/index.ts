@@ -4,7 +4,6 @@ export {
   type ConnectorsClient,
   type SkillsClient,
   type ConversationHandle,
-  type VaultHandle,
   createJ3Client,
   type DownloadResult,
   type J3Client,
@@ -13,6 +12,7 @@ export {
   type PairHandle,
   type PairResult,
   type Platform,
+  type SecretsHandle,
   type ServerUpdateHandle,
   type ServerUpdateStart,
   type UsageHandle,
@@ -142,20 +142,19 @@ export {
   type SettingsSave,
   type SettingsSaves,
 } from "./stores/Settings.ts";
+export {
+  type NewSecret,
+  Secrets,
+  type SecretsFailure,
+  type SecretsResult,
+  type SecretsView,
+} from "./stores/Secrets.ts";
 export type { Synced } from "./stores/synced.ts";
 export {
   type PairConversation,
   type PairConversationState,
   TeammatePairs,
 } from "./stores/TeammatePairs.ts";
-export {
-  type CredentialChanges,
-  type NewCredential,
-  Vault,
-  type VaultFailure,
-  type VaultResult,
-  type VaultView,
-} from "./stores/Vault.ts";
 export {
   type RecentTurns,
   type RecentTurnsState,

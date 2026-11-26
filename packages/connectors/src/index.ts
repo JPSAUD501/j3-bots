@@ -39,13 +39,13 @@ export {
   NeedsSignIn,
   NotMcp,
   ResponseTooLarge,
+  SecretsUnavailable,
   ServerError,
   TimedOut,
   Unreachable,
   UnreachableReason,
   UrlRefusal,
   UrlRefused,
-  VaultLocked,
   Withdrawn,
 } from "./errors.ts";
 export {

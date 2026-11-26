@@ -2,7 +2,7 @@
 
 **Draft.** Connectors are new in 0.4.0, and no step below has been run against Slack yet. What this page says about Slack comes from Slack's documentation and is **Assumed** until a sign-in confirms it.
 
-Slack's MCP server does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to it on its own. You create a Slack app and give J3 Bots its client ID and secret when you add the connector. J3 Bots keeps them in the vault and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
+Slack's MCP server does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to it on its own. You create a Slack app and give J3 Bots its client ID and secret when you add the connector. J3 Bots keeps them in its secrets and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
 
 ## Where your sign-ins return
 

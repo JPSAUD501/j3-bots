@@ -25,9 +25,9 @@ import * as Stream from "effect/Stream";
 import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { AS_ORIGIN, TestOAuth } from "../testing/oauth.ts";
-import { Vault } from "../vault/Vault.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 import { ConnectorReach, Connectors } from "./Connectors.ts";
-import { vaultIdOf } from "./credentials.ts";
+import { connectorSecretIdOf } from "./credentials.ts";
 import { ConnectorAuth } from "./oauth/ConnectorAuth.ts";
 import { CURATED, curatedEntry } from "./sources/Curated.ts";
 import { connectForm } from "./sources/form.ts";
@@ -93,7 +93,6 @@ const withVault = TestDomain.layerWithRegistry([
   },
 ]).pipe(Layer.provide(reach));
 
-const PASSWORD = Redacted.make("correct horse battery");
 const LAPTOP = DeviceId.make("device-laptop");
 const KEY = "github_pat_11AAAAAAA0first";
 const NEW_KEY = "github_pat_11AAAAAAA0second";
@@ -124,9 +123,8 @@ const value = (key: FieldKey, text: string): ConnectorFieldValue => ({
   value: Redacted.make(text),
 });
 
-/** Sets the vault up and makes a bot. */
+/** Makes a bot. */
 const setUp = Effect.gen(function* () {
-  yield* (yield* Vault).setup(PASSWORD);
   const bot = yield* (yield* Bots).create({
     commandId: CommandId.make("ana"),
     draft: { name: "Ana" },
@@ -137,15 +135,15 @@ const setUp = Effect.gen(function* () {
 /** The connector's sealed record. */
 const secretOf = (id: ConnectorId) =>
   Effect.gen(function* () {
-    return yield* (yield* Vault).connectorSecrets.get(vaultIdOf(id));
+    return yield* (yield* Secrets).connectorSecrets.get(connectorSecretIdOf(id));
   });
 
 /** Points the connector's sealed address at `url`, as its server moved there. */
 const pointAt = (id: ConnectorId, url: string) =>
   Effect.gen(function* () {
-    const vault = yield* Vault;
-    const secret = Option.getOrThrow(yield* vault.connectorSecrets.get(vaultIdOf(id)));
-    yield* vault.connectorSecrets.put({ ...secret, address: Redacted.make(url) });
+    const secrets = yield* Secrets;
+    const secret = Option.getOrThrow(yield* secrets.connectorSecrets.get(connectorSecretIdOf(id)));
+    yield* secrets.connectorSecrets.put({ ...secret, address: Redacted.make(url) });
   });
 
 /** The connector once `predicate` holds of it, from `connectors.subscribe`. */

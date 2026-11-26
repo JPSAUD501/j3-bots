@@ -1204,7 +1204,7 @@ function LiveShell({
 
   const signIns = useReadable(j3.signIns);
   const providerSetup = localProviderSetup(j3);
-  const vault = useReadable(j3.vault.view);
+  const secrets = useReadable(j3.secrets.view);
 
   // A connector's sign-in comes back to the desktop app through its loopback; to a
   // browser, through a server reached over https, else as an address the operator pastes.
@@ -1229,9 +1229,9 @@ function LiveShell({
     openPage: (url) => {
       window.open(url, "_blank", "noopener");
     },
-    // The vault is unlocked and set up in Settings, over the connectors, which wait as they were.
-    openVault: () => {
-      setSettingsPage("vault");
+    // Secrets are on their page of Settings, over the connectors, which wait as they were.
+    openSecrets: () => {
+      setSettingsPage("secrets");
       setSettingsOpen(true);
     },
   };
@@ -1240,7 +1240,7 @@ function LiveShell({
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
     signIns,
-    vault,
+    secrets,
     roster,
     sections,
     conversation: (asked) =>
@@ -1469,7 +1469,7 @@ function LiveShell({
     // The viewer opens over the bot's conversation, on the tab the address names.
     openBrowser: (botId, tab) =>
       void navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
-    dismissLogin: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
+    declineSecretAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
     resendMessage: (commandId, mentions) =>
@@ -1583,13 +1583,6 @@ function LiveShell({
         j3.dismissBotSave(bot.id);
         if (stillPaired()) say(t("details.browser.failed", { name: bot.profile.name }));
       }),
-    setVault: (bot, enabled) =>
-      void j3.updateBot(bot.id, { vault: enabled }).then((result) => {
-        if (result._tag !== "failed") return;
-        // As for the browser: the switch shows the bot as the server has it.
-        j3.dismissBotSave(bot.id);
-        if (stillPaired()) say(t("details.vault.failed", { name: bot.profile.name }));
-      }),
     openMemoryFile,
     freshStart: (botId, name) =>
       void j3
@@ -1619,7 +1612,7 @@ function LiveShell({
     refreshSettings: j3.refreshSettings,
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
     providerActions: providerActionsOf(j3),
-    vault: j3.vault,
+    secrets: j3.secrets,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

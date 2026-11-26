@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { DEFAULT_SESSION_LIMITS, type SessionLimits } from "@j3-bots/connectors";
+import { DEFAULT_SESSION_LIMITS } from "@j3-bots/connectors";
 import { type FakeOptions, fakeMcpServer } from "@j3-bots/connectors/testing";
 import {
   CommandId,
@@ -22,36 +22,22 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
+import * as Domain from "../domain.ts";
+import { Secrets } from "../secrets/Secrets.ts";
+import { reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { Vault } from "../vault/Vault.ts";
-import { ConnectorReach, Connectors, ToolNotOffered } from "./Connectors.ts";
-import { vaultIdOf } from "./credentials.ts";
+import { moveKeyFile } from "../testing/secrets.ts";
+import { Connectors, ToolNotOffered } from "./Connectors.ts";
+import { connectorSecretIdOf } from "./credentials.ts";
 
 const ID = ConnectorId.make("conn_0123456789abcdef");
 const KEY = "key_live_5c4b3a2918f7e6d5";
 const NEW_KEY = "key_live_a1b2c3d4e5f60718";
-const PASSWORD = Redacted.make("correct horse battery");
 
-/**
- * The fake answers over plain HTTP on loopback, which no address an operator
- * adds can name. The test lets the server reach loopback, makes every name
- * unresolvable so the add's first listing fails, then points the connector's
- * sealed address at the fake.
- */
-const domain = TestDomain.layer.pipe(
-  Layer.provide(
-    Layer.succeed(ConnectorReach, {
-      limits: {
-        ...DEFAULT_SESSION_LIMITS,
-        guard: {
-          ...DEFAULT_SESSION_LIMITS.guard,
-          resolve: () => Promise.reject(new Error("no such host")),
-        },
-      } satisfies SessionLimits,
-      loopback: "allow-http",
-    }),
-  ),
-);
+const domain = TestDomain.layer.pipe(Layer.provide(reachFakes));
+
+/** The server alone, for a test that starts it more than once over the same machine. */
+const started = Domain.layer.pipe(Layer.provide(reachFakes));
 
 const remote = (headers: ReadonlyArray<{ readonly name: string; readonly value: string }>) => ({
   _tag: "remote" as const,
@@ -72,8 +58,7 @@ const setUp = (
 ) =>
   Effect.gen(function* () {
     const fake = yield* fakeMcpServer(options);
-    const vault = yield* Vault;
-    yield* vault.setup(PASSWORD);
+    const secrets = yield* Secrets;
     const bots = yield* Bots;
     const ana = yield* bots.create({ commandId: CommandId.make("ana"), draft: { name: "Ana" } });
     const bea = yield* bots.create({ commandId: CommandId.make("bea"), draft: { name: "Bea" } });
@@ -84,15 +69,15 @@ const setUp = (
       grant: { _tag: "bots", ids: [ana.id] },
       by: { _tag: "operator" },
     });
-    const secret = yield* vault.connectorSecrets.get(vaultIdOf(ID));
+    const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID));
     assert.isTrue(Option.isSome(secret));
     if (Option.isSome(secret)) {
-      yield* vault.connectorSecrets.put({ ...secret.value, address: Redacted.make(fake.url) });
+      yield* secrets.connectorSecrets.put({ ...secret.value, address: Redacted.make(fake.url) });
     }
     return { fake, connectors, ana: ana.id, bea: bea.id };
   });
 
-/** Each test with a connector derives the vault's key and talks to a server over a socket. */
+/** Each test with a connector talks to a server over a socket. */
 const SLOW = 20_000;
 
 /** The connector once `predicate` holds of it, from `connectors.subscribe`. */
@@ -173,8 +158,8 @@ describe("Connectors", () => {
 
         yield* connectors.remove({ commandId: CommandId.make("remove"), connectorId: ID });
         assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
-        const vault = yield* Vault;
-        assert.isTrue(Option.isNone(yield* vault.connectorSecrets.get(vaultIdOf(ID))));
+        const secrets = yield* Secrets;
+        assert.isTrue(Option.isNone(yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID))));
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );
@@ -315,28 +300,33 @@ describe("Connectors", () => {
   );
 
   it.effect(
-    "offers no tools while the vault is locked, and answers again once it opens",
+    "offers no tools while the secrets cannot be read, and answers again at a start that reads them",
     () =>
       Effect.gen(function* () {
-        const { connectors, ana } = yield* setUp(
-          { tools: [{ name: "search" }], call: () => ({ _tag: "result", text: "found it" }) },
-          [{ name: "X-Api-Key", value: KEY }],
-        );
-        yield* connectors.toolsFor(ana);
-        yield* awaitConnector(listed);
-        const vault = yield* Vault;
+        const ana = yield* Effect.gen(function* () {
+          const { connectors, ana } = yield* setUp(
+            { tools: [{ name: "search" }], call: () => ({ _tag: "result", text: "found it" }) },
+            [{ name: "X-Api-Key", value: KEY }],
+          );
+          yield* connectors.toolsFor(ana);
+          yield* awaitConnector(listed);
+          return ana;
+        }).pipe(Effect.provide(started));
         const search = { botId: ana, name: "tracker__search", arguments: {} };
 
-        yield* vault.lock;
-        yield* awaitConnector((connector) => connector.status._tag === "vault-locked");
-        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
-        const locked = yield* connectors.call(search);
-        assert.include(locked.text, "vault is locked");
+        yield* moveKeyFile("away");
+        yield* Effect.gen(function* () {
+          const connectors = yield* Connectors;
+          yield* awaitConnector((connector) => connector.status._tag === "secrets-unavailable");
+          assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
+          assert.include((yield* connectors.call(search)).text, "can't be used until");
+        }).pipe(Effect.provide(started));
 
-        // The session that failed to open while it was locked is not kept.
-        yield* vault.unlock(PASSWORD);
-        assert.include((yield* connectors.call(search)).text, "found it");
-      }).pipe(Effect.scoped, Effect.provide(domain)),
+        yield* moveKeyFile("back");
+        yield* Effect.gen(function* () {
+          assert.include((yield* (yield* Connectors).call(search)).text, "found it");
+        }).pipe(Effect.provide(started));
+      }).pipe(Effect.scoped, Effect.provide(Layer.fresh(TestDomain.machine))),
     SLOW,
   );
 
@@ -372,28 +362,36 @@ describe("Connectors", () => {
   );
 
   it.live(
-    "removes a connector while the vault is locked, and its secrets once it opens",
+    "removes a connector while the secrets cannot be read, and its secrets at a start that reads them",
     () =>
       Effect.gen(function* () {
-        const { connectors, ana } = yield* setUp(
+        const ana = yield* setUp(
           { tools: [{ name: "search" }], call: () => ({ _tag: "result", text: "found it" }) },
           [{ name: "X-Api-Key", value: KEY }],
-        );
-        const vault = yield* Vault;
-        yield* vault.lock;
-        yield* connectors.remove({ commandId: CommandId.make("remove"), connectorId: ID });
-        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
-        assert.deepStrictEqual(
-          yield* connectors.subscribe.pipe(Stream.runHead),
-          Option.some({ _tag: "snapshot" as const, connectors: [] }),
+        ).pipe(
+          Effect.map(({ ana }) => ana),
+          Effect.provide(started),
         );
 
-        yield* vault.unlock(PASSWORD);
-        const secret = yield* vault.connectorSecrets
-          .get(vaultIdOf(ID))
-          .pipe(Effect.repeat({ until: Option.isNone, schedule: Schedule.spaced("20 millis") }));
-        assert.isTrue(Option.isNone(secret));
-      }).pipe(Effect.scoped, Effect.provide(domain)),
+        yield* moveKeyFile("away");
+        yield* Effect.gen(function* () {
+          const connectors = yield* Connectors;
+          yield* connectors.remove({ commandId: CommandId.make("remove"), connectorId: ID });
+          assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
+          assert.deepStrictEqual(
+            yield* connectors.subscribe.pipe(Stream.runHead),
+            Option.some({ _tag: "snapshot" as const, connectors: [] }),
+          );
+        }).pipe(Effect.provide(started));
+
+        yield* moveKeyFile("back");
+        yield* Effect.gen(function* () {
+          const secret = yield* (yield* Secrets).connectorSecrets
+            .get(connectorSecretIdOf(ID))
+            .pipe(Effect.repeat({ until: Option.isNone, schedule: Schedule.spaced("20 millis") }));
+          assert.isTrue(Option.isNone(secret));
+        }).pipe(Effect.provide(started));
+      }).pipe(Effect.scoped, Effect.provide(Layer.fresh(TestDomain.machine))),
     SLOW,
   );
 
@@ -428,8 +426,6 @@ describe("Connectors", () => {
     "records who changed a connector last, the operator or a bot, and when",
     () =>
       Effect.gen(function* () {
-        const vault = yield* Vault;
-        yield* vault.setup(PASSWORD);
         const bots = yield* Bots;
         const ana = yield* bots.create({
           commandId: CommandId.make("ana"),
