@@ -33,7 +33,7 @@ import {
 import { fittedMarks, insertMarks, placedMessage, withoutMarks } from "../files/placed.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable, waitFor } from "../Store.ts";
-import { Conversations, type MentionLabel, targetKey } from "./Conversations.ts";
+import { Conversations, keyTarget, type MentionLabel, targetKey } from "./Conversations.ts";
 
 /** A file in the composer, from the moment the operator picks it. */
 export type DraftFile =
@@ -236,6 +236,9 @@ const shown = (kept: Kept): Draft => ({
  * only, as it is, and tries again, after a pause that grows with each
  * failure, under the same checks as every write, until the device keeps it or
  * shows what another window kept instead.
+ *
+ * Every window of the device holds the same drafts: a window shows what
+ * another kept as soon as the device says it changed.
  *
  * One rule keeps a draft whole when several windows hold it. Every operation
  * on a draft (autosave, deletion, Send, Restore) runs under this window's
@@ -754,6 +757,36 @@ export const layer = Layer.effect(
         Queue.offerUnsafe(wake, void 0);
       }
     }).pipe(Effect.forkIn(scope));
+
+    // Another window kept, emptied or sent a draft: this one shows it as the
+    // device now keeps it, at once, so every window holds the same draft and
+    // the next write here claims the record as it is. What this window held
+    // and the device never kept is offered back, as when its own write finds
+    // the change. A window that hears nothing of the others, or hears late,
+    // still finds the change when it writes. It listens from before anything
+    // can be written, so no change made once the drafts are read is missed.
+    yield* storage.changes.pipe(
+      Stream.filter((table) => table === "drafts"),
+      Stream.runForEach(() =>
+        locked(
+          Effect.gen(function* () {
+            const pairing = followed.get();
+            if (pairing === null || closed()) return;
+            const stored = yield* storage.readAll("drafts");
+            for (const key of new Set([...stored.keys(), ...known.keys()])) {
+              if (stored.get(key) === known.get(key)) continue;
+              const target = keyTarget(key);
+              if (Option.isSome(target)) yield* reload(target.value, pairing);
+            }
+          }),
+        ).pipe(
+          Effect.catchTag("LocalStorageError", (error) =>
+            Effect.logWarning("Drafts another window changed could not be read", error),
+          ),
+        ),
+      ),
+      Effect.forkIn(scope, { startImmediately: true }),
+    );
 
     /**
      * Changes one draft in memory at once, unless it is `sending`, and has the

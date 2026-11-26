@@ -17,6 +17,7 @@ import {
   NonNegativeInt,
   type QuestionAnswers,
   type ReceivedEntry,
+  RoomId,
   type Sequence,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
@@ -57,6 +58,23 @@ const HISTORY_PAGE = 50;
 
 export const targetKey = (target: EntryTarget) =>
   target._tag === "conversation" ? `conversation:${target.botId}` : `room:${target.roomId}`;
+
+const decodeBotId = Schema.decodeUnknownOption(BotId);
+const decodeRoomId = Schema.decodeUnknownOption(RoomId);
+
+/** The conversation or room `targetKey` wrote `key` for; none for anything else. */
+export const keyTarget = (key: string): Option.Option<EntryTarget> => {
+  const at = key.indexOf(":");
+  const id = key.slice(at + 1);
+  switch (key.slice(0, Math.max(at, 0))) {
+    case "conversation":
+      return Option.map(decodeBotId(id), (botId) => ({ _tag: "conversation", botId }));
+    case "room":
+      return Option.map(decodeRoomId(id), (roomId) => ({ _tag: "room", roomId }));
+    default:
+      return Option.none();
+  }
+};
 
 /** The name a member had where the operator mentioned it, by picking it. */
 export const MentionLabel = Schema.Struct({ botId: BotId, label: Schema.String });
