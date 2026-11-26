@@ -1355,7 +1355,7 @@ export const layer = Layer.effect(
         DateTime.isLessThan(a.finishedAt, b.finishedAt) ? -1 : 1,
       );
       for (const turn of ended) {
-        // Over: whatever it ran on, the session's model is what it is now.
+        // Over: the model the session is on now is the replacement's own, below.
         if (turn.startedAt !== null)
           yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt, null);
         for (const work of turn.steps) yield* step(session, turn.turnId, work, turn.finishedAt);
@@ -1431,6 +1431,9 @@ export const layer = Layer.effect(
       }
       for (const speech of event.hostSpeech) yield* hostSpeech(session, speech);
       for (const result of event.delegatedResults) yield* delegatedResult(session, result);
+      // A turn that started on an older model during the gap, and has ended
+      // since, left the session on it.
+      if (event.model !== null) yield* modelStarted(session, event.model);
       if (event.queueHeld) {
         yield* queueHeld(session, event.cursor);
       } else {

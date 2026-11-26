@@ -502,7 +502,8 @@ export class TestEngineControl extends Context.Service<
     /**
      * A task the turn `origin` delegated ends while `turnId`, another turn,
      * runs: the engine steers its result into that turn, as it does whatever
-     * turn delegated it (`delegated-result`).
+     * turn delegated it, and the turn takes it. It is told as that turn ends
+     * (`delegated-result`).
      */
     readonly delegatedResult: (input: {
       readonly sessionId: SessionId;
@@ -583,6 +584,8 @@ interface TurnRecord {
   startedAt: DateTime.Utc | null;
   readonly steps: Map<WorkStepId, WorkStep>;
   readonly steers: Array<SteerRecord>;
+  /** Delegated results steered into it, told as it ends (`delegatedResult`). */
+  readonly landed: Array<DelegatedResult>;
   readonly toolCalls: Map<ToolCallId, ToolCallRecord>;
   readonly hostSpeech: Array<HostSpeech>;
   readonly closedRequests: Array<{
@@ -644,7 +647,7 @@ interface SessionRecord {
   readonly responses: Array<{ readonly requestId: RequestId; readonly response: RequestResponse }>;
   readonly rejectedAnswers: Array<RequestId>;
   readonly secretAnswers: Array<{ readonly requestId: RequestId; readonly answer: SecretAnswer }>;
-  /** Delegated results steered into a turn other than their own (`delegatedResult`). */
+  /** Delegated results told: each steered into a turn other than its own, which has ended. */
   readonly delegatedResults: Array<DelegatedResult>;
   /** Each open stream, with the cursor of the last event it was given. */
   readonly subscribers: Map<Subscriber, { lastCursor: EventCursor }>;
@@ -920,6 +923,7 @@ const make = Effect.gen(function* () {
       startedAt: null,
       steps: new Map(),
       steers: [],
+      landed: [],
       toolCalls: new Map(),
       hostSpeech: [],
       closedRequests: [],
@@ -1113,6 +1117,10 @@ const make = Effect.gen(function* () {
       contextRecovered: turn.contextRecovered,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
+    for (const result of turn.landed) {
+      session.delegatedResults.push(result);
+      emit(session, at, (stamp) => ({ _tag: "delegated-result", ...stamp, result }));
+    }
     if (session.running === turn.turnId) {
       session.running = null;
       // A failure holds the queue, except a usage limit, which makes it wait
@@ -1315,6 +1323,7 @@ const make = Effect.gen(function* () {
       closedRequests: listed.flatMap((turn) => turn.closedRequests),
       steers,
       delegatedResults: [...session.delegatedResults],
+      model: session.model,
       queueHeld,
     };
   };
@@ -2342,19 +2351,14 @@ const make = Effect.gen(function* () {
     delegatedResult: ({ sessionId, turnId, origin, text }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
-        yield* runningTurn(session, turnId);
+        const turn = yield* runningTurn(session, turnId);
         const result: DelegatedResult = {
           resultId: DelegatedResultId.make(newId("result")),
           turnId,
           origin,
           text,
         };
-        session.delegatedResults.push(result);
-        emit(session, yield* DateTime.now, (stamp) => ({
-          _tag: "delegated-result",
-          ...stamp,
-          result,
-        }));
+        turn.landed.push(result);
         return result.resultId;
       }),
 

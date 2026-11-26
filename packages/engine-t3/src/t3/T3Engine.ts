@@ -171,7 +171,7 @@ import {
   keepFetched,
   knowsDispatch,
   mirrorOf,
-  type ModelOf,
+  type Providers,
   nothingToStop,
   queuedRuns,
   replacement,
@@ -419,12 +419,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const providerOfInstance = new Map(
     options.providers.map((provider) => [instanceIdFor(provider.id), provider.id]),
   );
-  const modelOf: ModelOf = (selection) => {
-    const providerId = providerOfInstance.get(selection.instanceId);
-    if (providerId === undefined) return null;
-    return Option.getOrNull(
-      Option.map(decodeModelId(selection.model), (modelId) => ({ providerId, modelId })),
-    );
+  const echoingInstances = new Set(
+    options.providers.flatMap((provider) =>
+      provider.harness === "claude-code" ? [instanceIdFor(provider.id)] : [],
+    ),
+  );
+  /** What the adapter reads of the providers, which are the same for the engine's life. */
+  const providerReads: Providers = {
+    modelOf: (selection) => {
+      const providerId = providerOfInstance.get(selection.instanceId);
+      if (providerId === undefined) return null;
+      return Option.getOrNull(
+        Option.map(decodeModelId(selection.model), (modelId) => ({ providerId, modelId })),
+      );
+    },
+    echoesSteers: (instanceId) => echoingInstances.has(instanceId),
   };
   /**
    * The providers as each provisioning writes them, with the executable
@@ -1868,7 +1877,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             history,
             now,
             batches.toldHandoffs(input.sessionId),
-            modelOf,
+            providerReads,
           );
           view = replaced.view;
           yield* emit([replaced.event]);
@@ -1891,7 +1900,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               if (!applyEvent(mirror, item.event) || view === undefined) return;
               yield* digestToolCalls(mirror);
               yield* emit(
-                diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis), modelOf),
+                diff(
+                  mirror,
+                  view,
+                  DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+                  providerReads,
+                ),
               );
               return;
             }
@@ -2098,7 +2112,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               // card changes only while the approval is open and holds the item at that version.
               if (keepFetched(mirror, next.item) && view !== undefined) {
                 yield* emit(
-                  diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis), modelOf),
+                  diff(
+                    mirror,
+                    view,
+                    DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+                    providerReads,
+                  ),
                 );
               }
               break;

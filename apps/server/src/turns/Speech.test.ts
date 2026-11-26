@@ -1794,6 +1794,36 @@ it.effect("counts a harness's wake from another such wake whose work is pending"
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("keeps a harness's wake's hop count for its report brought back from a room", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* chainLimits({ hops: 2, fanOut: 3 });
+    const { ana, anaSession, notice } = yield* delegatingNotice;
+    const dee = yield* createBot("Dee");
+
+    // The report lands in a turn Ana runs for a room, and is brought back to
+    // her own conversation: the turn it starts goes on with the notice's work.
+    const room = yield* roomOf(ana.id);
+    yield* sendInRoom(ana.id, room.id, "Plan the launch.");
+    const roomTurn = yield* nextTurn(ana.id, notice);
+    yield* control.delegatedResult({
+      sessionId: anaSession,
+      turnId: roomTurn,
+      origin: notice,
+      text: "Delegated task node-1 [completed]:\nThe report is ready.",
+    });
+    yield* finished(ana.id, anaSession, roomTurn);
+    const reporting = yield* nextTurn(ana.id, roomTurn);
+    const reply = yield* messageTeammate(anaSession, reporting, {
+      to: dee.id,
+      text: "The report is attached.",
+      urgent: false,
+    });
+    assert.strictEqual(reply._tag, "result");
+    assert.deepStrictEqual(yield* heldHops(dee.id), [2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "counts the fan-out of the continuation of an operator's steer the engine ran as a turn of its own",
   () =>

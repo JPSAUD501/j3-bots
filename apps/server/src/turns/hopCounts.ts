@@ -66,7 +66,9 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
    * word, as a wake or a steer the turn took, the furthest hop count
    * of the wakes and held messages it delivers, and whether any dispatch
    * began it at all (`rooted`): a turn the engine started on its own for
-   * work it does not name has none.
+   * work it does not name has none. A dispatch that brings back only reports
+   * of the chain's own delegated tasks (`delegated-result`) does not begin
+   * it: the chain counts as it did before they landed elsewhere.
    */
   const carriedIn = (sessionId: SessionRowId, turnId: TurnId) =>
     SqlSchema.findAll({
@@ -92,7 +94,22 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
               WHERE hm.consumed_dispatch_id IN (${deliveredInSql(sessionId, turnId)})
             ), 0)
           ) AS furthest,
-          EXISTS (${deliveredInSql(sessionId, turnId)}) AS rooted
+          EXISTS (
+            SELECT 1 FROM dispatches rd
+            WHERE rd.id IN (${deliveredInSql(sessionId, turnId)})
+              AND NOT EXISTS (
+                SELECT 1 FROM wakes rw WHERE rw.dispatch_id = rd.id
+                  AND rw.kind = 'system'
+                  AND json_extract(rw.payload_json, '$._tag') = 'delegated-result'
+              )
+          ) OR EXISTS (
+            SELECT 1 FROM wakes rw
+            WHERE rw.dispatch_id IN (${deliveredInSql(sessionId, turnId)})
+              AND NOT (
+                rw.kind = 'system'
+                AND json_extract(rw.payload_json, '$._tag') = 'delegated-result'
+              )
+          ) AS rooted
       `,
     })(undefined).pipe(
       Effect.orDie,

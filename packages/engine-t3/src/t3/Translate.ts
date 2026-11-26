@@ -121,6 +121,13 @@ export interface Mirror {
    */
   readonly delegatedResults: Map<string, DelegatedResultRecord>;
   /**
+   * The engine's records of J3 Bots' steers it has shown waiting on the
+   * provider (`pending`), by item id: a provider that echoes a steer it read
+   * keeps the record so until the echo (`isTaken`). A snapshot shows no
+   * history, so each steer record it has counts as shown so.
+   */
+  readonly steersOffered: Set<string>;
+  /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
    */
@@ -151,6 +158,7 @@ export const emptyMirror = (): Mirror => ({
   openings: new Map(),
   origins: new Map(),
   delegatedResults: new Map(),
+  steersOffered: new Set(),
   toolDigests: new Map(),
   fetched: new Map(),
   toolPersistence: new Map(),
@@ -167,6 +175,7 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   openings: new Map(mirror.openings),
   origins: new Map(mirror.origins),
   delegatedResults: new Map(mirror.delegatedResults),
+  steersOffered: new Set(mirror.steersOffered),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
   toolPersistence: new Map(mirror.toolPersistence),
@@ -212,6 +221,9 @@ export const mirrorOf = (
         const result = delegatedResultOf(message, openings, items.values());
         return result === undefined ? [] : [[message.id, result]];
       }),
+    ),
+    steersOffered: new Set(
+      projection.turnItems.flatMap((item) => (isSteerItem(item) ? [item.id] : [])),
     ),
     toolDigests: new Map(),
     fetched: new Map(before.fetched),
@@ -287,6 +299,9 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       return true;
     case "turn-item.updated":
       mirror.items.set(event.payload.id, event.payload);
+      if (isSteerItem(event.payload) && event.payload.status === "pending") {
+        mirror.steersOffered.add(event.payload.id);
+      }
       dropUnheld(mirror);
       return true;
     case "runtime-request.updated":
@@ -354,9 +369,13 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       if (runId === null) return false;
       if (mirror.openings.get(runId) === id) {
         mirror.origins.set(runId, delegatorOf(event.payload, mirror.items.values()));
+        // A report the engine steered elsewhere and now runs as a run of its
+        // own, as it does a steer the provider did not take: that run is where
+        // it is answered.
+        mirror.delegatedResults.delete(id);
         return true;
       }
-      // A completion steered into another run: the first record of it is kept.
+      // A report steered into another run: the first record of it is kept.
       const result = delegatedResultOf(event.payload, mirror.openings, mirror.items.values());
       if (result === undefined || mirror.delegatedResults.has(id)) return false;
       mirror.delegatedResults.set(id, result);
@@ -1916,26 +1935,60 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 /** A session event before it gets its cursor and time. */
 export type EventBody = DistributiveOmit<SessionEvent, "cursor" | "at">;
 
-/**
- * The events that bring a subscriber from `view` to `mirror`, in order, and
- * `view` updated to match. Applying them to `view` again yields nothing.
- */
-/**
- * J3 Bots' name for the model a run runs on, from the engine's: the provider
- * whose instance it names, or `null` for an instance J3 Bots did not set up.
- */
-export type ModelOf = (selection: Run["modelSelection"]) => ModelChoice | null;
+/** What the adapter reads of the providers J3 Bots set up, by the engine's names for them. */
+export interface Providers {
+  /**
+   * J3 Bots' name for the model a run runs on, from the engine's: the provider
+   * whose instance it names, or `null` for an instance J3 Bots did not set up.
+   */
+  readonly modelOf: (selection: Run["modelSelection"]) => ModelChoice | null;
+  /**
+   * Whether the instance's provider tells the engine when it has read a steer.
+   * Claude Code's does: the engine records a steer as `completed` as it hands
+   * it over, the driver marks it `pending` and then `completed` again once the
+   * model echoes it (**Read** at `59651c1`, `Orchestrator.ts` L6442-6470,
+   * `ClaudeAdapterV2.ts` L14061 and L9366). The others leave the engine's
+   * first record standing.
+   */
+  readonly echoesSteers: (instanceId: Run["providerInstanceId"]) => boolean;
+}
 
 /**
  * Whether the run has taken the steer, while it runs: the engine's record of
- * the steer in the run is past waiting for the provider, and not cancelled.
- * The engine requeues only a steer whose record still waits
+ * the steer in the run is past waiting for the provider, and not cancelled,
+ * and for a provider that echoes a steer it read, that record has waited for
+ * the echo first. The engine requeues only a steer whose record still waits
  * (`requeueUnreadSteers`), so a steer taken is never run as a turn of its own.
  */
-const isTaken = (steer: SteerRecord): boolean =>
-  steer.item !== undefined &&
-  steer.item.status !== "cancelled" &&
-  !LIVE_ITEM.has(steer.item.status);
+const isTaken = (mirror: Mirror, providers: Providers, steer: SteerRecord): boolean => {
+  const { item } = steer;
+  if (item === undefined || item.status === "cancelled" || LIVE_ITEM.has(item.status)) {
+    return false;
+  }
+  const run = mirror.runs.get(steer.target);
+  return (
+    run !== undefined &&
+    (!providers.echoesSteers(run.providerInstanceId) || mirror.steersOffered.has(item.id))
+  );
+};
+
+/**
+ * Whether a report the engine steered into another run stayed there: that run
+ * has ended with the engine's record of the report in it past waiting on the
+ * provider, and no run opens with it. The engine runs a report the provider
+ * did not take as a run of its own, as any steer (`requeueUnreadSteers`, and
+ * a steer whose hand-over fails, **Read** at `59651c1`, `EffectWorker.ts`,
+ * L362-420), and that run is where it is answered.
+ */
+const stayedIn = (mirror: Mirror, messageId: string, record: DelegatedResultRecord): boolean => {
+  const run = mirror.runs.get(record.runId);
+  if (run === undefined || !isEnded(run)) return false;
+  const item = userMessagesOf(mirror, run).find((candidate) => candidate.messageId === messageId);
+  if (item === undefined || LIVE_ITEM.has(item.status)) return false;
+  return !runsInOrder(mirror).some(
+    (other) => other.id !== run.id && openingMessageOf(mirror, other) === messageId,
+  );
+};
 
 const delegatedResultEvent = (
   messageId: string,
@@ -1947,11 +2000,15 @@ const delegatedResultEvent = (
   text: record.text,
 });
 
+/**
+ * The events that bring a subscriber from `view` to `mirror`, in order, and
+ * `view` updated to match. Applying them to `view` again yields nothing.
+ */
 export const diff = (
   mirror: Mirror,
   view: View,
   now: DateTime.Utc,
-  modelOf: ModelOf,
+  providers: Providers,
 ): ReadonlyArray<EventBody> => {
   const events: Array<EventBody> = [];
   const steers = steersOf(mirror);
@@ -1993,14 +2050,18 @@ export const diff = (
           turnId,
           cause,
           startedAt: startedAtOf(run),
-          model: modelOf(run.modelSelection),
+          model: providers.modelOf(run.modelSelection),
         });
       }
       const ended = isEnded(run);
       // Told only while the turn runs: once it ends, the steer settles.
       if (!ended) {
         for (const steer of steers) {
-          if (steer.target !== run.id || view.taken.has(steer.messageId) || !isTaken(steer)) {
+          if (
+            steer.target !== run.id ||
+            view.taken.has(steer.messageId) ||
+            !isTaken(mirror, providers, steer)
+          ) {
             continue;
           }
           view.taken.add(steer.messageId);
@@ -2110,8 +2171,10 @@ export const diff = (
       events.push(steerEventOf(steer, settled));
     }
   }
+  // Told once the run it landed in has ended with it: until then the engine
+  // may still run it as a run of its own.
   for (const [messageId, record] of mirror.delegatedResults) {
-    if (view.delegatedResults.has(messageId)) continue;
+    if (view.delegatedResults.has(messageId) || !stayedIn(mirror, messageId, record)) continue;
     view.delegatedResults.add(messageId);
     events.push({ _tag: "delegated-result", result: delegatedResultEvent(messageId, record) });
   }
@@ -2140,7 +2203,7 @@ export const replacement = (
   now: DateTime.Utc,
   /** Whether each turn handed off, as a stream told it at the turn's end (`Batches`). */
   toldHandoffs: ReadonlyMap<string, boolean>,
-  modelOf: ModelOf,
+  providers: Providers,
 ): { readonly event: EventBody & { _tag: "replaced" }; readonly view: View } => {
   const openTurns: Array<OpenTurn> = [];
   const openRequests: Array<OpenRequest> = [];
@@ -2165,10 +2228,10 @@ export const replacement = (
         turnId,
         cause,
         startedAt: hasStarted(run) ? startedAtOf(run) : null,
-        model: hasStarted(run) ? modelOf(run.modelSelection) : null,
+        model: hasStarted(run) ? providers.modelOf(run.modelSelection) : null,
         steps: stepsOf(mirror, run),
         takenSteers: steers.flatMap((steer) =>
-          steer.target === run.id && isTaken(steer) ? [steer.key] : [],
+          steer.target === run.id && isTaken(mirror, providers, steer) ? [steer.key] : [],
         ),
         toolCalls: itemsOf(mirror, run).flatMap((item) => {
           const call = toolCallOf(mirror, item);
@@ -2223,14 +2286,14 @@ export const replacement = (
   }
 
   const delegatedResults = history
-    ? [...mirror.delegatedResults].map(([messageId, record]) =>
-        delegatedResultEvent(messageId, record),
+    ? [...mirror.delegatedResults].flatMap(([messageId, record]) =>
+        stayedIn(mirror, messageId, record) ? [delegatedResultEvent(messageId, record)] : [],
       )
     : [];
 
   // The subscriber now knows everything in the mirror.
   const view = emptyView();
-  diff(mirror, view, now, modelOf);
+  diff(mirror, view, now, providers);
   return {
     event: {
       _tag: "replaced",
@@ -2241,6 +2304,7 @@ export const replacement = (
       closedRequests,
       steers: steerSettlements,
       delegatedResults,
+      model: mirror.thread === undefined ? null : providers.modelOf(mirror.thread.modelSelection),
       // Stands for a hold the fresh view reports.
       queueHeld: view.hold.state === "reported",
     },

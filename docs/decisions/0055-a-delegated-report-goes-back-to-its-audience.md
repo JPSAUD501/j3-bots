@@ -12,15 +12,16 @@ A bot works for several audiences in one main session: its own conversation and 
 
 **The adapter tells J3 Bots of each report steered into a turn other than the one that delegated the task, and the server brings it to the delegating turn's audience as a wake of that audience.**
 
-- The adapter knows the delegating run: a completion names it, and a notice names the task, whose item is in that run. It tells the report once, by the engine's message id, with the turn it landed in, the delegating turn and the text, and lists it again in a replacement after a gap (`delegated-result`, [Engine](../architecture/engine.md#behaviors-j3-bots-designs-around)).
+- The adapter knows the delegating run: a completion names it, and a notice names the task, whose item is in that run. It tells the report once, by the engine's message id, with the turn it landed in, the delegating turn and the text, once that turn has ended with it, and lists it again in a replacement after a gap. A report the provider did not take there the engine runs as a turn of its own that names the delegating turn, so it is not told (`delegated-result`, [Engine](../architecture/engine.md#behaviors-j3-bots-designs-around)).
 - When the turn it landed in is for another audience, the server records a `system` wake, `delegated-result`, for the delegating turn's audience, once per report. Its cause is the delegating turn's work, so a Stop that covers that work drops it, and a Stop of the audience cancels it as any wake there.
-- The turn it starts records the delegating turn as the one whose work it continues: it speaks to that audience, and counts with that turn for hops and Stops, as 0013 says.
+- The turn it starts records the delegating turn as the one whose work it continues: it speaks to that audience, and counts with that turn for hops and Stops, as 0013 says. The wake's dispatch does not begin a chain of its own, so a chain the engine began keeps the count it borrowed.
 - The bot is told, in its base prompt and in the wake's envelope, that a delegated task's result is handled in the conversation it was delegated from.
 
 ## Costs
 
 - The report reaches the unrelated turn all the same, and the model has read it there. J3 Bots cannot unread it; the bot is told to leave it for its own conversation, and a bot that answers it there anyway answers twice.
 - One more turn per report that lands elsewhere, with the report in its envelope.
+- A report the engine hands over just as the turn it reached completes, and then sends again as a turn of its own, can be told as having stayed there and be answered twice ([Server: Known limits](../architecture/server.md#known-limits)).
 - A report whose delegating turn the server never admitted, such as one from before J3 Bots followed the session, has no audience to go to and is not brought back.
 
 ## Rejected
