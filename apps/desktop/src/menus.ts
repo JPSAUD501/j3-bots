@@ -6,7 +6,6 @@ import {
   LanguageReport,
   type LocalServerState,
   type PhoneAccess,
-  ShellCommand,
   type ShortcutChange,
   ShortcutRequest,
   type ShortcutStatus,
@@ -33,37 +32,23 @@ import {
   Tray,
 } from "electron";
 import type { Appearance } from "./appearance.ts";
+import { commandSender } from "./commands.ts";
+import { onWayland } from "./displayServer.ts";
 import { DesktopSettings } from "./settings.ts";
 import { makeTrayState, type TrayView } from "./trayState.ts";
 
 // The ways to the app from outside its page: the application menu, which
 // names every action with its shortcut; the tray, which lists the bots and
-// rooms that need the operator; and the global shortcut, which shows the
-// window with the cursor in the composer. The page decides what each does,
-// as it does for its own keys: the app only hands it the command.
+// rooms that need the operator and opens the window; and the global
+// shortcut, which opens and closes quick access (`quickAccess.ts`). The page
+// decides what each command does, as it does for its own keys: the app only
+// hands it the command.
 
 const decodeLanguage = Schema.decodeUnknownOption(LanguageReport);
 const decodeTray = Schema.decodeUnknownOption(TrayReport);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutRequest);
-const encodeCommand = Schema.encodeSync(ShellCommand);
 
 const MAC = process.platform === "darwin";
-
-/**
- * Whether Chromium draws on Wayland here, where a global shortcut goes through
- * the desktop's portal: on Linux, unless told to use X11, wherever a Wayland
- * display is there to use (Electron's own choice, **Assumed**).
- */
-const onWayland = () => {
-  if (process.platform !== "linux") return false;
-  const ozone = app.commandLine.getSwitchValue("ozone-platform");
-  if (ozone === "x11") return false;
-  return (
-    ozone === "wayland" ||
-    Boolean(process.env["WAYLAND_DISPLAY"]) ||
-    process.env["XDG_SESSION_TYPE"] === "wayland"
-  );
-};
 
 /** A label as a menu shows it: on Linux and Windows a lone `&` marks the key that follows. */
 const literal = (label: string) => (MAC ? label : label.replaceAll("&", "&&"));
@@ -91,6 +76,8 @@ interface Options {
   readonly fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean;
   /** Restores, shows and focuses the window. */
   readonly bringForward: () => void;
+  /** What the global shortcut does: opens quick access, or closes it. */
+  readonly toggleQuickAccess: () => void;
   /** The server this computer runs, in local mode, now and as it changes; `null` in any other. */
   readonly localServer: Stream.Stream<LocalServerState | null>;
   /** Phone access to that server, now and as it changes. */
@@ -108,6 +95,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   appearance,
   fromApp,
   bringForward,
+  toggleQuickAccess,
   localServer,
   phoneAccess,
 }: Options) {
@@ -123,10 +111,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
       let i18n: I18n = createI18n(resolveLocale(app.getPreferredSystemLanguages()));
       const icon = new Tray(trayIcon(false, appearance.systemTheme()));
 
-      const send = (command: ShellCommand) => {
-        if (window.isDestroyed()) return;
-        window.webContents.send(IPC_CHANNELS.command, encodeCommand(command));
-      };
+      const send = commandSender(window);
       /** Brings the window forward with the cursor in the composer, or on the roster. */
       const show = () => {
         bringForward();
@@ -136,7 +121,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
       /** Whether the system took `accelerator`; a malformed one throws, which is a refusal. */
       const register = (accelerator: Accelerator) => {
         try {
-          return globalShortcut.register(accelerator, show);
+          return globalShortcut.register(accelerator, toggleQuickAccess);
         } catch {
           return false;
         }
@@ -167,15 +152,15 @@ export const serve = Effect.fn("desktop.menus")(function* ({
             : { accelerator, registerAccelerator: false };
         const go: MenuItemConstructorOptions[] = [
           {
-            id: "show",
-            label: t("desktop.menu.show"),
+            id: "quickAccess",
+            label: t("desktop.menu.quickAccess"),
             accelerator: shortcut.accelerator,
             // The system holds it as the global shortcut once it took it.
-            // Anywhere else the menu holds it too, for as long as the window
-            // is in front: where it was refused, and on Wayland, where the
+            // Anywhere else the menu holds it too, for as long as the app is
+            // in front: where it was refused, and on Wayland, where the
             // desktop may refuse it without telling the app.
             registerAccelerator: shortcut.state !== "registered",
-            click: show,
+            click: toggleQuickAccess,
           },
           { type: "separator" },
           {

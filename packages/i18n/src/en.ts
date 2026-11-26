@@ -1686,25 +1686,29 @@ export const en = {
   "settings.thisDevice": "This device",
   "settings.thisDevice.unencrypted":
     "This computer had no keyring J3 Bots could use when it paired, so this device’s sign-in is stored without encryption. Anyone who can read your files here can use it. Pair this device again after unlocking your keychain or keyring to store it encrypted.",
-  "settings.shortcut": "Shortcut to show J3 Bots",
+  "settings.shortcut": "Shortcut for quick access",
   "settings.shortcut.change": "Change shortcut",
   "settings.shortcut.reset": "Use {shortcut}",
   "settings.shortcut.recording": "Press the new shortcut, or Escape to keep {shortcut}.",
   "settings.shortcut.needsModifier":
     "A shortcut needs Shift, Alt or Super beside another modifier (⇧ or ⌥ beside another on a Mac), with a letter, a digit or a function key: one like Ctrl+C belongs to every other app.",
   "settings.shortcut.registered":
-    "Press {shortcut} anywhere to show J3 Bots with the cursor in the open conversation’s message box.",
+    "Press {shortcut} anywhere to open quick access: a small window to talk to your primary bot, ready for you to type. Press it again to close it.",
   "settings.shortcut.taken":
     "{shortcut} doesn’t work here: another app or the system uses it. Choose another.",
   "settings.shortcut.refused":
     "{refused} is used by another app or the system, so {shortcut} stays.",
   "settings.shortcut.notSaved": "Couldn’t keep the new shortcut, so {shortcut} stays. Try again.",
   "settings.shortcut.unavailable":
-    "This desktop doesn’t let apps use a shortcut outside their own window, so {shortcut} works only while J3 Bots is in front.",
+    "This desktop doesn’t let apps use a shortcut outside their own window, so {shortcut} opens quick access only while J3 Bots is in front.",
   "settings.shortcut.requested":
     "On Wayland your desktop decides whether J3 Bots may use {shortcut}, and may refuse it without telling J3 Bots. If pressing it does nothing outside J3 Bots, your desktop didn’t allow it; it still works while J3 Bots is in front.",
   "desktop.menu.app": "J3 Bots",
   "desktop.menu.show": "Show J3 Bots",
+  "desktop.menu.quickAccess": "Quick access",
+  "quickAccess.label": "Quick access to {name}",
+  "quickAccess.openConversation": "Open conversation",
+  "quickAccess.close": "Close quick access",
   "desktop.menu.hide": "Hide J3 Bots",
   "desktop.menu.hideOthers": "Hide others",
   "desktop.menu.showAll": "Show all",

@@ -30,6 +30,17 @@ export const WindowState = Schema.Struct({
 export type WindowState = typeof WindowState.Type;
 
 /**
+ * Where quick access was last put on a display, by the display's id: how far
+ * its right and bottom edges stand from that display's work area's
+ * (`quickAccessPlace.ts`).
+ */
+const QuickAccessPlace = Schema.Struct({
+  display: Schema.String,
+  right: Schema.Int,
+  bottom: Schema.Int,
+});
+
+/**
  * The device this computer was last signed in as on the server it runs: its
  * id, which the next sign-in replaces (revokes), never its token, which only
  * the page keeps; and whether it is `current`, the device of the operator's
@@ -53,7 +64,9 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * version installs by itself (`automaticUpdates`), at launch or as the app
  * quits, on until the operator turns it off, and the export the bots on this
  * computer moved away with (`moved`), while their data is still here and
- * their server stays stopped. None is a secret.
+ * their server stays stopped, and where quick access was last put on each
+ * display it was dragged on, the latest last (`quickAccess`). None is a
+ * secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -67,6 +80,7 @@ export const Settings = Schema.Struct({
   updateChannel: UpdateChannel,
   automaticUpdates: Schema.Boolean,
   moved: Schema.NullOr(MovedAway),
+  quickAccess: Schema.Array(QuickAccessPlace),
 });
 export type Settings = typeof Settings.Type;
 
@@ -82,6 +96,7 @@ const EMPTY: Settings = {
   updateChannel: "stable",
   automaticUpdates: true,
   moved: null,
+  quickAccess: [],
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -96,6 +111,7 @@ const decodeAppearance = Schema.decodeUnknownOption(Appearance);
 const decodeFlag = Schema.decodeUnknownOption(Schema.Boolean);
 const decodeChannel = Schema.decodeUnknownOption(UpdateChannel);
 const decodeMoved = Schema.decodeUnknownOption(MovedAway);
+const decodeQuickAccess = Schema.decodeUnknownOption(Schema.Array(QuickAccessPlace));
 const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
 
 /**
@@ -123,6 +139,7 @@ export const decodeSettings = (
     updateChannel,
     automaticUpdates,
     moved,
+    quickAccess,
   } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
@@ -140,6 +157,7 @@ export const decodeSettings = (
   const keptChannel = decodeChannel(updateChannel);
   const keptAutomaticUpdates = decodeFlag(automaticUpdates);
   const keptMoved = decodeMoved(moved);
+  const keptQuickAccess = decodeQuickAccess(quickAccess);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -160,6 +178,7 @@ export const decodeSettings = (
     dropped.push("automaticUpdates");
   }
   if (moved !== undefined && moved !== null && Option.isNone(keptMoved)) dropped.push("moved");
+  if (quickAccess !== undefined && Option.isNone(keptQuickAccess)) dropped.push("quickAccess");
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -175,6 +194,7 @@ export const decodeSettings = (
       updateChannel: Option.getOrElse(keptChannel, () => EMPTY.updateChannel),
       automaticUpdates: Option.getOrElse(keptAutomaticUpdates, () => EMPTY.automaticUpdates),
       moved: Option.getOrNull(keptMoved),
+      quickAccess: Option.getOrElse(keptQuickAccess, () => EMPTY.quickAccess),
     },
     dropped,
   };

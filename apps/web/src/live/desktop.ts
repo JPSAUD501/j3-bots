@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  BotId,
   DeviceId,
   Language,
   PairingCode,
@@ -26,6 +27,7 @@ import {
   type NotificationRequest,
   PhoneAccess,
   PhoneAccessChange,
+  QuickAccessCue,
   ShellCommand,
   ShortcutChange,
   ShortcutStatus,
@@ -238,6 +240,26 @@ export interface Desktop {
    * while if the clipboard still holds it: whether it got there.
    */
   readonly copySecret: (value: Redacted.Redacted<string>) => Promise<boolean>;
+  /** What the quick access window's page asks of the app. Any other page is not answered. */
+  readonly quickAccess: DesktopQuickAccess;
+}
+
+/** The app, as the page of its quick access window speaks to it. */
+interface DesktopQuickAccess {
+  /**
+   * Tells the app whether quick access has what it shows: until it has, the
+   * global shortcut shows the main window instead.
+   */
+  readonly report: (available: boolean) => void;
+  /**
+   * Calls `listener` each time the app shows the window (`open`) or asks the
+   * page to go out before it hides it (`leave`); answers a function that stops it.
+   */
+  readonly onCue: (listener: (cue: QuickAccessCue) => void) => () => void;
+  /** Hides the window, once the page has gone out. */
+  readonly hide: () => void;
+  /** Shows the main window at `botId`'s conversation, under `pairing`, and hides quick access. */
+  readonly openConversation: (botId: BotId, pairing: DeviceId) => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -250,6 +272,7 @@ const decodeStatus = Schema.decodeUnknownOption(UpdateStatus);
 const decodeClick = Schema.decodeUnknownOption(NotificationClick);
 const decodeLink = Schema.decodeUnknownOption(AppLink);
 const decodeCommand = Schema.decodeUnknownOption(ShellCommand);
+const decodeCue = Schema.decodeUnknownOption(QuickAccessCue);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
 const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
 const decodeTheme = Schema.decodeUnknownOption(Theme);
@@ -440,5 +463,24 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     setPhoneAccess: (on, stopWork) =>
       ask(() => bridge.setPhoneAccess({ on, stopWork }), decodePhoneAccessChange),
     localPairingLink: (unlock) => ask(() => bridge.localPairingLink({ unlock }), decodePairingLink),
+    quickAccess: {
+      report: (available) => {
+        bridge.reportQuickAccess({ available });
+      },
+      onCue: (listener) => {
+        const stop: unknown = bridge.onQuickAccessCue((cue: unknown) =>
+          Option.map(decodeCue(cue), listener),
+        );
+        return () => {
+          if (typeof stop === "function") stop();
+        };
+      },
+      hide: () => {
+        bridge.hideQuickAccess();
+      },
+      openConversation: (botId, pairing) => {
+        bridge.openFromQuickAccess({ botId, pairing });
+      },
+    },
   }),
 });

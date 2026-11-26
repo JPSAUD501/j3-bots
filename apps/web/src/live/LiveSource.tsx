@@ -1147,7 +1147,9 @@ function LiveShell({
   // does not, unless Send sent nothing.
   const changedElsewhere = useEffectEvent(({ whileSending, displaced }: DraftChangedElsewhere) => {
     if (whileSending) say(t("composer.changedElsewhereWhileSending"));
-    else if (!displaced) say(t("composer.changedElsewhere"));
+    // In the desktop app the other window is its own quick access, on the same
+    // draft: what is typed in one simply shows in the other.
+    else if (!displaced && desktop === null) say(t("composer.changedElsewhere"));
   });
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 

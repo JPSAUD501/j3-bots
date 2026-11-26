@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { type ConnectionState, targetKey } from "@j3-bots/client-runtime";
+import {
+  J3ClientProvider,
+  useConnection,
+  useConnectors,
+  useConversation,
+  useEngineStatus,
+  useJ3Client,
+  useReadable,
+  useSettings,
+} from "@j3-bots/client-runtime/react";
+import type { BotId } from "@j3-bots/contracts";
+import { use, useEffect, useLayoutEffect, useState } from "react";
+import { OperatorTimeZone } from "../app/clock";
+import { useAttachments } from "../live/attachments";
+import { useCardIntents, useCardSubmitting } from "../live/cardIntents";
+import { client, server } from "../live/client";
+import { useComposerSource } from "../live/composer";
+import type { Desktop } from "../live/desktop";
+import { useInView } from "../live/inView";
+import { useNotice } from "../live/notices";
+import { useWorkFolds } from "../live/workFolds";
+import type { ConversationView } from "../shell/data";
+import { QuickAccess, type QuickAccessData, type QuickAccessIntents } from "./QuickAccess";
+
+/**
+ * Marks the page as quick access's for as long as it shows: its background
+ * is the window's see-through part, or the card's color where the window is
+ * not see-through (index.css).
+ */
+function useQuickPage(solid: boolean) {
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.dataset["quick"] = solid ? "solid" : "clear";
+    return () => {
+      delete root.dataset["quick"];
+    };
+  }, [solid]);
+}
+
+/** Tells the app that quick access has nothing to show, for as long as this is on the page. */
+function Unavailable({ app }: { app: Desktop }) {
+  useEffect(() => app.quickAccess.report(false), [app]);
+  return null;
+}
+
+/**
+ * The page of the desktop app's quick access window, on the server the app
+ * is on. It keeps its own connection, as another tab does, so the window
+ * opens on a conversation that is already there; and it tells the app
+ * whether it has one to show: a primary bot, on a server it has reached. Until
+ * then it draws nothing, and the app's shortcut shows the main window.
+ */
+export function QuickAccessLive({ app, solid }: { app: Desktop; solid: boolean }) {
+  useQuickPage(solid);
+  // No server named yet, or the bots moved away from this computer: nothing connects.
+  if (server === null || app.moved !== null) return <Unavailable app={app} />;
+  return (
+    <J3ClientProvider client={use(client(server))}>
+      <Connected app={app} origin={server} solid={solid} />
+    </J3ClientProvider>
+  );
+}
+
+const loadingView: ConversationView = {
+  phase: "loading",
+  items: [],
+  hasOlder: false,
+  loadingOlder: false,
+};
+
+/**
+ * How long the card has to go out before the window is hidden anyway, in ms:
+ * its way out is drawn frame by frame, and a page that draws no frame, as one
+ * the system has covered, would never say it has left.
+ */
+const LEAVE_WITHIN = 600;
+
+/** Whether the server is reached now: what quick access needs to open on. */
+const reached = (connection: ConnectionState) => connection._tag === "connected";
+
+function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: boolean }) {
+  const j3 = useJ3Client();
+  const connection = useConnection();
+  const pairing = useReadable(j3.pairing);
+  const listed = useReadable(j3.roster);
+  const roster = listed._tag === "ready" ? listed.value : null;
+  const primary =
+    roster?.flatMap((row) => (row._tag === "bot" && row.bot.primary ? [row] : []))[0] ?? null;
+  const botId = primary?.bot.id ?? null;
+  const conversation = useConversation(botId === null ? null : { _tag: "conversation", botId });
+  const engine = useEngineStatus();
+  const settings = useSettings();
+  const connectors = useConnectors();
+  const secrets = useReadable(j3.secrets.view);
+  const folds = useWorkFolds();
+  const { say, toast } = useNotice();
+  const attachments = useAttachments(j3, say);
+  // A connector's sign-in comes back to the desktop app, never to the server itself.
+  const cards = useCardIntents(j3, say, origin, false);
+  const submitting = useCardSubmitting();
+  const composer = useComposerSource(j3, say);
+
+  // The app shows the window and asks the page to go out; the page says when it has.
+  const [shown, setShown] = useState(false);
+  const [asked, setAsked] = useState(0);
+  useEffect(
+    () =>
+      app.quickAccess.onCue((cue) => {
+        setShown(cue === "open");
+        if (cue === "open") setAsked((times) => times + 1);
+      }),
+    [app],
+  );
+
+  useEffect(() => {
+    if (shown) return;
+    const timer = window.setTimeout(app.quickAccess.hide, LEAVE_WITHIN);
+    return () => window.clearTimeout(timer);
+  }, [app, shown]);
+
+  const available = reached(connection) && pairing !== null && botId !== null;
+  useEffect(() => {
+    app.quickAccess.report(available);
+  }, [app, available]);
+  useEffect(() => () => app.quickAccess.report(false), [app]);
+
+  // The conversation is on screen here only while quick access shows, in a
+  // window the operator is looking at: the server keeps its notifications
+  // quiet for it then, as for the main window's.
+  const inView = useInView();
+  const viewKey = botId === null ? null : targetKey({ _tag: "conversation", botId });
+  useEffect(() => {
+    j3.setView(shown && inView && botId !== null ? { _tag: "conversation", botId } : null);
+  }, [j3, shown, inView, botId]);
+
+  if (primary === null || pairing === null) return null;
+
+  /** The main window, at a bot's conversation: where everything quick access does not hold opens. */
+  const openInMain = (bot: BotId) => app.quickAccess.openConversation(bot, pairing);
+  const view: ConversationView =
+    conversation.state === null
+      ? loadingView
+      : {
+          phase: conversation.state.phase,
+          items: conversation.state.items,
+          hasOlder: conversation.state.hasOlder,
+          loadingOlder: conversation.state.loadingOlder,
+        };
+  const data: QuickAccessData = {
+    ...composer.data,
+    roster,
+    conversation: (asked) =>
+      viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
+    connectors: connectors._tag === "ready" ? connectors.value : null,
+    submitting,
+    workSteps: folds.steps,
+    secrets,
+    engine: engine._tag === "ready" ? engine.value : null,
+    connected: reached(connection),
+  };
+  const intents: QuickAccessIntents = {
+    ...cards,
+    ...composer.intents,
+    openWorkFold: folds.open,
+    closeWorkFold: folds.close,
+    openAttachment: attachments.open,
+    // A bot's browser, a routine, another bot's conversation and a
+    // connector's sign-in need the whole window.
+    openBrowser: (bot) => openInMain(bot),
+    openRoutine: () => openInMain(primary.bot.id),
+    openConversation: openInMain,
+    signInConnector: () => openInMain(primary.bot.id),
+    loadOlder: (asked) => {
+      if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
+    },
+    markRead: (asked, through) => {
+      if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
+    },
+    stopBot: (bot) => void j3.stopBot(bot),
+    secrets: { ...j3.secrets, copy: app.copySecret },
+  };
+  return (
+    // Every time in the operator's time zone, as the main window shows it.
+    <OperatorTimeZone timeZone={settings._tag === "ready" ? settings.value.timeZone : null}>
+      {attachments.host(
+        <QuickAccess
+          // One per bot: another primary bot opens afresh, at its own end.
+          key={primary.bot.id}
+          bot={primary.bot}
+          lastEntry={primary.lastEntry}
+          data={data}
+          intents={intents}
+          solid={solid}
+          shown={shown}
+          asked={asked}
+          onOpenConversation={() => openInMain(primary.bot.id)}
+          onClose={() => setShown(false)}
+          onLeft={app.quickAccess.hide}
+          overlay={toast}
+        />,
+      )}
+      {folds.readers}
+    </OperatorTimeZone>
+  );
+}

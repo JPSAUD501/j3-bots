@@ -107,6 +107,7 @@ import {
   useProfileEdits,
 } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
+import { QuickAccess } from "../quick/QuickAccess";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -326,6 +327,7 @@ export default function GalleryPage() {
                 <WhereBotsLiveSection />
                 <PhoneAccessSection />
                 <UpdatesGallerySection />
+                <QuickAccessSection />
                 <ShellSection />
               </div>
             </div>
@@ -4913,6 +4915,88 @@ function UpdatesGallerySection() {
         <Frame label="Mismatch in a browser: a stale page" width={390} height={360}>
           <Incompatible />
         </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * Quick access as the desktop app's small window shows it, on one bot of the
+ * sample team. Where the window is see-through, a wallpaper stands in for the
+ * desktop behind it. "Shortcut" does what the global shortcut does.
+ */
+function QuickAccessFrame({
+  label,
+  botId,
+  solid = false,
+}: {
+  label: string;
+  botId: BotId;
+  solid?: boolean;
+}) {
+  const source = useSampleSource();
+  const [shown, setShown] = useState(true);
+  const [asked, setAsked] = useState(0);
+  const row = source.data.roster?.flatMap((item) =>
+    item._tag === "bot" && item.bot.id === botId ? [item] : [],
+  )[0];
+  if (only.frame !== null && only.frame !== label) return null;
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <Frame label={label} width={solid ? 380 : 436} height={solid ? 580 : 642} replay>
+        {!solid && (
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-[linear-gradient(160deg,#dfe9f7,#f3e9f5_55%,#fbeedd)] dark:bg-[radial-gradient(120%_90%_at_20%_10%,#23304f,#141824_55%,#0a0b10)]"
+          />
+        )}
+        {row !== undefined && (
+          <QuickAccess
+            bot={row.bot}
+            lastEntry={row.lastEntry}
+            data={source.data}
+            intents={source.intents}
+            solid={solid}
+            shown={shown}
+            asked={asked}
+            onOpenConversation={() => {}}
+            onClose={() => setShown(false)}
+            onLeft={() => {}}
+          />
+        )}
+      </Frame>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setShown(!shown);
+          if (!shown) setAsked(asked + 1);
+        }}
+      >
+        Shortcut
+      </Button>
+    </div>
+  );
+}
+
+function QuickAccessSection() {
+  return (
+    <Section title="Quick access (desktop app)">
+      <div className="flex flex-wrap gap-6">
+        <QuickAccessFrame
+          label="Open on the primary bot while it works: its face on the card's edge, its conversation, the composer with the cursor"
+          botId={ids.scout}
+        />
+        <QuickAccessFrame
+          label="A bot waiting on an approval: the card is the conversation's own"
+          botId={ids.atlas}
+        />
+        <QuickAccessFrame label="A bot at rest, with nothing said yet" botId={ids.moss} />
+        <QuickAccessFrame
+          label="Where the window is not see-through (Linux without a compositor): the card fills it, square, with the face in its header"
+          botId={ids.scout}
+          solid
+        />
       </div>
     </Section>
   );

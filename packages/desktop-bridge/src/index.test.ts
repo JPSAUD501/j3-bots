@@ -16,6 +16,9 @@ import {
   NotificationRequest,
   LocalServerState,
   OpenRequest,
+  QuickAccessCue,
+  QuickAccessOpen,
+  QuickAccessReport,
   releaseFile,
   releasePage,
   SavingReport,
@@ -217,6 +220,10 @@ describe("the desktop bridge", () => {
       systemTheme: call,
       reportTray: call,
       onCommand: call,
+      reportQuickAccess: call,
+      onQuickAccessCue: call,
+      hideQuickAccess: call,
+      openFromQuickAccess: call,
       shortcutStatus: call,
       setShortcut: call,
       useThisComputer: call,
@@ -378,6 +385,20 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(ShellCommand, { _tag: "open", target }));
     assert.isTrue(decodes(ShellCommand, { _tag: "focus" }));
     assert.isFalse(decodes(ShellCommand, { _tag: "quit" }));
+  });
+
+  it("takes from quick access only whether it can show, and a bot to open under its pairing", () => {
+    assert.isTrue(decodes(QuickAccessReport, { available: true }));
+    assert.isFalse(decodes(QuickAccessReport, { available: "yes" }));
+    assert.isFalse(decodes(QuickAccessReport, true));
+    assert.isTrue(decodes(QuickAccessOpen, { botId: "bot-scout", pairing: "device-1" }));
+    assert.isFalse(decodes(QuickAccessOpen, { botId: "bot-scout" }));
+    assert.isFalse(decodes(QuickAccessOpen, { botId: "", pairing: "device-1" }));
+    assert.isFalse(
+      decodes(QuickAccessOpen, { target: { _tag: "room", roomId: "room-launch" }, pairing: "d" }),
+    );
+    assert.isTrue(decodes(QuickAccessCue, "open"));
+    assert.isFalse(decodes(QuickAccessCue, "close"));
   });
 });
 

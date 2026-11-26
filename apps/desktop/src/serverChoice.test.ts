@@ -334,6 +334,7 @@ describe("the settings file", () => {
     updateChannel: "stable",
     automaticUpdates: true,
     moved: null,
+    quickAccess: [],
   } as const;
   const NONE = {
     mode: null,
@@ -344,6 +345,7 @@ describe("the settings file", () => {
     updateChannel: "stable",
     automaticUpdates: true,
     moved: null,
+    quickAccess: [],
   } as const;
 
   it("reads the server, the window, the shortcut, the appearance, starting with the system, phone access, the update channel and updating by itself each on its own", () => {
@@ -452,6 +454,30 @@ describe("the settings file", () => {
         updateChannel: "stable",
         automaticUpdates: true,
         moved: null,
+        quickAccess: [],
+      },
+    );
+  });
+
+  it("keeps where quick access was put on each display, or nowhere when that cannot be read", () => {
+    const quickAccess = [
+      { display: "2528732444", right: 24, bottom: 120 },
+      { display: "7", right: 0, bottom: 0 },
+    ];
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, quickAccess })).settings.quickAccess,
+      quickAccess,
+    );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(
+        JSON.stringify({
+          server: SERVER,
+          quickAccess: [{ display: "7", right: "far", bottom: 0 }],
+        }),
+      ),
+      {
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["quickAccess"],
       },
     );
   });

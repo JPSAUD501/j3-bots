@@ -30,8 +30,10 @@ import {
 // The development build, launched as the operator launches it, against the
 // server's testing layer (its real routes and socket over the in-memory
 // engine) on loopback: refuse an address that redirects, name the server,
-// pair, open a bot from the roster, send it a message with a file, show the
-// window from the application menu with the cursor in the composer, find the
+// pair, open a bot from the roster, send it a message with a file, open quick
+// access on the primary bot (the application menu's item, which the global
+// shortcut also runs), send from it, find its draft in the main window, close
+// it with Escape and go from it to the conversation in the main window, find the
 // token nowhere on disk in the clear, launch again still paired, keep a
 // credential the system will not open, read a damaged one as not paired, and
 // change server from Settings; and follow links to the app, given at launch
@@ -126,7 +128,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const origin = yield* Server.origin;
         const bot = yield* (yield* Server.Bots).create({
           commandId: CommandId.make("smoke-bot"),
-          draft: { name: "Smoke Bot", job: "" },
+          draft: { name: "Smoke Bot", job: "", primary: true },
         });
         const devices = yield* Server.Devices;
         const entries = yield* Server.Entries;
@@ -159,7 +161,38 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
 
         const app = yield* launch(profile);
         const page = yield* Effect.promise(() => app.firstWindow({ timeout: STEP }));
+        /**
+         * What the global shortcut does, run from the application menu's item for it. Answers
+         * when it was pressed, on the clock the pages share.
+         */
+        const pressShortcut = () =>
+          app.evaluate(({ Menu }) => {
+            const pressedAt = performance.timeOrigin + performance.now();
+            Menu.getApplicationMenu()?.getMenuItemById("quickAccess")?.click();
+            return pressedAt;
+          });
+        /** Whether the quick access window shows. */
+        const quickAccessShows = () =>
+          app.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows().some(
+              (window) =>
+                URL.parse(window.webContents.getURL())?.pathname === "/quick" && window.isVisible(),
+            ),
+          );
+        /** Waits until quick access shows, or no longer does. */
+        const quickAccessTo = (shows: boolean) =>
+          Effect.promise(quickAccessShows).pipe(
+            Effect.repeat({
+              until: (now) => now === shows,
+              schedule: Schedule.spaced("100 millis"),
+            }),
+            Effect.timeout(STEP),
+          );
         yield* onPage(page, async () => {
+          // With no server named there is no bot to show: the shortcut shows the main window.
+          await page.getByLabel("Server address").waitFor({ state: "visible", timeout: STEP });
+          await pressShortcut();
+          assert.isFalse(await quickAccessShows(), "quick access opened with no server named");
           // An address that redirects to the server is not taken for it.
           await page.getByLabel("Server address").fill(redirecting, { timeout: STEP });
           await page.getByRole("button", { name: "Continue" }).click();
@@ -209,20 +242,82 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         assert.isTrue(Option.isSome(arrived));
         assert.strictEqual(new URL(page.url()).protocol, "j3bots-dev:");
 
-        // The application menu's Show, which the global shortcut also runs:
-        // the window comes forward with the cursor in the open conversation's composer.
-        yield* onPage(page, async () => {
-          await page.getByRole("button", { name: "Settings" }).focus();
-          const composer = await page
-            .getByRole("combobox", { name: `Message ${bot.profile.name}` })
+        // Quick access: the shortcut opens it on the primary bot's conversation once its page
+        // has reached the server, with the cursor in its composer. Until then it shows the
+        // main window, so the shortcut is pressed until quick access shows.
+        const messageBox = { name: `Message ${bot.profile.name}` };
+        yield* Effect.promise(async () => {
+          if (!(await quickAccessShows())) await pressShortcut();
+          return quickAccessShows();
+        }).pipe(
+          Effect.repeat({ until: (shows) => shows, schedule: Schedule.spaced("250 millis") }),
+          Effect.timeout(STEP),
+        );
+        const quick = app
+          .windows()
+          .find((window) => URL.parse(window.url())?.pathname === "/quick");
+        assert.isDefined(quick, "the quick access window has no page");
+        if (quick === undefined) return;
+        yield* onPage(quick, async () => {
+          const composer = await quick
+            .getByRole("combobox", messageBox)
             .elementHandle({ timeout: STEP });
-          await app.evaluate(({ Menu }) => {
-            Menu.getApplicationMenu()?.getMenuItemById("show")?.click();
-          });
-          await page.waitForFunction((element) => element === document.activeElement, composer, {
+          await quick.waitForFunction((element) => element === document.activeElement, composer, {
             timeout: STEP,
           });
+          // A message sent from it is in the conversation, here and in the main window.
+          await quick.keyboard.insertText("Hello from quick access");
+          await quick.keyboard.press("Enter");
+          await quick.getByText("Hello from quick access").first().waitFor({ timeout: STEP });
+          await page.getByText("Hello from quick access").first().waitFor({ timeout: STEP });
+          // What is typed in it and not sent is the conversation's draft: the main window has it.
+          await quick.keyboard.insertText("Half a thought");
+          await page
+            .getByRole("combobox", messageBox)
+            .filter({ hasText: "Half a thought" })
+            .waitFor({ timeout: STEP });
+          // Escape puts it away.
+          await quick.keyboard.press("Escape");
         });
+        yield* quickAccessTo(false);
+
+        // Asked for again, it is there within a frame or two of the shortcut: the window is
+        // kept, hidden, with its page loaded.
+        const shownIn = yield* onPage(quick, async () => {
+          await page.evaluate(() => window.history.back());
+          await page.waitForURL((url) => !url.pathname.startsWith("/bots/"), { timeout: STEP });
+          await quick.evaluate(() => {
+            document.addEventListener(
+              "visibilitychange",
+              () =>
+                requestAnimationFrame(() =>
+                  Reflect.set(window, "j3DrawnAt", performance.timeOrigin + performance.now()),
+                ),
+              { once: true },
+            );
+          });
+          const pressedAt = await pressShortcut();
+          assert.isTrue(await quickAccessShows(), "the shortcut returned before the window showed");
+          const drawn = await quick.waitForFunction(() => Reflect.get(window, "j3DrawnAt"), null, {
+            timeout: STEP,
+          });
+          return Number(await drawn.jsonValue()) - pressedAt;
+        });
+        // The measure the pull request states, in the run's log.
+        yield* Effect.log(
+          `Quick access drew its first frame ${Math.round(shownIn)} ms after the shortcut, in a ${
+            URL.parse(quick.url())?.searchParams.get("solid") === "true"
+              ? "solid window (no compositing manager here)"
+              : "see-through window"
+          }.`,
+        );
+        assert.isBelow(shownIn, 1500, "quick access took too long to show");
+        // "Open conversation" brings the main window to that conversation, and puts quick access away.
+        yield* onPage(quick, async () => {
+          await quick.getByRole("button", { name: "Open conversation" }).click();
+          await page.waitForURL((url) => url.pathname === `/bots/${bot.id}`, { timeout: STEP });
+        });
+        yield* quickAccessTo(false);
 
         // The credential is stored sealed; the token it holds is nowhere on disk in the clear.
         const record = yield* Schema.decodeUnknownEffect(SealedRecord)(
