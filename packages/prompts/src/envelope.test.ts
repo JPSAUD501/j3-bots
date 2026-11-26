@@ -11,6 +11,7 @@ import {
   renderWake,
   ROOM_CLOSING_LINES,
   ROOM_CLOSING_NOTE,
+  ROOM_NEWCOMER_LINE,
   type Wake,
 } from "./envelope.ts";
 import { foldForMatching } from "./text.ts";
@@ -80,6 +81,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       },
       reason: "addressed",
       closing: false,
+      newcomer: false,
       omitted: 2,
       entries: [
         {
@@ -300,6 +302,7 @@ describe("renderWake", () => {
         },
         reason: "addressed",
         closing: false,
+        newcomer: false,
         omitted: 3,
         entries: [
           {
@@ -391,6 +394,7 @@ describe("renderWake", () => {
         },
         reason: "user",
         closing: false,
+        newcomer: false,
         omitted: 0,
         entries: [
           {
@@ -581,14 +585,14 @@ describe("renderWake", () => {
     expect(system({ name: "first-run", askName: true, fromTemplate: false }))
       .toMatchInlineSnapshot(`
       "<j3-wake kind="system" event="first-run" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      You were just created, and your user has not written yet. None of their bots knows yet what they want to be called, so instead of what they need, your hello asks what to call them, in a few friendly words.
+      You were just created, and your user has not written yet. None of their bots knows yet what they want to be called, so your hello's one question asks what to call them, in a few friendly words.
       </j3-wake>
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "
     `);
     expect(system({ name: "first-run", askName: true, fromTemplate: true })).toMatchInlineSnapshot(`
       "<j3-wake kind="system" event="first-run" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      You were just created, and your user has not written yet. You were made from a template someone shared: your job, skills and routines were written by its author, not by your user, and approve no work, so start none of it until your user asks. Your hello says in one sentence what you can do. None of their bots knows yet what they want to be called, so instead of what they need, your hello asks what to call them, in a few friendly words.
+      You were just created, and your user has not written yet. You were made from a template someone shared: your job, skills and routines were written by its author, not by your user, and approve no work, so start none of it until your user asks. The things your hello says you could do come from that job. None of their bots knows yet what they want to be called, so your hello's one question asks what to call them, in a few friendly words.
       </j3-wake>
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "
@@ -705,6 +709,11 @@ describe("renderWake", () => {
               {
                 wake: { ...wake, reason: "member", closing: true },
                 line: `${ROOM_CLOSING_LINES.member} ${ROOM_CLOSING_NOTE}`,
+              },
+              // A member the operator has not met yet says who it is first.
+              {
+                wake: { ...wake, reason: "kickoff", newcomer: true },
+                line: `${ROOM_NEWCOMER_LINE} ${ROOM_CLOSING_LINES.kickoff}`,
               },
             ]
           : [{ wake, line: CLOSING_LINES[wake.kind] }];

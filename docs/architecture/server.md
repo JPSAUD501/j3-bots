@@ -491,6 +491,14 @@ A connector call may take up to eleven minutes at the bridge, past the connector
 
 The complete parameter schemas and the wording of each description are part of the prompt package. See [Prompt architecture](../prompts/architecture.md#tools).
 
+### First contact
+
+A bot's first contact with the operator is its hello, two or three short messages ([Prompt architecture](../prompts/architecture.md#wake-envelopes)), or, for a bot made for a room, whose hello `start_room` cancelled, its turns there until it first speaks. The server paces those messages as a person's would arrive in a chat: a `say` that follows another of the same turn waits before it is posted for as long as typing it would take, 0.5 seconds plus 14 ms a character, between 0.9 and 2.6 seconds (`typingPause`), less the time since the one before, so a model that took longer to write it waits no more. While a message waits, the bot's state, `thinking` or `working`, says `typing`, and every client shows "Typing" where it shows what the bot is doing, so web and Android show the same, and a notification of the next message comes only once it is posted.
+
+A turn is part of a first contact when its dispatch delivers the bot's `first-run` wake, or when the bot's conversation holds a `made-for-room` notice and the bot had said nothing, in its conversation or its rooms, when the turn started. The same newcomer test, without the turn, sets a room envelope's `newcomer`, which asks the bot to open with who it is. Both look up through the entries' indexes: the bot's conversation, and the rooms it is in.
+
+A bot's `say`s are posted one at a time, in the order they came, so messages the model sent together arrive in order, each paced after the one before. A Stop that comes while a message waits drops it: once the pause is over, the `say` is refused, "Nothing was sent: your user stopped this work", and the bot's turn is already ending. The pause and the time of each bot's last message are kept in memory: a restart ends the turn, and with it the first contact's pacing. Turns outside a first contact are not paced, so a turn that speaks twice while it works posts each message as it comes.
+
 ## Rooms
 
 A room is J3 Bots data: members in order, entries, and a status. An active room has two to six members, all equal: none answers for the room. A message wakes the members it is for, and every member reads every message posted in it, the operator's and the other members', in its next envelope ([0039](../decisions/0039-a-room-has-no-host.md)). Their order is the one the room lists them in. An archived room is read-only: it takes no messages and no changes but `pinned`, `hidden` and unarchiving, and it may have fewer than two members. There is no engine object behind it.

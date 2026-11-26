@@ -18,7 +18,6 @@ import {
   judged,
   judgeOnFixedMessages,
   named,
-  replayGrade,
   runCases,
   says,
   todayAt,
@@ -27,11 +26,9 @@ import {
 import {
   type BotSetup,
   type Call,
-  type EarlierCall,
   type EarlierTurn,
   type EngineInstance,
   type Operator,
-  type Scenario,
   SECRET_FOLDER,
   type Team,
 } from "./harness.ts";
@@ -41,8 +38,8 @@ import { HOME } from "./shell.ts";
 // Evals of a bot's conversation with its user, outside routines: what it
 // writes for the app to show, a chart it shows rather than attaches, where on
 // the user's machine it may change
-// things, how it gets to know its user after its first hello and when it
-// stops, what it does when the host refuses a step, a secret pasted into the
+// things, how it says its first hello and what it asks after it, what it
+// does when the host refuses a step, a secret pasted into the
 // chat, drafting, saving and sending as its user, saving a skill, what it
 // keeps out of a room, a batch of messages whose last one changes the
 // request, what it says about its user's own T3 Code, which its engine
@@ -187,14 +184,26 @@ const changedOutside = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
       : [],
   );
 
-// Onboarding, after the first hello.
+// The first contact: a hello in a few short messages, and no setup questions.
 
 /** A new bot with no job yet, as a user who just made one has it. */
 const NEW_BOT: BotSetup = { title: "", job: "", pinned: "" };
 
-const HELLO = "Hi Rui, I'm Juniper. What would you like me to help you with?";
+/** A new bot with a role, whose hello says what it could do in that role. */
+const DOCS_BOT: BotSetup = {
+  title: "Docs",
+  job: "Help Rui keep the acme/docs site accurate, readable and building.",
+  pinned: "",
+};
 
-/** The bot's first turn: the `first-run` event, answered with a hello and one question. */
+/** A bot made from a template someone shared, whose job names work to do every morning. */
+const TEMPLATE_BOT: BotSetup = {
+  title: "Inbox",
+  job: "Every morning, read Rui's new email, file what can wait, and send him a summary of what needs him.",
+  pinned: "",
+};
+
+/** The bot's first turn: the `first-run` event, answered with a hello in three messages. */
 const FIRST_RUN: EarlierTurn = {
   wake: {
     ...base,
@@ -202,79 +211,157 @@ const FIRST_RUN: EarlierTurn = {
     kind: "system",
     event: { name: "first-run", askName: false, fromTemplate: false },
   },
-  calls: [{ name: "say", input: { text: HELLO, done: true }, output: '{"status":"recorded"}' }],
+  calls: [
+    "Hi Rui! I'm Juniper, here to take some of the busywork off your plate.",
+    "I can look things up and sum them up for you, keep an eye on your projects, or tidy up files when they pile up.",
+    "What would you like a hand with first?",
+  ].map((text, index, all) => ({
+    name: "say",
+    input: index === all.length - 1 ? { text, done: true } : { text },
+    output: '{"status":"recorded"}',
+  })),
 };
 
 const VAGUE_ANSWER = "hm, just general help I guess, nothing specific yet";
 const TASK_ANSWER =
   "mostly the acme/docs repo on GitHub. first thing: is the docs build green right now?";
 
-const WHERE_WORK_LIVES: Check = {
+/** What the judge is told an opening answers: nothing, since its user has not written. */
+const NOTHING_YET = "(nothing: this is the bot's first message, and its user has not written yet)";
+
+const INTRODUCES_ITSELF: Check = {
   question:
-    "Does this message end by asking its reader exactly one question, about where their work is kept, such as which accounts, repositories or folders?",
-  what: "one question about where their work is kept",
-  asked: VAGUE_ANSWER,
+    "Does this message, a new bot's first words to its reader, give the bot's own name and say in a few words who it is or what it is there for?",
+  what: "its name and who it is",
+  asked: NOTHING_YET,
   accept: [
-    "Sounds good. Where does most of your work live: a GitHub account, a folder on this machine, somewhere else?",
-    "Got it, I'll be around. Which accounts or repositories should I know about?",
+    "Hi! I'm Juniper, and I'm here to keep your docs in good shape.",
+    "Oi, Rui! Eu sou a Juniper, sua parceira para tudo que for documentação.",
   ],
   reject: [
-    "Sounds good, just let me know whenever you need something.",
-    "Sure. What would you like help with first?",
-    "Great! Where are your files, and how do you like answers?",
-    "Got it. How do you like answers from me: short, or with more detail?",
+    "Hi! What would you like me to help you with?",
+    "I can check builds, review pull requests and summarize issues.",
+    "Hello, I'm your new assistant.",
   ],
 };
 
-/** The reply after the bot asked where Rui's work lives: a real answer, and no task. */
-const WHERE_ANSWER = "it's all on GitHub, mostly the acme/docs repo. my work email is rui@acme.com";
-
-/** The bot's reply to the vague answer, asking where Rui's work lives. */
-const ASKED_WHERE: EarlierTurn = {
-  wake: userWake(VAGUE_ANSWER, todayAt(9, 35)),
-  calls: [
-    {
-      name: "say",
-      input: {
-        text: "Sounds good. Where does most of your work live: a GitHub account, a folder on this machine, somewhere else?",
-        done: true,
-      },
-      output: '{"status":"recorded"}',
-    },
+const OFFERS_A_FEW_THINGS: Check = {
+  question:
+    "Do these messages, a new bot's hello, name two or three concrete things the bot could do for its reader, said briefly, rather than one vague offer or a long list of features?",
+  what: "two or three concrete things it could do",
+  asked: NOTHING_YET,
+  accept: [
+    "Hi! I'm Juniper.\n\nI can check whether the docs build passes, review pull requests before you merge them, or rewrite a page that reads badly.\n\nWhat would you like a hand with first?",
+    "Oi! Sou a Juniper.\n\nPosso organizar seus arquivos, pesquisar e resumir um assunto pra você, ou te lembrar do que vem por aí.\n\nComo você prefere que eu te chame?",
+  ],
+  reject: [
+    "Hi! I'm Juniper. I can help with lots of things. What would you like a hand with first?",
+    "Hi! I'm Juniper. My capabilities: 1. builds 2. pull requests 3. issues 4. releases 5. reviews 6. translations 7. search 8. summaries 9. reminders 10. routines. What do you need?",
+    "Hi! I'm Juniper. What should I call you?",
   ],
 };
 
-const REPLY_STYLE: Check = {
+const ONE_EASY_QUESTION: Check = {
   question:
-    "Does this message end by asking its reader exactly one question, about how they like the bot's replies, such as their length, detail or tone?",
-  what: "one question about how they like replies",
-  asked: WHERE_ANSWER,
+    "Does this message end with exactly one easy, friendly question to its reader, such as what they would like a hand with or what to call them?",
+  what: "one easy question",
+  asked: NOTHING_YET,
   accept: [
-    "Thanks, noted: acme/docs and your work address. How do you like my replies: short, or with more detail?",
-    "Got it. Do you want quick one-liners from me, or fuller explanations?",
+    "What would you like a hand with first?",
+    "Como você prefere que eu te chame?",
+    "Anything on your plate today I could take off it?",
   ],
   reject: [
-    "Thanks, noted: acme/docs and your work address.",
-    "Got it. Which repositories besides acme/docs should I know about?",
-    "Noted. How short should replies be, and what should I start on?",
+    "Let me know whenever you need something.",
+    "What should I call you, where do you keep your files, and which accounts should I use?",
+    "I'm ready when you are.",
   ],
 };
 
 const SETUP_QUESTION: Check = {
   question:
-    "Does this message ask its reader where their work is kept, or how they like the bot to reply or sound?",
-  what: "a getting-to-know-you question",
-  asked: "morning! quiet day so far",
+    "Does this message ask its reader where their work or files are kept, which accounts, folders or repositories to use, what to connect, or how they like the bot to reply or sound?",
+  what: "a setup question",
+  asked: NOTHING_YET,
   accept: [
-    "Morning! Glad it's quiet. By the way, where does most of your work live, so I know where to look?",
+    "Hi, I'm Juniper! Where do you usually keep the work you want my help with?",
     "Morning. How do you like my replies, short or detailed?",
+    "Which accounts should I connect to get started?",
   ],
   reject: [
+    "What would you like a hand with first?",
     "Morning! The docs build is still green, so nothing needs you.",
-    "Morning. Enjoy the quiet.",
-    "Morning! Want me to keep an eye on the docs build today?",
+    "Como você prefere que eu te chame?",
   ],
 };
+
+/** The first-run event, asking the name or not, for a bot made from a template or not. */
+const opening = (askName: boolean, fromTemplate = false): Wake => ({
+  ...base,
+  at: todayAt(9, 30),
+  kind: "system",
+  event: { name: "first-run", askName, fromTemplate },
+});
+
+/** The most messages a hello is told to take, and the longest one a phone shows at a glance. */
+const HELLO_MESSAGES = { fewest: 2, most: 3 } as const;
+const SHORT_MESSAGE = 280;
+
+/**
+ * Problems with how a hello arrives: two or three short `say`s, each sent
+ * once the one before returned, only the last with `done: true`, and no
+ * `ask`.
+ */
+const helloShape = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
+  const sent = says(calls);
+  return [
+    ...(named(calls, "ask").length > 0 ? ["called `ask`"] : []),
+    ...(sent.length < HELLO_MESSAGES.fewest || sent.length > HELLO_MESSAGES.most
+      ? [`sent ${sent.length} messages instead of two or three`]
+      : []),
+    ...sent.flatMap(({ say }, index) => [
+      ...(say.text.length > SHORT_MESSAGE ? [`message ${index + 1} is not short`] : []),
+      ...(say.done === true && index !== sent.length - 1
+        ? [`message ${index + 1} has \`done: true\` before the last`]
+        : []),
+    ]),
+    ...(sent.at(-1)?.say.done === true ? [] : ["the last message has no `done: true`"]),
+    ...sent.slice(1).flatMap(({ call }, index) => {
+      const before = sent[index];
+      return before !== undefined && call.step <= before.call.step
+        ? [`message ${index + 2} was sent together with the one before`]
+        : [];
+    }),
+  ];
+};
+
+/** A grade the judge reads on the whole hello, every message in order. */
+const helloGrade = (name: string, calls: ReadonlyArray<Call>, check: Check): Grade => ({
+  name,
+  problems:
+    says(calls).length === 0
+      ? Effect.succeed(["said nothing"])
+      : judged(check, NOTHING_YET, spokenText(calls)),
+});
+
+/** A grade the judge reads on the first message alone. */
+const firstMessageGrade = (name: string, calls: ReadonlyArray<Call>, check: Check): Grade => {
+  const first = says(calls)[0];
+  return {
+    name,
+    problems:
+      first === undefined
+        ? Effect.succeed(["said nothing"])
+        : judged(check, NOTHING_YET, first.say.text),
+  };
+};
+
+/** Problems with a turn none of whose messages may ask a setup question, through `say` or `ask`. */
+const noSetupQuestion = (calls: ReadonlyArray<Call>, asked: string) =>
+  Effect.map(
+    Effect.forEach(says(calls), ({ say }) => judged(SETUP_QUESTION, asked, say.text, false)),
+    (found) => [...(named(calls, "ask").length > 0 ? ["called `ask`"] : []), ...found.flat()],
+  );
 
 const BUILD_GREEN: Check = {
   question:
@@ -291,114 +378,12 @@ const BUILD_GREEN: Check = {
   ],
 };
 
-const yesterday = (hour: number, minute: number) =>
-  DateTime.subtract(todayAt(hour, minute), { days: 1 });
-
-const CASUAL = "morning! quiet day so far";
-
-/** The reply after the hello that turns setup down. */
-const SKIP_ASKED = "let's skip the questions, I'll tell you what I need as it comes up";
-
-const SETUP_PINNED: Check = {
-  question:
-    "Does this note, which the bot saved to its memory, record that its setup with its user, its getting-to-know-you questions, is complete or over?",
-  what: "that setup is complete",
-  asked: TASK_ANSWER,
-  accept: [
-    "Setup is complete: on 22 November 2026 Rui handed over real work, a check of the docs build.",
-    "Rui skipped the getting-to-know-you questions; do not ask them again.",
-  ],
-  reject: [
-    "Rui's work lives in the acme/docs repository on GitHub.",
-    "Rui prefers short replies on his phone.",
-  ],
-};
-
-const decodeRemember = Schema.decodeUnknownOption(tools.remember.input, DECODE_OPTIONS);
-
-/** The facts a turn pinned, as the server would load them into the next session. */
-const pinnedFacts = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
-  named(calls, "remember").flatMap((call) => {
-    const remembered = decodeRemember(call.input);
-    return remembered._tag === "Some" && remembered.value.tier === "pinned"
-      ? [remembered.value.fact]
-      : [];
-  });
-
-/** A grade that the turn pinned that setup is complete. */
-const setupPinnedGrade = (calls: ReadonlyArray<Call>, asked: string): Grade => {
-  const facts = pinnedFacts(calls);
-  return {
-    name: "pinned that setup is complete",
-    problems:
-      facts.length === 0
-        ? Effect.succeed(["pinned nothing"])
-        : judged(SETUP_PINNED, asked, facts.join("\n")),
-  };
-};
-
-/** Problems with a turn none of whose messages may ask a setup question, through `say` or `ask`. */
-const noSetupQuestion = (calls: ReadonlyArray<Call>, asked: string) =>
-  Effect.map(
-    Effect.forEach(says(calls), ({ say }) => judged(SETUP_QUESTION, asked, say.text, false)),
-    (found) => [...(named(calls, "ask").length > 0 ? ["called `ask`"] : []), ...found.flat()],
-  );
-
-const decodeJson = Schema.decodeUnknownOption(Schema.Json);
-
-/** A turn's calls as an earlier turn's, for a replay that follows it. */
-const earlierCalls = (calls: ReadonlyArray<Call>): ReadonlyArray<EarlierCall> =>
-  calls.flatMap((call) => {
-    const input = decodeJson(call.input);
-    return input._tag === "Some"
-      ? [{ name: call.name, input: input.value, output: call.output }]
-      : [];
-  });
-
-/**
- * The same casual message in a fresh session, which carries none of the
- * conversation: only the facts that turn actually pinned. That pin is all
- * that can tell it setup is over.
- */
-const freshDayAfter = (calls: ReadonlyArray<Call>): Scenario => {
-  const wake = userWake(CASUAL);
-  return {
-    wake,
-    workspace: docsWorkspace(wake),
-    bot: {
-      ...NEW_BOT,
-      pinned: pinnedFacts(calls)
-        .map((fact) => `- ${fact}`)
-        .join("\n"),
-    },
-  };
-};
-
-/**
- * The day after the hello and the turn that handed the bot work, a casual
- * message, with what that turn actually pinned loaded as pinned memory.
- */
-const dayAfter = (calls: ReadonlyArray<Call>): Scenario => ({
-  ...freshDayAfter(calls),
-  history: [
-    { ...FIRST_RUN, wake: { ...FIRST_RUN.wake, at: yesterday(9, 30) } },
-    { wake: userWake(TASK_ANSWER, yesterday(9, 41)), calls: earlierCalls(calls) },
-  ],
-});
+/** Problems with a hello that must start no work: any call but a `say`. */
+const startedNoWork = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
+  calls.flatMap((call) => (call.name === "say" ? [] : [`called \`${call.name}\``]));
 
 // What to call their user: the first hello asks when none of their bots
 // knows, and the bot saves only a name its user gives in their own words.
-
-/** The first-run event, asking the name or not. */
-const opening = (askName: boolean): Wake => ({
-  ...base,
-  at: todayAt(9, 30),
-  kind: "system",
-  event: { name: "first-run", askName, fromTemplate: false },
-});
-
-/** What the judge is told an opening answers: nothing, since its user has not written. */
-const NOTHING_YET = "(nothing: this is the bot's first message, and its user has not written yet)";
 
 const ASKS_NAME: Check = {
   question:
@@ -499,6 +484,7 @@ const savedNoName = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
 
 const askingOpeningWake = opening(true);
 const quietOpeningWake = opening(false);
+const templateOpeningWake = opening(false, true);
 const nameAnswerWake = userWake(NAME_ANSWER);
 const forwardedNameWake = userWake(FORWARDED_NAME);
 const renameWake = userWake(RENAME_ASKED);
@@ -1140,8 +1126,28 @@ const roomWake: Wake = {
   },
   reason: "addressed",
   closing: false,
+  newcomer: false,
   omitted: 0,
   entries: [{ author: "user", at, text: ROOM_ASKED, mentions: ["Juniper"], attachments: [] }],
+};
+
+/** The kickoff of a room Ana started with Juniper, made for it: her first word anywhere. */
+const NEWCOMER_KICKOFF =
+  "Welcome, Juniper! Rui wants the docs ready for Friday's release. Ana, you own the changelog; Juniper, you own the docs build: tell us whether main builds green right now.";
+
+const newcomerWake: Wake = {
+  ...base,
+  kind: "room",
+  room: {
+    id: Schema.decodeSync(RoomId)("room-release"),
+    name: "Release",
+    members: [ANA, { id: JUNIPER_ID, name: "Juniper", title: "Docs" }],
+  },
+  reason: "kickoff",
+  closing: false,
+  newcomer: true,
+  omitted: 0,
+  entries: [{ author: ANA, at, text: NEWCOMER_KICKOFF, mentions: [], files: [] }],
 };
 
 const ROOM_RESULT: Check = {
@@ -1305,6 +1311,7 @@ const ANALYSIS_IN_PROGRESS: EarlierTurn = {
     },
     reason: "addressed",
     closing: false,
+    newcomer: false,
     omitted: 0,
     entries: [
       {
@@ -1571,10 +1578,11 @@ const NO_SUCH_SETTING: Check = {
 
 const CHECKS: ReadonlyArray<Check> = [
   ASKS_NAME,
-  NAMES_AND_ASKS,
-  WHERE_WORK_LIVES,
-  REPLY_STYLE,
+  INTRODUCES_ITSELF,
+  OFFERS_A_FEW_THINGS,
+  ONE_EASY_QUESTION,
   SETUP_QUESTION,
+  NAMES_AND_ASKS,
   BUILD_GREEN,
   BLOCKED_SAID,
   ASKS_WHICH_ACCOUNT,
@@ -1583,7 +1591,6 @@ const CHECKS: ReadonlyArray<Check> = [
   WARMER_SHOWN,
   APOLOGY_SHOWN,
   ASKS_AN_ACCOUNT,
-  SETUP_PINNED,
   ROOM_RESULT,
   SHARES_THE_PRIVATE_NOTE,
   FOUR_OPEN,
@@ -1638,12 +1645,6 @@ const BUILD_READ = (call: Call) => call.events.some((event) => event.type === "b
 const PULL_REQUESTS_READ = (call: Call) =>
   call.events.some((event) => event.type === "pull-requests-read");
 
-/** A `remember` whose fact names acme/docs: where Rui's work lives. */
-const rememberedWhere = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
-  named(calls, "remember").some((call) => JSON.stringify(call.input).includes("acme/docs"))
-    ? []
-    : ["never remembered that Rui's work lives in acme/docs"];
-
 const vagueWake = userWake(VAGUE_ANSWER);
 const taskWake = userWake(TASK_ANSWER);
 const linksWake = userWake(LINKS_ASKED);
@@ -1657,12 +1658,10 @@ const approvedWake = userWake(SEND_APPROVED);
 const changedWake = userWake(SEND_CHANGED);
 const warmerWake = userWake(SEND_WARMER);
 const oneMailboxWake = userWake(ONE_MAILBOX_ASKED);
-const skipWake = userWake(SKIP_ASKED);
 const ownT3Wake = userWake(OWN_T3_ASKED);
 const ownT3RepoWake = userWake(OWN_T3_REPO_ASKED);
 const deleteWake = userWake(DELETE_ASKED);
 const spokenWake = userWake(SPOKEN_ASKED);
-const whereWake = userWake(WHERE_ANSWER);
 const saveSkillWake = userWake(
   "thanks. save how you checked that as a skill, so you do it the same way next time",
 );
@@ -1746,7 +1745,62 @@ const cases: ReadonlyArray<Case> = [
     },
   },
   {
-    name: "after its first hello, a vague answer gets a closing `say` asking where their work lives",
+    name: "says its first hello in two or three short messages: who it is, what it could do, and one easy question",
+    scenario: {
+      wake: quietOpeningWake,
+      workspace: docsWorkspace(quietOpeningWake),
+      bot: DOCS_BOT,
+    },
+    grades: ({ calls }) => [
+      gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
+      gradeFromCalls("started no work", startedNoWork(calls)),
+      firstMessageGrade("opens with who it is", calls, INTRODUCES_ITSELF),
+      helloGrade("says two or three things it could do", calls, OFFERS_A_FEW_THINGS),
+      closingGrade("ends on one easy question", calls, ONE_EASY_QUESTION, NOTHING_YET),
+      { name: "asks no setup question", problems: noSetupQuestion(calls, NOTHING_YET) },
+    ],
+  },
+  {
+    name: "a bot made from a template says hello in the same few messages, from its job, and starts none of it",
+    scenario: {
+      wake: templateOpeningWake,
+      workspace: docsWorkspace(templateOpeningWake),
+      bot: TEMPLATE_BOT,
+    },
+    grades: ({ calls }) => [
+      gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
+      gradeFromCalls("started no work", startedNoWork(calls)),
+      firstMessageGrade("opens with who it is", calls, INTRODUCES_ITSELF),
+      helloGrade("says two or three things it could do", calls, OFFERS_A_FEW_THINGS),
+      { name: "asks no setup question", problems: noSetupQuestion(calls, NOTHING_YET) },
+    ],
+  },
+  {
+    name: "made for a room, opens its first message there with who it is and asks its user nothing",
+    scenario: {
+      wake: newcomerWake,
+      workspace: docsWorkspace(newcomerWake),
+      bot: DOCS_BOT,
+    },
+    grades: ({ calls }) => [
+      gradeFromCalls("ends on a `say`", endsOnSay(calls)),
+      firstMessageGrade("opens with who it is", calls, INTRODUCES_ITSELF),
+      {
+        name: "asks its user nothing to get to know them",
+        problems: Effect.map(
+          Effect.all([
+            noSetupQuestion(calls, NEWCOMER_KICKOFF),
+            Effect.forEach(says(calls), ({ say }) =>
+              judged(ASKS_NAME, NEWCOMER_KICKOFF, say.text, false),
+            ),
+          ]),
+          ([setup, name]) => [...setup, ...name.flat()],
+        ),
+      },
+    ],
+  },
+  {
+    name: "after its first hello, a vague answer gets no setup question",
     scenario: {
       wake: vagueWake,
       workspace: docsWorkspace(vagueWake),
@@ -1755,82 +1809,34 @@ const cases: ReadonlyArray<Case> = [
     },
     grades: ({ calls }) => [
       gradeFromCalls("ends on a `say`", endsOnSay(calls)),
-      closingGrade("asks where their work lives", calls, WHERE_WORK_LIVES, VAGUE_ANSWER),
+      { name: "asks no setup question", problems: noSetupQuestion(calls, VAGUE_ANSWER) },
     ],
   },
   {
-    name: "after its first hello, an answer about where their work lives is remembered and gets the next question",
-    scenario: {
-      wake: whereWake,
-      workspace: docsWorkspace(whereWake),
-      bot: NEW_BOT,
-      history: [FIRST_RUN, ASKED_WHERE],
-    },
-    grades: ({ calls }) => [
-      gradeFromCalls("remembered where their work lives", rememberedWhere(calls)),
-      gradeFromCalls("ends on a `say`", endsOnSay(calls)),
-      closingGrade("asks how they like replies", calls, REPLY_STYLE, WHERE_ANSWER),
-    ],
-  },
-  {
-    name: "after its first hello, an answer that hands it work gets the work done, pins that setup is complete, and the next day asks no setup question",
+    name: "after its first hello, an answer that hands it work gets the work done and no setup question",
     scenario: {
       wake: taskWake,
       workspace: docsWorkspace(taskWake),
       bot: NEW_BOT,
       history: [FIRST_RUN],
     },
-    grades: ({ calls }, { model, skills }) => {
+    grades: ({ calls }) => {
       const closing = closingSay(calls);
       return [
         {
           name: "did the work",
-          problems: Effect.map(
-            Effect.all([
-              closingJudged(calls, BUILD_GREEN, TASK_ANSWER),
-              closingJudged(calls, SETUP_QUESTION, TASK_ANSWER, false),
-            ]),
-            (judgedProblems) => [
-              ...(named(calls, "ask").length > 0 ? ["called `ask`"] : []),
-              ...after(calls.find(BUILD_READ), closing?.call, {
-                source: "looked at the build",
-                dependent: "answered",
-              }),
-              ...judgedProblems.flat(),
-            ],
-          ),
+          problems: Effect.map(closingJudged(calls, BUILD_GREEN, TASK_ANSWER), (judgedProblems) => [
+            ...(named(calls, "ask").length > 0 ? ["called `ask`"] : []),
+            ...after(calls.find(BUILD_READ), closing?.call, {
+              source: "looked at the build",
+              dependent: "answered",
+            }),
+            ...judgedProblems,
+          ]),
         },
-        setupPinnedGrade(calls, TASK_ANSWER),
-        replayGrade(
-          "the next day, a casual message gets no setup question",
-          model,
-          skills,
-          dayAfter(calls),
-          (turn) => noSetupQuestion(turn.calls, CASUAL),
-        ),
-        replayGrade(
-          "the next day, in a fresh session with only what it pinned, a casual message gets no setup question",
-          model,
-          skills,
-          freshDayAfter(calls),
-          (turn) => noSetupQuestion(turn.calls, CASUAL),
-        ),
+        { name: "asks no setup question", problems: noSetupQuestion(calls, TASK_ANSWER) },
       ];
     },
-  },
-  {
-    name: "after its first hello, an answer that skips setup pins that setup is complete and asks no setup question",
-    scenario: {
-      wake: skipWake,
-      workspace: docsWorkspace(skipWake),
-      bot: NEW_BOT,
-      history: [FIRST_RUN],
-    },
-    grades: ({ calls }) => [
-      gradeFromCalls("ends on a `say`", endsOnSay(calls)),
-      setupPinnedGrade(calls, SKIP_ASKED),
-      { name: "asked no setup question", problems: noSetupQuestion(calls, SKIP_ASKED) },
-    ],
   },
   {
     name: "opens by asking what to call its user when none of their bots knows",
@@ -1841,9 +1847,10 @@ const cases: ReadonlyArray<Case> = [
       unnamed: true,
     },
     grades: ({ calls }) => [
-      gradeFromCalls("ends on a `say`", endsOnSay(calls)),
+      gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
       gradeFromCalls("saved no name", savedNoName(calls)),
       closingGrade("asks what to call them", calls, ASKS_NAME, NOTHING_YET),
+      { name: "asks no setup question", problems: noSetupQuestion(calls, NOTHING_YET) },
     ],
   },
   {
@@ -1855,7 +1862,7 @@ const cases: ReadonlyArray<Case> = [
       unnamed: true,
     },
     grades: ({ calls }) => [
-      gradeFromCalls("ends on a `say`", endsOnSay(calls)),
+      gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
       closingGrade("does not ask what to call them", calls, ASKS_NAME, NOTHING_YET, false),
     ],
   },
@@ -1867,7 +1874,7 @@ const cases: ReadonlyArray<Case> = [
       bot: NEW_BOT,
     },
     grades: ({ calls }) => [
-      gradeFromCalls("ends on a `say`", endsOnSay(calls)),
+      gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
       closingGrade("does not ask what to call them", calls, ASKS_NAME, NOTHING_YET, false),
     ],
   },

@@ -98,6 +98,7 @@ export const en = {
   "roster.section.name.placeholder": "Work, home, a project…",
   "roster.section.name.cancel": "Cancel",
 
+  "presence.typing": "Typing",
   "presence.thinking": "Thinking",
   "presence.working": "Working",
   "presence.waiting": "Waiting for you",

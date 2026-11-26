@@ -133,6 +133,7 @@ describe("rosterLine", () => {
       since: at("2026-11-20T14:59:00Z"),
       stalled: false,
       quietSince: null,
+      typing: false,
     });
     const quiet = [opening, thinking, opening].map((b) => quietConversationText(b, ctx));
     expect(new Set(quiet).size).toBe(1);
@@ -152,6 +153,34 @@ describe("rosterLine", () => {
     expect(rosterLine(row(blocked), ctx).tone).toBe("blocked");
   });
 
+  it("says a bot is typing while its next message waits, over what its turn is doing", () => {
+    const typing = (state: "thinking" | "working") =>
+      bot(
+        "Scout",
+        state === "thinking"
+          ? {
+              _tag: "thinking",
+              since: at("2026-11-20T14:59:50Z"),
+              stalled: false,
+              quietSince: null,
+              typing: true,
+            }
+          : {
+              _tag: "working",
+              since: at("2026-11-20T14:59:50Z"),
+              stalled: false,
+              quietSince: null,
+              typing: true,
+              activity: "Reading",
+              tool: null,
+            },
+      );
+    for (const state of ["thinking", "working"] as const) {
+      expect(presenceLine(typing(state), ctx)).toEqual({ text: "Typing", tone: "default" });
+      expect(rosterLine(row(typing(state)), ctx).text).toBe("Typing");
+    }
+  });
+
   it("says how long a stalled turn has been quiet, from its last activity, not its start", () => {
     const stalled = (quietSince: string | null) =>
       bot("Scout", {
@@ -159,6 +188,7 @@ describe("rosterLine", () => {
         since: at("2026-11-20T14:20:00Z"),
         stalled: true,
         quietSince: quietSince === null ? null : at(quietSince),
+        typing: false,
         activity: "Reading",
         tool: null,
       });

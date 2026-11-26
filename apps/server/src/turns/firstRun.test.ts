@@ -10,7 +10,7 @@ import {
   TEMPLATE_FORMAT,
   TEMPLATE_VERSION,
 } from "@j3-bots/contracts";
-import type { SessionId } from "@j3-bots/engine-t3";
+import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -34,6 +34,7 @@ import { archive, member, roomWith } from "../testing/rooms.ts";
 import {
   awaitEntry,
   command,
+  conversation,
   createNewBot,
   delivery,
   deliveryIs,
@@ -52,6 +53,9 @@ import {
   turnEnded,
   until,
 } from "../testing/turns.ts";
+import { BotTools } from "../tools/BotTools.ts";
+import { BotStates } from "./BotStates.ts";
+import { typingPause } from "./firstContact.ts";
 import { busyBackoff } from "./model.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
@@ -151,6 +155,87 @@ const deliveredBoth = (first: EntryId, second: EntryId) =>
     yield* deliveryIs(first, "delivered");
     yield* deliveryIs(second, "delivered");
   });
+
+/** The bot's model sends `text` in its turn, as one more `say`, and the server answers it. */
+const sayInTurn = (
+  botId: BotId,
+  turnId: TurnId,
+  call: string,
+  input: { readonly text: string; readonly done?: true },
+) =>
+  Effect.gen(function* () {
+    const sessionId = yield* engineSession(botId);
+    yield* (yield* TestEngineControl).toolCall({
+      sessionId,
+      turnId,
+      tool: "say",
+      input,
+      recorded: "now",
+    });
+    return yield* (yield* BotTools).call({
+      requestId: call,
+      sessionId,
+      tool: "say",
+      arguments: input,
+    });
+  });
+
+/** The texts of the bot's messages in its conversation, in order. */
+const messagesOf = (botId: BotId) =>
+  Effect.map(conversation(botId), (entries) =>
+    entries.flatMap((entry) =>
+      entry._tag === "message" && entry.author._tag === "bot" ? [entry.text] : [],
+    ),
+  );
+
+/** Whether the bot is shown typing its next message. */
+const typing = (botId: BotId) =>
+  Effect.gen(function* () {
+    const state = yield* (yield* BotStates).of(botId);
+    return (state._tag === "thinking" || state._tag === "working") && state.typing;
+  });
+
+const HELLO = "Hi! I'm Juno, here to take some busywork off your plate.";
+const OFFER =
+  "I can sort out your files, look things up and sum them up, or remind you of what's coming.";
+
+it.effect(
+  "posts a hello's next message a moment after the one before, the bot typing meanwhile",
+  () =>
+    Effect.gen(function* () {
+      const bot = yield* createNewBot("Juno");
+      const hello = yield* nextTurn(bot.id);
+      yield* sayInTurn(bot.id, hello, "hello-1", { text: HELLO });
+      // The model sends the next one at once: the server holds it, as a person types it.
+      const next = yield* sayInTurn(bot.id, hello, "hello-2", { text: OFFER, done: true }).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* until(typing(bot.id));
+      assert.deepStrictEqual(yield* messagesOf(bot.id), [HELLO]);
+
+      yield* TestClock.adjust(typingPause(OFFER));
+      assert.strictEqual((yield* Fiber.join(next))._tag, "result");
+      assert.deepStrictEqual(yield* messagesOf(bot.id), [HELLO, OFFER]);
+      assert.isFalse(yield* typing(bot.id));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("drops a hello's next message when the operator stops the bot while it types", () =>
+  Effect.gen(function* () {
+    const bot = yield* createNewBot("Juno");
+    const hello = yield* nextTurn(bot.id);
+    yield* sayInTurn(bot.id, hello, "hello-1", { text: HELLO });
+    const next = yield* sayInTurn(bot.id, hello, "hello-2", { text: OFFER, done: true }).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* until(typing(bot.id));
+
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* TestClock.adjust(typingPause(OFFER));
+    assert.strictEqual((yield* Fiber.join(next))._tag, "refused");
+    assert.deepStrictEqual(yield* messagesOf(bot.id), [HELLO]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
 
 /** What a first-run envelope adds when the opening asks the operator's name. */
 const ASKS_NAME = "None of their bots knows yet what they want to be called";

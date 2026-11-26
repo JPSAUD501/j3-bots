@@ -94,7 +94,7 @@ Checks that a bot builds a team when the operator asks for one ([Rooms](../docs/
 
 Each run starts, connects and pairs as the room eval does, on one harness, then:
 
-1. Saves the operator's name, so the primary bot's hello asks for nothing, and creates the primary bot, Lia, in `auto` permission mode. It waits until her first-run turn is over.
+1. Saves the operator's name, so the primary bot's hello does not ask what to call them, and creates the primary bot, Lia, in `auto` permission mode. It waits until her first-run turn is over.
 2. Sends her, in Brazilian Portuguese, a request for a support group of several bots to help open the online shop of the operator's bakery. Who is in it, and what each does, is hers to decide.
 3. Waits until a member other than Lia has a message in the room, or until nothing has been under way for 30 seconds.
 4. Scores the run from the server's database, then stops the server and deletes the run's home.

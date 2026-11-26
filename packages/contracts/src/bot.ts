@@ -98,6 +98,16 @@ const stalled = {
 };
 
 /**
+ * Set by the server while it holds the bot's next message for a moment
+ * before posting it, as a person types one: between the messages of a bot's
+ * first contact. Clients show the bot typing. False from a server that
+ * predates it.
+ */
+const typing = {
+  typing: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+};
+
+/**
  * What the bot is doing. A bot is in exactly one state. Whether it has said
  * something the operator has not read is not a state: it is the roster item's
  * `unread`, and a client shows an idle bot with unread entries as done.
@@ -105,11 +115,12 @@ const stalled = {
 export const BotState = Schema.Union([
   Schema.TaggedStruct("idle", {}),
   /** A turn started and no visible work has happened yet. */
-  Schema.TaggedStruct("thinking", { ...since, ...stalled }),
+  Schema.TaggedStruct("thinking", { ...since, ...stalled, ...typing }),
   /** A turn is running tools. */
   Schema.TaggedStruct("working", {
     ...since,
     ...stalled,
+    ...typing,
     /** One line saying what it is doing right now. */
     activity: Schema.NullOr(Label),
     /**

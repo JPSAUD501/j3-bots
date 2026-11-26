@@ -74,6 +74,8 @@ import {
   TurnToolRetry,
   TurnTools,
 } from "../tools/TurnTools.ts";
+import { BotStates } from "./BotStates.ts";
+import { inFirstContact, typingPause } from "./firstContact.ts";
 import { hopCounts } from "./hopCounts.ts";
 import { keyedLock } from "./keyedLock.ts";
 import { Ledger } from "./Ledger.ts";
@@ -335,6 +337,8 @@ export const layer = Layer.effect(
     const spoken = routineSpeech(sql, ids, changes);
     const setRoutine = yield* routineTool;
     const reads = roomReads(sql, entries, bots, settings);
+    const botStates = yield* BotStates;
+    const firstContact = inFirstContact(sql);
 
     const engineSessionOf = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -985,6 +989,34 @@ export const layer = Layer.effect(
           } satisfies Schema.Json)
         : null;
 
+    /**
+     * The message each bot posted last, the turn it was in and when: what
+     * the next message's pause counts from. One per bot, replaced by its
+     * next message, so it holds no more than the roster.
+     */
+    const lastSaid = new Map<BotId, { readonly turn: string; readonly at: number }>();
+    /** One bot's messages are posted one at a time, in the order they came. */
+    const speaking = keyedLock();
+    const turnOf = (found: Pin) => `${found.sessionId}/${found.turnId}`;
+
+    /**
+     * Holds a message that follows another of the same turn, in the bot's
+     * first contact, for as long as a person would take to type it, less
+     * the time since the one before (`typingPause`), with the bot shown
+     * typing meanwhile. Says whether it held the message: a Stop that came
+     * during the pause then drops it.
+     */
+    const paced = Effect.fn("Speech.paced")(function* (found: Pin, text: string) {
+      const previous = lastSaid.get(found.botId);
+      if (previous === undefined || previous.turn !== turnOf(found)) return false;
+      if (!(yield* firstContact(found))) return false;
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const wait = Duration.toMillis(typingPause(text)) - (now - previous.at);
+      if (wait <= 0) return false;
+      yield* botStates.typing(found.botId, Effect.sleep(Duration.millis(wait)));
+      return true;
+    });
+
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
       // `to: "dm"` speaks to the operator in private, also from a room turn.
       const audience = input.to === "dm" ? conversation : found.audience;
@@ -1000,67 +1032,84 @@ export const layer = Layer.effect(
       const shown =
         input.visual === undefined ? null : yield* workspaceVisual(found.botId, input.visual);
       const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
-      // The file lock, then the transaction: the order every writer of the
-      // attachment store takes them in. Admission and publication stay one
-      // transaction.
-      return yield* attachments.withStore((put) =>
-        once(
-          "say",
-          found,
-        )(
-          Effect.gen(function* () {
-            const target = yield* requireTarget(found.botId, audience);
-            const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
-            const mention = Option.isSome(room) ? yield* mentionedIn(found, room.value, given) : [];
-            const files: Array<Attachment> = [];
-            for (const file of read) {
-              files.push(
-                yield* put({ ...file, bot: found.botId }).pipe(
-                  Effect.mapError(
-                    () => new TurnToolRefused({ reason: `${file.name} cannot be attached.` }),
-                  ),
-                ),
-              );
-            }
-            const entry = yield* entries.append({
-              target,
-              entry: {
-                _tag: "message",
-                author: { _tag: "bot", botId: found.botId },
-                text: input.text,
-                attachments: files,
-                mentions: { _tag: "bots", ids: mention },
-                delivery: { _tag: "delivered" },
-                commandId: null,
-                ...(shown === null ? {} : { visual: shown }),
-              },
-            });
-            if (files.length > 0) {
-              yield* sql`
+      return yield* speaking.run(found.botId)(
+        Effect.gen(function* () {
+          const held = yield* paced(found, input.text);
+          // The file lock, then the transaction: the order every writer of the
+          // attachment store takes them in. Admission and publication stay one
+          // transaction.
+          const result = yield* attachments.withStore((put) =>
+            once(
+              "say",
+              found,
+            )(
+              Effect.gen(function* () {
+                if (held && (yield* workStopped(found)).stopped) {
+                  return yield* new TurnToolRefused({
+                    reason: "Nothing was sent: your user stopped this work. End your turn.",
+                  });
+                }
+                const target = yield* requireTarget(found.botId, audience);
+                const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
+                const mention = Option.isSome(room)
+                  ? yield* mentionedIn(found, room.value, given)
+                  : [];
+                const files: Array<Attachment> = [];
+                for (const file of read) {
+                  files.push(
+                    yield* put({ ...file, bot: found.botId }).pipe(
+                      Effect.mapError(
+                        () => new TurnToolRefused({ reason: `${file.name} cannot be attached.` }),
+                      ),
+                    ),
+                  );
+                }
+                const entry = yield* entries.append({
+                  target,
+                  entry: {
+                    _tag: "message",
+                    author: { _tag: "bot", botId: found.botId },
+                    text: input.text,
+                    attachments: files,
+                    mentions: { _tag: "bots", ids: mention },
+                    delivery: { _tag: "delivered" },
+                    commandId: null,
+                    ...(shown === null ? {} : { visual: shown }),
+                  },
+                });
+                if (files.length > 0) {
+                  yield* sql`
               UPDATE attachments SET entry_id = ${entry.id}
               WHERE ${sql.in(
                 "id",
                 files.map((file) => file.id),
               )}
             `.pipe(Effect.orDie);
-            }
-            yield* spoken.said({
-              sessionId: found.sessionId,
-              botId: found.botId,
-              entryId: entry.id,
-              text: input.text,
-            });
-            const routed =
-              Option.isSome(room) && entry._tag === "message"
-                ? yield* routeRoomMessage(found, room.value, entry, "bot")
-                : null;
-            if (input.done === true) {
-              for (const { id } of yield* deliveredBy(found))
-                yield* ledger.closeDelivery(id, "done");
-            }
-            return roomPosted(routed) ?? ({ status: "recorded" } satisfies Schema.Json);
-          }),
-        ),
+                }
+                yield* spoken.said({
+                  sessionId: found.sessionId,
+                  botId: found.botId,
+                  entryId: entry.id,
+                  text: input.text,
+                });
+                const routed =
+                  Option.isSome(room) && entry._tag === "message"
+                    ? yield* routeRoomMessage(found, room.value, entry, "bot")
+                    : null;
+                if (input.done === true) {
+                  for (const { id } of yield* deliveredBy(found))
+                    yield* ledger.closeDelivery(id, "done");
+                }
+                return roomPosted(routed) ?? ({ status: "recorded" } satisfies Schema.Json);
+              }),
+            ),
+          );
+          lastSaid.set(found.botId, {
+            turn: turnOf(found),
+            at: DateTime.toEpochMillis(yield* DateTime.now),
+          });
+          return result;
+        }),
       );
     });
 

@@ -58,6 +58,15 @@ export class BotStates extends Context.Service<
     readonly opening: (botId: BotId) => Effect.Effect<boolean>;
     /** Tells the roster about turns that just went quiet long enough to look stalled. */
     readonly watchStalls: Effect.Effect<never>;
+    /**
+     * Shows the bot typing while `effect` runs: its running turn's state
+     * says so (`BotState`'s `typing`). The speech pacing holds a message for
+     * that long before posting it (`Speech`, First contact).
+     */
+    readonly typing: <A, E, R>(
+      botId: BotId,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
   }
 >()("@j3-bots/server/turns/BotStates") {}
 
@@ -67,6 +76,8 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const engineState = yield* EngineState;
     const changes = yield* ChangeLog;
+    /** How many held messages each typing bot has: one shows it typing. */
+    const typists = new Map<BotId, number>();
 
     // The request's own turn, not whichever turn of the bot runs: a routine's
     // side session may run one of its own meanwhile.
@@ -198,7 +209,10 @@ export const layer = Layer.effect(
         const since = turn.value.started_at;
         const fold = turn.value.work_fold_entry_id;
         const step = fold === null ? Option.none() : yield* shown(fold);
-        if (Option.isNone(step)) return { _tag: "thinking", since, stalled, quietSince } as const;
+        const typing = typists.has(botId);
+        if (Option.isNone(step)) {
+          return { _tag: "thinking", since, stalled, quietSince, typing } as const;
+        }
         const latest = step.value;
         const running = latest.status === "running";
         return {
@@ -206,6 +220,7 @@ export const layer = Layer.effect(
           since,
           stalled,
           quietSince,
+          typing,
           activity: running ? latest.label : null,
           tool: running ? latest.tool : null,
         } as const;
@@ -274,6 +289,21 @@ export const layer = Layer.effect(
       Effect.andThen(Effect.never),
     );
 
-    return BotStates.of({ of, settingsHeld, opening, watchStalls });
+    const touched = (botId: BotId, by: number) =>
+      Effect.suspend(() => {
+        const count = (typists.get(botId) ?? 0) + by;
+        if (count > 0) typists.set(botId, count);
+        else typists.delete(botId);
+        return changes.touch({ _tag: "bot", botId });
+      });
+
+    const typing = <A, E, R>(botId: BotId, effect: Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        touched(botId, 1),
+        () => effect,
+        () => touched(botId, -1),
+      );
+
+    return BotStates.of({ of, settingsHeld, opening, watchStalls, typing });
   }),
 );

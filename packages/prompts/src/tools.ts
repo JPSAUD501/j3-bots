@@ -748,7 +748,7 @@ export const tools = {
       "Put one question to your user as a card with options to tap, for a decision that needs a structured answer.",
       "Use it when a wrong guess would cost something real or only they know the answer; otherwise decide, and say what you assumed.",
       "List only steps you will take the moment one is picked, each worded as what happens next; none of them is 'you decide' or a task for your user. Context longer than the question goes in a `say` before it.",
-      "A conversational question, such as a setup question after your hello, ends a `say` instead.",
+      "A conversational question ends a `say` instead.",
       "Calling it ends your turn: their answer arrives as your next turn, and a dismissed card means no. Do not ask the same thing again.",
       "Not in a routine run: put the question in a `say` there.",
       BOT_ONLY,

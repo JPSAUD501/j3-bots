@@ -97,6 +97,9 @@ const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
 /** How long a new bot takes to say hello, from its creation. */
 const OPENING_DELAY = 3200;
 
+/** How long each message of the hello takes after the one before: the server's pause, about. */
+const HELLO_PAUSE = 1800;
+
 /** How long an answer to a card takes to arrive, so a second click has something to miss. */
 const ANSWER_DELAY = 500;
 
@@ -261,7 +264,13 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
       updateBot(
         s,
         botId,
-        setState({ _tag: "thinking", since: now(), stalled: false, quietSince: null }),
+        setState({
+          _tag: "thinking",
+          since: now(),
+          stalled: false,
+          quietSince: null,
+          typing: false,
+        }),
       ),
     );
     window.setTimeout(() => {
@@ -332,9 +341,13 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     const left = found.room.answering.filter((id) => !woken.includes(id));
     update((s) =>
       answering(
-        working(woken, { _tag: "thinking", since: now(), stalled: false, quietSince: null })(
-          working(left, { _tag: "idle" })(s),
-        ),
+        working(woken, {
+          _tag: "thinking",
+          since: now(),
+          stalled: false,
+          quietSince: null,
+          typing: false,
+        })(working(left, { _tag: "idle" })(s)),
         () => woken,
       ),
     );
@@ -612,7 +625,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           hidden: hidden ?? false,
           sectionId: null,
           state: canSpeak
-            ? { _tag: "thinking", since: now(), stalled: false, quietSince: null }
+            ? { _tag: "thinking", since: now(), stalled: false, quietSince: null, typing: false }
             : { _tag: "idle" },
           settingsHeld: false,
           opening: true,
@@ -627,31 +640,45 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
         };
       });
       if (canSpeak) {
-        window.setTimeout(() => {
-          update((s) => {
-            const spoken = updateBot(
-              withEntries(s, key, (es) =>
-                appended(
-                  es,
-                  message(
-                    { _tag: "bot", botId },
-                    `Hi, I’m ${name}. What would you like me to take care of first?`,
-                  ),
-                ),
-              ),
-              botId,
-              setState({ _tag: "idle" }),
-            );
-            return {
-              ...spoken,
-              roster: spoken.roster.map((item) =>
-                item._tag === "bot" && item.bot.id === botId
-                  ? { ...item, bot: { ...item.bot, opening: false } }
-                  : item,
-              ),
-            };
-          });
-        }, OPENING_DELAY);
+        // A first contact, as a server paces it: each message a moment after
+        // the one before, the bot shown typing between them.
+        const hello = [
+          `Hi! I’m ${name}, and I’m here to take things off your plate.`,
+          "I can sort out your files and folders, look things up and sum them up for you, or remind you of what’s coming.",
+          "What should I call you?",
+        ];
+        const typing = setState({
+          _tag: "thinking",
+          since: now(),
+          stalled: false,
+          quietSince: null,
+          typing: true,
+        });
+        hello.forEach((text, index) => {
+          const last = index === hello.length - 1;
+          window.setTimeout(
+            () => {
+              update((s) => {
+                const spoken = updateBot(
+                  withEntries(s, key, (es) => appended(es, message({ _tag: "bot", botId }, text))),
+                  botId,
+                  last ? setState({ _tag: "idle" }) : typing,
+                );
+                return last
+                  ? {
+                      ...spoken,
+                      roster: spoken.roster.map((item) =>
+                        item._tag === "bot" && item.bot.id === botId
+                          ? { ...item, bot: { ...item.bot, opening: false } }
+                          : item,
+                      ),
+                    }
+                  : spoken;
+              });
+            },
+            OPENING_DELAY + index * HELLO_PAUSE,
+          );
+        });
       }
       return Promise.resolve({ _tag: "done", value: botId });
     },

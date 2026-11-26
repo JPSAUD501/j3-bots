@@ -283,13 +283,8 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
           tone: "blocked",
         };
       case "thinking":
-        return state.stalled
-          ? stalledLine(state.quietSince, ctx)
-          : { text: t("presence.thinking"), tone: "default" };
       case "working":
-        return state.stalled
-          ? stalledLine(state.quietSince, ctx)
-          : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
+        return turnUnderWayLine(state, ctx);
       case "idle":
         if (lastEntry === null && item.bot.opening) {
           return { text: t("roster.gettingReady"), tone: "default" };
@@ -338,6 +333,22 @@ export function heldHelloText(name: string, hold: OpeningHold, ctx: TimeContext)
 }
 
 /**
+ * What a bot's turn under way is doing, in one line: typing its next message
+ * in a first contact, quiet long enough to look stalled, or the step it is on.
+ */
+function turnUnderWayLine(
+  state: Extract<Bot["state"], { readonly _tag: "thinking" | "working" }>,
+  ctx: PresentationContext,
+): StatusLine {
+  const { t } = ctx.i18n;
+  if (state.typing) return { text: t("presence.typing"), tone: "default" };
+  if (state.stalled) return stalledLine(state.quietSince, ctx);
+  return state._tag === "thinking"
+    ? { text: t("presence.thinking"), tone: "default" }
+    : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
+}
+
+/**
  * What a bot is doing now, in one line: the line of its turn under way, and
  * what its conversation says aloud as that changes. A bot at rest is doing
  * nothing: null.
@@ -347,13 +358,8 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
   const { state } = bot;
   switch (state._tag) {
     case "thinking":
-      return state.stalled
-        ? stalledLine(state.quietSince, ctx)
-        : { text: t("presence.thinking"), tone: "default" };
     case "working":
-      return state.stalled
-        ? stalledLine(state.quietSince, ctx)
-        : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
+      return turnUnderWayLine(state, ctx);
     case "waiting":
       return { text: t("presence.waiting"), tone: "waiting" };
     case "blocked":

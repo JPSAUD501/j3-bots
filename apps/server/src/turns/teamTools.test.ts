@@ -10,7 +10,7 @@ import {
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import { ROOM_CLOSING_NOTE } from "@j3-bots/prompts";
+import { ROOM_CLOSING_NOTE, ROOM_NEWCOMER_LINE } from "@j3-bots/prompts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -491,6 +491,8 @@ it.effect(
         assert.include(envelope, "Pip takes billing");
         // It reads as the kickoff, which names its part, not as any message that mentions it.
         assert.include(envelope, 'reason="kickoff"');
+        // A bot made for the room meets the operator here, and opens with who it is.
+        assert.strictEqual(envelope.includes(ROOM_NEWCOMER_LINE), one !== wren);
         if (one === pip) yield* say(one, turn, { text: "On it.", done: true });
       }
       for (const [one, turn] of kicked) yield* finish(one, turn, team);
@@ -505,6 +507,8 @@ it.effect(
         const envelope = yield* lastEnvelope(one);
         assert.include(envelope, "On it.");
         assert.include(envelope, 'reason="member"');
+        // Mole has not spoken yet: still new to the operator.
+        assert.strictEqual(envelope.includes(ROOM_NEWCOMER_LINE), one === mole);
         yield* finish(one, reply, team);
       }
       assert.deepStrictEqual(yield* running(team), []);
