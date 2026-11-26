@@ -38,12 +38,13 @@ The operator picks a bot in the roster and types.
 - The operator can send another message at any time. It reaches the bot mid-turn and can redirect it.
 - Once the bot has answered, the empty composer can offer, faintly, a reply the operator might send next, with **Use** beside it ([Suggested replies](../architecture/clients.md#suggested-replies)). Use, or Tab on a computer, puts it in the message box to send or change; it never goes by itself. Typing hides it, and anything new in the conversation takes it away. Only a bot's own conversation offers one, never a room.
 - "Stop" ends the work. It does not undo what was already done, and the bot says what was left running, if anything. It sits in the bot's details, one press from the conversation's header, while there is work to stop; the conversation itself stays about what the bot is doing. On a computer, `Ctrl+.` (`⌘.` on macOS) stops it from the conversation.
+- If the bot's AI does not respond to Stop, Stop becomes **Force stop**, with one line saying why: the bot isn't responding to Stop, and Force stop ends what it is running now. The operator presses it once; the shortcut does the same. What the bot already did stays done, and the bot takes the next message as usual. A room offers the same while one of its bots ignores the room's Stop.
 
 ### Being asked
 
 A bot needs a decision or permission.
 
-- A **question** arrives as a card with a few options and, when it makes sense, room for a typed answer. Tapping an option answers it.
+- A **question** arrives as a card with a few options and, when it makes sense, room for a typed answer. Tapping an option answers it. A question from the bot's coding tool shows whole, however many parts it has, one under the other, each with the few words its tool puts over it and, under an option, the sketch or snippet the tool shows of it.
 - An **approval** arrives as a card that names the exact action, with Allow and Deny. Allowing can be for this once or for the session.
 - Both produce a notification on the operator's devices. Answering on any device resolves the card everywhere.
 - While the bot waits on a card the operator has scrolled away from, "Waiting for you" floats over the end of the conversation, with an arrow toward the card, and brings it back into view.
@@ -226,3 +227,7 @@ A bot is in exactly one of these, and the avatar carries it:
 While a first contact's next message is a moment from arriving, the line that says what the bot is doing says "Typing", in its row and in its conversation; the avatar stays Thinking or Working.
 
 "Working" and "stuck" must never look the same. A bot whose turn has produced no activity for a long time is shown as possibly stalled, with a way to check on it or stop it.
+
+When its AI is hard to reach and the engine is trying again, the line says so quietly: "Having trouble reaching Claude, trying again". A retry that works leaves no trace.
+
+**Errors say what happened and what to do, in plain words.** Only what a person can understand or act on is shown: a usage limit and when it resets, the AI's account signed out (sign in again in Settings), the AI unreachable (check the internet connection), or work that couldn't finish (try again). The AI is named when the bot is known. Nothing on screen names the engine, a provider's error class or a code. The technical words, scrubbed of secrets, sit behind **Details** on the notice, for whoever wants them, and in the server's log.
