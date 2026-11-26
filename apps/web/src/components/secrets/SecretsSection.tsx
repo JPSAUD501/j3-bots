@@ -79,7 +79,6 @@ type Screen =
  */
 export function SecretsSection({ secrets }: { readonly secrets: SecretsAccess }) {
   const i18n = useI18n();
-  const { t } = i18n;
   const failureText = useSecretsFailureText();
   const [screen, setScreen] = useState<Screen>({ _tag: "list" });
   const { view } = secrets;
@@ -116,9 +115,7 @@ export function SecretsSection({ secrets }: { readonly secrets: SecretsAccess })
     );
   };
 
-  return (
-    <Section>{body()}</Section>
-  );
+  return <Section>{body()}</Section>;
 }
 
 /** A vault from before secrets, opened with its password typed one last time. */
