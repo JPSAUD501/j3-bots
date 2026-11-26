@@ -28,6 +28,7 @@ import {
   finishRunning,
   flushed,
   gateSettled,
+  holdGate,
   mainSessionId,
   nextTurn,
   noticesOf,
@@ -659,17 +660,25 @@ it.effect(
       yield* finishRunning(bot.id);
       yield* turnEnded(bot.id);
 
-      // A send is under way when the engine starts again under a policy that
-      // refuses the bot's mode, and the new start answers it before the
-      // server has seen that start.
-      const sending = yield* control.holdNext("dispatch");
+      // A send is written and waits for its session's gate when the engine
+      // starts again under a policy that refuses the bot's mode, and it
+      // reaches the new start before the server has seen that start.
+      const sql = yield* SqlClient.SqlClient;
+      const gate = yield* holdGate(bot.id);
       const waiting = yield* sendToBot(bot.id, "Plan the launch.");
-      yield* sending.entered;
+      yield* until(
+        sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM dispatches WHERE bot_id = ${bot.id} AND status = 'intended'
+        `.pipe(
+          Effect.orDie,
+          Effect.map(([row]) => row?.n === 1),
+        ),
+      );
       const notice = yield* control.holdNextStartNotice;
       yield* control.setReachable(false);
       yield* control.limitPermissionModes("auto");
       yield* control.setReachable(true);
-      yield* sending.release;
+      yield* gate.release;
       yield* gateSettled(bot.id);
       assert.isTrue(yield* refusalRecorded(bot.id));
 

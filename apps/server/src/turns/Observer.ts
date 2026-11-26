@@ -1661,7 +1661,7 @@ export const layer = Layer.effect(
      * engine's own console sends none.
      */
     const closeUnwatched = Effect.gen(function* () {
-      for (const sessionId of [...following.keys()]) {
+      for (const sessionId of following.keys()) {
         if (Option.isNone(yield* watchedRow(sessionId).pipe(Effect.orDie))) yield* close(sessionId);
       }
     }).pipe(Effect.withSpan("Observer.closeUnwatched"));

@@ -285,8 +285,9 @@ export class Ledger extends Context.Service<
      * The operator's messages held behind the bot's opening when the
      * dispatch carries it. Whether each shows it waits behind the hello
      * follows whether the engine may have that dispatch (`refreshMessages`):
-     * a send that claims it or gives its claim back shows them again in the
-     * same transaction. Read before a release, which unlinks the opening.
+     * a send that claims it or gives its claim back, and the dispatch's end
+     * when it will not run (`release`, `drop`, `fail`, `abandon`), show them
+     * again in the same transaction.
      */
     readonly heldBehindOpening: (
       dispatchId: DispatchRowId,
@@ -822,6 +823,9 @@ export const layer = Layer.effect(
     ) {
       const at = yield* now;
       const sources = yield* sourcesOf(dispatchId);
+      // Read before the wakes are unlinked: an opening going back unsent
+      // shows the messages behind it wait behind the hello again.
+      const held = yield* heldBehindOpening(dispatchId);
       yield* roomWorkChanged(dispatchId);
       if (after._tag !== "cancelled") yield* cancelStoppedHandoffs(dispatchId, at);
       switch (after._tag) {
@@ -913,7 +917,7 @@ export const layer = Layer.effect(
         }
       }
       yield* refreshNotices(dispatchId);
-      yield* refreshMessages(sources);
+      yield* refreshMessages([...sources, ...held]);
       yield* refreshHeld(dispatchId);
     }, Effect.orDie);
 

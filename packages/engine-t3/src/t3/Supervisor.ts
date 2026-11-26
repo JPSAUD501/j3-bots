@@ -73,8 +73,9 @@ export interface SupervisorInput<E> {
   readonly state: SubscriptionRef.SubscriptionRef<ProcessState>;
   /**
    * The engine's starts, counted: one more each time it becomes ready, set
-   * before `state` says so. So it names the start that answers a command
-   * while the engine is ready, and the last one that did once it is not.
+   * before `state` says so. Read before a command is sent, it names the
+   * start the command goes to, or an older one when the engine starts again
+   * while the command is on its way, never a newer one.
    */
   readonly starts: Ref.Ref<number>;
   /**

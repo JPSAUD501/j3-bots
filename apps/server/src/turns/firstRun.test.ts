@@ -12,6 +12,8 @@ import {
 } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -548,6 +550,40 @@ it.effect("keeps the held messages out of a hello that said it is done until its
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "sends the held messages once the hello stopped at its usage limit, before the reset",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { providerId } = OTHER_PROVIDER_MODEL;
+      yield* providerIs(providerId, signedOut);
+      const bot = yield* createNewBot("Ana", OTHER_PROVIDER_MODEL);
+      const session = yield* engineSession(bot.id);
+      const message = yield* sendToBot(bot.id, "Book the venue.");
+      yield* flushed(bot.id);
+      yield* providerIs(providerId, { _tag: "ready" });
+
+      // The hello stops at the usage limit, to go on at the reset an hour away.
+      const hello = yield* nextTurn(bot.id);
+      const resumesAt = DateTime.addDuration(yield* DateTime.now, Duration.hours(1));
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId: hello,
+        outcome: { _tag: "failed", failure: "usage-limit", retryAt: resumesAt },
+        continuation: { resumesAt },
+      });
+      yield* turnEnded(bot.id);
+
+      // The held message goes now, as one the operator wrote then would.
+      yield* finishRunning(bot.id, hello);
+      yield* deliveryIs(message, "delivered");
+      assert.deepStrictEqual(yield* sentInOrder(session, [FIRST_RUN, "Book the venue."]), [
+        FIRST_RUN,
+        "Book the venue.",
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("keeps every message behind a hello its provider turned ready for, in order", () =>
   Effect.gen(function* () {
     const { providerId } = OTHER_PROVIDER_MODEL;
@@ -603,6 +639,32 @@ it.effect(
         FIRST_RUN,
         "Book the venue.",
       ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "shows a held message behind the hello again when the engine refuses the hello's mode",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { providerId } = OTHER_PROVIDER_MODEL;
+      yield* providerIs(providerId, signedOut);
+      yield* TestClock.adjust("1 second");
+      const bot = yield* (yield* Bots).create({
+        commandId: command(),
+        draft: { name: "Ana", job: "", model: OTHER_PROVIDER_MODEL, permissionMode: "full-access" },
+      });
+      yield* engineSession(bot.id);
+      const message = yield* sendToBot(bot.id, "Book the venue.");
+      yield* flushed(bot.id);
+
+      // The session was opened before a policy that refuses its mode: the
+      // hello's send is claimed, and the engine refuses its turn.
+      yield* control.limitPermissionModes("auto");
+      yield* providerIs(providerId, { _tag: "ready" });
+      yield* until(Effect.map(control.modeRefusals, (refusals) => refusals === 1));
+      yield* gateSettled(bot.id);
+      assert.deepStrictEqual(yield* delivery(message), behindOpening);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
