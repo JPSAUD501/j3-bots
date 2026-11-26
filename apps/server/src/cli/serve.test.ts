@@ -123,10 +123,16 @@ const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started))
 
 /**
  * The pipes a stand-in engine holds on Windows, as it reports them before it
- * starts anything: how many of its standard handles it found among them, and,
- * for each other pipe, the id of the process that serves it.
+ * starts anything: how many of its standard handles it found among them; how
+ * many handles did not answer, as a synchronous file object does not while
+ * another process's I/O holds it; and, for each other pipe, the id of the
+ * process that serves it.
  */
-const HeldPipes = Schema.Struct({ standard: Schema.Int, servers: Schema.Array(Schema.Int) });
+const HeldPipes = Schema.Struct({
+  standard: Schema.Int,
+  waited: Schema.Int,
+  servers: Schema.Array(Schema.Int),
+});
 const decodeHeldPipes = Schema.decodeUnknownEffect(Schema.fromJsonString(HeldPipes));
 
 const isRunning = (pid: number) => {
@@ -146,7 +152,8 @@ const isRunning = (pid: number) => {
  * shell, so a small C# program, compiled by Windows' own compiler as the job
  * launcher is, starts it and waits for it. That program first writes to
  * `pipes` the pipes it holds (`HeldPipes`), found by trying every handle value
- * up to 64 Ki, past any a process this small has. It never answers, so the
+ * up to 64 Ki, past any a process this small has, and asking each on a
+ * thread of its own for at most two seconds. It never answers, so the
  * server never finds it ready, and starts it as it starts the engine: on
  * Windows, through the job launcher.
  */
@@ -181,6 +188,7 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
         "using System.Diagnostics;",
         "using System.IO;",
         "using System.Runtime.InteropServices;",
+        "using System.Threading;",
         "",
         "class Engine {",
         '  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);',
@@ -189,20 +197,40 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
         '  [DllImport("kernel32.dll")] static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint process);',
         "  const uint PipeType = 3;",
         "",
+        "  // What one handle is, asked on a thread of its own: a query on a synchronous",
+        "  // file object waits for as long as another process's I/O on it holds it.",
+        "  sealed class Probe {",
+        "    readonly IntPtr handle;",
+        "    public uint Type;",
+        "    public bool Served;",
+        "    public uint Server;",
+        "    public Probe(IntPtr handle) { this.handle = handle; }",
+        "    public void Run() {",
+        "      Type = GetFileType(handle);",
+        "      if (Type == PipeType) Served = GetNamedPipeServerProcessId(handle, out Server);",
+        "    }",
+        "  }",
+        "",
         "  static int Main() {",
         "    var standard = new List<long>();",
         "    foreach (int which in new int[] { -10, -11, -12 }) standard.Add(GetStdHandle(which).ToInt64());",
         "    int standardFound = 0;",
+        "    int waited = 0;",
         "    var servers = new List<string>();",
         "    for (long value = 4; value < 0x10000; value += 4) {",
         "      IntPtr handle = new IntPtr(value);",
         "      uint flags;",
-        "      if (!GetHandleInformation(handle, out flags) || GetFileType(handle) != PipeType) continue;",
+        "      if (!GetHandleInformation(handle, out flags)) continue;",
+        "      var probe = new Probe(handle);",
+        "      var thread = new Thread(probe.Run);",
+        "      thread.IsBackground = true;",
+        "      thread.Start();",
+        "      if (!thread.Join(2000)) { waited++; continue; }",
+        "      if (probe.Type != PipeType) continue;",
         "      if (standard.Contains(value)) { standardFound++; continue; }",
-        "      uint server;",
-        "      if (GetNamedPipeServerProcessId(handle, out server)) servers.Add(server.ToString());",
+        "      if (probe.Served) servers.Add(probe.Server.ToString());",
         "    }",
-        `    File.WriteAllText(${verbatim(`${pipes}.partial`)}, "{\\"standard\\":" + standardFound + ",\\"servers\\":[" + string.Join(",", servers) + "]}");`,
+        `    File.WriteAllText(${verbatim(`${pipes}.partial`)}, "{\\"standard\\":" + standardFound + ",\\"waited\\":" + waited + ",\\"servers\\":[" + string.Join(",", servers) + "]}");`,
         `    File.Move(${verbatim(`${pipes}.partial`)}, ${verbatim(pipes)});`,
         `    var start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});`,
         "    start.UseShellExecute = false;",
@@ -344,6 +372,9 @@ describe("serve, as the desktop app runs it", () => {
   // it holds instead. Every inheritable handle of the launcher reaches it, the
   // pipe the server reads the launcher's output on among them, so the pipe at
   // fd 3 would too, and none of the pipes it holds is one this process serves.
+  // A handle that does not answer is a synchronous file object, which fd 3 is
+  // not: libuv opens the child's end of an overlapped pipe overlapped
+  // (`uv__create_pipe_pair`, src/win/pipe.c, read on v1.x at f08538c).
   it.live(
     "hands the pipe to none of the processes it starts",
     () =>
@@ -368,7 +399,14 @@ describe("serve, as the desktop app runs it", () => {
           Effect.timeoutOrElse({
             duration: WITHIN,
             orElse: () =>
-              Effect.die(`the engine did not start; the server wrote:\n${server.output()}`),
+              fs.exists(engine.pipes).pipe(
+                Effect.orElseSucceed(() => false),
+                Effect.flatMap((scanned) =>
+                  Effect.die(
+                    `the engine did not start${scanned ? ", though it wrote what it holds" : ""}; the server wrote:\n${server.output()}`,
+                  ),
+                ),
+              ),
           }),
         );
         // Both are ended, and gone, before their folder is removed: Windows
@@ -398,18 +436,23 @@ describe("serve, as the desktop app runs it", () => {
         if (process.platform === "win32") {
           // Written before the engine started its script, which wrote `started`.
           const held = yield* fs.readFileString(engine.pipes).pipe(Effect.flatMap(decodeHeldPipes));
-          assert.strictEqual(held.standard, 3, "the engine did not find its own standard handles");
+          const report = JSON.stringify(held);
+          assert.strictEqual(
+            held.standard,
+            3,
+            `the engine did not find its own standard handles: ${report}`,
+          );
           const serverPid = server.child.pid;
           if (serverPid === undefined) return yield* Effect.die("the server has no id");
           assert.include(
             held.servers,
             serverPid,
-            "no pipe the server gave the launcher reached the engine",
+            `no pipe the server gave the launcher reached the engine: ${report}`,
           );
           assert.notInclude(
             held.servers,
             process.pid,
-            "the engine holds a pipe this process gave the server",
+            `the engine holds a pipe this process gave the server: ${report}`,
           );
         }
 
