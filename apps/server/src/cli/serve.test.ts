@@ -23,7 +23,6 @@ import * as Socket from "../admin/socket.ts";
 import * as Home from "../home/Home.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import * as Ports from "../system/Ports.ts";
-import { runPowerShell } from "../system/PowerShell.ts";
 import { startFailure } from "./serve.ts";
 
 const SERVER = `${import.meta.dirname}/../bin.ts`;
@@ -166,50 +165,22 @@ const kill = (pid: number) => {
 const ENDS_WITHIN = Duration.seconds(10);
 
 /**
- * Waits on each process in `J3_PIDS` until it has ended, and fails naming
- * those that have not within `ENDS_WITHIN`. A process Windows no longer lists
- * is gone.
+ * Ends each process in `pids` and waits until none runs, for at most
+ * `ENDS_WITHIN`. Off Windows only, where Node's check of a process is exact.
  */
-const WAIT_FOR_ENDS = String.raw`$until = [DateTime]::UtcNow.AddMilliseconds(${Duration.toMillis(ENDS_WITHIN)})
-$left = @()
-foreach ($id in $env:J3_PIDS.Split(',')) {
-  $process = Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue
-  if ($null -eq $process) { continue }
-  $wait = [Math]::Max(0, [int]($until - [DateTime]::UtcNow).TotalMilliseconds)
-  if (-not $process.WaitForExit($wait)) { $left += "$id ($($process.ProcessName))" }
-  $process.Dispose()
-}
-if ($left.Count -gt 0) {
-  [Console]::Error.WriteLine('still running: ' + ($left -join ', '))
-  exit 1
-}
-`;
-
-/**
- * Waits until each process in `pids` has ended. On Windows it waits on each
- * process itself, as only that shows a process has ended: Node's check,
- * `process.kill(pid, 0)`, answers that a process is gone once its exit code is
- * set (libuv 1.52.1, `uv__kill` in src/win/process.c), and Windows sets that
- * as it starts to end a process, before its threads have ended and its
- * program's file is released. Dies naming those still running. Elsewhere that
- * check is exact, and nothing depends on the wait but the next test.
- */
-const untilEnded = Effect.fn("untilEnded")(function* (pids: ReadonlyArray<number>) {
-  if (pids.length === 0) return;
-  if (process.platform === "win32") {
-    yield* runPowerShell(WAIT_FOR_ENDS, { J3_PIDS: pids.join(",") }).pipe(
-      Effect.catch((error) => Effect.die(`the stand-in's processes did not end: ${error.message}`)),
-    );
-    return;
-  }
-  yield* Effect.sync(() => pids.filter(isRunning)).pipe(
-    Effect.repeat({
-      while: (running) => running.length > 0,
-      schedule: Schedule.spaced("100 millis"),
-    }),
-    Effect.timeoutOption(ENDS_WITHIN),
+const endAll = (pids: ReadonlyArray<number>) =>
+  Effect.sync(() => pids.forEach(kill)).pipe(
+    Effect.andThen(
+      Effect.sync(() => pids.filter(isRunning)).pipe(
+        Effect.repeat({
+          while: (running) => running.length > 0,
+          schedule: Schedule.spaced("100 millis"),
+        }),
+        Effect.timeoutOption(ENDS_WITHIN),
+      ),
+    ),
+    Effect.asVoid,
   );
-});
 
 /**
  * A stand-in for the engine in `folder`, for `J3_ENGINE_BINARY`: a Node
@@ -219,7 +190,10 @@ const untilEnded = Effect.fn("untilEnded")(function* (pids: ReadonlyArray<number
  * shell, so a small C# program, compiled by Windows' own compiler as the job
  * launcher is, starts it and waits for it. Each run of the stand-in first
  * leaves a file named after its own id in `runs`, so every process that ran
- * it is known, however many the server started. The C# program then writes to
+ * it is known, however many the server started; on Windows the file holds
+ * when the process was created, so a later process given the same id is not
+ * taken for it. `endRuns` ends them all and waits until each has ended. The
+ * C# program then writes to
  * `shared` what it shares with the processes above it (`SharedFiles`),
  * trying every handle value up to 64 Ki, past any a process this small or
  * the server has. It takes no account of its arguments, so the server's
@@ -236,6 +210,19 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
   const runs = path.join(folder, "runs");
   const script = path.join(folder, "engine.cjs");
   yield* fs.makeDirectory(runs);
+  /** Every run recorded: its id, and what it recorded, which on Windows is when it was created. */
+  const recorded = fs.readDirectory(runs).pipe(
+    Effect.flatMap((names) =>
+      Effect.forEach(
+        names.filter((name) => /^\d+$/.test(name)),
+        (name) =>
+          fs
+            .readFileString(path.join(runs, name))
+            .pipe(Effect.map((created) => ({ pid: Number(name), created: created.trim() }))),
+      ),
+    ),
+    Effect.orDie,
+  );
   yield* fs.writeFileString(
     script,
     [
@@ -278,6 +265,7 @@ class Engine {
   [DllImport("kernel32.dll")] static extern bool GetHandleInformation(IntPtr handle, out uint flags);
   [DllImport("kernel32.dll")] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
   [DllImport("kernelbase.dll")] static extern bool CompareObjectHandles(IntPtr first, IntPtr second);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
 
   const uint DuplicateAccess = 0x40;
   const uint QueryLimitedAccess = 0x1000;
@@ -364,8 +352,17 @@ class Engine {
     }
   }
 
+  // Leaves this run's id, and when Windows created it, in 'runs'.
+  static void Record() {
+    long created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), out created, out exited, out kernel, out user)) throw new Exception("GetProcessTimes " + Marshal.GetLastWin32Error());
+    string run = Path.Combine(${verbatim(runs)}, Process.GetCurrentProcess().Id.ToString());
+    File.WriteAllText(run + ".partial", created.ToString());
+    File.Move(run + ".partial", run);
+  }
+
   static int Main() {
-    File.WriteAllText(Path.Combine(${verbatim(runs)}, Process.GetCurrentProcess().Id.ToString()), "");
+    Record();
     File.WriteAllText(${verbatim(`${shared}.partial`)}, Report());
     File.Move(${verbatim(`${shared}.partial`)}, ${verbatim(shared)});
     ProcessStartInfo start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});
@@ -377,7 +374,70 @@ class Engine {
 }
 `,
     );
+    const endSource = path.join(folder, "end.cs");
+    yield* fs.writeFileString(
+      endSource,
+      String.raw`using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+// Ends each run 'id:created' names and waits until it has ended, for at most
+// as many milliseconds as its first argument says. A run whose id names no
+// process, or a process created at another time, has ended. Writes the runs
+// still running and exits 1 if there are any; exits 2 if it could not look.
+class End {
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int id);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint code);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+
+  const uint Access = 0x00100000 | 0x1000 | 0x1; // synchronize, query limited information, terminate
+  const int NoSuchProcess = 87;
+  const uint Signaled = 0;
+  const uint TimedOut = 0x102;
+
+  static int Main(string[] args) {
+    DateTime until = DateTime.UtcNow.AddMilliseconds(long.Parse(args[0]));
+    List<string> running = new List<string>();
+    for (int i = 1; i < args.Length; i++) {
+      string[] run = args[i].Split(':');
+      IntPtr process = OpenProcess(Access, false, int.Parse(run[0]));
+      if (process == IntPtr.Zero) {
+        int error = Marshal.GetLastWin32Error();
+        if (error == NoSuchProcess) continue;
+        Console.Error.WriteLine("OpenProcess " + args[i] + ": " + error);
+        return 2;
+      }
+      try {
+        long created, exited, kernel, user;
+        if (!GetProcessTimes(process, out created, out exited, out kernel, out user)) {
+          Console.Error.WriteLine("GetProcessTimes " + args[i] + ": " + Marshal.GetLastWin32Error());
+          return 2;
+        }
+        if (created != long.Parse(run[1])) continue;
+        // Fails once the process is ending; the wait tells.
+        TerminateProcess(process, 1);
+        uint waited = WaitForSingleObject(process, (uint)Math.Max(0, (until - DateTime.UtcNow).TotalMilliseconds));
+        if (waited == TimedOut) {
+          running.Add(args[i]);
+        } else if (waited != Signaled) {
+          Console.Error.WriteLine("WaitForSingleObject " + args[i] + ": " + waited + " " + Marshal.GetLastWin32Error());
+          return 2;
+        }
+      } finally {
+        CloseHandle(process);
+      }
+    }
+    if (running.Count == 0) return 0;
+    Console.WriteLine("still running: " + string.Join(", ", running.ToArray()));
+    return 1;
+  }
+}
+`,
+    );
     const command = path.join(folder, "engine.exe");
+    const ender = path.join(folder, "end.exe");
     const compiler = path.join(
       yield* Config.String("SystemRoot").pipe(Config.withDefault("C:\\Windows")),
       "Microsoft.NET",
@@ -385,18 +445,56 @@ class Engine {
       "v4.0.30319",
       "csc.exe",
     );
-    yield* Effect.promise(
-      () =>
-        new Promise<void>((resolve, reject) =>
-          NodeChildProcess.execFile(
-            compiler,
-            ["/nologo", "/target:exe", `/out:${command}`, source],
-            { windowsHide: true },
-            (error) => (error === null ? resolve() : reject(error)),
+    const compile = (input: string, output: string) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            NodeChildProcess.execFile(
+              compiler,
+              ["/nologo", "/target:exe", `/out:${output}`, input],
+              { windowsHide: true },
+              (error) => (error === null ? resolve() : reject(error)),
+            ),
           ),
-        ),
-    );
-    return { command, started, shared, runs };
+      );
+    yield* Effect.all([compile(source, command), compile(endSource, ender)], {
+      concurrency: "unbounded",
+    });
+    // Windows waits on each run itself, as only that shows it has ended:
+    // Node's `process.kill(pid, 0)` answers that a process is gone once its
+    // exit code is set (libuv 1.52.1, `uv__kill` in src/win/process.c), and
+    // Windows sets that as it starts to end a process, before its threads
+    // have ended and its program's file is released. `end.exe` is itself
+    // waited on by Node, whose exit event comes once Windows signals it ended.
+    const endRuns = Effect.gen(function* () {
+      const records = yield* recorded;
+      if (records.length === 0) return;
+      const ended = yield* Effect.callback<{
+        readonly code: string;
+        readonly output: string;
+      }>((resume) => {
+        NodeChildProcess.execFile(
+          ender,
+          [
+            String(Duration.toMillis(ENDS_WITHIN)),
+            ...records.map(({ pid, created }) => `${pid}:${created}`),
+          ],
+          { windowsHide: true },
+          (error, stdout, stderr) =>
+            resume(
+              Effect.succeed({
+                code: error === null ? "0" : String(error.code),
+                output: `${stdout}${stderr}`,
+              }),
+            ),
+        );
+      });
+      if (ended.code !== "0")
+        return yield* Effect.die(
+          `the stand-in's runs did not all end (exit ${ended.code}):\n${ended.output}`,
+        );
+    });
+    return { command, started, shared, endRuns };
   }
   const command = path.join(folder, "engine");
   yield* fs.writeFileString(
@@ -404,7 +502,8 @@ class Engine {
     `#!/bin/sh\n: > '${runs}'/$$\nexec '${process.execPath}' '${script}' "$@"\n`,
   );
   yield* fs.chmod(command, 0o755);
-  return { command, started, shared, runs };
+  const endRuns = recorded.pipe(Effect.flatMap((records) => endAll(records.map(({ pid }) => pid))));
+  return { command, started, shared, endRuns };
 });
 
 /** The parent's end of `child`'s descriptor 3, as the admin channel. */
@@ -535,31 +634,23 @@ describe("serve, as the desktop app runs it", () => {
           { ...env, J3_ENGINE_BINARY: engine.command },
           "overlapped",
         );
-        // The server, every process that ran the stand-in, and its script and
-        // harness have ended before their folder is removed: Windows removes
-        // no program's file while a process runs it. The server first, so it
-        // starts no other run.
+        // The server, and every process that ran the stand-in, have ended
+        // before their folder is removed: Windows removes no program's file
+        // while a process runs it. The server first, so it starts no other
+        // run. Off Windows the script and its harness outlive the server, and
+        // are ended too; on Windows they end with it, in its job, and run no
+        // program from the folder.
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
             server.child.kill("SIGKILL");
             yield* server.exited;
-            const runs = yield* fs
-              .readDirectory(engine.runs)
-              .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+            yield* engine.endRuns;
+            if (process.platform === "win32") return;
             const started = yield* fs
               .readFileString(engine.started)
               .pipe(Effect.flatMap(decodeStarted), Effect.option);
-            const pids = [
-              ...new Set([
-                ...runs.map(Number).filter(Number.isSafeInteger),
-                ...Option.match(started, {
-                  onNone: () => [],
-                  onSome: ({ script, harness }) => [script, harness],
-                }),
-              ]),
-            ];
-            yield* Effect.sync(() => pids.forEach(kill));
-            yield* untilEnded(pids);
+            if (Option.isSome(started))
+              yield* endAll([started.value.script, started.value.harness]);
           }),
         );
         const pipe = server.child.stdio[3];
