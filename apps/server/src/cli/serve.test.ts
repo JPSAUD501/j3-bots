@@ -123,17 +123,21 @@ const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started))
 
 /**
  * What a stand-in engine on Windows finds before it starts anything, by
- * comparing kernel objects, never asking a file anything: the ids of the
- * launcher that started it and of the process that started the launcher,
- * and how many of its file objects each of those holds too. Or why it could
- * not look.
+ * comparing kernel objects, never asking a file anything: the ids of its
+ * parent and of its parent's parent; how many file objects it holds; and how
+ * many of them it finds again in its own handles, in its parent's, in its
+ * grandparent's, and in its parent's but not its grandparent's. Or why it
+ * could not look.
  */
 const SharedFiles = Schema.Union([
   Schema.Struct({
-    launcher: Schema.Int,
-    server: Schema.Int,
-    withLauncher: Schema.Int,
-    withServer: Schema.Int,
+    parent: Schema.Int,
+    grandparent: Schema.Int,
+    files: Schema.Int,
+    withSelf: Schema.Int,
+    withParent: Schema.Int,
+    withGrandparent: Schema.Int,
+    withParentAlone: Schema.Int,
   }),
   Schema.Struct({ error: Schema.String }),
 ]);
@@ -157,7 +161,9 @@ const isRunning = (pid: number) => {
  * launcher is, starts it and waits for it. That program first writes to
  * `shared` what it shares with the processes above it (`SharedFiles`),
  * trying every handle value up to 64 Ki, past any a process this small or
- * the server has. It never answers, so the
+ * the server has. It takes no account of its arguments, so the server's
+ * first run of the engine's binary, its CLI minting the engine's credential,
+ * is the stand-in that reports. It never answers, so the
  * server never finds it ready, and starts it as it starts the engine: on
  * Windows, through the job launcher.
  */
@@ -250,9 +256,9 @@ class Engine {
     return files;
   }
 
-  // How many of 'own' process 'id' holds too: each of its handles, copied
+  // Which of 'own' process 'id' holds too: each of its handles, copied
   // here, against each of them, as objects.
-  static int SharedWith(int id, List<IntPtr> own) {
+  static List<long> SharedWith(int id, List<IntPtr> own) {
     IntPtr process = OpenProcess(DuplicateAccess, false, id);
     if (process == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
     List<long> shared = new List<long>();
@@ -271,22 +277,27 @@ class Engine {
     } finally {
       CloseHandle(process);
     }
-    return shared.Count;
+    return shared;
   }
 
   static string Report() {
     try {
       List<IntPtr> own = OwnFiles();
-      int launcher = ParentOf(GetCurrentProcess());
-      IntPtr launcherProcess = OpenProcess(QueryLimitedAccess, false, launcher);
-      if (launcherProcess == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
-      int server;
+      int parent = ParentOf(GetCurrentProcess());
+      IntPtr parentProcess = OpenProcess(QueryLimitedAccess, false, parent);
+      if (parentProcess == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
+      int grandparent;
       try {
-        server = ParentOf(launcherProcess);
+        grandparent = ParentOf(parentProcess);
       } finally {
-        CloseHandle(launcherProcess);
+        CloseHandle(parentProcess);
       }
-      return "{\"launcher\":" + launcher + ",\"server\":" + server + ",\"withLauncher\":" + SharedWith(launcher, own) + ",\"withServer\":" + SharedWith(server, own) + "}";
+      List<long> withSelf = SharedWith(Process.GetCurrentProcess().Id, own);
+      List<long> withParent = SharedWith(parent, own);
+      List<long> withGrandparent = SharedWith(grandparent, own);
+      int parentAlone = 0;
+      foreach (long handle in withParent) if (!withGrandparent.Contains(handle)) parentAlone++;
+      return "{\"parent\":" + parent + ",\"grandparent\":" + grandparent + ",\"files\":" + own.Count + ",\"withSelf\":" + withSelf.Count + ",\"withParent\":" + withParent.Count + ",\"withGrandparent\":" + withGrandparent.Count + ",\"withParentAlone\":" + parentAlone + "}";
     } catch (Exception error) {
       return "{\"error\":\"" + error.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
     }
@@ -431,13 +442,21 @@ describe("serve, as the desktop app runs it", () => {
   // closing once the server is killed, while the engine and its harness still
   // run, shows that neither holds it. On Windows Node puts every child it does
   // not detach in a job that ends with it, and the engine's own job ends with
-  // the launcher: the engine ends with the server. There the engine compares
-  // its file objects with those of the processes above it instead. Every
-  // inheritable handle of the launcher reaches it, so some of its files are
-  // the launcher's, and the pipe at fd 3 would be too; none of them is one the
-  // server holds. It asks no file anything: a query on a synchronous file
-  // object can wait in the kernel for as long as another process's I/O holds
-  // it, and a process with a thread waiting there does not end when killed.
+  // the launcher: the engine ends with the server. There the stand-in that
+  // the server first runs, its CLI, compares its file objects with the
+  // server's and with those of the process that started the server, this
+  // one. A child gets every handle its parent may pass on, since the libuv of
+  // the Node the server pins names no list of them (1.52.1,
+  // src/win/process.c), so the handles this process may pass on reach it
+  // through the server, and are its and the server's both. fd 3 is not: this
+  // process closed its copy of the child's end once the server started, and
+  // the server's Node made it one it does not pass on, as it does every
+  // descriptor it inherits (`uv_disable_stdio_inheritance`,
+  // deps/uv/src/win/process-stdio.c, read in Node v26.13.1). So no file it
+  // shares with the server may be one it does not share with this process.
+  // It asks no file anything: a query on a synchronous file object can wait
+  // in the kernel for as long as another process's I/O holds it, and a
+  // process with a thread waiting there does not end when killed.
   it.live(
     "hands the pipe to none of the processes it starts",
     () =>
@@ -504,16 +523,20 @@ describe("serve, as the desktop app runs it", () => {
           if ("error" in found)
             return yield* Effect.die(`the engine could not look: ${found.error}`);
           const report = JSON.stringify(found);
-          assert.strictEqual(found.server, server.child.pid, `the launcher's parent: ${report}`);
-          assert.isAbove(
-            found.withLauncher,
-            0,
-            `no handle the launcher holds reached the engine: ${report}`,
+          // The server's own child, which its CLI is.
+          assert.strictEqual(found.parent, server.child.pid, `the engine's parent: ${report}`);
+          assert.strictEqual(found.grandparent, process.pid, `the server's parent: ${report}`);
+          // What the comparison finds when there is something to find.
+          assert.isAbove(found.files, 0, `the engine holds no file: ${report}`);
+          assert.strictEqual(
+            found.withSelf,
+            found.files,
+            `the engine missed its own files: ${report}`,
           );
           assert.strictEqual(
-            found.withServer,
+            found.withParentAlone,
             0,
-            `the engine holds a file the server holds: ${report}`,
+            `the engine holds a file the server holds and this process does not: ${report}`,
           );
         }
 
