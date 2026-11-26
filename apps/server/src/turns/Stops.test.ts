@@ -86,6 +86,34 @@ it.effect("keeps a message sent after a Stop retryable when both share a timesta
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("confirms a Stop past a steer the engine never settles, and applies it if it does", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Rewrite the intro.");
+    const turnId = yield* nextTurn(bot.id);
+    const steer = yield* sendToBot(bot.id, "Keep it short.");
+    yield* until(Effect.map(deliveriesOf(session, "Keep it short."), (sent) => sent.length > 0));
+    yield* control.readSteers({ sessionId: session, turnId });
+    // An engine fault: the turn the Stop ends settles its steer with no event.
+    const withheld = yield* control.withholdNextSteerSettlements;
+
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
+    yield* stopSettled;
+    yield* turnEnded(bot.id);
+    yield* deliveryIs(steer, "cancelled");
+    // The session takes work again.
+    yield* sendToBot(bot.id, "Now the outro.");
+    const next = yield* nextTurn(bot.id, turnId);
+
+    // The engine says it after all: the agent had read the steer.
+    yield* withheld.release;
+    yield* deliveryIs(steer, "delivered");
+    assert.deepStrictEqual(yield* admittedTurn(bot.id), Option.some(next));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("cancels a message whose send was lost behind a turn when Stop races it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

@@ -93,6 +93,15 @@ const narrowOf = (round: Round): Narrow | null => {
   return null;
 };
 
+/** A steer the engine took for a turn that has ended, and never settled (`Stops.observe`). */
+const Unsettled = Schema.Struct({
+  id: DispatchRowId,
+  bot_id: BotId,
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
+  seq: DispatchSeq,
+});
+
 const Fenced = Schema.Struct({
   id: DispatchRowId,
   bot_id: BotId,
@@ -281,12 +290,14 @@ export const layer = Layer.effect(
       const landing = mayLand(sql);
       // Every session of the bot with work in scope that may be in the engine:
       // a turn running, a turn whose background work the engine last
-      // reported still pending, or a dispatch the engine has or may yet take.
-      // So a room's Stop reaches the background work its turns started, by
-      // the turn that started it, never by the session's work as a whole. A
-      // bot Stop reaches every live session too, for background work the
-      // server does not see. A session the engine retired has nothing left in
-      // it to stop: its retirement ended what ran there.
+      // reported still pending or has not reported since it ended, or a
+      // dispatch the engine has or may yet take. So a room's Stop reaches the
+      // background work its turns started, by the turn that started it, never
+      // by the session's work as a whole, also work a turn's end did not tell
+      // of: its round is judged on a report, which settles it unsent when it
+      // lists none. A bot Stop reaches every live session too, for background
+      // work the server does not see. A session the engine retired has
+      // nothing left in it to stop: its retirement ended what ran there.
       const sessions = yield* sql<{ readonly id: string }>`
         SELECT s.id FROM sessions s
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND s.engine_retired_at IS NULL AND (
@@ -296,7 +307,8 @@ export const layer = Layer.effect(
           )
           OR EXISTS (
             SELECT 1 FROM turns
-            WHERE session_id = s.id AND background_pending = 1 AND ${inScope(scope)}
+            WHERE session_id = s.id AND (background_pending = 1 OR background_unreported = 1)
+              AND ${inScope(scope)}
           )
           OR EXISTS (
             SELECT 1 FROM dispatches WHERE session_id = s.id AND ${inScope(scope)} AND (
@@ -388,6 +400,33 @@ export const layer = Layer.effect(
           ${options.keepOpening ? sql`AND NOT (${opening}) AND NOT ${behindOpeningSql(sql, "wakes")}` : sql``}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
+      // A room's Stop also ends what the bot's work there set off in another
+      // room: the wakes its posts there wrote, as it ends the room's own,
+      // also one already in a dispatch never sent, which is released, so the
+      // recipient's other wakes are planned again without it (`Ledger`). One
+      // the engine may have is the recipient's turn. A teammate's message
+      // keeps the rule of a Stop of its sender: only a Stop that reaches its
+      // sending turn while it runs ends it (above).
+      if (scope._tag === "room") {
+        const unsent = yield* SqlSchema.findAll({
+          Request: Schema.Void,
+          Result: Schema.Struct({ id: DispatchRowId }),
+          execute: () => sql`
+            SELECT DISTINCT d.id FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
+            WHERE d.status = 'intended' AND d.attempts = 0 AND d.fenced_by_stop_id IS NULL
+              AND w.status = 'dispatched' AND w.kind = 'room'
+              AND w.cause_room_id = ${scope.roomId} AND w.cause_bot_id = ${botId}
+          `,
+        })(undefined);
+        for (const dispatch of unsent) yield* ledger.release(dispatch.id, { _tag: "pending" });
+        if (unsent.length > 0) yield* sql.afterCommit(signals.dispatch.fire);
+        const caused = yield* sql<{ readonly id: string }>`
+          SELECT id FROM wakes
+          WHERE status = 'pending' AND kind = 'room' AND cause_room_id = ${scope.roomId}
+            AND cause_bot_id = ${botId}
+        `;
+        yield* ledger.cancelWakes(caused.map((wake) => wake.id));
+      }
       yield* sql.afterCommit(signals.stops.fire);
       // A routine run whose attempt waited is settled now, and its side
       // session retired.
@@ -653,9 +692,10 @@ export const layer = Layer.effect(
      * What of the narrow Stop's own work the session's applied events still
      * show: `running`, a turn of it not finished or a dispatch of it the
      * engine has or may be taking; `flagged`, a turn of it whose background
-     * work the engine last reported pending. A dispatch whose recovery gave
-     * up counts as neither: its fence reopens the Stop if its key lands
-     * (`stopTargets.openRound`).
+     * work the engine last reported pending, or has not reported since the
+     * turn ended, which may have left work its end did not tell of. A
+     * dispatch whose recovery gave up counts as neither: its fence reopens
+     * the Stop if its key lands (`stopTargets.openRound`).
      */
     const ownWork = (sessionId: SessionRowId, narrow: Narrow) =>
       SqlSchema.findOne({
@@ -676,7 +716,8 @@ export const layer = Layer.effect(
             ) AS running,
             EXISTS (
               SELECT 1 FROM turns ow_flagged WHERE ow_flagged.session_id = ${sessionId}
-                AND ow_flagged.background_pending = 1 AND ${own(narrow, "ow_flagged")}
+                AND (ow_flagged.background_pending = 1 OR ow_flagged.background_unreported = 1)
+                AND ${own(narrow, "ow_flagged")}
             ) AS flagged
         `,
       })(undefined).pipe(Effect.orDie);
@@ -909,6 +950,44 @@ export const layer = Layer.effect(
     });
 
     /**
+     * The engine settles a steer after the turn it rode ends: taken, dropped
+     * or requeued as a turn of its own. A report that shows nothing it can
+     * run, with every event it had applied, leaves nothing to settle one the
+     * engine took for a turn that has ended and never settled, as an engine
+     * fault can leave it: it would stay accepted, and the session's Stop
+     * unconfirmable. It fails as the engine dropping it would (`wakesAfter`),
+     * cancelled when a Stop covers it and `stopped`, retryable, otherwise,
+     * and as `unresolved`, so a settlement that arrives after all is still
+     * applied to it (`Observer`) and its key's landing reopens a Stop.
+     */
+    const settleOrphanedSteers = Effect.fn("Stops.settleOrphanedSteers")(function* (
+      sessionId: SessionRowId,
+    ) {
+      const orphaned = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Unsettled,
+        execute: () => sql`
+          SELECT os_dispatch.id, os_dispatch.bot_id, os_dispatch.audience,
+            os_dispatch.audience_room_id, os_dispatch.seq
+          FROM dispatches os_dispatch
+          WHERE os_dispatch.session_id = ${sessionId} AND os_dispatch.status = 'accepted'
+            AND os_dispatch.delivery = 'steer' AND EXISTS (
+              SELECT 1 FROM turns os_turn
+              WHERE os_turn.session_id = os_dispatch.session_id
+                AND os_turn.engine_turn_id = COALESCE(
+                  os_dispatch.engine_turn_id, os_dispatch.steer_turn_id
+                )
+                AND os_turn.finished_at IS NOT NULL
+            )
+        `,
+      })(undefined);
+      for (const steer of orphaned) {
+        yield* Effect.logWarning("The engine never settled a steer whose turn ended");
+        yield* ledger.abandon(steer.id, yield* targets.wakesAfter(steer, { _tag: "dropped" }));
+      }
+    }, Effect.orDie);
+
+    /**
      * The session's events are brought past every round acknowledged so far,
      * and the targets are judged from what they show. Confirmation comes only
      * from here, after a `synchronize`, never from one event as it is
@@ -972,6 +1051,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const at = timeText(yield* DateTime.now);
           if (!engineShows) {
+            yield* settleOrphanedSteers(sessionId);
             for (const round of sent) {
               yield* sql`
                 UPDATE stop_targets SET observed_at = ${at}

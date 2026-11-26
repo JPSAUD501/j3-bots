@@ -52,6 +52,7 @@ import {
   sendInRoom,
   sendToBot,
   sessionAfter,
+  stopSettled,
   teammateMessagesFor,
   timesSent,
   turnEnded,
@@ -1061,6 +1062,52 @@ it.effect("sends nothing from a turn the engine started once a Stop is recorded 
 );
 
 it.effect(
+  "sends nothing from a turn the engine began before a Stop that showed it only after, and sends once it settled",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot: ana, session, turnId: watching } = yield* working("Watch the build.");
+      const bo = yield* createBot("Bo");
+      yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+      yield* finished(ana.id, session, watching);
+      // The build finishes and wakes the session just before the operator's
+      // Stop, whose round has not reached the engine yet; the event that
+      // tells of the turn is still on its way.
+      const stalled = yield* control.stallEvents(session);
+      const turnId = yield* control.startEngineTurn(session);
+      const gate = yield* holdGate(ana.id);
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+      yield* stalled.release;
+      yield* nextTurn(ana.id, watching);
+
+      const reply = yield* messageTeammate(session, turnId, {
+        to: bo.id,
+        text: "Deploy it.",
+        urgent: true,
+      });
+      assert.include(refusal(reply), "Your user stopped this work");
+      yield* gate.release;
+      yield* stopSettled;
+      yield* turnEnded(ana.id);
+      assert.deepStrictEqual(yield* handoffs(bo.id), []);
+
+      // A turn the engine begins once the Stop settled is new work.
+      yield* sendToBot(ana.id, "Watch the build again.");
+      const again = yield* nextTurn(ana.id, turnId);
+      yield* control.startBackgroundWork({ sessionId: session, turnId: again });
+      yield* finished(ana.id, session, again);
+      const later = yield* control.startEngineTurn(session);
+      yield* nextTurn(ana.id, again);
+      const sent = yield* messageTeammate(session, later, {
+        to: bo.id,
+        text: "The build passed.",
+        urgent: false,
+      });
+      assert.strictEqual(sent._tag, "result");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
   "shows an urgent message that never reached the teammate, and sends it again on retry",
   () =>
     Effect.gen(function* () {
@@ -1682,6 +1729,37 @@ it.effect("keeps the hop count a harness's wake took on admission for the work i
     assert.strictEqual(reply._tag, "result");
     assert.deepStrictEqual(yield* heldHops(dee.id), [2]);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "sends nothing from a delegated task's completion the engine began before a Stop that showed it only after",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { ana, anaSession, notice } = yield* delegatingNotice;
+      const dee = yield* createBot("Dee");
+
+      // The report the notice delegated completes just before the
+      // operator's Stop: the turn it starts names the notice, which no Stop
+      // covers, and the event that tells of it is still on its way.
+      const stalled = yield* control.stallEvents(anaSession);
+      const reporting = yield* control.startEngineTurn(anaSession, notice);
+      const gate = yield* holdGate(ana.id);
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+      yield* stalled.release;
+      yield* nextTurn(ana.id, notice);
+
+      const reply = yield* messageTeammate(anaSession, reporting, {
+        to: dee.id,
+        text: "The report is attached.",
+        urgent: true,
+      });
+      assert.include(refusal(reply), "Your user stopped this work");
+      yield* gate.release;
+      yield* stopSettled;
+      yield* turnEnded(ana.id);
+      assert.deepStrictEqual(yield* handoffs(dee.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("counts a harness's wake from another such wake whose work is pending", () =>

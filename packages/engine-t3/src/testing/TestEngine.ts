@@ -319,6 +319,14 @@ export class TestEngineControl extends Context.Service<
      */
     readonly dropNextMarker: Effect.Effect<{ readonly requested: Effect.Effect<void> }>;
     /**
+     * The next turn to end with steers on it settles none of them, as an
+     * engine fault would leave them: no `steered`, `steer-dropped` or
+     * `steer-requeued` reaches the streams, a replacement lists none, and
+     * none becomes a turn. `release` sends each settlement late: `steered`
+     * for a steer the agent read, `steer-dropped` for any other.
+     */
+    readonly withholdNextSteerSettlements: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
      * The next `stop` takes effect before it answers, and then background
      * work starts a turn in the session, which the stop missed: as when a run
      * begins between a Stop's commands. `started` gives that turn once the
@@ -432,12 +440,16 @@ export class TestEngineControl extends Context.Service<
      * wakes it: its turn reports it as `backgroundWork`. The wake it brings is
      * `startEngineTurn`. With `stoppable: false` the engine's stop does not
      * reach it, as an old provider session's work after another client started
-     * a fresh context: it ends by itself or when the session is retired.
+     * a fresh context: it ends by itself or when the session is retired. With
+     * `announced: false` the turn's end says it left none, as for a monitor the
+     * agent does not await: only the engine's report of the session's
+     * background work lists it, as that turn's.
      */
     readonly startBackgroundWork: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
       readonly stoppable?: boolean;
+      readonly announced?: boolean;
     }) => Effect.Effect<void>;
     /**
      * The background work every turn of the session left running ends, and
@@ -522,7 +534,17 @@ interface SteerRecord {
   readonly key: IdempotencyKey;
   /** Turns waiting when the steer was sent: a follow-up turn runs after these. */
   readonly queuedAhead: ReadonlyArray<TurnId>;
-  state: "unread" | "read" | "dropped" | "requeued";
+  /** `withheld`: its turn ended, and the engine settled it with no event (`withholdNextSteerSettlements`). */
+  state: "unread" | "read" | "dropped" | "requeued" | "withheld";
+}
+
+/** A steer whose settlement the engine kept back, to send late. */
+interface WithheldSteer {
+  readonly session: SessionRecord;
+  readonly turnId: TurnId;
+  readonly steer: SteerRecord;
+  /** Whether the agent read it before its turn ended: it settles as `steered`, else `steer-dropped`. */
+  readonly read: boolean;
 }
 
 interface ToolCallRecord {
@@ -546,6 +568,11 @@ interface TurnRecord {
   }>;
   /** It left background work running, which a Stop ends. */
   background: boolean;
+  /**
+   * That work is not one its end tells of, as a monitor the agent does not
+   * await: only the engine's report of the session's background work lists it.
+   */
+  unannounced: boolean;
   /** It left background work running that a Stop does not reach; retiring the session ends it. */
   unstoppable: boolean;
   /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
@@ -675,6 +702,8 @@ const make = Effect.gen(function* () {
   >();
   let stopEffects: Deferred.Deferred<void> | null = null;
   let droppedMarker: Deferred.Deferred<void> | null = null;
+  /** The steers whose settlements the next turn's end keeps back, once armed. */
+  let withholding: Array<WithheldSteer> | null = null;
   let turnDuringStop: {
     readonly sessionId: SessionId;
     readonly started: Deferred.Deferred<TurnId>;
@@ -863,6 +892,7 @@ const make = Effect.gen(function* () {
       hostSpeech: [],
       closedRequests: [],
       background: false,
+      unannounced: false,
       unstoppable: false,
       contextRecovered: false,
       ended: null,
@@ -873,6 +903,10 @@ const make = Effect.gen(function* () {
 
   /** Whether the turn left background work that still runs, whether or not a Stop reaches it. */
   const leftWork = (turn: TurnRecord) => turn.background || turn.unstoppable;
+
+  /** Whether the turn's end tells of background work it left running (`leftWork`). */
+  const announcesWork = (turn: TurnRecord) =>
+    (turn.background && !turn.unannounced) || turn.unstoppable;
 
   /** Whether background work some turn of the session left still runs. */
   const backgroundRuns = (session: SessionRecord) => [...session.turns.values()].some(leftWork);
@@ -989,7 +1023,13 @@ const make = Effect.gen(function* () {
     clearEmptyHold(session);
     const settlements: Array<(stamp: { cursor: EventCursor; at: DateTime.Utc }) => SessionEvent> =
       [];
+    const withheld = withholding;
     for (const steer of turn.steers) {
+      if (withheld !== null && (steer.state === "read" || steer.state === "unread")) {
+        withheld.push({ session, turnId: turn.turnId, steer, read: steer.state === "read" });
+        steer.state = "withheld";
+        continue;
+      }
       if (steer.state === "read") {
         settlements.push((stamp) => ({
           _tag: "steered",
@@ -1026,6 +1066,8 @@ const make = Effect.gen(function* () {
         }));
       }
     }
+    // Only the first turn to end with steers keeps theirs back.
+    if (withheld !== null && withheld.length > 0) withholding = null;
     turn.ended = { outcome, at, continuation };
     emit(session, at, (stamp) => ({
       _tag: "turn-finished",
@@ -1034,7 +1076,7 @@ const make = Effect.gen(function* () {
       finishedAt: at,
       cause: turn.cause,
       outcome,
-      backgroundWork: leftWork(turn),
+      backgroundWork: announcesWork(turn),
       continuation,
       contextRecovered: turn.contextRecovered,
     }));
@@ -1202,7 +1244,7 @@ const make = Effect.gen(function* () {
           startedAt: turn.startedAt,
           finishedAt: turn.ended.at,
           outcome: turn.ended.outcome,
-          backgroundWork: leftWork(turn),
+          backgroundWork: announcesWork(turn),
           continuation: turn.ended.continuation,
           steps,
           contextRecovered: turn.contextRecovered,
@@ -2002,6 +2044,25 @@ const make = Effect.gen(function* () {
       return { requested: Deferred.await(requested) };
     }),
 
+    withholdNextSteerSettlements: Effect.sync(() => {
+      const withheld: Array<WithheldSteer> = [];
+      withholding = withheld;
+      return {
+        release: Effect.gen(function* () {
+          const at = yield* DateTime.now;
+          for (const { session, turnId, steer, read } of withheld.splice(0)) {
+            steer.state = read ? "read" : "dropped";
+            emit(session, at, (stamp) => ({
+              _tag: read ? "steered" : "steer-dropped",
+              ...stamp,
+              key: steer.key,
+              turnId,
+            }));
+          }
+        }),
+      };
+    }),
+
     startEngineTurnDuringNextStop: (sessionId) =>
       Effect.gen(function* () {
         yield* existingSession(sessionId);
@@ -2169,12 +2230,14 @@ const make = Effect.gen(function* () {
         return speech.speechId;
       }),
 
-    startBackgroundWork: ({ sessionId, turnId, stoppable = true }) =>
+    startBackgroundWork: ({ sessionId, turnId, stoppable = true, announced = true }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        if (stoppable) turn.background = true;
-        else turn.unstoppable = true;
+        if (stoppable) {
+          turn.background = true;
+          turn.unannounced = !announced;
+        } else turn.unstoppable = true;
       }),
 
     recoverContext: ({ sessionId, turnId }) =>

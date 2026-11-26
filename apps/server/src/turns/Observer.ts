@@ -582,6 +582,26 @@ export const layer = Layer.effect(
       // A harness's wake takes its hop count now, from the flags that show
       // what may have woken it, before its own work can clear them.
       if (cause._tag !== "dispatch" && origin === null) yield* chains.borrow(session.id, turnId);
+      if (cause._tag !== "dispatch") {
+        // A turn the engine started on its own may have begun before a Stop
+        // of the bot was recorded, its start still on its way, whether or not
+        // it names the turn it goes on with: one first seen while such a
+        // Stop's target in the session is unsettled is that Stop's to end, as
+        // a turn it marked. One first seen once it settled began after
+        // (`Stops`): every event the engine had then was applied. A room's
+        // Stop marks none: a turn it would cover goes on with a turn of the
+        // room, which its dispatch order covers (`workStopped`).
+        yield* sql`
+          UPDATE turns SET stop_id = (
+            SELECT ts_target.stop_id FROM stop_targets ts_target
+            JOIN stops ts_stop ON ts_stop.id = ts_target.stop_id
+            WHERE ts_target.session_id = ${session.id} AND ts_target.stopped_at IS NULL
+              AND ts_stop.scope = 'bot' AND ts_stop.engine_turn_id IS NULL
+            ORDER BY ts_stop.rowid DESC LIMIT 1
+          )
+          WHERE session_id = ${session.id} AND engine_turn_id = ${turnId}
+        `;
+      }
       // A Stop round already sent missed this turn, or the engine applied a
       // key a Stop had fenced: it is stopped on sight.
       if (yield* stops.openRound(session.id, fencedBy)) yield* sql.afterCommit(signals.stops.fire);
@@ -592,9 +612,9 @@ export const layer = Layer.effect(
      * started it: each listed turn's work may still run, as of the report.
      * The report lists work only while no turn runs or waits
      * (`BackgroundWork`), so only then does a turn it leaves out have none
-     * left, and only then is the session's check done (`Stops`); otherwise
-     * what was known stands, and the check stays due. The end of a turn that
-     * ran or waited makes it due again.
+     * left, and only then is the session's check done (`Stops`), its turns
+     * reported; otherwise what was known stands, and the check stays due.
+     * The end of a turn that ran or waited makes it due again.
      */
     const backgroundReported = Effect.fn("Observer.backgroundReported")(function* (
       session: Watched,
@@ -611,6 +631,10 @@ export const layer = Layer.effect(
       if (event.runnableTurns.length > 0) return;
       if ((yield* openTurnRows(session.id).pipe(Effect.orDie)).length > 0) return;
       yield* sql`UPDATE sessions SET background_check_due = 0 WHERE id = ${session.id}`;
+      yield* sql`
+        UPDATE turns SET background_unreported = 0
+        WHERE session_id = ${session.id} AND background_unreported = 1
+      `;
       yield* sql`
         UPDATE turns SET background_pending = 0
         WHERE session_id = ${session.id} AND background_pending = 1
@@ -743,14 +767,26 @@ export const layer = Layer.effect(
             WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
           `;
         }
+        // A room turn's end, also one that told of no work, leaves it
+        // unreported until the next report: the engine can count work an end
+        // did not tell of, as a monitor the agent does not await, and only
+        // the report says whose it is, so a room's Stop waits for it
+        // (`Stops`).
+        if (turn.value.audience === "room") {
+          yield* sql`
+            UPDATE turns SET background_unreported = 1
+            WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
+          `;
+        }
       }
-      // While turns of the session have work flagged, each turn's end is
-      // followed by a report taken once nothing runs (`Stops`): a flag lasts
-      // no longer than its work.
+      // While turns of the session have work flagged or unreported, each
+      // turn's end is followed by a report taken once nothing runs (`Stops`):
+      // a flag lasts no longer than its work.
       yield* sql`
         UPDATE sessions SET background_check_due = 1
         WHERE id = ${session.id} AND EXISTS (
-          SELECT 1 FROM turns WHERE session_id = ${session.id} AND background_pending = 1
+          SELECT 1 FROM turns WHERE session_id = ${session.id}
+            AND (background_pending = 1 OR background_unreported = 1)
         )
       `;
       // The provider's conversation could not be resumed: the bot's main
@@ -976,7 +1012,7 @@ export const layer = Layer.effect(
           yield* routing.botMessage({
             room: room.value,
             botId: session.bot_id,
-            turn: { sessionId: session.id, turnId: speech.turnId },
+            turn: { sessionId: session.id, turnId: speech.turnId, audience },
             message: entry,
             word: "bot",
             seq: work.seq,

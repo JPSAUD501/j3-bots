@@ -50,6 +50,7 @@ import {
   engineSession,
   eventually,
   flushed,
+  holdGate,
   messageTeammate,
   nextTurn,
   providerIs,
@@ -62,6 +63,7 @@ import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { Cards } from "./Cards.ts";
 import { Pipeline } from "./Pipeline.ts";
+import { Stops } from "./Stops.ts";
 
 // Bots build a team on the operator's word (`docs/architecture/server.md`,
 // Bot tools and Rooms): `create_bot` only in a turn the operator spoke in, at
@@ -224,6 +226,32 @@ it.effect("creates no bot in a turn the operator did not speak in", () =>
     assert.include(refusalOf(reply), "only your user can ask for a new bot");
     const names = (yield* (yield* BotStore).list).map(({ bot }) => bot.profile.name);
     assert.deepStrictEqual(names.toSorted(), ["Scout", "Wren"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("makes no bot and starts no room once a Stop covers the turn, before it ends", () =>
+  Effect.gen(function* () {
+    const scout = yield* primaryBot("Scout");
+    const { session, turnId } = yield* operatorAsks(scout, "Make me a deploy group.");
+    const pip = decodeCreated(resultOf(yield* createIn(session, turnId, "Pip")));
+    // The Stop is recorded; its round has not reached the engine, so the
+    // turn still runs and its calls still match.
+    const gate = yield* holdGate(scout.id);
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: scout.id });
+
+    const created = yield* createIn(session, turnId, "Ledger");
+    const started = yield* call(session, turnId, "start_room", {
+      name: "Deploy",
+      members: [pip.id],
+      kickoff: "Pip deploys.",
+    });
+
+    assert.include(refusalOf(created), "Your user stopped this work");
+    assert.include(refusalOf(started), "Your user stopped this work");
+    yield* gate.release;
+    const names = (yield* (yield* BotStore).list).map(({ bot }) => bot.profile.name);
+    assert.deepStrictEqual(names.toSorted(), ["Pip", "Scout"]);
+    assert.deepStrictEqual(yield* (yield* Rooms).list, []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

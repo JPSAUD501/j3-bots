@@ -84,13 +84,14 @@ export const WakeRow = Schema.Struct({
   payload_json: json(WakePayload),
   status: WakeStatus,
   source_entry_id: Schema.NullOr(EntryId),
+  cause_room_id: Schema.NullOr(RoomId),
   created_at: Time,
 });
 export type WakeRow = typeof WakeRow.Type;
 
 export const WAKE_COLUMNS = `
   id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
-  source_entry_id, created_at
+  source_entry_id, cause_room_id, created_at
 `;
 
 /** What becomes of the wakes of a dispatch that ends undelivered. */
@@ -812,6 +813,26 @@ export const layer = Layer.effect(
       `;
 
     /**
+     * Room wakes of the dispatch that a bot's work for a room caused, whose
+     * room's Stop was recorded once the dispatch was written, so once the
+     * wake was: they are cancelled instead of waiting again or failing, as
+     * that Stop cancelled the ones still waiting (`Stops.record`). The order
+     * is the dispatch's, never a time: a wake written after the Stop goes in
+     * a later dispatch, above the Stop's mark.
+     */
+    const cancelStoppedRoomPosts = (dispatchId: DispatchRowId, at: string) =>
+      sql`
+        UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${at}
+        WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
+          AND kind = 'room' AND cause_room_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM stops sr_stop JOIN dispatches sr_dispatch ON sr_dispatch.id = ${dispatchId}
+            WHERE sr_stop.bot_id = wakes.cause_bot_id AND sr_stop.scope = 'room'
+              AND sr_stop.room_id = wakes.cause_room_id AND sr_stop.engine_turn_id IS NULL
+              AND sr_stop.dispatch_mark >= sr_dispatch.seq
+          )
+      `;
+
+    /**
      * Wakes of a dispatch that will not run to its end, as `after` says.
      * `unread`: the engine certainly never applied it, so a teammate's urgent
      * message it cancels waits on as a held one (`holdUnread`).
@@ -827,7 +848,10 @@ export const layer = Layer.effect(
       // shows the messages behind it wait behind the hello again.
       const held = yield* heldBehindOpening(dispatchId);
       yield* roomWorkChanged(dispatchId);
-      if (after._tag !== "cancelled") yield* cancelStoppedHandoffs(dispatchId, at);
+      if (after._tag !== "cancelled") {
+        yield* cancelStoppedHandoffs(dispatchId, at);
+        yield* cancelStoppedRoomPosts(dispatchId, at);
+      }
       switch (after._tag) {
         case "pending":
           yield* sql`

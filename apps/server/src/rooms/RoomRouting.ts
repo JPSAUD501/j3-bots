@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
-import type { DispatchSeq, RoomReason, SessionRowId } from "../turns/model.ts";
+import type { Audience, DispatchSeq, RoomReason, SessionRowId } from "../turns/model.ts";
 import { notices } from "../turns/notices.ts";
 import { roomShown } from "../turns/roomShown.ts";
 import { type NewWake, Wakes } from "../turns/Wakes.ts";
@@ -46,10 +46,14 @@ export type BotMessageRouted =
  */
 export type BotWord = "kickoff" | "relayed" | "bot";
 
-/** The speaking turn: what it was shown of the room decides its messages' round. */
+/**
+ * The speaking turn: what it was shown of the room decides its messages'
+ * round, and the audience it speaks for is whose work its wakes are.
+ */
 export interface SpeakingTurn {
   readonly sessionId: SessionRowId;
   readonly turnId: TurnId;
+  readonly audience: Audience;
 }
 
 /**
@@ -227,8 +231,10 @@ export const layer = Layer.effect(
         }
       }
       if (input.stopped) return { _tag: "routed" } as const;
-      // The speaking turn's work: a Stop that covers it, or the room's
-      // archival, leaves these wakes unwritten (`Wakes.record`). A room
+      // The speaking turn's work, for the audience it speaks for, which may
+      // be another room: a Stop that covers it, or the archival of either
+      // room, leaves these wakes unwritten (`Wakes.record`), and a Stop of
+      // that room's work cancels them while they wait (`Stops.record`). A room
       // counts its own rounds, so its wakes carry no hops: a teammate
       // message a member sends from them starts a chain of its own.
       yield* wakes.record(
@@ -244,7 +250,12 @@ export const layer = Layer.effect(
           sourceEntryId: input.message.id,
           hops: 0,
           retryOf: null,
-          cause: { _tag: "teammate", senderId: input.botId, audience, seq: input.seq },
+          cause: {
+            _tag: "teammate",
+            senderId: input.botId,
+            audience: input.turn.audience,
+            seq: input.seq,
+          },
         })),
       );
       return { _tag: "routed" } as const;

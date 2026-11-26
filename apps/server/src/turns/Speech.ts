@@ -964,7 +964,7 @@ export const layer = Layer.effect(
       return yield* routing.botMessage({
         room,
         botId: found.botId,
-        turn: { sessionId: found.sessionId, turnId: found.turnId },
+        turn: { sessionId: found.sessionId, turnId: found.turnId, audience: found.audience },
         message,
         word,
         seq: work.seq,
@@ -1697,9 +1697,11 @@ export const layer = Layer.effect(
      * the operator spoke in (`operatorSpokeIn`), so a teammate, a room member
      * or a routine run cannot have bots made through the primary bot, and at
      * most `MAX_BOTS_PER_REQUEST` for one request of the operator's, counted
-     * across the turns that answered it (`madeForRequest`). The call is pinned, and counted,
-     * in the transaction that saves the bot (`MadeBy.claim`), whose hello waits
-     * for this turn to end: `start_room` may still place it in a room.
+     * across the turns that answered it (`madeForRequest`). The call is
+     * pinned, counted and checked against the Stops that cover the turn
+     * (`workStopped`) in the transaction that saves the bot (`MadeBy.claim`),
+     * so a Stop recorded first always wins. Its hello waits for this turn to
+     * end: `start_room` may still place it in a room.
      */
     const createBot = Effect.fn("Speech.createBot")(function* (found: Pin, call: CreateBotCall) {
       // Checked before the bot is saved, as for `set_operator_name`: matching
@@ -1724,6 +1726,13 @@ export const layer = Layer.effect(
                 }),
             ),
           );
+          // A Stop that committed first wins, whatever the engine has done
+          // with the turn yet: nothing is saved, and no workspace is made.
+          if ((yield* workStopped(found)).stopped) {
+            return yield* new TurnToolRefused({
+              reason: "Your user stopped this work, so nothing was created.",
+            });
+          }
           if ((yield* madeForRequest(found)).length >= MAX_BOTS_PER_REQUEST) {
             return yield* new TurnToolRefused({
               reason: `Nothing was created: one request of your user's may create at most ${MAX_BOTS_PER_REQUEST} bots, and this one has, in this turn or one that answered it before.`,
@@ -1738,8 +1747,9 @@ export const layer = Layer.effect(
 
     /**
      * `start_room` (`docs/architecture/server.md`, Rooms): only in a turn the
-     * operator spoke in, as only the operator asks for a room. In the
-     * transaction that pins the request it creates the room with the caller
+     * operator spoke in, as only the operator asks for a room, and refused
+     * when a Stop covers the turn (`workStopped`), read in the transaction
+     * that pins the request. In that transaction it creates the room with the caller
      * as its first member, shows a `room-started` notice there and in the
      * caller's conversation, posts the kickoff as the caller's message, and
      * routes it as the operator's word, round 0 of the room's rounds, and
