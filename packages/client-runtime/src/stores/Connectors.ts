@@ -11,7 +11,10 @@ import {
   type ConnectorFieldValue,
   type ConnectorGrant,
   ConnectorId,
+  type ConnectorListingDetails,
   type ConnectorPrompt,
+  type Language,
+  type ListingRef,
   type PromptArguments,
   type SignInRedirect,
   type SignInStarted,
@@ -57,6 +60,14 @@ export class Connectors extends Context.Service<
     readonly state: Readable<Synced<ReadonlyArray<Connector>>>;
     /** The prompts the connectors `botId` may use offer, for the `/` menu of its conversation. */
     readonly prompts: (botId: BotId) => Effect.Effect<IntentResult<ReadonlyArray<ConnectorPrompt>>>;
+    /**
+     * A gallery entry's page, in `language`: what an ask to add one that
+     * signs in with the operator's own app shows them to set that app up.
+     */
+    readonly listing: (
+      ref: ListingRef,
+      language: Language,
+    ) => Effect.Effect<IntentResult<ConnectorListingDetails>>;
     /** A prompt as its server writes it from the operator's arguments, for their draft. */
     readonly renderPrompt: (input: {
       readonly botId: BotId;
@@ -179,6 +190,15 @@ export const layer = Layer.effect(
       return yield* answered(connection.call((client) => client["connector.prompts"]({ botId })));
     });
 
+    const listing = Effect.fn("Connectors.listing")(function* (
+      ref: ListingRef,
+      language: Language,
+    ) {
+      return yield* answered(
+        connection.call((client) => client["connectors.get"]({ ref, language })),
+      );
+    });
+
     const renderPrompt = Effect.fn("Connectors.renderPrompt")(function* (input: {
       readonly botId: BotId;
       readonly connectorId: ConnectorId;
@@ -245,6 +265,7 @@ export const layer = Layer.effect(
     return Connectors.of({
       state,
       prompts,
+      listing,
       renderPrompt,
       update,
       remove,

@@ -79,6 +79,7 @@ import {
   type ConnectorsPlace,
   notificationOpening,
   type OpenedNotification,
+  ownAppSetup,
   pairKeyText,
   ROOM_MEMBERS,
   type RoomFormMode,
@@ -1586,6 +1587,19 @@ function LiveShell({
     openConnectorPage: (url) => {
       window.open(url, "_blank", "noopener");
     },
+    connectorAskSetup: (listing) =>
+      j3.connectors
+        .listing(listing, i18n.locale)
+        .then((result) =>
+          result._tag === "done"
+            ? { _tag: "done", value: ownAppSetup(result.value, signInRoute._tag === "server") }
+            : result,
+        ),
+    allowConnectorAsk: (entryId, client) =>
+      void j3.answerCard(entryId, { _tag: "connector-ask", client }).then((result) => {
+        if (refusedWith(result, "answer")) say(t("connectorAsk.refused"));
+      }),
+    declineConnectorAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     openConnectors,
     connectorPrompts: (botId) =>
       j3.connectors.prompts(botId).then((result) => (result._tag === "done" ? result.value : null)),

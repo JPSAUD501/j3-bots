@@ -2,9 +2,7 @@
 
 **Draft.** Connectors are new in 0.4.0, and no step below has been run against Google yet. What this page says about Google comes from Google's documentation and is **Assumed** until a sign-in confirms it.
 
-**Not reachable in 0.10.0.** The apps of this release have no screen that takes your app's client, and a bot refuses a server that needs one, so a Google connector can't be added now ([decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md)). The steps below stay for the release that brings that screen back; a Google connector added before 0.10.0 keeps working.
-
-Google does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to a Google MCP server on its own. You register an app of your own in Google Cloud and give J3 Bots its client ID and secret when you add the connector. J3 Bots keeps them in its secrets and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
+Google does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to a Google MCP server on its own. You register an app of your own in Google Cloud and give J3 Bots its client ID and secret on the card a bot shows when it adds the connector ([decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md)). J3 Bots keeps them in its secrets and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
 
 ## Where your sign-ins return
 
@@ -28,7 +26,7 @@ A Desktop app client accepts a return to loopback on any port and path, as nativ
 
 ## Add the connector
 
-Open the Google service in the gallery. Its page shows these steps and the redirect address for the way you are signing in, and already knows Google's issuer, `https://accounts.google.com`: give it the client ID and the secret, then sign in. Every Google connector can use the same client. A Google server not in the gallery is added by its address, with the issuer, the client ID and the secret.
+Ask a bot for the Google service, such as "connect my Gmail". It adds the gallery's entry, and since that needs your app, it asks you first, with a card in its conversation. The card shows these steps and the redirect address for the way you are signing in, and already knows Google's issuer, `https://accounts.google.com`: give it the client ID and the secret and press **Allow**. They go to J3 Bots' server only; the bot never sees them, and is told only that you allowed it. A sign-in card follows. Every Google connector can use the same client, given on each one's card. A Google server not in the gallery can't take your app's client: ask the bot for the gallery's entry.
 
 For a gallery entry, J3 Bots asks Google for the scopes the entry lists, with `access_type=offline` and `prompt=consent`, which Google needs before it gives a refresh token (**Assumed**, from Google's documentation); without one the connector would need a sign-in every hour. J3 Bots uses the app only with the authorization server you named: a connector whose metadata names another is refused, so the secret never reaches a server other than Google's. It sends the secret only to Google's token and revocation endpoints, in a Basic authorization header.
 
@@ -36,4 +34,4 @@ For a gallery entry, J3 Bots asks Google for the scopes the entry lists, with `a
 
 - An External app left in **Testing** gets refresh tokens that Google ends after seven days, according to Google's documentation. The connector then needs a new sign-in. Publishing the app, or using an Internal one, avoids that.
 - Removing the connector revokes its tokens at Google, and leaves your app and its client as they are. Delete the client in the console if you no longer want it.
-- A client ID or secret you mistyped fails at the first sign-in with a refused client. Fix it by adding the connector again, once a release can.
+- A client ID or secret you mistyped fails at the first sign-in with a refused client. Fix it by asking the bot to remove the connector and add it again, and give the card the right values.

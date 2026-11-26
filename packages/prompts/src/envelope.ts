@@ -305,6 +305,18 @@ export type SystemEvent =
       readonly outcome: "saved" | "declined" | "expired";
       /** The reference the bot names the secret by (`secret:<name>`), saved or not. */
       readonly reference: string;
+    }
+  | {
+      readonly name: "connector-ask";
+      /**
+       * How the bot's ask to add a server its user had to allow ended: added
+       * on their yes, declined, failed after their yes, or it waited too long.
+       */
+      readonly outcome: "added" | "declined" | "failed" | "expired";
+      /** The server's name, as it would be added. */
+      readonly server: string;
+      /** What comes next for a server added, or why one failed; null otherwise. */
+      readonly note: string | null;
     };
 
 export interface SystemWake extends WakeBase {
@@ -425,6 +437,23 @@ const SECRET_ASK_LINES: {
     "Your ask for a secret waited too long and closed without an answer. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on it, and that you will continue when they tell you to.",
 };
 
+/**
+ * What a `connector-ask` event says happened, and what to do now. A server
+ * the operator did not allow is not asked for again on the bot's own.
+ */
+const CONNECTOR_ASK_LINES: {
+  readonly [O in Extract<SystemEvent, { readonly name: "connector-ask" }>["outcome"]]: string;
+} = {
+  added:
+    "Your user allowed the MCP server you asked to add, named below, and it is added: its note says what comes next for it. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
+  declined:
+    "Your user declined the MCP server you asked to add, named below. Do not add it again on your own, and do not look for another way to reach it. Finish what does not need it, then end with a `say` with `done: true` that tells your user what it still blocks.",
+  failed:
+    "Your user allowed the MCP server you asked to add, named below, but adding it failed, for the reason in its note. Do not try again on your own: end with a `say` with `done: true` that tells your user why, in your own words.",
+  expired:
+    "Your ask to add the MCP server named below closed without an answer: it waited too long, or J3 Bots restarted while it waited. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on it, and that you will continue when they tell you to.",
+};
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -444,6 +473,8 @@ const eventLine = (event: SystemEvent): string => {
       return BROWSER_HELP_LINES[event.outcome];
     case "secret-ask":
       return SECRET_ASK_LINES[event.outcome];
+    case "connector-ask":
+      return CONNECTOR_ASK_LINES[event.outcome];
   }
 };
 
@@ -799,6 +830,12 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         w.empty("browser-tab", [["site", event.site]]);
       }
       if (event.name === "secret-ask") w.empty("secret", [["reference", event.reference]]);
+      if (event.name === "connector-ask") {
+        w.empty("server", [
+          ["name", event.server],
+          ["note", event.note],
+        ]);
+      }
       if (event.name === "delegated-result") w.data([["source", "delegated-task"]], event.text);
       return;
     }

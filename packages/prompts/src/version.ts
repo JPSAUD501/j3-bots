@@ -178,6 +178,11 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     kind: "system",
     event: { name: "secret-ask", outcome, reference: "secret:name" },
   })),
+  ...(["added", "declined", "failed", "expired"] as const).map((outcome): Wake => ({
+    ...base,
+    kind: "system",
+    event: { name: "connector-ask", outcome, server: "text", note: "text" },
+  })),
 ];
 
 const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [

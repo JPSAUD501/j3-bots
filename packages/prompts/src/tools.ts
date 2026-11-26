@@ -978,7 +978,7 @@ export const tools = {
       "A command runs as J3 Bots' own user on its machine, with what that user can reach: add only one your user would run themselves.",
       MANAGES,
       "A server that needs a sign-in is added, and your user signs in from a card in your conversation; its tools come once they have.",
-      "J3 Bots can't add an address in your user's own network, or a gallery server that needs an app they register, for now.",
+      "An address in your user's own network, or a gallery server that signs in with an app they register, is added only on their yes: a card in your conversation asks them, and takes their app's client, which you never see. You are woken when they answer, or the card waits too long.",
       "Returns the server, with its status.",
     ],
     AddMcpServerInput,
@@ -1102,6 +1102,9 @@ export const MANAGEMENT_NOTES = {
   /** A server added that could not be reached yet. */
   failing: "J3 Bots could not reach it yet. Its status says why; its tools come once it answers.",
   removed: "Removed. Every bot that used it lost its tools.",
+  /** A server that waits on the operator's yes, asked on a card. */
+  asked:
+    "Nothing is added yet: a card in your conversation asks your user to allow it. You are woken with their answer. Tell them in a sentence, and carry on with what does not need it.",
   /** A skill saved or installed. */
   skillSaved: "Your harness offers it by its description from your next turn.",
   skillRemoved: "Removed.",
@@ -1129,10 +1132,11 @@ export const MANAGEMENT_REFUSED = {
     `The secret ${name} is referenced in the address, where J3 Bots does not resolve it: a reference goes in a header, an argument or a variable. A service that takes its key only in the address can't be added for now. Nothing changed.`,
   secretDestination: (name: string) =>
     `This server sends the secret ${name}, so you can't change where it sends it: its address, headers, command, arguments and other variables. You may change which secrets it names. Your user can change a command server's command line on its page in Settings → MCP and skills, on the web or the desktop app. For anything else, remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
-  privateNetwork:
-    "That address is in your user's own network, which J3 Bots can't add for now. Nothing changed.",
   ownApp:
-    "That server signs in only with an app your user registers at the service, which J3 Bots can't add for now. Nothing changed.",
+    "That server signs in only with an app your user registers, at a service J3 Bots doesn't know, so it can't be added. Nothing changed.",
+  workStopped: "Nothing was shown: your user stopped this work. Stop here.",
+  askChanged:
+    "What your user allowed no longer matches what adding this server needs, so it was not added. Nothing changed.",
   unknownSkill: (name: string) => `There is no skill ${name} there. Check \`list_skills\`.`,
   skillShipped: "Skills named j3-… are J3 Bots' own: nobody changes them. Nothing changed.",
   skillNameTaken: (name: string) =>

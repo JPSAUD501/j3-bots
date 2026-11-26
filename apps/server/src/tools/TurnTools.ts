@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import type { MadeBy } from "../bots/Bots.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import type { CallPlace } from "../turns/ConnectorSteps.ts";
+import type { Audience } from "../turns/model.ts";
 
 /** The tools whose effect belongs to the turn that called them. */
 const TurnToolName = Schema.Literals([
@@ -99,6 +100,11 @@ export class CallCutOff extends Schema.TaggedError<CallCutOff>()("CallCutOff", {
   }
 }
 
+/** Where a claimed call stands, and the audience its turn works for. */
+export interface ClaimedPlace extends CallPlace {
+  readonly audience: Audience;
+}
+
 /** A connector tool's call to claim for its turn: who made it, under which id, and its arguments. */
 export interface ClaimedCall {
   /** The tool's name in the `j3` namespace, `<connector>__<tool>`. */
@@ -181,10 +187,11 @@ export class TurnTools extends Context.Service<
      * record for the request, committed before it returns, so the call is
      * made at the connector once. What the connector answers is not kept: a
      * request claimed before fails with `CallCutOff`. Answers where the call
-     * stands, which an app it opens is kept by.
+     * stands, which an app it opens is kept by, and the audience its turn
+     * works for, which a card the call shows wakes the bot for.
      */
     readonly claimConnectorCall: (
       call: ClaimedCall,
-    ) => Effect.Effect<CallPlace, TurnEnded | TurnToolRetry | CallCutOff>;
+    ) => Effect.Effect<ClaimedPlace, TurnEnded | TurnToolRetry | CallCutOff>;
   }
 >()("@j3-bots/server/tools/TurnTools") {}

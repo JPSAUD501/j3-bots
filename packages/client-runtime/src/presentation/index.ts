@@ -48,6 +48,7 @@ export {
   type Point,
   siteOf,
 } from "./browser.ts";
+export { type OwnAppClient, ownAppClient, type OwnAppSetup, ownAppSetup } from "./connectorAsk.ts";
 export {
   applyConnectorChange,
   connectorNeedsYou,

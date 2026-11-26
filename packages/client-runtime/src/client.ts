@@ -8,7 +8,10 @@ import type {
   ConnectorAppViewId,
   ConnectorGrant,
   ConnectorId,
+  ConnectorListingDetails,
   ConnectorPrompt,
+  Language,
+  ListingRef,
   PromptArguments,
   SignInRedirect,
   SignInStarted,
@@ -224,6 +227,10 @@ export interface ConnectorsClient {
     readonly name: string;
     readonly arguments: PromptArguments;
   }) => Promise<Actions.IntentResult<{ readonly text: string; readonly cut: boolean }>>;
+  readonly listing: (
+    ref: ListingRef,
+    language: Language,
+  ) => Promise<Actions.IntentResult<ConnectorListingDetails>>;
   readonly update: (
     connectorId: ConnectorId,
     changes: Connectors.ConnectorChanges,
@@ -897,6 +904,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       state: services.connectors.state,
       prompts: (botId) => run.promise(services.connectors.prompts(botId)),
       renderPrompt: (input) => run.promise(services.connectors.renderPrompt(input)),
+      listing: (ref, language) => run.promise(services.connectors.listing(ref, language)),
       update: (connectorId, changes) =>
         run.promise(services.connectors.update(connectorId, changes)),
       remove: (connectorId) => run.promise(services.connectors.remove(connectorId)),

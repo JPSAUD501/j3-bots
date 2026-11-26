@@ -197,12 +197,6 @@ it.effect(
         50,
       )).flatMap((entry) => (entry._tag === "connector-auth" ? [entry.status] : []));
       assert.deepStrictEqual(cards, ["pending"]);
-
-      // One whose app the operator registers is theirs to add.
-      assert.strictEqual(
-        refusalOf(yield* call(ada, "add_mcp_server", { gallery: "curated:google-gmail" })),
-        MANAGEMENT_REFUSED.ownApp,
-      );
     }).pipe(Effect.scoped, Effect.provide(domain)),
 );
 

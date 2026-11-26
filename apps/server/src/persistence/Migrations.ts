@@ -54,6 +54,7 @@ import Migration0048 from "./migrations/0048_stop_reach.ts";
 import Migration0049 from "./migrations/0049_engine_edges.ts";
 import Migration0050 from "./migrations/0050_engine_instance.ts";
 import Migration0051 from "./migrations/0051_first_spoke.ts";
+import Migration0052 from "./migrations/0052_connector_asks.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -109,6 +110,7 @@ const migrations = SqliteMigrator.fromRecord({
   "49_engine_edges": Migration0049,
   "50_engine_instance": Migration0050,
   "51_first_spoke": Migration0051,
+  "52_connector_asks": Migration0052,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

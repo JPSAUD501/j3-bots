@@ -5,14 +5,21 @@ import {
   BotId,
   type ChangeAuthor,
   CommandId,
+  type Conflict,
   type Connector,
   CommandLine,
   type ConnectorCommandError,
   type ConnectorGrant,
+  type ConnectorAskEntry,
   ConnectorFieldValues,
+  type ConnectorGlyph,
   ConnectorId,
   ConnectorSource,
   CuratedKey,
+  type EntryId,
+  Invalid,
+  type NotFound,
+  type OAuthClientInput,
   GitRef,
   GitRepository,
   type LastChange,
@@ -31,11 +38,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
+import { ConnectorAsks, type Needs, type Settled } from "../connectors/ConnectorAsks.ts";
 import { ConnectorSignIns } from "../connectors/auth.ts";
 import { Connectors, type ListedConnector } from "../connectors/Connectors.ts";
 import { ConnectorSources } from "../connectors/sources/Sources.ts";
 import type { NotASkill, SkillFetchFailed } from "../skills/SkillRepositories.ts";
 import { type SkillChangeError, Skills } from "../skills/Skills.ts";
+import type { SpeakingTurn } from "../turns/workStopped.ts";
 
 /** Why a management tool did nothing, in words the bot reads. */
 export class ManagementRefused extends Schema.TaggedError<ManagementRefused>()(
@@ -48,6 +57,14 @@ export interface Caller {
   readonly botId: BotId;
   readonly requestId: string;
 }
+
+/** A caller in the turn its call was claimed for, whose audience a card it shows wakes. */
+export interface TurnCaller extends Caller {
+  readonly turn: SpeakingTurn;
+}
+
+/** The client the operator registered for an own app, as their answer to a bot's ask gives it. */
+export type OwnAppClient = Pick<OAuthClientInput, "clientId" | "clientSecret">;
 
 type Managed = Effect.Effect<Schema.Json, ManagementRefused>;
 
@@ -64,7 +81,15 @@ export class Management extends Context.Service<
   {
     readonly searchServers: (caller: Caller, input: ToolInput<"search_mcp_servers">) => Managed;
     readonly listServers: (caller: Caller) => Managed;
-    readonly addServer: (caller: Caller, input: ToolInput<"add_mcp_server">) => Managed;
+    readonly addServer: (caller: TurnCaller, input: ToolInput<"add_mcp_server">) => Managed;
+    /**
+     * The operator's yes to a bot's ask to add a connector that needs it: the
+     * add the bot asked for, with their consent or the client they registered.
+     */
+    readonly answerAsk: (input: {
+      readonly entryId: EntryId;
+      readonly client: OwnAppClient | null;
+    }) => Effect.Effect<void, Conflict | Invalid | NotFound>;
     readonly updateServer: (caller: Caller, input: ToolInput<"update_mcp_server">) => Managed;
     readonly removeServer: (caller: Caller, input: ToolInput<"remove_mcp_server">) => Managed;
     readonly setServerBots: (caller: Caller, input: ToolInput<"set_mcp_server_bots">) => Managed;
@@ -157,6 +182,28 @@ const statusJson = (connector: Connector): Schema.Json => {
   }
 };
 
+/** What the operator's yes gives a bot's add. */
+interface Consent {
+  /** They said the address in their own network is theirs to reach. */
+  readonly privateNetwork: boolean;
+  /** The client they registered for an own app. */
+  readonly oauthClient: OAuthClientInput | null;
+}
+
+const NO_CONSENT: Consent = { privateNetwork: false, oauthClient: null };
+
+/** An add that waits on the operator's yes, and the card that asks for it. */
+interface NeedsYes {
+  readonly _tag: "needs";
+  readonly needs: Needs;
+  readonly name: string;
+  readonly glyph: ConnectorGlyph | null;
+  readonly ask: ConnectorAskEntry["ask"];
+}
+
+/** An address's host and port, as the card names it; the address itself can carry a key. */
+const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : "");
+
 export const layer = Layer.effect(
   Management,
   Effect.gen(function* () {
@@ -165,6 +212,7 @@ export const layer = Layer.effect(
     const sources = yield* ConnectorSources;
     const signIns = yield* ConnectorSignIns;
     const skills = yield* Skills;
+    const asks = yield* ConnectorAsks;
 
     const isPrimary = Effect.fnUntraced(function* (botId: BotId) {
       const self = yield* store.find(botId);
@@ -242,9 +290,6 @@ export const layer = Layer.effect(
       if (error._tag === "NotFound" && error.resource === "connector-listing") {
         return refuse(MANAGEMENT_REFUSED.unknownListing("that entry"));
       }
-      if (error._tag === "Conflict" && error.reason === "private-network") {
-        return refuse(MANAGEMENT_REFUSED.privateNetwork);
-      }
       if (error._tag === "SecretRefused") {
         switch (error.problem) {
           case "missing":
@@ -264,7 +309,16 @@ export const layer = Layer.effect(
       return refuse(`${error.message} Nothing changed.`);
     };
 
-    const sourceOf = Effect.fnUntraced(function* (input: ToolInput<"add_mcp_server">) {
+    /**
+     * What the bot's call adds, with what the operator's yes gave it: their
+     * word for an address in their own network, or their own app's client.
+     * A gallery entry that signs in with an own app, without that client,
+     * needs their yes first.
+     */
+    const sourceOf = Effect.fnUntraced(function* (
+      input: ToolInput<"add_mcp_server">,
+      consent: Consent,
+    ) {
       if (input.gallery !== undefined) {
         const gallery = input.gallery;
         const ref = listingRefOf(gallery);
@@ -272,16 +326,30 @@ export const layer = Layer.effect(
         const connection = yield* sources
           .connection(ref.value, "en")
           .pipe(Effect.mapError(() => refuse(MANAGEMENT_REFUSED.unknownListing(gallery))));
-        // An app the operator registers is theirs to set up.
-        if (connection.listing.connect === "own-app")
-          return yield* refuse(MANAGEMENT_REFUSED.ownApp);
-        return yield* decodeSettings(ConnectorSource, {
+        const { listing } = connection;
+        const values = yield* decodeSettings(ConnectorFieldValues, pairs(input.values, "key"));
+        if (listing.connect === "own-app" && consent.oauthClient === null) {
+          // The operator registers the app, at the issuer the entry names.
+          const details = yield* sources
+            .get(ref.value, "en")
+            .pipe(Effect.mapError(() => refuse(MANAGEMENT_REFUSED.unknownListing(gallery))));
+          const issuer = details.setup?.issuer ?? null;
+          if (issuer === null) return yield* refuse(MANAGEMENT_REFUSED.ownApp);
+          return {
+            _tag: "needs",
+            needs: { _tag: "own-app", issuer },
+            name: listing.name,
+            glyph: listing.glyph,
+            ask: { _tag: "own-app", listing: ref.value },
+          } satisfies NeedsYes;
+        }
+        return {
           _tag: "listing",
           ref: ref.value,
           language: "en",
-          values: pairs(input.values, "key"),
-          oauthClient: null,
-        });
+          values,
+          oauthClient: listing.connect === "own-app" ? consent.oauthClient : null,
+        } satisfies ConnectorSource;
       }
       const name = input.name ?? "";
       if (input.url !== undefined) {
@@ -291,8 +359,7 @@ export const layer = Layer.effect(
           url: input.url,
           headers: pairs(input.headers, "name"),
           oauthClient: null,
-          // An address in the operator's own network takes their word, which no current client asks for.
-          privateNetwork: false,
+          privateNetwork: consent.privateNetwork,
         });
       }
       return yield* decodeSettings(ConnectorSource, {
@@ -325,6 +392,46 @@ export const layer = Layer.effect(
             : serverJson(listed, true),
         note,
       } satisfies Schema.Json;
+    });
+
+    /**
+     * Adds what the bot's call asks for, with the operator's consent: the
+     * connector added, with the answer the bot reads, or what needs their
+     * yes first.
+     */
+    const addWith = Effect.fnUntraced(function* (
+      caller: Caller,
+      input: ToolInput<"add_mcp_server">,
+      consent: Consent,
+    ) {
+      const primary = yield* isPrimary(caller.botId);
+      const grant = yield* grantFor(caller, primary, input.scope);
+      const source = yield* sourceOf(input, consent);
+      if (source._tag === "needs") return source;
+      const added = yield* connectors
+        .add({ id: connectorIdOf(caller.requestId), source, grant, by: by(caller) })
+        .pipe(
+          Effect.map((connector) => ({ _tag: "added", connector }) as const),
+          Effect.catchIf(
+            (error) => error._tag === "Conflict" && error.reason === "private-network",
+            () =>
+              // Their own network: added once the operator says it is theirs.
+              Effect.succeed({
+                _tag: "needs",
+                needs: { _tag: "private-network" },
+                name: source._tag === "remote" ? source.name : "",
+                glyph: null,
+                ask: { _tag: "private-network", host: hostOf(input.url ?? "") },
+              } satisfies NeedsYes),
+          ),
+          Effect.mapError(connectorRefusal),
+        );
+      if (added._tag === "needs") return added;
+      return {
+        _tag: "added",
+        connector: added.connector,
+        answer: yield* addedAnswer(caller, added.connector),
+      } as const;
     });
 
     const by = (caller: Caller): ChangeAuthor => ({ _tag: "bot", botId: caller.botId });
@@ -377,16 +484,60 @@ export const layer = Layer.effect(
     });
 
     const addServer = Effect.fn("Management.addServer")(function* (
-      caller: Caller,
+      caller: TurnCaller,
       input: ToolInput<"add_mcp_server">,
     ) {
-      const primary = yield* isPrimary(caller.botId);
-      const grant = yield* grantFor(caller, primary, input.scope);
-      const source = yield* sourceOf(input);
-      const connector = yield* connectors
-        .add({ id: connectorIdOf(caller.requestId), source, grant, by: by(caller) })
-        .pipe(Effect.mapError(connectorRefusal));
-      return yield* addedAnswer(caller, connector);
+      const added = yield* addWith(caller, input, NO_CONSENT);
+      if (added._tag === "added") return added.answer;
+      const shown = yield* asks.open({
+        turn: caller.turn,
+        name: added.name,
+        glyph: added.glyph,
+        ask: added.ask,
+        add: { botId: caller.botId, requestId: caller.requestId, input, needs: added.needs },
+      });
+      if (!shown) return yield* refuse(MANAGEMENT_REFUSED.workStopped);
+      return { asked: added.name, note: MANAGEMENT_NOTES.asked } satisfies Schema.Json;
+    });
+
+    const answerAsk = Effect.fn("Management.answerAsk")(function* (input: {
+      readonly entryId: EntryId;
+      readonly client: OwnAppClient | null;
+    }) {
+      yield* asks.answer(input.entryId, (add) =>
+        Effect.gen(function* () {
+          // An address takes the operator's word alone, an own app their client.
+          if ((add.needs._tag === "own-app") !== (input.client !== null)) {
+            return yield* new Invalid({ reason: "answer" });
+          }
+          const consent: Consent =
+            add.needs._tag === "own-app" && input.client !== null
+              ? {
+                  privateNetwork: false,
+                  oauthClient: { issuer: add.needs.issuer, ...input.client },
+                }
+              : { privateNetwork: true, oauthClient: null };
+          return yield* addWith(
+            { botId: add.botId, requestId: add.requestId },
+            add.input,
+            consent,
+          ).pipe(
+            Effect.map((added): Settled =>
+              added._tag === "added"
+                ? {
+                    _tag: "added",
+                    connectorId: added.connector.id,
+                    note: added.answer.note,
+                  }
+                : // Their yes was for what the card named; the add needs another.
+                  { _tag: "failed", note: MANAGEMENT_REFUSED.askChanged },
+            ),
+            Effect.catchTag("ManagementRefused", (refused) =>
+              Effect.succeed<Settled>({ _tag: "failed", note: refused.reason }),
+            ),
+          );
+        }),
+      );
     });
 
     const updateServer = Effect.fn("Management.updateServer")(function* (
@@ -624,6 +775,7 @@ export const layer = Layer.effect(
     });
 
     return Management.of({
+      answerAsk,
       searchServers,
       listServers,
       addServer,

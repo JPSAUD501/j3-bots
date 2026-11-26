@@ -148,6 +148,18 @@ export const WakePayload = Schema.Union([
     outcome: Schema.Literals(["saved", "declined", "expired"]),
     name: SecretName,
   }),
+  /**
+   * How the bot's ask to add a connector its operator had to allow ended
+   * (`ConnectorAsks`): added on their yes, declined, failed after their yes,
+   * or expired. `server` is the connector's name; `note` says what comes next
+   * for one added, or why one failed.
+   */
+  Schema.TaggedStruct("connector-ask", {
+    cardId: EntryId,
+    outcome: Schema.Literals(["added", "declined", "failed", "expired"]),
+    server: Schema.String,
+    note: Schema.NullOr(Schema.String),
+  }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
   /**

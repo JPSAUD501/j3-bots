@@ -55,6 +55,7 @@ import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { Skills } from "../skills/Skills.ts";
 import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
+import { Management } from "../tools/Management.ts";
 
 const operator = { _tag: "operator" } as const;
 
@@ -97,6 +98,7 @@ export const handlers = J3Rpcs.toLayer(
     const secretAsks = yield* SecretAsks;
     const connectors = yield* Connectors;
     const connectorInputs = yield* ConnectorInputs;
+    const management = yield* Management;
     const connectorApps = yield* ConnectorApps;
     const connectorAuth = yield* ConnectorAuth;
     const connectorSources = yield* ConnectorSources;
@@ -197,6 +199,10 @@ export const handlers = J3Rpcs.toLayer(
           // A connector's request goes back to its server only, never to the engine.
           case "connector-input":
             return connectorInputs.answer({ ...card, answer: answer.answer });
+          // The operator's yes adds what the bot asked for; their app's
+          // secret goes to the server's secrets alone, never to a receipt.
+          case "connector-ask":
+            return management.answerAsk({ entryId: card.entryId, client: answer.client });
           default:
             return cards.answer({ ...card, answer });
         }

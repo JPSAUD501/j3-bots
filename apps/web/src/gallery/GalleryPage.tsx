@@ -102,6 +102,7 @@ import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { ConnectorAuthCard } from "../components/connectors/ConnectorCards";
+import { ConnectorAskCard } from "../components/connectors/ConnectorAskCard";
 import { ConnectorInputCard } from "../components/connectors/ConnectorInputCard";
 import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
@@ -177,7 +178,12 @@ import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { sampleConnectorAppAccess } from "./sampleConnectorApps";
-import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
+import {
+  connectorsHolder,
+  sampleConnectors,
+  sampleConnectorsIntents,
+  sampleOwnAppSetup,
+} from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
@@ -1183,6 +1189,9 @@ const timelineIntents: TimelineIntents = {
   signInConnector: nothing,
   answerConnectorInput: nothing,
   openConnectorPage: nothing,
+  connectorAskSetup: sampleOwnAppSetup,
+  allowConnectorAsk: nothing,
+  declineConnectorAsk: nothing,
   connectorApp: sampleConnectorAppAccess,
   resendMessage: nothing,
   discardMessage: nothing,
@@ -1391,6 +1400,20 @@ function CardsSection() {
               key={entry.id}
               entry={entry}
               onAnswer={nothing}
+              onOpenPage={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="A bot asks your yes to add a connector: an address in your own network, an app you register; added, declined, failed, closed without an answer">
+        <div className="flex flex-col gap-3">
+          {variants.connectorAsks.map((entry) => (
+            <ConnectorAskCard
+              key={entry.id}
+              entry={entry}
+              setup={sampleOwnAppSetup}
+              onAllow={nothing}
+              onDecline={nothing}
               onOpenPage={nothing}
             />
           ))}

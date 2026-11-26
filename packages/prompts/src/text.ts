@@ -30,7 +30,8 @@ export type EnvelopeTag =
   | "run"
   | "field"
   | "browser-tab"
-  | "secret";
+  | "secret"
+  | "server";
 
 const ENVELOPE_TAGS: ReadonlyArray<EnvelopeTag> = [
   "j3-wake",
@@ -49,6 +50,7 @@ const ENVELOPE_TAGS: ReadonlyArray<EnvelopeTag> = [
   "field",
   "browser-tab",
   "secret",
+  "server",
 ];
 
 /** Characters that pass for one of the ASCII characters a tag is made of. */

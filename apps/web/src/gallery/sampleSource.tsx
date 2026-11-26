@@ -67,7 +67,13 @@ import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
 import { copySample, sampleSecrets } from "./sampleSecrets";
 import { galleryVariants } from "./variants";
-import { sampleConnectors, sampleConnectorsIntents, samplePromptIntents } from "./sampleConnectors";
+import {
+  SAMPLE_ASKED_CONNECTOR,
+  sampleConnectors,
+  sampleConnectorsIntents,
+  sampleOwnAppSetup,
+  samplePromptIntents,
+} from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
@@ -404,6 +410,18 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           : e,
       ),
     openConnectorPage: () => {},
+    connectorAskSetup: sampleOwnAppSetup,
+    // The sample adds nothing: a yes reads as added.
+    allowConnectorAsk: (entryId) =>
+      inFlight(entryId, (e) =>
+        e._tag === "connector-ask"
+          ? { ...e, status: { _tag: "added", connectorId: SAMPLE_ASKED_CONNECTOR } }
+          : e,
+      ),
+    declineConnectorAsk: (entryId) =>
+      inFlight(entryId, (e) =>
+        e._tag === "connector-ask" ? { ...e, status: { _tag: "declined" } } : e,
+      ),
     connectorPrompts: (botId) =>
       samplePromptIntents
         .prompts(botId)

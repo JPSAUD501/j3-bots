@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { applyConnectorChange } from "@j3-bots/client-runtime/presentation";
+import type { IntentResult } from "@j3-bots/client-runtime";
+import { applyConnectorChange, type OwnAppSetup } from "@j3-bots/client-runtime/presentation";
 import type { SignInRoute } from "@j3-bots/client-runtime/react";
 import {
   type Connector,
@@ -14,6 +15,7 @@ import {
   FieldKey,
   type ListingRef,
   SecretName,
+  SetupPageUrl,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
@@ -224,6 +226,24 @@ const later = <A>(value: A): Promise<A> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ANSWER_DELAY));
 const done = <A>(value: A) => later({ _tag: "done", value } as const);
 const failed = () => later({ _tag: "failed", failure: { _tag: "unexpected" } } as const);
+
+/** The connector a yes to a bot's ask adds in the sample. */
+export const SAMPLE_ASKED_CONNECTOR = connectorId("home-lights");
+
+/**
+ * The own app's setup a bot's ask to add a gallery entry shows, as the
+ * sample's server answers it, a little late.
+ */
+export const sampleOwnAppSetup = (): Promise<IntentResult<OwnAppSetup>> =>
+  done({
+    steps: [
+      "Open the developer console of the service and create a project.",
+      "Add an OAuth client of the kind “Web application”.",
+      "Add the redirect address below to it, then copy its client ID and secret.",
+    ],
+    url: SetupPageUrl.make("https://console.example.com/credentials"),
+    redirect: "https://bots.example.com/connectors/sign-in/return",
+  });
 
 /** How the sample's servers answer the composer's `/` menu: Notion offers two prompts. */
 export const samplePromptIntents: Pick<ConnectorsIntents, "prompts" | "renderPrompt"> = {

@@ -25,8 +25,10 @@ import {
   BotId,
   type BrowserHelpEntry,
   type CredentialFill,
+  type ConnectorAskEntry,
   type ConnectorAuthEntry,
   type ConnectorInputEntry,
+  CuratedKey,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -645,6 +647,38 @@ export function galleryVariants(now: DateTime.Utc) {
     input("ci-expired", form, { _tag: "expired" }),
   ];
 
+  const connectorAsk = (
+    name: string,
+    ask: ConnectorAskEntry["ask"],
+    status: ConnectorAskEntry["status"],
+  ): ConnectorAskEntry => ({
+    _tag: "connector-ask",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    ...(ask._tag === "private-network"
+      ? { name: "Home lights", glyph: null }
+      : { name: "Example Mail", glyph: ConnectorGlyph.make("envelope") }),
+    ask,
+    status,
+  });
+  // A fictional address in the operator's own network.
+  const network: ConnectorAskEntry["ask"] = { _tag: "private-network", host: "192.168.1.20:8123" };
+  const ownApp: ConnectorAskEntry["ask"] = {
+    _tag: "own-app",
+    listing: { _tag: "curated", key: CuratedKey.make("example-mail") },
+  };
+  const connectorAsks: ReadonlyArray<ConnectorAskEntry> = [
+    connectorAsk("cq-network", network, { _tag: "pending" }),
+    connectorAsk("cq-own-app", ownApp, { _tag: "pending" }),
+    connectorAsk("cq-added", network, {
+      _tag: "added",
+      connectorId: ConnectorId.make("conn_home"),
+    }),
+    connectorAsk("cq-declined", ownApp, { _tag: "declined" }),
+    connectorAsk("cq-failed", ownApp, { _tag: "failed" }),
+    connectorAsk("cq-expired", network, { _tag: "expired" }),
+  ];
+
   const fold = (
     name: string,
     status: WorkFoldEntry["status"],
@@ -993,6 +1027,7 @@ export function galleryVariants(now: DateTime.Utc) {
     asks,
     savedSecrets,
     connectorInputs,
+    connectorAsks,
     connectorAuths,
     folds,
     notices,

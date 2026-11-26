@@ -130,6 +130,8 @@ function previewSummary(
       return t("summary.connectorSignIn", { name: text });
     case "connector-input":
       return t(current ? "summary.connectorAsks" : "summary.connectorAsked", { name: text });
+    case "connector-ask":
+      return t(current ? "summary.needsConnectorYes" : "summary.askedConnectorYes", { name: text });
     case "work-fold":
       return workDoneText(preview.step, preview.ending, ctx.i18n);
     case "notice":
