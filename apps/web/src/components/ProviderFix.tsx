@@ -38,8 +38,9 @@ type Asking = "idle" | "asking" | "failed";
  * (`providerFix`): for a harness that is not installed, Install, which the
  * server does, with its progress and a way to cancel; where the server cannot
  * install it, where its maker says how and a way to look again once it is;
- * for one that failed, a way to try again. In local mode, a failure also says
- * where the server's log is. Nothing for any other state.
+ * for one that failed, a way to try again. In local mode, a failure whose
+ * cause the line does not already say also says where the server's log is.
+ * Nothing for any other state.
  */
 export function ProviderFix({
   provider,
@@ -114,7 +115,7 @@ export function ProviderFix({
     case "retry":
       return (
         <div className="flex flex-col gap-1.5">
-          {fix._tag === "retry" && place === "this-computer" && (
+          {fix._tag === "retry" && !fix.rechecking && place === "this-computer" && (
             <p className="text-xs text-pretty text-muted-foreground">{t("provider.failed.log")}</p>
           )}
           <div className="flex flex-wrap items-center gap-2">

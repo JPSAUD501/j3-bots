@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as NetAddress from "effect/net/NetAddress";
@@ -515,6 +516,31 @@ const unavailableCheck = (
   }
 };
 
+/**
+ * A provider whose last check timed out, which the server checks again on
+ * its own (`retryAt`): what a busy machine causes, as just after an update,
+ * so a warning until its checks keep timing out.
+ */
+const recheckingCheck = Effect.fn("doctor.recheckingProvider")(function* (
+  harness: HarnessFacts,
+  provider: string,
+  path: string,
+  retryAt: DateTime.Utc,
+  detail: string | undefined,
+) {
+  const seconds = Math.ceil(
+    (DateTime.toEpochMillis(retryAt) - DateTime.toEpochMillis(yield* DateTime.now)) / 1000,
+  );
+  const when = seconds > 0 ? `in ${seconds} s` : "now";
+  const says = detail === undefined ? "" : ` The engine says: ${detail}`;
+  return check(
+    harness.name,
+    "warning",
+    `The engine found ${harness.name} at ${path}, but its check of ${provider} did not end in time, as on a machine busy starting. The server checks it again on its own ${when}.${says}`,
+    `Run this again in a minute. If its checks keep timing out, run \`${harness.executable} --version\` as this user to see whether it starts; the log has the engine's own account: ${SERVICE_LOG}.`,
+  );
+});
+
 const providerCheck = Effect.fn("doctor.provider")(function* (
   id: Harness,
   status: Option.Option<AdminStatus>,
@@ -581,8 +607,10 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   }
   for (const provider of providers) {
     if (provider.status._tag === "unavailable") {
-      const { reason, detail } = provider.status;
-      return unavailableCheck(harness, provider.name, found.value, reason, detail);
+      const { reason, detail, retryAt } = provider.status;
+      return retryAt === undefined
+        ? unavailableCheck(harness, provider.name, found.value, reason, detail)
+        : yield* recheckingCheck(harness, provider.name, found.value, retryAt, detail);
     }
   }
   const limited = providers.find((provider) => provider.status._tag === "limited");

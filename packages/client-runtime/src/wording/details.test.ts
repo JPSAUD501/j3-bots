@@ -218,6 +218,25 @@ describe("providerLine", () => {
     expect(line(unavailable()).text).toBe("Not available right now");
     expect(line(unavailable("unknown")).text).toBe("Not available right now");
   });
+
+  it("says when the server checks again a provider whose check timed out", () => {
+    const timedOut = (retryAt: string) => ({
+      status: {
+        _tag: "unavailable",
+        checking: false,
+        reason: "failed",
+        retryAt: at(retryAt),
+      } as const,
+    });
+    const due = line(timedOut("2026-11-20T17:40:15Z"));
+    expect(plain(due.text)).toBe("Its check took too long. Checking again at 2:40 PM");
+    expect(due.tone).toBe("waiting");
+    expect(providerLine(provider(timedOut("2026-11-20T17:40:15Z")), pt, "server").text).toBe(
+      "A verificação demorou demais. Verificando de novo às 14:40",
+    );
+    // Its time has come: that check is under way.
+    expect(line(timedOut("2026-11-20T17:39:50Z"))).toEqual({ text: "Checking…", tone: "waiting" });
+  });
 });
 
 describe("memoryFileName", () => {

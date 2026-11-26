@@ -116,11 +116,22 @@ export const ProviderStatus = Schema.Struct({
      * than `reason` answers without either, at the same protocol version, and
      * a client then knows only that the provider cannot run; it also does not
      * answer `engine.recheckProvider`. An older client ignores both.
+     *
+     * `retryAt`, with `failed`, when its last check timed out, as one run
+     * while the machine was busy starting: the server has the engine check it
+     * again on its own, and this is when it next does, 15 seconds after the
+     * check that timed out, then 30, then a minute, then every five minutes
+     * until a check does not time out. A time already passed means that check
+     * is under way. Absent for any other failure, which stays as it is until
+     * the operator acts, and from a server older than it, at the same
+     * protocol version, which does not check again on its own. An older
+     * client ignores it.
      */
     Schema.TaggedStruct("unavailable", {
       checking: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
       reason: Schema.optionalKey(UnavailableReason),
       detail: Schema.optionalKey(ProviderDetail),
+      retryAt: Schema.optionalKey(Schema.DateTimeUtc),
     }),
   ]),
   models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),

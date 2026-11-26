@@ -114,6 +114,8 @@ export const openingHeld = (bot: Bot, engine: EngineStatus | null): OpeningHold 
  *   `page` is where its maker says how, when J3 Bots knows it; once it is
  *   installed, the engine looks again (`engine.recheckProvider`);
  * - `retry`: it was found and failed; the engine checks it again.
+ *   `rechecking` when its check timed out and the server already checks it
+ *   again on its own (`retryAt`), so why it failed is known.
  * Null for any other state: one that runs or is being checked, a signed-out
  * provider (which the step's own sign-in or command connects), one turned
  * off on the server, which no client turns on, and one whose server gives no
@@ -127,15 +129,18 @@ export type ProviderFix =
     }
   | { readonly _tag: "getting"; readonly harness: SignInHarness; readonly task: HarnessTask }
   | { readonly _tag: "install"; readonly page: string | null }
-  | { readonly _tag: "retry" };
+  | { readonly _tag: "retry"; readonly rechecking: boolean };
 
 export const providerFix = (provider: ProviderStatus): ProviderFix | null => {
   const { status } = provider;
-  return status._tag === "unavailable" && !status.checking ? fixFor(status.reason, provider) : null;
+  return status._tag === "unavailable" && !status.checking
+    ? fixFor(status.reason, status.retryAt !== undefined, provider)
+    : null;
 };
 
 const fixFor = (
   reason: UnavailableReason | undefined,
+  rechecking: boolean,
   { harness, copy }: ProviderStatus,
 ): ProviderFix | null => {
   switch (reason) {
@@ -155,7 +160,7 @@ const fixFor = (
         page: harness === "other" ? null : signInHarnesses[harness].installPage,
       };
     case "failed":
-      return { _tag: "retry" };
+      return { _tag: "retry", rechecking };
     case "disabled":
     case "unknown":
     case undefined:

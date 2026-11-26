@@ -192,6 +192,40 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
   );
 
 /**
+ * What the engine words a check of Claude Code or Codex with when it did not
+ * answer in time: "Timed out while checking Codex app-server provider
+ * status." and "Claude Agent CLI is installed but failed to run. Timed out
+ * while running command." (**Read** at `59651c1`, `CodexProvider.ts` and
+ * `ClaudeProvider.ts`). The engine reports no other sign of it.
+ */
+const TIMED_OUT = /\btimed out\b/i;
+
+/**
+ * Whether the engine's last check of the instance timed out, which a machine
+ * busy starting everything can cause, and which the engine does not try again
+ * on its own (`FIRST_CHECK_BUDGET` says when it does): a check that found the
+ * harness and reported an error in the engine's words for a timeout
+ * (`TIMED_OUT`), or a first check still not ended past its budget. A check
+ * that failed for another reason, or did not find the harness, did not time
+ * out. An ACP agent's check is J3 Bots' own command, so neither applies.
+ */
+export const checkTimedOut = (
+  provider: ProviderInstance,
+  engine: ReportedProvider | undefined,
+  firstCheck: boolean,
+): boolean => {
+  if (engine === undefined || provider.harness === "acp-command") return false;
+  if (notCheckedYet(provider, engine)) return !firstCheck;
+  // An instance the engine could not create reports itself neither enabled nor installed.
+  return (
+    engine.enabled &&
+    engine.installed &&
+    engine.status === "error" &&
+    TIMED_OUT.test(engine.message ?? "")
+  );
+};
+
+/**
  * Whether the engine's instance can run a bot, in J3 Bots' terms:
  * - not checked yet since the engine started (`notCheckedYet`): within the
  *   first-check budget, `unavailable` and `checking`; past it, the check
@@ -412,13 +446,17 @@ const updateOf = (
  * Each of J3 Bots' providers as the engine reports its instance, in the order
  * J3 Bots lists them. `firstCheck`: whether the provider is within its
  * first-check budget, since the engine became ready (`withFirstCheckBudget`)
- * or the engine replaced its instance.
+ * or the engine replaced its instance. `rechecks`: when the adapter next
+ * checks again a provider whose check timed out (`recheckWhileTimedOut`),
+ * which its status carries as `retryAt` while that check still reads as
+ * timed out.
  */
 export const providerStatuses = (
   providers: ReadonlyArray<ProviderInstance>,
   engine: ReadonlyArray<ReportedProvider>,
   firstCheck: (providerId: ProviderInstance["id"]) => boolean,
   updates: ReadonlyMap<ProviderId, UpdateRequest> = new Map(),
+  rechecks: ReadonlyMap<ProviderId, DateTime.Utc> = new Map(),
 ): ReadonlyArray<ProviderStatus> =>
   providers.map((provider) => {
     const reported = engine.find(
@@ -427,11 +465,19 @@ export const providerStatuses = (
     // An ACP agent is a command J3 Bots runs, not a harness with versions.
     const version = provider.harness === "acp-command" ? undefined : versionOf(reported);
     const update = updateOf(reported, updates.get(provider.id));
+    const inBudget = firstCheck(provider.id);
+    const status = statusOf(provider, reported, inBudget);
+    const retryAt = rechecks.get(provider.id);
     return {
       id: provider.id,
       name: provider.name,
       harness: provider.harness === "acp-command" ? "other" : provider.harness,
-      status: statusOf(provider, reported, firstCheck(provider.id)),
+      status:
+        status._tag === "unavailable" &&
+        retryAt !== undefined &&
+        checkTimedOut(provider, reported, inBudget)
+          ? { ...status, retryAt }
+          : status,
       models: modelsOf(reported),
       usage: usageOf(reported),
       ...(version === undefined ? {} : { version }),
