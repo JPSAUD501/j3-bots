@@ -19,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -182,7 +183,7 @@ it.effect(
       // the secrets its start made.
       const bot = yield* createBot("Ana").pipe(Effect.provide(Domain.layer));
       yield* (yield* FileSystem.FileSystem).remove(yield* secretsFolder, { recursive: true });
-      yield* oldVault([
+      const { wrappedKey } = yield* oldVault([
         {
           id: "cred_0000000000000001",
           label: "Example (work)",
@@ -242,8 +243,16 @@ it.effect(
         assert.strictEqual(Redacted.value(password), "hunter2");
       }).pipe(Effect.provide(Domain.layer));
 
-      // Nothing of the password is left, nor any sealed name.
+      // Nothing of the password is left, nor any sealed name: the keyring's
+      // bytes are gone from the files too, not only from its table.
       assert.deepStrictEqual(yield* onSecretsFile((sql) => sql`SELECT * FROM keyring`), []);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const folder = yield* secretsFolder;
+      for (const file of yield* fs.readDirectory(folder)) {
+        const bytes = yield* fs.readFile(path.join(folder, file));
+        assert.notInclude(Buffer.from(bytes).toString("latin1"), wrappedKey, file);
+      }
       assert.deepStrictEqual(
         yield* onSecretsFile((sql) => sql`SELECT * FROM record_fields WHERE field = 'name'`),
         [],

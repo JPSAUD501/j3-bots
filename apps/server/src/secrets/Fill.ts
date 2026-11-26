@@ -108,6 +108,8 @@ export class CredentialFills extends Context.Service<
 interface Seen {
   origin: SiteOrigin | null;
   secret: Secret | null;
+  /** The browser took what was typed. */
+  typed: boolean;
 }
 
 /** A fill's call, pinned to its turn. */
@@ -421,10 +423,7 @@ const make = (timing: FillTiming) =>
           yield* viewer.send(ENTER_UP);
         }
         yield* drained;
-        // Ready secrets never stop being so: a refusal here cannot happen.
-        yield* secrets
-          .filled({ id: secret.id, botId, use: { _tag: "browser", origin } })
-          .pipe(Effect.orDie);
+        seen.typed = true;
         if (request.field !== "password") return { submitted };
         // The bot gets the tab back on the page that follows. A page that
         // stays, as one that only shows an error does, has the password
@@ -523,7 +522,7 @@ const make = (timing: FillTiming) =>
         const claim = yield* turnTools.claimFill(call);
         if (claim._tag === "stored") return yield* decodeOutcome(claim.result).pipe(Effect.orDie);
         const startedAt = yield* DateTime.now;
-        const seen: Seen = { origin: null, secret: null };
+        const seen: Seen = { origin: null, secret: null, typed: false };
         const outcome = yield* attempt(request, claim, seen).pipe(
           Effect.map(({ submitted }): FillOutcome => ({ _tag: "filled", submitted })),
           Effect.catchTags({
@@ -533,6 +532,24 @@ const make = (timing: FillTiming) =>
           lock.withPermits(1),
         );
         yield* record(request, outcome, seen, startedAt);
+        // Once the tab is given back and the fill answered, where the login
+        // was used last: a write that fails changes neither.
+        const { secret, origin } = seen;
+        if (seen.typed && secret !== null && origin !== null) {
+          yield* secrets
+            .filled({
+              id: secret.id,
+              botId: request.caller.botId,
+              use: { _tag: "browser", origin },
+            })
+            .pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("Where a login was used last could not be recorded").pipe(
+                  Effect.annotateLogs({ secretId: secret.id }),
+                ),
+              ),
+            );
+        }
         yield* turnTools.settleFill(call, yield* encodeOutcome(outcome).pipe(Effect.orDie));
         return outcome;
       });

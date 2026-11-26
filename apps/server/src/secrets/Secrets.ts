@@ -327,6 +327,9 @@ const openSecretsFile = Effect.fn("Secrets.open")(function* (location: string) {
   const sql = yield* SqliteClient.make({ filename: location });
   const provided = Effect.provideService(SqlClient.SqlClient, sql);
   yield* sql`PRAGMA foreign_keys = ON`;
+  // What is deleted is overwritten, not only unlinked: a deleted value, or an
+  // old vault's keyring, never stays readable in the file's free space.
+  yield* sql`PRAGMA secure_delete = ON`;
   const [table] = yield* sql`
     SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
@@ -679,6 +682,9 @@ export const layer = Layer.effect(
               yield* sql`DELETE FROM keyring`.pipe(Effect.orDie);
             }),
           );
+          // The pages the keyring was on, as they were, are in the write-ahead
+          // log until it is written back and emptied.
+          yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`.pipe(Effect.orDie);
           dataKey = key.value;
           revision += 1;
           yield* Effect.logInfo(

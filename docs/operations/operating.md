@@ -224,11 +224,11 @@ Secrets keep the logins and values you type for bots, and what connectors need t
 
   ```sh
   systemctl --user stop j3-bots
-  mv ~/.j3-bots/vault ~/.j3-bots/vault.lost-$(date +%F)
+  mv ~/.j3-bots/vault ~/j3-bots-vault.lost-$(date +%F)
   systemctl --user start j3-bots
   ```
 
-  The secrets are then empty. Add each login again. A connector kept its address, its keys and its sign-in among the secrets, so each one lost them too: remove it from its page and add it again, with the address or command and any key or app it was given. Keep the moved folder if you might find the password or the key: putting it back while the service is stopped brings everything back.
+  The secrets are then empty. Add each login again. A connector kept its address, its keys and its sign-in among the secrets, so each one lost them too: remove it from its page and add it again, with the address or command and any key or app it was given. Keep the moved folder if you might find the password or the key: putting it back as `~/.j3-bots/vault` while the service is stopped brings everything back. It goes outside the data directory so that no backup of it takes the folder with its key.
 
 ## J3 Bots' own harnesses
 

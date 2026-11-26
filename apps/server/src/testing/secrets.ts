@@ -136,4 +136,6 @@ export const oldVault = (logins: ReadonlyArray<OldLogin>) =>
         }
       }),
     );
+    /** The keyring's wrapped key as the file holds it. */
+    return { wrappedKey: Buffer.from(wrapped.sealed).toString("base64") };
   });

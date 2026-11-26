@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
@@ -154,6 +155,8 @@ export const layer = Layer.effect(
       return true;
     });
 
+    const saving = Semaphore.makeUnsafe(1);
+
     const add = Effect.fn("SecretAsks.add")(function* (input: {
       readonly id: SecretId;
       readonly name: SecretName;
@@ -180,9 +183,15 @@ export const layer = Layer.effect(
       // the card it answers, and the card closed after. A crash between the
       // two leaves the card open: a device that sends the answer again, under
       // any id, closes it, and so does the next sweep.
-      const { secret } = yield* secrets.add({ ...input, access, askedIn: card.id });
-      yield* transaction(close(card.id, "saved"));
-      return secret;
+      // One save or sweep at a time, so a sweep never expires a card whose
+      // secret a save added after the sweep looked.
+      return yield* saving.withPermit(
+        Effect.gen(function* () {
+          const { secret } = yield* secrets.add({ ...input, access, askedIn: card.id });
+          yield* transaction(close(card.id, "saved"));
+          return secret;
+        }),
+      );
     });
 
     const decline = (card: SecretAskEntry) => close(card.id, "declined");
@@ -207,18 +216,20 @@ export const layer = Layer.effect(
      * past `SECRET_ASK_WAIT`. While the secrets cannot be read, nothing can
      * be saved from a card either, and none closes as saved.
      */
-    const sweep = Effect.gen(function* () {
-      const open = yield* openAsks(undefined).pipe(Effect.orDie);
-      if (open.length === 0) return;
-      const saved = yield* secrets
-        .askedIn(open.map(({ entry_id }) => entry_id))
-        .pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set()));
-      for (const { entry_id } of open) {
-        if (saved.has(entry_id)) yield* transaction(close(entry_id, "saved"));
-      }
-      const due = yield* openPastWait(timeText(yield* DateTime.now)).pipe(Effect.orDie);
-      for (const { entry_id } of due) yield* transaction(close(entry_id, "expired"));
-    });
+    const sweep = saving.withPermit(
+      Effect.gen(function* () {
+        const open = yield* openAsks(undefined).pipe(Effect.orDie);
+        if (open.length === 0) return;
+        const saved = yield* secrets
+          .askedIn(open.map(({ entry_id }) => entry_id))
+          .pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set()));
+        for (const { entry_id } of open) {
+          if (saved.has(entry_id)) yield* transaction(close(entry_id, "saved"));
+        }
+        const due = yield* openPastWait(timeText(yield* DateTime.now)).pipe(Effect.orDie);
+        for (const { entry_id } of due) yield* transaction(close(entry_id, "expired"));
+      }),
+    );
 
     const run = Stream.tick(SWEEP_EVERY).pipe(
       Stream.runForEach(() => sweep),
