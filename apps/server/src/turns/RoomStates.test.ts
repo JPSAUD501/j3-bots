@@ -375,14 +375,17 @@ it.effect(
       yield* finish(hal, watching, members);
       yield* sendToBot(hal.bot.id, "What is left today?");
       const privately = yield* nextTurn(hal.bot.id, watching);
+
+      // The Stop runner hears the engine's answer to Hal's Stop only later:
+      // its pass waits there, before it looks for a Force stop to send.
+      const asked = yield* control.holdNextAnswer("stop");
       yield* stops.stopBot({ commandId: command(), botId: hal.bot.id });
+      yield* asked.entered;
       yield* until(Effect.map(ignoredTurn(hal.bot.id), Option.isSome));
 
       // Force stop is pressed; before the runner gets to it, the private turn
       // ends with nothing of its own left, while the build goes on.
-      const asked = yield* control.holdNextAnswer("stop");
       yield* stops.forceStopBot({ commandId: command(), botId: hal.bot.id });
-      yield* asked.entered;
       yield* control.finishTurn({
         sessionId: hal.session,
         turnId: privately,
