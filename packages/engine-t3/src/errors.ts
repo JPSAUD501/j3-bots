@@ -239,11 +239,16 @@ export class OpenRejected extends Schema.TaggedError<OpenRejected>()("OpenReject
  * `permissionMode` is the mode refused: the one asked for, or for a turn the
  * one its session runs in. `allowed` is the highest mode the policy allows,
  * as the engine reports its policy, or `null` when it reports none the
- * refusal can be put down to.
+ * refusal can be put down to. `engineStart` is the start of the engine that
+ * refused it (`Engine.starts`): the policy it read is that start's.
  */
 export class PermissionModeRefused extends Schema.TaggedError<PermissionModeRefused>()(
   "PermissionModeRefused",
-  { permissionMode: PermissionMode, allowed: Schema.NullOr(PermissionMode) },
+  {
+    permissionMode: PermissionMode,
+    allowed: Schema.NullOr(PermissionMode),
+    engineStart: Schema.Int,
+  },
 ) {
   override get message(): string {
     const allowed = this.allowed === null ? "" : `; it allows up to ${this.allowed}`;

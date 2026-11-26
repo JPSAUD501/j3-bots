@@ -384,11 +384,14 @@ export const sessionLoss = (
       WHERE session_id = ${sessionId} AND status = 'intended'
     `;
     // What waited on the session may settle, its bot may take work
-    // elsewhere, a main session is replaced, and a side session's routine run
-    // is tried again in a fresh one.
+    // elsewhere, a main session is replaced, a side session's routine run is
+    // tried again in a fresh one, and its event stream is closed: an engine
+    // thread archived from the engine's own console keeps its stream open
+    // with nothing more to say (`Observer`).
     yield* sql.afterCommit(
       Effect.all(
         [
+          signals.unwatched.fire,
           signals.dispatch.fire,
           signals.recovery.fire,
           signals.stops.fire,

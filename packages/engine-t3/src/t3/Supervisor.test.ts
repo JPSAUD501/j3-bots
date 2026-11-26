@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -136,6 +137,7 @@ describe("supervise", () => {
         home: "/nonexistent/home",
         port: 1,
         state,
+        starts: yield* Ref.make(0),
         // The engine's preparation never finishes, so the scope closes inside a run.
         beforeStart: Deferred.succeed(preparing, undefined).pipe(Effect.andThen(Effect.never)),
         checkAccess: Effect.succeed("granted"),
@@ -159,6 +161,7 @@ describe("supervise", () => {
         home: "/nonexistent/home",
         port,
         state,
+        starts: yield* Ref.make(0),
         // Nothing on the port answers as an engine (the HTTP client fails), yet it is taken.
         beforeStart: Effect.sync(() => {
           starts++;
@@ -188,6 +191,7 @@ describe("supervise", () => {
         home: "/nonexistent/home",
         port: 1,
         state,
+        starts: yield* Ref.make(0),
         beforeStart: Effect.void,
         checkAccess: Effect.succeed("granted"),
         reissueCredential: Effect.void,

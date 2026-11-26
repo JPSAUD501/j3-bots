@@ -494,9 +494,6 @@ export const layer = Layer.effect(
         if (Option.isSome(lost)) {
           openFailures.delete(botId);
           yield* transaction(sessionLost(lost.value.id));
-          // Its event stream may still be open, and nothing else closes it:
-          // the engine already archived it, so it is never retired there.
-          yield* observer.close(lost.value.id);
           return "done" as const;
         }
       }
@@ -591,7 +588,6 @@ export const layer = Layer.effect(
               changes.touch({ _tag: "bot", botId: session.bot_id }),
             ),
           );
-          yield* observer.close(session.id);
         }
         return outcome.done();
       }).pipe(Effect.withSpan("Rotations.rotateDue")),

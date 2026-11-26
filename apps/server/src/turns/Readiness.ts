@@ -9,7 +9,10 @@ import { UNAVAILABLE_RETRY } from "./model.ts";
 interface State {
   /** The startup or reconnect sequence has run since the engine last became ready. */
   readonly released: boolean;
-  /** How many times it has: a loop parked behind an unready engine waits for the next. */
+  /**
+   * The engine start it last ran for (`Engine.starts`), 0 before the first: a
+   * loop parked behind an unready engine waits for a later one.
+   */
   readonly generation: number;
 }
 
@@ -33,13 +36,13 @@ export class Readiness extends Context.Service<
      */
     readonly changeOrRetry: (generation: number) => Effect.Effect<void>;
     /**
-     * The engine's start generation, as the turn machinery sees it: how many
-     * times the machinery was released after the engine became ready. An
-     * answer to a call made under an older one came from an engine that has
-     * been unready since, and may no longer hold.
+     * The engine start the machinery was last released for (`Engine.starts`),
+     * 0 before the first. An answer an older start gave came from an engine
+     * that has been unready since, and may no longer hold.
      */
     readonly generation: Effect.Effect<number>;
-    readonly release: Effect.Effect<void>;
+    /** The startup sequence has run for the engine start `start`. */
+    readonly release: (start: number) => Effect.Effect<void>;
     readonly hold: Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Readiness") {}
@@ -65,10 +68,12 @@ export const layer = Layer.effect(
       released,
       changeOrRetry,
       generation: SubscriptionRef.get(state).pipe(Effect.map((current) => current.generation)),
-      release: SubscriptionRef.update(state, (current) => ({
-        released: true,
-        generation: current.released ? current.generation : current.generation + 1,
-      })),
+      release: Effect.fn("Readiness.release")((start: number) =>
+        SubscriptionRef.update(state, (current) => ({
+          released: true,
+          generation: Math.max(current.generation, start),
+        })),
+      ),
       hold: SubscriptionRef.update(state, (current) => ({ ...current, released: false })),
     });
   }),

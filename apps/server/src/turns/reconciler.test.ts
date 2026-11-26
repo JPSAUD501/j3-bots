@@ -33,7 +33,7 @@ const worker = (passes: ReadonlyArray<(n: number) => Effect.Effect<Pass>>) =>
       if (run === undefined) return yield* Effect.die(new Error("A worker with no passes"));
       return yield* run(n);
     });
-    yield* readiness.release;
+    yield* readiness.release(1);
     yield* Effect.forkChild(
       reconcile({ name: "A worker", pass, signal: signals.dispatch, readiness }),
     );
@@ -97,7 +97,7 @@ it.effect("runs again at once when the engine came back while a refused pass ran
       () =>
         Effect.gen(function* () {
           yield* readiness.hold;
-          yield* readiness.release;
+          yield* readiness.release(2);
           return { _tag: "unavailable" } as const;
         }),
       () => Effect.succeed(done()),

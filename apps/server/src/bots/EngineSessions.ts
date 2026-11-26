@@ -244,14 +244,15 @@ export class EngineSessions extends Context.Service<
      */
     readonly notReady: (botId: BotId) => Effect.Effect<void>;
     /**
-     * The engine became ready, perhaps after it started again under another
-     * policy: every bot whose permission mode it refused is asked for once
-     * more. Its conversation is told again only of a refusal that differs
-     * from the one it was told of. Called once the machinery is released, so
-     * the engine's start generation has moved past every call made before
-     * the engine was ready again, whose refusal is never written after this.
+     * The engine start `start` became ready, perhaps under another policy:
+     * every bot whose permission mode an earlier start refused is asked for
+     * once more, and one this start or a later one refused already stays
+     * refused. Its conversation is told again only of a refusal that differs
+     * from the one it was told of. Called once the machinery is released for
+     * `start`, so a refusal an earlier start gave is never written after this
+     * (`modeRefusals`).
      */
-    readonly engineStarted: Effect.Effect<void>;
+    readonly engineStarted: (start: number) => Effect.Effect<void>;
     /** Removes the bot's project, and every session in it, from the engine. */
     readonly removeProject: (botId: BotId) => Effect.Effect<void, EngineDown>;
     /**
@@ -316,6 +317,12 @@ export const layer = Layer.effect(
     const { notify } = notices(sql, entries);
     const changes = yield* ChangeLog;
     const refusals = modeRefusals(sql, entries, readiness, signals, changes);
+    // The engine's starts are counted afresh in each run of the server: a
+    // refusal an earlier run recorded is cleared by this run's first start,
+    // as one recorded before starts were is (`engineStarted`).
+    yield* sql`
+      UPDATE bots SET mode_refused_engine_start = NULL WHERE mode_refused_engine_start IS NOT NULL
+    `.pipe(Effect.orDie);
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
@@ -509,13 +516,21 @@ export const layer = Layer.effect(
 
     // Each bot cleared is touched: its rooms are read again, where a member
     // whose wake waited out of the room for its refusal answers again.
-    const engineStarted = Effect.gen(function* () {
-      const cleared = yield* sql<{ readonly id: string }>`
-        UPDATE bots SET mode_refused_revision = NULL WHERE mode_refused_revision IS NOT NULL
-        RETURNING id
-      `;
-      for (const { id } of cleared) yield* changes.touch({ _tag: "bot", botId: BotId.make(id) });
-    }).pipe(transaction, Effect.orDie, Effect.withSpan("EngineSessions.engineStarted"));
+    const engineStarted = Effect.fn("EngineSessions.engineStarted")(
+      function* (start: number) {
+        const cleared = yield* sql<{ readonly id: string }>`
+          UPDATE bots SET mode_refused_revision = NULL, mode_refused_engine_start = NULL
+          WHERE mode_refused_revision IS NOT NULL
+            AND (mode_refused_engine_start IS NULL OR mode_refused_engine_start < ${start})
+          RETURNING id
+        `;
+        for (const { id } of cleared) {
+          yield* changes.touch({ _tag: "bot", botId: BotId.make(id) });
+        }
+      },
+      transaction,
+      Effect.orDie,
+    );
 
     /**
      * Marks the session aligned, with the browser setting its tools have now,
@@ -616,7 +631,6 @@ export const layer = Layer.effect(
             if (work.admitted !== null || work.runningTurns > 0) {
               return "turn-running" as const;
             }
-            const generation = yield* readiness.generation;
             const refused = yield* engine
               .configureSession({
                 sessionId: due.sessionId,
@@ -639,7 +653,7 @@ export const layer = Layer.effect(
               return refused;
             }
             if (refused !== null) {
-              yield* refusals.refused(botId, due.revision, refused, generation);
+              yield* refusals.refused(botId, due.revision, refused);
               return "mode-refused" as const;
             }
             if (yield* aligned(botId, rowId, due.changes, due.browser)) {
@@ -795,7 +809,6 @@ export const layer = Layer.effect(
       // the engine is ready again.
       if (selected.modeRefused) return "mode-refused" as const;
       if (session.engine_session_id === null) {
-        const generation = yield* readiness.generation;
         // Its first turn starts its tools with what the project allows then.
         yield* writeBrowserAccess(botId);
         const opened = yield* openUnderKey(session, {
@@ -812,7 +825,7 @@ export const layer = Layer.effect(
           ),
         );
         if (opened._tag === "refused") {
-          yield* refusals.refused(botId, selected.revision, opened.refusal, generation);
+          yield* refusals.refused(botId, selected.revision, opened.refusal);
           return "mode-refused" as const;
         }
         // Recorded before it is aligned, which it takes no work until.

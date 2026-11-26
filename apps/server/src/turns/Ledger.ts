@@ -282,11 +282,16 @@ export class Ledger extends Context.Service<
      */
     readonly refreshMessages: (entryIds: ReadonlyArray<EntryId>) => Effect.Effect<void>;
     /**
-     * The dispatch was claimed for its first send: when it carries the bot's
-     * opening, the operator's messages behind it show they wait like any
-     * other, no longer for a provider.
+     * The operator's messages held behind the bot's opening when the
+     * dispatch carries it. Whether each shows it waits behind the hello
+     * follows whether the engine may have that dispatch (`refreshMessages`):
+     * a send that claims it or gives its claim back, and the dispatch's end
+     * when it will not run (`release`, `drop`, `fail`, `abandon`), show them
+     * again in the same transaction.
      */
-    readonly openingSent: (dispatchId: DispatchRowId) => Effect.Effect<void>;
+    readonly heldBehindOpening: (
+      dispatchId: DispatchRowId,
+    ) => Effect.Effect<ReadonlyArray<EntryId>>;
     /**
      * The dispatch's wakes of teammate messages that reached the recipient
      * otherwise, as by another wake that landed late: never sent again.
@@ -560,12 +565,14 @@ export const layer = Layer.effect(
       }
     });
 
-    const openingSent = Effect.fn("Ledger.openingSent")(function* (dispatchId: DispatchRowId) {
+    const heldBehindOpening = Effect.fn("Ledger.heldBehindOpening")(function* (
+      dispatchId: DispatchRowId,
+    ) {
       const rows = yield* sql<{ readonly source_entry_id: string }>`
         SELECT DISTINCT h.source_entry_id FROM wakes h JOIN wakes o ON o.id = h.behind_opening_id
         WHERE o.dispatch_id = ${dispatchId} AND h.source_entry_id IS NOT NULL
       `;
-      yield* refreshMessages(rows.map((row) => EntryId.make(row.source_entry_id)));
+      return rows.map((row) => EntryId.make(row.source_entry_id));
     }, Effect.orDie);
 
     /** The received cards of the held messages the dispatch's envelope carried. */
@@ -816,6 +823,9 @@ export const layer = Layer.effect(
     ) {
       const at = yield* now;
       const sources = yield* sourcesOf(dispatchId);
+      // Read before the wakes are unlinked: an opening going back unsent
+      // shows the messages behind it wait behind the hello again.
+      const held = yield* heldBehindOpening(dispatchId);
       yield* roomWorkChanged(dispatchId);
       if (after._tag !== "cancelled") yield* cancelStoppedHandoffs(dispatchId, at);
       switch (after._tag) {
@@ -907,7 +917,7 @@ export const layer = Layer.effect(
         }
       }
       yield* refreshNotices(dispatchId);
-      yield* refreshMessages(sources);
+      yield* refreshMessages([...sources, ...held]);
       yield* refreshHeld(dispatchId);
     }, Effect.orDie);
 
@@ -1294,7 +1304,7 @@ export const layer = Layer.effect(
       undeliveredRetryable,
       cancelWakes,
       refreshMessages,
-      openingSent,
+      heldBehindOpening,
       readHandoffWakes,
       carriesRead,
       heldRemoved,

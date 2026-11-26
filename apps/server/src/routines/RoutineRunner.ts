@@ -668,10 +668,8 @@ export const layer = Layer.effect(
             return "unavailable";
           case "SessionNotFound":
             // The engine has no such session, archived from its console say:
-            // recorded lost, which nudges the runner to retire it. Its event
-            // stream may still be open, and nothing else closes it.
+            // recorded lost, which nudges the runner to retire it.
             yield* transaction(sessionLost(session.id));
-            yield* observer.close(session.id);
             return "done";
           default:
             return "deferred";

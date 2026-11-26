@@ -385,6 +385,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const http = yield* HttpClient.HttpClient;
 
   const state = yield* SubscriptionRef.make<ProcessState>({ _tag: "starting" });
+  /** The engine's starts (`SupervisorInput.starts`): the one answering now, or that last did. */
+  const starts = yield* Ref.make(0);
   /** The engine executable, once installed. */
   const installed = yield* Deferred.make<string>();
   /** The credential, once minted; read on every dial and request. */
@@ -619,6 +621,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         home: options.home,
         port: options.port,
         state,
+        starts,
         beforeStart: provisionEngine.pipe(Effect.andThen(ensure), Effect.flatMap(storeCredential)),
         checkAccess: currentToken.pipe(
           Effect.flatMap((token) => checkAccess({ baseUrl: baseUrl(options.port), token })),
@@ -859,9 +862,16 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * the error's name and message, so the ceiling is read from the engine's
    * config: `null` when that read fails in any way, a mode this adapter does
    * not know included, or its ceiling is not below the mode and so cannot be
-   * what refused it. The refusal stands either way.
+   * what refused it. The refusal stands either way. `engineStart` is the
+   * engine start read before the command was sent: the engine may start
+   * again while it is on its way, so the start named is never newer than the
+   * one that refused, only, rarely, older, which costs the server one more
+   * ask (`Engine.starts`).
    */
-  const permissionModeRefused = Effect.fnUntraced(function* (permissionMode: PermissionMode) {
+  const permissionModeRefused = Effect.fnUntraced(function* (
+    permissionMode: PermissionMode,
+    engineStart: number,
+  ) {
     const config = yield* rpc["server.getConfig"]({}).pipe(
       Effect.timeout(COMMAND_TIMEOUT),
       Effect.exit,
@@ -874,6 +884,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     return yield* new PermissionModeRefused({
       permissionMode,
       allowed: allowed !== null && rank(allowed) < rank(permissionMode) ? allowed : null,
+      engineStart,
     });
   });
 
@@ -1185,6 +1196,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   }) {
     const sessionId = SessionId.make(threadIdFor(input.key));
     const selection = yield* modelSelection(input.model);
+    const sentTo = yield* Ref.get(starts);
     // Settled by the key's receipt, as a dispatch is: the engine keeps a
     // refusal for the key, so a refused opening is never sent again.
     const sent = yield* sendByReceipt({
@@ -1202,24 +1214,26 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       creationSource: "server",
     });
     if (sent === "rejected") return yield* new OpenRejected({ key: input.key });
-    if (sent === "mode-refused") return yield* permissionModeRefused(input.permissionMode);
+    if (sent === "mode-refused") return yield* permissionModeRefused(input.permissionMode, sentTo);
     return sessionId;
   });
 
   /**
    * What an error reply to a settings command of the session names, once a
    * read of the session says whether it is still there. `permissionMode` is
-   * the mode the command asked for, if it asked for one.
+   * the mode the command asked for, if it asked for one, and `sentTo` the
+   * engine start read before it was sent (`permissionModeRefused`).
    */
   const settingsRefusal = Effect.fnUntraced(function* (
     sessionId: SessionId,
     error: OrchestrationV2DispatchCommandError,
     permissionMode: PermissionMode | undefined,
+    sentTo: number,
   ) {
     yield* afterSending(projection(sessionId));
     const name = causeName(error);
     if (permissionMode !== undefined && Option.isSome(name) && MODE_LIMITS.has(name.value)) {
-      return yield* permissionModeRefused(permissionMode);
+      return yield* permissionModeRefused(permissionMode, sentTo);
     }
     if (isBackgroundWorkRefusal(error)) return yield* new BackgroundWorkRunning({ sessionId });
     return yield* refused(error);
@@ -1238,13 +1252,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     input: OrchestrationV2Command,
     permissionMode: PermissionMode | undefined,
   ) =>
-    command(input).pipe(
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) =>
-          settingsRefusal(sessionId, error, permissionMode),
-      }),
-      Effect.asVoid,
+    Effect.flatMap(Ref.get(starts), (sentTo) =>
+      command(input).pipe(
+        Effect.catchTags({
+          EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+          OrchestrationV2DispatchCommandError: (error) =>
+            settingsRefusal(sessionId, error, permissionMode, sentTo),
+        }),
+        Effect.asVoid,
+      ),
     );
 
   const configureSession = Effect.fn("Engine.configureSession")(function* (input: {
@@ -1483,6 +1499,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       mimeType: attachment.mediaType,
       sizeBytes: attachment.size,
     }));
+    const sentTo = yield* Ref.get(starts);
     const sent = yield* sendByReceipt({
       type: "message.dispatch",
       commandId: commandId("dispatch", input.key),
@@ -1513,7 +1530,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         Effect.mapError(() => new EngineIndeterminate()),
       );
       if (thread === undefined) return yield* new EngineIndeterminate();
-      return yield* permissionModeRefused(PERMISSION_MODES[thread.runtimeMode]);
+      return yield* permissionModeRefused(PERMISSION_MODES[thread.runtimeMode], sentTo);
     }
   });
 
@@ -2490,6 +2507,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   const engine = Engine.of({
     status,
+    starts: stateChanges(state).pipe(
+      Stream.map((current) => (current._tag === "ready" ? current.start : null)),
+      Stream.changes,
+    ),
     connectProviders,
     connectedEndpoint: connectedNow,
     recheckProvider,

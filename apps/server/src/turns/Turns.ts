@@ -63,14 +63,18 @@ export const layer = Layer.effectDiscard(
         ),
       );
 
-    const start = Effect.gen(function* () {
+    const start = Effect.fn("Turns.start")(function* (engineStart: number) {
       yield* step("Sessions could not be followed", observer.watchAll);
-      yield* readiness.release;
-      // It may have started again under another policy. Cleared once the
-      // release moved the engine's start generation on, so no refusal met
-      // before is written after this, and before the workers are nudged, so
-      // they find the bots asked for again.
-      yield* step("Refused permission modes could not be cleared", sessions.engineStarted);
+      yield* readiness.release(engineStart);
+      // It may have started again under another policy: the refusals of
+      // earlier starts are cleared. Once the release moved the generation on,
+      // so no refusal an earlier start gave is written after this
+      // (`modeRefusals`), and before the workers are nudged, so they find the
+      // bots asked for again. One this start gave stands.
+      yield* step(
+        "Refused permission modes could not be cleared",
+        sessions.engineStarted(engineStart),
+      );
       yield* signals.stops.fire;
       yield* signals.recovery.fire;
       yield* signals.resumes.fire;
@@ -83,7 +87,7 @@ export const layer = Layer.effectDiscard(
       yield* step("Secret submissions could not be checked", cards.checkSubmissions).pipe(
         Effect.forkIn(scope),
       );
-    }).pipe(Effect.withSpan("Turns.start"));
+    });
 
     /**
      * A loop that fails unexpectedly is logged and started again after a
@@ -101,12 +105,13 @@ export const layer = Layer.effectDiscard(
 
     const run = Effect.all(
       [
+        // Each start of the engine, also one that followed another unseen.
         supervised(
           "Following the engine's readiness",
-          engine.status.pipe(
-            Stream.map((status) => status.state._tag === "ready"),
-            Stream.changes,
-            Stream.runForEach((ready) => (ready ? start : readiness.hold)),
+          engine.starts.pipe(
+            Stream.runForEach((engineStart) =>
+              engineStart === null ? readiness.hold : start(engineStart),
+            ),
           ),
         ),
         // A provider's state holds some wakes (`Pipeline`): the dispatcher

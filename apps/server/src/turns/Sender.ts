@@ -293,7 +293,7 @@ export const layer = Layer.effect(
      * after its delay in a fresh side session, with the refusal named in the
      * run's history.
      */
-    const modeRefused = (row: DispatchRow, refusal: PermissionModeRefused, generation: number) =>
+    const modeRefused = (row: DispatchRow, refusal: PermissionModeRefused) =>
       transaction(
         Effect.gen(function* () {
           const [bot] = yield* sql<{ readonly settings_revision: number }>`
@@ -303,7 +303,7 @@ export const layer = Layer.effect(
           if (session.main) {
             yield* releaseUnsent(row.id);
             if (bot !== undefined) {
-              yield* refusals.refused(row.bot_id, bot.settings_revision, refusal, generation);
+              yield* refusals.refused(row.bot_id, bot.settings_revision, refusal);
             }
           } else {
             yield* runFailed(row.id, {
@@ -342,10 +342,13 @@ export const layer = Layer.effect(
      * The claimed attempt was never sent: it is given back, and a fenced
      * dispatch is released. A first send given back into a side session its
      * bot's settings moved past meanwhile is the routine runner's to replace.
+     * A bot's opening given back is unsent again: the operator's messages
+     * behind it show they wait behind the hello again.
      */
     const notSent = (dispatchId: DispatchRowId) =>
       transaction(
         Effect.gen(function* () {
+          const held = yield* ledger.heldBehindOpening(dispatchId);
           yield* sql`
             UPDATE dispatches SET attempts = attempts - 1
             WHERE id = ${dispatchId} AND status = 'intended' AND attempts > 0
@@ -363,6 +366,7 @@ export const layer = Layer.effect(
           ) {
             yield* ledger.release(dispatchId, yield* unsentWakes(row.value));
           }
+          yield* ledger.refreshMessages(held);
           return "engine-unavailable" as const;
         }),
       );
@@ -667,7 +671,7 @@ export const layer = Layer.effect(
      * A first start of the bot's opening needs its provider ready, which may
      * have gone while the send waited for the gate, and is released otherwise
      * (`startHold`). Once it is claimed, the operator's messages behind it
-     * wait like any other (`Ledger.openingSent`).
+     * wait like any other (`Ledger.heldBehindOpening`).
      */
     const claim = (row: DispatchRow) =>
       transaction(
@@ -725,7 +729,7 @@ export const layer = Layer.effect(
             RETURNING attempts
           `;
           if (claimed.length === 0) return "refused" as const;
-          if (opening) yield* ledger.openingSent(row.id);
+          if (opening) yield* ledger.refreshMessages(yield* ledger.heldBehindOpening(row.id));
           return "claimed" as const;
         }),
       ).pipe(Effect.withSpan("Sender.claim"));
@@ -871,8 +875,6 @@ export const layer = Layer.effect(
       input: DispatchInput,
       firstSend: boolean,
     ) {
-      // An answer from an engine that was unready since is stale (`modeRefusals`).
-      const generation = yield* readiness.generation;
       if (firstSend) {
         return yield* engine.dispatch(input).pipe(
           Effect.flatMap((disposition) => accepted(row, disposition)),
@@ -886,7 +888,7 @@ export const layer = Layer.effect(
               ),
             DispatchRejected: () =>
               failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
-            PermissionModeRefused: (refusal) => modeRefused(row, refusal, generation),
+            PermissionModeRefused: (refusal) => modeRefused(row, refusal),
             EngineUnavailable: () => notSent(row.id),
             EngineIncompatible: () => notSent(row.id),
             EngineIndeterminate: () => undecided(row.id),
@@ -897,7 +899,7 @@ export const layer = Layer.effect(
         Effect.flatMap(() => accepted(row, null)),
         Effect.catchTags({
           DispatchRejected: () => failSent(row.id, "rejected").pipe(Effect.as("settled" as const)),
-          PermissionModeRefused: (refusal) => modeRefused(row, refusal, generation),
+          PermissionModeRefused: (refusal) => modeRefused(row, refusal),
           // While the engine is unreachable the recovery waits, and counts nothing.
           EngineUnavailable: () => notSent(row.id),
           EngineIncompatible: () => notSent(row.id),

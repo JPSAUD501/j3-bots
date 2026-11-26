@@ -85,7 +85,7 @@ import {
 import { modeRefusedSql } from "./modeRefusals.ts";
 import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
-import { behindOpeningSql, openingUnsentSql } from "./openings.ts";
+import { behindOpeningSql, openingOpenSql, openingUnsentSql } from "./openings.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { automatedSql, providerLimit } from "./providerLimit.ts";
@@ -419,7 +419,7 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The bot's opening that has not ended, if it has one: whether the engine
+     * The bot's opening that has not ended (`openingOpenSql`), if it has one: whether the engine
      * does not have it yet (`openingUnsentSql`), and whether an operator's
      * message waits behind it already.
      */
@@ -432,7 +432,7 @@ export const layer = Layer.effect(
           EXISTS (SELECT 1 FROM wakes h WHERE h.behind_opening_id = o.id) AS holds
         FROM wakes o
         WHERE o.bot_id = ${botId} AND json_extract(o.payload_json, '$._tag') = 'first-run'
-          AND o.status IN ('pending', 'dispatched')
+          AND ${openingOpenSql(sql, "o")}
         ORDER BY o.rowid DESC LIMIT 1
       `,
     });

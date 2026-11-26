@@ -59,7 +59,8 @@ type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavai
 export type ProcessState =
   /** `install` while the pinned engine downloads, before the supervisor runs. */
   | { readonly _tag: "starting"; readonly install?: EngineInstallProgress }
-  | { readonly _tag: "ready"; readonly environmentId: string }
+  /** `start`: which of the engine's starts this is (`SupervisorInput.starts`). */
+  | { readonly _tag: "ready"; readonly environmentId: string; readonly start: number }
   | { readonly _tag: "unavailable"; readonly reason: UnavailableReason }
   | { readonly _tag: "incompatible"; readonly runningVersion: string };
 
@@ -70,6 +71,13 @@ export interface SupervisorInput<E> {
   readonly port: number;
   /** Where the supervisor publishes the engine's state. */
   readonly state: SubscriptionRef.SubscriptionRef<ProcessState>;
+  /**
+   * The engine's starts, counted: one more each time it becomes ready, set
+   * before `state` says so. Read before a command is sent, it names the
+   * start the command goes to, or an older one when the engine starts again
+   * while the command is on its way, never a newer one.
+   */
+  readonly starts: Ref.Ref<number>;
   /**
    * Runs before every start, while the engine is down: provisioning, the
    * credential. A failure keeps the engine down, and the start is tried again.
@@ -303,12 +311,16 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const settle = Effect.fnUntraced(function* (environmentId: string) {
     const granted = yield* access;
     if (granted === "unreachable") return false;
-    yield* SubscriptionRef.set(
-      state,
-      granted === "granted"
-        ? { _tag: "ready", environmentId }
-        : { _tag: "unavailable", reason: "credential-refused" },
-    );
+    if (granted !== "granted") {
+      yield* SubscriptionRef.set(state, { _tag: "unavailable", reason: "credential-refused" });
+      return true;
+    }
+    const current = yield* SubscriptionRef.get(state);
+    const start =
+      current._tag === "ready"
+        ? current.start
+        : yield* Ref.updateAndGet(input.starts, (n) => n + 1);
+    yield* SubscriptionRef.set(state, { _tag: "ready", environmentId, start });
     return true;
   });
 
@@ -475,7 +487,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   } satisfies Supervision;
 });
 
-/** Whether two states say the same: same tag, reason and download progress. */
+/** Whether two states say the same: same tag, reason, download progress and start. */
 const sameState = (a: ProcessState, b: ProcessState): boolean => {
   switch (a._tag) {
     case "starting":
@@ -487,6 +499,7 @@ const sameState = (a: ProcessState, b: ProcessState): boolean => {
     case "unavailable":
       return b._tag === "unavailable" && a.reason === b.reason;
     case "ready":
+      return b._tag === "ready" && a.start === b.start;
     case "incompatible":
       return a._tag === b._tag;
   }
