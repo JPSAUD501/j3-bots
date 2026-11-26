@@ -20,7 +20,12 @@ import { refuse } from "./errors.ts";
  */
 const START_REFUSED = 78;
 
-/** The failures of a start that only the operator can clear. */
+/**
+ * The failures of a start that only the operator can clear. A home another
+ * server holds (`ServerAlreadyRunning`) is not one: that server may be one
+ * still stopping, or an update copying the databases, and a later start
+ * passes once it lets go.
+ */
 const REFUSALS: ReadonlySet<string> = new Set([
   "ConfigRefused",
   "ConfigFileInvalid",
@@ -29,7 +34,6 @@ const REFUSALS: ReadonlySet<string> = new Set([
   "HomeNotWritable",
   "HomeBlocked",
   "RollbackUnfinished",
-  "ServerAlreadyRunning",
 ]);
 
 /**
