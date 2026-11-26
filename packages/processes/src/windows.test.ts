@@ -61,6 +61,9 @@ describe("windowsNameKey", () => {
     assert.notStrictEqual(windowsNameKey("straße"), windowsNameKey("STRASSE"));
     // A dotted capital I is not an i followed by a combining dot.
     assert.notStrictEqual(windowsNameKey("\u0130"), windowsNameKey("i\u0307"));
+    // Nor are a dotless i and a long s an I and an S, which a path check would take them for.
+    assert.notStrictEqual(windowsNameKey("D:\\\u0131"), windowsNameKey("D:\\I"));
+    assert.notStrictEqual(windowsNameKey("\u017f"), windowsNameKey("S"));
   });
 });
 

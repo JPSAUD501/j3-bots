@@ -86,19 +86,24 @@ export const windowsCommandWord = (word: string): string => {
  * its upcase table, which maps each UTF-16 unit to one unit, its upper case,
  * and leaves every other unit as it is: `ß` stays `ß`, and `K`, the Kelvin
  * sign, is not `k`. So each unit is upper-cased on its own, and kept as it is
- * where its upper case would take more than one unit. Lower-casing the whole
- * name, as `toLowerCase` does, would take `K` for `k` and `İ` for `i̇`. A
- * volume's table is the one of the Windows that formatted it, which can
- * differ from Unicode's, which Node follows, on a few letters: the Greek
+ * where its upper case would take more than one unit, or where it is not
+ * ASCII and its upper case is: Windows' default table leaves the dotless `ı`
+ * and the long `ſ` as they are, never `I` and `S` (**Read** in ntfs-3g's
+ * `ntfs_upcase_table_build`, which rebuilds that table). Lower-casing the
+ * whole name, as `toLowerCase` does, would take `K` for `k` and `İ` for `i̇`.
+ * A volume's table is the one of the Windows that formatted it, which can
+ * differ from Unicode's, which Node follows, on a few more letters: the Greek
  * letters with a subscript iota, whose one-unit upper case this does not
- * find, among them.
+ * find, among them. Where it differs, two names Windows takes for one are
+ * told apart, never the other way round, on the letters above.
  */
 export const windowsNameKey = (name: string): string => {
   let key = "";
   for (let at = 0; at < name.length; at++) {
     const unit = name[at] ?? "";
     const upper = unit.toUpperCase();
-    key += upper.length === 1 ? upper : unit;
+    const intoAscii = unit.charCodeAt(0) > 0x7f && upper.charCodeAt(0) <= 0x7f;
+    key += upper.length === 1 && !intoAscii ? upper : unit;
   }
   return key;
 };
