@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Loaded } from "@j3-bots/client-runtime";
 import {
-  canStop,
+  botStop,
   connectorsOf,
   type Teammate,
   teammatesOf,
@@ -98,7 +98,8 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const browserNeedsSetup =
     engine._tag === "ready" && engine.value.browser?._tag === "setup-required";
   const skeleton = (count: number) => <SkeletonRows count={count} />;
-  const stopFocus = useFocusAfterStop(canStop(bot));
+  const stop = botStop(bot);
+  const stopFocus = useFocusAfterStop(stop !== "hidden");
   return (
     <ScrollView
       className="flex-1 bg-background"
@@ -128,8 +129,15 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         />
       </Profile>
 
-      {canStop(bot) && (
+      {stop === "offered" && (
         <StopRow label={t("details.stop")} onPress={() => stopFocus.stopped(actions.stop(bot))} />
+      )}
+      {stop === "force" && (
+        <StopRow
+          label={t("details.forceStop")}
+          why={t("details.forceStop.why")}
+          onPress={() => stopFocus.stopped(actions.forceStop(bot))}
+        />
       )}
 
       {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}

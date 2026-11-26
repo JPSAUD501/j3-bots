@@ -10,7 +10,11 @@ import type * as Statement from "effect/sql/Statement";
 import { modeRefusedSql } from "./modeRefusals.ts";
 import { joinedWork, WorkJson } from "./turnWork.ts";
 
-const WorkRow = Schema.Struct({ room_id: RoomId, work: RoomWorkState });
+const WorkRow = Schema.Struct({
+  room_id: RoomId,
+  work: RoomWorkState,
+  force_stop: Schema.BooleanFromBit,
+});
 const AnsweringRow = Schema.Struct({ room_id: RoomId, bot_id: BotId });
 const MemberWorkRow = Schema.Struct({
   room_id: RoomId,
@@ -34,6 +38,11 @@ export interface RoomActivity {
    * empty unless `work` is `running`.
    */
   readonly memberWork: ReadonlyArray<MemberWork>;
+  /**
+   * Whether a member's AI ignores the stop of a turn of the room, or the
+   * room's own Stop of its session (`Room.forceStop`, `roomsIgnoredStopSql`).
+   */
+  readonly forceStop: boolean;
 }
 
 /**
@@ -65,7 +74,13 @@ export interface RoomActivity {
  * as one: the latest plan, and every little one of them. A member still
  * `answering` is in a turn; one that is not left work behind it.
  *
- * All three are read in one transaction, so they agree.
+ * `forceStop` is whether the engine's stop of a turn of the room, or of the
+ * background work it left, goes unconfirmed by its AI, in a session the engine
+ * still has: the turn a session records as ignoring its stop is the room's,
+ * or the room's own Stop went to that session and is not settled
+ * (`roomsIgnoredStopSql`), and no Force stop of it waits for the engine yet.
+ *
+ * All four are read in one transaction, so they agree.
  */
 export class RoomStates extends Context.Service<
   RoomStates,
@@ -78,6 +93,38 @@ export class RoomStates extends Context.Service<
     readonly activityOfBot: (botId: BotId) => Effect.Effect<ReadonlyMap<RoomId, RoomActivity>>;
   }
 >()("@j3-bots/server/turns/RoomStates") {}
+
+/**
+ * Whether the stop a session ignores is room `roomId`'s to force: the turn it
+ * ignores, `ignoredTurnId`, answers in the room, or the room's own Stop went
+ * to the session, `sessionId`, and is not settled. An idle session's stop
+ * reaches the engine's latest turn, which can be another audience's while
+ * work the room's turn left goes on (**Read** at `59651c1`, `Orchestrator.ts`,
+ * `dispatchRunInterrupt`). A room's Stop that still waits for another
+ * audience's turn to end has asked the engine nothing, so a stop the session
+ * ignores meanwhile is not the room's. Each is a column or a value.
+ */
+export const roomsIgnoredStopSql = (
+  sql: SqlClient.SqlClient,
+  ids: {
+    readonly sessionId: Statement.Fragment;
+    readonly ignoredTurnId: Statement.Fragment;
+    readonly roomId: RoomId | Statement.Fragment;
+  },
+) => sql`(
+  EXISTS (
+    SELECT 1 FROM turns ri_turn
+    WHERE ri_turn.session_id = ${ids.sessionId} AND ri_turn.engine_turn_id = ${ids.ignoredTurnId}
+      AND ri_turn.audience = 'room' AND ri_turn.audience_room_id = ${ids.roomId}
+  )
+  OR EXISTS (
+    SELECT 1 FROM stops ri_stop JOIN stop_targets ri_target ON ri_target.stop_id = ri_stop.id
+    WHERE ri_stop.scope = 'room' AND ri_stop.room_id = ${ids.roomId}
+      AND ri_stop.engine_turn_id IS NULL
+      AND ri_target.session_id = ${ids.sessionId} AND ri_target.stopped_at IS NULL
+      AND ri_target.issued_at IS NOT NULL
+  )
+)`;
 
 export const layer = Layer.effect(
   RoomStates,
@@ -114,7 +161,18 @@ export const layer = Layer.effect(
             AND (rs_turn.finished_at IS NULL OR rs_turn.background_pending = 1)
         ) THEN 'running'
         ELSE 'none'
-      END AS work
+      END AS work,
+      EXISTS (
+        SELECT 1 FROM sessions rs_ignoring
+        WHERE rs_ignoring.stop_ignored_turn_id IS NOT NULL
+          AND rs_ignoring.force_stop_turn_id IS NOT rs_ignoring.stop_ignored_turn_id
+          AND rs_ignoring.lost_at IS NULL AND rs_ignoring.engine_retired_at IS NULL
+          AND ${roomsIgnoredStopSql(sql, {
+            sessionId: sql`rs_ignoring.id`,
+            ignoredTurnId: sql`rs_ignoring.stop_ignored_turn_id`,
+            roomId: sql`rs_room.id`,
+          })}
+      ) AS force_stop
       FROM rooms rs_room
       WHERE rs_room.status = 'active' AND ${rooms}
     `;
@@ -248,6 +306,7 @@ export const layer = Layer.effect(
                     work: turnWork,
                   }))
                 : [],
+              forceStop: row.force_stop,
             },
           ];
         }),

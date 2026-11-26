@@ -41,6 +41,7 @@ const room: Room = {
   hidden: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: "none",
+  forceStop: false,
   answering: [],
   memberWork: [],
 };

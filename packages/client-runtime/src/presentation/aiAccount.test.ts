@@ -15,6 +15,7 @@ import {
   aiAccountStates,
   aiAction,
   type AiFacts,
+  aiNameOf,
   aiOutage,
   connectStepSaysProgress,
   openAiAccount,
@@ -325,5 +326,21 @@ describe("the first run's quiet line, on the connect step", () => {
     expect(connectStepSaysProgress(starting, "claude-code")).toBe(true);
     const out: EngineStatus = { ...engineWith(), state: { _tag: "unavailable", reason: "down" } };
     expect(connectStepSaysProgress(out, null)).toBe(true);
+  });
+});
+
+describe("aiNameOf", () => {
+  it("calls an AI by its account, any other provider by the engine's name, and none unlisted", () => {
+    const other: ProviderStatus = {
+      ...provider("codex", { _tag: "ready" }),
+      id: ProviderId.make("local"),
+      name: "Local model",
+      harness: "other",
+    };
+    const engine = engineWith(provider("claude-code", { _tag: "ready" }), other);
+    expect(aiNameOf(engine, ProviderId.make("claude-code"))).toBe("Claude");
+    expect(aiNameOf(engine, ProviderId.make("local"))).toBe("Local model");
+    expect(aiNameOf(engine, ProviderId.make("gone"))).toBeNull();
+    expect(aiNameOf(null, ProviderId.make("claude-code"))).toBeNull();
   });
 });

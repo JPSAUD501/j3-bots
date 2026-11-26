@@ -1072,3 +1072,58 @@ it.effect("ends a turn its lost session cut short where it was last seen working
     assert.deepStrictEqual([ended.ending, ended.finishedAt], ["interrupted", lastSeen]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "shows the bot retrying while the engine tries its AI again, and leaves no trace once it recovers",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const states = yield* BotStates;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Translate the docs.");
+      const turnId = yield* nextTurn(bot.id);
+      const retrying = states
+        .of(bot.id)
+        .pipe(
+          Effect.map((state) =>
+            state._tag === "thinking" || state._tag === "working" ? state.retrying : null,
+          ),
+        );
+
+      yield* control.retry({ sessionId: session, turnId, retrying: true });
+      yield* until(Effect.map(retrying, (now) => now === true));
+      yield* control.retry({ sessionId: session, turnId, retrying: false });
+      yield* until(Effect.map(retrying, (now) => now === false));
+
+      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+      yield* turnEnded(bot.id);
+      assert.deepStrictEqual(yield* noticesOf(bot.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps what the engine said of a failure behind its notice", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Translate the docs.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: {
+        _tag: "failed",
+        failure: "unreachable",
+        retryAt: null,
+        details: "transport_error: The connection to the provider closed.",
+      },
+    });
+    const notice = yield* awaitEntry(bot.id, "notice");
+    assert.deepStrictEqual(notice.notice, {
+      _tag: "turn-failed",
+      failure: "unreachable",
+      details: "transport_error: The connection to the provider closed.",
+    });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

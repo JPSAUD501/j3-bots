@@ -29,6 +29,7 @@ const room = (answering: ReadonlyArray<BotId>): Room => ({
   hidden: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: answering.length === 0 ? "none" : "running",
+  forceStop: false,
   answering,
   memberWork: [],
 });

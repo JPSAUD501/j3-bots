@@ -11,7 +11,12 @@ import { Text } from "../text.tsx";
  * before anything they list. `onPress` null keeps the row in place while the
  * work stops, disabled, taking no press and showing none.
  */
-export function StopRow(props: { readonly label: string; readonly onPress: (() => void) | null }) {
+export function StopRow(props: {
+  readonly label: string;
+  /** For a Force stop: the one line that says why it is offered. */
+  readonly why?: string;
+  readonly onPress: (() => void) | null;
+}) {
   const held = props.onPress === null;
   return (
     <View className="px-3 pt-2">
@@ -24,12 +29,17 @@ export function StopRow(props: { readonly label: string; readonly onPress: (() =
         className="min-h-12 flex-row items-center gap-3 rounded-md px-2 active:bg-muted"
       >
         <Icon icon={Square} size={14} color="accent-muted-foreground" filled />
-        <Text
-          numberOfLines={1}
-          className={`min-w-0 flex-1 text-base font-medium ${held ? "text-muted-foreground" : "text-foreground"}`}
-        >
-          {props.label}
-        </Text>
+        <View className="min-w-0 flex-1 py-2">
+          <Text
+            numberOfLines={1}
+            className={`text-base font-medium ${held ? "text-muted-foreground" : "text-foreground"}`}
+          >
+            {props.label}
+          </Text>
+          {props.why !== undefined && (
+            <Text className="text-xs text-muted-foreground">{props.why}</Text>
+          )}
+        </View>
       </PressScale>
     </View>
   );

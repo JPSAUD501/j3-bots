@@ -544,6 +544,10 @@ export interface J3Client {
   ) => Promise<Actions.IntentResult>;
   readonly stopBot: (botId: BotId) => Promise<Actions.IntentResult>;
   readonly stopRoom: (roomId: RoomId) => Promise<Actions.IntentResult>;
+  /** Stop, for a bot whose AI ignores it (`Bot.forceStop`). */
+  readonly forceStopBot: (botId: BotId) => Promise<Actions.IntentResult>;
+  /** Stop, for a room whose member's AI ignores it (`Room.forceStop`). */
+  readonly forceStopRoom: (roomId: RoomId) => Promise<Actions.IntentResult>;
 
   readonly updateSettings: (
     change: Settings.SettingsChange,
@@ -877,6 +881,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
     stopRoom: (roomId) => run.promise(services.roster.stopRoom(roomId)),
+    forceStopBot: (botId) => run.promise(services.roster.forceStop(botId)),
+    forceStopRoom: (roomId) => run.promise(services.roster.forceStopRoom(roomId)),
 
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),

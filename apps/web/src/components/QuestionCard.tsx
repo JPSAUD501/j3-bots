@@ -3,7 +3,13 @@ import { Checkbox } from "@base-ui/react/checkbox";
 import { CheckboxGroup } from "@base-ui/react/checkbox-group";
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import type { Question, QuestionAnswers, QuestionEntry, QuestionOption } from "@j3-bots/contracts";
+import {
+  cardQuestions,
+  type QuestionAnswers,
+  type QuestionEntry,
+  type QuestionOption,
+  type WholeQuestion,
+} from "@j3-bots/contracts";
 import { CheckIcon, MessageCircleQuestionIcon } from "lucide-react";
 import { useId, useState } from "react";
 import {
@@ -38,7 +44,9 @@ interface QuestionCardProps {
  * says so: the harness's own question holds its turn until it is answered or
  * the turn is stopped. An option the bot
  * recommends says so in words; one that loses something says that too, and
- * is drawn in the blocked color.
+ * is drawn in the blocked color. A harness's question can come with a header
+ * over it and a preview under an option, shown as the harness gives them.
+ * Several questions stack, each under the one before, however many there are.
  */
 export function QuestionCard({
   entry,
@@ -49,7 +57,8 @@ export function QuestionCard({
   const { t } = useI18n();
   const { status } = entry;
   const pending = status._tag === "pending";
-  const [first] = entry.questions;
+  const questions = cardQuestions(entry);
+  const [first] = questions;
   const outcomeId = useId();
   // Answered, the controls go; focus that was in them moves to the card.
   const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
@@ -63,8 +72,7 @@ export function QuestionCard({
           if (!submitting) onDismiss();
         }
       : null;
-  const answersOnTap =
-    pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
+  const answersOnTap = pending && questions.length === 1 && !first.multiple && !first.acceptsText;
   // The option tapped confirms while its answer is on its way: it takes a check, and the others
   // step back. Refused, the card waits again with every option as it was.
   const [tapped, setTapped] = useState<string | null>(null);
@@ -82,7 +90,7 @@ export function QuestionCard({
     >
       {!pending ? (
         <div className={cn("flex flex-col gap-3", closedHere && "arrive")}>
-          {entry.questions.map((q) => (
+          {questions.map((q) => (
             <Resolved
               key={q.id}
               question={q}
@@ -103,7 +111,10 @@ export function QuestionCard({
       ) : answersOnTap ? (
         <div className="flex flex-col gap-3" {...actions}>
           <fieldset className="flex flex-col gap-2">
-            <legend className="mb-2 text-sm font-medium">{first.prompt}</legend>
+            <legend className="mb-2 flex flex-col items-start gap-1.5 text-sm font-medium">
+              <QuestionHeader question={first} />
+              {first.prompt}
+            </legend>
             <div className="flex flex-col gap-1.5">
               {first.options.map((option) => (
                 <button
@@ -136,7 +147,7 @@ export function QuestionCard({
         // Keyed by the entry, so a draft never outlives the card it was typed into.
         <QuestionForm
           key={entry.id}
-          questions={entry.questions}
+          questions={questions}
           textReplacesChoice={entry.origin === "engine"}
           onAnswer={answer}
           onDismiss={dismiss}
@@ -156,7 +167,7 @@ function QuestionForm({
   submitting,
   focusWatch,
 }: {
-  questions: ReadonlyArray<Question>;
+  questions: ReadonlyArray<WholeQuestion>;
   textReplacesChoice: boolean;
   onAnswer: (answers: QuestionAnswers) => void;
   onDismiss: (() => void) | null;
@@ -174,7 +185,7 @@ function QuestionForm({
 
   return (
     <form
-      className="flex flex-col gap-3"
+      className="flex flex-col gap-3 [&>[data-question]+[data-question]]:border-t [&>[data-question]+[data-question]]:border-border [&>[data-question]+[data-question]]:pt-3"
       onSubmit={(event) => {
         event.preventDefault();
         if (answers !== null) onAnswer(answers);
@@ -204,7 +215,7 @@ function QuestionFields({
   readOnly,
   onChange,
 }: {
-  question: Question;
+  question: WholeQuestion;
   draft: QuestionDraft | null;
   /** A typed answer goes instead of a choice, never beside it. */
   textReplacesChoice: boolean;
@@ -228,7 +239,8 @@ function QuestionFields({
     "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-readonly:hover:bg-transparent",
   );
   return (
-    <div className="flex flex-col gap-2">
+    <div data-question className="flex flex-col gap-2">
+      <QuestionHeader question={question} />
       <p id={promptId} className="text-sm font-medium">
         {question.prompt}
       </p>
@@ -311,6 +323,22 @@ function OptionText({ option }: { option: QuestionOption }) {
         )}
       </span>
       {description !== null && <span className="text-xs text-muted-foreground">{description}</span>}
+      {option.preview !== undefined && (
+        // A span, not a pre: the option is a button, which holds phrasing content only.
+        <span className="mt-1.5 block max-h-48 overflow-auto rounded-sm bg-muted px-2.5 py-2 font-mono text-xs whitespace-pre text-muted-foreground">
+          {option.preview}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** What a harness's question is about, in a few words over it, when it says. */
+function QuestionHeader({ question }: { question: WholeQuestion }) {
+  if (question.header === undefined) return null;
+  return (
+    <span className="rounded-sm bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
+      {question.header}
     </span>
   );
 }
@@ -348,7 +376,7 @@ function Resolved({
   answer,
   drawn,
 }: {
-  question: Question;
+  question: WholeQuestion;
   answer: QuestionAnswers[string] | null;
   /** Answered while on screen: each chosen option's check draws itself. */
   drawn: boolean;
@@ -356,6 +384,7 @@ function Resolved({
   const chosen = question.options.filter((o) => answer?.optionIds.includes(o.id));
   return (
     <div className="flex flex-col gap-2">
+      <QuestionHeader question={question} />
       <p className="text-sm font-medium">{question.prompt}</p>
       {chosen.map((option) => (
         <div key={option.id} className={cn(choiceRow, "border-foreground/60 bg-muted")}>

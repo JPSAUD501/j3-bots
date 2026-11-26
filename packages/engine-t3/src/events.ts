@@ -2,12 +2,12 @@
 import {
   ApprovalEntry,
   FailureClass,
+  FailureDetails,
   LittleOne,
-  MAX_CARD_QUESTIONS,
   ModelChoice,
   Plan,
-  Question,
   SecretRequestEntry,
+  WholeQuestion,
   WorkStep,
 } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
@@ -77,24 +77,13 @@ export const EngineRequest = Schema.Union([
     sessionGrant: ApprovalEntry.fields.sessionGrant,
   }),
   /**
-   * The harness's own question tool, not the bot's `ask`. Question and option
-   * ids are J3 Bots' own, stable for the request; the adapter maps an answer
-   * back to the engine's exact question keys and option values.
+   * The harness's own question tool, not the bot's `ask`, whole: as many
+   * questions and options as it asked. Question and option ids are J3 Bots'
+   * own, stable for the request; the adapter maps an answer back to the
+   * engine's exact question keys and option values.
    */
   Schema.TaggedStruct("question", {
-    questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(MAX_CARD_QUESTIONS)),
-  }),
-  /**
-   * A question from the harness's own tool that a card cannot show whole: more
-   * questions than one card holds, or a question with more options than one
-   * shows. Nothing of it is dropped silently: the server shows a notice saying
-   * why. It takes no answer, so its turn waits until it is stopped.
-   * `count` is how many the engine asked for, `max` how many a card shows.
-   */
-  Schema.TaggedStruct("unsupported-question", {
-    exceeds: Schema.Literals(["questions", "options"]),
-    count: Schema.Int,
-    max: Schema.Int,
+    questions: Schema.NonEmptyArray(WholeQuestion),
   }),
   /** A credential only the operator can give. Answered with `Engine.respondSecret`. */
   Schema.TaggedStruct("secret", {
@@ -148,6 +137,12 @@ export const TurnOutcome = Schema.Union([
     failure: FailureClass,
     /** For a usage limit: when the provider said it resets. */
     retryAt: Schema.NullOr(Schema.DateTimeUtc),
+    /**
+     * What the engine said of the failure: its class, code and message,
+     * scrubbed of secrets (`failureDetailsOf`). Absent when it recorded
+     * none, and from an outcome stored before it was kept.
+     */
+    details: Schema.optionalKey(FailureDetails),
   }),
 ]);
 export type TurnOutcome = typeof TurnOutcome.Type;
@@ -268,6 +263,8 @@ export const OpenTurn = Schema.Struct({
    * claimed then: Codex's record of one closes while it waits on its approval.
    */
   closedToolCalls: Schema.Array(ToolCall),
+  /** As `turn-retrying` says it now. */
+  retrying: Schema.Boolean,
 });
 export type OpenTurn = typeof OpenTurn.Type;
 
@@ -397,6 +394,8 @@ export const SessionEvent = Schema.Union([
     delegatedResults: Schema.Array(DelegatedResult),
     model: Schema.NullOr(ModelChoice),
     queueHeld: Schema.Boolean,
+    /** As `stop-ignored` says it now. */
+    stopIgnored: Schema.NullOr(TurnId),
   }),
   /**
    * A turn began. Until its first step, the bot is thinking. A turn caused by a
@@ -504,6 +503,26 @@ export const SessionEvent = Schema.Union([
    * `59651c1`, `EffectWorker.ts` L362-420).
    */
   Schema.TaggedStruct("delegated-result", { ...at, result: DelegatedResult }),
+  /**
+   * Whether the turn's provider failed and the engine is trying it again on
+   * its own: the engine records the failure with the attempt it is on, as an
+   * error item still running while it retries, which completes once an
+   * attempt succeeds and fails once it gives up, ending the turn as failed
+   * (**Read** at `59651c1`, T3 Code's own client, `session-logic.ts`,
+   * `providerErrorPresentation`). Told when it changes, while the turn runs;
+   * a turn's end ends it.
+   */
+  Schema.TaggedStruct("turn-retrying", { ...at, turnId: TurnId, retrying: Schema.Boolean }),
+  /**
+   * The engine's stop reached the session's latest turn, or the background
+   * work that turn left, and its provider did not confirm it in time: the
+   * engine marks the stop unresponsive, and its own client then offers Force
+   * stop (**Read** at `59651c1`: the `run_interrupt_request` item's
+   * `unresponsiveAt`, and `threadExecution.ts`, `presentRunStop`). `turnId`
+   * is that turn, null once no stop is ignored: the turn ended or the
+   * provider answered. Told when it changes. `Engine.forceStop` ends it.
+   */
+  Schema.TaggedStruct("stop-ignored", { ...at, turnId: Schema.NullOr(TurnId) }),
   /**
    * A step was added or changed. Steps replace by id; the latest running step is
    * what the bot is doing right now.

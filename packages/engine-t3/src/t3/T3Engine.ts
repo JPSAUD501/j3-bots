@@ -427,8 +427,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       provider.harness === "claude-code" ? [instanceIdFor(provider.id)] : [],
     ),
   );
-  /** What the adapter reads of the providers, which are the same for the engine's life. */
-  const providerReads: Providers = {
+  /** What the adapter reads of the providers that is the same for the engine's life. */
+  const providerFacts: Omit<Providers, "redact"> = {
     modelOf: (selection) => {
       const providerId = providerOfInstance.get(selection.instanceId);
       if (providerId === undefined) return null;
@@ -476,6 +476,26 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   );
   /** The connection's key the engine was last started with, which its words must not carry. */
   const givenKey = yield* Ref.make<Redacted.Redacted<string> | null>(null);
+  /**
+   * The secrets the engine's words are cleared of (`withoutSecrets`), as the
+   * engine was given them, read each time it becomes ready, and as
+   * each batch of a session's events is told: a new connection restarts it.
+   */
+  const secrets = Effect.gen(function* () {
+    const key = yield* Ref.get(givenKey);
+    return [
+      ...(key === null ? [] : [Redacted.value(key)]),
+      ...options.providers.flatMap((provider) =>
+        provider.environment.map((variable) => Redacted.value(variable.value)),
+      ),
+      ...options.toolBridge.environment.map((variable) => Redacted.value(variable.value)),
+    ];
+  });
+  /** What the adapter reads of the providers now, with the secrets it is given. */
+  const providerReads = Effect.map(secrets, (known): Providers => ({
+    ...providerFacts,
+    redact: (text) => redact(text, known),
+  }));
   /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
   const provisionInput = Effect.gen(function* () {
     return {
@@ -1543,6 +1563,32 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
+  /** Force stop of the turn whose stop its provider ignores (`Engine.forceStop`). */
+  const forceStop = Effect.fn("Engine.forceStop")(function* (input: {
+    readonly sessionId: SessionId;
+    readonly turnId: TurnId;
+  }) {
+    yield* liveProjection(input.sessionId);
+    yield* ready;
+    yield* rpc["orchestration.forceStopThread"]({
+      threadId: ThreadId.make(input.sessionId),
+      runId: RunId.make(input.turnId),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: COMMAND_TIMEOUT,
+        orElse: () => Effect.fail(new EngineIndeterminate()),
+      }),
+      Effect.catchTags({
+        RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        // A newer turn started: nothing ignores the stop the operator saw.
+        OrchestrationV2ForceStopThreadError: (error) =>
+          error.reason === "superseded" ? Effect.void : Effect.fail(new EngineUnavailable()),
+      }),
+      Effect.asVoid,
+    );
+  });
+
   /**
    * Releases a held queue, keyed by the hold it answers. The engine refuses a
    * resume while the session waits on a usage limit, whose continuation runs
@@ -1943,7 +1989,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             history,
             now,
             batches.toldHandoffs(input.sessionId),
-            providerReads,
+            yield* providerReads,
           );
           view = replaced.view;
           yield* emit([replaced.event]);
@@ -1970,7 +2016,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                   mirror,
                   view,
                   DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
-                  providerReads,
+                  yield* providerReads,
                 ),
               );
               return;
@@ -2182,7 +2228,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
                     mirror,
                     view,
                     DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
-                    providerReads,
+                    yield* providerReads,
                   ),
                 );
               }
@@ -2283,21 +2329,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       else next.set(providerId, request);
       return next;
     });
-  /**
-   * The secrets the engine's words are cleared of (`withoutSecrets`), as the
-   * engine was given them, read each time it becomes ready: a new
-   * connection restarts it.
-   */
-  const secrets = Effect.gen(function* () {
-    const key = yield* Ref.get(givenKey);
-    return [
-      ...(key === null ? [] : [Redacted.value(key)]),
-      ...options.providers.flatMap((provider) =>
-        provider.environment.map((variable) => Redacted.value(variable.value)),
-      ),
-      ...options.toolBridge.environment.map((variable) => Redacted.value(variable.value)),
-    ];
-  });
   const logProblems = Effect.fn("Engine.logProviderProblems")(function* (
     providers: ReadonlyArray<ReportedProvider>,
   ) {
@@ -2709,6 +2740,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     redispatch,
     stageAttachment,
     stop,
+    forceStop,
     resumeQueue,
     respond,
     respondSecret,

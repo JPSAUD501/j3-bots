@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { knownTimeZone } from "@j3-bots/client-runtime/presentation";
-import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/react";
+import { aiNameOf, knownTimeZone } from "@j3-bots/client-runtime/presentation";
+import {
+  useEngineStatus,
+  useJ3Client,
+  useReadable,
+  useSettings,
+} from "@j3-bots/client-runtime/react";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import type { Bot, BotId, RoomId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
@@ -34,6 +39,8 @@ export function PresentationProvider({ children }: { readonly children: ReactNod
   const now = useNow();
   const settings = useSettings();
   const roster = useReadable(useJ3Client().roster);
+  const engineStatus = useEngineStatus();
+  const engine = engineStatus._tag === "ready" ? engineStatus.value : null;
   const saved = settings._tag === "ready" ? settings.value.timeZone : null;
   const timeZone = useMemo(
     () => (saved === null ? null : knownTimeZone(saved)) ?? deviceTimeZone(),
@@ -66,8 +73,9 @@ export function PresentationProvider({ children }: { readonly children: ReactNod
       timeZone,
       botName: (id: BotId) => bots.get(id)?.profile.name ?? null,
       roomName: (id: RoomId) => rooms.get(id) ?? null,
+      aiName: (bot: Bot) => aiNameOf(engine, bot.model.providerId),
     }),
-    [i18n, now, timeZone, bots, rooms],
+    [i18n, now, timeZone, bots, rooms, engine],
   );
   return (
     <PresentationContextValue value={context}>

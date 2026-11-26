@@ -16,7 +16,7 @@ describe("delivery line", () => {
         en,
       );
     expect(refused("message-length")).toBe(
-      "Not sent: too long for this bot’s engine to take in one message",
+      "Not sent: too long for this bot to take in one message",
     );
     expect(refused("mentions")).toBe("Not sent: the server refused it");
   });

@@ -221,10 +221,13 @@ const restingRoom: Room = {
   name: "Weekend plans",
   members: [team.bots.moss.id, team.bots.pip.id],
   work: "none",
+  forceStop: false,
   answering: [],
 };
 /** The sample room while the server ends its work. */
 const stoppingRoom: Room = { ...team.room, work: "stopping", answering: [] };
+/** The room's Stop, which a member's AI ignores. */
+const forceStopRoom: Room = { ...team.room, work: "stopping", answering: [], forceStop: true };
 const shortcuts = shellShortcuts();
 /** The type scale's two sets: the one a page shows depends on its pointer, so both are drawn. */
 const typeInputs: ReadonlyArray<TypeInput> = ["pointer", "touch"];
@@ -251,7 +254,7 @@ export default function GalleryPage() {
     <I18nProvider locale={locale}>
       <ClockProvider now={SAMPLE_NOW}>
         <OperatorTimeZone timeZone={team.settings.timeZone}>
-          <RosterProvider roster={team.roster}>
+          <RosterProvider roster={team.roster} engine={team.engine}>
             <div className="min-h-full">
               <div className="mx-auto flex max-w-[90rem] flex-col gap-12 px-4 py-8 @container">
                 <header className="flex flex-wrap items-end justify-between gap-4">
@@ -733,7 +736,7 @@ const madeRoom = (count: number): RosterItem => ({
 function PlainRoster({ items }: { items: ReadonlyArray<RosterItem> }) {
   const folded = useFoldedSections(null);
   return (
-    <RosterProvider roster={[...team.roster, ...items]}>
+    <RosterProvider roster={[...team.roster, ...items]} engine={team.engine}>
       <div className="flex h-full flex-col bg-sidebar">
         <Roster
           items={items}
@@ -1398,7 +1401,7 @@ function BubblesSection() {
 function CardsSection() {
   return (
     <Section title="Questions, approvals and credentials">
-      <Labeled label="Question: pending (tap an option), recommended and destructive options, a form of radio buttons, checkboxes and text, answered, dismissed, expired, refused">
+      <Labeled label="Question: pending (tap an option), recommended and destructive options, a form of radio buttons, checkboxes and text, a harness question larger than a card used to hold (headers, previews, five questions stacked), answered, dismissed, expired, refused">
         <div className="flex flex-col gap-3">
           {variants.questions.map((entry) => (
             <QuestionCard key={entry.id} entry={entry} onAnswer={nothing} onDismiss={nothing} />
@@ -1509,12 +1512,26 @@ const turnStates = (() => {
   return [
     {
       name: "thinking",
-      bot: as({ _tag: "thinking", since: ago(7), stalled: false, quietSince: null, typing: false }),
+      bot: as({
+        _tag: "thinking",
+        since: ago(7),
+        stalled: false,
+        quietSince: null,
+        typing: false,
+        retrying: false,
+      }),
       fold: null,
     },
     {
       name: "typing",
-      bot: as({ _tag: "thinking", since: ago(3), stalled: false, quietSince: null, typing: true }),
+      bot: as({
+        _tag: "thinking",
+        since: ago(3),
+        stalled: false,
+        quietSince: null,
+        typing: true,
+        retrying: false,
+      }),
       fold: null,
     },
     {
@@ -1525,6 +1542,7 @@ const turnStates = (() => {
         stalled: false,
         quietSince: null,
         typing: false,
+        retrying: false,
         activity: "pnpm test billing",
         tool: null,
         littleOnes: 0,
@@ -1544,7 +1562,23 @@ const turnStates = (() => {
         stalled: true,
         quietSince: ago(780),
         typing: false,
+        retrying: false,
         activity: null,
+        tool: null,
+        littleOnes: 0,
+      }),
+      fold: running?.entry ?? null,
+    },
+    {
+      name: "retrying",
+      bot: as({
+        _tag: "working",
+        since: ago(95),
+        stalled: false,
+        quietSince: null,
+        typing: false,
+        retrying: true,
+        activity: "pnpm test billing",
         tool: null,
         littleOnes: 0,
       }),
@@ -1558,6 +1592,7 @@ const turnStates = (() => {
         stalled: false,
         quietSince: null,
         typing: false,
+        retrying: false,
         activity: null,
         tool: "browser",
         littleOnes: 0,
@@ -1571,7 +1606,7 @@ function WorkSection() {
   return (
     <AttachmentImagesProvider fetch={galleryImage}>
       <Section title="A turn's work">
-        <Labeled label="Under way: thinking before any step, typing the next message of a first contact, working on a step (its steps open), waiting on the operator, stalled, past an hour">
+        <Labeled label="Under way: thinking before any step, typing the next message of a first contact, working on a step (its steps open), waiting on the operator, stalled, having trouble reaching its AI while it is tried again, past an hour">
           <div className="flex max-w-(--layout-text-column) flex-col gap-2">
             {turnStates.map(({ name, bot, fold }) => (
               <WorkFold
@@ -1886,6 +1921,7 @@ const detailsIntents = {
   openMemoryFile: nothing,
   editProfile: nothing,
   stop: nothing,
+  forceStop: nothing,
   show: nothing,
   freshStart: nothing,
   deleteBot: nothing,
@@ -1898,6 +1934,7 @@ const detailsIntents = {
 const roomIntents = {
   editRoom: nothing,
   stop: nothing,
+  forceStop: nothing,
   show: nothing,
   archiveRoom: () => Promise.resolve(),
   unarchiveRoom: () => Promise.resolve(),
@@ -2015,6 +2052,22 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
+          {/* Its AI ignores the Stop: Force stop, with why. */}
+          <BotDetails
+            bot={{ ...scout, forceStop: true }}
+            routines={team.routines[scout.id] ?? []}
+            memory={team.memory[scout.id] ?? []}
+            files={team.files[scout.id] ?? []}
+            connectors={sampleConnectors}
+            teammates={[]}
+            modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
+            intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
+            onClose={nothing}
+          />
+        </Pane>
+        <Pane>
           <RoutineRunList
             routine={priceWatch}
             runs={{
@@ -2052,6 +2105,10 @@ function DetailsSection() {
             intents={roomIntents}
             onClose={nothing}
           />
+        </Pane>
+        <Pane>
+          {/* A member's AI ignores the room's Stop: Force stop, with why. */}
+          <RoomDetails room={forceStopRoom} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
           <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />
@@ -3241,7 +3298,14 @@ function UsageGallerySection() {
 /** A bot just created: its first turn has started and nothing is in its conversation yet. */
 const speakingFirst = {
   ...team.bots.moss,
-  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false, quietSince: null, typing: false },
+  state: {
+    _tag: "thinking",
+    since: SAMPLE_NOW,
+    stalled: false,
+    quietSince: null,
+    typing: false,
+    retrying: false,
+  },
   opening: true,
 } as const;
 

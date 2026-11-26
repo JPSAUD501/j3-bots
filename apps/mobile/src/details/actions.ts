@@ -29,6 +29,9 @@ export function useBotActions() {
     /** Stops the bot's work under way at once: whether the server took it. */
     stop: (bot: Bot): Promise<boolean> =>
       client.stopBot(bot.id).then((result) => result._tag === "done"),
+    /** Stop, for an AI that ignores it (`Bot.forceStop`): whether the server took it. */
+    forceStop: (bot: Bot): Promise<boolean> =>
+      client.forceStopBot(bot.id).then((result) => result._tag === "done"),
     freshStart: (bot: Bot) =>
       void client
         .freshStart(bot.id)
@@ -62,6 +65,12 @@ export function useRoomActions() {
     /** Stops the work addressed to the room, once the operator confirmed it: whether the server took it. */
     stop: (room: Room): Promise<boolean> =>
       client.stopRoom(room.id).then((result) => {
+        if (roomStopFailed(result)) say(t("room.stopFailed", { name: room.name }));
+        return result._tag === "done";
+      }),
+    /** Stop, for a member's AI that ignores the room's Stop: whether the server took it. */
+    forceStop: (room: Room): Promise<boolean> =>
+      client.forceStopRoom(room.id).then((result) => {
         if (roomStopFailed(result)) say(t("room.stopFailed", { name: room.name }));
         return result._tag === "done";
       }),

@@ -72,6 +72,13 @@ export const Room = Schema.Union([
      */
     work: RoomWorkState.pipe(Schema.withDecodingDefaultKey(Effect.succeed("none"))),
     /**
+     * A member's AI ignores the Stop of the room's work: the engine asked it to
+     * stop and it has not confirmed in time. Clients offer Force stop in place
+     * of the Stop under way while it is true (`room.forceStop`). False from a
+     * server that predates it.
+     */
+    forceStop: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    /**
      * The members answering now, in member order: those whose turn for the
      * room runs and those woken whose turn has yet to start. Empty unless
      * `work` is `running`, and from a server that does not send it.

@@ -1668,6 +1668,13 @@ function LiveShell({
         if (roomStopFailed(result) && stillPaired()) say(t("room.stopFailed", { name }));
       });
     },
+    forceStopBot: (botId) => void j3.forceStopBot(botId),
+    forceStopRoom: (roomId) => {
+      const name = roomOf(roomId)?.name ?? "";
+      void j3.forceStopRoom(roomId).then((result) => {
+        if (roomStopFailed(result) && stillPaired()) say(t("room.stopFailed", { name }));
+      });
+    },
     createBot: (draft) =>
       j3
         .createBot(draft)

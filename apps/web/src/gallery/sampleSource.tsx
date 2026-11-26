@@ -276,6 +276,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           stalled: false,
           quietSince: null,
           typing: false,
+          retrying: false,
         }),
       ),
     );
@@ -295,6 +296,27 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     const round = (rounds.get(roomId) ?? 0) + 1;
     rounds.set(roomId, round);
     return round;
+  };
+  /** The room's Stop: the sample's members work only for the room, so it ends whatever they run. */
+  const stopSampleRoom = (roomId: RoomId) => {
+    nextRound(roomId);
+    update((s) => {
+      const found = s.roster.find((i) => i._tag === "room" && i.room.id === roomId);
+      const members = found?._tag === "room" ? found.room.members : [];
+      return members.reduce(
+        (next, botId) =>
+          updateBot(next, botId, (bot) =>
+            bot.state._tag === "thinking" || bot.state._tag === "working"
+              ? setState({ _tag: "idle" })(bot)
+              : bot,
+          ),
+        updateRoom(s, roomId, (room) =>
+          room.status === "active"
+            ? { ...room, work: "none", answering: [], forceStop: false }
+            : room,
+        ),
+      );
+    });
   };
   /**
    * A room message as the server takes one: the members it mentions start at
@@ -353,6 +375,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           stalled: false,
           quietSince: null,
           typing: false,
+          retrying: false,
         })(working(left, { _tag: "idle" })(s)),
         () => woken,
       ),
@@ -575,27 +598,14 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
         e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
       ),
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
+    forceStopBot: (botId) =>
+      update((s) =>
+        updateBot(s, botId, (bot) => ({ ...bot, state: { _tag: "idle" }, forceStop: false })),
+      ),
     setBrowser: (bot, enabled) =>
       update((s) => updateBot(s, bot.id, (current) => ({ ...current, browser: enabled }))),
-    // The sample's members work only for the room, so its Stop ends whatever they run.
-    stopRoom: (roomId) => {
-      nextRound(roomId);
-      update((s) => {
-        const found = s.roster.find((i) => i._tag === "room" && i.room.id === roomId);
-        const members = found?._tag === "room" ? found.room.members : [];
-        return members.reduce(
-          (next, botId) =>
-            updateBot(next, botId, (bot) =>
-              bot.state._tag === "thinking" || bot.state._tag === "working"
-                ? setState({ _tag: "idle" })(bot)
-                : bot,
-            ),
-          updateRoom(s, roomId, (room) =>
-            room.status === "active" ? { ...room, work: "none", answering: [] } : room,
-          ),
-        );
-      });
-    },
+    stopRoom: (roomId) => stopSampleRoom(roomId),
+    forceStopRoom: (roomId) => stopSampleRoom(roomId),
     setRoutineEnabled: (routineId, enabled) =>
       update((s) => ({
         ...s,
@@ -643,9 +653,17 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           hidden: hidden ?? false,
           sectionId: null,
           state: canSpeak
-            ? { _tag: "thinking", since: now(), stalled: false, quietSince: null, typing: false }
+            ? {
+                _tag: "thinking",
+                since: now(),
+                stalled: false,
+                quietSince: null,
+                typing: false,
+                retrying: false,
+              }
             : { _tag: "idle" },
           settingsHeld: false,
+          forceStop: false,
           opening: true,
           suggestedReply: null,
           createdAt: now(),
@@ -672,6 +690,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           stalled: false,
           quietSince: null,
           typing: true,
+          retrying: false,
         });
         hello.forEach((text, index) => {
           const last = index === hello.length - 1;
@@ -853,6 +872,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 status: "active",
                 members: room.members,
                 work: "none",
+                forceStop: false,
                 answering: [],
                 memberWork: [],
               },

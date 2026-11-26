@@ -24,7 +24,7 @@ import {
   arrangeRoster,
   arrivalCounts,
   buildTimeline,
-  canStop,
+  botStop,
   liveTurn,
   offeredReply,
   openingHeld,
@@ -292,10 +292,14 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         target.focus();
         return true;
       }
-      case "stop":
-        if (item?._tag !== "bot" || !canStop(item.bot)) return false;
-        intents.stopBot(item.bot.id);
+      case "stop": {
+        if (item?._tag !== "bot") return false;
+        const stop = botStop(item.bot);
+        if (stop === "hidden") return false;
+        if (stop === "force") intents.forceStopBot(item.bot.id);
+        else intents.stopBot(item.bot.id);
         return true;
+      }
     }
   });
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -746,6 +750,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             headingId={detailsHeadingId}
             intents={{
               stop: () => intents.stopBot(bot.id),
+              forceStop: () => intents.forceStopBot(bot.id),
               show: () => intents.placeBot(bot.id, { hidden: false }),
               setRoutineEnabled: intents.setRoutineEnabled,
               openRoutine: intents.openRoutine,
@@ -774,6 +779,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             intents={{
               editRoom: () => intents.editRoom(room.id),
               stop: () => intents.stopRoom(room.id),
+              forceStop: () => intents.forceStopRoom(room.id),
               show: () => intents.placeRoom(room.id, { hidden: false }),
               archiveRoom: () => intents.archiveRoom(room.id),
               unarchiveRoom: () => intents.unarchiveRoom(room.id),
@@ -789,7 +795,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   }
 
   return (
-    <RosterProvider roster={rosterItems}>
+    <RosterProvider roster={rosterItems} engine={data.engine}>
       <BrowserProvider source={browser}>
         <AvatarConnection connected={data.connected}>
           <AppShell

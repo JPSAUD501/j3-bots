@@ -17,7 +17,7 @@ import {
   WorkImageId,
   WorkStepId,
 } from "./base.ts";
-import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
+import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
@@ -137,24 +137,48 @@ export const QuestionOption = Schema.Struct({
   description: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_000))),
   /** `recommended` marks the option the bot suggests; `destructive`, one that loses something. */
   style: Schema.Literals(["default", "recommended", "destructive"]),
+  /**
+   * What choosing the option would look like, as the harness's own question
+   * tool shows it beside the option: a sketch, a layout or a few lines of
+   * code, shown as written, in a fixed-width block. Absent for most options,
+   * and from a server that predates it.
+   */
+  preview: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
 });
 export type QuestionOption = typeof QuestionOption.Type;
 
-/** The most options one question shows. */
+/** The most options one question of `QuestionEntry.questions` holds. */
 export const MAX_QUESTION_OPTIONS = 6;
-/** The most questions one card holds. */
+/** The most questions `QuestionEntry.questions` holds. */
 export const MAX_CARD_QUESTIONS = 4;
 
-export const Question = Schema.Struct({
+const questionFields = {
   id: Label,
+  /**
+   * A few words naming what the question is about, shown over it, as the
+   * harness's own question tool gives one. Absent from a bot's `ask`, and from
+   * a server that predates it.
+   */
+  header: Schema.optionalKey(Label),
   prompt: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_000)),
-  options: Schema.Array(QuestionOption).check(Schema.isMaxLength(MAX_QUESTION_OPTIONS)),
   /** Whether a typed answer is accepted besides the options. */
   acceptsText: Schema.Boolean,
   /** Whether more than one option may be chosen. */
   multiple: Schema.Boolean,
+};
+
+export const Question = Schema.Struct({
+  ...questionFields,
+  options: Schema.Array(QuestionOption).check(Schema.isMaxLength(MAX_QUESTION_OPTIONS)),
 });
 export type Question = typeof Question.Type;
+
+/** A question with any number of options, as the harness's own question tool may ask one. */
+export const WholeQuestion = Schema.Struct({
+  ...questionFields,
+  options: Schema.Array(QuestionOption),
+});
+export type WholeQuestion = typeof WholeQuestion.Type;
 
 export const QuestionAnswer = Schema.Struct({
   optionIds: Schema.Array(Label),
@@ -182,7 +206,20 @@ export type QuestionAnswers = typeof QuestionAnswers.Type;
 export const QuestionEntry = Schema.TaggedStruct("question", {
   ...entry,
   origin: Schema.Literals(["ask", "engine"]),
+  /**
+   * The card's questions, within what every client shows: at most
+   * `MAX_CARD_QUESTIONS`, each with at most `MAX_QUESTION_OPTIONS` options.
+   * When `whole` is set, a single question that takes no answer, saying the
+   * app needs an update to answer it: what a client that predates `whole`
+   * shows, since one refuses a card past those limits.
+   */
   questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(MAX_CARD_QUESTIONS)),
+  /**
+   * An `engine` question past `questions`' limits, whole: more questions, or a
+   * question with more options. Clients show these in place of `questions`
+   * (`cardQuestions`), and the server takes answers to these.
+   */
+  whole: Schema.optionalKey(Schema.NonEmptyArray(WholeQuestion)),
   status: Schema.Union([
     Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
@@ -202,6 +239,11 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
   ]),
 });
 export type QuestionEntry = typeof QuestionEntry.Type;
+
+/** The questions a card asks and takes answers to: `whole` when it is set, else `questions`. */
+export const cardQuestions = (
+  entry: Pick<QuestionEntry, "questions" | "whole">,
+): readonly [WholeQuestion, ...Array<WholeQuestion>] => entry.whole ?? entry.questions;
 
 export const ApprovalDecision = Schema.Literals(["allow-once", "allow-session", "deny"]);
 export type ApprovalDecision = typeof ApprovalDecision.Type;
@@ -631,8 +673,16 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
     Schema.TaggedStruct("chain-stopped", {
       limit: Schema.Literals(["hops", "fan-out", "room"]),
     }),
-    /** A turn failed. Retryable with `notice.retry`. */
-    Schema.TaggedStruct("turn-failed", { failure }),
+    /**
+     * A turn failed. Retryable with `notice.retry`. `details` is what the
+     * engine said of the failure, technical and scrubbed of secrets, which
+     * clients show only behind "Details". Absent when the engine said
+     * nothing, and from a server that predates it.
+     */
+    Schema.TaggedStruct("turn-failed", {
+      failure,
+      details: Schema.optionalKey(FailureDetails),
+    }),
     /**
      * Urgent teammate messages from `senders` never reached this bot: J3 Bots
      * gave up waking it with them. Retryable with `notice.retry`.
@@ -899,7 +949,7 @@ export const entryText = (entry: Entry): string => {
     case "handoff":
       return entry.text;
     case "question":
-      return entry.questions[0].prompt;
+      return cardQuestions(entry)[0].prompt;
     case "approval":
       return entry.action;
     case "secret-request":

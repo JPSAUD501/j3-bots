@@ -2,16 +2,17 @@
 import {
   type CommandId,
   Conflict,
+  cardQuestions,
   type Entry,
   EntryId,
   Invalid,
   NotFound,
-  type Question,
   type QuestionAnswers,
   type QuestionEntry,
   RoomId,
   type ConnectorAskEntry,
   type SecretAskEntry,
+  type WholeQuestion,
 } from "@j3-bots/contracts";
 import {
   Engine,
@@ -108,7 +109,7 @@ const answerKey = (entryId: EntryId) => IdempotencyKey.make(`answer:${entryId}`)
  * reaching the turn. An `ask` question takes both.
  */
 const fits = (
-  questions: ReadonlyArray<Question>,
+  questions: ReadonlyArray<WholeQuestion>,
   answers: QuestionAnswers,
   origin: QuestionEntry["origin"],
 ): boolean => {
@@ -146,7 +147,7 @@ const responseFor = (
       // The engine takes no dismissal of a question that holds a turn: it is
       // answered, or the turn is stopped.
       if (answer._tag === "dismiss") return "not-dismissible";
-      return answer._tag === "question" && fits(card.questions, answer.answers, card.origin)
+      return answer._tag === "question" && fits(cardQuestions(card), answer.answers, card.origin)
         ? { _tag: "question", answers: answer.answers }
         : "invalid";
     case "secret-request":
@@ -239,7 +240,7 @@ export const layer = Layer.effect(
         return yield* new Conflict({ reason: "card-closed" });
       }
       if (answer._tag === "approval") return yield* new Invalid({ reason: "answer" });
-      if (answer._tag === "question" && !fits(card.questions, answer.answers, card.origin)) {
+      if (answer._tag === "question" && !fits(cardQuestions(card), answer.answers, card.origin)) {
         return yield* new Invalid({ reason: "answer" });
       }
       if (card.author._tag !== "bot") {

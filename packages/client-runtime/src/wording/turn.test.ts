@@ -14,6 +14,7 @@ const working = (activity: string | null, stalled = false): BotState => ({
   stalled,
   quietSince: stalled ? at(started) : null,
   typing: false,
+  retrying: false,
   activity,
   tool: null,
   littleOnes: 0,

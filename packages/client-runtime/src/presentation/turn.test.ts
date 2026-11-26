@@ -12,6 +12,7 @@ const scout = bot("Scout", {
   stalled: false,
   quietSince: null,
   typing: false,
+  retrying: false,
 });
 const asScout = { _tag: "bot", botId: scout.id } as const;
 
@@ -60,6 +61,7 @@ describe("liveTurn", () => {
       stalled: true,
       quietSince: at(started),
       typing: false,
+      retrying: false,
       activity: null,
       tool: null,
       littleOnes: 0,

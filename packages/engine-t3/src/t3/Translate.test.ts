@@ -39,7 +39,11 @@ import {
 } from "./Translate.ts";
 
 /** These turns run on no provider of J3 Bots's: their model is not what is tested. */
-const noProviders: Providers = { modelOf: () => null, echoesSteers: () => false };
+const noProviders: Providers = {
+  modelOf: () => null,
+  echoesSteers: () => false,
+  redact: (text) => text,
+};
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
 
@@ -1768,7 +1772,11 @@ describe("what a running turn takes from outside it", () => {
   // `59651c1`, `Orchestrator.ts` L6442-6470, `ClaudeAdapterV2.ts` L14061,
   // L9366).
   it("tells a steer taken on Claude Code only once Claude echoed it", () => {
-    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    const claude: Providers = {
+      modelOf: () => null,
+      echoesSteers: () => true,
+      redact: (text) => text,
+    };
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
     const { view } = replacement(mirror, false, at, new Map(), claude);
@@ -1790,7 +1798,11 @@ describe("what a running turn takes from outside it", () => {
   });
 
   it("tells no steer taken on Claude Code from a snapshot that shows it handed over", () => {
-    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    const claude: Providers = {
+      modelOf: () => null,
+      echoesSteers: () => true,
+      redact: (text) => text,
+    };
     // The snapshot falls between the engine's hand-over and Claude's hold.
     const mirror = mirrorOf(
       Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
@@ -1843,6 +1855,7 @@ describe("what a running turn takes from outside it", () => {
           ? { providerId, modelId: ModelId.make(selection.model) }
           : null,
       echoesSteers: () => false,
+      redact: (text) => text,
     };
     const mirror = emptyMirror();
     const { view } = replacement(mirror, false, at, new Map(), providers);
@@ -2046,5 +2059,211 @@ describe("a turn's plan and little ones", () => {
       ["Review the diff"],
     );
     assert.deepStrictEqual(works(diff(mirror, view, at, noProviders)), []);
+  });
+});
+
+describe("a provider the engine retries", () => {
+  // The engine records a failure it retries as an error item with the attempt
+  // it is on, running while it retries, completed once an attempt succeeds,
+  // failed once it gives up (**Read** at `59651c1`, T3 Code's `session-logic.ts`,
+  // `providerErrorPresentation`).
+  const retryItem = (status: string) =>
+    item({
+      id: "item-retry",
+      type: "error",
+      status,
+      failure: {
+        class: "transport_error",
+        message: "socket hang up",
+        code: null,
+        retryable: true,
+      },
+      retry: { attempt: 2, maxAttempts: 5, retryDelayMs: 4000 },
+    });
+  const retrying = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((told) => (told._tag === "turn-retrying" ? [told.retrying] : []));
+
+  it("tells the turn retrying while the engine retries, and not once an attempt succeeds", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, retryItem("running"));
+    assert.deepStrictEqual(retrying(diff(mirror, view, at, noProviders)), [true]);
+    assert.isTrue(
+      replacement(mirror, false, at, new Map(), noProviders).event.openTurns[0]?.retrying,
+    );
+
+    applyEvent(mirror, retryItem("completed"));
+    assert.deepStrictEqual(retrying(diff(mirror, view, at, noProviders)), [false]);
+    // A recovered failure leaves no trace in how the turn ends.
+    applyEvent(mirror, run("completed", 1));
+    const ended = diff(mirror, view, at, noProviders).find((told) => told._tag === "turn-finished");
+    assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
+      _tag: "completed",
+    });
+  });
+
+  it("ends the turn as unreachable, with the engine's words scrubbed, once it gives up", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, retryItem("running"));
+    diff(mirror, view, at, noProviders);
+    applyEvent(
+      mirror,
+      item({
+        id: "item-retry",
+        type: "error",
+        status: "failed",
+        failure: {
+          class: "transport_error",
+          message: "connect failed: Authorization: Bearer abcdefghijklmnop1234",
+          code: "ECONNRESET",
+          retryable: false,
+        },
+        retry: { attempt: 5, maxAttempts: 5, retryDelayMs: null },
+      }),
+    );
+    applyEvent(mirror, run("failed", 1));
+    const told = diff(mirror, view, at, noProviders);
+    // The turn's end ends its retrying: no `turn-retrying` is told after it.
+    assert.deepStrictEqual(retrying(told), []);
+    const ended = told.find((each) => each._tag === "turn-finished");
+    assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
+      _tag: "failed",
+      failure: "unreachable",
+      retryAt: null,
+      details: "transport_error (ECONNRESET): connect failed: Authorization: Bearer [redacted]",
+    });
+  });
+
+  it("ends a turn Claude's API refused for its sign-in as signed out, without the key it was given", () => {
+    const key = "gw_live_7Qm2ZxPa9LrT4kVb8NcY1sWd3Hj";
+    const given: Providers = {
+      ...noProviders,
+      redact: (text) => text.split(key).join("[redacted]"),
+    };
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), given);
+    applyEvent(mirror, run("running", 1));
+    diff(mirror, view, at, given);
+    applyEvent(
+      mirror,
+      item({
+        id: "item-401",
+        type: "error",
+        status: "failed",
+        failure: {
+          class: "provider_error",
+          message: `API Error: 401 Incorrect API key provided: ${key}`,
+          code: "api_error_401",
+          retryable: null,
+        },
+      }),
+    );
+    applyEvent(mirror, run("failed", 1));
+    const ended = diff(mirror, view, at, given).find((told) => told._tag === "turn-finished");
+    assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
+      _tag: "failed",
+      failure: "permission-error",
+      retryAt: null,
+      details:
+        "provider_error (api_error_401): API Error: 401 Incorrect API key provided: [redacted]",
+    });
+  });
+});
+
+describe("a stop the provider ignores", () => {
+  const interrupt = (fields: Record<string, unknown>) =>
+    item({
+      id: "item-interrupt",
+      type: "run_interrupt_request",
+      status: "completed",
+      message: "Stop requested",
+      ...fields,
+    });
+  const ignored = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((told) => (told._tag === "stop-ignored" ? [told.turnId] : []));
+
+  it("is told once the engine marks the stop unresponsive, and cleared once it is answered", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, interrupt({}));
+    // Asked, and not yet late: nothing to force.
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), []);
+
+    applyEvent(mirror, interrupt({ unresponsiveAt: at }));
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [TurnId.make("run-1")]);
+    assert.strictEqual(
+      replacement(mirror, false, at, new Map(), noProviders).event.stopIgnored,
+      TurnId.make("run-1"),
+    );
+
+    applyEvent(
+      mirror,
+      item({
+        id: "item-interrupt-result",
+        type: "run_interrupt_result",
+        status: "completed",
+        message: "Stopped",
+      }),
+    );
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [null]);
+  });
+
+  it("stays told on a turn that ended while the work it left ignores the stop", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, interrupt({ unresponsiveAt: at }));
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [TurnId.make("run-1")]);
+    // A newer turn is the one a stop acts on: the old one's ignored stop no longer counts.
+    applyEvent(mirror, run("running", 2));
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [null]);
+  });
+});
+
+describe("a question past what a card used to hold", () => {
+  const many = Array.from({ length: 6 }, (_, index) => ({
+    id: `q${index}`,
+    header: `Part ${index + 1}`,
+    question: `Question ${index + 1}?`,
+    options: Array.from({ length: 8 }, (_, option) => ({
+      label: `Option ${option + 1}`,
+      description: "A choice",
+      ...(option === 0 ? { preview: "+-----+\n| box |\n+-----+" } : {}),
+    })),
+  }));
+
+  it("opens whole, with each question's header and each option's preview", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(
+      mirror,
+      item({
+        id: "item-ask",
+        type: "user_input_request",
+        status: "waiting",
+        requestId: "request-1",
+        questions: many,
+      }),
+    );
+    const opened = diff(mirror, view, at, noProviders).find(
+      (told) => told._tag === "request-opened",
+    );
+    assert(opened?._tag === "request-opened" && opened.open.request._tag === "question");
+    const { questions } = opened.open.request;
+    assert.strictEqual(questions.length, 6);
+    assert.strictEqual(questions[5]?.options.length, 8);
+    assert.strictEqual(questions[0].header, "Part 1");
+    assert.strictEqual(questions[0].options[0]?.preview, "+-----+\n| box |\n+-----+");
+    assert.notProperty(questions[0].options[1], "preview");
+    // Answers map back to the engine's own keys, past the old limits too.
+    assert.deepStrictEqual(
+      engineAnswersOf(many, answers({ "question-6": { optionIds: ["option-8"], text: null } })),
+      { q5: "Option 8" },
+    );
   });
 });

@@ -26,6 +26,11 @@ export interface PresentationContext extends TimeContext {
   readonly botName: (id: BotId) => string | null;
   /** A room's name as it is now, archived or not, or null if it no longer exists. */
   readonly roomName: (id: RoomId) => string | null;
+  /**
+   * What the operator calls the AI the bot thinks with, such as Claude
+   * (`aiNameOf`), or null when that is not known.
+   */
+  readonly aiName: (bot: Bot) => string | null;
 }
 
 /**
@@ -64,9 +69,16 @@ function rosterUsageLimitText(resetsAt: DateTime.Utc | null, ctx: TimeContext): 
     : t("roster.usageLimitUntil", { when: timeInSentence(resetsAt, ctx) });
 }
 
+/**
+ * Why a bot's work did not finish, in plain words, with what the operator can
+ * do about it. `ai` names the bot's AI when it is known: a notice does not say
+ * whose turn it was. The engine's own words stay behind Details
+ * (`failureDetails`).
+ */
 function failureText(
   failure: FailureClass,
   retryAt: DateTime.Utc | null,
+  ai: string | null,
   ctx: PresentationContext,
 ): string {
   const { t } = ctx.i18n;
@@ -74,9 +86,13 @@ function failureText(
     case "usage-limit":
       return usageLimitText(retryAt, ctx);
     case "provider-error":
-      return t("failure.providerError");
+      return ai === null ? t("failure.providerErrorUnnamed") : t("failure.providerError", { ai });
     case "permission-error":
-      return t("failure.permissionError");
+      return ai === null
+        ? t("failure.permissionErrorUnnamed")
+        : t("failure.permissionError", { ai });
+    case "unreachable":
+      return ai === null ? t("failure.unreachableUnnamed") : t("failure.unreachable", { ai });
     case "engine-unavailable":
       return t("failure.engineUnavailable");
     case "session-lost":
@@ -169,7 +185,7 @@ export function noticeText(
           return t("notice.chainRoom");
       }
     case "turn-failed":
-      return failureText(notice.failure, null, ctx);
+      return failureText(notice.failure, null, null, ctx);
     case "handoff-failed": {
       const nameOf = (id: BotId) => ctx.botName(id) ?? t("bot.unknown");
       const [first, ...rest] = notice.senders;
@@ -281,12 +297,12 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
           text:
             state.failure === "usage-limit"
               ? rosterUsageLimitText(state.retryAt, ctx)
-              : failureText(state.failure, state.retryAt, ctx),
+              : failureText(state.failure, state.retryAt, ctx.aiName(item.bot), ctx),
           tone: "blocked",
         };
       case "thinking":
       case "working":
-        return turnUnderWayLine(state, ctx);
+        return turnUnderWayLine(item.bot, state, ctx);
       case "idle":
         if (lastEntry === null && item.bot.opening) {
           return { text: t("roster.gettingReady"), tone: "default" };
@@ -339,11 +355,20 @@ export function heldHelloText(name: string, hold: OpeningHold, ctx: TimeContext)
  * in a first contact, quiet long enough to look stalled, or the step it is on.
  */
 function turnUnderWayLine(
+  bot: Bot,
   state: Extract<Bot["state"], { readonly _tag: "thinking" | "working" }>,
   ctx: PresentationContext,
 ): StatusLine {
   const { t } = ctx.i18n;
   if (state.typing) return { text: t("presence.typing"), tone: "default" };
+  // A retry that works leaves no trace: the line goes back to the turn's step.
+  if (state.retrying) {
+    const ai = ctx.aiName(bot);
+    return {
+      text: ai === null ? t("presence.retryingUnnamed") : t("presence.retrying", { ai }),
+      tone: "waiting",
+    };
+  }
   if (state.stalled) return stalledLine(state.quietSince, ctx);
   return state._tag === "thinking"
     ? { text: t("presence.thinking"), tone: "default" }
@@ -361,11 +386,14 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
   switch (state._tag) {
     case "thinking":
     case "working":
-      return turnUnderWayLine(state, ctx);
+      return turnUnderWayLine(bot, state, ctx);
     case "waiting":
       return { text: t("presence.waiting"), tone: "waiting" };
     case "blocked":
-      return { text: failureText(state.failure, state.retryAt, ctx), tone: "blocked" };
+      return {
+        text: failureText(state.failure, state.retryAt, ctx.aiName(bot), ctx),
+        tone: "blocked",
+      };
     case "idle":
       return null;
   }

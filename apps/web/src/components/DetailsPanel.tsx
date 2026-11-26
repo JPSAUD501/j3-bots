@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactElement, type ReactNode, type RefObject } from "react";
 import {
-  canStop,
+  botStop,
   connectorsOf,
   roomStop,
   type Teammate,
@@ -191,11 +191,15 @@ const stopRow = cn(
   "items-center aria-disabled:text-muted-foreground aria-disabled:hover:bg-transparent",
 );
 
-function StopRowContent({ label, end }: { label: string; end?: ReactNode }) {
+/** The Stop row: its label, and, for a Force stop, the one line that says why it is offered. */
+function StopRowContent({ label, why, end }: { label: string; why?: string; end?: ReactNode }) {
   return (
     <>
       <SquareIcon aria-hidden className="size-3.5 shrink-0 fill-current text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm font-medium">{label}</span>
+        {why !== undefined && <span className="text-xs text-muted-foreground">{why}</span>}
+      </span>
       {end}
     </>
   );
@@ -218,6 +222,8 @@ export interface BotDetailsIntents {
   readonly editProfile?: () => void;
   /** Stops the bot's work under way at once, as its keyboard shortcut does. */
   readonly stop: () => void;
+  /** Stop, for an AI that ignores it (`botStop` is `force`), as the shortcut then does. */
+  readonly forceStop: () => void;
   /** Puts a hidden bot back in the roster's list. */
   readonly show: () => void;
   readonly freshStart: () => void;
@@ -277,6 +283,7 @@ export function BotDetails({
   const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, i18n);
   const stopRef = useFocusAfterStop(headingRef);
+  const stop = botStop(bot);
   return (
     <PanelFrame
       title={t("conversation.details")}
@@ -312,17 +319,18 @@ export function BotDetails({
         }
       />
 
-      {canStop(bot) && (
+      {stop !== "hidden" && (
         <StopPlace>
           <button
             ref={stopRef}
             type="button"
-            onClick={intents.stop}
+            onClick={stop === "force" ? intents.forceStop : intents.stop}
             aria-keyshortcuts={stopShortcut.aria}
             className={stopRow}
           >
             <StopRowContent
-              label={t("details.stop")}
+              label={stop === "force" ? t("details.forceStop") : t("details.stop")}
+              {...(stop === "force" ? { why: t("details.forceStop.why") } : {})}
               end={
                 <Kbd aria-hidden className="pointer-coarse:hidden">
                   {stopShortcut.label}
@@ -672,6 +680,8 @@ export interface RoomDetailsIntents {
   readonly editRoom: () => void;
   /** Stops the work addressed to the room; its Stop asks first. */
   readonly stop: () => void;
+  /** Stop, for a member's AI that ignores the room's Stop (`roomStop` is `force`). */
+  readonly forceStop: () => void;
   /** Puts a hidden room back in the roster's list. */
   readonly show: () => void;
   /** Resolves once the server answered, whatever it said. */
@@ -742,7 +752,15 @@ export function RoomDetails({
           )
         }
       />
-      {stopping !== "hidden" && (
+      {stopping === "force" && (
+        <StopPlace>
+          {/* The operator confirmed the Stop already: Force stop goes at once. */}
+          <button ref={stopRef} type="button" onClick={intents.forceStop} className={stopRow}>
+            <StopRowContent label={t("room.forceStop")} why={t("room.forceStop.why", { name })} />
+          </button>
+        </StopPlace>
+      )}
+      {(stopping === "offered" || stopping === "stopping") && (
         <StopPlace>
           {/* One button through the whole Stop, so focus stays on it once the question closes. */}
           <Confirm
