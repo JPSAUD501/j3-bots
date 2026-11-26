@@ -35,32 +35,12 @@ const keyOf = (item: RosterItem | RosterItemKey) =>
 export const needsOperator = (item: RosterItem) =>
   item.unread || (item._tag === "bot" && item.bot.state._tag === "waiting");
 
-const pinned = (item: RosterItem) => (item._tag === "bot" ? item.bot.pinned : item.room.pinned);
-
-const nameOf = (item: RosterItem) => (item._tag === "bot" ? item.bot.profile.name : item.room.name);
-
 /**
  * Whether the bot or room is hidden: out of the roster's rows, among the
  * hidden conversations, still running and notifying.
  */
 export const isHidden = (item: RosterItem): boolean =>
   item._tag === "bot" ? item.bot.hidden : item.room.hidden;
-
-/**
- * The roster as every client lists it: hidden bots and rooms left out, pinned
- * rows on top, then the rows that need the operator, then the most recently
- * active.
- */
-export const rosterRows = (items: ReadonlyArray<RosterItem>): ReadonlyArray<RosterItem> =>
-  items
-    .filter((item) => !isHidden(item))
-    .toSorted(
-      (a, b) =>
-        Number(pinned(b)) - Number(pinned(a)) ||
-        Number(needsOperator(b)) - Number(needsOperator(a)) ||
-        (b.lastActivityAt?.epochMilliseconds ?? 0) - (a.lastActivityAt?.epochMilliseconds ?? 0) ||
-        nameOf(a).localeCompare(nameOf(b)),
-    );
 
 /** Where a bot sits in the roster. Fields left out keep their value. */
 export interface BotPlacement {

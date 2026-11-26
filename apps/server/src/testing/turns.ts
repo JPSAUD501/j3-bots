@@ -17,6 +17,7 @@ import {
 } from "@j3-bots/contracts";
 import { type IdempotencyKey, SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -129,11 +130,15 @@ export const createBot = (name: string, model?: ModelChoice) =>
 /** How long `eventually` waits for a change before it reads again anyway, in real time. */
 const POLL_INTERVAL = "20 millis";
 
+/** The clock of the wall, for a wait a test clock must not hold back. */
+const wallClock = Clock.Clock.defaultValue();
+
 /**
  * Re-reads `read` each time the server commits a change a client could see,
  * until it finds a value. Every event the observer applies and every write to
  * an entry signals one; state written without one is read again after a short
- * real-time interval, which the test clock does not hold back.
+ * real-time interval, which a test clock does not hold back. A client test
+ * runs on the wall clock, without one.
  */
 export const eventually = <A, E, R>(read: Effect.Effect<Option.Option<A>, E, R>) =>
   Effect.scoped(
@@ -144,7 +149,7 @@ export const eventually = <A, E, R>(read: Effect.Effect<Option.Option<A>, E, R>)
         if (Option.isSome(found)) return found.value;
         yield* Effect.raceFirst(
           Effect.asVoid(PubSub.take(changes)),
-          TestClock.withLive(Effect.sleep(POLL_INTERVAL)),
+          Effect.sleep(POLL_INTERVAL).pipe(Effect.provideService(Clock.Clock, wallClock)),
         );
       }
     }),
@@ -543,6 +548,13 @@ export const noticesOf = (botId: BotId) =>
 
 let calls = 0;
 
+/** What the bot gives its `ask` tool: a JSON object, as every tool's arguments. */
+type AskArguments = {
+  readonly prompt: string;
+  readonly options: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+  readonly allow_custom: boolean;
+};
+
 /**
  * The bot asks the operator, in its running turn, which region to deploy to;
  * with `allowCustom`, a typed answer is taken too.
@@ -553,12 +565,29 @@ export const askRegion = (
   turnId: TurnId,
   allowCustom = false,
 ) =>
+  ask(botId, sessionId, turnId, {
+    prompt: "Which region?",
+    options: [{ label: "Europe", value: "eu-west-1" }],
+    allow_custom: allowCustom,
+  });
+
+/**
+ * The bot asks the operator, in the turn it runs now, to pick one of
+ * `labels`: the card its `ask` tool raises.
+ */
+export const botAsks = (botId: BotId, prompt: string, labels: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const args = {
-      prompt: "Which region?",
-      options: [{ label: "Europe", value: "eu-west-1" }],
-      allow_custom: allowCustom,
-    };
+    const sessionId = yield* engineSession(botId);
+    const turnId = yield* nextTurn(botId);
+    return yield* ask(botId, sessionId, turnId, {
+      prompt,
+      options: labels.map((label) => ({ label, value: label.toLowerCase() })),
+      allow_custom: false,
+    });
+  });
+
+const ask = (botId: BotId, sessionId: SessionId, turnId: TurnId, args: AskArguments) =>
+  Effect.gen(function* () {
     yield* (yield* TestEngineControl).toolCall({
       sessionId,
       turnId,

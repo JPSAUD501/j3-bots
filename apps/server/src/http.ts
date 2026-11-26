@@ -6,6 +6,7 @@ import {
   DESKTOP_APP_ORIGINS,
   HTTP_PATHS,
   Invalid,
+  J3Rpcs,
   MAX_ATTACHMENT_SIZE,
   NotAuthenticated,
   PairRequest,
@@ -298,7 +299,7 @@ export const routes = Layer.mergeAll(
 /** Every route, the RPC and media sockets and the web client: what clients are served. */
 export const app = Layer.mergeAll(
   routes,
-  RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers),
+  RpcSocket.layer(J3Rpcs, Rpc.handlers),
   MediaSocket.route,
   WebClient.layer,
 );

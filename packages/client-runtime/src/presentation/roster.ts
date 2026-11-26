@@ -73,27 +73,39 @@ export const rosterTarget = (key: RosterItemKey): EntryTarget =>
 
 const isPinned = (item: RosterItem) => (item._tag === "bot" ? item.bot.pinned : item.room.pinned);
 
+const createdAtOf = (item: RosterItem) =>
+  item._tag === "bot" ? item.bot.createdAt : item.room.createdAt;
+
+/** Newest activity first; a row with none yet after every row with some. */
+const byActivity = (a: RosterItem, b: RosterItem): number => {
+  if (a.lastActivityAt === null || b.lastActivityAt === null) {
+    if (a.lastActivityAt === b.lastActivityAt) return 0;
+    return a.lastActivityAt === null ? 1 : -1;
+  }
+  return DateTime.Order(b.lastActivityAt, a.lastActivityAt);
+};
+
+/** Bots before rooms, each by id, in code-unit order as the server's database sorts them. */
+const byKey = (a: RosterItem, b: RosterItem): number => {
+  const [x, y] = [rosterKeyText(rosterKeyOf(a)), rosterKeyText(rosterKeyOf(b))];
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 /**
- * Pinned rows first, then rows that need the operator, then the most recently
- * active. This is the web roster's order, and not yet `rosterRows`': that one
- * also leaves hidden rows out and breaks a tie by name, where this keeps the
- * order the rows came in. Issue #54 merges the two into one order.
+ * The roster's order, the server's own, which every client lists: pinned rows
+ * first, then rows that need the operator, then the most recently active,
+ * then the longest there. Hidden rows keep their place in it: arranging the
+ * roster (`arrangeRoster`) and searching it (`filterRoster`) set them apart.
  */
 export function orderRoster(items: ReadonlyArray<RosterItem>): RosterItem[] {
-  const recency = (item: RosterItem) =>
-    item.lastActivityAt === null ? -Infinity : DateTime.toEpochMillis(item.lastActivityAt);
-  return items
-    .map((item) => ({
-      item,
-      pinned: isPinned(item),
-      needs: needsOperator(item),
-      at: recency(item),
-    }))
-    .sort(
-      (a, b) =>
-        Number(b.pinned) - Number(a.pinned) || Number(b.needs) - Number(a.needs) || b.at - a.at,
-    )
-    .map(({ item }) => item);
+  return items.toSorted(
+    (a, b) =>
+      Number(isPinned(b)) - Number(isPinned(a)) ||
+      Number(needsOperator(b)) - Number(needsOperator(a)) ||
+      byActivity(a, b) ||
+      DateTime.Order(createdAtOf(a), createdAtOf(b)) ||
+      byKey(a, b),
+  );
 }
 
 /** A bot's roster item. */

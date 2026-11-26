@@ -60,13 +60,18 @@ const names = (items: ReadonlyArray<RosterItem>) =>
   items.map((i) => (i._tag === "bot" ? i.bot.profile.name : i.room.name));
 
 describe("orderRoster", () => {
-  it("puts pinned rows first, then rows that need the operator, then the most recent", () => {
+  it("puts pinned rows first, then rows that need the operator, then the most recent, then the longest there", () => {
     const items = [
       row(bot("Quiet")),
       row(bot("Recent"), preview("2026-11-20T14:00:00Z")),
+      row(
+        bot("Newcomer", { _tag: "idle" }, { createdAt: at("2026-03-01T00:00:00Z") }),
+        preview("2026-11-20T09:00:00Z"),
+      ),
       row(bot("Older"), preview("2026-11-20T09:00:00Z")),
       row(bot("Unread"), preview("2026-11-19T09:00:00Z"), true),
       row(bot("Asking", { _tag: "waiting", entryId: EntryId.make("ask"), since: null })),
+      row(bot("Away", { _tag: "idle" }, { hidden: true }), preview("2026-11-20T10:00:00Z")),
       row(bot("Pinned", { _tag: "idle" }, { pinned: true })),
     ];
     expect(names(orderRoster(items))).toEqual([
@@ -74,7 +79,9 @@ describe("orderRoster", () => {
       "Unread",
       "Asking",
       "Recent",
+      "Away",
       "Older",
+      "Newcomer",
       "Quiet",
     ]);
   });

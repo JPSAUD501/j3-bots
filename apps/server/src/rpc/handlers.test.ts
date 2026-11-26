@@ -5,6 +5,7 @@ import {
   Conflict,
   type Device,
   type DeviceId,
+  J3Rpcs,
   NotFound,
   ProviderId,
   PushToken,
@@ -17,13 +18,13 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import { CurrentDevice } from "../auth/DeviceAuth.ts";
 import { Devices } from "../devices/Devices.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { handlers, ServedRpcs } from "./handlers.ts";
+import { handlers } from "./handlers.ts";
 
-type Client = RpcClient.RpcClient<RpcGroup.Rpcs<typeof ServedRpcs>>;
+type Client = RpcClient.RpcClient<RpcGroup.Rpcs<typeof J3Rpcs>>;
 
 /** Runs `use` with a client of a socket that `deviceId` opened. */
 const asDevice = <A, E, R>(deviceId: DeviceId, use: (client: Client) => Effect.Effect<A, E, R>) =>
-  RpcTest.makeClient(ServedRpcs).pipe(
+  RpcTest.makeClient(J3Rpcs).pipe(
     Effect.flatMap(use),
     Effect.scoped,
     Effect.provide(handlers),

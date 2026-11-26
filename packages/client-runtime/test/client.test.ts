@@ -7,6 +7,7 @@ import {
   DeviceToken,
   type Entry,
   type EntryId,
+  type QuestionEntry,
   type EntryTarget,
   HTTP_PATHS,
   J3Rpcs,
@@ -26,13 +27,14 @@ import {
   ServerInfo,
   MAX_USAGE_TURNS,
   USAGE_PERIOD,
-  type UsageTurn,
 } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -43,7 +45,6 @@ import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -77,9 +78,10 @@ import { USAGE_PAGE, Usage } from "../src/stores/Usage.ts";
 import { SignOut } from "../src/intents/SignOut.ts";
 import * as TestPlatform from "./platform.ts";
 
-// The real server's routes, socket and part-1 handlers, over the in-memory
-// engine and a temporary database. The RPCs it does not serve yet are answered
-// by the fakes below, which keep the contract: a command id is applied once.
+// The real server's routes, socket and handlers, over the in-memory engine and
+// a temporary database. The taps below wrap a few of its handlers, so a test
+// can watch a call, hold it or refuse it at an exact point; the server's own
+// handler still answers every call a tap lets through.
 
 /** A view a socket reported, with the device the socket belongs to. */
 interface ReportedView {
@@ -87,147 +89,105 @@ interface ReportedView {
   readonly target: EntryTarget | null;
 }
 
-/** What the fakes record, and a gate that holds them until the test opens it. */
-class Fakes extends Context.Service<
-  Fakes,
+/** What the taps record, and a gate that holds calls until the test opens it. */
+class Taps extends Context.Service<
+  Taps,
   {
     readonly gate: Latch.Latch;
     /** Every `message.send` the server received, by command id, as it arrives. */
     readonly sends: Queue.Queue<CommandId>;
     /** Every `card.answer` the server received. */
     readonly answers: Queue.Queue<CommandId>;
-    /** The `card.answer` commands applied, on any socket. */
-    readonly answered: Set<CommandId>;
     /** The entry each `message.send` command made, on any socket. */
     readonly applied: Map<CommandId, EntryId>;
     /** Texts `message.send` refuses, as the server refuses a message to a bot it no longer has. */
     readonly refusing: Set<string>;
     /** Every view a socket reported, with the device the socket belongs to. */
     readonly views: Queue.Queue<ReportedView>;
-    /** The turns `usage.turns` answers from, newest first, and the moment the server reads them at. */
-    readonly turns: { all: Array<UsageTurn>; readAt: DateTime.Utc };
+    /** The moment the server read the turns at, in its last answer to `usage.turns`. */
+    readonly turnsRead: { at: DateTime.Utc | null };
     /** How many of the next `usage.turns` reads fail, as the server fails one that breaks. */
     readonly failingReads: { count: number };
     /** How many of the next `usage.turns` reads never answer. */
     readonly silentReads: { count: number };
+    /** How many of the next `bot.freshStart` calls fail, as the server fails one that breaks. */
+    readonly failingFreshStarts: { count: number };
   }
->()("@j3-bots/client-runtime/test/client.test/Fakes") {}
+>()("@j3-bots/client-runtime/test/client.test/Taps") {}
 
-const fakes = Layer.effect(
-  Fakes,
+const taps = Layer.effect(
+  Taps,
   Effect.gen(function* () {
-    return Fakes.of({
+    return Taps.of({
       gate: yield* Latch.make(true),
       sends: yield* Queue.unbounded<CommandId>(),
       answers: yield* Queue.unbounded<CommandId>(),
-      answered: new Set(),
       applied: new Map(),
       refusing: new Set(),
       views: yield* Queue.unbounded<ReportedView>(),
-      turns: { all: [], readAt: DateTime.makeUnsafe(0) },
+      turnsRead: { at: null },
       failingReads: { count: 0 },
       silentReads: { count: 0 },
+      failingFreshStarts: { count: 0 },
     });
   }),
 );
 
-const notFaked = () => Effect.die("Not faked");
+/** Whether a handler gave its reply for later, as a handler may. */
+const isLater = <A, E>(answer: A | Deferred.Deferred<A, E>): answer is Deferred.Deferred<A, E> =>
+  Deferred.isDeferred(answer);
 
-const unserved = Layer.mergeAll(
+/** What a handler answered: its reply, now or once it gives it. */
+const replied = <A, E>(answer: A | Deferred.Deferred<A, E>): Effect.Effect<A, E> =>
+  isLater(answer) ? Deferred.await(answer) : Effect.succeed(answer);
+
+const tapped = Layer.mergeAll(
   J3Rpcs.toLayerHandler(
     "message.send",
     Effect.gen(function* () {
-      const { gate, sends, applied, refusing } = yield* Fakes;
-      const entries = yield* Server.Entries;
-      const files = yield* Server.Attachments;
-      const once = Semaphore.makeUnsafe(1);
-      return ({ commandId, target, text, attachments, attachmentOffsets, mentions }) =>
+      const { gate, sends, applied, refusing } = yield* Taps;
+      const send = yield* J3Rpcs.accessHandler("message.send");
+      return (input, options) =>
         Effect.gen(function* () {
-          yield* Queue.offer(sends, commandId);
+          yield* Queue.offer(sends, input.commandId);
           yield* gate.await;
-          if (refusing.has(text)) return yield* new NotFound({ resource: "bot" });
-          return yield* once.withPermits(1)(
-            Effect.gen(function* () {
-              const known = applied.get(commandId);
-              if (known !== undefined) return known;
-              const stored = yield* Effect.forEach(attachments, (id) => files.open(id));
-              const entry = yield* entries.append({
-                target,
-                commandId,
-                entry: {
-                  _tag: "message",
-                  author: { _tag: "operator" },
-                  text,
-                  attachments: stored.flatMap((file) =>
-                    Option.isSome(file) ? [file.value.attachment] : [],
-                  ),
-                  ...(attachmentOffsets === undefined ? {} : { attachmentOffsets }),
-                  mentions: mentions ?? { _tag: "bots", ids: [] },
-                  delivery: { _tag: "pending" },
-                  commandId,
-                },
-              });
-              applied.set(commandId, entry.id);
-              return entry.id;
-            }),
-          );
+          if (refusing.has(input.text)) return yield* new NotFound({ resource: "bot" });
+          const entryId = yield* send(input, options).pipe(Effect.flatMap(replied));
+          applied.set(input.commandId, entryId);
+          return entryId;
         });
     }),
   ),
   J3Rpcs.toLayerHandler(
     "card.answer",
     Effect.gen(function* () {
-      const { gate, answers, answered } = yield* Fakes;
-      const entries = yield* Server.Entries;
-      const once = Semaphore.makeUnsafe(1);
-      return ({ commandId, entryId, answer }) =>
-        Effect.gen(function* () {
-          yield* Queue.offer(answers, commandId);
-          yield* gate.await;
-          return yield* once.withPermits(1)(
-            Effect.gen(function* () {
-              if (answered.has(commandId)) return;
-              const found = yield* entries.find(entryId);
-              if (Option.isNone(found) || found.value.entry._tag !== "question") {
-                return yield* new NotFound({ resource: "entry" });
-              }
-              // Resolved by another answer, here or on another device.
-              if (found.value.entry.status._tag !== "pending") {
-                return yield* new Conflict({ reason: "card-closed" });
-              }
-              yield* entries.update({
-                ...found.value.entry,
-                status:
-                  answer._tag === "question"
-                    ? { _tag: "answered", answers: answer.answers }
-                    : { _tag: "dismissed" },
-              });
-              answered.add(commandId);
-            }),
-          );
-        });
+      const { gate, answers } = yield* Taps;
+      const answer = yield* J3Rpcs.accessHandler("card.answer");
+      return (input, options) =>
+        Queue.offer(answers, input.commandId).pipe(
+          Effect.andThen(gate.await),
+          Effect.andThen(answer(input, options)),
+        );
     }),
   ),
   J3Rpcs.toLayerHandler(
     "client.view",
     Effect.gen(function* () {
-      const { views } = yield* Fakes;
+      const { views } = yield* Taps;
       const device = yield* Server.CurrentDevice;
-      return ({ target }) => Queue.offer(views, { device: device.id, target }).pipe(Effect.asVoid);
+      const view = yield* J3Rpcs.accessHandler("client.view");
+      return (input, options) =>
+        Queue.offer(views, { device: device.id, target: input.target }).pipe(
+          Effect.andThen(view(input, options)),
+        );
     }),
   ),
-  J3Rpcs.toLayerHandler("notifications.subscribe", () => Stream.never),
-  J3Rpcs.toLayerHandler("entries.workSteps", () => Stream.die("Not faked")),
-  J3Rpcs.toLayerHandler("secret.provide", notFaked),
-  J3Rpcs.toLayerHandler("notice.retry", notFaked),
-  J3Rpcs.toLayerHandler("message.retry", notFaked),
-  J3Rpcs.toLayerHandler("bot.stop", notFaked),
-  J3Rpcs.toLayerHandler("bot.freshStart", notFaked),
   J3Rpcs.toLayerHandler(
     "usage.turns",
     Effect.gen(function* () {
-      const { turns, failingReads, silentReads } = yield* Fakes;
-      return ({ limit }) =>
+      const { turnsRead, failingReads, silentReads } = yield* Taps;
+      const read = yield* J3Rpcs.accessHandler("usage.turns");
+      return (input, options) =>
         Effect.suspend(() => {
           if (failingReads.count > 0) {
             failingReads.count -= 1;
@@ -237,20 +197,30 @@ const unserved = Layer.mergeAll(
             silentReads.count -= 1;
             return Effect.never;
           }
-          const { all, readAt } = turns;
-          const since = DateTime.subtractDuration(readAt, USAGE_PERIOD);
-          const inPeriod = all.filter((turn) => DateTime.isGreaterThan(turn.startedAt, since));
-          return Effect.succeed({
-            turns: inPeriod.slice(0, limit),
-            readAt,
-            hasMore: inPeriod.length > limit,
+          return Effect.gen(function* () {
+            const turns = yield* read(input, options).pipe(Effect.flatMap(replied));
+            turnsRead.at = turns.readAt;
+            return turns;
           });
         });
     }),
   ),
-).pipe(Layer.provide(fakes));
+  J3Rpcs.toLayerHandler(
+    "bot.freshStart",
+    Effect.gen(function* () {
+      const { failingFreshStarts } = yield* Taps;
+      const freshStart = yield* J3Rpcs.accessHandler("bot.freshStart");
+      return (input, options) =>
+        Effect.suspend(() => {
+          if (failingFreshStarts.count === 0) return freshStart(input, options);
+          failingFreshStarts.count -= 1;
+          return Effect.die("The fresh start broke");
+        });
+    }),
+  ),
+);
 
-const server = Server.layer(unserved).pipe(Layer.provideMerge(fakes));
+const server = Server.layer(tapped).pipe(Layer.provideMerge(taps));
 
 /**
  * A fresh client of the test server, with `stored` as its saved credential.
@@ -531,33 +501,55 @@ const reachedBy = (deviceId: DeviceId, target: EntryTarget, entry: Entry) =>
   });
 
 /**
- * What `usage.turns` answers from, in place of what an earlier test left:
- * `count` turns of a new bot, one a minute back from now, and with
- * `dayBefore` one more from the day before. The server reads them as of now,
- * which it returns.
+ * How many turns the server holds of the day, once each of `bots` ran its
+ * first: the one the engine runs for a new bot.
  */
-const setTurns = (count: number, dayBefore = false) =>
+const firstTurnsRan = (bots: ReadonlyArray<BotId>) =>
+  Effect.gen(function* () {
+    yield* Effect.forEach(bots, Server.turnRecorded, { discard: true });
+    const { turns } = yield* (yield* Server.Usage).turns({ period: USAGE_PERIOD, limit: 10_000 });
+    return turns.length;
+  });
+
+/**
+ * Turns of a new bot, as the server records them: `count`, one a minute back
+ * from now, and with `dayBefore` one more from the day before. Returns how
+ * many turns of the day the server then holds: those, and the first turn of
+ * the new bot and of each of `others`.
+ */
+const setTurns = (count: number, dayBefore = false, others: ReadonlyArray<BotId> = []) =>
   Effect.gen(function* () {
     const botId = yield* createBot("Ana");
+    const ran = yield* firstTurnsRan([botId, ...others]);
     const now = yield* DateTime.now;
-    const turnAt = (minutesAgo: number): UsageTurn => {
-      const startedAt = DateTime.subtract(now, { minutes: minutesAgo });
-      return {
-        botId,
-        routine: null,
-        providerId: ProviderId.make("claude"),
-        startedAt,
-        finishedAt: startedAt,
-      };
-    };
-    const { turns } = yield* Fakes;
-    turns.all = [
-      ...Array.from({ length: count }, (_, index) => turnAt(index + 1)),
-      ...(dayBefore ? [turnAt(25 * 60)] : []),
-    ];
-    turns.readAt = now;
-    return now;
+    const minutesAgo = (minutes: number) => DateTime.subtract(now, { minutes });
+    yield* Server.pastTurns(
+      botId,
+      ProviderId.make("claude"),
+      Arr.appendAll(
+        Arr.makeBy(count, (index) => minutesAgo(index + 1)),
+        dayBefore ? [minutesAgo(25 * 60)] : [],
+      ),
+    );
+    return ran + count;
   });
+
+/** A room of `members`, created through the client's typed RPC client. */
+const createRoom = (name: string, members: ReadonlyArray<BotId>) =>
+  Effect.gen(function* () {
+    const connection = yield* Connection;
+    const commandId = yield* (yield* Actions).commandId;
+    const room = yield* connection.call((rpc) => rpc["room.create"]({ commandId, name, members }));
+    return { _tag: "room", roomId: room.id } satisfies EntryTarget;
+  });
+
+/**
+ * Runs `effect` against a server of its own, whose turns are only those its
+ * test records and runs: no bot of an earlier test holds one of the turns
+ * that may run at once, or counts among the day's.
+ */
+const onItsOwnServer = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(Effect.provide(Layer.fresh(server)));
 
 const botSays = (botId: BotId, text: string) =>
   Effect.gen(function* () {
@@ -617,38 +609,22 @@ const atOneInstant = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     return yield* effect.pipe(Effect.provideService(Clock.Clock, stopped));
   });
 
-/** A question card the bot raises, with one pick between two options. */
-const botAsks = (botId: BotId) =>
-  Effect.gen(function* () {
-    const entries = yield* Server.Entries;
-    return yield* entries.append({
-      target: { _tag: "conversation", botId },
-      entry: {
-        _tag: "question",
-        author: { _tag: "bot", botId },
-        origin: "ask",
-        questions: [
-          {
-            id: "pick",
-            prompt: "Which one?",
-            options: [
-              { id: "a", label: "A", description: null, style: "default" },
-              { id: "b", label: "B", description: null, style: "default" },
-            ],
-            acceptsText: false,
-            multiple: false,
-          },
-        ],
-        status: { _tag: "pending" },
-      },
-    });
-  });
+/** A question card the bot raises in the turn it runs, to pick "A" or "B". */
+const botAsks = (botId: BotId) => Server.botAsks(botId, "Which one?", ["A", "B"]);
 
-/** The answer that picks `option` on a card of `botAsks`. */
-const picking = (option: string): CardAnswer => ({
-  _tag: "question",
-  answers: { pick: { optionIds: [option], text: null } },
-});
+/** The answer that picks the option labelled `label` on a card of `botAsks`. */
+const picking = (card: QuestionEntry, label: string) =>
+  Effect.gen(function* () {
+    const [question] = card.questions;
+    const option = question?.options.find((candidate) => candidate.label === label);
+    if (question === undefined || option === undefined) {
+      return yield* Effect.die(`The card has no option ${label}`);
+    }
+    return {
+      _tag: "question",
+      answers: { [question.id]: { optionIds: [option.id], text: null } },
+    } satisfies CardAnswer;
+  });
 
 /** What a test drives of one device's open client. */
 const deviceClient = Effect.gen(function* () {
@@ -671,7 +647,7 @@ interface OnDevice extends Effect.Success<typeof deviceClient> {
 /**
  * Runs `use` with two devices, A and B, each paired on its own and each with
  * a client open and connected, and a bot both talk to. B's client closes
- * first, while A's is still open. Once both have closed, what the fakes
+ * first, while A's is still open. Once both have closed, what the taps
  * received from them is not left for the next test.
  */
 const acrossDevices = <A, E, R>(
@@ -696,7 +672,7 @@ const acrossDevices = <A, E, R>(
       Effect.provide(client(first.credential, first.device)),
       Effect.ensuring(
         Effect.gen(function* () {
-          const { sends, answers } = yield* Fakes;
+          const { sends, answers } = yield* Taps;
           yield* Queue.clear(sends);
           yield* Queue.clear(answers);
         }),
@@ -730,13 +706,16 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       Effect.gen(function* () {
         yield* pairAndConnect;
         // More than one read takes within the day, and one turn from the day before.
-        const readAt = yield* setTurns(1_100, true);
+        yield* setTurns(1_100, true);
 
         const view = yield* (yield* Usage).open;
         let state = yield* waitFor(view.state, (next) => next.read._tag === "ready");
         // The moment the server read them, not the client's.
+        const { turnsRead } = yield* Taps;
         assert.isTrue(
-          state.read._tag === "ready" && DateTime.Equivalence(state.read.value.readAt, readAt),
+          state.read._tag === "ready" &&
+            turnsRead.at !== null &&
+            DateTime.Equivalence(state.read.value.readAt, turnsRead.at),
         );
         const steps: Array<[number, boolean]> = [];
         while (state.read._tag === "ready") {
@@ -753,19 +732,19 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           [MAX_USAGE_TURNS, false],
         ]);
         assert.isTrue(state.read._tag === "ready" && state.read.value.hasMore);
-      }).pipe(Effect.scoped, Effect.provide(client())),
+      }).pipe(Effect.scoped, Effect.provide(client()), onItsOwnServer),
   );
 
   it.effect("shows a read that gets no answer in time as failed, keeping the turns read", () =>
     Effect.gen(function* () {
-      const { device, credential } = yield* pairedDevice("Ana");
+      const { device, credential, botId } = yield* pairedDevice("Ana");
       yield* Effect.gen(function* () {
         yield* waitFor((yield* Connection).state, isConnected);
-        yield* setTurns(USAGE_PAGE + 50);
+        const day = yield* setTurns(USAGE_PAGE + 50, false, [botId]);
         const view = yield* (yield* Usage).open;
         yield* waitFor(view.state, (state) => state.read._tag === "ready");
 
-        (yield* Fakes).silentReads.count = 1;
+        (yield* Taps).silentReads.count = 1;
         yield* view.loadMore;
         const failed = yield* waitFor(view.state, (state) => state.failed);
         assert.deepStrictEqual(
@@ -775,12 +754,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
         yield* view.retry;
         const read = yield* waitFor(view.state, (state) => !state.loadingMore && !state.failed);
-        assert.strictEqual(
-          read.read._tag === "ready" && read.read.value.turns.length,
-          USAGE_PAGE + 50,
-        );
+        assert.strictEqual(read.read._tag === "ready" && read.read.value.turns.length, day);
       }).pipe(Effect.scoped, Effect.provide(client(credential, device, undefined, SHORT_TIMEOUT)));
-    }),
+    }).pipe(onItsOwnServer),
   );
 
   it.effect(
@@ -789,7 +765,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       Effect.gen(function* () {
         yield* pairAndConnect;
         const network = yield* TestPlatform.TestNetwork;
-        yield* setTurns(USAGE_PAGE + 50);
+        const day = yield* setTurns(USAGE_PAGE + 50);
         const view = yield* (yield* Usage).open;
         yield* waitFor(view.state, (state) => state.read._tag === "ready");
 
@@ -804,18 +780,15 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* network.corruptReplies(false);
         yield* view.retry;
         const read = yield* waitFor(view.state, (state) => !state.loadingMore && !state.failed);
-        assert.strictEqual(
-          read.read._tag === "ready" && read.read.value.turns.length,
-          USAGE_PAGE + 50,
-        );
-      }).pipe(Effect.scoped, Effect.provide(client())),
+        assert.strictEqual(read.read._tag === "ready" && read.read.value.turns.length, day);
+      }).pipe(Effect.scoped, Effect.provide(client()), onItsOwnServer),
   );
 
   it.effect("says the first read of the turns failed, and reads them on retry", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
-      yield* setTurns(3);
-      (yield* Fakes).failingReads.count = 1;
+      const day = yield* setTurns(3);
+      (yield* Taps).failingReads.count = 1;
 
       const view = yield* (yield* Usage).open;
       const failed = yield* waitFor(view.state, (state) => state.failed);
@@ -825,9 +798,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const read = yield* waitFor(view.state, (state) => state.read._tag === "ready");
       assert.deepStrictEqual(
         read.read._tag === "ready" && [read.read.value.turns.length, read.failed],
-        [3, false],
+        [day, false],
       );
-    }).pipe(Effect.scoped, Effect.provide(client())),
+    }).pipe(Effect.scoped, Effect.provide(client()), onItsOwnServer),
   );
 
   it.effect(
@@ -837,11 +810,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* pairAndConnect;
         const network = yield* TestPlatform.TestNetwork;
         // Fewer than a page more within the day, and one turn from the day before.
-        yield* setTurns(USAGE_PAGE + 50, true);
+        const day = yield* setTurns(USAGE_PAGE + 50, true);
         const view = yield* (yield* Usage).open;
         yield* waitFor(view.state, (state) => state.read._tag === "ready");
 
-        (yield* Fakes).failingReads.count = 1;
+        (yield* Taps).failingReads.count = 1;
         yield* view.loadMore;
         const failed = yield* waitFor(view.state, (state) => state.failed);
         assert.deepStrictEqual(
@@ -873,9 +846,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             reread.read.value.canLoadMore,
             reread.failed,
           ],
-          [USAGE_PAGE + 50, false, false, false],
+          [day, false, false, false],
         );
-      }).pipe(Effect.scoped, Effect.provide(client())),
+      }).pipe(Effect.scoped, Effect.provide(client()), onItsOwnServer),
   );
 
   it.effect("keeps a credential it was given without a code, connects, and keeps it", () =>
@@ -964,7 +937,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("signs out: the server revokes the device and nothing of it stays here", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
       yield* Effect.gen(function* () {
         yield* pairAndConnect;
@@ -1224,7 +1197,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     "has no socket open on the server in the background, so it is pushed to, and opens one when the app returns",
     () =>
       Effect.gen(function* () {
-        const { views } = yield* Fakes;
+        const { views } = yield* Taps;
         const connection = yield* Connection;
         const lifecycle = yield* TestPlatform.TestLifecycle;
         yield* pairAndConnect;
@@ -1446,7 +1419,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("shows a sent message at once and keeps one copy through a dropped socket", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const network = yield* TestPlatform.TestNetwork;
       const conversations = yield* Conversations;
       const botId = yield* createBot("Courier");
@@ -1488,7 +1461,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("answers a card once when it is submitted twice", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
-      const { gate, answers } = yield* Fakes;
+      const { gate, answers } = yield* Taps;
       const conversations = yield* Conversations;
       const actions = yield* Actions;
       const botId = yield* createBot("Asker");
@@ -1497,13 +1470,14 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* waitFor(conversation.state, (state) => entryIds(state).includes(card.id));
 
       yield* gate.close;
-      const pick = (option: string) => conversations.answerCard(card.id, picking(option));
-      const first = yield* Effect.forkChild(pick("a"));
+      const a = yield* picking(card, "A");
+      const pick = (answer: CardAnswer) => conversations.answerCard(card.id, answer);
+      const first = yield* Effect.forkChild(pick(a));
       yield* waitFor(
         actions.state,
         (state) => state.get(cardAction(card.id))?._tag === "submitting",
       );
-      const second = yield* Effect.forkChild(pick("b"));
+      const second = yield* Effect.forkChild(pick(yield* picking(card, "B")));
       yield* gate.open;
 
       assert.deepStrictEqual(yield* Fiber.join(first), { _tag: "done", value: undefined });
@@ -1521,11 +1495,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       );
       assert.deepStrictEqual(resolved?._tag === "question" && resolved.status, {
         _tag: "answered",
-        answers: { pick: { optionIds: ["a"], text: null } },
+        answers: a.answers,
       });
       // Once the resolved card has arrived, nothing is held for it any more.
       yield* waitFor(actions.state, (state) => !state.has(cardAction(card.id)));
-    }).pipe(Effect.scoped, Effect.provide(client())),
+    }).pipe(Effect.scoped, Effect.provide(client()), onItsOwnServer),
   );
 
   // One conversation across devices: two devices, each paired on its own.
@@ -1561,7 +1535,8 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* waitFor(onA.state, (state) => entryIds(state).includes(card.id));
           yield* waitFor(onB.state, (state) => entryIds(state).includes(card.id));
 
-          assert.deepStrictEqual(yield* b.conversations.answerCard(card.id, picking("b")), {
+          const pickedOnB = yield* picking(card, "B");
+          assert.deepStrictEqual(yield* b.conversations.answerCard(card.id, pickedOnB), {
             _tag: "done",
             value: undefined,
           });
@@ -1577,11 +1552,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           );
           const answeredOnB: ReturnType<typeof statusOn> = {
             _tag: "answered",
-            answers: { pick: { optionIds: ["b"], text: null } },
+            answers: pickedOnB.answers,
           };
           assert.deepStrictEqual(statusOn(resolved), answeredOnB);
 
-          const late = yield* a.conversations.answerCard(card.id, picking("a"));
+          const late = yield* a.conversations.answerCard(card.id, yield* picking(card, "A"));
           if (late._tag !== "failed" || late.failure._tag !== "refused") {
             return assert.fail(`A resolved question took another answer: ${late._tag}`);
           }
@@ -1589,7 +1564,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.strictEqual(refusal._tag === "Conflict" && refusal.reason, "card-closed");
           assert.deepStrictEqual(statusOn(onA.state.get()), answeredOnB);
         }),
-      ),
+      ).pipe(onItsOwnServer),
   );
 
   it.effect(
@@ -1620,7 +1595,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             kept.filter((entry) => entry._tag === "message" && entry.text === text).length,
             1,
           );
-          const { sends } = yield* Fakes;
+          const { sends } = yield* Taps;
           const sentCommands = yield* Queue.clear(sends);
           assert.deepStrictEqual(
             sentCommands.filter((commandId) => commandId === outgoing.commandId),
@@ -1670,7 +1645,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends a message an earlier launch left unsent, once", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
 
       // The first launch sends while the server holds the command, then ends.
@@ -1717,7 +1692,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("sends two messages queued offline in the order they were written", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const network = yield* TestPlatform.TestNetwork;
       const connection = yield* Connection;
       const drafts = yield* Drafts;
@@ -1826,7 +1801,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends a draft two tabs hold once, and the other tab shows what is left", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
       const first = yield* Effect.gen(function* () {
         yield* pairAndConnect;
@@ -1865,7 +1840,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     "shows a draft another tab sent instead of writing it back, and restores on request",
     () =>
       Effect.gen(function* () {
-        const { gate, sends } = yield* Fakes;
+        const { gate, sends } = yield* Taps;
         const device = TestPlatform.makeDevice();
         const first = yield* Effect.gen(function* () {
           yield* pairAndConnect;
@@ -2018,7 +1993,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* commitGate.open;
         assert.strictEqual(yield* Fiber.join(sending), "sent");
-        yield* Queue.take((yield* Fakes).sends);
+        yield* Queue.take((yield* Taps).sends);
 
         // Drafts are kept one after another: once a later one is, the sent one had its turn.
         yield* drafts.setText(later, "afterwards");
@@ -2350,7 +2325,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends one conversation's messages from two tabs one at a time, in order", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
       const first = yield* Effect.gen(function* () {
         yield* pairAndConnect;
@@ -2398,7 +2373,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends a message another tab kept offline once that tab has closed", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
       const first = yield* Effect.gen(function* () {
         yield* pairAndConnect;
@@ -2534,7 +2509,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("finds the draft changed when another tab sent one this tab never saw", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
       const first = yield* Effect.gen(function* () {
         yield* pairAndConnect;
@@ -2574,7 +2549,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("keeps the draft when the device cannot keep the message", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const drafts = yield* Drafts;
       const botId = yield* createBot("Careful");
       const target: EntryTarget = { _tag: "conversation", botId };
@@ -2600,7 +2575,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("drops a message sent again once accepted, and shows its entry in the history", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
 
       // The server accepts the message, and the device loses its answer: the
@@ -2658,7 +2633,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("keeps a draft and its uploaded file through a reload, and sends it once", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const device = TestPlatform.makeDevice();
 
       const first = yield* Effect.gen(function* () {
@@ -2728,7 +2703,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     "keeps each file of a draft where it was placed through a reload, and sends its place",
     () =>
       Effect.gen(function* () {
-        const { sends } = yield* Fakes;
+        const { sends } = yield* Taps;
         const device = TestPlatform.makeDevice();
         const upload = (name: string) => ({ name, body: new Blob([name], { type: "text/plain" }) });
 
@@ -2906,12 +2881,12 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* drafts.detach(target, refused.key);
       yield* drafts.setText(target, "just the one");
       assert.strictEqual(yield* drafts.send(target), "sent");
-      yield* Queue.take((yield* Fakes).sends);
+      yield* Queue.take((yield* Taps).sends);
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
   it.effect("shows a message another tab could not deliver as not sent", () =>
     Effect.gen(function* () {
-      const { sends, refusing } = yield* Fakes;
+      const { sends, refusing } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Gone");
       refusing.add("for a bot that is gone");
 
@@ -2945,15 +2920,16 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends again a refused message with the mentions it is given in place of its own", () =>
     Effect.gen(function* () {
-      const { sends, refusing } = yield* Fakes;
-      const { device, target, botId, credential } = yield* pairedDevice("Stays");
+      const { sends, refusing } = yield* Taps;
+      const { device, botId, credential } = yield* pairedDevice("Stays");
       const text = "@Stays and @Left, have a look";
       refusing.add(text);
 
       yield* Effect.gen(function* () {
         const conversations = yield* Conversations;
-        const conversation = yield* conversations.open(target);
         const left = yield* createBot("Left");
+        const target = yield* createRoom("Review", [botId, left]);
+        const conversation = yield* conversations.open(target);
         yield* conversations.enqueue({
           target,
           text,
@@ -2986,7 +2962,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     "keeps the name each mention was picked by with a message not sent, through a reload",
     () =>
       Effect.gen(function* () {
-        const { sends, refusing } = yield* Fakes;
+        const { sends, refusing } = yield* Taps;
         const { device, target, botId, credential } = yield* pairedDevice("Wren");
         const text = "@Wren, have a look";
         refusing.add(text);
@@ -3016,7 +2992,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("does nothing when Retry finds the message discarded in another tab", () =>
     Effect.gen(function* () {
-      const { sends, refusing } = yield* Fakes;
+      const { sends, refusing } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Refuser");
       refusing.add("refused, then discarded");
       const notSent = (state: ConversationState) =>
@@ -3050,7 +3026,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends from a connected tab what a tab was sending when it went offline", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Handoff");
 
       yield* gate.close;
@@ -3077,7 +3053,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("settles a send another tab delivered, and does not send it again", () =>
     Effect.gen(function* () {
-      const { sends, applied } = yield* Fakes;
+      const { sends, applied } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Proxy");
 
       yield* Effect.gen(function* () {
@@ -3107,7 +3083,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends a message whose tab closed before telling the others", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Quiet");
 
       yield* Effect.gen(function* () {
@@ -3133,7 +3109,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("sends messages kept in the same millisecond in the order they were kept", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Hasty");
       const texts = ["one", "two", "three", "four", "five", "six"];
 
@@ -3170,7 +3146,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("does nothing when Discard finds a later attempt refused the same way", () =>
     Effect.gen(function* () {
-      const { sends, refusing } = yield* Fakes;
+      const { sends, refusing } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Stubborn");
       refusing.add("refused twice");
       const notSent = (state: ConversationState) =>
@@ -3206,7 +3182,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("answers a Retry from the outbox after it, not from a read made before", () =>
     Effect.gen(function* () {
-      const { sends, refusing } = yield* Fakes;
+      const { sends, refusing } = yield* Taps;
       const readGate = yield* Latch.make(true);
       const reading = yield* Queue.unbounded<void>();
       const { device, target, credential } = yield* pairedDevice("Second chance", {
@@ -3242,7 +3218,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("records an answer the device could not record, and never sends it again", () => {
     let full = false;
     return Effect.gen(function* () {
-      const { gate, sends, refusing } = yield* Fakes;
+      const { gate, sends, refusing } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Full disk", {
         refuseCommits: () => full,
       });
@@ -3298,7 +3274,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     let failNextRead = false;
     let armed = false;
     return Effect.gen(function* () {
-      const { gate, sends, refusing } = yield* Fakes;
+      const { gate, sends, refusing } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Flaky disk", {
         refuseCommits: () => {
           if (full) return true;
@@ -3349,7 +3325,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("drops a message another tab delivered once the history loaded starts after it", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const { device, target, botId, credential } = yield* pairedDevice("Busy");
 
       yield* Effect.gen(function* () {
@@ -3385,7 +3361,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("drops it too when this tab learns of the delivery only once it reconnects", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const { device, target, botId, credential } = yield* pairedDevice("Busier");
 
       yield* Effect.gen(function* () {
@@ -3421,7 +3397,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("keeps, and does not send, a draft whose images together are over the limit", () =>
     Effect.gen(function* () {
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Gallery");
       const key = targetKey(target);
       // As many of the largest images as a message's images may add up to, and one more,
@@ -3763,7 +3739,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.strictEqual(drafts.offers.get().size, 0);
 
       // Its own message is the first and only one the server gets.
-      const { sends } = yield* Fakes;
+      const { sends } = yield* Taps;
       const conversation = yield* conversations.open(target);
       yield* conversations.enqueue({ target, text: "the new pairing's message" });
       const delivered = yield* Queue.take(sends);
@@ -3782,7 +3758,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("signs out only its own pairing when another is made while an answer is recorded", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const commitGate = yield* Latch.make(true);
       const committing = yield* Queue.unbounded<void>();
       const { device, target, credential } = yield* pairedDevice("Recorded late", {
@@ -3842,7 +3818,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("shows nothing of the pairing it leaves while that pairing still saves", () =>
     Effect.gen(function* () {
-      const { gate, sends } = yield* Fakes;
+      const { gate, sends } = yield* Taps;
       const commitGate = yield* Latch.make(true);
       const committing = yield* Queue.unbounded<void>();
       const { device, target, credential } = yield* pairedDevice("Left at once", {
@@ -4118,6 +4094,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     Effect.gen(function* () {
       yield* pairAndConnect;
       const botId = yield* createBot("Not fresh");
+      (yield* Taps).failingFreshStarts.count = 1;
       assert.deepStrictEqual(yield* (yield* Details).freshStart(botId), {
         _tag: "failed",
         failure: { _tag: "unexpected" },
@@ -4167,7 +4144,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("answers Send again with what became of its own attempt, not of a later one", () =>
     Effect.gen(function* () {
-      const { sends, refusing } = yield* Fakes;
+      const { sends, refusing } = yield* Taps;
       const { device, target, credential } = yield* pairedDevice("Superseded");
       refusing.add("refused, then sent again");
       const notSent = (state: ConversationState) =>
@@ -4214,7 +4191,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     () => {
       let full = false;
       return Effect.gen(function* () {
-        const { gate, sends, refusing } = yield* Fakes;
+        const { gate, sends, refusing } = yield* Taps;
         const commitGate = yield* Latch.make(true);
         const committing = yield* Queue.unbounded<void>();
         const { device, target, credential } = yield* pairedDevice("Cut off", {
@@ -4506,7 +4483,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
   it.effect("reports the view on every socket, and never one set under another pairing", () =>
     Effect.gen(function* () {
-      const { views } = yield* Fakes;
+      const { views } = yield* Taps;
       const connection = yield* Connection;
       const presence = yield* Presence;
       const network = yield* TestPlatform.TestNetwork;

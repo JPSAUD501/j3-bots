@@ -23,28 +23,32 @@ export { Bots } from "../bots/Bots.ts";
 export { Devices } from "../devices/Devices.ts";
 export { Entries } from "../entries/Entries.ts";
 export { Presence } from "../presence/Presence.ts";
+export { Usage } from "../turns/Usage.ts";
 export { botHasTabs, type FakeViewer, TestBrowserControl, ViewerClosed } from "./browser.ts";
+export { botAsks } from "./turns.ts";
+export { pastTurns, turnRecorded } from "./usage.ts";
 
-/** The RPCs of the contract this server does not answer yet. */
-export type UnservedRpcs = Exclude<
-  RpcGroup.Rpcs<typeof J3Rpcs>,
-  RpcGroup.Rpcs<typeof Handlers.ServedRpcs>
->;
+/** Every handler of the contract, as the server answers it. */
+type ServerHandlers = Rpc.ToHandler<RpcGroup.Rpcs<typeof J3Rpcs>>;
 
-/** What the domain offers the handlers of the RPCs it does not serve yet. */
-type DomainServices = Layer.Success<typeof TestDomain.layer> | CurrentDevice;
+/** What a tap may use: the domain, and the server's own handlers, to wrap. */
+type TapServices = Layer.Success<typeof TestDomain.layer> | CurrentDevice | ServerHandlers;
 
 /**
  * The server as a client meets it, for client tests: its HTTP routes and the
  * RPC and media sockets on a free loopback port, over the in-memory engine and a fresh
- * database. `unserved` answers the RPCs the server does not serve yet, so a
- * client can be tested against the whole contract.
+ * database. `taps` replaces handlers with ones that wrap the server's own
+ * (`J3Rpcs.accessHandler`), for a test that watches a call, holds it or
+ * refuses it at an exact point; every other call is the server's own. What
+ * else the taps need (`R`), the layer needs.
  */
-export const layer = (unserved: Layer.Layer<Rpc.ToHandler<UnservedRpcs>, never, DomainServices>) =>
+export const layer = <Tapped extends ServerHandlers, R = never>(
+  taps: Layer.Layer<Tapped, never, TapServices | R>,
+) =>
   Ports.serve(
     Layer.mergeAll(
       Http.routes,
-      RpcSocket.layer(J3Rpcs, Layer.mergeAll(Handlers.handlers, unserved)),
+      RpcSocket.layer(J3Rpcs, taps.pipe(Layer.provideMerge(Handlers.handlers))),
       MediaSocket.route,
     ),
     NodeHttpServer.layerTest,
