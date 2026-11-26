@@ -450,6 +450,8 @@ export function Onboarding({
             />
           </Animated.View>
         )}
+        {/* Under the step's words, which it must not wash over. */}
+        {step === "arrival" && created && !reduced && <Bloom look={look} />}
         <Animated.View
           key={view.move}
           className="flex-1"
@@ -576,7 +578,6 @@ function Hero({
             swells={arrived}
             dusty
           />
-          {arrived && !reduced && <Bloom look={look} />}
           <BotAvatar ref={botRef} avatar={look} seed="first-bot" state="idle" size={HERO_SIZE} />
         </Animated.View>
       </Animated.View>
@@ -599,8 +600,10 @@ function Hero({
 const BLOOM = 5.2;
 
 /**
- * The finale's glow: it opens around the bot as its light swells, and goes,
- * in the bot's color, soft at its edge, so nothing of it is ever cut.
+ * The finale's glow: it opens around the bot being made as its light swells,
+ * and goes, in the bot's color, soft at its edge, so nothing of it is ever
+ * cut. It is laid over the steps' top, centred on the bot, and goes under the
+ * step's words.
  */
 function Bloom({ look }: { readonly look: AvatarChoice }) {
   const color = useTint(look).color;
@@ -618,30 +621,25 @@ function Bloom({ look }: { readonly look: AvatarChoice }) {
   });
   const across = HERO_SIZE * BLOOM;
   return (
-    <Animated.View
-      style={[
-        {
-          position: "absolute",
-          left: (HERO_SIZE - across) / 2,
-          top: (HERO_SIZE - across) / 2,
-          width: across,
-          height: across,
-        },
-        style,
-      ]}
+    <View
+      pointerEvents="none"
+      className="absolute inset-x-0 items-center"
+      style={{ top: HERO_ABOVE + HERO_SIZE / 2 - across / 2 }}
     >
-      <Svg width={across} height={across}>
-        <Defs>
-          <RadialGradient id="bloom" cx="0.5" cy="0.5" r="0.5">
-            <Stop offset="0" stopColor={color} stopOpacity={0.34} />
-            <Stop offset="0.32" stopColor={color} stopOpacity={0.17} />
-            <Stop offset="0.62" stopColor={color} stopOpacity={0.06} />
-            <Stop offset="1" stopColor={color} stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        <Rect width={across} height={across} fill="url(#bloom)" />
-      </Svg>
-    </Animated.View>
+      <Animated.View style={[{ width: across, height: across }, style]}>
+        <Svg width={across} height={across}>
+          <Defs>
+            <RadialGradient id="bloom" cx="0.5" cy="0.5" r="0.5">
+              <Stop offset="0" stopColor={color} stopOpacity={0.34} />
+              <Stop offset="0.32" stopColor={color} stopOpacity={0.17} />
+              <Stop offset="0.62" stopColor={color} stopOpacity={0.06} />
+              <Stop offset="1" stopColor={color} stopOpacity={0} />
+            </RadialGradient>
+          </Defs>
+          <Rect width={across} height={across} fill="url(#bloom)" />
+        </Svg>
+      </Animated.View>
+    </View>
   );
 }
 

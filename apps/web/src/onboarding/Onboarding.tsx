@@ -487,7 +487,10 @@ function Preparing({
       className="flex h-8 shrink-0 items-center justify-center gap-2 pb-[env(safe-area-inset-bottom)] text-xs text-muted-foreground box-content"
     >
       {line !== null && (
-        <span key={ready ? "ready" : "preparing"} className="onboarding-fade-in contents">
+        <span
+          key={ready ? "ready" : "preparing"}
+          className="onboarding-fade-in inline-flex items-center gap-2"
+        >
           {ready ? (
             <CheckIcon aria-hidden className="size-3.5 text-success" />
           ) : (

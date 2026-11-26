@@ -76,7 +76,7 @@ export interface StageActor {
   readonly size: number;
   /** Where it stands across the stage, in % of its width. */
   readonly x: number;
-  /** How far upstage it stands: each step back is a little higher and a little dimmer. */
+  /** How far upstage it stands: each step back is a little higher. */
   readonly depth: 0 | 1 | 2;
 }
 
