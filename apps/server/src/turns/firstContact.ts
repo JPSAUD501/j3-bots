@@ -51,8 +51,9 @@ const Found = Schema.Struct({ found: Schema.BooleanFromBit });
  * for: its conversation says so (`made-for-room`), and it has said nothing
  * yet, or nothing before `before`, a time its turn started at. What it said
  * in a room is read from the `say`s its own sessions posted, which outlive a
- * change of the room's members and the room itself. Every lookup goes
- * through an index: the bot's conversation, its sessions' calls.
+ * change of the room's members and the room itself. The entries are read
+ * through the conversation's index and the calls through their session's;
+ * the bot's few sessions are scanned.
  */
 const newcomerSql = (
   sql: SqlClient.SqlClient,

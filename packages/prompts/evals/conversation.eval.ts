@@ -356,7 +356,6 @@ const firstMessageGrade = (name: string, calls: ReadonlyArray<Call>, check: Chec
   };
 };
 
-/** Problems with a turn none of whose messages may ask a setup question, through `say` or `ask`. */
 /** The problems if any of the bot's messages says what `check` asks about. */
 const inNoMessage = (calls: ReadonlyArray<Call>, check: Check, asked: string) =>
   Effect.map(
@@ -364,6 +363,7 @@ const inNoMessage = (calls: ReadonlyArray<Call>, check: Check, asked: string) =>
     (found) => found.flat(),
   );
 
+/** Problems with a turn none of whose messages may ask a setup question, through `say` or `ask`. */
 const noSetupQuestion = (calls: ReadonlyArray<Call>, asked: string) =>
   Effect.map(inNoMessage(calls, SETUP_QUESTION, asked), (found) => [
     ...(named(calls, "ask").length > 0 ? ["called `ask`"] : []),
