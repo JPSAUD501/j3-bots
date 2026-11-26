@@ -30,10 +30,29 @@ import { isIdle, sessionWork } from "./sessionWork.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
 /**
- * A main session that ran this many turns is replaced. Provisional, until
- * real conversations tune it (`docs/open-questions.md`, 6).
+ * A main session is replaced once its working context reaches this share of
+ * the point where the harness would compact it on its own, or of the model's
+ * window where the provider names no such point, as its latest turn's end
+ * measured it. Replaced between turns, it never reaches that point in the
+ * middle of the bot's work, where a compaction would cut into it, unless one
+ * turn alone fills the rest. Decision 0074.
+ */
+export const ROTATE_AT_CONTEXT_SHARE = 0.75;
+
+/**
+ * A main session whose provider never measured its context is replaced once it
+ * ran this many turns. Provisional, until real conversations tune it
+ * (`docs/open-questions.md`, 6).
  */
 export const ROTATE_AFTER_RUNS = 200;
+
+/**
+ * Any main session is replaced once it ran this many turns, also one whose
+ * context the harness keeps compacting below `ROTATE_AT_CONTEXT_SHARE`: it
+ * bounds the history the engine and the adapter read back for a session
+ * (`Translate.ts`, `replacement`).
+ */
+export const ROTATE_AFTER_RUNS_MEASURED = 500;
 
 /**
  * How soon a rotation or an alignment held by background work looks again:
@@ -91,9 +110,9 @@ const encodeNote = Schema.encodeEffect(json(CatchUpNote));
  * lost one. For the operator's own actions a Stop ran first: the session is
  * replaced once that Stop settles and no turn or background work the engine's
  * stop reaches is pending; work it does not reach, which only the retirement
- * ends, does not hold it. The run limit waits until the session is quiet, no
- * turn and no background work pending at all, for the work to end by itself,
- * and its session takes new work meanwhile.
+ * ends, does not hold it. The run limit and a full context wait until the
+ * session is quiet, no turn and no background work pending at all, for the
+ * work to end by itself, and its session takes new work meanwhile.
  */
 type Waits = "nothing" | "turns" | "stoppable" | "everything";
 
@@ -106,6 +125,7 @@ const waitsFor = (session: Due): Waits => {
     case "fresh-start":
       return "stoppable";
     case "runs":
+    case "context":
     case null:
       return "everything";
   }
@@ -128,8 +148,10 @@ const waitsFor = (session: Due): Waits => {
  * one with a settings change it was not brought to is aligned once no turn
  * runs there, on each pass, with backoff after a failure, so a bot never waits
  * for an engine restart to get one, and never takes work with settings the
- * operator replaced. And it asks for the rotation of a session that ran
- * `ROTATE_AFTER_RUNS` turns.
+ * operator replaced. And it asks for the rotation of a session whose context
+ * reached `ROTATE_AT_CONTEXT_SHARE` of its limit, or that ran
+ * `ROTATE_AFTER_RUNS` turns with no measure of its context, or
+ * `ROTATE_AFTER_RUNS_MEASURED` with one.
  */
 export class Rotations extends Context.Service<
   Rotations,
@@ -171,14 +193,30 @@ export const layer = Layer.effect(
       { readonly failures: number; readonly at: DateTime.Utc }
     >();
 
-    const overRuns = SqlSchema.findAll({
-      Request: Schema.Number,
+    /** Live main sessions not yet due whose context is near its limit. */
+    const overContext = SqlSchema.findAll({
+      Request: Schema.Void,
       Result: Schema.Struct({ id: SessionRowId }),
-      execute: (limit) => sql`
+      execute: () => sql`
+        SELECT id FROM sessions
+        WHERE purpose = 'main' AND retired_at IS NULL AND lost_at IS NULL
+          AND rotation_reason IS NULL AND context_limit IS NOT NULL
+          AND context_used >= ${ROTATE_AT_CONTEXT_SHARE} * context_limit
+      `,
+    });
+
+    /** Live main sessions not yet due that ran as many turns as they may. */
+    const overRuns = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: SessionRowId }),
+      execute: () => sql`
         SELECT s.id FROM sessions s
         WHERE s.purpose = 'main' AND s.retired_at IS NULL AND s.lost_at IS NULL
           AND s.rotation_reason IS NULL
-          AND (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id) >= ${limit}
+          AND (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id) >= CASE
+            WHEN s.context_limit IS NULL THEN ${ROTATE_AFTER_RUNS}
+            ELSE ${ROTATE_AFTER_RUNS_MEASURED}
+          END
       `,
     });
 
@@ -512,7 +550,10 @@ export const layer = Layer.effect(
     const rotatePass: Effect.Effect<Pass> = yield* onePassAtATime(
       Effect.gen(function* () {
         const outcome = passOutcome();
-        for (const { id } of yield* overRuns(ROTATE_AFTER_RUNS).pipe(Effect.orDie)) {
+        for (const { id } of yield* overContext(undefined).pipe(Effect.orDie)) {
+          yield* requestRotation(id, "context");
+        }
+        for (const { id } of yield* overRuns(undefined).pipe(Effect.orDie)) {
           yield* requestRotation(id, "runs");
         }
         let replaced = false;

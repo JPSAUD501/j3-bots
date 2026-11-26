@@ -4,6 +4,8 @@ import {
   FailureClass,
   MAX_CARD_QUESTIONS,
   ModelChoice,
+  NonNegativeInt,
+  PositiveInt,
   Question,
   SecretRequestEntry,
   WorkStep,
@@ -239,6 +241,24 @@ export const OpenTurn = Schema.Struct({
 });
 export type OpenTurn = typeof OpenTurn.Type;
 
+/**
+ * How full the session's working context was as a turn ended: the tokens the
+ * model read on its latest request, against the point where the harness
+ * compacts the context on its own, or the model's whole window where the
+ * provider names no such point. **Read** at `59651c1`: Claude Code's adapter
+ * reports the context of each request it makes, and a compaction threshold
+ * only where the operator set a smaller window (`ClaudeAdapterV2.ts`,
+ * `emitContextUsage` and `claudeAutoCompactThreshold`); Codex's reports the
+ * last request's tokens against the model's window, with no threshold
+ * (`CodexAdapterV2.ts`, `thread/tokenUsage/updated`). Each reports while the
+ * provider turn runs, before it ends.
+ */
+export const ContextFill = Schema.Struct({
+  usedTokens: NonNegativeInt,
+  limitTokens: PositiveInt,
+});
+export type ContextFill = typeof ContextFill.Type;
+
 export const EndedTurn = Schema.Struct({
   turnId: TurnId,
   cause: TurnCause,
@@ -258,6 +278,8 @@ export const EndedTurn = Schema.Struct({
   steps: Schema.Array(WorkStep),
   /** As on `turn-finished`. */
   contextRecovered: Schema.Boolean,
+  /** As on `turn-finished`. */
+  context: Schema.NullOr(ContextFill),
 });
 export type EndedTurn = typeof EndedTurn.Type;
 
@@ -572,6 +594,14 @@ export const SessionEvent = Schema.Union([
      * a `handoff` item at the run's start before the run's message.
      */
     contextRecovered: Schema.Boolean,
+    /**
+     * How full the session's working context was as the turn ended. Null when
+     * the provider reported no usage for it, or no limit to measure it by: a
+     * turn that never started, or a provider that does not report it. A
+     * usage the provider reported only after the turn's end is not in it; the
+     * next turn's end reads it.
+     */
+    context: Schema.NullOr(ContextFill),
   }),
   /**
    * The pending continuation of the ended turn `turnId` will not run: `stop`

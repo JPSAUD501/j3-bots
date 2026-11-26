@@ -65,5 +65,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0066](0066-connecting-an-ai-is-picking-the-account-you-have.md) | Connecting an AI is picking the account you have | Accepted |
 | [0067](0067-a-first-contact-is-a-paced-hello-not-a-setup.md) | A bot's first contact is a hello in a few paced messages, not a setup | Accepted |
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
+| [0074](0074-a-session-rotates-by-how-full-its-context-is.md) | A session rotates by how full its context is | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

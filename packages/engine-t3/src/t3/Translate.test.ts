@@ -623,6 +623,7 @@ describe("backgroundWorkOf", () => {
         backgroundWork: true,
         continuation: null,
         contextRecovered: false,
+        context: null,
       },
     ]);
     keep(5, [replacement(mirror, true, at, new Map(), noProviders).event]);
@@ -1417,6 +1418,76 @@ describe("a turn the engine ran on recovered context", () => {
     applyEvent(mirror, run("running", 1));
     applyEvent(mirror, run("completed", 1));
     assert.deepStrictEqual(recovered(diff(mirror, view, at, noProviders)), [false]);
+  });
+});
+
+describe("how full a turn left the session's context", () => {
+  /** A provider turn of the run's attempt, reporting this token usage. */
+  const providerTurn = (ordinal: number, usage: Record<string, unknown> | undefined) =>
+    event("provider-turn.updated", {
+      id: `provider-turn-${ordinal}`,
+      providerThreadId: "provider-thread-1",
+      nodeId: "node-1",
+      runAttemptId: "attempt-1",
+      nativeTurnRef: null,
+      ordinal,
+      status: "completed",
+      startedAt: at,
+      completedAt: at,
+      ...(usage === undefined
+        ? {}
+        : { tokenUsage: { updatedAt: "2026-11-20T12:00:00Z", ...usage } }),
+    });
+  const attempt = { activeAttemptId: "attempt-1" };
+  const fills = (events: ReturnType<typeof diff>) =>
+    events.flatMap((event) => (event._tag === "turn-finished" ? [event.context] : []));
+  const ended = (...events: ReadonlyArray<ReturnType<typeof event>>) => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1, attempt));
+    for (const reported of events) applyEvent(mirror, reported);
+    applyEvent(mirror, run("completed", 1, attempt));
+    return {
+      live: fills(diff(mirror, view, at, noProviders)),
+      resumed: replacement(mirror, true, at, new Map(), noProviders).event.endedTurns.map(
+        (turn) => turn.context,
+      ),
+    };
+  };
+
+  it("measures it against the point where the harness compacts, live and on resume", () => {
+    const fill = { usedTokens: 90_000, limitTokens: 117_000 };
+    assert.deepStrictEqual(
+      ended(
+        providerTurn(1, { usedTokens: 90_000, maxTokens: 200_000, autoCompactThreshold: 117_000 }),
+      ),
+      { live: [fill], resumed: [fill] },
+    );
+  });
+
+  it("measures it against the model's window where the provider names no compaction point", () => {
+    assert.deepStrictEqual(
+      ended(providerTurn(1, { usedTokens: 150_000, maxTokens: 272_000 })).live,
+      [{ usedTokens: 150_000, limitTokens: 272_000 }],
+    );
+  });
+
+  it("reads the latest provider turn of the attempt, which a Codex goal can run several of", () => {
+    assert.deepStrictEqual(
+      ended(
+        providerTurn(2, { usedTokens: 40_000, maxTokens: 272_000 }),
+        providerTurn(1, { usedTokens: 10_000, maxTokens: 272_000 }),
+      ).live,
+      [{ usedTokens: 40_000, limitTokens: 272_000 }],
+    );
+  });
+
+  it("tells none with no usage or no limit to measure it by", () => {
+    assert.deepStrictEqual(ended().live, [null]);
+    assert.deepStrictEqual(ended(providerTurn(1, undefined)).live, [null]);
+    assert.deepStrictEqual(ended(providerTurn(1, { usedTokens: 5_000, maxTokens: null })).live, [
+      null,
+    ]);
   });
 });
 

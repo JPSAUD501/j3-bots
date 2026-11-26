@@ -50,7 +50,12 @@ import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Readiness } from "./Readiness.ts";
 import { RETRY_TICK } from "./reconciler.ts";
-import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
+import {
+  ROTATE_AFTER_RUNS,
+  ROTATE_AFTER_RUNS_MEASURED,
+  ROTATE_AT_CONTEXT_SHARE,
+  Rotations,
+} from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
 import { Usage } from "./Usage.ts";
 
@@ -87,6 +92,27 @@ const finish = (botId: BotId, session: SessionId, turnId: TurnId) =>
     yield* turnEnded(botId);
   });
 
+/** The context window of the provider in these tests, which names no compaction point. */
+const WINDOW = 200_000;
+
+/**
+ * The operator writes, and the bot answers in a turn whose provider reports the
+ * session's working context at `share` of its window as the turn ends.
+ */
+const exchangeFilling = (botId: BotId, session: SessionId, text: string, share: number) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* sendToBot(botId, text);
+    const turnId = yield* nextTurn(botId);
+    yield* control.fillContext({
+      sessionId: session,
+      turnId,
+      fill: { usedTokens: Math.round(share * WINDOW), limitTokens: WINDOW },
+    });
+    yield* finish(botId, session, turnId);
+    return turnId;
+  });
+
 /** Whether the server took the session out of use in the engine. */
 const retiredInEngine = (session: SessionId) =>
   Effect.gen(function* () {
@@ -100,10 +126,10 @@ const retiredInEngine = (session: SessionId) =>
   });
 
 /**
- * Brings the bot's main session to exactly `ROTATE_AFTER_RUNS` turns, its own
- * (the opening included) and turns long finished, as weeks of work would add.
+ * Brings the bot's main session to exactly `limit` turns, its own (the opening
+ * included) and turns long finished, as weeks of work would add.
  */
-const reachRunLimit = (sessionId: SessionRowId) =>
+const reachRunLimit = (sessionId: SessionRowId, limit = ROTATE_AFTER_RUNS) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const at = DateTime.formatIso(yield* DateTime.now);
@@ -113,13 +139,13 @@ const reachRunLimit = (sessionId: SessionRowId) =>
     // One transaction: a commit per row would take seconds.
     yield* sql.withTransaction(
       Effect.forEach(
-        Array.from({ length: ROTATE_AFTER_RUNS - (ran?.n ?? 0) }, (_, n) => n),
+        Array.from({ length: limit - (ran?.n ?? 0) }, (_, n) => n),
         (n) => sql`
           INSERT INTO turns (
             session_id, engine_turn_id, audience, started_at, last_activity_at, finished_at,
             outcome_json
           ) VALUES (
-            ${sessionId}, ${`old-${n}`}, 'conversation', ${at}, ${at}, ${at}, '{"_tag":"completed"}'
+            ${sessionId}, ${`old-${(ran?.n ?? 0) + n}`}, 'conversation', ${at}, ${at}, ${at}, '{"_tag":"completed"}'
           )
         `,
         { discard: true },
@@ -1503,6 +1529,77 @@ it.effect(
       const text = yield* firstEnvelope(replacement);
       assert.include(text, "Your working session was replaced.");
       assert.include(text, "Plan the launch.");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "replaces a session once a turn ends with its context near where the harness compacts, carrying the conversation",
+  () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* exchangeFilling(bot.id, session, "Plan the launch.", ROTATE_AT_CONTEXT_SHARE - 0.05);
+      yield* (yield* Rotations).rotateDue;
+      assert.strictEqual(yield* engineSession(bot.id), session);
+
+      yield* exchangeFilling(bot.id, session, "Draft the press note.", ROTATE_AT_CONTEXT_SHARE);
+      const replacement = yield* sessionAfter(bot.id, session);
+      assert.isTrue(yield* retiredInEngine(session));
+      yield* sendToBot(bot.id, "Where were we?");
+      yield* nextTurn(bot.id);
+      const text = yield* firstEnvelope(replacement);
+      assert.include(text, "Your working session was replaced.");
+      assert.include(text, "Draft the press note.");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "waits for background work before a context rotation, planning into the session meanwhile",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const rotations = yield* Rotations;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Start the dev server.");
+      const started = yield* nextTurn(bot.id);
+      yield* control.startBackgroundWork({ sessionId: session, turnId: started });
+      yield* control.fillContext({
+        sessionId: session,
+        turnId: started,
+        fill: { usedTokens: WINDOW - 10_000, limitTokens: WINDOW },
+      });
+      yield* finish(bot.id, session, started);
+
+      yield* rotations.rotateDue;
+      assert.strictEqual(yield* engineSession(bot.id), session);
+      const meanwhile = yield* sendToBot(bot.id, "Is it up?");
+      const answering = yield* nextTurn(bot.id, started);
+      yield* deliveryIs(meanwhile, "delivered");
+      yield* finish(bot.id, session, answering);
+      yield* rotations.rotateDue;
+      assert.strictEqual(yield* engineSession(bot.id), session);
+
+      yield* control.endBackgroundWork(session);
+      yield* rotations.rotateDue;
+      yield* sessionAfter(bot.id, session);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a session with room in its context past the run limit of an unmeasured one, up to its own",
+  () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* exchangeFilling(bot.id, session, "Plan the launch.", 0.1);
+      yield* reachRunLimit(yield* mainSessionId(bot.id));
+      yield* (yield* Rotations).rotateDue;
+      assert.strictEqual(yield* engineSession(bot.id), session);
+
+      yield* reachRunLimit(yield* mainSessionId(bot.id), ROTATE_AFTER_RUNS_MEASURED);
+      yield* (yield* Rotations).rotateDue;
+      yield* sessionAfter(bot.id, session);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

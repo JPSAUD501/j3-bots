@@ -10,6 +10,7 @@ import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/c
 import {
   isOrchestrationV2WorkActive,
   isQueuedProviderThreadPlaceholder,
+  latestProviderTurnForAttempt,
   OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -17,6 +18,7 @@ import {
   type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
@@ -32,6 +34,7 @@ import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
 import {
   type BackgroundWork,
+  type ContextFill,
   type DelegatedResult,
   type EndedTurn,
   type EngineRequest,
@@ -81,6 +84,7 @@ type RuntimeRequest = OrchestrationV2RuntimeRequest;
 type Thread = OrchestrationV2AppThread;
 type ProviderThread = OrchestrationV2ProviderThread;
 type ProviderSession = OrchestrationV2ProviderSession;
+type ProviderTurn = OrchestrationV2ProviderTurn;
 type Message = OrchestrationV2ConversationMessage;
 
 /** The engine's state of one thread, as far as J3 Bots reads it. */
@@ -102,6 +106,11 @@ export interface Mirror {
    * (`backgroundWorkOf`).
    */
   readonly providerSessions: Map<string, ProviderSession["status"]>;
+  /**
+   * Read only for the token usage they report, by id: how full the session's
+   * working context was as a turn ended (`contextFillOf`).
+   */
+  readonly providerTurns: Map<string, ProviderTurn>;
   /**
    * The message each run opened with, by run id, as its first record carried
    * it: a steering restart moves the run's `userMessageId` to the steer, on
@@ -156,6 +165,7 @@ export const emptyMirror = (): Mirror => ({
   requests: new Map(),
   providerThreads: new Map(),
   providerSessions: new Map(),
+  providerTurns: new Map(),
   openings: new Map(),
   origins: new Map(),
   delegatedResults: new Map(),
@@ -173,6 +183,7 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   requests: new Map(mirror.requests),
   providerThreads: new Map(mirror.providerThreads),
   providerSessions: new Map(mirror.providerSessions),
+  providerTurns: new Map(mirror.providerTurns),
   openings: new Map(mirror.openings),
   origins: new Map(mirror.origins),
   delegatedResults: new Map(mirror.delegatedResults),
@@ -210,6 +221,7 @@ export const mirrorOf = (
     providerSessions: new Map(
       projection.providerSessions.map((session) => [session.id, session.status]),
     ),
+    providerTurns: new Map(projection.providerTurns.map((turn) => [turn.id, turn])),
     openings,
     origins: new Map(
       [...openings].map(([runId, messageId]) => [
@@ -355,6 +367,11 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       return false;
     case "provider-session.detached":
       mirror.providerSessions.delete(event.payload.providerSessionId);
+      return false;
+    case "provider-turn.updated":
+      // No session event is made of it: its token usage is read at its run's
+      // end (`contextFillOf`).
+      mirror.providerTurns.set(event.payload.id, event.payload);
       return false;
     case "message.updated": {
       // The engine records a run's opening message in the command that
@@ -692,6 +709,24 @@ const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "runn
  */
 const hasRecoveredContext = (mirror: Mirror, run: Run) =>
   itemsOf(mirror, run).some((item) => item.type === "handoff");
+
+/**
+ * How full the session's working context was as the run ended, from the
+ * token usage of its attempt's latest provider turn, as the engine reads a
+ * run's usage (**Read** at `59651c1`, `Orchestrator.ts`, `providerTurnForRun`):
+ * a Codex goal can span several provider turns in one attempt. Measured
+ * against the harness's compaction threshold, or the model's window where the
+ * provider names none; null with no usage, or no limit to measure it by.
+ */
+const contextFillOf = (mirror: Mirror, run: Run): ContextFill | null => {
+  const usage = latestProviderTurnForAttempt(
+    [...mirror.providerTurns.values()],
+    run.activeAttemptId,
+  )?.tokenUsage;
+  if (usage === undefined) return null;
+  const limitTokens = usage.autoCompactThreshold ?? usage.maxTokens ?? 0;
+  return limitTokens > 0 ? { usedTokens: usage.usedTokens, limitTokens } : null;
+};
 
 /**
  * A task the provider reports that holds the agent's completion: the agent
@@ -2158,6 +2193,7 @@ export const diff = (
           backgroundWork: hasBackgroundWork(mirror, run),
           continuation,
           contextRecovered: hasRecoveredContext(mirror, run),
+          context: contextFillOf(mirror, run),
         });
       }
     }
@@ -2255,6 +2291,7 @@ export const replacement = (
         continuation: continuationOf(mirror, run, now),
         steps: stepsOf(mirror, run),
         contextRecovered: hasRecoveredContext(mirror, run),
+        context: contextFillOf(mirror, run),
       });
       // A requeued steer shows as its follow-up turn, whose cause is the dispatch.
       for (const steer of steers) {

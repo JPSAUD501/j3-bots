@@ -8,12 +8,15 @@ import type { Signals } from "./Signals.ts";
 
 /**
  * Why a bot's main session is to be replaced (`docs/architecture/server.md`,
- * Rotation), weakest first: it ran `ROTATE_AFTER_RUNS` turns, the engine could
- * not resume the provider's conversation, the operator moved the bot to
- * another provider, or the operator asked for a fresh start.
+ * Rotation), weakest first: it ran `ROTATE_AFTER_RUNS` turns, its working
+ * context neared the point where the harness would compact it
+ * (`ROTATE_AT_CONTEXT_SHARE`), the engine could not resume the provider's
+ * conversation, the operator moved the bot to another provider, or the
+ * operator asked for a fresh start.
  */
 export const RotationReason = Schema.Literals([
   "runs",
+  "context",
   "context-recovered",
   "provider-changed",
   "fresh-start",
@@ -23,20 +26,21 @@ export type RotationReason = typeof RotationReason.Type;
 /** A stronger reason replaces a weaker one; a fresh start replaces any. */
 const STRENGTH: { readonly [R in RotationReason]: number } = {
   runs: 0,
-  "context-recovered": 1,
-  "provider-changed": 2,
-  "fresh-start": 3,
+  context: 1,
+  "context-recovered": 2,
+  "provider-changed": 3,
+  "fresh-start": 4,
 };
 
 /**
  * Whether a `sessions` row still takes new work: what the dispatcher plans
- * into, and checks again where it writes. Only the run limit leaves a session
- * planned into until it is quiet, so long background work never holds the
- * bot's wakes; any other reason holds new work for the session that replaces
- * it.
+ * into, and checks again where it writes. Only the run limit and a full
+ * context leave a session planned into until it is quiet, so long background
+ * work never holds the bot's wakes; any other reason holds new work for the
+ * session that replaces it.
  */
 export const takesNewWorkSql = (sql: SqlClient.SqlClient) =>
-  sql`(rotation_reason IS NULL OR rotation_reason = 'runs')`;
+  sql`(rotation_reason IS NULL OR rotation_reason IN ('runs', 'context'))`;
 
 /**
  * Whether a `catch_up_notes` row reports a conversation entry from before its
@@ -64,6 +68,7 @@ export const rotationRequests = (sql: SqlClient.SqlClient, signals: Signals["Ser
   const weaker = (reason: RotationReason) => sql`
     (rotation_reason IS NULL OR CASE rotation_reason
       WHEN 'runs' THEN ${STRENGTH.runs}
+      WHEN 'context' THEN ${STRENGTH.context}
       WHEN 'context-recovered' THEN ${STRENGTH["context-recovered"]}
       WHEN 'provider-changed' THEN ${STRENGTH["provider-changed"]}
       WHEN 'fresh-start' THEN ${STRENGTH["fresh-start"]}

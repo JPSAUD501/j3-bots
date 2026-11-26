@@ -42,9 +42,9 @@ On a laptop, a turn under the engine costs about 59,000 input tokens per model c
 
 ## 6. When should a main session rotate, and what does the digest contain?
 
-The server rotates a main session after 200 turns and carries a digest of the last delivered messages, up to 60 of them and 6,000 characters ([Server: sessions](architecture/server.md#sessions)). Both numbers are guesses. Rotation trades continuity for cost: tokens or age may be better triggers than turns, and the digest may need the bot's own summary rather than the raw messages. A fresh start carries no digest, as the client promises: the new session starts from the bot's memory files alone.
+The server rotates a main session once its working context reaches three quarters of the point where the harness would compact it, or after 200 turns where the provider gives no measure, and carries a digest of the last delivered messages, up to 60 of them and 6,000 characters ([Server: sessions](architecture/server.md#sessions), [decision 0074](decisions/0074-a-session-rotates-by-how-full-its-context-is.md)). The share, the run count and the digest's size are guesses. Rotation trades continuity for cost, and the digest may need the bot's own summary rather than the raw messages. A fresh start carries no digest, as the client promises: the new session starts from the bot's memory files alone.
 
-**Settled by** real conversations: how a session's cost grows with its turns on each provider, and whether bots pick up well after a rotation.
+**Settled by** real conversations: how much a turn adds to a session's context on each provider, how often a turn still runs into the harness's compaction, and whether bots pick up well after a rotation.
 
 ## 7. How does an operator configure providers without T3 Code's interface?
 

@@ -47,6 +47,7 @@ import {
 } from "../errors.ts";
 import type {
   BackgroundWork,
+  ContextFill,
   DelegatedResult,
   EndedTurn,
   EngineRequest,
@@ -474,6 +475,15 @@ export class TestEngineControl extends Context.Service<
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
     }) => Effect.Effect<void>;
+    /**
+     * The provider reports how full the session's working context is, as it
+     * does on each request of the turn: the turn's end tells the latest.
+     */
+    readonly fillContext: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly fill: ContextFill;
+    }) => Effect.Effect<void>;
     /** Whether background work some turn of the session started still runs. */
     readonly backgroundWorkRunning: (sessionId: SessionId) => Effect.Effect<boolean>;
     /**
@@ -613,6 +623,8 @@ interface TurnRecord {
   unstoppable: boolean;
   /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
   contextRecovered: boolean;
+  /** How full the provider last reported the session's working context, if it did. */
+  context: ContextFill | null;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -940,6 +952,7 @@ const make = Effect.gen(function* () {
       unannounced: false,
       unstoppable: false,
       contextRecovered: false,
+      context: null,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
@@ -1124,6 +1137,7 @@ const make = Effect.gen(function* () {
       backgroundWork: announcesWork(turn),
       continuation,
       contextRecovered: turn.contextRecovered,
+      context: turn.context,
     }));
     for (const settlement of settlements) emit(session, at, settlement);
     for (const result of turn.landed) {
@@ -1303,6 +1317,7 @@ const make = Effect.gen(function* () {
           continuation: turn.ended.continuation,
           steps,
           contextRecovered: turn.contextRecovered,
+          context: turn.context,
         });
         listed.push(turn);
       }
@@ -2334,6 +2349,13 @@ const make = Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
         turn.contextRecovered = true;
+      }),
+
+    fillContext: ({ sessionId, turnId, fill }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        turn.context = fill;
       }),
 
     endBackgroundWork: (sessionId) =>

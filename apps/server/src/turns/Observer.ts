@@ -2,6 +2,7 @@
 import { BotId, type Entry, EntryId, type ModelChoice, RoomId, WorkStep } from "@j3-bots/contracts";
 import {
   type BackgroundWork,
+  type ContextFill,
   type DelegatedResult,
   Engine,
   type EngineDown,
@@ -225,6 +226,8 @@ interface TurnEnd {
    * in a fresh one: the session is due for rotation.
    */
   readonly contextRecovered: boolean;
+  /** How full the session's working context was as it ended, if the provider said. */
+  readonly context: ContextFill | null;
   readonly at: DateTime.Utc;
 }
 
@@ -899,6 +902,16 @@ export const layer = Layer.effect(
             WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
           `;
         }
+        // How full its working context is now, which the rotator reads
+        // (`Rotations`): turns end in order, so the latest end is the latest
+        // measure.
+        if (end.context !== null) {
+          yield* sql`
+            UPDATE sessions
+            SET context_used = ${end.context.usedTokens}, context_limit = ${end.context.limitTokens}
+            WHERE id = ${session.id}
+          `;
+        }
       }
       // While turns of the session have work flagged or unreported, each
       // turn's end is followed by a report taken once nothing runs (`Stops`):
@@ -913,7 +926,7 @@ export const layer = Layer.effect(
       // The provider's conversation could not be resumed: the bot's main
       // session is replaced once it is idle, with a digest of its own. Any
       // turn's end may also have made a session due for rotation idle, or
-      // brought it to its run limit.
+      // brought it to its run limit or near the end of its context.
       if (end.contextRecovered) {
         yield* requestRotation(session.id, "context-recovered");
       }
@@ -1372,6 +1385,7 @@ export const layer = Layer.effect(
           continuation: turn.continuation,
           continued: continued.has(turn.turnId),
           contextRecovered: turn.contextRecovered,
+          context: turn.context,
           at: turn.finishedAt,
         });
       }
@@ -1410,6 +1424,7 @@ export const layer = Layer.effect(
           continuation: null,
           continued: false,
           contextRecovered: false,
+          context: null,
           at: event.at,
         });
       }
@@ -1517,6 +1532,7 @@ export const layer = Layer.effect(
             continuation: event.continuation,
             continued: false,
             contextRecovered: event.contextRecovered,
+            context: event.context,
             at: event.finishedAt,
           });
         case "continuation-dropped":
