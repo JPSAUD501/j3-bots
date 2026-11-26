@@ -29,6 +29,25 @@ const bounded = (text: string): string => {
   return `${(space > 0 ? cut.slice(0, space) : cut).trimEnd()}…`;
 };
 
+/** The lines under the "What's new" heading of `body`, up to the next section; none without one. */
+const whatsNewLines = (body: string): ReadonlyArray<string> => {
+  const lines = body.split(/\r?\n/);
+  const start = lines.findIndex((line) => WHATS_NEW.test(line));
+  if (start === -1) return [];
+  const end = lines.findIndex((line, index) => index > start && SECTION_END.test(line));
+  return lines.slice(start + 1, end === -1 ? undefined : end);
+};
+
+/**
+ * The "What's new" section of `body`, a release's notes in Markdown, as
+ * written there, without its heading; null when the notes have no such
+ * section or it is empty. The `j3-app` skill a bot reads carries it.
+ */
+export const whatsNewOf = (body: string): string | null => {
+  const section = whatsNewLines(body).join("\n").trim();
+  return section.length === 0 ? null : section;
+};
+
 /**
  * The highlights of a release from `body`, its notes in Markdown as the
  * releases page has them: at most `MAX_HIGHLIGHTS`. None when the notes have
@@ -36,12 +55,8 @@ const bounded = (text: string): string => {
  */
 export const highlightsOf = (body: string | null | undefined): ReadonlyArray<string> => {
   if (body === null || body === undefined) return [];
-  const lines = body.split(/\r?\n/);
-  const start = lines.findIndex((line) => WHATS_NEW.test(line));
-  if (start === -1) return [];
   const highlights: Array<string> = [];
-  for (const line of lines.slice(start + 1)) {
-    if (SECTION_END.test(line)) break;
+  for (const line of whatsNewLines(body)) {
     const lead = LEAD.exec(line)?.[1];
     if (lead === undefined) continue;
     const text = plain(lead);

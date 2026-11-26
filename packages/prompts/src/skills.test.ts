@@ -20,4 +20,8 @@ describe("shared skills", () => {
       expect(match?.[2]?.length ?? 0).toBeLessThanOrEqual(1_024);
     }
   });
+
+  it("carry no placeholder left to fill, j3-app's release included", () => {
+    for (const skill of sharedSkills) expect(skill.text, skill.name).not.toMatch(/\{\{[^}]*\}\}/);
+  });
 });

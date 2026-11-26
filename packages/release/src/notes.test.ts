@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
 import { MAX_HIGHLIGHT_LENGTH, MAX_HIGHLIGHTS } from "@j3-bots/contracts";
-import { highlightsOf } from "./notes.ts";
+import { highlightsOf, whatsNewOf } from "./notes.ts";
 
 const notes = `# J3 Bots 9.1.0
 
@@ -53,5 +53,20 @@ describe("the highlights of a release", () => {
     assert.isDefined(only);
     assert.isAtMost(only.length, MAX_HIGHLIGHT_LENGTH);
     assert.match(only, /word…$/);
+  });
+});
+
+describe("the What's new section of a release", () => {
+  it("is the section as written, from under its heading to the next section", () => {
+    const section = whatsNewOf(notes);
+    assert.isNotNull(section);
+    assert.isTrue(section?.startsWith("- **A bot keeps a garden** ([#901]"));
+    assert.include(section, "  A paragraph under an item.\n\n### Details\n");
+    assert.isTrue(section?.endsWith("- **A deeper heading stays in the section** (#903)."));
+  });
+
+  it("is none without the section, or when it holds nothing", () => {
+    assert.isNull(whatsNewOf("# J3 Bots 9.1.0\n\n## Updating\n\n- **The server**\n"));
+    assert.isNull(whatsNewOf("## What's new\n\n\n## Known limits\n\n- **A limit**\n"));
   });
 });
