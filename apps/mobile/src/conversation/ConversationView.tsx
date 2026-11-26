@@ -94,6 +94,7 @@ import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
+import { ConnectorApps } from "./ConnectorAppCard.tsx";
 import { type TurnBot, WorkFold } from "./WorkFold.tsx";
 
 /** Whether the app is in the foreground. */
@@ -687,6 +688,11 @@ function Row({
       return (
         <AnimatedView {...enteringWhen(settles, settleIn(springs.pop))}>
           <WorkFold fold={row.fold} live={row.live ? turnBot : null} />
+          {row.fold !== null && row.fold.apps.length > 0 && (
+            <View className="px-4">
+              <ConnectorApps apps={row.fold.apps} />
+            </View>
+          )}
         </AnimatedView>
       );
     case "card": {

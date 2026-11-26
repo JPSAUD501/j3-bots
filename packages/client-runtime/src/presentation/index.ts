@@ -295,6 +295,21 @@ export {
   type SignInCatch,
   signInCatch,
 } from "./signInReturn.ts";
+export {
+  CONNECTOR_APP_BRIDGE,
+  CONNECTOR_APP_DEFAULT_HEIGHT,
+  CONNECTOR_APP_FRAME_SANDBOX,
+  type ConnectorAppAsk,
+  type ConnectorAppHost,
+  type ConnectorAppHostOptions,
+  type ConnectorAppPlace,
+  clampConnectorAppHeight,
+  connectorAppDocument,
+  connectorAppHost,
+  connectorAppShell,
+  fromOwnFrame,
+  type HostMessage,
+} from "./connectorApp.ts";
 export { typedOrigins } from "./secrets.ts";
 export {
   readVisualHeight,

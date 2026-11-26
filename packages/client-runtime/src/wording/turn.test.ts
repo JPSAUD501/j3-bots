@@ -25,6 +25,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   createdAt: at("2026-11-20T14:00:20Z"),
   turnStartedAt: at(started),
   stepCount: 2,
+  apps: [],
   status,
 });
 

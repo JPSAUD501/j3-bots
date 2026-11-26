@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
+import { CONNECTOR_APP_FRAME_POLICY, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
 import { ServerOrigin } from "@j3-bots/desktop-bridge";
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
@@ -99,8 +99,12 @@ describe("the page's content security policy", () => {
     assert.include(contentSecurityPolicy(null, sources), `script-src 'self' ${sources[0]};`);
   });
 
-  it("serves the visual page under a visual's policy, and every other page under the app's", () => {
+  it("serves the visual and connector app pages under their own policies, every other under the app's", () => {
     assert.strictEqual(policyFor(["visual-frame.html"], null, []), VISUAL_FRAME_POLICY);
+    assert.strictEqual(
+      policyFor(["connector-app-frame.html"], null, []),
+      CONNECTOR_APP_FRAME_POLICY,
+    );
     for (const segments of [["index.html"], ["assets", "visual-frame.html"], []]) {
       assert.strictEqual(policyFor(segments, null, []), contentSecurityPolicy(null, []));
     }

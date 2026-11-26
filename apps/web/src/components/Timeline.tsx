@@ -40,6 +40,7 @@ import { QuestionCard } from "./QuestionCard";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretAskCard } from "./SecretAskCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { type ConnectorAppAccess, ConnectorApps } from "./ConnectorAppCard";
 import type { SecretsAccess } from "./secrets/parts";
 import { TimeDivider } from "./TimeDivider";
 import { type TurnBot, WorkFold } from "./WorkFold";
@@ -78,6 +79,8 @@ export interface TimelineIntents {
   readonly answerConnectorInput: (entryId: EntryId, answer: ElicitationAnswer) => void;
   /** Opens the page a connector's server asked the operator to open. */
   readonly openConnectorPage: (url: string) => void;
+  /** The apps connectors' tools opened, which turns' work shows. */
+  readonly connectorApp: ConnectorAppAccess;
 }
 
 interface TimelineProps {
@@ -176,6 +179,7 @@ export function Timeline({
                   else intents.closeWorkFold(fold.id);
                 }}
               />
+              {fold !== null && <ConnectorApps apps={fold.apps} access={intents.connectorApp} />}
             </div>
           );
         }

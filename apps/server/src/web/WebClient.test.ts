@@ -14,7 +14,12 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as NetAddress from "effect/net/NetAddress";
-import { VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
+import {
+  CONNECTOR_APP_FRAME_PATH,
+  CONNECTOR_APP_FRAME_POLICY,
+  VISUAL_FRAME_PATH,
+  VISUAL_FRAME_POLICY,
+} from "@j3-bots/contracts";
 import * as Ports from "../system/Ports.ts";
 import * as WebClient from "./WebClient.ts";
 
@@ -45,6 +50,7 @@ const fixture = Effect.fn("fixture")(function* (linkedIndex: boolean) {
   yield* fs.writeFileString(path.join(root, "assets", "index-B1x2y3z4.js"), SCRIPT);
   yield* fs.writeFileString(path.join(root, "manifest.webmanifest"), "{}");
   yield* fs.writeFileString(path.join(root, VISUAL_FRAME_PATH), "<!doctype html>");
+  yield* fs.writeFileString(path.join(root, CONNECTOR_APP_FRAME_PATH), "<!doctype html>");
   yield* fs.symlink(path.join(secrets, "secret.txt"), path.join(root, "leak.txt"));
   yield* fs.symlink(secrets, path.join(root, "linked"));
   return root;
@@ -134,6 +140,17 @@ it.layer(NodeServices.layer)("web client", (it) => {
         const response = yield* get(VISUAL_FRAME_PATH, "text/html");
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["content-security-policy"], VISUAL_FRAME_POLICY);
+        assert.isUndefined(response.headers["x-frame-options"]);
+      }),
+    ),
+  );
+
+  it.effect("serves the connector app page sandboxed, under an app's widest policy", () =>
+    serving(
+      Effect.gen(function* () {
+        const response = yield* get(CONNECTOR_APP_FRAME_PATH, "text/html");
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers["content-security-policy"], CONNECTOR_APP_FRAME_POLICY);
         assert.isUndefined(response.headers["x-frame-options"]);
       }),
     ),

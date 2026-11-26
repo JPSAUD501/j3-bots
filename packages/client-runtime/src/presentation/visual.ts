@@ -37,8 +37,9 @@ export const VISUAL_HEIGHT_MESSAGE = "j3-visual-height";
  */
 export const VISUAL_BRIDGE = "J3Visual";
 
-// The first script of a visual's document, before any of the page's, shuts
-// the ways out a policy does not:
+// The first script of a visual's document, and of a connector's app's
+// (`connectorAppDocument`), before any of the page's, shuts the ways out a
+// policy does not:
 // - WebRTC. No policy Chromium enforces covers it (`connect-src` does not,
 //   and it does not know a `webrtc` directive), so a peer connection could
 //   reach any address. Every RTC interface is deleted from the page's realm
@@ -54,7 +55,7 @@ export const VISUAL_BRIDGE = "J3Visual";
 //   an opaque origin of its own, and the policy starts no worker.
 // It keeps the built-ins it uses, so the page cannot turn it off by replacing
 // them. docs/architecture/security.md, "Visuals", has the proof.
-const GUARD = `(function () {
+export const PAGE_GUARD = `(function () {
   "use strict";
   var apply = Reflect.apply, drop = Reflect.deleteProperty, describe = Object.getOwnPropertyDescriptor;
   var names = Object.getOwnPropertyNames(window);
@@ -144,7 +145,7 @@ export const visualDocument = (html: string, appearance: VisualAppearance): stri
       `<meta http-equiv="Content-Security-Policy" content="${VISUAL_CONTENT_SECURITY_POLICY}">` +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       `<style>${themeStyle(appearance)}</style>` +
-      `<script>${GUARD}</script>` +
+      `<script>${PAGE_GUARD}</script>` +
       `<script>${HEIGHT_REPORTER}</script>` +
       html;
 

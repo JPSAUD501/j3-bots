@@ -38,6 +38,13 @@ import {
   SignInRedirect,
   SignInStarted,
 } from "./connector.ts";
+import {
+  ConnectorAppAnswer,
+  ConnectorAppResourceUri,
+  ConnectorAppToolName,
+  ConnectorAppView,
+  ConnectorAppViewId,
+} from "./connectorApp.ts";
 import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { ElicitationAnswer } from "./elicitation.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
@@ -1232,6 +1239,46 @@ export const ConnectorRpcs = RpcGroup.make(
   }),
 );
 
+/**
+ * A connector's app, which a turn's work shows (`WorkFoldEntry.apps`): its
+ * document, and what the app asks of its connector while a client draws it
+ * (decision 0048). Each request goes out as the bot whose call opened the
+ * app, through that bot's own session with the connector, checked as the
+ * bot's own calls are; a client asks the operator first when the view's
+ * `calls` is `ask`. New in 0.9.0: an older client never sees an app.
+ */
+export const ConnectorAppRpcs = RpcGroup.make(
+  /** The app, ready to draw. `NotFound("connector-app")` once its conversation's work is gone. */
+  Rpc.make("connectorApp.open", {
+    payload: { viewId: ConnectorAppViewId },
+    success: ConnectorAppView,
+    error: NotFound,
+  }),
+  /**
+   * A `tools/call` the app asked for: a tool of its own connector whose
+   * `visibility` includes `app`. `allowed` says the operator pressed Allow
+   * for the tool in the app's card; without it the call runs only while the
+   * bot is in full access, and is refused `needs-allow` otherwise. The answer
+   * is the connector's, or why it was not passed on.
+   */
+  Rpc.make("connectorApp.callTool", {
+    payload: {
+      viewId: ConnectorAppViewId,
+      name: ConnectorAppToolName,
+      arguments: Schema.JsonObject,
+      allowed: Schema.Boolean,
+    },
+    success: ConnectorAppAnswer,
+    error: NotFound,
+  }),
+  /** A `resources/read` the app asked for, of its own connector. */
+  Rpc.make("connectorApp.readResource", {
+    payload: { viewId: ConnectorAppViewId, uri: ConnectorAppResourceUri },
+    success: ConnectorAppAnswer,
+    error: NotFound,
+  }),
+);
+
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
@@ -1248,5 +1295,6 @@ export const J3Rpcs = RosterRpcs.merge(
   BrowserRpcs,
   SecretsRpcs,
   ConnectorRpcs,
+  ConnectorAppRpcs,
   SkillRpcs,
 );

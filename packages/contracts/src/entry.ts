@@ -20,6 +20,7 @@ import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ConnectorId } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
+import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
@@ -473,6 +474,15 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
   stepCount: NonNegativeInt,
+  /**
+   * The connectors' apps the turn's tool calls opened, in the order they
+   * were called, at most `MAX_CONNECTOR_APPS_PER_FOLD`: a client draws each
+   * under the fold's line, open or not. Empty from a server, or a fold, that
+   * predates them.
+   */
+  apps: Schema.Array(ConnectorAppRef)
+    .check(Schema.isMaxLength(MAX_CONNECTOR_APPS_PER_FOLD))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   status: Schema.Union([
     Schema.TaggedStruct("running", {}),
     Schema.TaggedStruct("finished", {

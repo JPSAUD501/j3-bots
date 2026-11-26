@@ -180,7 +180,8 @@ export class TurnTools extends Context.Service<
      * session's running admitted turn, as the turn tools are, and claims that
      * record for the request, committed before it returns, so the call is
      * made at the connector once. What the connector answers is not kept: a
-     * request claimed before fails with `CallCutOff`.
+     * request claimed before fails with `CallCutOff`. Answers where the call
+     * stands, which an app it opens is kept by.
      */
     readonly claimConnectorCall: (
       call: ClaimedCall,

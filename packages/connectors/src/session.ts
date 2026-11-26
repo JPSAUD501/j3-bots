@@ -14,15 +14,23 @@ import {
   StreamableHTTPClientTransport,
   type Transport,
 } from "@modelcontextprotocol/client";
+import {
+  fitsUtf8,
+  MAX_CONNECTOR_APP_DATA_BYTES,
+  MCP_APP_MIME_TYPE,
+  MCP_APPS_EXTENSION,
+} from "@j3-bots/contracts";
 import * as Clock from "effect/Clock";
 import type * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import { blobText } from "./app.ts";
 import { type CatalogTool, catalogOf, cleanTitle, ListedTool, toolBytes } from "./catalog.ts";
 import { answerText, CallResult, contentText, ResourceContents } from "./content.ts";
 import { elicitationOf, elicitResultOf } from "./elicitation.ts";
@@ -176,6 +184,12 @@ export interface ToolAnswer {
   readonly isError: boolean;
   /** Part of the answer was cut to fit `maxResultCharacters`. */
   readonly cut: boolean;
+  /**
+   * The answer whole, as MCP gives it (`CallToolResult`), with the
+   * connector's secrets taken out, for an app to be given; null when it is
+   * larger than `MAX_CONNECTOR_APP_DATA_BYTES` as JSON.
+   */
+  readonly result: Schema.Json | null;
 }
 
 /** How far a call has come, as its server says: progress, or the status of the task it runs as. */
@@ -250,6 +264,15 @@ export interface McpSession {
     readonly arguments: Readonly<Record<string, string>>;
     readonly hooks?: CallHooks;
   }) => Effect.Effect<PromptText, ConnectorFailure>;
+  /**
+   * Reads a resource (`resources/read`) for a connector's app, whole, as MCP
+   * gives it (`ReadResourceResult`), with the connector's secrets taken out;
+   * null when it is larger than `maxBytes` as JSON.
+   */
+  readonly readAppResource: (
+    uri: string,
+    maxBytes: number,
+  ) => Effect.Effect<Schema.Json | null, ConnectorFailure>;
 }
 
 /** Headers the transport sets itself, or that would change how a request is framed: never taken from the store. */
@@ -540,12 +563,63 @@ export const scrubberOf = (values: ReadonlyArray<string>): ((text: string) => st
   return (text) => secrets.reduce((out, secret) => out.replaceAll(secret, "[redacted]"), text);
 };
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
+
+const isJsonArray = (value: Schema.JsonArray | Schema.JsonObject): value is Schema.JsonArray =>
+  Array.isArray(value);
+
+/** A `blob` that is UTF-8 text, with `scrub` applied to the text; one that is not text is left as it is. */
+const scrubbedBlob = (blob: string, scrub: (text: string) => string): string =>
+  Option.match(blobText(blob), {
+    onNone: () => blob,
+    onSome: (text) => {
+      const clean = scrub(text);
+      return clean === text ? blob : Base64.encode(new TextEncoder().encode(clean));
+    },
+  });
+
+/** `value` with every `blob` in it scrubbed as its text: what base64 would hide from `scrub`. */
+const scrubbedBlobs = (value: Schema.Json, scrub: (text: string) => string): Schema.Json => {
+  if (value === null || typeof value !== "object") return value;
+  if (isJsonArray(value)) return value.map((item) => scrubbedBlobs(item, scrub));
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      key === "blob" && typeof item === "string"
+        ? scrubbedBlob(item, scrub)
+        : scrubbedBlobs(item, scrub),
+    ]),
+  );
+};
+
+/**
+ * A server's answer as JSON, with `scrub` applied to its text and to every
+ * `blob` of text in it (an app's document may come as one), for an app: null
+ * when it is larger than `maxBytes`, or no longer JSON once scrubbed (a
+ * secret that spanned its structure).
+ */
+const appData = (
+  value: unknown,
+  scrub: (text: string) => string,
+  maxBytes: number,
+): Schema.Json | null => {
+  const text = JSON.stringify(value);
+  if (typeof text !== "string" || !fitsUtf8(text, maxBytes)) return null;
+  return Option.getOrNull(
+    Option.map(decodeJson(scrub(text)), (json) => scrubbedBlobs(json, scrub)),
+  );
+};
+
 const cut = (text: string, max: number): { readonly text: string; readonly cut: boolean } => {
   const end = codePointsEnd(text, max);
   return end === null ? { text, cut: false } : { text: text.slice(0, end), cut: true };
 };
 
-/** The client a session speaks through, with what J3 Bots offers a server: elicitation, in both modes, and tasks. Never sampling or roots. */
+/**
+ * The client a session speaks through, with what J3 Bots offers a server:
+ * elicitation, in both modes, tasks, and showing a tool's app as an HTML
+ * document of the MCP Apps extension (decision 0048). Never sampling or roots.
+ */
 export const makeClient = (
   setup: ClientSetup,
   limits: SessionLimits,
@@ -559,7 +633,10 @@ export const makeClient = (
   return new Client(setup.client, {
     capabilities: {
       elicitation: { form: {}, url: {} },
-      extensions: { [TASKS_EXTENSION]: {} },
+      extensions: {
+        [TASKS_EXTENSION]: {},
+        [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+      },
     },
     versionNegotiation: {
       mode: "auto",
@@ -1017,8 +1094,14 @@ export const sessionOf = (
             Effect.fromResult,
             Effect.mapError(() => new NotMcp()),
           );
-    const text = cut(scrub(answer.sent)(answerText(result)), limits.maxResultCharacters);
-    return { text: text.text, cut: text.cut, isError: result.isError === true };
+    const clean = scrub(answer.sent);
+    const text = cut(clean(answerText(result)), limits.maxResultCharacters);
+    return {
+      text: text.text,
+      cut: text.cut,
+      isError: result.isError === true,
+      result: appData(result, clean, MAX_CONNECTOR_APP_DATA_BYTES),
+    };
   });
 
   const readResource: McpSession["readResource"] = Effect.fn("McpSession.readResource")(
@@ -1079,5 +1162,26 @@ export const sessionOf = (
     return { description, messages, cut: wasCut };
   });
 
-  return { info, listTools, listResources, listPrompts, callTool, readResource, getPrompt };
+  const readAppResource: McpSession["readAppResource"] = Effect.fn("McpSession.readAppResource")(
+    function* (uri, maxBytes) {
+      const answer = yield* tagged(limits.listDeadline, undefined, (tag, signal) =>
+        client.readResource(
+          { uri, _meta: { [CALL_TAG]: tag } },
+          { signal, timeout: sdkTimeout(limits.listDeadline) },
+        ),
+      );
+      return appData(answer.value, scrub(answer.sent), maxBytes);
+    },
+  );
+
+  return {
+    info,
+    listTools,
+    listResources,
+    listPrompts,
+    callTool,
+    readResource,
+    readAppResource,
+    getPrompt,
+  };
 };

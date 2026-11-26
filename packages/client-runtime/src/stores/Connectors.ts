@@ -4,6 +4,9 @@ import {
   type CommandError,
   type CommandLine,
   type Connector,
+  type ConnectorAppAnswer,
+  type ConnectorAppView,
+  type ConnectorAppViewId,
   type ConnectorFieldValue,
   type ConnectorGrant,
   ConnectorId,
@@ -21,6 +24,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
+import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { Connection, type NotPaired } from "../connection/Connection.ts";
@@ -106,6 +110,20 @@ export class Connectors extends Context.Service<
     ) => Effect.Effect<IntentResult<SignInStarted>>;
     /** Finishes a `relay` or `paste` sign-in with the address the browser returned to. */
     readonly completeSignIn: (url: Redacted.Redacted<string>) => Effect.Effect<IntentResult>;
+    /** A connector's app a turn's work shows, ready to draw. */
+    readonly openApp: (viewId: ConnectorAppViewId) => Effect.Effect<IntentResult<ConnectorAppView>>;
+    /** A tool call an app asked for, made as the bot whose call opened it; `allowed` once the operator allowed it. */
+    readonly callAppTool: (
+      viewId: ConnectorAppViewId,
+      name: string,
+      args: Schema.JsonObject,
+      allowed: boolean,
+    ) => Effect.Effect<IntentResult<ConnectorAppAnswer>>;
+    /** A resource an app asked to read, of its own connector. */
+    readonly readAppResource: (
+      viewId: ConnectorAppViewId,
+      uri: string,
+    ) => Effect.Effect<IntentResult<ConnectorAppAnswer>>;
   }
 >()("@j3-bots/client-runtime/stores/Connectors") {}
 
@@ -271,6 +289,32 @@ export const layer = Layer.effect(
       );
     });
 
+    const openApp = Effect.fn("Connectors.openApp")(function* (viewId: ConnectorAppViewId) {
+      return yield* answered(connection.call((client) => client["connectorApp.open"]({ viewId })));
+    });
+
+    const callAppTool = Effect.fn("Connectors.callAppTool")(function* (
+      viewId: ConnectorAppViewId,
+      name: string,
+      args: Schema.JsonObject,
+      allowed: boolean,
+    ) {
+      return yield* answered(
+        connection.call((client) =>
+          client["connectorApp.callTool"]({ viewId, name, arguments: args, allowed }),
+        ),
+      );
+    });
+
+    const readAppResource = Effect.fn("Connectors.readAppResource")(function* (
+      viewId: ConnectorAppViewId,
+      uri: string,
+    ) {
+      return yield* answered(
+        connection.call((client) => client["connectorApp.readResource"]({ viewId, uri })),
+      );
+    });
+
     return Connectors.of({
       state,
       prompts,
@@ -284,6 +328,9 @@ export const layer = Layer.effect(
       setBots,
       beginSignIn,
       completeSignIn,
+      openApp,
+      callAppTool,
+      readAppResource,
     });
   }),
 );

@@ -209,6 +209,7 @@ export const openCommandSession = (
           listPrompts: explained(session.listPrompts),
           callTool: (input) => explained(session.callTool(input)),
           readResource: (input) => explained(session.readResource(input)),
+          readAppResource: (uri, maxBytes) => explained(session.readAppResource(uri, maxBytes)),
           getPrompt: (input) => explained(session.getPrompt(input)),
         },
         ended: Effect.raceFirst(running.ended, Deferred.await(broken)),

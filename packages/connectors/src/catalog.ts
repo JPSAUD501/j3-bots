@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A tool's digest is a synchronous SHA-256, which only node:crypto gives a pure function.
 import * as NodeCrypto from "node:crypto";
 import { defuseTags } from "@j3-bots/prompts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { codePointsEnd } from "./text.ts";
 
@@ -34,9 +35,75 @@ export const ListedTool = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   description: Schema.optionalKey(Schema.String),
   inputSchema: Schema.JsonObject,
-  _meta: Schema.optionalKey(Schema.Struct({ ui: Schema.optionalKey(Schema.JsonObject) })),
+  /** Read only for its app (`toolUiOf`); anything else in it is left. */
+  _meta: Schema.optionalKey(Schema.Unknown),
 });
 export type ListedTool = typeof ListedTool.Type;
+
+/** The longest address of an app's resource J3 Bots keeps. */
+const MAX_RESOURCE_URI = 2_048;
+
+/**
+ * What the MCP Apps extension says of a tool, read from its `_meta.ui`: the
+ * `ui://` resource its app is, if any, and who may call it. A bot is offered
+ * only a tool whose `visibility` includes `model`, and an app may call only
+ * one whose `visibility` includes `app`; a tool that says nothing is both.
+ */
+export interface ToolUi {
+  readonly resourceUri: string | null;
+  readonly model: boolean;
+  readonly app: boolean;
+}
+
+const ListedMeta = Schema.Struct({
+  ui: Schema.optionalKey(Schema.JsonObject),
+  /** The extension's earlier, flat form, which its servers may still send. */
+  "ui/resourceUri": Schema.optionalKey(Schema.String),
+});
+const decodeListedMeta = Schema.decodeUnknownOption(ListedMeta);
+
+/**
+ * A listed tool's `_meta.ui` as its server wrote it, the earlier flat
+ * `_meta["ui/resourceUri"]` read as its `resourceUri`; null when it has none.
+ */
+const listedUiOf = (meta: unknown): Schema.JsonObject | null =>
+  Option.match(decodeListedMeta(meta), {
+    onNone: () => null,
+    onSome: (listed) =>
+      listed.ui ??
+      (listed["ui/resourceUri"] === undefined ? null : { resourceUri: listed["ui/resourceUri"] }),
+  });
+
+const ReadUi = Schema.Struct({
+  resourceUri: Schema.optionalKey(Schema.String),
+  visibility: Schema.optionalKey(Schema.Unknown),
+});
+const decodeReadUi = Schema.decodeUnknownOption(ReadUi);
+
+/** A resource's address an app may be: `ui://`, one line, no hidden character, within {@link MAX_RESOURCE_URI}. */
+const appUri = (uri: string | undefined): string | null =>
+  uri !== undefined &&
+  uri.startsWith("ui://") &&
+  uri.length <= MAX_RESOURCE_URI &&
+  !/[\s\p{Cc}\p{Cf}]/u.test(uri)
+    ? uri
+    : null;
+
+/**
+ * A tool's `ui` (`CatalogTool.ui`), read leniently: an address that is not
+ * one an app may be is no app, and a `visibility` that is not a list is the
+ * default, both. A list that names neither `model` nor `app` leaves the tool
+ * to nobody.
+ */
+export const toolUiOf = (ui: Schema.JsonObject | null): ToolUi =>
+  Option.match(decodeReadUi(ui), {
+    onNone: () => ({ resourceUri: null, model: true, app: true }),
+    onSome: (read) => {
+      const names = (who: string) =>
+        !Array.isArray(read.visibility) || read.visibility.includes(who);
+      return { resourceUri: appUri(read.resourceUri), model: names("model"), app: names("app") };
+    },
+  });
 
 /** A tool as J3 Bots keeps and offers it. */
 export const CatalogTool = Schema.Struct({
@@ -50,7 +117,7 @@ export const CatalogTool = Schema.Struct({
   /**
    * What the tool's `_meta.ui` says, as its server wrote it, for the MCP Apps
    * extension: the `ui://` resource that renders its calls and who may call
-   * it. No model reads it. Null when it has none.
+   * it (`toolUiOf` reads it). No model reads it. Null when it has none.
    */
   ui: Schema.NullOr(Schema.JsonObject),
   /** SHA-256 of the title, description, input schema and `ui`: whether what bots are offered changed. */
@@ -169,7 +236,7 @@ export const catalogOf = (
     const title = cleanTitle(tool.title === undefined ? undefined : redact(tool.title));
     const description = cleanDescription(redact(tool.description ?? ""));
     // A page's address that holds a secret would point nowhere once cleaned: none is kept.
-    const listedUi = tool._meta?.ui ?? null;
+    const listedUi = listedUiOf(tool._meta);
     const ui =
       listedUi !== null && redact(canonical(listedUi)) !== canonical(listedUi) ? null : listedUi;
     tools.push({

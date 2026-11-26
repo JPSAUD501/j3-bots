@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { HTTP_PATHS, VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
+import {
+  CONNECTOR_APP_FRAME_PATH,
+  CONNECTOR_APP_FRAME_POLICY,
+  HTTP_PATHS,
+  VISUAL_FRAME_PATH,
+  VISUAL_FRAME_POLICY,
+} from "@j3-bots/contracts";
 import type { ServerOrigin } from "@j3-bots/desktop-bridge";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
@@ -117,14 +123,17 @@ export const contentSecurityPolicy = (
 
 /**
  * The policy a file of the build is served with: a visual's for the page a
- * visual is drawn in, which runs the visual's inline scripts in a sandbox,
- * and the app's for every other.
+ * visual is drawn in, and a connector app's for the page an app is drawn in,
+ * each of which runs its document's inline scripts in a sandbox; and the
+ * app's for every other.
  */
 export const policyFor = (
   segments: ReadonlyArray<string>,
   server: ServerOrigin | null,
   scriptSources: ReadonlyArray<string>,
-): string =>
-  `/${segments.join("/")}` === VISUAL_FRAME_PATH
-    ? VISUAL_FRAME_POLICY
-    : contentSecurityPolicy(server, scriptSources);
+): string => {
+  const path = `/${segments.join("/")}`;
+  if (path === VISUAL_FRAME_PATH) return VISUAL_FRAME_POLICY;
+  if (path === CONNECTOR_APP_FRAME_PATH) return CONNECTOR_APP_FRAME_POLICY;
+  return contentSecurityPolicy(server, scriptSources);
+};

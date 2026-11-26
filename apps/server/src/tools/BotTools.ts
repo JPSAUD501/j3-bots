@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { type BotSession, EngineSessions } from "../bots/EngineSessions.ts";
+import { ConnectorApps } from "../connectors/ConnectorApps.ts";
 import {
   type ConnectorCallHooks,
   Connectors,
@@ -116,6 +117,7 @@ export const layer = Layer.effect(
     const secrets = yield* Secrets;
     const connectors = yield* Connectors;
     const management = yield* Management;
+    const apps = yield* ConnectorApps;
     const inputs = yield* ConnectorInputs;
     const steps = yield* ConnectorSteps;
 
@@ -557,7 +559,7 @@ export const layer = Layer.effect(
       const tooLarge = inputCapRefusal(input);
       if (tooLarge !== undefined) return yield* new Refused({ reason: tooLarge });
       const place = yield* claim(tool, call);
-      return yield* connectors
+      const answer = yield* connectors
         .call({
           botId: call.caller.botId,
           name: tool,
@@ -565,6 +567,10 @@ export const layer = Layer.effect(
           hooks: hooksFor(call.caller.botId, place),
         })
         .pipe(Effect.catchTag("ToolNotOffered", (error) => new Refused({ reason: error.message })));
+      if (Option.isSome(answer.app)) {
+        yield* apps.record({ place, botId: call.caller.botId, input, app: answer.app.value });
+      }
+      return answer;
     });
 
     const answer = (

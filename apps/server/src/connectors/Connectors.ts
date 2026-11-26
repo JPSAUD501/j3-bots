@@ -5,11 +5,15 @@ import {
   type Activity,
   type CallHooks,
   type CallProgress,
+  type AppDocument,
+  appDocumentOf,
+  toolUiOf,
   type CatalogTool,
   checkUrl,
   type ConnectorFailure,
   DEFAULT_SESSION_LIMITS,
   makeSupervisor,
+  MAX_APP_RESOURCE_JSON_BYTES,
   type McpSession,
   NeedsSignIn,
   nextFailing,
@@ -38,6 +42,9 @@ import {
   type CommandId,
   Conflict,
   Connector,
+  type ConnectorAppAnswer,
+  type ConnectorAppTool,
+  MAX_CONNECTOR_APP_DATA_BYTES,
   type ConnectorField,
   type ConnectorFieldValue,
   type ConnectorGlyph,
@@ -164,10 +171,28 @@ class ConnectorUnavailableError extends Schema.TaggedError<ConnectorUnavailableE
   { reason: Schema.Literals(CONNECTOR_UNAVAILABLE) },
 ) {}
 
+/**
+ * An app a connector's tool opened (the MCP Apps extension, decision 0048):
+ * the tool, its document as its server gave it, and the call's answer as MCP
+ * gives it, with the connector's secrets taken out (null when too large).
+ */
+export interface OpenedApp {
+  readonly connectorId: ConnectorId;
+  readonly connector: string;
+  readonly tool: ConnectorAppTool;
+  readonly document: AppDocument;
+  readonly result: Schema.Json | null;
+}
+
 /** What a bot reads back from a connector's tool: framed as untrusted data, or J3 Bots' own line when there was no answer. */
 export interface ToolCallAnswer {
   readonly text: string;
   readonly isError: boolean;
+}
+
+/** A tool call's answer, and the app the tool opened, when it has one and its server answered both. */
+export interface CalledTool extends ToolCallAnswer {
+  readonly app: Option.Option<OpenedApp>;
 }
 
 /** The bot is offered no tool by that name, or no connector by that slug: none such, or not granted. */
@@ -194,7 +219,7 @@ export class Connectors extends Context.Service<
       readonly name: string;
       readonly arguments: Readonly<Record<string, unknown>>;
       readonly hooks?: ConnectorCallHooks;
-    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    }) => Effect.Effect<CalledTool, ToolNotOffered>;
     /**
      * The resources and resource templates of the connectors `botId` may use
      * that are connected, or of the one `slug` names, as their servers list
@@ -238,6 +263,25 @@ export class Connectors extends Context.Service<
       readonly name: string;
       readonly arguments: PromptArguments;
     }) => Effect.Effect<{ readonly text: string; readonly cut: boolean }, CommandError>;
+    /**
+     * A tool call an app asked for, as `botId`, through that bot's own
+     * session: a tool of the connector's that the bot may use and whose
+     * `visibility` includes `app`, checked as the bot's own calls are, and
+     * made only while `permitted` holds once the session is open.
+     */
+    readonly appCall: (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly name: string;
+      readonly arguments: Readonly<Record<string, unknown>>;
+      readonly permitted: Effect.Effect<boolean>;
+    }) => Effect.Effect<ConnectorAppAnswer>;
+    /** A resource an app asked to read, as `botId`, through that bot's own session. */
+    readonly appRead: (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly uri: string;
+    }) => Effect.Effect<ConnectorAppAnswer>;
     readonly subscribe: Stream.Stream<ConnectorsEvent>;
     /** Every connector, as clients see it, with the prefix its tools are named under (`<prefix>__<tool>`). */
     readonly listed: Effect.Effect<ReadonlyArray<ListedConnector>>;
@@ -939,8 +983,12 @@ export const layer = Layer.effect(
       );
     });
 
+    /** The connector's tools a bot is offered: accepted, still listed so, and not for apps alone. */
+    const botToolsOf = (connector: StoredConnector, seen: Seen) =>
+      offeredOf(connector, seen).filter((tool) => toolUiOf(tool.ui).model);
+
     const offeredTool = (connector: StoredConnector, seen: Seen, name: string) =>
-      offeredOf(connector, seen).find((tool) => toolName(connector.slug, tool.name) === name);
+      botToolsOf(connector, seen).find((tool) => toolName(connector.slug, tool.name) === name);
 
     const toolsFor = Effect.fn("Connectors.toolsFor")(function* (botId: BotId) {
       const granted = yield* grantedTo(botId);
@@ -958,7 +1006,7 @@ export const layer = Layer.effect(
           )._tag === "connected",
       );
       return connected.flatMap((connector) =>
-        offeredOf(connector, seen.get(connector.id) ?? NOTHING_SEEN).map((tool): OfferedTool => ({
+        botToolsOf(connector, seen.get(connector.id) ?? NOTHING_SEEN).map((tool): OfferedTool => ({
           name: toolName(connector.slug, tool.name),
           connectorId: connector.id,
           upstreamName: tool.name,
@@ -1058,6 +1106,34 @@ export const layer = Layer.effect(
       return yield* new ConnectorUnavailableError({ reason: unavailableOf(stumble.failure) });
     });
 
+    /**
+     * A tool's app, read alongside its call through the same session: its
+     * document, or none when the tool has none, or its server's answer is not
+     * one J3 Bots shows. Nothing of it counts against the connector: the call
+     * is what the bot asked for.
+     */
+    const appOf = (session: McpSession, connector: StoredConnector, tool: CatalogTool) => {
+      const uri = toolUiOf(tool.ui).resourceUri;
+      if (uri === null) return Effect.succeed(Option.none<AppDocument>());
+      return session.readAppResource(uri, MAX_APP_RESOURCE_JSON_BYTES).pipe(
+        Effect.map((answer) => appDocumentOf(answer, uri)),
+        Effect.flatMap((read) =>
+          Result.isSuccess(read)
+            ? Effect.succeedSome(read.success)
+            : Effect.logInfo("A connector's app was not shown").pipe(
+                Effect.annotateLogs({ connectorId: connector.id, reason: read.failure }),
+                Effect.as(Option.none<AppDocument>()),
+              ),
+        ),
+        Effect.catch((failure: ConnectorFailure) =>
+          Effect.logInfo("A connector's app could not be read").pipe(
+            Effect.annotateLogs({ connectorId: connector.id, reason: failure._tag }),
+            Effect.as(Option.none<AppDocument>()),
+          ),
+        ),
+      );
+    };
+
     const call = Effect.fn("Connectors.call")(function* (input: {
       readonly botId: BotId;
       readonly name: string;
@@ -1077,26 +1153,48 @@ export const layer = Layer.effect(
             yield* input.hooks.started({ connector: refOf(connector), ui: now.tool.ui });
           }
           const hooks = sessionHooks(connector, input.hooks);
-          return yield* session.callTool({
-            name: now.tool.name,
-            arguments: input.arguments,
-            ...(hooks === undefined ? {} : { hooks }),
-          });
+          return yield* Effect.all(
+            [
+              session.callTool({
+                name: now.tool.name,
+                arguments: input.arguments,
+                ...(hooks === undefined ? {} : { hooks }),
+              }),
+              appOf(session, connector, now.tool),
+            ],
+            { concurrency: 2 },
+          ).pipe(Effect.map(([answer, document]) => ({ tool: now.tool, answer, document })));
         }),
       ).pipe(Effect.result);
       if (Result.isFailure(outcome)) {
         if (outcome.failure._tag === "ToolNotOffered") return yield* outcome.failure;
-        return yield* unavailable(connector.name, outcome.failure.reason);
+        const line = yield* unavailable(connector.name, outcome.failure.reason);
+        return { ...line, app: Option.none() } satisfies CalledTool;
       }
-      const answer = outcome.success;
-      return yield* framed({
+      const { tool, answer, document } = outcome.success;
+      const framedAnswer = yield* framed({
         type: "answer",
         connector: connector.name,
-        tool: found.value.tool.name,
+        tool: tool.name,
         text: answer.text,
         isError: answer.isError,
         cut: answer.cut,
       });
+      return {
+        ...framedAnswer,
+        app: Option.map(document, (opened): OpenedApp => ({
+          connectorId: connector.id,
+          connector: connector.name,
+          tool: {
+            name: tool.name,
+            title: tool.title,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          },
+          document: opened,
+          result: answer.result,
+        })),
+      } satisfies CalledTool;
     });
 
     /** The connectors `botId` may use that are connected, or the one `slug` names. */
@@ -1116,6 +1214,87 @@ export const layer = Layer.effect(
             unavailable,
             Option.fromNullishOr(states.get(connector.id)),
           )._tag === "connected",
+      );
+    });
+
+    /**
+     * Runs an app's request through `botId`'s session with the connector:
+     * only while the bot is granted it and it is connected, as for the bot's
+     * own calls, both checked again once the session is open, which may have
+     * waited on a command connector's process starting; and only while
+     * `permitted` holds then. `use` answers a refusal when the request is not
+     * one an app may make.
+     */
+    const appRequest = Effect.fn("Connectors.appRequest")(
+      function* (
+        botId: BotId,
+        connectorId: ConnectorId,
+        permitted: Effect.Effect<boolean>,
+        use: (
+          session: McpSession,
+          connector: StoredConnector,
+        ) => Effect.Effect<ConnectorAppAnswer, ConnectorFailure>,
+      ) {
+        const connector = (yield* usable(botId)).find((granted) => granted.id === connectorId);
+        if (connector === undefined) {
+          const granted = (yield* grantedTo(botId)).some((granted) => granted.id === connectorId);
+          return { _tag: "refused", reason: granted ? "unavailable" : "gone" } as const;
+        }
+        return yield* withSession(connector, botId, (session) =>
+          Effect.gen(function* () {
+            const now = (yield* grantedTo(botId)).find((granted) => granted.id === connectorId);
+            if (now === undefined) return yield* new Withdrawn();
+            if (!(yield* permitted)) return { _tag: "refused", reason: "needs-allow" } as const;
+            return yield* use(session, now);
+          }),
+        );
+      },
+      Effect.catchTags({
+        ToolNotOffered: () =>
+          Effect.succeed<ConnectorAppAnswer>({ _tag: "refused", reason: "gone" }),
+        ConnectorUnavailableError: () =>
+          Effect.succeed<ConnectorAppAnswer>({ _tag: "refused", reason: "unavailable" }),
+      }),
+    );
+
+    /** An answer an app is given, or `too-large` when its server's was. */
+    const appAnswer = (result: Schema.Json | null): ConnectorAppAnswer =>
+      result === null ? { _tag: "refused", reason: "too-large" } : { _tag: "answer", result };
+
+    const appCall = Effect.fn("Connectors.appCall")(function* (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly name: string;
+      readonly arguments: Readonly<Record<string, unknown>>;
+      readonly permitted: Effect.Effect<boolean>;
+    }) {
+      return yield* appRequest(
+        input.botId,
+        input.connectorId,
+        input.permitted,
+        (session, connector) =>
+          Effect.gen(function* () {
+            // Opening the session listed the tools again: checked against that listing.
+            const seen = yield* seenOf(connector.id);
+            const tool = offeredOf(connector, seen).find(
+              (offered) => offered.name === input.name && toolUiOf(offered.ui).app,
+            );
+            if (tool === undefined) return { _tag: "refused", reason: "not-for-apps" } as const;
+            const answer = yield* session.callTool({ name: tool.name, arguments: input.arguments });
+            return appAnswer(answer.result);
+          }),
+      );
+    });
+
+    const appRead = Effect.fn("Connectors.appRead")(function* (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly uri: string;
+    }) {
+      return yield* appRequest(input.botId, input.connectorId, Effect.succeed(true), (session) =>
+        session
+          .readAppResource(input.uri, MAX_CONNECTOR_APP_DATA_BYTES)
+          .pipe(Effect.map(appAnswer)),
       );
     });
 
@@ -1984,6 +2163,8 @@ export const layer = Layer.effect(
       getPrompt,
       menuPrompts,
       renderPrompt,
+      appCall,
+      appRead,
       subscribe,
       listed: Effect.flatMap(store.all, (all) =>
         Effect.forEach(all, (stored) =>

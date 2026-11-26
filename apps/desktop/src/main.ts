@@ -60,7 +60,7 @@ import * as PhoneAccessControl from "./localServer/phoneAccess.ts";
 import { quitGate } from "./localServer/quitGate.ts";
 import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
-import { externalUrl, isAppUrl, isVisualFrameUrl } from "./navigation.ts";
+import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
@@ -173,10 +173,11 @@ const lockNavigation = (contents: WebContents) => {
   };
   contents.on("will-navigate", stay);
   contents.on("will-redirect", stay);
-  // A frame inside the page: only a bot's visual, in the app's visual page.
-  // Whatever the visual does then, it does not take its frame anywhere else.
+  // A frame inside the page: only a bot's visual or a connector's app, each
+  // in its page of the app. Whatever either does then, it does not take its
+  // frame anywhere else.
   contents.on("will-frame-navigate", (event) => {
-    if (!event.isMainFrame && !isVisualFrameUrl(event.url, APP_ORIGIN)) event.preventDefault();
+    if (!event.isMainFrame && !isFrameUrl(event.url, APP_ORIGIN)) event.preventDefault();
   });
   contents.on("will-attach-webview", (event) => event.preventDefault());
   contents.setWindowOpenHandler(({ url }) => {
@@ -452,8 +453,8 @@ const program = Effect.gen(function* () {
       }),
   );
 
-  // The app's page only, never a frame in it: a bot's visual is on the app's
-  // scheme, though sandboxed.
+  // The app's page only, never a frame in it: a bot's visual and a
+  // connector's app are on the app's scheme, though sandboxed.
   session.defaultSession.setPermissionRequestHandler((_contents, permission, grant, details) =>
     grant(
       PERMISSIONS.has(permission) &&

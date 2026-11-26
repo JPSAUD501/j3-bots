@@ -3,6 +3,9 @@ import type {
   Attachment,
   Bot,
   Connector,
+  ConnectorAppAnswer,
+  ConnectorAppView,
+  ConnectorAppViewId,
   ConnectorGrant,
   ConnectorId,
   ConnectorListing,
@@ -68,6 +71,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Redacted from "effect/Redacted";
+import type * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
@@ -253,6 +257,21 @@ export interface ConnectorsClient {
     redirect: SignInRedirect,
   ) => Promise<Actions.IntentResult<SignInStarted>>;
   readonly completeSignIn: (url: Redacted.Redacted<string>) => Promise<Actions.IntentResult>;
+  /** A connector's app a turn's work shows, and what it asks of its connector while drawn. */
+  readonly app: {
+    readonly open: (viewId: ConnectorAppViewId) => Promise<Actions.IntentResult<ConnectorAppView>>;
+    /** `allowed` once the operator allowed the tool in the app's card. */
+    readonly callTool: (
+      viewId: ConnectorAppViewId,
+      name: string,
+      args: Schema.JsonObject,
+      allowed: boolean,
+    ) => Promise<Actions.IntentResult<ConnectorAppAnswer>>;
+    readonly readResource: (
+      viewId: ConnectorAppViewId,
+      uri: string,
+    ) => Promise<Actions.IntentResult<ConnectorAppAnswer>>;
+  };
 }
 
 /** Every bot's skills and each bot's own; see `Skills`. */
@@ -909,6 +928,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       beginSignIn: (connectorId, redirect) =>
         run.promise(services.connectors.beginSignIn(connectorId, redirect)),
       completeSignIn: (url) => run.promise(services.connectors.completeSignIn(url)),
+      app: {
+        open: (viewId) => run.promise(services.connectors.openApp(viewId)),
+        callTool: (viewId, name, args, allowed) =>
+          run.promise(services.connectors.callAppTool(viewId, name, args, allowed)),
+        readResource: (viewId, uri) =>
+          run.promise(services.connectors.readAppResource(viewId, uri)),
+      },
     },
     skills: {
       state: services.skills.state,

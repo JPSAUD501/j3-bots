@@ -8,8 +8,8 @@ import * as Schema from "effect/Schema";
 /**
  * A Streamable HTTP MCP server for tests, on loopback, of the 2025-11-25
  * revision: enough of it for a session to open (refusing `server/discover`
- * as a server of that revision does), list tools (in pages), call them and
- * hear that its tools changed. Each tool answers with what its handler returns, and the
+ * as a server of that revision does), list tools (in pages), call them, read
+ * resources and hear that its tools changed. Each tool answers with what its handler returns, and the
  * server records every request's headers. Like a server that ignores
  * cancellation, it keeps a request it holds open until the client closes it.
  */
@@ -18,11 +18,17 @@ interface FakeTool {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: Readonly<Record<string, unknown>>;
+  readonly _meta?: Readonly<Record<string, unknown>>;
 }
 
 /** What a call answers: a result, a raw body, or nothing at all (it is held until the client closes it). */
 type FakeAnswer =
-  | { readonly _tag: "result"; readonly text: string; readonly isError?: boolean }
+  | {
+      readonly _tag: "result";
+      readonly text: string;
+      readonly isError?: boolean;
+      readonly structuredContent?: Readonly<Record<string, unknown>>;
+    }
   | { readonly _tag: "raw"; readonly body: string }
   | { readonly _tag: "hang" };
 
@@ -35,6 +41,8 @@ interface FakeRequest {
 export interface FakeMcpServer {
   readonly url: string;
   readonly requests: ReadonlyArray<FakeRequest>;
+  /** The capabilities each `initialize` declared, in order. */
+  readonly clientCapabilities: ReadonlyArray<unknown>;
   /** Replaces the listed tools. */
   readonly setTools: (tools: ReadonlyArray<FakeTool>) => void;
   /** Tells every open stream that the tools changed. */
@@ -59,6 +67,8 @@ export interface FakeOptions {
   readonly hold?: (rpc: string) => boolean;
   /** Lists the tools this many to a page. */
   readonly pageSize?: number;
+  /** What `resources/read` answers for an address: its `contents`, or an error when undefined. */
+  readonly resources?: (uri: string) => ReadonlyArray<unknown> | undefined;
 }
 
 const Rpc = Schema.Struct({
@@ -70,6 +80,8 @@ const Rpc = Schema.Struct({
       name: Schema.optionalKey(Schema.String),
       arguments: Schema.optionalKey(Schema.Unknown),
       cursor: Schema.optionalKey(Schema.String),
+      uri: Schema.optionalKey(Schema.String),
+      capabilities: Schema.optionalKey(Schema.Unknown),
     }),
   ),
 });
@@ -81,6 +93,7 @@ export const fakeMcpServer = (options: FakeOptions) =>
       (resume) => {
         let tools = options.tools;
         const requests: Array<FakeRequest> = [];
+        const clientCapabilities: Array<unknown> = [];
         const streams = new Set<NodeHttp.ServerResponse>();
         const streamOpened = Deferred.makeUnsafe<void>();
         const cancelled = Deferred.makeUnsafe<void>();
@@ -173,9 +186,13 @@ export const fakeMcpServer = (options: FakeOptions) =>
               case "server/discover":
                 return refuse(response, rpc.id);
               case "initialize":
+                clientCapabilities.push(rpc.params?.capabilities);
                 return reply(response, rpc.id, {
                   protocolVersion: rpc.params?.protocolVersion ?? "2025-11-25",
-                  capabilities: { tools: { listChanged: true } },
+                  capabilities: {
+                    tools: { listChanged: true },
+                    ...(options.resources === undefined ? {} : { resources: {} }),
+                  },
                   serverInfo: { name: "fake", version: "1.0.0" },
                 });
               case "tools/list": {
@@ -204,7 +221,25 @@ export const fakeMcpServer = (options: FakeOptions) =>
                 return reply(response, rpc.id, {
                   content: [{ type: "text", text: answer.text }],
                   isError: answer.isError ?? false,
+                  ...(answer.structuredContent === undefined
+                    ? {}
+                    : { structuredContent: answer.structuredContent }),
                 });
+              }
+              case "resources/read": {
+                const contents = options.resources?.(rpc.params?.uri ?? "");
+                if (contents === undefined) {
+                  response.writeHead(200, { "content-type": "application/json" });
+                  response.end(
+                    JSON.stringify({
+                      jsonrpc: "2.0",
+                      id: rpc.id,
+                      error: { code: -32002, message: "Resource not found" },
+                    }),
+                  );
+                  return;
+                }
+                return reply(response, rpc.id, { contents });
               }
               default:
                 return reply(response, rpc.id, {});
@@ -220,6 +255,7 @@ export const fakeMcpServer = (options: FakeOptions) =>
               fake: {
                 url: `http://127.0.0.1:${port}/mcp`,
                 requests,
+                clientCapabilities,
                 streamOpened: Deferred.await(streamOpened),
                 held: (count) =>
                   Effect.suspend(() => {

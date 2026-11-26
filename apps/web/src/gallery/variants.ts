@@ -654,6 +654,7 @@ export function galleryVariants(now: DateTime.Utc) {
     ...base(name),
     turnStartedAt: ago(6),
     stepCount,
+    apps: [],
     status,
   });
   const step = (

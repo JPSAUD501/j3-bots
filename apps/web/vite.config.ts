@@ -2,16 +2,22 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
-import { VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
+import {
+  CONNECTOR_APP_FRAME_PATH,
+  CONNECTOR_APP_FRAME_POLICY,
+  VISUAL_FRAME_PATH,
+  VISUAL_FRAME_POLICY,
+} from "@j3-bots/contracts";
 import { defineConfig, loadEnv, type Plugin } from "vite-plus";
 import { bundleInputs } from "../../scripts/bundle-inputs.ts";
 import { pwa } from "./pwa/plugin.ts";
 
 /**
- * The development server frames a bot's visual as the J3 Bots server does
- * (apps/server/src/web/WebClient.ts): the visual page under a visual's policy,
- * and every other page allowed to frame only its own origin. So a visual that
- * reaches for the network fails here as it would in production.
+ * The development server frames a bot's visual and a connector's app as the
+ * J3 Bots server does (apps/server/src/web/WebClient.ts): each one's page
+ * under its own policy, and every other page allowed to frame only its own
+ * origin. So a visual or an app that reaches past its policy fails here as it
+ * would in production.
  */
 const visualFrame = (): Plugin => ({
   name: "j3-visual-frame",
@@ -20,7 +26,11 @@ const visualFrame = (): Plugin => ({
       const path = new URL(request.url ?? "/", "http://localhost").pathname;
       response.setHeader(
         "content-security-policy",
-        path === VISUAL_FRAME_PATH ? VISUAL_FRAME_POLICY : "frame-src 'self'",
+        path === VISUAL_FRAME_PATH
+          ? VISUAL_FRAME_POLICY
+          : path === CONNECTOR_APP_FRAME_PATH
+            ? CONNECTOR_APP_FRAME_POLICY
+            : "frame-src 'self'",
       );
       next();
     });

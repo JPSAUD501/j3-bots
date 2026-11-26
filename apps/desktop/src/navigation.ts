@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { VISUAL_FRAME_PATH } from "@j3-bots/contracts";
+import { CONNECTOR_APP_FRAME_PATH, VISUAL_FRAME_PATH } from "@j3-bots/contracts";
 
 /**
  * `url`'s scheme and host, as `j3bots://app`. A custom scheme's `URL.origin`
@@ -13,17 +13,21 @@ const originOf = (url: string): string | null => {
 /** Whether `url` is one of the app's own pages: the window may go there. */
 export const isAppUrl = (url: string, appOrigin: string): boolean => originOf(url) === appOrigin;
 
+/** The app's pages a frame inside its page may show: a bot's visual's, and a connector's app's. */
+const FRAME_PATHS = new Set([VISUAL_FRAME_PATH, CONNECTOR_APP_FRAME_PATH]);
+
 /**
  * Whether a frame inside the app's page may go to `url`. The page frames
- * nothing but a bot's visual, in the app's visual page, so that page, as the
- * app loads it, is the only place a frame may be.
+ * nothing but a bot's visual and a connector's app, each in its page of the
+ * app, so those pages, as the app loads them, are the only places a frame may
+ * be.
  */
-export const isVisualFrameUrl = (url: string, appOrigin: string): boolean => {
+export const isFrameUrl = (url: string, appOrigin: string): boolean => {
   const parsed = URL.parse(url);
   return (
     parsed !== null &&
     isAppUrl(url, appOrigin) &&
-    parsed.pathname === VISUAL_FRAME_PATH &&
+    FRAME_PATHS.has(parsed.pathname) &&
     parsed.search === "" &&
     parsed.hash === ""
   );
