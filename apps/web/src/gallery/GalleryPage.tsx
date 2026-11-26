@@ -36,6 +36,7 @@ import {
   type RoutineRun,
   ServerOrigin,
   type Skill,
+  type SuggestedReply,
   TEMPLATE_FORMAT,
   TEMPLATE_VERSION,
   TemplateTooLarge,
@@ -1752,7 +1753,7 @@ function ComposerDemo({
   /** The mentions picked in `initial`. */
   mentions?: ReadonlyArray<DraftMention>;
   /** A reply the AI suggests. */
-  suggestion?: string | null;
+  suggestion?: SuggestedReply | null;
 }) {
   const draftKey = useId();
   const [value, setValue] = useState(initial);
@@ -1862,7 +1863,10 @@ function ComposerSection() {
           <ComposerDemo
             initial=""
             recipient={team.bots.scout.profile.name}
-            suggestion="Move the second meeting to Friday morning"
+            suggestion={{
+              text: "Move the second meeting to Friday morning",
+              after: EntryId.make("gallery-answer"),
+            }}
           />
         </div>
       </Labeled>

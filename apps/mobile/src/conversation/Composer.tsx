@@ -15,7 +15,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
-import type { Attachment, Avatar, EntryTarget } from "@j3-bots/contracts";
+import type { Attachment, Avatar, EntryTarget, SuggestedReply } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { ArrowUp, File, Images, Plus, Users } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -102,7 +102,7 @@ export function Composer({
   /** The bot whose color tints the composer; none in a room. */
   readonly tint?: Avatar | null;
   /** In a bot's conversation, the reply the AI guessed the operator may send next, or null. */
-  readonly suggestion?: string | null;
+  readonly suggestion?: SuggestedReply | null;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -251,7 +251,7 @@ export function Composer({
     options.length === 0 &&
     prompt.options.length === 0 &&
     prompt.chosen === null
-      ? suggestion
+      ? suggestion.text
       : null;
   // The suggestion becomes the draft, with the caret after it, to send or change.
   const takeSuggestion = (taken: string) => {

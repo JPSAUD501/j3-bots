@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Attachment, Avatar } from "@j3-bots/contracts";
+import type { Attachment, Avatar, SuggestedReply } from "@j3-bots/contracts";
 import { ArrowUpIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -143,9 +143,10 @@ interface ComposerProps {
   readonly prompts?: PromptMenu;
   /**
    * In a bot's conversation, the reply the AI guessed the operator may send
-   * next, or null. It is never sent by itself: see the composer.
+   * next, with the message it follows, or null. It is never sent by itself:
+   * see the composer.
    */
-  readonly suggestion?: string | null;
+  readonly suggestion?: SuggestedReply | null;
 }
 
 /**
@@ -179,7 +180,8 @@ interface ComposerProps {
  * writes becomes the draft, which the operator reads and sends as their own.
  * A reply the AI suggests shows in place of the placeholder while the draft
  * is empty and no list is open, with Use beside it: Use, or Tab, puts it in
- * the draft with the caret after it, to send or change; Escape sets it aside.
+ * the draft with the caret after it, to send or change; Escape sets it aside
+ * until a later answer brings another.
  * It leaves as soon as the operator types.
  */
 export function Composer({
@@ -267,9 +269,8 @@ export function Composer({
     field: fieldRef,
     menu: frozen ? undefined : prompts,
   });
-  // The suggestion the operator set aside, in the draft it was offered in.
-  const [setAside, setSetAside] = useState<string | null>(null);
-  const suggestionKey = suggestion === null ? null : `${draftKey}\n${suggestion}`;
+  // The message whose suggestion the operator set aside: a later answer's is offered again.
+  const [setAside, setSetAside] = useState<SuggestedReply["after"] | null>(null);
   const offered =
     suggestion !== null &&
     value === "" &&
@@ -278,8 +279,8 @@ export function Composer({
     !mention.open &&
     !prompt.open &&
     prompt.chosen === null &&
-    setAside !== suggestionKey
-      ? suggestion
+    setAside !== suggestion.after
+      ? suggestion.text
       : null;
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
@@ -551,7 +552,7 @@ export function Composer({
               if (event.key === "Escape") {
                 // Taken here, so the shell does not close the details as well.
                 event.preventDefault();
-                setSetAside(suggestionKey);
+                setSetAside(suggestion?.after ?? null);
                 return;
               }
             }

@@ -22,11 +22,13 @@ import {
   conversation,
   eventually,
   flushed,
+  messageTeammate,
   nextTurn,
   sendToBot,
   until,
 } from "../testing/turns.ts";
 import { offerableText } from "./SuggestedReplies.ts";
+import * as Clock from "effect/Clock";
 
 // A reply the AI suggests is offered in the bot's conversation only after a
 // turn the operator woke there, while what the bot answered is the newest
@@ -49,6 +51,14 @@ const guess = (scout: Member, turnId: TurnId, text: string) =>
       reply: { turnId, text },
     });
   });
+
+/**
+ * Lets the server weigh a guess it should not offer: nothing it does then
+ * shows, so the test waits a moment in real time before it looks.
+ */
+const weighed = Effect.sleep("100 millis").pipe(
+  Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+);
 
 /** The operator asks Scout something, and Scout answers in a turn that ends. */
 const answered = (scout: Member, question: string, answer: string, previous: TurnId | null) =>
@@ -95,6 +105,35 @@ describe("suggested replies", () => {
       yield* finish(scout, roomTurn, [scout, wren]);
       yield* guess(scout, roomTurn, "Tell Wren too");
       yield* offeredIs(scout.bot.id, null);
+    }).pipe(Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect("are never offered for a teammate's turn the operator steered", () =>
+    Effect.gen(function* () {
+      const scout = yield* member("Scout");
+      const wren = yield* member("Wren");
+      yield* sendToBot(wren.bot.id, "Ask Scout what is left.");
+      const asked = yield* nextTurn(wren.bot.id);
+      yield* messageTeammate(wren.session, asked, {
+        to: scout.bot.id,
+        text: "What is left?",
+        urgent: true,
+      });
+      yield* finish(wren, asked, [wren]);
+
+      // Scout answers its teammate, and the operator's word is steered in.
+      const teammateTurn = yield* nextTurn(scout.bot.id);
+      yield* sendToBot(scout.bot.id, "And tell me when it is done.");
+      yield* flushed(scout.bot.id);
+      yield* (yield* TestEngineControl).readSteers({
+        sessionId: scout.session,
+        turnId: teammateTurn,
+      });
+      yield* say(scout, teammateTurn, { text: "Only the invoices are left.", done: true });
+      yield* finish(scout, teammateTurn, [scout]);
+      yield* guess(scout, teammateTurn, "Thanks, Wren");
+      yield* weighed;
+      assert.isNull(yield* offered(scout.bot.id));
     }).pipe(Effect.provide(TestDomain.layer)),
   );
 

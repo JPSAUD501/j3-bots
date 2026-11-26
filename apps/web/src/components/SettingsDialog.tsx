@@ -1000,7 +1000,11 @@ function HarnessSwitch({
         }}
       />
       <p role="status" className="text-xs text-blocked empty:sr-only">
-        {watching && save._tag === "failed" && t("settings.saveFailed")}
+        {/* Only under the switch whose save failed: the two share one save. */}
+        {watching &&
+          save._tag === "failed" &&
+          save.changes[setting] !== undefined &&
+          t("settings.saveFailed")}
       </p>
     </div>
   );

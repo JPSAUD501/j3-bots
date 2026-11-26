@@ -49,14 +49,20 @@ const suggestion: SuggestedReply = { text: "Move the second one", after: answer.
 
 describe("the reply the composer offers", () => {
   it("follows the answer it was guessed after, past the answer's work fold", () => {
-    expect(offeredReply(suggestion, [question, answer])).toBe("Move the second one");
-    expect(offeredReply(suggestion, [question, answer, fold])).toBe("Move the second one");
+    expect(offeredReply(suggestion, [question, answer])).toBe(suggestion);
+    expect(offeredReply(suggestion, [question, answer, fold])).toBe(suggestion);
   });
 
   it("is gone once anything newer shows, even before the server says so", () => {
     expect(offeredReply(suggestion, [question, answer, sending])).toBeNull();
     const later = message("2026-11-20T10:02:00Z", scout, "Also, lunch moved.");
     expect(offeredReply(suggestion, [question, answer, later])).toBeNull();
+    const working: WorkFoldEntry = {
+      ...fold,
+      id: EntryId.make("next"),
+      status: { _tag: "running" },
+    };
+    expect(offeredReply(suggestion, [question, answer, working])).toBeNull();
     expect(offeredReply(null, [question, answer])).toBeNull();
   });
 

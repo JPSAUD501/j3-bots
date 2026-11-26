@@ -27,8 +27,8 @@ import { SessionRowId } from "./model.ts";
  * turn it completes in a session (`Engine.suggestedReplies`), from the whole
  * session: the wake envelopes, the bot's working text and every audience the
  * session serves. So the server offers a guess only where it follows what the
- * operator saw: after a turn of the bot's main session that the operator woke
- * in its conversation, that completed, and whose last message there is still
+ * operator saw: after a turn of the bot's main session that only the operator
+ * woke, in its conversation (every wake it took, its steers' too, is theirs), that completed, and whose last message there is still
  * the conversation's newest entry, the turn's own work fold aside. A guess
  * after a room turn, a teammate's message, a routine or anything the server
  * or the engine started is never offered, nor one that reads as an envelope's
@@ -105,6 +105,11 @@ export const layer = Layer.effect(
             SELECT 1 FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
             WHERE d.session_id = t.session_id AND d.engine_turn_id = t.engine_turn_id
               AND w.kind = 'user'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM dispatches d JOIN wakes w ON w.dispatch_id = d.id
+            WHERE d.session_id = t.session_id AND d.engine_turn_id = t.engine_turn_id
+              AND w.kind <> 'user'
           )
           AND t.said_entry_id = (
             SELECT e.id FROM entries e

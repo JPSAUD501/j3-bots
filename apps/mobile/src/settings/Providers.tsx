@@ -156,7 +156,12 @@ function HarnessSwitch(props: {
           void client.updateSettings({ section: "harnesses", changes: { [props.setting]: on } });
         }}
       />
-      <Problem>{watching && save._tag === "failed" ? t("settings.saveFailed") : null}</Problem>
+      {/* Only under the switch whose save failed: the two share one save. */}
+      <Problem>
+        {watching && save._tag === "failed" && save.changes[props.setting] !== undefined
+          ? t("settings.saveFailed")
+          : null}
+      </Problem>
     </View>
   );
 }
