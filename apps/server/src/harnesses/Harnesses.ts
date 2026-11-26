@@ -339,6 +339,19 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
         ),
       );
     const engineFailed = () => new HarnessFailed({ reason: "engine" });
+    // From here a client's cancel no longer stops the job (`cancel`): the
+    // engine may take the copy at any moment, and `current.json` must then
+    // name it. The server's stop still does, at once, though the engine may
+    // take long to show it runs the copy: its next start runs whichever copy
+    // `current.json` names, and the engine starts anew with it.
+    const begun = yield* lock.withPermits(1)(
+      Effect.sync(() => {
+        if (cancelled.has(harness)) return false;
+        switching.add(harness);
+        return true;
+      }),
+    );
+    if (!begun) return yield* Effect.interrupt;
     const outcome = yield* options.work
       .paused(
         Effect.gen(function* () {
@@ -370,8 +383,8 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
             Effect.catch((error) => fileFailed(options.platform, renameRefused(error))(error)),
             Effect.tapError(() => putBack),
           );
-          // Recorded in the same step: a cancel that lands meanwhile finds
-          // the copy the engine now runs installed, keeps it, and is told so.
+          // Recorded at once: a cancel that landed meanwhile finds the copy
+          // the engine now runs installed, keeps it, and is told so.
           committed.set(harness, copy);
           if (stranded.get(harness)?.version === copy.version) stranded.delete(harness);
           yield* update(harness, (slot) => ({ ...slot, installed: Option.some(copy), task: null }));
@@ -380,7 +393,7 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
           return { _tag: "switched", released } as const;
         }),
       )
-      .pipe(Effect.uninterruptible);
+      .pipe(Effect.ensuring(lock.withPermits(1)(Effect.sync(() => switching.delete(harness)))));
     if (outcome._tag !== "switched") return outcome;
     if (!outcome.released) {
       yield* Effect.logInfo(
@@ -456,9 +469,11 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
     return Option.some(copy);
   });
 
-  // The job of each harness under way, and the harnesses whose job a client cancelled.
+  // The job of each harness under way, the harnesses whose job a client
+  // cancelled, and those whose job is switching the engine to its copy.
   const jobs = new Map<SignInHarness, Fiber.Fiber<Option.Option<InstalledCopy>, HarnessFailed>>();
   const cancelled = new Set<SignInHarness>();
+  const switching = new Set<SignInHarness>();
   const lock = yield* Semaphore.make(1);
 
   const end = Effect.fn("Harnesses.end")(function* (
@@ -571,10 +586,11 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
       Effect.sync(() => {
         const running = jobs.get(harness);
         if (running !== undefined) cancelled.add(harness);
-        return running;
+        return switching.has(harness) ? undefined : running;
       }),
     );
-    // Not waited for: a switch under way finishes first, and its end is on `copies`.
+    // Not waited for: its end is on `copies`. A switch under way is not
+    // stopped: it finishes, and a copy it made current stays installed.
     if (fiber !== undefined) yield* Fiber.interrupt(fiber).pipe(Effect.forkIn(scope));
   });
 

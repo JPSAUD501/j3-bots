@@ -6,12 +6,14 @@ import { type HarnessCopy, ProviderId, type SignInHarness } from "@j3-bots/contr
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Duration from "effect/Duration";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
@@ -533,6 +535,20 @@ describe("J3 Bots' own copies of the harnesses", () => {
       const updated = yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
       assert.isNull(updated.task);
       assert.lengthOf(yield* switchedTo, 2);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect("stops at once while the engine has yet to show it runs a new copy", () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      // The engine never answers here: a stop that waited for it would never end.
+      const held = yield* control.holdNextAnswer("setHarnessExecutable");
+      const service = yield* Scope.make();
+      yield* setup({ prepare: (fake) => publishClaude(fake, "2.1.326") }).pipe(
+        Scope.provide(service),
+      );
+      yield* held.entered;
+      yield* Scope.close(service, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
   );
 
