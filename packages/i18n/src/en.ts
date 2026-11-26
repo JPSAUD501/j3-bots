@@ -184,7 +184,7 @@ export const en = {
   "conversation.details": "Details",
 
   "message.queued": "Queued",
-  "message.waitingForModel": "Sent once a model is connected",
+  "message.waitingForModel": "Sent once the AI is connected",
   "message.waitingForReset": "Sent when the usage limit resets",
   "message.waitingForResetAt": "Sent when the usage limit resets {when}",
   "message.cancelled": "Not sent: you stopped the bot first",
@@ -812,8 +812,6 @@ export const en = {
   "provider.failed": "Found, but it failed to start",
   "provider.timedOut": "Its check took too long. J3 Bots checks again on its own",
   "provider.disabled": "Turned off on the server",
-  "provider.retry": "Try again",
-  "provider.recheckFailed": "Couldn’t reach the engine. Try again in a moment.",
   "provider.failed.log":
     "The server’s log says why: server/server.log, in J3 Bots’ app data folder.",
   "provider.detail": "The engine says: {detail}",
@@ -828,7 +826,6 @@ export const en = {
   "provider.updateFailed": "The update didn’t finish",
   "provider.updateUnverified": "The update ran, but the engine couldn’t confirm a newer version",
   "provider.updateRefused": "Couldn’t start the update. Try again in a moment.",
-  "provider.install": "Install",
   "provider.install.downloading": "Downloading… {received} of {total} MB",
   "provider.install.downloadingNoTotal": "Downloading… {received} MB",
   "provider.install.verifying": "Checking the download…",
@@ -893,66 +890,111 @@ export const en = {
   "onboarding.look.title": "Pick a look for {name}",
   "onboarding.look.hint": "You can change it later in the bot’s details.",
   "onboarding.create": "Create {name}",
-  "onboarding.connect.title": "{name} needs a model to think with",
-  "onboarding.connect.body":
-    "Bots think with AI models such as Claude or GPT, and none is connected to your server yet. Run this on the machine where J3 Bots is installed: it asks for the address of the service that reaches your models, and its key.",
-  "onboarding.connect.login": "Signing in with your own Claude or ChatGPT account instead?",
-  "onboarding.connect.loginLink": "See provider login in the install guide",
-  "onboarding.connect.later":
-    "No rush: create {name} now, and it says hello as soon as a model is connected.",
-  "onboarding.connect.createWaits":
-    "You can create {name} as soon as Claude Code or Codex can run.",
-  "onboarding.connect.ready.title": "A model is connected",
+  "onboarding.connect.choice.title": "Which AI will {name} use?",
+  "onboarding.connect.choice.body": "Your bots think with an AI. Use the one you already have.",
+  "onboarding.connect.signIn.title": "Sign in to {account}",
+  "onboarding.connect.signIn.body": "It takes a minute, in your browser.",
+  "onboarding.connect.getting.title": "Getting {account} ready",
+  "onboarding.connect.finishing.title": "Almost there",
+  "onboarding.connect.failed.title": "The sign-in didn’t finish",
+  "onboarding.connect.stuck.title": "{account} isn’t ready yet",
+  "onboarding.connect.ready.title": "{account} is connected",
   "onboarding.connect.ready.body": "Everything is ready for {name} to say hello.",
-  "onboarding.connect.checking.title": "Looking for a model for {name}",
-  "onboarding.connect.checking.body":
-    "J3 Bots checks Claude Code and Codex each time it starts. It takes up to a minute.",
-  "onboarding.connect.unavailable.title": "No model can run {name} right now",
-  "onboarding.connect.unavailable.body":
-    "Neither Claude Code nor Codex can run a bot on your server yet. Each says why below, with what fixes it.",
-  "onboarding.connect.status.waiting": "Waiting for a model…",
-  "onboarding.connect.status.ready": "Connected",
-  "onboarding.connect.status.checking": "Checking…",
-  "onboarding.connect.status.unavailable": "Nothing can run a bot yet",
-  "onboarding.connect.status.connecting": "Waiting for the server…",
-  "onboarding.connect.status.starting": "Starting…",
-  "onboarding.connect.status.engineOut": "Not running",
-  "onboarding.connect.local.body":
-    "Bots think with AI models such as Claude or GPT. Sign in with an account you already have: J3 Bots keeps a sign-in of its own, and your own Claude Code and Codex stay as they are.",
-  "providers.signIn.claude-code": "Sign in with Claude",
-  "providers.signIn.codex": "Sign in with ChatGPT (Codex)",
-  "providers.signIn.plan": "Bots use your own plan: their usage counts toward your limits.",
-  "providers.signIn.starting": "Starting {harness}’s sign-in…",
-  "providers.signIn.waiting": "Finish signing in to {harness} in your browser.",
-  "providers.signIn.openAgain": "Open the page again",
-  "providers.signIn.cancel": "Cancel",
-  "providers.signIn.succeeded": "{harness} is signed in. Checking it…",
-  "providers.signIn.succeededEndpoint":
-    "{harness} is signed in, but the endpoint at {endpoint} is still connected, and bots reach their models through it while it is.",
-  "providers.signIn.tryAgain": "Try again",
-  "providers.signIn.failed.notInstalled":
-    "{harness} isn’t on this computer any more. Look again once it is installed.",
-  "providers.signIn.failed.needsTerminal":
-    "{harness} can only sign in from a terminal on this computer, which the app doesn’t have. Use an endpoint instead.",
-  "providers.signIn.failed.ended": "{harness}’s sign-in stopped before it finished. Try again.",
-  "providers.signIn.failed.noCredential":
-    "{harness} finished without leaving a sign-in J3 Bots can use. If it keeps its sign-in in the system’s keyring, use an endpoint instead.",
-  "providers.signIn.failed.linkedHome":
-    "J3 Bots’ folder for {harness} is a link to another folder, so nothing was signed in there. Remove the link, then try again.",
-  "providers.signIn.failed.homeRefused":
-    "J3 Bots couldn’t use its folder for {harness}: other users can open it, or it can’t be written. The server’s log names it.",
-  "providers.signIn.failed.timedOut":
-    "The sign-in waited 10 minutes for your browser, then stopped. Try again.",
-  "providers.signIn.failed.other": "{harness}’s sign-in didn’t work. Try again.",
-  "providers.signIn.unsupported":
-    "This server signs harnesses in only from a terminal on its machine.",
-  "providers.notFound":
-    "Neither Claude Code nor Codex is installed on this computer. Install one, then look again.",
-  "providers.notFound.install": "Install {harness}",
-  "providers.notFound.lookAgain": "Look again",
-  "providers.notFound.looking": "Looking…",
-  "providers.endpoint.open": "Advanced: use an endpoint",
-  "providers.endpoint.use": "Use an endpoint",
+  "onboarding.connect.restarting.title": "J3 Bots is restarting",
+  "onboarding.connect.restarting.body": "It takes a moment. This screen updates on its own.",
+  "onboarding.connect.setup.title": "J3 Bots couldn’t finish getting ready",
+  "onboarding.connect.setup.body": "It keeps trying on its own. Details says what went wrong.",
+  "onboarding.connect.out.title": "J3 Bots can’t run your bots right now",
+  "onboarding.connect.out.body":
+    "Something on the machine it runs on needs fixing first. Details says what.",
+  "onboarding.connect.later":
+    "No rush: create {name} now, and it says hello as soon as its AI is connected.",
+  "onboarding.connect.createLater": "Create {name} and do this later",
+  "onboarding.connect.createWaits":
+    "J3 Bots is still getting ready. You can create {name} in a moment.",
+  "onboarding.connect.createWaits.none":
+    "You can create {name} as soon as Claude or ChatGPT is ready.",
+  "onboarding.connect.createWaits.out": "You can create {name} once J3 Bots is running again.",
+  "ai.by": "by {maker}",
+  "ai.choice.label": "The AI you have",
+  "ai.plan": "It uses the plan you already have: what your bots do counts toward its limits.",
+  "ai.other": "Use {account} instead",
+  "ai.signIn": "Sign in with {account}",
+  "ai.download": "Download {account}",
+  "ai.tryAgain": "Try again",
+  "ai.lookAgain": "Look again",
+  "ai.openAgain": "Open the page again",
+  "ai.cancel": "Cancel",
+  "ai.stopDownload": "Stop the download",
+  "ai.details": "Details",
+  "ai.requestFailed": "Couldn’t reach J3 Bots. Try again in a moment.",
+  "ai.howToInstall": "How to install {product}",
+  "ai.copyCommand": "Copy the command",
+  "ai.steps.label": "How signing in goes",
+  "ai.steps.page.here": "A page opens in your browser",
+  "ai.steps.page.desktopApp": "Open J3 Bots on your computer",
+  "ai.steps.page.server": "Run one command",
+  "ai.steps.signIn": "You sign in to {account}",
+  "ai.steps.back": "You come back here",
+  "ai.ready": "{account} is connected.",
+  "ai.finishing": "You’re signed in. Checking {account}…",
+  "ai.finishing.endpoint":
+    "The endpoint at {endpoint} is still connected, and your bots reach their AI through it while it is.",
+  "ai.signingIn.opening": "Opening the sign-in page…",
+  "ai.signingIn.browser": "Sign in to {account} in your browser.",
+  "ai.signingIn.notices":
+    "This screen notices on its own when you’re done. There’s nothing to copy.",
+  "ai.getting": "Downloading {account}…",
+  "ai.getting.progress": "Downloading {account}… {percent}%",
+  "ai.getting.verifying": "Almost done. Checking the download…",
+  "ai.queued": "Your browser opens as soon as this is done.",
+  "ai.signedOut": "Not connected yet.",
+  "ai.signedOut.desktopApp":
+    "Open J3 Bots on your computer and sign in there. This screen notices on its own.",
+  "ai.signedOut.server":
+    "Run this on the machine where J3 Bots is installed. This screen notices on its own.",
+  "ai.missing": "Not downloaded yet.",
+  "ai.missing.failed.checksum":
+    "The download came out damaged, so nothing was installed. Try again.",
+  "ai.missing.failed.engine": "{account} was downloaded, but J3 Bots couldn’t start using it yet.",
+  "ai.missing.cannotGet.here": "J3 Bots can’t download {account} for this computer by itself.",
+  "ai.missing.cannotGet.server": "J3 Bots can’t download {account} for its server by itself.",
+  "ai.missing.cannotGet.hint": "Install {product} from its maker’s page, then look again.",
+  "ai.checking": "Checking {account}…",
+  "ai.preparing": "J3 Bots is getting ready…",
+  "ai.preparing.progress": "J3 Bots is getting ready… {percent}%",
+  "ai.problem.failed": "{account} is there, but it didn’t start.",
+  "ai.problem.failed.hint": "Try again. If it keeps happening, Details says more.",
+  "ai.problem.timedOut":
+    "Checking {account} is taking longer than usual. J3 Bots keeps trying on its own.",
+  "ai.problem.off": "{account} is turned off on this server.",
+  "ai.problem.unknown": "{account} can’t be used right now.",
+  "ai.signIn.failed.notInstalled":
+    "{account} isn’t ready on this computer yet. Try again in a moment.",
+  "ai.signIn.failed.needsTerminal": "{account} couldn’t open its sign-in page from this app.",
+  "ai.signIn.failed.ended": "The sign-in stopped before it finished.",
+  "ai.signIn.failed.noCredential":
+    "{account} signed in, but kept the sign-in where J3 Bots can’t use it.",
+  "ai.signIn.failed.home": "J3 Bots couldn’t keep the sign-in safely on this computer.",
+  "ai.signIn.failed.timedOut": "The sign-in page waited 10 minutes, then gave up.",
+  "ai.signIn.failed.other": "The sign-in didn’t work.",
+  "ai.signIn.details.notInstalled":
+    "{product} isn’t on this computer any more. Look again once it is installed.",
+  "ai.signIn.details.needsTerminal":
+    "{product} can only sign in from a terminal on this computer, which the app doesn’t have. Use an endpoint instead.",
+  "ai.signIn.details.ended": "{product}’s sign-in ended without signing in.",
+  "ai.signIn.details.noCredential":
+    "{product} finished without leaving a sign-in J3 Bots can use. If it keeps its sign-in in the system’s keyring, use an endpoint instead.",
+  "ai.signIn.details.linkedHome":
+    "J3 Bots’ folder for {product} is a link to another folder, so nothing was signed in there. Remove the link, then try again.",
+  "ai.signIn.details.homeRefused":
+    "J3 Bots couldn’t use its folder for {product}: other users can open it, or it can’t be written. The server’s log names it.",
+  "ai.signIn.details.timedOut":
+    "{product}’s sign-in waited 10 minutes for the browser, then stopped.",
+  "ai.signIn.details.other": "{product}’s sign-in couldn’t be run. The server’s log says why.",
+  "ai.details.download": "{product}, download: {reason}",
+  "ai.details.found": "{product}: {path}",
+  "providers.endpoint.open": "Advanced",
   "providers.endpoint.body":
     "An endpoint serves Claude Code’s and Codex’s models from elsewhere, such as a proxy in front of your subscriptions. It must speak Anthropic’s Messages API and OpenAI’s Responses API.",
   "providers.endpoint.url": "Base URL",
@@ -976,25 +1018,22 @@ export const en = {
   "providers.endpoint.failed": "Couldn’t reach the server, so nothing changed. Try again.",
   "onboarding.arrival.title": "{name} is here",
   "onboarding.arrival.hello": "Saying hello…",
-  "onboarding.arrival.waiting": "{name} says hello as soon as a model is connected.",
+  "onboarding.arrival.waiting": "{name} says hello as soon as its AI is connected.",
   "onboarding.failed":
     "Couldn’t create {name}. Check that this device still reaches your server, then try again.",
   "onboarding.failedNoModel":
-    "Couldn’t create {name}: your server has no model it can use yet. Connect one, then try again.",
+    "Couldn’t create {name}: J3 Bots has no AI to give it yet. Connect one, then try again.",
 
   "empty.noSelection.title": "Pick someone to talk to",
   "empty.noSelection.body": "Choose a bot or a room from the list.",
   "empty.noSelection.shortcut": "moves to the next one",
   "empty.quiet.speaksFirst": "{name} speaks first. It is getting ready.",
   "empty.quiet.body": "No messages yet. Tell {name} what you need.",
-  "empty.quiet.waitingForModel": "{name} says hello as soon as a model is connected.",
+  "empty.quiet.waitingForModel": "{name} says hello as soon as its AI is connected.",
   "empty.quiet.waitingForReset": "{name} says hello when the usage limit resets.",
   "empty.quiet.waitingForResetAt": "{name} says hello when the usage limit resets {when}.",
   "empty.quiet.room":
     "No messages yet. Everyone here reads what you write: with no @, whoever has something to add answers; an @ speaks to the bots you name.",
-  "empty.quiet.connectInApp":
-    "To connect one, sign in from Settings → Providers in J3 Bots, on the computer it runs on.",
-  "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",
   "message.notSent.left.one": "Not sent: {names} is no longer in this room",
@@ -1457,8 +1496,6 @@ export const en = {
   "settings.botBrowser.signOut.failed": "The browser didn’t sign out. Try again.",
   "settings.engine.ready": "Running, version {version}",
   "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
-  "settings.engine.harness.found": "{harness}: found at {path}",
-  "settings.engine.harness.missing": "{harness}: not found",
   "settings.usage": "Usage",
   "usage.engineNotRunning": "Usage shows while the engine is running.",
   "usage.noProviders": "No provider can run bots yet.",

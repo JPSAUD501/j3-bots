@@ -300,10 +300,6 @@ export const readyingShare = (now: GettingReady): number | null =>
     ? null
     : Math.min(0.99, Math.max(0, Math.floor(now.fraction * 100) / 100));
 
-/** Where the install guide says how to sign a harness in with its own account (`provider login`). */
-export const providerLoginGuide =
-  "https://github.com/JPSAUD501/j3-bots/blob/main/docs/operations/install.md#connect-the-providers";
-
 /**
  * First names a person on a team would have, common where each language is
  * spoken, short, and each with its own first letter: one is the first bot's

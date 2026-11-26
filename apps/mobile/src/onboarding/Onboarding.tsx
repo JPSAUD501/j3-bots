@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  cannotRun,
+  type AiAccount,
+  aiOutage,
+  connectStepSaysProgress,
   defaultBotName,
   type Featured,
   nextStep,
@@ -19,8 +21,8 @@ import {
   workTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { refusedWith } from "@j3-bots/client-runtime";
-import { useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
-import { connectStepText } from "@j3-bots/client-runtime/wording";
+import { useAiOpened, useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
+import { aiActionLabel, connectStepText } from "@j3-bots/client-runtime/wording";
 import {
   type AvatarChoice,
   type BotId,
@@ -51,7 +53,6 @@ import {
   BackHandler,
   I18nManager,
   KeyboardAvoidingView,
-  Linking,
   Platform,
   ScrollView,
   View,
@@ -66,7 +67,6 @@ import Animated, {
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
@@ -74,15 +74,22 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { AvatarChoices } from "../components/avatar/AvatarPicker.tsx";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar.tsx";
-import { ProviderRow } from "../components/Engine.tsx";
+import {
+  AiAccountPanel,
+  AiChoice,
+  AiDetails,
+  OtherAccount,
+  useAiText,
+  useMobileAiConnect,
+} from "../components/AiConnect.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { useI18n } from "../i18n.ts";
 import { popIn, settleIn, useReducedMotion } from "../motion.ts";
 import { useColor } from "../theme.ts";
-import { CommandLine } from "../components/CommandLine.tsx";
 import { useTint } from "../conversation/tint.ts";
 import { PressScale } from "../press.tsx";
+import { Button } from "../ui.tsx";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { type Box, boxFrom, sendOff, useSentOff } from "./handoff.tsx";
 import { BigButton, bigFieldClass, Cast, Light, StepTitle } from "./parts.tsx";
@@ -475,8 +482,7 @@ export function Onboarding({
           />
         )}
       </View>
-      {/* The arrival says what it waits for itself, under the bot. */}
-      <Preparing engine={engine} quiet={step === "arrival"} />
+      <StepPreparing engine={engine} step={step} />
     </KeyboardAvoidingView>
   );
 }
@@ -641,6 +647,27 @@ function Bloom({ look }: { readonly look: AvatarChoice }) {
       </Animated.View>
     </View>
   );
+}
+
+const noSignIns = new Map<AiAccount, never>();
+
+/**
+ * The quiet line under a step (`Preparing`), silent where the step says the
+ * same itself: the arrival, which says what it waits for under the bot, and
+ * the connect step while an account is open on it or J3 Bots is out
+ * (`connectStepSaysProgress`), so one screen never shows two progress lines.
+ */
+function StepPreparing({
+  engine,
+  step,
+}: {
+  readonly engine: EngineStatus | null;
+  readonly step: OnboardingStep;
+}) {
+  const opened = useAiOpened({ engine, locations: null, signIns: noSignIns });
+  const quiet =
+    step === "arrival" || (step === "connect" && connectStepSaysProgress(engine, opened));
+  return <Preparing engine={engine} quiet={quiet} />;
 }
 
 /**
@@ -907,18 +934,16 @@ function FailureLine({
   );
 }
 
-const toneClass = {
-  waiting: "text-waiting",
-  ready: "text-success",
-  muted: "text-muted-foreground",
-} as const;
-
-const dotClass = {
-  waiting: "bg-waiting",
-  ready: "bg-success",
-  muted: "bg-muted-foreground",
-} as const;
-
+/**
+ * The AI the bot thinks with, asked as one question: which one the operator
+ * has. Picking one leaves that account alone on the screen, with the sign-in
+ * drawn and what to do; the other stays one press away. While something is
+ * still asked of the operator, picking an account or pressing its button,
+ * that leads, and creating the bot is the quieter way on under it. A phone
+ * signs no account in itself, so an account has a button only where there
+ * is something to ask of the server, as trying a download again; otherwise
+ * the big button creates the bot, which says hello when its AI is ready.
+ */
 function ConnectStep({
   engine,
   name,
@@ -932,86 +957,82 @@ function ConnectStep({
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const text = connectStepText(engine, name, i18n);
-  const { login } = text;
-  // Each provider that cannot run, with why and what fixes it: all of them
-  // when none can, and beside the command, those that connecting would not fix.
-  const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
-  const listed =
-    engine === null || gate === null
-      ? []
-      : gate._tag === "unavailable"
-        ? engine.providers
-        : gate._tag === "connect"
-          ? engine.providers.filter(cannotRun)
-          : [];
+  const ai = useMobileAiConnect(engine);
+  const { opened } = ai;
+  const openedText = useAiText(ai, opened ?? ai.accounts["claude-code"]);
+  const text = connectStepText(
+    engine,
+    opened === null ? null : { account: opened.account, text: openedText },
+    opened?.state ?? null,
+    name,
+    i18n,
+  );
+  const out = aiOutage(engine) !== null;
+  // The account's own button leads while it asks something of the operator.
+  const asked = out || opened === null ? null : opened.action;
+  // Creating the bot leads once nothing is asked of them: no account to pick, no button of its own.
+  const leads = out || (opened !== null && asked === null);
+  const createWaits = text.createWaits !== null;
+  const under = text.createWaits ?? (leads ? text.later : null);
   return (
     <StepFrame
       actions={
         <>
           <FailureLine failure={failure} name={name} />
-          <BigButton
-            label={t("onboarding.create", { name })}
-            onPress={onCreate}
-            disabled={text.createWaits !== null}
-          />
-          {(text.createWaits ?? text.later) !== null && (
-            <Text className="text-center text-sm text-muted-foreground">
-              {text.createWaits ?? text.later}
-            </Text>
+          {opened !== null && asked !== null ? (
+            <BigButton
+              label={aiActionLabel(asked, opened.account, i18n)}
+              onPress={opened.act}
+              disabled={opened.asking === "asking"}
+            />
+          ) : (
+            leads && (
+              <BigButton
+                label={t("onboarding.create", { name })}
+                onPress={onCreate}
+                disabled={createWaits}
+              />
+            )
+          )}
+          {!leads && (
+            <Button
+              variant="quiet"
+              label={t("onboarding.connect.createLater", { name })}
+              disabled={createWaits}
+              onPress={onCreate}
+            />
+          )}
+          {under !== null && (
+            <Text className="text-center text-sm text-muted-foreground">{under}</Text>
           )}
         </>
       }
     >
       <StepTitle>{text.title}</StepTitle>
-      <Text className="text-center text-lg text-muted-foreground">{text.body}</Text>
-      {text.command !== null && (
-        <View className="mt-1 w-full">
-          <CommandLine command={text.command} />
-        </View>
-      )}
-      {login !== null && (
-        <Text className="text-center text-sm text-muted-foreground">
-          {login.text}{" "}
-          <Text
-            accessibilityRole="link"
-            onPress={() => void Linking.openURL(login.url)}
-            className="font-medium text-foreground underline"
-          >
-            {login.link}
-          </Text>
-        </Text>
-      )}
-      {listed.length > 0 && (
-        <View className="w-full gap-1.5">
-          {listed.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} />
+      {/* Live: the step says when the account connects, without moving on by itself. */}
+      <Text accessibilityLiveRegion="polite" className="text-center text-lg text-muted-foreground">
+        {text.body}
+      </Text>
+      {!out &&
+        (opened === null ? (
+          <AiChoice ai={ai} />
+        ) : (
+          <>
+            <AiAccountPanel ai={ai} account={opened} said={text.says} button={false} />
+            <OtherAccount ai={ai} account={opened.account} />
+          </>
+        ))}
+      {text.details.length > 0 && (
+        <AiDetails>
+          {text.details.map((detail) => (
+            <Text key={detail} selectable className="text-xs text-muted-foreground">
+              {detail}
+            </Text>
           ))}
-        </View>
+        </AiDetails>
       )}
-      {/* Live: the step says when a provider connects, without moving on by itself. */}
-      <View accessibilityLiveRegion="polite" className="flex-row items-center gap-2">
-        <Pulse tone={text.status.tone} />
-        <Text className={`text-sm font-medium tabular-nums ${toneClass[text.status.tone]}`}>
-          {text.status.text}
-        </Text>
-      </View>
     </StepFrame>
   );
-}
-
-function Pulse({ tone }: { readonly tone: "waiting" | "ready" | "muted" }) {
-  const reduced = useReducedMotion();
-  const opacity = useSharedValue(1);
-  useEffect(() => {
-    if (tone !== "waiting" || reduced) {
-      opacity.set(1);
-      return;
-    }
-    opacity.set(withRepeat(withTiming(0.35, { duration: 800 }), -1, true));
-  }, [tone, reduced, opacity]);
-  const style = useAnimatedStyle(() => ({ opacity: opacity.get() }));
-  return <Animated.View className={`size-2 rounded-full ${dotClass[tone]}`} style={style} />;
 }
 
 /**

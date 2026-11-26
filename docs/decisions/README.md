@@ -62,6 +62,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0062](0062-a-home-moves-as-an-export.md) | A home moves as an export: secrets sealed under a passphrase, sessions left behind | Accepted |
 | [0064](0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md) | The harnesses install as the server starts, and fail with the true reason | Accepted |
 | [0065](0065-the-first-run-tells-what-j3-bots-is-before-it-asks.md) | The first run tells what J3 Bots is before it asks, in a light drawn as light | Accepted |
+| [0066](0066-connecting-an-ai-is-picking-the-account-you-have.md) | Connecting an AI is picking the account you have | Accepted |
 | [0067](0067-a-first-contact-is-a-paced-hello-not-a-setup.md) | A bot's first contact is a hello in a few paced messages, not a setup | Accepted |
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
 

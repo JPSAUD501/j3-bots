@@ -240,7 +240,7 @@ Secrets keep the logins and values you type for bots, and what connectors need t
 
 ## J3 Bots' own harnesses
 
-When it does not find Claude Code or Codex, the server installs its own copy, from the harness's maker, starting as it starts, beside the engine's download ([Install: when the engine cannot run a harness](install.md#when-the-engine-cannot-run-a-harness)). One you cancelled stays cancelled until you press **Install**. A harness you installed yourself stays yours: the server never installs beside it, and Settings offers the engine's **Update** for it.
+When it does not find Claude Code or Codex, the server installs its own copy, from the harness's maker, starting as it starts, beside the engine's download ([Install: when the engine cannot run a harness](install.md#when-the-engine-cannot-run-a-harness)). One you stopped stays stopped until you press the account's button in the app: **Sign in with Claude** in the desktop app, **Download Claude** from another device. A harness you installed yourself stays yours: the server never installs beside it, and Settings offers the engine's **Update** for it.
 
 - **Where.** In the data directory, `harnesses/claude-code/` and `harnesses/codex/` ([Server: data](../architecture/server.md#data)). Your `PATH` and your own `~/.claude` and `~/.codex` are not touched; the engine is told where the copy is.
 - **Disk.** Claude Code is about 370 MB, Codex's download about 200 MB and more once unpacked. During an update the old and the new version are both there, until the switch, or until the engine next starts.

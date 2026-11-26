@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus, Room } from "@j3-bots/contracts";
-import {
-  connectCommand,
-  openingHeld,
-  ownHarness,
-  providerDetail,
-} from "@j3-bots/client-runtime/presentation";
+import { openingHeld, providerDetail, providerFix } from "@j3-bots/client-runtime/presentation";
 import { avatarEnsemble } from "@j3-bots/design-tokens";
 import { type LucideIcon, SearchXIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
+import { AiConnect, type ConnectPlace, useWebAiConnect } from "./AiConnect";
 import { cn } from "../lib/cn";
 import {
   type ProviderPlace,
@@ -20,13 +16,10 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import { BotAvatar, RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
-import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
-import { OwnHarnessLine, type ProviderActions, ProviderFix } from "./ProviderFix";
-import { engineFindings, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
-import { ProviderUpdate } from "./ProviderUpdate";
+import type { ProviderActions } from "./ProviderFix";
 
 /** Three idle bots: the picture for screens where the team is still to come. */
 function Ensemble() {
@@ -117,14 +110,6 @@ export function ConversationGone({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** The command that connects the providers, when one needs it, ready to copy. */
-export function ConnectProviders({ engine }: { engine: EngineStatus }) {
-  const { t } = useI18n();
-  const connect = connectCommand(engine);
-  if (connect === null) return null;
-  return <CommandLine command={connect} copyLabel={t("firstRun.connect.copy")} />;
-}
-
 const providerToneClass = {
   ready: "text-success",
   waiting: "text-waiting",
@@ -133,12 +118,11 @@ const providerToneClass = {
 } as const satisfies Record<ProviderTone, string>;
 
 /**
- * One provider: its name, and its state in words. `stale` mutes a state
- * reported before a disconnection. One the engine cannot run also shows what
- * the engine said of it and what fixes it (`ProviderFix`); and its
- * harness's version and update: of J3 Bots' own copy when it runs one
- * (`OwnHarnessLine`), else of the harness the engine found
- * (`ProviderUpdate`); unless stale.
+ * A provider that is neither AI account, as the scripted agent of a
+ * development server: its name, and its state in words. `stale` mutes a state
+ * reported before a disconnection. One the engine cannot run also offers to
+ * check it again, and keeps what the engine said of it under "Details";
+ * unless stale.
  */
 export function ProviderRow({
   provider,
@@ -153,8 +137,9 @@ export function ProviderRow({
 }) {
   const { t } = useI18n();
   const line = providerLine(provider, usePresentation(), place);
+  const [asking, setAsking] = useState<"idle" | "asking" | "failed">("idle");
   const detail = providerDetail(provider);
-  const own = ownHarness(provider);
+  const fixable = providerFix(provider) !== null;
   return (
     <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
@@ -165,18 +150,31 @@ export function ProviderRow({
           {line.text}
         </span>
       </div>
-      {!stale && detail !== null && (
-        <p className="text-xs text-pretty break-words text-muted-foreground">
-          {t("provider.detail", { detail })}
+      {!stale && fixable && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="self-start"
+          disabled={asking === "asking"}
+          onClick={() => {
+            setAsking("asking");
+            void actions.recheck(provider.id).then((took) => setAsking(took ? "idle" : "failed"));
+          }}
+        >
+          {t("ai.tryAgain")}
+        </Button>
+      )}
+      {asking === "failed" && (
+        <p role="alert" className="text-xs text-blocked">
+          {t("ai.requestFailed")}
         </p>
       )}
-      {!stale && <ProviderFix provider={provider} place={place} actions={actions} />}
-      {!stale &&
-        (own === null ? (
-          <ProviderUpdate provider={provider} onUpdate={actions.update} />
-        ) : (
-          <OwnHarnessLine own={own} actions={actions} />
-        ))}
+      {!stale && detail !== null && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">{t("ai.details")}</summary>
+          <p className="pt-1 text-pretty break-words select-text">{detail}</p>
+        </details>
+      )}
     </li>
   );
 }
@@ -198,31 +196,22 @@ export function NoSelection({ nextShortcut }: { nextShortcut: string }) {
 }
 
 /**
- * Where a provider of the server this client talks to connects: from here,
- * when the server runs on this computer; in the desktop app that runs it,
- * from another device; otherwise with the command, on the server's machine.
- */
-export type ConnectPlace =
-  | { readonly _tag: "here"; readonly setup: LocalProviderSetup }
-  | { readonly _tag: "desktop-app" }
-  | { readonly _tag: "server" };
-
-/**
  * A conversation with nothing in it yet. A new bot speaks first, so this is
- * usually brief; while its provider is not connected, it says what connects
- * it, where it connects (`connect`).
+ * usually brief; while its AI is not connected, it says so, with the same
+ * way to connect one as the first run, where it connects (`connect`).
  */
 export function QuietConversation({
   bot,
   engine,
   connect,
+  actions,
 }: {
   bot: Bot;
   engine: EngineStatus | null;
   connect: ConnectPlace;
+  actions: ProviderActions;
 }) {
   const ctx = usePresentation();
-  const { t } = ctx.i18n;
   const name = bot.profile.name;
   const held = openingHeld(bot, engine);
   return (
@@ -234,35 +223,28 @@ export function QuietConversation({
         title={name}
         body={held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
       />
-      {held?._tag === "connect" && (
-        <div className="flex w-full max-w-sm flex-col gap-2 text-start">
-          {connect._tag === "desktop-app" ? (
-            <p className="text-center text-sm text-pretty text-muted-foreground">
-              {t("empty.quiet.connectInApp")}
-            </p>
-          ) : connect._tag === "here" ? (
-            <LocalSignIn
-              setup={connect.setup}
-              fallback={<ConnectCommand command={held.command} />}
-              findings={engineFindings(engine)}
-            />
-          ) : (
-            <ConnectCommand command={held.command} />
-          )}
-        </div>
+      {held !== null && held._tag !== "limit" && (
+        <WaitingForAi engine={engine} connect={connect} actions={actions} />
       )}
     </Centered>
   );
 }
 
-/** The command that connects a provider, to run where the server is. */
-function ConnectCommand({ command }: { command: string }) {
-  const { t } = useI18n();
+/** What connects the AI a bot's hello waits for, under the bot. */
+function WaitingForAi({
+  engine,
+  connect,
+  actions,
+}: {
+  engine: EngineStatus | null;
+  connect: ConnectPlace;
+  actions: ProviderActions;
+}) {
+  const ai = useWebAiConnect({ engine, connect, actions });
   return (
-    <>
-      <p className="text-center text-sm text-muted-foreground">{t("empty.quiet.connectHint")}</p>
-      <CommandLine command={command} copyLabel={t("firstRun.connect.copy")} large />
-    </>
+    <div className="flex w-full max-w-sm flex-col">
+      <AiConnect ai={ai} />
+    </div>
   );
 }
 

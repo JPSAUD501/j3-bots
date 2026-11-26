@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Collapsible } from "@base-ui/react/collapsible";
 import type { ConnectEndpointResult, SignInView } from "@j3-bots/client-runtime";
-import { endpointInstead, signInLine, type SignInLine } from "@j3-bots/client-runtime/wording";
 import {
   type EngineStatus,
   type HarnessLocation,
@@ -9,12 +7,10 @@ import {
   normalizeBaseUrl,
   type ProviderConnectionRequest,
   type SignInHarness,
-  signInHarnesses,
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
-import { ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import type { I18n } from "@j3-bots/i18n";
-import { type ReactNode, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
@@ -38,8 +34,6 @@ export interface ProviderSetupIntents {
 export interface LocalProviderSetup extends ProviderSetupIntents {
   readonly signIns: ReadonlyMap<SignInHarness, SignInView>;
 }
-
-const idle: SignInView = { _tag: "idle" };
 
 /** Where the server finds each harness: `looking` until it said, null when it could not. */
 type Found = ReadonlyArray<HarnessLocation> | null | "looking";
@@ -65,10 +59,10 @@ export const engineFindings = (engine: EngineStatus | null): string =>
         .join(",");
 
 /**
- * The harnesses the server finds, asked as this mounts, again on `look`, and
- * again, without showing the search, each time `findings` changes.
+ * The harnesses the server finds, asked as this mounts and again each time
+ * `findings` changes.
  */
-function useHarnesses(ask: ProviderSetupIntents["harnesses"], findings: string) {
+export function useHarnesses(ask: ProviderSetupIntents["harnesses"], findings: string) {
   const [found, setFound] = useState<Found>("looking");
   const askNow = () =>
     ask().then(
@@ -81,190 +75,14 @@ function useHarnesses(ask: ProviderSetupIntents["harnesses"], findings: string) 
   useEffect(() => {
     void askFor(findings);
   }, [findings]);
-  const look = () => {
-    setFound("looking");
-    void askNow();
-  };
-  return { found, look };
+  return { found };
 }
 
 const lineTone = {
   waiting: "text-waiting",
   ready: "text-success",
   blocked: "text-blocked",
-} as const satisfies Record<SignInLine["tone"], string>;
-
-/**
- * Signing the providers in from this app: a button for each harness the
- * server finds, which runs the harness's own sign-in there and opens its page
- * in the browser; the install pages when it finds none; and, folded away, an
- * endpoint instead. `fallback` is what shows when the server cannot say where
- * its harnesses are, as one from before it could.
- */
-export function LocalSignIn({
-  setup,
-  fallback,
-  findings,
-}: {
-  readonly setup: LocalProviderSetup;
-  readonly fallback: ReactNode;
-  /** `engineFindings` of the engine's status: where the harnesses are is asked again as it changes. */
-  readonly findings: string;
-}) {
-  const { t } = useI18n();
-  const { found, look } = useHarnesses(setup.harnesses, findings);
-  const [endpointOpen, setEndpointOpen] = useState(false);
-  const endpointRef = useRef<HTMLDivElement>(null);
-  // From a sign-in that cannot work here: the form opens, in sight.
-  const openEndpoint = () => {
-    setEndpointOpen(true);
-    requestAnimationFrame(() => endpointRef.current?.scrollIntoView({ block: "start" }));
-  };
-  if (found === null) return fallback;
-  if (found === "looking") {
-    return (
-      <p role="status" className="text-sm text-muted-foreground">
-        {t("providers.notFound.looking")}
-      </p>
-    );
-  }
-  const installed = found.filter((location) => location.path !== null);
-  const views = installed.map(({ harness }) => setup.signIns.get(harness) ?? idle);
-  // A server that cannot run a sign-in says so once, with the fallback, for every harness.
-  if (views.some((view) => view._tag === "unsupported")) return fallback;
-  return (
-    <div className="flex w-full flex-col gap-3 text-start">
-      {installed.length === 0 ? (
-        <NotFound locations={found} onLook={look} />
-      ) : (
-        <>
-          <ul className="flex flex-col gap-2">
-            {installed.map(({ harness }) => (
-              <HarnessSignIn
-                key={harness}
-                harness={harness}
-                view={setup.signIns.get(harness) ?? idle}
-                onSignIn={() => setup.signIn(harness)}
-                onCancel={() => setup.cancelSignIn(harness)}
-                onEndpoint={openEndpoint}
-              />
-            ))}
-          </ul>
-          <p className="text-center text-xs text-pretty text-muted-foreground">
-            {t("providers.signIn.plan")}
-          </p>
-        </>
-      )}
-      <Collapsible.Root ref={endpointRef} open={endpointOpen} onOpenChange={setEndpointOpen}>
-        <Collapsible.Trigger className="pressable group -ms-2 flex min-h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground">
-          <ChevronRightIcon
-            aria-hidden
-            className="size-3.5 transition-transform duration-(--duration-pop) ease-pop group-data-panel-open:rotate-90 rtl:-scale-x-100"
-          />
-          {t("providers.endpoint.open")}
-        </Collapsible.Trigger>
-        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
-          <EndpointForm onConnect={setup.connectEndpoint} />
-        </Collapsible.Panel>
-      </Collapsible.Root>
-    </div>
-  );
-}
-
-/**
- * One harness's sign-in: its button, or, while it runs, where it stands, with
- * its page to open again and a way to stop it. Once it ended, what became of
- * it, and the button again to try once more, or the endpoint when that is the
- * way forward.
- */
-function HarnessSignIn({
-  harness,
-  view,
-  onSignIn,
-  onCancel,
-  onEndpoint,
-}: {
-  readonly harness: SignInHarness;
-  readonly view: SignInView;
-  readonly onSignIn: () => void;
-  readonly onCancel: () => void;
-  readonly onEndpoint: () => void;
-}) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const line = signInLine(harness, view, i18n);
-  const running = view._tag === "starting" || view._tag === "waiting-for-browser";
-  return (
-    <li className="flex flex-col gap-2">
-      {!running && view._tag !== "succeeded" && (
-        <Button className="h-11 w-full" onClick={onSignIn}>
-          {t(harness === "claude-code" ? "providers.signIn.claude-code" : "providers.signIn.codex")}
-        </Button>
-      )}
-      {line !== null && (
-        <p role="status" className={cn("text-sm text-pretty", lineTone[line.tone])}>
-          {line.text}
-        </p>
-      )}
-      {running && (
-        <div className="flex flex-wrap items-center gap-2">
-          {view._tag === "waiting-for-browser" && (
-            <Button
-              variant="secondary"
-              size="sm"
-              render={<a href={view.url} target="_blank" rel="noreferrer" />}
-            >
-              <ExternalLinkIcon aria-hidden className="size-3.5" />
-              {t("providers.signIn.openAgain")}
-            </Button>
-          )}
-          <Button variant="ghost-muted" size="sm" onClick={onCancel}>
-            {t("providers.signIn.cancel")}
-          </Button>
-        </div>
-      )}
-      {endpointInstead(view) && (
-        <Button variant="secondary" size="sm" className="self-start" onClick={onEndpoint}>
-          {t("providers.endpoint.use")}
-        </Button>
-      )}
-    </li>
-  );
-}
-
-/** Neither harness on this computer: where to install each, and a way to look again once one is. */
-function NotFound({
-  locations,
-  onLook,
-}: {
-  readonly locations: ReadonlyArray<HarnessLocation>;
-  readonly onLook: () => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-pretty text-muted-foreground">{t("providers.notFound")}</p>
-      <ul className="flex flex-col gap-1 text-sm">
-        {locations.map(({ harness }) => (
-          <li key={harness}>
-            <a
-              href={signInHarnesses[harness].installPage}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 font-medium text-foreground underline underline-offset-2"
-            >
-              {t("providers.notFound.install", { harness: signInHarnesses[harness].name })}
-              <ExternalLinkIcon aria-hidden className="size-3.5" />
-            </a>
-          </li>
-        ))}
-      </ul>
-      <Button className="h-11 w-full" onClick={onLook}>
-        {t("providers.notFound.lookAgain")}
-      </Button>
-    </div>
-  );
-}
+} as const;
 
 type EndpointPhase =
   | { readonly _tag: "editing" }
@@ -277,7 +95,7 @@ type EndpointPhase =
  * the server keeps. When bots have work running, which the engine's restart
  * stops, the form says so and restarts only once asked again.
  */
-function EndpointForm({
+export function EndpointForm({
   onConnect,
 }: {
   readonly onConnect: ProviderSetupIntents["connectEndpoint"];
@@ -382,7 +200,10 @@ function EndpointForm({
   );
 }
 
-function endpointAnswer(result: ConnectEndpointResult, { t, plural }: I18n): SignInLine {
+function endpointAnswer(
+  result: ConnectEndpointResult,
+  { t, plural }: I18n,
+): { readonly text: string; readonly tone: keyof typeof lineTone } {
   switch (result._tag) {
     case "applied":
       return { text: t("providers.endpoint.applied", { baseUrl: result.baseUrl }), tone: "ready" };
@@ -404,32 +225,4 @@ function endpointAnswer(result: ConnectEndpointResult, { t, plural }: I18n): Sig
     case "failed":
       return { text: t("providers.endpoint.failed"), tone: "blocked" };
   }
-}
-
-/** Where the server finds each harness, for Settings: its path, or that it is not there. */
-export function HarnessLocations({
-  setup,
-  findings,
-}: {
-  readonly setup: ProviderSetupIntents;
-  /** As `LocalSignIn`'s. */
-  readonly findings: string;
-}) {
-  const { t } = useI18n();
-  const { found } = useHarnesses(setup.harnesses, findings);
-  if (found === null || found === "looking") return null;
-  return (
-    <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
-      {found.map(({ harness, path }) => {
-        const name = signInHarnesses[harness].name;
-        return (
-          <li key={harness} className="break-all">
-            {path === null
-              ? t("settings.engine.harness.missing", { harness: name })
-              : t("settings.engine.harness.found", { harness: name, path })}
-          </li>
-        );
-      })}
-    </ul>
-  );
 }

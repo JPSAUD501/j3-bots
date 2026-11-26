@@ -2,37 +2,44 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { SAMPLE_NOW, sampleTeam } from "../gallery/sample";
-import { type ConnectPlace, QuietConversation } from "./EmptyStates";
+import { sampleProviderActions } from "../gallery/sampleSource";
+import { QuietConversation } from "./EmptyStates";
 
 vi.mock("../preferences/preferences", () => ({
   usePreferences: () => ({ appearance: "system", language: "en", theme: "light" }),
 }));
 
 const team = sampleTeam(SAMPLE_NOW);
-const COMMAND = "j3-bots provider connect";
-/** A new bot whose hello waits for a provider to be connected. */
+/** A new bot whose hello has not been said yet. */
 const waiting = { ...team.bots.moss, opening: true } as const;
-const signedOut = {
+const withClaude = (status: (typeof team.engine.providers)[number]["status"]) => ({
   ...team.engine,
-  providers: team.engine.providers.map((provider) => ({
-    ...provider,
-    status: { _tag: "sign-in-required", command: COMMAND } as const,
-  })),
-};
+  providers: team.engine.providers.map((provider) => ({ ...provider, status })),
+});
 
-const shown = (connect: ConnectPlace) =>
-  renderToStaticMarkup(<QuietConversation bot={waiting} engine={signedOut} connect={connect} />);
+const shown = (engine: ReturnType<typeof withClaude>) =>
+  renderToStaticMarkup(
+    <QuietConversation
+      bot={waiting}
+      engine={engine}
+      connect={{ _tag: "server" }}
+      actions={sampleProviderActions}
+    />,
+  );
 
-describe("an empty conversation whose hello waits for a model", () => {
-  it("gives the command to run where the server is", () => {
-    const markup = shown({ _tag: "server" });
-    expect(markup).toContain("run this on the machine where J3 Bots is installed");
-    expect(markup).toContain(COMMAND);
+describe("an empty conversation whose hello waits", () => {
+  it("asks which AI the operator has while the bot's is not connected", () => {
+    const markup = shown(
+      withClaude({ _tag: "sign-in-required", command: "j3-bots provider connect" }),
+    );
+    expect(markup).toContain("says hello as soon as its AI is connected");
+    expect(markup).toContain("Claude");
+    expect(markup).toContain("ChatGPT");
   });
 
-  it("sends a device that reaches the desktop app's server to the app, with no command", () => {
-    const markup = shown({ _tag: "desktop-app" });
-    expect(markup).toContain("sign in from Settings → Providers in J3 Bots");
-    expect(markup).not.toContain(COMMAND);
+  it("offers no account while the wait is for a usage limit, which signing in does not lift", () => {
+    const markup = shown(withClaude({ _tag: "limited", resetsAt: null }));
+    expect(markup).toContain("says hello when the usage limit resets");
+    expect(markup).not.toContain("ChatGPT");
   });
 });

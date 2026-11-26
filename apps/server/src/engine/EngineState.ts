@@ -21,11 +21,15 @@ const HARNESS_LABELS = { "claude-code": "Claude Code", codex: "Codex" } as const
 /**
  * Which provider a new bot lands on when none is named, lowest first: one
  * that runs it now, one that will once its limit resets, one a command
- * connects, and last one the engine is still checking. One the engine checked
- * and cannot run, such as a harness that is not installed, never: the engine
- * lists Claude Code's catalog even then (**Read** at `59651c1`,
- * `checkClaudeProviderStatus` in `ClaudeProvider.ts`), and a bot put on it
- * would wait for a provider that never comes.
+ * connects, one the engine is still checking, and last one whose harness is
+ * not installed yet. J3 Bots installs a missing harness itself as the server
+ * starts (docs/decisions/0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md),
+ * and the engine lists Claude Code's catalog even before it is there
+ * (**Read** at `59651c1`, `checkClaudeProviderStatus` in `ClaudeProvider.ts`),
+ * so the operator's first bot is made while its AI still downloads, and says
+ * hello once it runs. One the engine found and cannot run, as a harness that
+ * failed to start or a provider turned off, never: a bot put on it would
+ * wait for a provider nothing is bringing.
  */
 const defaultRank = (status: EngineStatus["providers"][number]["status"]): number | null => {
   switch (status._tag) {
@@ -36,7 +40,8 @@ const defaultRank = (status: EngineStatus["providers"][number]["status"]): numbe
     case "sign-in-required":
       return 2;
     case "unavailable":
-      return status.checking ? 3 : null;
+      if (status.checking) return 3;
+      return status.reason === "not-installed" ? 4 : null;
   }
 };
 
@@ -54,8 +59,10 @@ export const providerReady = (status: EngineStatus, providerId: ProviderId): boo
  * The model of a bot created without one, in `status`: the first model of the
  * first ready provider; with none ready, of the first that lists a model and
  * may still run it, as `defaultRank` orders them. A first bot is not refused
- * for want of a connected provider: its hello waits for one, and it moves to
- * the default model once that model's provider is ready (`Bots.adoptDefaults`).
+ * for want of a connected provider, or of one still being downloaded: its
+ * hello waits for one, and it moves to the default model once that model's
+ * provider is ready (`Bots.adoptDefaults`), which is how a bot made on
+ * Claude's catalog ends up on ChatGPT when that is the account signed in.
  */
 export const defaultModelIn = (status: EngineStatus): Option.Option<ModelChoice> => {
   let best: { readonly rank: number; readonly model: ModelChoice } | null = null;

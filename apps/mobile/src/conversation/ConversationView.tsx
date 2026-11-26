@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type MentionLabel, retryAction, runByDesktopApp } from "@j3-bots/client-runtime";
+import { type MentionLabel, retryAction } from "@j3-bots/client-runtime";
 import {
   addressed,
   arrivalCounts,
@@ -26,7 +26,6 @@ import {
   useConversationEnd,
   useDraft,
   useEngineStatus,
-  useServerUpdate,
   useJ3Client,
   useSelected,
 } from "@j3-bots/client-runtime/react";
@@ -75,7 +74,7 @@ import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
-import { CommandLine } from "../components/CommandLine.tsx";
+import { AiConnect } from "../components/AiConnect.tsx";
 import { PendingButton } from "../components/form.tsx";
 import { StateMark } from "../components/States.tsx";
 import type { Navigation } from "../navigation.tsx";
@@ -573,16 +572,14 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
 
 /**
  * A bot's conversation before anything is said in it. A first hello waiting
- * for a provider says so, with the command that connects one when there is,
- * or, on a server the desktop app runs, where in the app it connects.
+ * for its AI says so, with the same way to connect one as the first run.
  */
 function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) {
   const ctx = usePresentation();
-  const { t } = ctx.i18n;
   const status = useEngineStatus();
-  const inApp = runByDesktopApp(useServerUpdate());
+  const engine = status._tag === "ready" ? status.value : null;
   const name = bot.profile.name;
-  const held = openingHeld(bot, status._tag === "ready" ? status.value : null);
+  const held = openingHeld(bot, engine);
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
@@ -595,12 +592,9 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
       <Body>
         {held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
       </Body>
-      {held?._tag === "connect" && (
-        <View className="w-full max-w-sm gap-2">
-          <Text className="text-center text-sm text-muted-foreground">
-            {t(inApp ? "empty.quiet.connectInApp" : "empty.quiet.connectHint")}
-          </Text>
-          {!inApp && <CommandLine command={held.command} />}
+      {held !== null && held._tag !== "limit" && (
+        <View className="w-full max-w-sm">
+          <AiConnect engine={engine} />
         </View>
       )}
     </View>

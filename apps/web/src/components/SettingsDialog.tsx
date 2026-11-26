@@ -33,11 +33,13 @@ import {
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { type PairingOffer, qrOrigin, type SettingsSaves } from "@j3-bots/client-runtime";
 import {
+  aiAccountProvider,
+  aiAccounts,
   clockTime,
-  connectCommand,
   connectorNeedsYou,
   connectorTone,
   installsHarnesses,
+  ownHarness,
   providersNeedYou,
   type SettingsPage,
   settingsGroups,
@@ -81,14 +83,16 @@ import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { UpdatePromptEntryButton } from "./UpdatePrompt";
 import { ShortcutSetting } from "./ShortcutSetting";
-import { ConnectProviders, ProviderRow } from "./EmptyStates";
-import type { ProviderActions } from "./ProviderFix";
 import {
-  engineFindings,
-  HarnessLocations,
-  type LocalProviderSetup,
-  LocalSignIn,
-} from "./ProviderSetup";
+  AdvancedEndpoint,
+  AiAccountCard,
+  type ConnectPlace,
+  connectPlaceOf,
+  useWebAiConnect,
+} from "./AiConnect";
+import { ProviderRow } from "./EmptyStates";
+import { OwnHarnessLine, type ProviderActions } from "./ProviderFix";
+import { ProviderUpdate } from "./ProviderUpdate";
 import { ChangeServer } from "./ServerAddress";
 import {
   LeftHere,
@@ -503,9 +507,12 @@ function PageBody({
             connected: data.connected,
             onSave: intents.updateSettings,
           }}
-          {...(intents.providerSetup === undefined
-            ? {}
-            : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+          connect={connectPlaceOf(
+            intents.providerSetup === undefined
+              ? undefined
+              : { ...intents.providerSetup, signIns: data.signIns },
+            intents.serverUpdate?.view,
+          )}
         />
       );
     case "usage":
@@ -566,23 +573,23 @@ function PageBody({
 }
 
 /**
- * Whether the engine runs, and if not, why and what to do; then each provider.
- * Disconnected, it is what the server last reported, muted and said to be so.
- * While the server runs on this computer (`providerSetup`), also where it
- * finds each harness, and the providers sign in from here.
+ * Whether J3 Bots can run bots, and if not, why and what to do; then each AI
+ * account, with the same way to connect it as the first run, where it
+ * connects (`connect`), and any other provider. Disconnected, it is what the
+ * server last reported, muted and said to be so.
  */
 export function EngineSection({
   engine,
   stale,
   actions,
   autoUpdate,
-  providerSetup,
+  connect = { _tag: "server" },
 }: {
   engine: EngineStatus | null;
   stale: boolean;
   actions: ProviderActions;
   autoUpdate?: AutoUpdateProps;
-  providerSetup?: LocalProviderSetup;
+  connect?: ConnectPlace;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -594,6 +601,7 @@ export function EngineSection({
     );
   }
   const problem = engineProblem(engine, i18n);
+  const others = engine.providers.filter((provider) => provider.harness === "other");
   return (
     <Section>
       {stale && <p className="text-xs text-muted-foreground">{t("settings.engine.lastKnown")}</p>}
@@ -619,13 +627,14 @@ export function EngineSection({
           <p className="text-sm text-muted-foreground">{problem.body}</p>
         </div>
       )}
-      {engine.providers.length > 0 && (
+      <AiAccounts engine={engine} stale={stale} actions={actions} connect={connect} />
+      {others.length > 0 && (
         <ul className="flex flex-col gap-1.5 text-sm">
-          {engine.providers.map((provider) => (
+          {others.map((provider) => (
             <ProviderRow
               key={provider.id}
               provider={provider}
-              place={providerSetup === undefined ? "server" : "this-computer"}
+              place={connect._tag === "here" ? "this-computer" : "server"}
               actions={actions}
               stale={stale}
             />
@@ -635,20 +644,47 @@ export function EngineSection({
       {autoUpdate !== undefined && installsHarnesses(engine) && (
         <AutoUpdateHarnesses {...autoUpdate} />
       )}
-      {providerSetup !== undefined && (
-        <HarnessLocations setup={providerSetup} findings={engineFindings(engine)} />
-      )}
-      {!stale &&
-        (providerSetup !== undefined && connectCommand(engine) !== null ? (
-          <LocalSignIn
-            setup={providerSetup}
-            fallback={<ConnectProviders engine={engine} />}
-            findings={engineFindings(engine)}
-          />
-        ) : (
-          <ConnectProviders engine={engine} />
-        ))}
     </Section>
+  );
+}
+
+/**
+ * Each AI account, one card each: where it stands and its one button, then
+ * the version it runs, with Update when a newer one is out; and, in the app
+ * on the server's own computer, an endpoint instead, folded away.
+ */
+function AiAccounts({
+  engine,
+  stale,
+  actions,
+  connect,
+}: {
+  engine: EngineStatus;
+  stale: boolean;
+  actions: ProviderActions;
+  connect: ConnectPlace;
+}) {
+  const ai = useWebAiConnect({ engine, connect, actions });
+  return (
+    <>
+      <ul className="flex flex-col gap-1.5 text-sm">
+        {aiAccounts.map((account) => {
+          const provider = aiAccountProvider(engine, account);
+          const own = provider === undefined ? null : ownHarness(provider);
+          return (
+            <AiAccountCard key={account} ai={ai} account={account} stale={stale}>
+              {provider !== undefined &&
+                (own === null ? (
+                  <ProviderUpdate provider={provider} onUpdate={actions.update} />
+                ) : (
+                  <OwnHarnessLine own={own} actions={actions} />
+                ))}
+            </AiAccountCard>
+          );
+        })}
+      </ul>
+      {!stale && <AdvancedEndpoint ai={ai} />}
+    </>
   );
 }
 

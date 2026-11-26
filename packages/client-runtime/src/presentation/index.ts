@@ -5,6 +5,26 @@
  * formatted. Free of any interface library and of the interface's sentences.
  */
 export {
+  type AiAccount,
+  aiAccountNames,
+  aiAccountProvider,
+  aiAccounts,
+  type AiAccountState,
+  aiAccountStates,
+  type AiAction,
+  aiAction,
+  type AiFacts,
+  aiOutage,
+  type AiPlace,
+  connectStepSaysProgress,
+  openAiAccount,
+  otherAiAccount,
+  queuedSignIn,
+  type SignInStep,
+  signInStepAt,
+  signInSteps,
+} from "./aiAccount.ts";
+export {
   avatarBusy,
   avatarFace,
   type AvatarContext,

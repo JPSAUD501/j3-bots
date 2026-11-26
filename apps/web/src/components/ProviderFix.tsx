@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type OwnHarness, providerFix } from "@j3-bots/client-runtime/presentation";
-import {
-  harnessFailureText,
-  harnessOutcomeText,
-  harnessTaskText,
-  type ProviderPlace,
-} from "@j3-bots/client-runtime/wording";
-import type { ProviderId, ProviderStatus, SignInHarness } from "@j3-bots/contracts";
-import { DownloadIcon, ExternalLinkIcon } from "lucide-react";
+import type { OwnHarness } from "@j3-bots/client-runtime/presentation";
+import { harnessOutcomeText, harnessTaskText } from "@j3-bots/client-runtime/wording";
+import type { ProviderId, SignInHarness } from "@j3-bots/contracts";
 import { useState } from "react";
-import { useI18n, usePresentation } from "../app/context";
+import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
 
@@ -34,120 +28,7 @@ export interface ProviderActions {
 type Asking = "idle" | "asking" | "failed";
 
 /**
- * What fixes a provider the engine cannot run, under its line
- * (`providerFix`): for a harness that is not installed, Install, which the
- * server does, with its progress and a way to cancel; where the server cannot
- * install it, where its maker says how and a way to look again once it is;
- * for one that failed, a way to try again. In local mode, a failure whose
- * cause the line does not already say also says where the server's log is.
- * Nothing for any other state.
- */
-export function ProviderFix({
-  provider,
-  place,
-  actions,
-}: {
-  readonly provider: ProviderStatus;
-  readonly place: ProviderPlace;
-  readonly actions: ProviderActions;
-}) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const [asking, setAsking] = useState<Asking>("idle");
-  const fix = providerFix(provider);
-  if (fix === null) return null;
-  const ask = (request: Promise<boolean>) => {
-    setAsking("asking");
-    void request.then((took) => setAsking(took ? "idle" : "failed"));
-  };
-  const failure = asking === "failed" && (
-    <p role="alert" className="text-xs text-blocked">
-      {t(
-        fix._tag === "get" || fix._tag === "getting"
-          ? "provider.install.requestFailed"
-          : "provider.recheckFailed",
-      )}
-    </p>
-  );
-  switch (fix._tag) {
-    case "get":
-      return (
-        <div className="flex flex-col gap-1.5">
-          {fix.failed !== null && (
-            <p role="alert" className="text-xs text-pretty text-blocked">
-              {harnessFailureText(fix.failed, i18n)}
-            </p>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={asking === "asking"}
-              onClick={() => ask(actions.install(fix.harness))}
-            >
-              <DownloadIcon aria-hidden className="size-3.5" />
-              {t(fix.failed === null ? "provider.install" : "provider.retry")}
-            </Button>
-          </div>
-          {failure}
-        </div>
-      );
-    case "getting":
-      return (
-        <div className="flex flex-col gap-1.5">
-          <p role="status" className="text-xs text-pretty text-muted-foreground tabular-nums">
-            {harnessTaskText(fix.task, i18n)}
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="ghost-muted"
-              size="sm"
-              disabled={asking === "asking"}
-              onClick={() => ask(actions.cancelInstall(fix.harness))}
-            >
-              {t("provider.install.cancel")}
-            </Button>
-          </div>
-          {failure}
-        </div>
-      );
-    case "install":
-    case "retry":
-      return (
-        <div className="flex flex-col gap-1.5">
-          {fix._tag === "retry" && !fix.rechecking && place === "this-computer" && (
-            <p className="text-xs text-pretty text-muted-foreground">{t("provider.failed.log")}</p>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            {fix._tag === "install" && fix.page !== null && (
-              <Button
-                variant="secondary"
-                size="sm"
-                render={<a href={fix.page} target="_blank" rel="noreferrer" />}
-              >
-                <ExternalLinkIcon aria-hidden className="size-3.5" />
-                {t("providers.notFound.install", { harness: provider.name })}
-              </Button>
-            )}
-            <Button
-              variant={fix._tag === "retry" ? "secondary" : "ghost-muted"}
-              size="sm"
-              disabled={asking === "asking"}
-              onClick={() => ask(actions.recheck(provider.id))}
-            >
-              {asking === "asking"
-                ? t("provider.checking")
-                : t(fix._tag === "retry" ? "provider.retry" : "providers.notFound.lookAgain")}
-            </Button>
-          </div>
-          {failure}
-        </div>
-      );
-  }
-}
-
-/**
- * The copy of its harness J3 Bots installed for a provider (`ownHarness`), in
+ * The copy of its harness J3 Bots installed for an account (`ownHarness`), in
  * Settings, where `ProviderUpdate` shows the operator's own: the version it
  * runs and the newest, when that is newer, with Update; an update under way,
  * with a way to cancel it; and how the last install or update ended.

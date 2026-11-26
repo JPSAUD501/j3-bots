@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { signInCommands } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { type Harness, HARNESSES } from "../engine/harnesses.ts";
@@ -143,8 +144,8 @@ export const noWayToModels = (harness: Harness, connectCommand: string): Check =
   // sign-in waits for a callback that never comes.
   const login =
     deviceAuth === undefined
-      ? `\`j3-bots provider login ${harness}\``
-      : `\`j3-bots provider login ${harness} --device-auth\`, which shows a code to enter in a browser on any device`;
+      ? `\`${signInCommands[harness]}\``
+      : `\`${signInCommands[harness]}\`, which shows a code to enter in a browser on any device`;
   return check(
     name,
     "problem",
