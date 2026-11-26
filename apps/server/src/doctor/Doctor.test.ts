@@ -462,14 +462,17 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         server: Option.some(
           running({
             engine: {
-              state: { _tag: "unavailable", reason: "install-failed" },
+              state: { _tag: "unavailable", reason: "install-failed", installFailure: "in-use" },
               pinnedVersion: "0.1.11",
               providers: [],
             },
           }),
         ),
       });
-      assertFlagged(named(failed.checks, "Engine"), "problem");
+      const engine = named(failed.checks, "Engine");
+      assertFlagged(engine, "problem");
+      // What mends why it failed, not a guess at the disk.
+      assert.include(Option.getOrThrow(engine.fix), "virus scanner");
     }),
   );
 

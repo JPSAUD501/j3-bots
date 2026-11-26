@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { HarnessTask } from "@j3-bots/contracts";
+import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -13,7 +15,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { Layout } from "../Layout.ts";
 import type { DistributionClient, Release } from "./distributions.ts";
-import { HarnessFailed } from "./failure.ts";
+import { fileFailed, HarnessFailed } from "./failure.ts";
 import { sha256 } from "./hash.ts";
 import { writeInPlace } from "./inPlace.ts";
 import { type CopyLayout, InnerPath, type InstalledCopy } from "./layout.ts";
@@ -22,6 +24,15 @@ import { type CopyLayout, InnerPath, type InstalledCopy } from "./layout.ts";
 // in `versions/<version>/` (`layout.ts`). Nothing is made executable, and
 // nothing unpacked, before the whole download has the SHA-256 its maker
 // publishes; a copy is installed only once it ran and said its version.
+//
+// It runs for the first time in its version's folder, not where it was
+// unpacked: Windows refuses to move a folder while another program holds a
+// file in it, and a new executable is held for a moment after its first run
+// (by a scanner, or by its own process as it ends). Made after that run, the
+// move failed the install whenever something still held the copy (decision
+// 0064). A rename or a removal Windows refuses while another program holds a
+// file is tried again for a while (`whileHeld`); each file failure says what
+// it comes down to (`fileFailed`).
 
 /** No harness's download is near this; one that passes it is not the release. */
 const MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
@@ -32,7 +43,6 @@ const PROGRESS_INTERVAL_MS = 1_000;
 /** Runs a copy once and answers the version it says it is, if it ran and said one. */
 export type Probe = (executable: string) => Effect.Effect<Option.Option<string>>;
 
-const storage = () => new HarnessFailed({ reason: "storage" });
 const unreachable = () => new HarnessFailed({ reason: "unreachable" });
 const checksum = () => new HarnessFailed({ reason: "checksum" });
 const check = () => new HarnessFailed({ reason: "check" });
@@ -60,19 +70,19 @@ export const installRelease = Effect.fn("harnesses.installRelease")(function* (i
   readonly platform: string;
   readonly report: (task: HarnessTask) => Effect.Effect<void>;
 }) {
-  const { release, layout, files, report } = input;
+  const { release, layout, files, report, platform } = input;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const partial = layout.partial(release.version);
   const staging = layout.staging(release.version);
   const target = layout.version(release.version);
-  const remove = (location: string) =>
-    fs.remove(location, { recursive: true, force: true }).pipe(Effect.mapError(storage));
-
+  const { writeFailed, remove, rename } = fileSteps(fs, platform);
   // Every location is checked to be inside the home, links resolved, before it is written.
-  const root = yield* files.writable(layout.root).pipe(Effect.mapError(storage));
-  yield* fs.makeDirectory(root, { recursive: true, mode: 0o700 }).pipe(Effect.mapError(storage));
-  yield* files.writable(partial).pipe(Effect.mapError(storage));
+  const checked = (location: string) => files.writable(location).pipe(Effect.catch(writeFailed));
+
+  const root = yield* checked(layout.root);
+  yield* fs.makeDirectory(root, { recursive: true, mode: 0o700 }).pipe(Effect.catch(writeFailed));
+  yield* checked(partial);
 
   const existing = yield* fs.stat(partial).pipe(Effect.option);
   const kept =
@@ -118,21 +128,16 @@ export const installRelease = Effect.fn("harnesses.installRelease")(function* (i
         ),
       );
       // Written in place, so that a download cut off resumes; a link at its name is refused.
+      // A write that fails is the file system's, not the network's.
       yield* writeInPlace(partial, appending, arriving).pipe(
-        // A write that fails is the disk's, not the network's.
-        Effect.catchTag("InPlaceFailure", (error) =>
-          Effect.logWarning("Writing a harness download failed", {
-            file: error.file,
-            code: error.code,
-          }).pipe(Effect.andThen(Effect.fail(storage()))),
-        ),
+        Effect.catchTag("InPlaceFailure", writeFailed),
       );
     }
   }
 
   yield* report({ _tag: "verifying" });
   // Checked again before it is read: the download may have taken long.
-  yield* files.writable(partial).pipe(Effect.mapError(storage));
+  yield* checked(partial);
   const hash = sha256();
   let size = 0;
   yield* fs.stream(partial).pipe(
@@ -142,7 +147,7 @@ export const installRelease = Effect.fn("harnesses.installRelease")(function* (i
         hash.update(chunk);
       }),
     ),
-    Effect.mapError(storage),
+    Effect.catch(writeFailed),
   );
   if ((release.size !== null && size !== release.size) || hash.hex() !== release.sha256) {
     // A wrong download would fail the same way forever: the next attempt starts over.
@@ -150,34 +155,50 @@ export const installRelease = Effect.fn("harnesses.installRelease")(function* (i
     return yield* checksum();
   }
 
-  yield* files.writable(staging).pipe(Effect.mapError(storage));
+  yield* checked(staging);
   yield* remove(staging);
-  yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
-  const inner = yield* unpack(input, partial, staging).pipe(Effect.tapError(() => remove(staging)));
-  const executable = path.join(staging, ...inner.split("/"));
+  yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.catch(writeFailed));
+  const inner = yield* unpack(input, partial, staging).pipe(
+    Effect.tapError(() => remove(staging).pipe(Effect.ignore)),
+  );
+
+  // Moved into place before anything in it runs (above).
+  yield* checked(target);
+  yield* fs
+    .makeDirectory(layout.versions, { recursive: true, mode: 0o700 })
+    .pipe(Effect.catch(writeFailed));
+  yield* remove(target);
+  yield* rename(staging, target);
+  const executable = path.join(target, ...inner.split("/"));
   const said = yield* input.probe(executable);
   if (Option.isNone(said) || said.value !== release.version) {
     yield* Effect.logWarning("A downloaded harness did not say the version its maker listed", {
       listed: release.version,
       said: Option.getOrNull(said),
     });
-    yield* remove(staging);
+    // What the copy did matters, not its removal: one left is pruned later.
+    yield* remove(target).pipe(Effect.ignore);
     return yield* check();
   }
-
-  yield* files.writable(target).pipe(Effect.mapError(storage));
-  yield* fs
-    .makeDirectory(layout.versions, { recursive: true, mode: 0o700 })
-    .pipe(Effect.mapError(storage));
-  yield* remove(target);
-  yield* fs.rename(staging, target).pipe(Effect.mapError(storage));
   yield* remove(partial);
-  return {
-    version: release.version,
-    executable: path.join(target, ...inner.split("/")),
-    inner,
-  } satisfies InstalledCopy;
+  return { version: release.version, executable, inner } satisfies InstalledCopy;
 });
+
+/**
+ * How an install fails for a file: a write, read or check that fails says
+ * why (`fileFailed`); a rename or a removal is tried again while Windows says
+ * another program holds the file (`whileHeld`), and then says why.
+ */
+const fileSteps = (fs: FileSystem.FileSystem, platform: string) => {
+  const movedFailed = fileFailed(platform, true);
+  const patiently = <A>(operation: Effect.Effect<A, PlatformError.PlatformError>) =>
+    whileHeld(operation, { platform, codeOf: platformErrorCode }).pipe(Effect.catch(movedFailed));
+  return {
+    writeFailed: fileFailed(platform, false),
+    remove: (location: string) => patiently(fs.remove(location, { recursive: true, force: true })),
+    rename: (from: string, to: string) => patiently(fs.rename(from, to)),
+  };
+};
 
 /**
  * The system's own `tar`: on Windows, the one in its `System32` folder,
@@ -214,10 +235,11 @@ const unpack = Effect.fnUntraced(function* (
   const { release } = input;
   switch (release.format) {
     case "executable": {
+      const { writeFailed, rename } = fileSteps(fs, input.platform);
       const file = path.join(into, release.fileName);
-      yield* fs.rename(archive, file).pipe(Effect.mapError(storage));
+      yield* rename(archive, file);
       if (input.platform !== "win32") {
-        yield* fs.chmod(file, 0o755).pipe(Effect.mapError(storage));
+        yield* fs.chmod(file, 0o755).pipe(Effect.catch(writeFailed));
       }
       return release.fileName;
     }
@@ -239,7 +261,9 @@ const unpack = Effect.fnUntraced(function* (
           ),
           Effect.orElseSucceed(() => -1),
         );
-      if (exit !== 0) return yield* check();
+      // The archive had the maker's checksum: a tar that fails could not
+      // write what it unpacked, and says why on the server's stderr.
+      if (exit !== 0) return yield* new HarnessFailed({ reason: "files" });
       const described = yield* fs
         .readFileString(path.join(into, "codex-package.json"))
         .pipe(

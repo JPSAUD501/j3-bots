@@ -9,7 +9,7 @@ import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { windowsNameKey } from "@j3-bots/processes";
+import { errnoCode, windowsNameKey } from "@j3-bots/processes";
 
 // Unpacks a zip archive in this process: Windows has no `tar` J3 Bots can
 // count on, and T3 Code ships its Windows engine as a zip. It reads what the
@@ -20,10 +20,15 @@ import { windowsNameKey } from "@j3-bots/processes";
 // any entry whose name would lead out of it, or that Windows would read as
 // another name.
 
-/** Why an archive could not be unpacked, with what in it was refused. */
+/**
+ * Why an archive could not be unpacked, with what in it was refused, and the
+ * system's code for a file that could not be written (`write`), such as
+ * `ENOSPC` for a full disk.
+ */
 export class UnzipFailed extends Schema.TaggedError<UnzipFailed>()("UnzipFailed", {
   reason: Schema.Literals(["not-a-zip", "unsupported", "unsafe-name", "corrupt", "write"]),
   detail: Schema.String,
+  code: Schema.NullOr(Schema.String),
 }) {
   override get message(): string {
     switch (this.reason) {
@@ -80,8 +85,8 @@ interface ZipEntry {
   readonly executable: boolean;
 }
 
-const refusal = (reason: UnzipFailed["reason"], detail: string) =>
-  new UnzipFailed({ reason, detail });
+const refusal = (reason: UnzipFailed["reason"], detail: string, code: string | null = null) =>
+  new UnzipFailed({ reason, detail, code });
 const fail = (reason: UnzipFailed["reason"], detail: string) =>
   Result.fail(refusal(reason, detail));
 const isUnzipFailed = Schema.is(UnzipFailed);
@@ -250,12 +255,13 @@ const failure =
   (reason: UnzipFailed["reason"]) =>
   (cause: unknown): UnzipFailed => {
     if (isUnzipFailed(cause)) return cause;
-    const code = cause instanceof Error && "code" in cause ? cause.code : undefined;
+    const code = errnoCode(cause);
     // zlib's codes for a stream that does not inflate.
-    const damaged = typeof code === "string" && code.startsWith("Z_");
+    const damaged = code !== null && code.startsWith("Z_");
     return refusal(
       damaged ? "corrupt" : reason,
       cause instanceof Error ? cause.message : String(cause),
+      damaged ? null : code,
     );
   };
 

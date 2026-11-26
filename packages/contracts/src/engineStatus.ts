@@ -13,6 +13,7 @@ import {
 } from "./base.ts";
 import type { ModelChoice, PermissionMode } from "./bot.ts";
 import { HarnessCopy } from "./harness.ts";
+import type { SignInHarness } from "./provider.ts";
 
 export const UsageWindow = Schema.Struct({
   /**
@@ -169,6 +170,32 @@ export const EngineInstallProgress = Schema.Struct({
 export type EngineInstallProgress = typeof EngineInstallProgress.Type;
 
 /**
+ * Why the last try to install the pinned engine failed, while the server
+ * waits to try again (`install-failed`):
+ * - `unsupported-platform`: the engine has no release for this machine;
+ * - `download`: its download could not be read, or was cut off;
+ * - `checksum`: what arrived is not the archive J3 Bots pins;
+ * - `extract`: the archive did not unpack;
+ * - `storage`, `in-use`, `permission`, `outside-home`, `files`: a file
+ *   could not be written, as for a harness (`HarnessInstallFailure`): only
+ *   `storage` is a full disk;
+ * - `unknown`, as a client reads it: a reason a newer server gives.
+ */
+export const engineInstallFailures = [
+  "unsupported-platform",
+  "download",
+  "checksum",
+  "extract",
+  "storage",
+  "in-use",
+  "permission",
+  "outside-home",
+  "files",
+] as const;
+export const EngineInstallFailure = OpenLiterals(engineInstallFailures);
+export type EngineInstallFailure = typeof EngineInstallFailure.Type;
+
+/**
  * Whether the engine's browser can run on the machine that hosts J3 Bots, as
  * far as the server could tell: what a bot given the browser needs first.
  * `setup-required` says what is missing: a sandbox the system allows, the
@@ -200,12 +227,16 @@ export const EngineStatus = Schema.Struct({
      * - `down`: the engine is not running or not answering, and is being restarted;
      * - `port-in-use`: another program listens on the engine's port, which J3
      *   Bots leaves alone;
-     * - `install-failed`: the pinned engine could not be downloaded or checked;
+     * - `install-failed`: the pinned engine could not be installed; the server
+     *   tries again, and `installFailure` says why the last try failed. A
+     *   server older than `installFailure` never sends it, at the same
+     *   protocol version, and an older client ignores it;
      * - `credential-refused`: the engine refused J3 Bots' credential, also after
      *   a fresh one was minted.
      */
     Schema.TaggedStruct("unavailable", {
       reason: Schema.Literals(["down", "port-in-use", "install-failed", "credential-refused"]),
+      installFailure: Schema.optionalKey(EngineInstallFailure),
     }),
     /** Running, but not the engine version this release of J3 Bots is pinned to. */
     Schema.TaggedStruct("incompatible", { runningVersion: Label }),
@@ -219,8 +250,20 @@ export const EngineStatus = Schema.Struct({
    * it, at the same protocol version, and an older client ignores it.
    */
   browser: Schema.optionalKey(BrowserHostStatus),
+  /**
+   * J3 Bots' own copy of each harness (`HarnessCopy`), from a server that
+   * installs them, at every state of the engine: the providers carry it
+   * only once the engine is ready, and the copies start downloading with
+   * the engine, as the server starts. With `state.starting.install`, it is
+   * all a first run waits to download. A server older than it never sends
+   * it, at the same protocol version, and an older client ignores it.
+   */
+  harnesses: Schema.optionalKey(Schema.Struct({ "claude-code": HarnessCopy, codex: HarnessCopy })),
 });
 export type EngineStatus = typeof EngineStatus.Type;
+
+/** Each harness's copy, by harness, as `EngineStatus.harnesses` carries it. */
+export type HarnessCopies = Readonly<Record<SignInHarness, HarnessCopy>>;
 
 /**
  * The permission mode of a bot created without one, in `status`: supervised

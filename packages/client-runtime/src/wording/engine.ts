@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  EngineInstallFailure,
   EngineStatus,
   HarnessInstallFailure,
   HarnessOutcome,
@@ -8,6 +9,7 @@ import type {
   UnavailableReason,
 } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
+import { ownInstall } from "../presentation/engine.ts";
 import { usageLimitText } from "./status.ts";
 import { type TimeContext, timeInSentence } from "./time.ts";
 
@@ -66,13 +68,40 @@ export function engineProblem(
         case "port-in-use":
           return { title: t("engine.portInUse.title"), body: t("engine.portInUse.body") };
         case "install-failed":
-          return { title: t("engine.installFailed.title"), body: t("engine.installFailed.body") };
+          return {
+            title: t("engine.installFailed.title"),
+            body: engineInstallFailureText(state.installFailure, i18n),
+          };
         case "credential-refused":
           return {
             title: t("engine.credentialRefused.title"),
             body: t("engine.credentialRefused.body"),
           };
       }
+  }
+}
+
+/** Why the engine's install failed, in words, with what to do; the general sentence for a reason it has none for. */
+function engineInstallFailureText(reason: EngineInstallFailure | undefined, { t }: I18n): string {
+  switch (reason) {
+    case "download":
+      return t("engine.installFailed.body.download");
+    case "storage":
+      return t("engine.installFailed.body.storage");
+    case "in-use":
+      return t("engine.installFailed.body.inUse");
+    case "permission":
+      return t("engine.installFailed.body.permission");
+    case "outside-home":
+      return t("engine.installFailed.body.outsideHome");
+    case "unsupported-platform":
+      return t("engine.installFailed.body.unsupported");
+    case "checksum":
+    case "extract":
+    case "files":
+    case "unknown":
+    case undefined:
+      return t("engine.installFailed.body");
   }
 }
 
@@ -94,6 +123,16 @@ export function providerLine(
 ): { readonly text: string; readonly tone: ProviderTone } {
   const { t } = ctx.i18n;
   const { status } = provider;
+  // J3 Bots' own install says more than the engine's "not found".
+  const own = status._tag === "unavailable" ? ownInstall(provider) : null;
+  if (own !== null) {
+    switch (own._tag) {
+      case "installing":
+        return { text: installingText(own.task, ctx.i18n), tone: "waiting" };
+      case "failed":
+        return { text: t("provider.installFailed"), tone: "blocked" };
+    }
+  }
   switch (status._tag) {
     case "ready":
       return provider.models.length > 0
@@ -194,6 +233,17 @@ function unavailableLine(
   }
 }
 
+/** A first install under way, as a provider's line says it: "Installing… 42 of 230 MB". */
+function installingText(task: HarnessTask, { t }: I18n): string {
+  if (task._tag !== "downloading" || task.receivedBytes === 0) return t("provider.installing");
+  return task.totalBytes === null
+    ? t("provider.installing.progressNoTotal", { received: megabytes(task.receivedBytes) })
+    : t("provider.installing.progress", {
+        received: megabytes(task.receivedBytes),
+        total: megabytes(task.totalBytes),
+      });
+}
+
 /**
  * What an install or update of the server's own copy of a harness is doing,
  * in words: "Downloading… 42 of 370 MB", "Checking the download…", or that
@@ -228,6 +278,14 @@ export function harnessFailureText(reason: HarnessInstallFailure, { t }: I18n): 
       return t("provider.install.failed.storage");
     case "engine":
       return t("provider.install.failed.engine");
+    case "in-use":
+      return t("provider.install.failed.inUse");
+    case "permission":
+      return t("provider.install.failed.permission");
+    case "outside-home":
+      return t("provider.install.failed.outsideHome");
+    case "files":
+      return t("provider.install.failed.files");
     case "unknown":
       return t("provider.install.failed.unknown");
   }

@@ -4,29 +4,59 @@ import * as NodeZlib from "node:zlib";
 import { assert, describe, it } from "@effect/vitest";
 import { type HarnessCopy, ProviderId, type SignInHarness } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import type * as Duration from "effect/Duration";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { ServerConfig } from "../config.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { claudeCode, codex, onlyTo } from "./distributions.ts";
 import { type Harnesses, make, withCopies } from "./Harnesses.ts";
 import { sha256Hex } from "./hash.ts";
-import { versionIn } from "./install.ts";
+import { type Probe, versionIn } from "./install.ts";
 import { copyLayout } from "./layout.ts";
 
 const CLAUDE_BASE = "https://downloads.test/claude-code-releases";
 const CODEX_BASE = "https://releases.test/codex";
-const MACHINE = { platform: "linux", arch: "x64" } as const;
-const CODEX_PACKAGE = "codex-package-x86_64-unknown-linux-musl.tar.gz";
+interface Machine {
+  readonly platform: string;
+  readonly arch: string;
+}
+const MACHINE: Machine = { platform: "linux", arch: "x64" };
+/** The machine the test runs on, whose file system and processes a real copy meets. */
+const HOST: Machine = { platform: process.platform, arch: process.arch };
+
+/** What each maker calls `machine`, and the file names its builds take there. */
+const builds = (machine: Machine) => {
+  const windows = machine.platform === "win32";
+  const os = windows ? "win32" : machine.platform;
+  const cpu = machine.arch === "arm64" ? "arm64" : "x64";
+  const target =
+    machine.platform === "win32"
+      ? "x86_64-pc-windows-msvc"
+      : machine.platform === "darwin"
+        ? "aarch64-apple-darwin"
+        : `${cpu === "arm64" ? "aarch64" : "x86_64"}-unknown-linux-musl`;
+  return {
+    claudePlatform: `${os}-${cpu}`,
+    claudeFile: windows ? "claude.exe" : "claude",
+    codexPackage: `codex-package-${target}.tar.gz`,
+    codexEntry: windows ? "bin/codex.exe" : "bin/codex",
+  };
+};
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 
@@ -127,46 +157,57 @@ const publishClaude = (
   version: string,
   binary: Uint8Array = claudeBinary(version),
   digest: string = sha256Hex(binary),
+  machine: Machine = MACHINE,
 ) => {
+  const { claudePlatform, claudeFile } = builds(machine);
   fake.files.set("/claude-code-releases/stable", bytes(`${version}\n`));
   fake.files.set(
     `/claude-code-releases/${version}/manifest.json`,
     bytes(
       JSON.stringify({
         version,
-        platforms: { "linux-x64": { binary: "claude", checksum: digest, size: binary.byteLength } },
+        platforms: {
+          [claudePlatform]: { binary: claudeFile, checksum: digest, size: binary.byteLength },
+        },
       }),
     ),
   );
-  fake.files.set(`/claude-code-releases/${version}/linux-x64/claude`, binary);
+  fake.files.set(`/claude-code-releases/${version}/${claudePlatform}/${claudeFile}`, binary);
 };
 
 /** Puts Codex `version` on the fake's latest channel, as a package whose entrypoint says it. */
-const publishCodex = (fake: FakeDistributions, version: string) => {
+const publishCodex = (fake: FakeDistributions, version: string, machine: Machine = MACHINE) => {
+  const { codexPackage, codexEntry } = builds(machine);
   const archive = tarGz([
     [
       "codex-package.json",
-      bytes(JSON.stringify({ layoutVersion: 1, version, entrypoint: "bin/codex" })),
+      bytes(JSON.stringify({ layoutVersion: 1, version, entrypoint: codexEntry })),
     ],
     ["bin/", null],
-    ["bin/codex", bytes(`codex-cli ${version}\n`)],
+    [codexEntry, bytes(`codex-cli ${version}\n`)],
   ]);
-  const sums = bytes(`${sha256Hex(archive)}  ${CODEX_PACKAGE}\n`);
+  const sums = bytes(`${sha256Hex(archive)}  ${codexPackage}\n`);
   fake.files.set(
     "/codex/channels/latest",
     bytes(
       JSON.stringify({
         tag_name: `rust-v${version}`,
         assets: [
-          { name: CODEX_PACKAGE, digest: `sha256:${sha256Hex(archive)}` },
+          { name: codexPackage, digest: `sha256:${sha256Hex(archive)}` },
           { name: "codex-package_SHA256SUMS", digest: `sha256:${sha256Hex(sums)}` },
         ],
       }),
     ),
   );
   fake.files.set(`/codex/releases/${version}/codex-package_SHA256SUMS`, sums);
-  fake.files.set(`/codex/releases/${version}/${CODEX_PACKAGE}`, archive);
+  fake.files.set(`/codex/releases/${version}/${codexPackage}`, archive);
 };
+
+/** A probe that reads what a fake binary says it is, without running it. */
+const readsVersion =
+  (fs: FileSystem.FileSystem): Probe =>
+  (executable) =>
+    fs.readFileString(executable).pipe(Effect.map(versionIn), Effect.orElseSucceed(Option.none));
 
 interface Setup {
   readonly harnesses: Harnesses["Service"];
@@ -176,6 +217,8 @@ interface Setup {
   readonly running: Ref.Ref<number>;
   /** Whether the engine released every session on the provider when asked, after a switch. */
   readonly released: Ref.Ref<boolean>;
+  /** How many switches held every bot's first send. */
+  readonly pauses: Ref.Ref<number>;
   /** The operator's `autoUpdateHarnesses`. */
   readonly autoUpdate: SubscriptionRef.SubscriptionRef<boolean>;
   /** The harnesses the operator has on `PATH`. */
@@ -190,6 +233,12 @@ interface Setup {
 const setup = Effect.fn(function* (options?: {
   readonly onPath?: ReadonlyArray<SignInHarness>;
   readonly prepare?: (fake: FakeDistributions) => void;
+  /** The machine the distributions are read for; the fake's own by default. */
+  readonly machine?: Machine;
+  /** How a new copy is run once; by default, what the fake binary says is read. */
+  readonly probe?: Probe;
+  /** The operator's `autoUpdateHarnesses` as the service starts; on by default. */
+  readonly autoUpdate?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -200,26 +249,31 @@ const setup = Effect.fn(function* (options?: {
   const client = onlyTo(["https://downloads.test", "https://releases.test"])(fakeClient(fake));
   const running = yield* Ref.make(0);
   const released = yield* Ref.make(false);
-  const autoUpdate = yield* SubscriptionRef.make(true);
+  const pauses = yield* Ref.make(0);
+  const autoUpdate = yield* SubscriptionRef.make(options?.autoUpdate ?? true);
   const onPath = yield* Ref.make(options?.onPath ?? []);
+  const machine = options?.machine ?? MACHINE;
   const harnesses = yield* make({
     home,
-    platform: MACHINE.platform,
+    platform: machine.platform,
     distributions: {
-      "claude-code": claudeCode(client, CLAUDE_BASE, MACHINE),
-      codex: codex(client, CODEX_BASE, MACHINE),
+      "claude-code": claudeCode(client, CLAUDE_BASE, machine),
+      codex: codex(client, CODEX_BASE, machine),
     },
-    probe: () => (executable) =>
-      fs.readFileString(executable).pipe(Effect.map(versionIn), Effect.orElseSucceed(Option.none)),
+    probe: () => options?.probe ?? readsVersion(fs),
     onPath: (harness) => Effect.map(Ref.get(onPath), (found) => found.includes(harness)),
     autoUpdate: SubscriptionRef.changes(autoUpdate),
     work: {
-      paused: (effect) => effect,
+      paused: (effect) =>
+        Effect.andThen(
+          Ref.update(pauses, (count) => count + 1),
+          effect,
+        ),
       running: () => Ref.get(running),
       release: () => Ref.get(released),
     },
   });
-  return { harnesses, fake, home, running, released, autoUpdate, onPath } satisfies Setup;
+  return { harnesses, fake, home, running, released, pauses, autoUpdate, onPath } satisfies Setup;
 });
 
 /** The first state of `harness`'s copy that `until` holds for. */
@@ -491,6 +545,38 @@ describe("J3 Bots' own copies of the harnesses", () => {
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
   );
 
+  it.effect(
+    "holds no bot's send while it switches to a first copy, and every one for an update",
+    () =>
+      Effect.gen(function* () {
+        const { harnesses, fake, pauses } = yield* setup({
+          onPath: ["codex"],
+          prepare: (fake) => publishClaude(fake, "2.1.326"),
+        });
+        yield* copyWhen(harnesses, "claude-code", installed("2.1.326"));
+        assert.strictEqual(yield* Ref.get(pauses), 0);
+
+        publishClaude(fake, "2.1.330");
+        yield* harnesses.install("claude-code");
+        yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
+        assert.strictEqual(yield* Ref.get(pauses), 1);
+      }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect("stops at once while the engine has yet to show it runs a new copy", () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      // The engine never answers here: a stop that waited for it would never end.
+      const held = yield* control.holdNextAnswer("setHarnessExecutable");
+      const service = yield* Scope.make();
+      yield* setup({ prepare: (fake) => publishClaude(fake, "2.1.326") }).pipe(
+        Scope.provide(service),
+      );
+      yield* held.entered;
+      yield* Scope.close(service, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
   it.effect("keeps the new copy when a cancel lands while the provider switches to it", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -631,6 +717,48 @@ describe("J3 Bots' own copies of the harnesses", () => {
       }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
   );
 
+  it.effect("starts installing both harnesses at once as it starts, though updates are off", () =>
+    Effect.gen(function* () {
+      const { harnesses } = yield* setup({
+        autoUpdate: false,
+        prepare: (fake) => {
+          publishClaude(fake, "2.1.326");
+          publishCodex(fake, "0.172.0");
+          // Neither download ends: both are seen under way together.
+          fake.serving.set("/claude-code-releases/2.1.326/linux-x64/claude", {
+            _tag: "hang",
+            after: 1000,
+          });
+          fake.serving.set(`/codex/releases/0.172.0/${builds(MACHINE).codexPackage}`, {
+            _tag: "hang",
+            after: 100,
+          });
+        },
+      });
+
+      const both = yield* harnesses.copies.pipe(
+        Stream.filter((copies) =>
+          Object.values(copies).every(
+            (copy) => copy.task?._tag === "downloading" && copy.task.receivedBytes > 0,
+          ),
+        ),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(both));
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect("leaves a harness alone as it starts when the operator has their own", () =>
+    Effect.gen(function* () {
+      const { harnesses, fake } = yield* setup({
+        onPath: ["claude-code"],
+        prepare: (fake) => publishCodex(fake, "0.172.0"),
+      });
+      yield* copyWhen(harnesses, "codex", installed("0.172.0"));
+      assert.isFalse(fake.asked.some(({ path }) => path.startsWith("/claude-code-releases")));
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
   it("keeps the engine's update off J3 Bots' own copy, and offers it for the operator's", () => {
     const provider = {
       id: ProviderId.make("claude-code"),
@@ -658,4 +786,97 @@ describe("J3 Bots' own copies of the harnesses", () => {
     assert.isUndefined(served("j3")?.version);
     assert.deepStrictEqual(served("operator")?.version, provider.version);
   });
+});
+
+/**
+ * A probe that, once `probe` answered, keeps the copy open for `duration`
+ * from another handle, as a scanner does with a new executable that just
+ * ran, or a process that ran it while it ends.
+ */
+const holdingAfter =
+  (probe: Probe, fs: FileSystem.FileSystem, duration: Duration.Input): Probe =>
+  (executable) =>
+    Effect.gen(function* () {
+      const said = yield* probe(executable);
+      const opened = yield* Deferred.make<void>();
+      yield* fs
+        .open(executable, { flag: "r" })
+        .pipe(
+          Effect.andThen(Deferred.succeed(opened, undefined)),
+          Effect.andThen(Effect.sleep(duration)),
+          Effect.scoped,
+          Effect.ensuring(Deferred.succeed(opened, undefined)),
+          Effect.forkDetach,
+        );
+      yield* Deferred.await(opened);
+      return said;
+    });
+
+/** A probe that runs the copy with `--version`, as the server's does, for Node standing in. */
+const runsIt =
+  (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]): Probe =>
+  (executable) =>
+    spawner.string(ChildProcess.make(executable, ["--version"], { stdin: "ignore" })).pipe(
+      // Node says `v24.1.0`; a harness says its version without the `v`.
+      Effect.map((output) => versionIn(output.replace(/^v/, ""))),
+      Effect.orElseSucceed(Option.none),
+    );
+
+// On the file system of the machine the test runs on, Windows' included:
+// what a real copy meets there between its download and its first run.
+describe("J3 Bots' own copies on this machine's file system", () => {
+  it.live(
+    "installs a copy that runs, from its download through its first run",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Node itself stands in for the harness: a real executable that says a version.
+        const binary = yield* fs.readFile(process.execPath);
+        const version = process.versions.node;
+        const { harnesses, home } = yield* setup({
+          machine: HOST,
+          probe: runsIt(spawner),
+          prepare: (fake) => publishClaude(fake, version, binary, sha256Hex(binary), HOST),
+        });
+
+        yield* harnesses.install("claude-code");
+        const copy = yield* copyWhen(harnesses, "claude-code", ended);
+        assert.deepStrictEqual(copy.last?._tag, "installed");
+        const executable = path.join(
+          copyLayout(path, home, "claude-code").version(version),
+          builds(HOST).claudeFile,
+        );
+        assert.deepStrictEqual(
+          (yield* switchedTo).map((switched) => switched.executable),
+          [executable],
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+    // Node is over a hundred megabytes, copied and hashed twice.
+    60_000,
+  );
+
+  for (const harness of ["claude-code", "codex"] as const) {
+    it.live(
+      `installs ${harness} although another program holds its new copy for a moment after its first run`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const version = harness === "codex" ? "0.172.0" : "2.1.326";
+          const { harnesses } = yield* setup({
+            machine: HOST,
+            probe: holdingAfter(readsVersion(fs), fs, "2 seconds"),
+            prepare: (fake) =>
+              harness === "codex"
+                ? publishCodex(fake, version, HOST)
+                : publishClaude(fake, version, claudeBinary(version), undefined, HOST),
+          });
+
+          yield* harnesses.install(harness);
+          const copy = yield* copyWhen(harnesses, harness, ended);
+          assert.deepStrictEqual(copy.last, { ...copy.last, _tag: "installed" });
+        }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+    );
+  }
 });

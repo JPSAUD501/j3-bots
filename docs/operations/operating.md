@@ -240,15 +240,15 @@ Secrets keep the logins and values you type for bots, and what connectors need t
 
 ## J3 Bots' own harnesses
 
-When it does not find Claude Code or Codex, the server can install its own copy, from the harness's maker, when you press **Install** ([Install: when the engine cannot run a harness](install.md#when-the-engine-cannot-run-a-harness)). A harness you installed yourself stays yours: the server never installs beside it, and Settings offers the engine's **Update** for it.
+When it does not find Claude Code or Codex, the server installs its own copy, from the harness's maker, starting as it starts, beside the engine's download ([Install: when the engine cannot run a harness](install.md#when-the-engine-cannot-run-a-harness)). One you cancelled stays cancelled until you press **Install**. A harness you installed yourself stays yours: the server never installs beside it, and Settings offers the engine's **Update** for it.
 
 - **Where.** In the data directory, `harnesses/claude-code/` and `harnesses/codex/` ([Server: data](../architecture/server.md#data)). Your `PATH` and your own `~/.claude` and `~/.codex` are not touched; the engine is told where the copy is.
 - **Disk.** Claude Code is about 370 MB, Codex's download about 200 MB and more once unpacked. During an update the old and the new version are both there, until the switch, or until the engine next starts.
 - **Updates.** The server checks each maker for a newer version a minute after it starts and about every six hours, and installs it by itself. The new version waits until no bot is running anything in a session on that provider, then takes over; new turns wait the moment it takes, until the engine shows it runs the new version, at most a minute and a half, or it is put back on the version before. Each bot's next turn on that provider then starts the new version and goes on with its conversation. The version before is removed then, or, if a session could not be released, when the engine next starts. Turning the switch off while an update waits gives that update up. Settings → Providers shows each copy's version, **Update** when a newer one is out, and how the last update ended, and one switch turns the updates by themselves off; **Update** still works with it off.
 - **What it reaches.** `downloads.claude.ai` and `releases.openai.com`, over HTTPS. A server that cannot reach them says the install could not download.
-- **Back up.** A backup does not need the copies: the server installs them again. Add `--exclude=./harnesses` to the `tar` [below](#back-up) to leave them out; after a restore without them, the provider offers **Install** again.
-- **Remove a copy.** Stop the server, delete `harnesses/<provider>/` from the data directory, and start it again: the provider then runs the harness on the `PATH`, if there is one, or offers **Install**. `j3-bots uninstall --delete-data` removes them with the rest.
-- **Not checked yet on Windows and macOS.** The install is built for both, and tested only against stand-ins on Linux.
+- **Back up.** A backup does not need the copies: the server installs them again. Add `--exclude=./harnesses` to the `tar` [below](#back-up) to leave them out; after a restore without them, the server installs them again as it starts.
+- **Remove a copy.** Stop the server, delete `harnesses/<provider>/` from the data directory, and start it again: the provider then runs the harness on the `PATH`, if there is one, or the server installs a new copy. `j3-bots uninstall --delete-data` removes them with the rest.
+- **Checked on Linux and Windows, not yet on macOS.** CI installs both harnesses from stand-ins of the makers' distributions on Linux and on Windows, a real executable among them, and on Windows with another program holding the new copy after its first run ([Install: on Windows](install.md#on-windows-another-program-holds-a-new-copy)).
 
 ## Back up
 

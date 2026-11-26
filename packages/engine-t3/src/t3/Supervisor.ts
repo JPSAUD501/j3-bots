@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- Whether another program holds the engine's port takes a trial listen from node:net.
 import * as NodeNet from "node:net";
-import type { EngineInstallProgress, EngineStatus } from "@j3-bots/contracts";
+import type { EngineInstallFailure, EngineInstallProgress, EngineStatus } from "@j3-bots/contracts";
 import { inJob, jobLauncher } from "@j3-bots/processes";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -61,7 +61,12 @@ export type ProcessState =
   | { readonly _tag: "starting"; readonly install?: EngineInstallProgress }
   /** `start`: which of the engine's starts this is (`SupervisorInput.starts`). */
   | { readonly _tag: "ready"; readonly environmentId: string; readonly start: number }
-  | { readonly _tag: "unavailable"; readonly reason: UnavailableReason }
+  /** `installFailure` with `install-failed`: why the last install failed. */
+  | {
+      readonly _tag: "unavailable";
+      readonly reason: UnavailableReason;
+      readonly installFailure?: EngineInstallFailure;
+    }
   | { readonly _tag: "incompatible"; readonly runningVersion: string };
 
 export interface SupervisorInput<E> {
@@ -487,7 +492,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   } satisfies Supervision;
 });
 
-/** Whether two states say the same: same tag, reason, download progress and start. */
+/** Whether two states say the same: same tag, reason and why, download progress and start. */
 const sameState = (a: ProcessState, b: ProcessState): boolean => {
   switch (a._tag) {
     case "starting":
@@ -497,7 +502,9 @@ const sameState = (a: ProcessState, b: ProcessState): boolean => {
         a.install?.totalBytes === b.install?.totalBytes
       );
     case "unavailable":
-      return b._tag === "unavailable" && a.reason === b.reason;
+      return (
+        b._tag === "unavailable" && a.reason === b.reason && a.installFailure === b.installFailure
+      );
     case "ready":
       return b._tag === "ready" && a.start === b.start;
     case "incompatible":
