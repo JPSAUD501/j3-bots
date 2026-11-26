@@ -2,10 +2,8 @@
 import type {
   BotId,
   BrowserTabRef,
-  ConnectorGlyph,
   ConnectorId,
   EntryId,
-  ListingRef,
   MemoryPath,
   PairBotIds,
   RoomId,
@@ -35,11 +33,9 @@ import {
 import { useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
-import { AddConnectorScreen } from "./connectors/AddConnectorScreen.tsx";
 import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
 import { ConnectorsScreen } from "./connectors/ConnectorsScreen.tsx";
-import { ListingScreen } from "./connectors/ListingScreen.tsx";
-import { NewSkillScreen, SkillScreen } from "./connectors/Skills.tsx";
+import { SkillScreen } from "./connectors/Skills.tsx";
 import { useI18n } from "./i18n.ts";
 import { useSideBySide } from "./layout.ts";
 import { PresentationProvider } from "./presentation.tsx";
@@ -80,9 +76,7 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * The operator's secrets open from Settings and from a connector that cannot
  * read them, then one secret, then its form.
  * The connectors' screens open from Settings, a bot's details and a card:
- * their list and the gallery, a gallery entry, one connector, and adding one
- * of the operator's own. `forBot` is the bot a new connector is for at first.
- * The skills open from the same list: one skill, and adding one.
+ * their list, and one connector. The skills open from the same list.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -114,25 +108,14 @@ export type Screens = {
   secret: { readonly id: SecretId };
   /** A new secret with `id` null; otherwise the one to change. */
   secretForm: { readonly id: SecretId | null };
-  connectors: { readonly forBot: BotId | null } | undefined;
-  connectorListing: {
-    readonly ref: ListingRef;
-    readonly name: string;
-    readonly glyph: ConnectorGlyph | null;
-    readonly forBot: BotId | null;
-  };
+  connectors: undefined;
   connector: {
     readonly connectorId: ConnectorId;
     /** Start its sign-in as the screen opens, as a card's Sign in asks. */
     readonly signIn: boolean;
-    /** It was just added: the screen says who can use it from now. */
-    readonly added: boolean;
   };
-  addConnector: { readonly forBot: BotId | null };
   /** One skill, by whose it is and its name. */
   skill: { readonly scope: SkillScope; readonly name: SkillName };
-  /** `forBot` is the bot a new skill is for at first. */
-  newSkill: { readonly forBot: BotId | null };
 };
 
 /**
@@ -315,11 +298,8 @@ export function Main() {
                 <Stack.Screen name="secretForm" options={sheet} component={SecretFormScreen} />
                 {/* The connectors' screens set their own titles. */}
                 <Stack.Screen name="connectors" component={ConnectorsScreen} />
-                <Stack.Screen name="connectorListing" component={ListingScreen} />
                 <Stack.Screen name="connector" component={ConnectorScreen} />
-                <Stack.Screen name="addConnector" options={sheet} component={AddConnectorScreen} />
                 <Stack.Screen name="skill" component={SkillScreen} />
-                <Stack.Screen name="newSkill" options={sheet} component={NewSkillScreen} />
               </Stack.Navigator>
             </NavigationContainer>
           </FileOpenerProvider>

@@ -52,15 +52,7 @@ export function ConnectorAuthCard({ entry }: { readonly entry: ConnectorAuthEntr
             variant="primary"
             label={t("connectorCard.signIn")}
             onPress={() =>
-              open({
-                at: {
-                  _tag: "connector",
-                  connectorId: entry.connectorId,
-                  signIn: true,
-                  added: false,
-                },
-                forBot: entry.author.botId,
-              })
+              open({ _tag: "connector", connectorId: entry.connectorId, signIn: true })
             }
           />
         </View>

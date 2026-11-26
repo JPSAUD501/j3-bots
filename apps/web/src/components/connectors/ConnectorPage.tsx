@@ -7,7 +7,6 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useConnectorSignIn } from "@j3-bots/client-runtime/react";
 import {
-  connectedText,
   connectFailureText,
   secretRefusalText,
   publisherText,
@@ -35,15 +34,13 @@ import { SignInPanel } from "./SignInPanel";
 /**
  * What the page last did, which its one message reports: each thing done on it
  * replaces the one before, so an older message never stays above a newer one.
- * Opening it on a connector just added counts, with the sign-in that finishes adding it.
  */
 type Outcome =
-  | { readonly _tag: "added" }
   | { readonly _tag: "signed-in" }
   | { readonly _tag: "edited"; readonly saved: EditOutcome };
 
 /**
- * A connector the operator added: whether bots can use it now, and the one
+ * A connector the operator or a bot added: whether bots can use it now, and the one
  * thing that fixes it when they cannot; the bots that may use it, changed in place; who it is signed in as, where
  * it is reached, what it lets bots do; and Disconnect.
  */
@@ -51,7 +48,6 @@ export function ConnectorPage({
   connector,
   loading,
   signInOnOpen,
-  added,
   bots,
   connected,
   intents,
@@ -61,7 +57,6 @@ export function ConnectorPage({
   connector: Connector | null;
   loading: boolean;
   signInOnOpen: boolean;
-  added: boolean;
   bots: ReadonlyArray<Bot>;
   connected: boolean;
   intents: ConnectorsIntents;
@@ -78,14 +73,13 @@ export function ConnectorPage({
   const [replacing, setReplacing] = useState(false);
   // A command connector's edit, while open.
   const [editing, setEditing] = useState(false);
-  const [outcome, setOutcome] = useState<Outcome | null>(added ? { _tag: "added" } : null);
-  // A sign-in reports its own outcome, except the one that finishes adding the connector.
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const startSignIn = (id: ConnectorId) => {
-    setOutcome((current) => (current?._tag === "added" ? current : { _tag: "signed-in" }));
+    setOutcome({ _tag: "signed-in" });
     signIn.start(id);
   };
 
-  // A card's Sign in, or a connector just added that signs in, starts it as the page opens:
+  // A card's Sign in starts it as the page opens:
   // the browser's sign-in for one that signs in there, its form again for one that takes a key.
   const startedOnOpen = useRef(false);
   const connectorId = connector?.id ?? null;
@@ -141,17 +135,11 @@ export function ConnectorPage({
         </div>
       </div>
 
-      {outcome?._tag === "added" && connector.status._tag === "connected" && (
+      {outcome?._tag === "signed-in" && signIn.phase._tag === "done" && (
         <p role="status" className="text-sm">
-          {connectedText(connector.grant, bots, ctx.i18n)}
+          {t("signIn.done")}
         </p>
       )}
-      {(outcome?._tag === "added" || outcome?._tag === "signed-in") &&
-        signIn.phase._tag === "done" && (
-          <p role="status" className="text-sm">
-            {t("signIn.done")}
-          </p>
-        )}
       {outcome?._tag === "edited" && (
         <p role="status" className="text-sm">
           {outcome.saved === "command"

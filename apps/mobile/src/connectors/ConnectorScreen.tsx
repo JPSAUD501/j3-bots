@@ -12,7 +12,6 @@ import {
   useConnectorSignIn,
 } from "@j3-bots/client-runtime/react";
 import {
-  connectedText,
   connectFailureText,
   secretRefusalText,
   grantText,
@@ -40,9 +39,9 @@ import { useBotList, usePresentation } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
 import { type ConnectorsIntents, useConnectorsIntents } from "./intents.ts";
-import { CommandLine } from "./ListingScreen.tsx";
 import {
   BotsPicker,
+  CommandLine,
   ConnectorHeading,
   ListingFields,
   PageSection,
@@ -53,7 +52,7 @@ import {
 type Props = NativeStackScreenProps<Screens, "connector">;
 
 /**
- * A connector the operator added: whether bots can use it now, and the one
+ * A connector the operator or a bot added: whether bots can use it now, and the one
  * thing that fixes it when they cannot; the bots that may use it, changed in
  * place; who it is signed in as, where it is reached, what it lets bots do and
  * what its server speaks; and Disconnect. A connector that runs
@@ -68,7 +67,7 @@ export function ConnectorScreen({ navigation, route }: Props) {
   const bots = useBotList();
   const connected = useConnection()._tag === "connected";
   const state = useConnectors();
-  const { connectorId, signIn: signInOnOpen, added } = route.params;
+  const { connectorId, signIn: signInOnOpen } = route.params;
   const connector =
     state._tag === "ready"
       ? (state.value.find((candidate) => candidate.id === connectorId) ?? null)
@@ -84,7 +83,7 @@ export function ConnectorScreen({ navigation, route }: Props) {
     navigation.setOptions({ title: "" });
   }, [navigation]);
 
-  // A card's Sign in, or a connector just added that signs in, starts it as the page opens:
+  // A card's Sign in starts it as the page opens:
   // the browser's sign-in for one that signs in there, its form again for one that takes a key.
   const startedOnOpen = useRef(false);
   const shownId = connector?.id ?? null;
@@ -135,11 +134,6 @@ export function ConnectorScreen({ navigation, route }: Props) {
         publisher={publisherText(connector.publisher, ctx.i18n)}
       />
 
-      {added && connector.status._tag === "connected" && (
-        <Text accessibilityLiveRegion="polite" className="text-base text-foreground">
-          {connectedText(connector.grant, bots, ctx.i18n)}
-        </Text>
-      )}
       {signIn.phase._tag === "done" && (
         <Text accessibilityLiveRegion="polite" className="text-base text-foreground">
           {t("signIn.done")}

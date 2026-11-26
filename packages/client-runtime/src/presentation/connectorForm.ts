@@ -10,11 +10,6 @@ import {
   ConnectorSource,
   EnvName,
   FieldKey,
-  HeaderName,
-  Label,
-  type Language,
-  type ListingRef,
-  OAuthClientInput,
   pinRefusal,
   type PinRefusal,
   reservedVariable,
@@ -23,21 +18,15 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-// The forms that add a connector, as the operator fills them in, and the
-// source each one sends. Every value the operator typed is redacted here, the
-// moment it leaves the form, and the server checks each again.
+// The forms that change a connector the operator has, as they fill them in:
+// a key or token given again, and a command connector's edit. Every value the
+// operator typed is redacted here, the moment it leaves the form, and the
+// server checks each again.
 
-/** A row of a list of names and values: a header, or an environment variable. */
+/** A row of a list of names and values: an environment variable. */
 export interface PairInput {
   readonly name: string;
   readonly value: string;
-}
-
-/** An OAuth client as its fields hold it: the issuer it is registered at, its id and its secret. */
-export interface ClientInput {
-  readonly issuer: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
 }
 
 /**
@@ -57,130 +46,43 @@ export interface EnvProblem {
 }
 
 /**
- * What a form got wrong, each where the operator typed it: a field the
- * listing requires left empty (`missing`), an argument too long for a command
- * (`args`), a package a command runs at no exact version (`pin`), arguments
- * kept where a changed command needs them again (`argsAgain`), a client's
- * issuer that is not an https: address (`issuer`), the rows of `headers`
- * whose names do not fit, and the rows of `env` the server would refuse.
+ * What a command connector's edit got wrong, each where the operator typed
+ * it: no program (`command`), an argument too long (`args`), a package it
+ * runs at no exact version (`pin`), arguments kept where a changed command
+ * needs them again (`argsAgain`), and the rows of `env` the server would
+ * refuse.
  */
 export interface FormProblems {
-  readonly name: boolean;
-  readonly url: boolean;
   readonly command: boolean;
   readonly args: boolean;
   readonly pin: PinRefusal | null;
   readonly argsAgain: boolean;
-  readonly issuer: boolean;
-  readonly clientId: boolean;
-  readonly missing: ReadonlyArray<FieldKey>;
-  readonly headers: ReadonlyArray<number>;
   readonly env: ReadonlyArray<EnvProblem>;
 }
 
-export type SourceDraft =
-  | { readonly _tag: "ready"; readonly source: ConnectorSource }
-  | { readonly _tag: "invalid"; readonly problems: FormProblems };
-
 const noProblems: FormProblems = {
-  name: false,
-  url: false,
   command: false,
   args: false,
   pin: null,
   argsAgain: false,
-  issuer: false,
-  clientId: false,
-  missing: [],
-  headers: [],
   env: [],
 };
 
 const hasProblems = (problems: FormProblems) =>
-  problems.name ||
-  problems.url ||
   problems.command ||
   problems.args ||
   problems.pin !== null ||
   problems.argsAgain ||
-  problems.issuer ||
-  problems.clientId ||
-  problems.missing.length > 0 ||
-  problems.headers.length > 0 ||
   problems.env.length > 0;
 
-const decodeLabel = Schema.decodeUnknownOption(Label);
-const [, remoteFields, commandFields] = ConnectorSource.members;
-const decodeAddress = Schema.decodeUnknownOption(remoteFields.fields.url);
+const [, , commandFields] = ConnectorSource.members;
 const decodeArgs = Schema.decodeUnknownOption(commandFields.fields.args);
-const decodeHeaderName = Schema.decodeUnknownOption(HeaderName);
 const decodeEnvName = Schema.decodeUnknownOption(EnvName);
-const decodeIssuer = Schema.decodeUnknownOption(OAuthClientInput.fields.issuer);
 const decodeFieldKey = Schema.decodeUnknownOption(FieldKey);
 const isCommand = Schema.is(ConnectorCommand.fields.command);
 
-/** The host of an address the operator typed, read before it is redacted, or none when it is not one. */
-const hostOf = (text: string): Option.Option<string> =>
-  URL.canParse(text) ? Option.some(new URL(text).hostname) : Option.none();
-
 /** A row the operator left blank, which the form drops rather than refuses. */
 const blank = (pair: PairInput) => pair.name.trim() === "" && pair.value === "";
-
-/**
- * The client the operator typed: `none` when every field is empty, or the
- * fields it still needs, since the server uses a client only with the issuer
- * it names.
- */
-type ClientDraft =
-  | { readonly _tag: "none" }
-  | { readonly _tag: "ready"; readonly client: OAuthClientInput }
-  | { readonly _tag: "invalid"; readonly issuer: boolean; readonly clientId: boolean };
-
-const clientDraft = (input: ClientInput): ClientDraft => {
-  const typedIssuer = input.issuer.trim();
-  const clientId = input.clientId.trim();
-  if (typedIssuer === "" && clientId === "" && input.clientSecret === "") return { _tag: "none" };
-  const issuer = decodeIssuer(typedIssuer);
-  if (Option.isNone(issuer) || clientId === "") {
-    return { _tag: "invalid", issuer: Option.isNone(issuer), clientId: clientId === "" };
-  }
-  return {
-    _tag: "ready",
-    client: {
-      issuer: issuer.value,
-      clientId,
-      clientSecret: input.clientSecret === "" ? null : Redacted.make(input.clientSecret),
-    },
-  };
-};
-
-/**
- * The rows that name something, each decoded, and the index of each whose
- * name does not fit; blank rows are dropped.
- */
-const pairs = <N>(
-  rows: ReadonlyArray<PairInput>,
-  decodeName: (name: string) => Option.Option<N>,
-): {
-  readonly decoded: ReadonlyArray<{ readonly name: N; readonly value: Redacted.Redacted<string> }>;
-  readonly refused: ReadonlyArray<number>;
-} => {
-  const decoded: Array<{ readonly name: N; readonly value: Redacted.Redacted<string> }> = [];
-  const refused: Array<number> = [];
-  rows.forEach((row, index) => {
-    if (blank(row)) return;
-    const name = decodeName(row.name.trim());
-    if (Option.isSome(name)) decoded.push({ name: name.value, value: Redacted.make(row.value) });
-    else refused.push(index);
-  });
-  return { decoded, refused };
-};
-
-/** The client of an entry that takes one, which it needs: left empty, it is missing both fields. */
-const requiredClient = (input: ClientInput): ClientDraft => {
-  const draft = clientDraft(input);
-  return draft._tag === "none" ? { _tag: "invalid", issuer: true, clientId: true } : draft;
-};
 
 /**
  * The values a connector's fields took, each redacted: an empty one left out,
@@ -235,91 +137,6 @@ export const withoutSecrets = (
 ): ReadonlyMap<FieldKey, string> =>
   new Map([...typed].filter(([key]) => !fields.some((field) => field.key === key && field.secret)));
 
-/**
- * A gallery entry's form: a value for each of its fields, as `fieldValues`
- * takes them, and for an `own-app` entry the client the operator registered.
- * `language` is the operator's: the connector keeps its name and fields in it.
- */
-export function listingSource(input: {
-  readonly ref: ListingRef;
-  readonly language: Language;
-  readonly fields: ReadonlyArray<ConnectorField>;
-  readonly values: ReadonlyMap<FieldKey, string>;
-  /** Null for an entry that takes no client. */
-  readonly client: ClientInput | null;
-}): SourceDraft {
-  const values = fieldValues(input.fields, input.values);
-  const oauthClient: ClientDraft =
-    input.client === null ? { _tag: "none" } : requiredClient(input.client);
-  const problems: FormProblems = {
-    ...noProblems,
-    missing: values._tag === "invalid" ? values.missing : [],
-    issuer: oauthClient._tag === "invalid" && oauthClient.issuer,
-    clientId: oauthClient._tag === "invalid" && oauthClient.clientId,
-  };
-  if (values._tag === "invalid" || hasProblems(problems) || oauthClient._tag === "invalid") {
-    return { _tag: "invalid", problems };
-  }
-  return {
-    _tag: "ready",
-    source: {
-      _tag: "listing",
-      ref: input.ref,
-      language: input.language,
-      values: values.values,
-      oauthClient: oauthClient._tag === "ready" ? oauthClient.client : null,
-    },
-  };
-}
-
-/**
- * A connector added by its address. Without a name it takes the address's
- * host. `privateNetwork` is what the operator confirmed, once the server
- * refused the address as one in their own network.
- */
-export function remoteSource(input: {
-  readonly name: string;
-  readonly url: string;
-  readonly headers: ReadonlyArray<PairInput>;
-  readonly client: ClientInput;
-  readonly privateNetwork: boolean;
-}): SourceDraft {
-  const typedUrl = input.url.trim();
-  const url = decodeAddress(Redacted.make(typedUrl));
-  const typedName = input.name.trim();
-  const host = hostOf(typedUrl);
-  const name = decodeLabel(typedName === "" && Option.isSome(host) ? host.value : typedName);
-  const headers = pairs(input.headers, (text) => decodeHeaderName(text));
-  const oauthClient = clientDraft(input.client);
-  const problems: FormProblems = {
-    ...noProblems,
-    name: Option.isSome(url) && Option.isNone(name),
-    url: Option.isNone(url),
-    issuer: oauthClient._tag === "invalid" && oauthClient.issuer,
-    clientId: oauthClient._tag === "invalid" && oauthClient.clientId,
-    headers: headers.refused,
-  };
-  if (
-    hasProblems(problems) ||
-    Option.isNone(url) ||
-    Option.isNone(name) ||
-    oauthClient._tag === "invalid"
-  ) {
-    return { _tag: "invalid", problems };
-  }
-  return {
-    _tag: "ready",
-    source: {
-      _tag: "remote",
-      name: name.value,
-      url: url.value,
-      headers: headers.decoded,
-      oauthClient: oauthClient._tag === "ready" ? oauthClient.client : null,
-      privateNetwork: input.privateNetwork,
-    },
-  };
-}
-
 /** Arguments as the operator typed them: one per line, each trimmed, blank lines dropped. */
 const argumentsOf = (text: string): ReadonlyArray<string> =>
   text
@@ -360,8 +177,7 @@ const variables = (
 };
 
 /**
- * A command line as the operator typed it, as `connector.add` and
- * `connector.update` take it, or what the server would refuse in it: a
+ * A command line as the operator typed it, as `connector.update` takes it, or what the server would refuse in it: a
  * package `npx` or `uvx` would fetch at no exact version among them
  * ({@link pinRefusal}).
  */
@@ -394,27 +210,6 @@ const commandLine = (input: {
   if (hasProblems(problems) || Option.isNone(args)) return { _tag: "invalid", problems };
   return { _tag: "ready", command: { command, args: args.value, env: env.decoded } };
 };
-
-/**
- * A connector the server starts by command: its arguments one per line, as
- * typed, each redacted, blank lines dropped, and its environment. The
- * operator confirms it ({@link commandConsent}) before it is sent.
- */
-export function commandSource(input: {
-  readonly name: string;
-  readonly command: string;
-  readonly args: string;
-  readonly env: ReadonlyArray<PairInput>;
-}): SourceDraft {
-  const name = decodeLabel(input.name.trim());
-  const line = commandLine({ ...input, args: argumentsOf(input.args) });
-  const problems: FormProblems = {
-    ...(line._tag === "invalid" ? line.problems : noProblems),
-    name: Option.isNone(name),
-  };
-  if (line._tag === "invalid" || Option.isNone(name)) return { _tag: "invalid", problems };
-  return { _tag: "ready", source: { _tag: "command", name: name.value, ...line.command } };
-}
 
 /**
  * What the client knows of a command connector's command line: its program
@@ -531,7 +326,7 @@ export function commandEdit(
  * runs with its value (`settings`, {@link codeVariable}), as part of the
  * line, and the name of every other variable, never its value. `added` and
  * `removed` name the variables the command did not have before, or no
- * longer has, none for a new connector.
+ * longer has.
  */
 export interface CommandConsent {
   readonly program: string;
@@ -543,8 +338,8 @@ export interface CommandConsent {
   readonly programChanged: boolean;
 }
 
-/** The confirmation for `command`, against what the connector ran before, if it has run. */
-export function commandConsent(command: CommandLine, before: KnownCommand | null): CommandConsent {
+/** The confirmation for `command`, against what the connector ran before. */
+export function commandConsent(command: CommandLine, before: KnownCommand): CommandConsent {
   const all: ReadonlyArray<string> = command.env.map((variable) => variable.name);
   return {
     program: command.command,
@@ -555,9 +350,9 @@ export function commandConsent(command: CommandLine, before: KnownCommand | null
         : [],
     ),
     names: all.filter((name) => !codeVariable(name)),
-    added: before === null ? [] : all.filter((name) => !before.names.includes(name)),
-    removed: before === null ? [] : before.names.filter((name) => !all.includes(name)),
-    programChanged: before !== null && before.program !== command.command,
+    added: all.filter((name) => !before.names.includes(name)),
+    removed: before.names.filter((name) => !all.includes(name)),
+    programChanged: before.program !== command.command,
   };
 }
 

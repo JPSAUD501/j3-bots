@@ -749,13 +749,11 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               deleteBot: () => intents.deleteBot(bot.id),
               shareTemplate: () => intents.shareBotTemplate(bot.id),
               openConnectors: (connectorId) =>
-                intents.openConnectors({
-                  at:
-                    connectorId === null
-                      ? { _tag: "home" }
-                      : { _tag: "connector", connectorId, signIn: false, added: false },
-                  forBot: bot.id,
-                }),
+                intents.openConnectors(
+                  connectorId === null
+                    ? { _tag: "home" }
+                    : { _tag: "connector", connectorId, signIn: false },
+                ),
               openPair: (botIds) => navigation.openPair(botIds, null),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}

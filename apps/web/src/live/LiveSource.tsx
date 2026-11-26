@@ -76,7 +76,7 @@ import {
 } from "@j3-bots/client-runtime";
 import { providerActionsOf } from "./providerActions";
 import {
-  type ConnectorsOpening,
+  type ConnectorsPlace,
   notificationOpening,
   type OpenedNotification,
   pairKeyText,
@@ -1017,8 +1017,8 @@ function LiveShell({
   // The image a file shows over everything, opened from a conversation.
   const [viewing, setViewing] = useState<Attachment | null>(null);
   // The connectors screen, and what opened it; null while it is closed.
-  const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsOpening | null>(null);
-  const openConnectors = (opening: ConnectorsOpening) => {
+  const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsPlace | null>(null);
+  const openConnectors = (opening: ConnectorsPlace) => {
     setSettingsOpen(false);
     // A screen put aside under Settings comes back as it was, with what opened it.
     if (connectorsOpening === null) setConnectorsOpening(opening);
@@ -1578,10 +1578,7 @@ function LiveShell({
       }),
     openConversation: (botId) => void goToBot(botId),
     signInConnector: (entry) =>
-      openConnectors({
-        at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
-        forBot: entry.author.botId,
-      }),
+      openConnectors({ _tag: "connector", connectorId: entry.connectorId, signIn: true }),
     answerConnectorInput: (entryId, answer) =>
       void j3.answerCard(entryId, { _tag: "connector-input", answer }).then((result) => {
         if (refusedWith(result, "connector-input")) say(t("connectorInput.refused"));

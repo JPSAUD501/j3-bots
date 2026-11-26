@@ -11,8 +11,6 @@ import {
   type BotTemplate,
   Conflict,
   type Connector,
-  ConnectorGlyph,
-  CuratedKey,
   type EngineStatus,
   EntryId,
   type EntryTarget,
@@ -29,7 +27,6 @@ import {
   PairingCode,
   ProviderId,
   type ProviderStatus,
-  RegistryName,
   type Bot,
   type BrowserTabRef,
   type Room,
@@ -38,6 +35,7 @@ import {
   type RosterItemKey,
   type RoutineRun,
   ServerOrigin,
+  type Skill,
   TEMPLATE_FORMAT,
   TEMPLATE_VERSION,
   TemplateTooLarge,
@@ -2242,21 +2240,23 @@ function ConnectorsVariant({
   route = { _tag: "paste" },
   connected = true,
   initial = sampleConnectors,
+  initialSkills = sampleSkills,
 }: {
   label: string;
   at: ConnectorsPlace;
   route?: SignInRoute;
   connected?: boolean;
   initial?: ReadonlyArray<Connector>;
+  initialSkills?: ReadonlyArray<Skill>;
 }) {
   const titleId = useId();
   const [connectors, setConnectors] = useState(initial);
   const [intents] = useState(() =>
     sampleConnectorsIntents(connectorsHolder(initial, setConnectors), route),
   );
-  const [skills, setSkills] = useState(sampleSkills);
+  const [skills, setSkills] = useState(initialSkills);
   const [skillsIntents] = useState(() => {
-    let current = sampleSkills;
+    let current = initialSkills;
     return sampleSkillsIntents({
       get: () => current,
       set: (next) => {
@@ -2270,7 +2270,7 @@ function ConnectorsVariant({
       <div className="flex h-full flex-col bg-background">
         <ConnectorsScreen
           titleId={titleId}
-          opening={{ at, forBot: ids.scout }}
+          opening={at}
           connectors={connectors}
           bots={Object.values(team.bots)}
           skills={skills}
@@ -2299,19 +2299,14 @@ const relay: SignInRoute = {
   stop: nothing,
 };
 
-const listingAt = (key: string, name: string, glyph: string | null): ConnectorsPlace => ({
-  _tag: "listing",
-  ref: { _tag: "curated", key: CuratedKey.make(key) },
-  name,
-  glyph: glyph === null ? null : ConnectorGlyph.make(glyph),
-});
-
 const connectorAt = (index: number, signIn = false): ConnectorsPlace => ({
   _tag: "connector",
   connectorId: sampleConnectorId(index),
   signIn,
-  added: false,
 });
+
+/** J3 Bots' own skills alone: what a home has before any bot adds one. */
+const shippedSkills = sampleSkills.filter((skill) => skill.shipped);
 
 function ConnectorsGallerySection() {
   return (
@@ -2319,35 +2314,18 @@ function ConnectorsGallerySection() {
       <Labeled label="Settings: the connectors, how many work and how many need you">
         <ConnectorsSection connectors={sampleConnectors} onOpen={nothing} />
       </Labeled>
+      <Labeled label="Settings: none yet">
+        <ConnectorsSection connectors={[]} onOpen={nothing} />
+      </Labeled>
       <div className="flex flex-wrap gap-4">
-        <ConnectorsVariant label="Yours and featured; type to search" at={{ _tag: "home" }} />
+        <ConnectorsVariant label="What the bots added" at={{ _tag: "home" }} />
+        <ConnectorsVariant
+          label="None yet: ask a bot"
+          at={{ _tag: "home" }}
+          initial={[]}
+          initialSkills={shippedSkills}
+        />
         <ConnectorsVariant label="Offline" at={{ _tag: "home" }} connected={false} />
-        <ConnectorsVariant
-          label="An entry that signs in"
-          at={listingAt("notion", "Notion", "notebook")}
-        />
-        <ConnectorsVariant
-          label="An entry that needs an app you register"
-          at={listingAt("google-calendar", "Google Calendar", "calendar")}
-        />
-        <ConnectorsVariant
-          label="An entry that needs an app you register, with sign-ins back at the server"
-          at={listingAt("google-calendar", "Google Calendar", "calendar")}
-          route={{ _tag: "server" }}
-        />
-        <ConnectorsVariant
-          label="An entry that takes a key"
-          at={listingAt("sentry", "Sentry", null)}
-        />
-        <ConnectorsVariant
-          label="An entry that runs a command"
-          at={{
-            _tag: "listing",
-            ref: { _tag: "registry", name: RegistryName.make("io.example/files") },
-            name: "Local files",
-            glyph: ConnectorGlyph.make("folder"),
-          }}
-        />
         <ConnectorsVariant label="Connected, for all bots" at={connectorAt(0)} />
         <ConnectorsVariant
           label="Signing in again from a browser: paste the address"
@@ -2361,7 +2339,7 @@ function ConnectorsGallerySection() {
         <ConnectorsVariant label="Can't reach, on an older revision" at={connectorAt(2)} />
         <ConnectorsVariant label="Secrets unavailable" at={connectorAt(3)} />
         <ConnectorsVariant label="Names a secret one of its bots may not use" at={connectorAt(4)} />
-        <ConnectorsVariant label="Add your own" at={{ _tag: "add-own" }} />
+        <ConnectorsVariant label="Runs a command a bot added" at={connectorAt(5)} />
       </div>
     </Section>
   );

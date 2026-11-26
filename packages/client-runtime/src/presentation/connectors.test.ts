@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type Connector, ConnectorId, ConnectorOrigin } from "@j3-bots/contracts";
+import { type Connector, ConnectorId, ConnectorOrigin } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
-import { applyConnectorChange, initialGrant, sameGrant, withBot } from "./connectors.ts";
+import { applyConnectorChange, sameGrant, withBot } from "./connectors.ts";
 
 const scout = bot("Scout");
 const hal = bot("Hal", { _tag: "idle" }, { primary: true });
@@ -43,13 +43,6 @@ describe("the connectors a device holds", () => {
 });
 
 describe("which bots a connector is for", () => {
-  it("starts with the bot it is added for, else every bot", () => {
-    expect(initialGrant(bots, scout.id)).toEqual({ _tag: "bots", ids: [scout.id] });
-    expect(initialGrant(bots, null)).toEqual({ _tag: "all-bots" });
-    // A bot deleted since leaves it to every bot.
-    expect(initialGrant(bots, BotId.make("gone"))).toEqual({ _tag: "all-bots" });
-  });
-
   it("takes one bot out of all bots as every other bot there is now", () => {
     expect(withBot({ _tag: "all-bots" }, hal.id, false, bots)).toEqual({
       _tag: "bots",

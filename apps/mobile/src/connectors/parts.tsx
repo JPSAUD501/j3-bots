@@ -5,7 +5,6 @@ import {
   grantsBot,
   withBot,
 } from "@j3-bots/client-runtime/presentation";
-import type { Answer } from "@j3-bots/client-runtime/react";
 import { connectorStatusText } from "@j3-bots/client-runtime/wording";
 import type {
   Bot,
@@ -16,17 +15,17 @@ import type {
   ConnectorTool,
 } from "@j3-bots/contracts";
 import { CONNECTOR_GLYPHS, isConnectorGlyphName } from "@j3-bots/design-tokens";
-import { ChevronRight, X } from "lucide-react-native";
+import { ChevronRight } from "lucide-react-native";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
-import { ChoiceRow, Problem, Quiet, SwitchRow, TextField } from "../components/form.tsx";
+import { ChoiceRow, Problem, SwitchRow, TextField } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
-import { Text, TextInput } from "../text.tsx";
+import { Text } from "../text.tsx";
 import { useColor } from "../theme.ts";
 import { Button } from "../ui.tsx";
 import { SecretField } from "../secrets/SecretsForms.tsx";
@@ -334,7 +333,7 @@ export function ToolList({ tools }: { readonly tools: ReadonlyArray<ConnectorToo
  * A masked field with what it is for under it, and why it is wrong once it
  * is. What is typed is never suggested, kept by the keyboard or autofilled.
  */
-export function SecretLine({
+function SecretLine({
   label,
   hint,
   problem,
@@ -450,109 +449,13 @@ export function ListingFields({
   });
 }
 
-/** A header of `HeaderRows`, under a key of its own while the form lives. */
-export interface KeyedHeader {
-  readonly key: number;
-  readonly name: string;
-  readonly value: string;
-}
-
-/**
- * Header rows, each a name and a masked value, with a button that adds one
- * and one on each row that removes it.
- */
-export function HeaderRows({
-  rows,
-  refused,
-  readOnly,
-  onChange,
-}: {
-  readonly rows: ReadonlyArray<KeyedHeader>;
-  /** The rows whose name does not fit, by place. */
-  readonly refused: ReadonlyArray<number>;
-  readonly readOnly: boolean;
-  readonly onChange: (rows: ReadonlyArray<KeyedHeader>) => void;
-}) {
-  const { t } = useI18n();
-  const placeholder = useColor("accent-muted-foreground");
-  const set = (index: number, row: KeyedHeader) =>
-    onChange(rows.map((current, at) => (at === index ? row : current)));
+/** A command line, as the server would run it, in the mono face. */
+export function CommandLine({ text }: { readonly text: string }) {
   return (
-    <View className="gap-3">
-      {rows.map((row, index) => (
-        <View key={row.key} className="gap-2 rounded-md border border-border p-3">
-          <View className="flex-row items-center gap-2">
-            <TextInput
-              face="mono"
-              accessibilityLabel={t("addOwn.header.name")}
-              aria-invalid={refused.includes(index)}
-              value={row.name}
-              placeholder={t("addOwn.header.name")}
-              placeholderTextColor={placeholder}
-              editable={!readOnly}
-              autoCapitalize="none"
-              autoCorrect={false}
-              spellCheck={false}
-              onChangeText={(name) => set(index, { ...row, name })}
-              className={`min-h-11 min-w-0 flex-1 rounded-md border bg-muted px-3 text-base text-foreground ${refused.includes(index) ? "border-blocked" : "border-transparent"}`}
-            />
-            <PressScale
-              depth="round"
-              accessibilityRole="button"
-              accessibilityLabel={t("addOwn.header.remove")}
-              disabled={readOnly}
-              onPress={() => onChange(rows.filter((_, at) => at !== index))}
-              className="size-11 items-center justify-center rounded-pill"
-            >
-              <Icon icon={X} size={18} color="accent-muted-foreground" />
-            </PressScale>
-          </View>
-          <SecretField
-            label={t("addOwn.header.value")}
-            value={row.value}
-            onChange={(value) => set(index, { ...row, value })}
-            editable={!readOnly}
-          />
-          <Problem>{refused.includes(index) ? t("addOwn.header.invalid") : null}</Problem>
-        </View>
-      ))}
-      <View className="items-start">
-        <Button
-          variant="secondary"
-          label={t("addOwn.header.add")}
-          disabled={readOnly}
-          onPress={() =>
-            onChange([
-              ...rows,
-              {
-                key: rows.reduce((top, row) => Math.max(top, row.key + 1), 0),
-                name: "",
-                value: "",
-              },
-            ])
-          }
-        />
-      </View>
-    </View>
-  );
-}
-
-/** What a read that answered holds, or that it did not answer, with a way to read it again. */
-export function Loaded<A>({
-  answer,
-  onRetry,
-  children,
-}: {
-  readonly answer: Exclude<Answer<A>, { readonly _tag: "loading" }>;
-  readonly onRetry: () => void;
-  readonly children: (value: A) => ReactNode;
-}) {
-  const { t } = useI18n();
-  if (answer._tag === "ready") return children(answer.value);
-  return (
-    <View className="items-start gap-2">
-      <Quiet>{t("connectors.loadFailed")}</Quiet>
-      <Button variant="secondary" label={t("connectors.retry")} onPress={onRetry} />
+    <View className="rounded-md bg-muted px-3 py-2">
+      <Text face="mono" selectable className="text-sm text-foreground">
+        {text}
+      </Text>
     </View>
   );
 }

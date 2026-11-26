@@ -482,12 +482,7 @@ function BotConnectors({
             depth="row"
             accessibilityRole="button"
             accessibilityLabel={connector.name}
-            onPress={() =>
-              open({
-                at: { _tag: "connector", connectorId: connector.id, signIn: false, added: false },
-                forBot: bot.id,
-              })
-            }
+            onPress={() => open({ _tag: "connector", connectorId: connector.id, signIn: false })}
             className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
           >
             <ConnectorTile name={connector.name} glyph={connector.glyph} />
@@ -505,7 +500,7 @@ function BotConnectors({
         <Button
           variant="secondary"
           label={t("details.connectors.manage")}
-          onPress={() => open({ at: { _tag: "home" }, forBot: bot.id })}
+          onPress={() => open({ _tag: "home" })}
         />
       </View>
     </>

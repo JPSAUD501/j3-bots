@@ -14,7 +14,7 @@ import type {
 } from "@j3-bots/client-runtime";
 import {
   applyConnectorChange,
-  type ConnectorsOpening,
+  type ConnectorsPlace,
   fittedMarks,
   hasDefaultModel,
   inPair,
@@ -81,7 +81,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly connectors: ReadonlyArray<Connector>;
   readonly skills: ReadonlyArray<Skill>;
   /** The connectors screen, and what opened it; null while it is closed. */
-  readonly connectorsOpening: ConnectorsOpening | null;
+  readonly connectorsOpening: ConnectorsPlace | null;
 }
 
 /** Provider actions as the gallery takes them: done at once, changing nothing. */
@@ -371,7 +371,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
       return { ...s, drafts: { ...s.drafts, [key]: change(s.drafts[key] ?? blankDraft) } };
     });
 
-  const openConnectors = (opening: ConnectorsOpening) =>
+  const openConnectors = (opening: ConnectorsPlace) =>
     // A screen put aside under Settings comes back as it was, with what opened it.
     update((s) => ({
       ...s,
@@ -383,10 +383,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     connectorApp: sampleConnectorAppAccess,
     openConnectors,
     signInConnector: (entry) =>
-      openConnectors({
-        at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
-        forBot: entry.author.botId,
-      }),
+      openConnectors({ _tag: "connector", connectorId: entry.connectorId, signIn: true }),
     answerConnectorInput: (entryId, answer) =>
       inFlight(entryId, (e) =>
         e._tag === "connector-input"

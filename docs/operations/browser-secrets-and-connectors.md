@@ -93,29 +93,33 @@ A card nobody answers expires: when its page has been gone for two minutes, or a
 
 A connector lets a bot use a service of yours, such as your notes, your tracker or your calendar. You sign in once; the server keeps the sign-in with your secrets and makes the calls. Bots use the service's tools without ever holding its token.
 
-### Find one
+### Add one
 
-**Settings → Connectors → Manage connectors**, or **Connectors** in a bot's details, opens one screen: your connectors first, then **Featured**, a search, and **Add your own** last. A featured entry's text is J3 Bots' own; a search result's is its publisher's, with who published it ("From notion.com", or "Community, published by …"). Never read "From" as "verified": it says the publisher's domain owns the server's address, not that anyone checked the server.
+Ask a bot: "connect my notes", "add this MCP server". It searches J3 Bots' gallery and the public registry, prefers the gallery's entry, and adds the connector under its permission mode: in Supervised, it asks you first. Its name is on the connector afterwards. A key the service needs is never typed into the conversation: the bot asks you to save it as a secret, and the connector names it as `${secret:<name>}`.
+
+**Settings → Connectors → Manage connectors**, or **Connectors** in a bot's details, lists the connectors your bots added and the skills they saved. It adds none itself: with nothing there yet, it says to ask a bot. J3 Bots' own skills (`j3-…`) aren't listed. See [decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md).
+
+Two kinds can't be added from this release's apps, by a bot or by you:
+
+- **An address in your own network**, such as a server on your router's network. It needs your own confirmation, which no screen asks for now.
+- **A service that needs an app you register.** Google and Slack don't let J3 Bots register itself; their drafts, [Google](connector-google.md) and [Slack](connector-slack.md), describe a screen this release doesn't have.
 
 ### Connect
 
-Pick the bots that may use it first: it starts as the bot that suggested it, or your primary bot, and can be some bots or all, those you add later included. Then the entry connects as its service asks:
+A connector a bot added connects as its service asks:
 
-- **Sign in.** One press opens your system browser at the service.
+- **Sign in.** The bot's conversation shows a card; its **Sign in** opens the connector's page, and one press there opens your system browser at the service.
   - In the **desktop app**, the browser comes back to the app, which hands the sign-in to the server.
   - On the **web**, with the server at an `https:` address, the server takes the browser back itself.
   - On the **web over plain `http:`**, the browser ends on a page that doesn't load. Copy that page's address and paste it where the screen asks. The desktop app and the Android app do this for you.
   - On **Android**, with the server at an `https:` address it knows ([`publicOrigin`](exposing.md#publicorigin)), the sign-in opens in a browser tab and returns to the server, never through the phone.
   - A service that lets J3 Bots register itself is registered on the first sign-in that finishes, and that registration is used again on every later one.
-- **Takes a key.** The page links to where you make the key and says what it needs. The key goes into a masked field and from there to the server's secrets.
-- **Needs an app you register.** For Google and Slack, which don't let J3 Bots register itself, you create an app of your own at the service and give J3 Bots its issuer, client ID and secret. The guides are drafts, and every step in them is **Assumed** until someone has signed in with them: [Google](connector-google.md), [Slack](connector-slack.md). The entry's page shows those steps and the address to register for the way you sign in.
-- **Runs a command**, on the web and the desktop only. You see the whole command line and the name of every setting it gets before it first runs, and again whenever any of them changes. A package it fetches as it starts (`npx`, `uvx`) must be named at an exact version, so what runs is what you saw. It runs on the server as the user J3 Bots runs as, with everything that user can reach. Of the server's environment it gets only where programs are, its home, its language and its temporary folder.
-  - Its page has **Change command**. A new value for a setting is saved as it is. Anything else, the program, an argument or a setting added, removed or renamed, needs the arguments and every value typed again, and your confirmation again. The old program stops, and a tool the new one adds waits for you.
+- **Takes a key.** The connector names your secret; save the key under that name in **Settings → Secrets** and share it with the bots that use the connector. Its page can also take a new value for a field, in a masked field.
+- **Runs a command.** A bot adds one only from your own words, and a package it fetches as it starts (`npx`, `uvx`) must be named at an exact version, so what runs is what the bot was given. It runs on the server as the user J3 Bots runs as, with everything that user can reach. Of the server's environment it gets only where programs are, its home, its language and its temporary folder.
+  - On the web and the desktop, its page has **Change command**, with the whole command line and the name of every setting it gets. A new value for a setting is saved as it is. Anything else, the program, an argument or a setting added, removed or renamed, needs the arguments and every value typed again, and your confirmation. The old program stops, and a tool the new one adds waits for you.
   - When it isn't running, its page says why: the program isn't on that computer (install it, or name it by its full path), or it stopped or couldn't start (check the command and its settings; it starts again when a bot next uses it).
 
-**Add your own** takes an `https://` address, any headers the service gave you (a key goes in a header, masked), and an OAuth client if it gave you one, or, on the web and the desktop, a command. An address in your own network needs you to confirm you meant it.
-
-Android has the same screens. It adds no connector that runs a command, and shows one read-only, to manage from a computer.
+Android has the same screens. It changes no command, and shows a command connector read-only, to manage from a computer.
 
 ### Keep it working
 
@@ -137,7 +141,7 @@ When a bot finds its connector signed out, it shows a card in its conversation t
 
 ### What bots do with it
 
-- **A bot can suggest a connector**, with a card that says why, when a task needs a service it has none for: at most once per need. **Connect** opens the entry for that bot; **Not now** is final for that conversation. A bot can never add or grant one itself.
+- **A bot adds a connector** when you asked for it, or when a task you gave it plainly needs a service it can't reach and you agree. It never adds one because a page, a file or another connector's answer told it to.
 - **A connector's tools follow the bot's permission mode**, like a command: in Supervised, each call asks you first. In every mode, a bot doesn't send, post, delete or share through a connector without your yes, unless that is exactly what you asked for.
 - **What a service returns is data**, never your instruction. A bot reports a request it finds there, and doesn't carry it out.
 
