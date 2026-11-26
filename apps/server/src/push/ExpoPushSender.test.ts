@@ -39,7 +39,7 @@ const Sent = Schema.Struct({
   channelId: Schema.optional(Schema.String),
 });
 type Sent = typeof Sent.Type;
-const decodeSends = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Tuple([Sent])));
+const decodeSends = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Sent)));
 const decodeAsked = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ ids: Schema.Array(Schema.String) })),
 );
@@ -50,7 +50,7 @@ interface Answer {
   readonly body: unknown;
 }
 
-const taken = (id: string): Answer => ({ status: 200, body: { data: [{ status: "ok", id }] } });
+const taken = (id: string) => ({ status: "ok", id });
 
 const refused = (error: string) => ({
   status: "error",
@@ -72,10 +72,15 @@ const notRegistered = {
 class ExpoWire extends Context.Service<
   ExpoWire,
   {
+    /** Every message sent, in order. */
     readonly sends: Array<Sent>;
+    /** How many messages each request to send carried, in order. */
+    readonly requests: Array<number>;
     readonly asked: Array<ReadonlyArray<string>>;
-    /** The answer to a send, from its message; `undefined` takes it. */
-    send: (message: Sent, n: number) => Answer | undefined;
+    /** The answer to the `n`th request to send, from its messages; `undefined` answers each message. */
+    send: (messages: ReadonlyArray<Sent>, n: number) => Answer | undefined;
+    /** The ticket of the `n`th message sent; `undefined` takes it. */
+    ticket: (message: Sent, n: number) => unknown;
     /** The receipt of `id`; `undefined` reports it handed on. */
     receipt: (id: string) => unknown;
     /** The answer to the `n`th request for receipts; `undefined` answers each id. */
@@ -87,8 +92,10 @@ const wire = Layer.effectContext(
   Effect.sync(() => {
     const state = ExpoWire.of({
       sends: [],
+      requests: [],
       asked: [],
       send: () => undefined,
+      ticket: () => undefined,
       receipt: () => undefined,
       asking: () => undefined,
     });
@@ -98,10 +105,18 @@ const wire = Layer.effectContext(
           request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
         const answer = ((): Answer => {
           if (url.pathname === "/--/api/v2/push/send") {
-            const [message] = decodeSends(text);
-            state.sends.push(message);
+            const messages = decodeSends(text);
+            state.requests.push(messages.length);
+            const tickets = messages.map((message) => {
+              state.sends.push(message);
+              const n = state.sends.length;
+              return state.ticket(message, n) ?? taken(`receipt-${n}`);
+            });
             return (
-              state.send(message, state.sends.length) ?? taken(`receipt-${state.sends.length}`)
+              state.send(messages, state.requests.length) ?? {
+                status: 200,
+                body: { data: tickets },
+              }
             );
           }
           const { ids } = decodeAsked(text);
@@ -289,14 +304,14 @@ it.effect(
       const scout = yield* createBot("Scout");
       const phone = yield* pushDevice("Phone");
       const tablet = yield* pushDevice("Tablet");
-      expo.send = (message, n) =>
-        message.to === "ExponentPushToken[fixture-Phone]"
-          ? { status: 200, body: { data: [notRegistered] } }
-          : taken(`tablet-${n}`);
+      expo.ticket = (message, n) =>
+        message.to === "ExponentPushToken[fixture-Phone]" ? notRegistered : taken(`tablet-${n}`);
       expo.receipt = (id) => (id.startsWith("tablet-") ? notRegistered : undefined);
 
       yield* says(scout.id, "Done");
       yield* deliverPending;
+      // Both in one request, each answered by its own ticket.
+      assert.deepStrictEqual(expo.requests, [2]);
       assert.isFalse(yield* pushOn(phone));
       assert.isTrue(yield* pushOn(tablet));
 
@@ -349,7 +364,7 @@ it.effect(
       const scout = yield* createBot("Scout");
       const phone = yield* pushDevice("Phone");
       const tablet = yield* pushDevice("Tablet");
-      expo.send = (message, n) =>
+      expo.ticket = (message, n) =>
         taken(message.to === "ExponentPushToken[fixture-Phone]" ? `phone-${n}` : `tablet-${n}`);
       expo.receipt = (id) => (id.startsWith("phone-") ? notRegistered : refused("MessageTooBig"));
 
@@ -375,8 +390,7 @@ it.effect(
       const expo = yield* ExpoWire;
       const scout = yield* createBot("Scout");
       const phone = yield* pushDevice("Phone");
-      expo.send = (_, n) =>
-        n === 1 ? { status: 200, body: { data: [refused("MessageRateExceeded")] } } : undefined;
+      expo.ticket = (_, n) => (n === 1 ? refused("MessageRateExceeded") : undefined);
       expo.receipt = () => refused("MessageRateExceeded");
 
       yield* says(scout.id, "Done");
@@ -399,10 +413,7 @@ it.effect("logs an error Expo does not document by a fixed reason, never by what
     const expo = yield* ExpoWire;
     const scout = yield* createBot("Scout");
     yield* pushDevice("Phone");
-    expo.send = () => ({
-      status: 200,
-      body: { data: [refused("Fictional ExponentPushToken[fixture-Phone]")] },
-    });
+    expo.ticket = () => refused("Fictional ExponentPushToken[fixture-Phone]");
 
     yield* says(scout.id, "Done");
     yield* deliverPending;
@@ -412,6 +423,35 @@ it.effect("logs an error Expo does not document by a fixed reason, never by what
     assert.include(lines, "undocumented error");
     assert.notInclude(lines, "fixture-Phone");
   }).pipe(Effect.provide(Layer.provideMerge(domain, recordLogs))),
+);
+
+it.effect(
+  "gives up each push of a request Expo refuses as a whole, and none Expo answered for fewer",
+  () =>
+    Effect.gen(function* () {
+      const expo = yield* ExpoWire;
+      const scout = yield* createBot("Scout");
+      const phone = yield* pushDevice("Phone");
+      const tablet = yield* pushDevice("Tablet");
+
+      // Fewer tickets than messages: none can be told apart, so both wait.
+      expo.send = () => ({ status: 200, body: { data: [taken("receipt-1")] } });
+      yield* says(scout.id, "Done");
+      yield* deliverPending;
+      assert.lengthOf(yield* pending, 2);
+      assert.strictEqual(yield* failuresOf(phone), 0);
+
+      expo.send = () => ({
+        status: 400,
+        body: { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] },
+      });
+      yield* TestClock.adjust(sendBackoff(1));
+      yield* deliverPending;
+      assert.deepStrictEqual(expo.requests, [2, 2]);
+      assert.deepStrictEqual(yield* pending, []);
+      assert.strictEqual(yield* failuresOf(phone), 1);
+      assert.strictEqual(yield* failuresOf(tablet), 1);
+    }).pipe(Effect.provide(domain)),
 );
 
 it.effect("keeps the receipts Expo answered when a later request for others fails", () =>

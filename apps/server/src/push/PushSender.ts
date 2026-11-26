@@ -8,6 +8,7 @@ import type {
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 /** One push delivery's id: the key that makes every send of it the same notification. */
@@ -40,7 +41,7 @@ export interface PushMessage {
 
 /**
  * The service could not be reached, did not answer in time, or asked to come
- * back later: no message would pass now, this one included, though the same
+ * back later: no message would pass now, these included, though the same
  * send may later. `reason` is one the sender chose, never text the service
  * sent.
  */
@@ -61,12 +62,25 @@ export class PushUnregistered extends Schema.TaggedError<PushUnregistered>()(
 ) {}
 
 /**
- * The service refused the message for good: sending it again would fail the
- * same way. `reason` is one the sender chose, never text the service sent.
+ * The service refused the message for good, or a request of them as a whole:
+ * sending it again would fail the same way. `reason` is one the sender chose,
+ * never text the service sent.
  */
 export class PushRejected extends Schema.TaggedError<PushRejected>()("PushRejected", {
   reason: Schema.String,
 }) {}
+
+/**
+ * What the service answered about one message of a send: it took it, with a
+ * receipt to ask about later if the service gives one, or refused it.
+ */
+export type PushSent = Result.Result<
+  PushReceiptId | null,
+  PushThrottled | PushUnregistered | PushRejected
+>;
+
+/** The most messages `PushSender.send` takes at once: what Expo takes in one request. */
+export const MAX_MESSAGES_PER_SEND = 100;
 
 /** What the service later says about a message it took. */
 export type PushReceipt =
@@ -84,22 +98,21 @@ export type PushReceipt =
  * Sends notifications to devices through a push service
  * (`docs/decisions/0014-push-goes-through-a-push-sender.md`). The delivery
  * worker owns retries, deadlines and what follows from each answer; a sender
- * only translates one message, or one question about earlier messages, to
- * its service and back.
+ * only translates messages, or a question about earlier messages, to its
+ * service and back.
  */
 export class PushSender extends Context.Service<
   PushSender,
   {
     /**
-     * Sends one message. Succeeds once the service took it, with a receipt to
-     * ask about later if the service gives one.
+     * Sends up to `MAX_MESSAGES_PER_SEND` messages in one request: what the
+     * service answered about each, in their order. Fails when the service
+     * answered none of them (`PushUnavailable`), or refused the request as a
+     * whole (`PushRejected`), which holds for each of them.
      */
     readonly send: (
-      message: PushMessage,
-    ) => Effect.Effect<
-      PushReceiptId | null,
-      PushUnavailable | PushThrottled | PushUnregistered | PushRejected
-    >;
+      messages: ReadonlyArray<PushMessage>,
+    ) => Effect.Effect<ReadonlyArray<PushSent>, PushUnavailable | PushRejected>;
     /**
      * What became of messages the service took. A receipt the service has no
      * answer for yet, or that could not be asked for now, is left out: the

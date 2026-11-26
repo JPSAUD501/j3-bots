@@ -2,6 +2,7 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -12,6 +13,7 @@ import {
   PushReceiptId,
   PushRejected,
   PushSender,
+  type PushSent,
   PushThrottled,
   PushUnavailable,
   PushUnregistered,
@@ -75,7 +77,8 @@ const Ticket = Schema.Union([
   Schema.Struct({ status: Schema.Literal("error"), details: ErrorDetails }),
 ]);
 
-const SendResponse = Schema.Struct({ data: Schema.Tuple([Ticket]) });
+/** One ticket per message, in the order they were sent. */
+const SendResponse = Schema.Struct({ data: Schema.Array(Ticket) });
 
 const Receipt = Schema.Union([
   Schema.Struct({ status: Schema.Literal("ok") }),
@@ -159,6 +162,21 @@ const post = <A>(
     }),
   );
 
+/** What one ticket says, in the sender's terms. */
+const sentOf = (ticket: typeof Ticket.Type): PushSent => {
+  if (ticket.status === "ok") return Result.succeed(ticket.id);
+  const code = codeOf(ticket.details);
+  switch (code) {
+    case "DeviceNotRegistered":
+      return Result.fail(new PushUnregistered());
+    case "MessageRateExceeded":
+      // Too many to this device just now: the same send may pass later.
+      return Result.fail(new PushThrottled());
+    default:
+      return Result.fail(new PushRejected({ reason: code ?? UNDOCUMENTED }));
+  }
+};
+
 /** What one receipt says, in the sender's terms. */
 const receiptOf = (receipt: typeof Receipt.Type): PushReceipt => {
   if (receipt.status === "ok") return { _tag: "delivered" };
@@ -178,21 +196,14 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
 
-    const send = Effect.fn("ExpoPushSender.send")(function* (message: PushMessage) {
-      const {
-        data: [ticket],
-      } = yield* post(client, SEND_URL, [expoMessage(message)], SendResponse);
-      if (ticket.status === "ok") return ticket.id;
-      const code = codeOf(ticket.details);
-      switch (code) {
-        case "DeviceNotRegistered":
-          return yield* new PushUnregistered();
-        case "MessageRateExceeded":
-          // Too many to this device just now: the same send may pass later.
-          return yield* new PushThrottled();
-        default:
-          return yield* new PushRejected({ reason: code ?? UNDOCUMENTED });
+    const send = Effect.fn("ExpoPushSender.send")(function* (messages: ReadonlyArray<PushMessage>) {
+      if (messages.length === 0) return [];
+      const { data } = yield* post(client, SEND_URL, messages.map(expoMessage), SendResponse);
+      // Tickets that cannot be matched to their messages say nothing of any.
+      if (data.length !== messages.length) {
+        return yield* new PushUnavailable({ reason: "unreadable answer" });
       }
+      return data.map(sentOf);
     });
 
     const receipts = Effect.fn("ExpoPushSender.receipts")(function* (
