@@ -89,7 +89,7 @@ const serve = (
 };
 
 /** A fake git host for the scope, with an empty repository `skills.git`. */
-export const fakeGitHost = Effect.acquireRelease(
+const fakeGitHost = Effect.acquireRelease(
   Effect.callback<{
     readonly host: FakeGitHost;
     readonly served: string;
@@ -141,7 +141,7 @@ export const fakeGitHost = Effect.acquireRelease(
 );
 
 /** The public address skills are installed from in tests, which reaches the fake host. */
-export const REPOSITORY = "https://git.example.test/skills.git";
+const REPOSITORY = "https://git.example.test/skills.git";
 
 /** The fake git host of a test's domain. */
 export class TestGitHost extends Context.Service<TestGitHost, FakeGitHost>()(

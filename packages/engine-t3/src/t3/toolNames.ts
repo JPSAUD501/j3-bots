@@ -29,7 +29,7 @@ const split = (name: string): { readonly server: string | null; readonly tool: s
  * names holds `__`, so a call to one is a step of the bot's work, shown as
  * the connector's, as well as a call the server matches to its turn.
  */
-export const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
+const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
 
 /**
  * J3 Bots' own tools that are steps of a bot's work, unlike the rest of them,

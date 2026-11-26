@@ -58,6 +58,7 @@ const connector = {
     ],
   },
   createdAt: "2026-11-22T08:59:00.000Z",
+  lastChange: { by: { _tag: "bot", botId: "b1" }, at: "2026-11-23T09:30:00.000Z" },
 };
 
 describe("a connector", () => {

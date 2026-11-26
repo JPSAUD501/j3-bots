@@ -48,7 +48,7 @@ import {
 /** Names J3 Bots keeps for the skills it ships, which nobody saves, installs or removes. */
 const SHIPPED_PREFIX = "j3-";
 
-export const isShippedName = (name: string) => name.startsWith(SHIPPED_PREFIX);
+const isShippedName = (name: string) => name.startsWith(SHIPPED_PREFIX);
 
 /** The record's key of a scope: the bot's id, or `''` for the shared skills. */
 const scopeKey = (scope: SkillScope) => (scope._tag === "bot" ? scope.botId : "");
