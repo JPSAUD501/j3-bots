@@ -5,8 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { powerShellLiteral } from "@j3-bots/processes";
 import { runPowerShell } from "../system/PowerShell.ts";
-import { judgeAcl, powerShellWord, readFolderAcl } from "./windowsAcl.ts";
+import { judgeAcl, readFolderAcl } from "./windowsAcl.ts";
 
 // For tests that set a folder's privacy as an operator would, on the system
 // they run on: by its mode bits, or on Windows by its access control list.
@@ -40,7 +41,7 @@ export const runInPowerShell = (command: string) =>
 export const openToOthers = Effect.fn("openToOthers")(function* (folder: string) {
   if (process.platform === "win32") {
     return yield* runInPowerShell(
-      `icacls ${powerShellWord(folder)} /grant ${powerShellWord(`*${USERS}:(OI)(CI)RX`)}`,
+      `icacls ${powerShellLiteral(folder)} /grant ${powerShellLiteral(`*${USERS}:(OI)(CI)RX`)}`,
     );
   }
   yield* (yield* FileSystem.FileSystem).chmod(folder, 0o750);
