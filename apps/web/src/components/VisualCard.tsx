@@ -104,7 +104,8 @@ interface LoadingFrameProps {
  * Loads the client's visual page, in a sandbox with scripts only, and posts
  * it the visual's document; it takes nothing back but the page's height.
  * The frame loads twice as the client means it to: the empty visual page,
- * then the document written over it. A later load is the frame showing
+ * then the document written over it (as Chromium fires them, which the
+ * desktop app runs; Firefox and Safari not tried). A later load is the frame showing
  * something else, which the visual navigated it to (an error page most
  * often, since the policy lets it reach nothing), and the visual is shown as
  * failed.

@@ -163,6 +163,7 @@ export const visualDocument = (html: string, appearance: VisualAppearance): stri
 // The frame loads once, with the visual; a later load is the frame showing
 // something else, which the visual navigated it to (the WebView's error page
 // most often, since the policy lets it reach nothing), and the relay says so.
+// A visual that reloads itself loads again too, and is counted gone with them.
 const HEIGHT_RELAY = `(function(){var f=document.getElementById("visual"),b=window[${JSON.stringify(VISUAL_BRIDGE)}],loads=0;f.addEventListener("load",function(){if(++loads>1&&b)b.postMessage(JSON.stringify({type:${JSON.stringify(VISUAL_GONE_MESSAGE)}}));});window.addEventListener("message",function(e){var d=e.data;if(e.source!==f.contentWindow||!b||d===null||typeof d!=="object")return;b.postMessage(JSON.stringify({type:d.type,height:d.height}));});})();`;
 
 /** `text` as a double-quoted attribute's value: the parser gives back `text`. */
