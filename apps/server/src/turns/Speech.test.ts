@@ -965,8 +965,9 @@ it.effect("delivers a held message to a teammate that read one before", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("starts the chain again once the engine took the operator's steer", () =>
+it.effect("starts the chain again once the turn took the operator's steer", () =>
   Effect.gen(function* () {
+    const control = yield* TestEngineControl;
     yield* chainLimits({ hops: 1, fanOut: 1 });
     const ana = yield* createBot("Ana");
     const bo = yield* createBot("Bo");
@@ -980,8 +981,18 @@ it.effect("starts the chain again once the engine took the operator's steer", ()
     });
     assert.include(refusal(refused), "reached your user's limit of 1");
 
-    // The operator steers Bo's running turn.
+    // The operator steers Bo's running turn. Until the turn takes the steer,
+    // the engine may still run it as a turn of its own, which their word starts.
     yield* sendToBot(bo.id, "Tell Ana it is Friday.");
+    yield* flushed(bo.id);
+    const early = yield* messageTeammate(boSession, boTurn, {
+      to: ana.id,
+      text: "It is Friday.",
+      urgent: false,
+    });
+    assert.include(refusal(early), "reached your user's limit of 1");
+
+    yield* control.readSteers({ sessionId: boSession, turnId: boTurn });
     yield* flushed(bo.id);
     const reply = yield* messageTeammate(boSession, boTurn, {
       to: ana.id,
@@ -1780,6 +1791,87 @@ it.effect("counts a harness's wake from another such wake whose work is pending"
     });
     assert.strictEqual(reply._tag, "result");
     assert.deepStrictEqual(yield* heldHops(dee.id), [2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a harness's wake's hop count for its report brought back from a room", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* chainLimits({ hops: 2, fanOut: 3 });
+    const { ana, anaSession, notice } = yield* delegatingNotice;
+    const dee = yield* createBot("Dee");
+
+    // The report lands in a turn Ana runs for a room, and is brought back to
+    // her own conversation: the turn it starts goes on with the notice's work.
+    const room = yield* roomOf(ana.id);
+    yield* sendInRoom(ana.id, room.id, "Plan the launch.");
+    const roomTurn = yield* nextTurn(ana.id, notice);
+    yield* control.delegatedResult({
+      sessionId: anaSession,
+      turnId: roomTurn,
+      origin: notice,
+      text: "Delegated task node-1 [completed]:\nThe report is ready.",
+    });
+    yield* finished(ana.id, anaSession, roomTurn);
+    const reporting = yield* nextTurn(ana.id, roomTurn);
+    const reply = yield* messageTeammate(anaSession, reporting, {
+      to: dee.id,
+      text: "The report is attached.",
+      urgent: false,
+    });
+    assert.strictEqual(reply._tag, "result");
+    assert.deepStrictEqual(yield* heldHops(dee.id), [2]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts what the dispatch that brings a report back delivers beside it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* chainLimits({ hops: 3, fanOut: 3 });
+    yield* concurrentTurns(5);
+    const { ana, anaSession, notice } = yield* delegatingNotice;
+    const [cy, dee, eve] = [
+      yield* createBot("Cy"),
+      yield* createBot("Dee"),
+      yield* createBot("Eve"),
+    ];
+    const room = yield* roomOf(ana.id);
+    yield* sendInRoom(ana.id, room.id, "Plan the launch.");
+    const roomTurn = yield* nextTurn(ana.id, notice);
+    yield* control.delegatedResult({
+      sessionId: anaSession,
+      turnId: roomTurn,
+      origin: notice,
+      text: "Delegated task node-1 [completed]:\nThe report is ready.",
+    });
+
+    // Meanwhile a chain at hop 3 leaves Ana a message, held for her own
+    // conversation: it rides the dispatch that brings the report back.
+    yield* wokenBy(cy.id, dee.id, "Ask Eve.", true);
+    const deeTurn = yield* nextTurn(dee.id);
+    yield* messageTeammate(yield* engineSession(dee.id), deeTurn, {
+      to: eve.id,
+      text: "Tell Ana.",
+      urgent: true,
+    });
+    const eveTurn = yield* nextTurn(eve.id);
+    yield* messageTeammate(yield* engineSession(eve.id), eveTurn, {
+      to: ana.id,
+      text: "The venue is booked.",
+      urgent: false,
+    });
+    assert.deepStrictEqual(yield* heldHops(ana.id), [3]);
+    yield* finished(dee.id, yield* engineSession(dee.id), deeTurn);
+    yield* finished(eve.id, yield* engineSession(eve.id), eveTurn);
+
+    yield* finished(ana.id, anaSession, roomTurn);
+    const reporting = yield* nextTurn(ana.id, roomTurn);
+    const reply = yield* messageTeammate(anaSession, reporting, {
+      to: eve.id,
+      text: "Thanks.",
+      urgent: false,
+    });
+    assert.include(refusal(reply), "reached your user's limit of 3");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

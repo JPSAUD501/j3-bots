@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, WorkStepId } from "@j3-bots/contracts";
+import { type BotId, ModelId, WorkStepId } from "@j3-bots/contracts";
 import { Engine, EventCursor, IdempotencyKey } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +13,7 @@ import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { EngineSessions } from "../bots/EngineSessions.ts";
 import * as Domain from "../domain.ts";
@@ -34,6 +35,7 @@ import {
   nextTurn,
   received,
   noticesOf,
+  providerLists,
   sendToBot,
   timesSent,
   turnEnded,
@@ -635,6 +637,53 @@ it.effect("retries a held queue's resume whose reply was lost", () =>
     yield* (yield* HeldQueues).resumePending;
     assert.isTrue(yield* resumed);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+// The engine starts a requeued steer on the model it was sent with, and moves
+// the session back to it (**Read** at 59651c1, `Orchestrator.ts`,
+// `queuedRunModelSelection`, L1045-1053).
+it.effect(
+  "brings the session back to the bot's model after a requeued steer ran on an older one",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { providerId, modelId } = TestDomain.DEFAULT_MODEL;
+      const newer = { providerId, modelId: ModelId.make("sonnet") };
+      yield* providerLists(providerId, [
+        { id: modelId, name: "Claude Opus" },
+        { id: newer.modelId, name: "Claude Sonnet" },
+      ]);
+      const { bot, session, turnId } = yield* steering;
+      // The operator moves the bot to another model while the engine queues a
+      // turn of its own behind the running one and holds its queue; the turn
+      // ends without reading the steer, which joins the queue ahead of it.
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { model: newer },
+      });
+      yield* control.startEngineTurn(session);
+      yield* control.holdQueue({ sessionId: session, heldAgainOnResume: false });
+      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+
+      // J3 Bots aligns the session before it resumes the queue, whose first
+      // turn, the steer's, runs on the model the steer was sent with.
+      const steered = yield* nextTurn(bot.id, turnId);
+      assert.deepStrictEqual(yield* control.sessionModel(session), TestDomain.DEFAULT_MODEL);
+      yield* finishRunning(bot.id, turnId);
+      const own = yield* nextTurn(bot.id, steered);
+      yield* control.finishTurn({
+        sessionId: session,
+        turnId: own,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(bot.id);
+
+      // Once it ends, the session is aligned again before anything else is sent.
+      yield* until(
+        control.sessionModel(session).pipe(Effect.map((model) => model.modelId === newer.modelId)),
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("forgets a hold that the engine's replaced history no longer shows", () =>

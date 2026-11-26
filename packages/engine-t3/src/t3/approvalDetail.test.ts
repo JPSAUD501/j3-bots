@@ -22,9 +22,13 @@ import {
   keepFetched,
   replacement,
   type EventBody,
+  type Providers,
   type Mirror,
   type View,
 } from "./Translate.ts";
+
+/** These turns run on no provider of J3 Bots's: their model is not what is tested. */
+const noProviders: Providers = { modelOf: () => null, echoesSteers: () => false };
 
 // Items shaped as the engine records them at the pin: the approval carries the
 // provider's prompt and reason under the native id of the command or file
@@ -519,7 +523,7 @@ describe("an approval's card while it waits", () => {
     for (const entity of [asked, held]) mirror.items.set(entity.id, entity);
     mirror.requests.set(asks.id, asks);
     // The stream has told what the mirror holds: the approval, open, as a summary.
-    const { event, view } = replacement(mirror, false, at);
+    const { event, view } = replacement(mirror, false, at, new Map(), noProviders);
     assert.deepStrictEqual(
       event.openRequests.map((open) => open.request._tag === "approval" && open.request.exact),
       [false],
@@ -542,7 +546,7 @@ describe("an approval's card while it waits", () => {
     );
     keepFetched(mirror, whole);
     assert.deepStrictEqual(changesToFetch(mirror), []);
-    const [updated, ...more] = updates(diff(mirror, view, at));
+    const [updated, ...more] = updates(diff(mirror, view, at, noProviders));
     assert.strictEqual(more.length, 0);
     assert.deepStrictEqual(updated, {
       _tag: "approval",
@@ -554,13 +558,13 @@ describe("an approval's card while it waits", () => {
       sessionGrant: { covers: "every-file-change" },
     });
     // Told once: the same state changes nothing.
-    assert.deepStrictEqual(diff(mirror, view, at), []);
+    assert.deepStrictEqual(diff(mirror, view, at, noProviders), []);
   });
 
   it("stays a summary when the fetch brings nothing back", () => {
     // A fetch that failed or timed out never reaches the mirror.
     const { mirror, view } = setUp();
-    assert.deepStrictEqual(diff(mirror, view, at), []);
+    assert.deepStrictEqual(diff(mirror, view, at, noProviders), []);
   });
 
   /** A stream's batches as it emits them, all at one engine sequence. */
@@ -599,7 +603,7 @@ describe("an approval's card while it waits", () => {
     assert.deepStrictEqual(changesToFetch(resumed.mirror), [held]);
     assert.isTrue(keepFetched(resumed.mirror, whole));
     assert.deepStrictEqual(
-      updates(diff(resumed.mirror, resumed.view, at)).map(
+      updates(diff(resumed.mirror, resumed.view, at, noProviders)).map(
         (request) => request._tag === "approval" && request.exact,
       ),
       [true],
@@ -611,7 +615,7 @@ describe("an approval's card while it waits", () => {
     const stream = emitted();
     const [summary] = stream.emit(mirror, view, [told]);
     keepFetched(mirror, whole);
-    const [upgrade, ...more] = stream.emit(mirror, view, diff(mirror, view, at));
+    const [upgrade, ...more] = stream.emit(mirror, view, diff(mirror, view, at, noProviders));
     assert.strictEqual(more.length, 0);
     if (summary === undefined || upgrade === undefined) throw new Error("nothing emitted");
     const resumed = stream.resume(summary);
@@ -622,7 +626,7 @@ describe("an approval's card while it waits", () => {
     assert.deepStrictEqual(changesToFetch(resumed.mirror), []);
     resumed.mirror.requests.set(asks.id, { ...asks, status: "resolved", resolvedAt: at });
     assert.deepStrictEqual(
-      diff(resumed.mirror, resumed.view, at).map((event) => event._tag),
+      diff(resumed.mirror, resumed.view, at, noProviders).map((event) => event._tag),
       ["request-closed"],
     );
   });
@@ -644,7 +648,7 @@ describe("an approval's card while it waits", () => {
     assert.isFalse(keepFetched(mirror, whole));
     assert.deepStrictEqual(changesToFetch(mirror), []);
     assert.deepStrictEqual(
-      updates(diff(mirror, view, at)).map(
+      updates(diff(mirror, view, at, noProviders)).map(
         (request) => request._tag === "approval" && request.detail?.text,
       ),
       ["- Keep this list item\n- And this one"],
@@ -653,10 +657,10 @@ describe("an approval's card while it waits", () => {
 
   it("says the approval closed when the engine recorded its answer, however late it is seen", () => {
     const { mirror, view, asks } = setUp();
-    diff(mirror, view, at);
+    diff(mirror, view, at, noProviders);
     const answered = DateTime.makeUnsafe("2026-11-20T12:00:03Z");
     mirror.requests.set(asks.id, { ...asks, status: "resolved", resolvedAt: answered });
-    const [closed] = diff(mirror, view, DateTime.makeUnsafe("2026-11-20T14:00:00Z"));
+    const [closed] = diff(mirror, view, DateTime.makeUnsafe("2026-11-20T14:00:00Z"), noProviders);
     assert.deepStrictEqual(
       closed?._tag === "request-closed" && [closed.resolution, closed.closedAt],
       ["answered", answered],
@@ -666,7 +670,7 @@ describe("an approval's card while it waits", () => {
   it("never changes once the approval has closed, and lets go of what was fetched for it", () => {
     const { mirror, view, asks, whole } = setUp();
     assert.isTrue(keepFetched(mirror, whole));
-    assert.strictEqual(updates(diff(mirror, view, at)).length, 1);
+    assert.strictEqual(updates(diff(mirror, view, at, noProviders)).length, 1);
     const closed = { ...asks, status: "resolved" as const, resolvedAt: at };
     applyEvent(
       mirror,
@@ -680,12 +684,12 @@ describe("an approval's card while it waits", () => {
     );
     assert.strictEqual(mirror.fetched.size, 0);
     assert.deepStrictEqual(
-      diff(mirror, view, at).map((event) => event._tag),
+      diff(mirror, view, at, noProviders).map((event) => event._tag),
       ["request-closed"],
     );
     assert.deepStrictEqual(changesToFetch(mirror), []);
     // A fetch that lands after the approval closed is not kept.
     assert.isFalse(keepFetched(mirror, whole));
-    assert.deepStrictEqual(diff(mirror, view, at), []);
+    assert.deepStrictEqual(diff(mirror, view, at, noProviders), []);
   });
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { QuestionAnswers } from "@j3-bots/contracts";
+import { ModelId, ProviderId, QuestionAnswers } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   OrchestrationV2DomainEvent,
@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { TurnCause } from "../events.ts";
-import { EventCursor, IdempotencyKey, SessionId, TurnId } from "../ids.ts";
+import { DelegatedResultId, EventCursor, IdempotencyKey, SessionId, TurnId } from "../ids.ts";
 import { toolInputDigest } from "../toolCaller.ts";
 import { makeBatches } from "./Batches.ts";
 import { messageIdFor } from "./Keys.ts";
@@ -26,6 +26,7 @@ import {
   emptyMirror,
   engineAnswersOf,
   type EventBody,
+  type Providers,
   isDeleted,
   isOver,
   mirrorOf,
@@ -36,6 +37,9 @@ import {
   toolsToResolve,
   workInShell,
 } from "./Translate.ts";
+
+/** These turns run on no provider of J3 Bots's: their model is not what is tested. */
+const noProviders: Providers = { modelOf: () => null, echoesSteers: () => false };
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
 
@@ -152,10 +156,10 @@ describe("a start the engine queues behind another turn", () => {
   it("is queued from its run, before the engine records its message", () => {
     const mirror = emptyMirror();
     mirror.runs.set(running.id, running);
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
 
     applyEvent(mirror, event("run.created", queued));
-    assert.deepStrictEqual(diff(mirror, view, at), [
+    assert.deepStrictEqual(diff(mirror, view, at, noProviders), [
       { _tag: "turn-queued", turnId, cause: { _tag: "dispatch", key } },
     ]);
     assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
@@ -191,7 +195,7 @@ describe("a start the engine queues behind another turn", () => {
         updatedAt: at,
       }),
     );
-    assert.deepStrictEqual(diff(mirror, view, at), []);
+    assert.deepStrictEqual(diff(mirror, view, at, noProviders), []);
     assert.deepStrictEqual(dispositionOf(mirror, key), Option.some({ _tag: "queued", turnId }));
   });
 
@@ -502,18 +506,18 @@ describe("backgroundWorkOf", () => {
   it("counts a task that holds the agent's completion as the turn's hand-off", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     const monitor = { taskId: "task-1", kind: "monitor", awaited: true };
     applyEvent(mirror, providerThread([], [monitor], "run-1"));
     applyEvent(mirror, run("completed", 1));
-    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [true]);
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at, noProviders)), [true]);
 
     // Still running when the next turn ends: it is the first turn's, not this one's.
     applyEvent(mirror, providerThread([], [monitor], "run-2"));
     applyEvent(mirror, run("running", 2));
-    diff(mirror, view, at);
+    diff(mirror, view, at, noProviders);
     applyEvent(mirror, run("completed", 2));
-    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at, noProviders)), [false]);
   });
 
   // A replacement comes once the stream lost replay coverage: by then the
@@ -524,13 +528,13 @@ describe("backgroundWorkOf", () => {
     batches.open(session);
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(
       mirror,
       providerThread([], [{ taskId: "task-1", kind: "background_task" }], "run-1"),
     );
     applyEvent(mirror, run("completed", 1));
-    const told = diff(mirror, view, at);
+    const told = diff(mirror, view, at, noProviders);
     assert.deepStrictEqual(backgroundAtEnd(told), [true]);
     batches.keep(
       session,
@@ -551,7 +555,7 @@ describe("backgroundWorkOf", () => {
     applyEvent(mirror, providerThread([], [], "run-2"));
     applyEvent(mirror, run("running", 2));
     applyEvent(mirror, run("completed", 2));
-    const { event } = replacement(mirror, true, at, batches.toldHandoffs(session));
+    const { event } = replacement(mirror, true, at, batches.toldHandoffs(session), noProviders);
     assert.deepStrictEqual(
       event.endedTurns.map((turn) => [turn.turnId, turn.backgroundWork]),
       [
@@ -574,7 +578,7 @@ describe("backgroundWorkOf", () => {
         { sequence: place, part: 0 },
         {
           mirror: emptyMirror(),
-          view: replacement(emptyMirror(), false, at).view,
+          view: replacement(emptyMirror(), false, at, new Map(), noProviders).view,
           events: bodies.map((body, index) => ({
             ...body,
             cursor: EventCursor.make(`${place}.0.${index}.${bodies.length}.stream-1`),
@@ -588,17 +592,20 @@ describe("backgroundWorkOf", () => {
       providerThread([], [{ taskId: "task-1", kind: "background_task" }], "run-1"),
     );
     applyEvent(mirror, run("completed", 1));
-    keep(3, [replacement(mirror, true, at, batches.toldHandoffs(session)).event]);
+    keep(3, [replacement(mirror, true, at, batches.toldHandoffs(session), noProviders).event]);
 
     // The task ends and wakes the session; the next replacement repeats the
     // hand-off as the first one told it.
     applyEvent(mirror, providerThread([], [], "run-2"));
     applyEvent(mirror, run("completed", 2));
     const handoffs = () =>
-      replacement(mirror, true, at, batches.toldHandoffs(session)).event.endedTurns.map((turn) => [
-        turn.turnId,
-        turn.backgroundWork,
-      ]);
+      replacement(
+        mirror,
+        true,
+        at,
+        batches.toldHandoffs(session),
+        noProviders,
+      ).event.endedTurns.map((turn) => [turn.turnId, turn.backgroundWork]);
     assert.deepStrictEqual(handoffs(), [
       [TurnId.make("run-1"), true],
       [TurnId.make("run-2"), false],
@@ -618,7 +625,7 @@ describe("backgroundWorkOf", () => {
         contextRecovered: false,
       },
     ]);
-    keep(5, [replacement(mirror, true, at, new Map()).event]);
+    keep(5, [replacement(mirror, true, at, new Map(), noProviders).event]);
     assert.deepStrictEqual(handoffs(), [
       [TurnId.make("run-1"), true],
       [TurnId.make("run-2"), true],
@@ -799,10 +806,10 @@ describe("backgroundWorkOf", () => {
   it("leaves a monitor the agent does not await to wake the session on its own", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, providerThread([], [{ taskId: "task-1", kind: "monitor" }], "run-1"));
     applyEvent(mirror, run("completed", 1));
-    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at)), [false]);
+    assert.deepStrictEqual(backgroundAtEnd(diff(mirror, view, at, noProviders)), [false]);
     // The engine's stop still counts it, as the first turn's.
     assert.deepStrictEqual(backgroundWorkOf(mirror).pending, pendingIn(["run-1"]));
   });
@@ -909,12 +916,12 @@ describe("the cause of a turn the engine started on its own", () => {
   const startedWake = (delegatedBy?: string) => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, run("starting", 2));
     applyEvent(mirror, wakeMessage(delegatedBy));
     applyEvent(mirror, notice);
     applyEvent(mirror, run("running", 2));
-    return { mirror, view, started: diff(mirror, view, at) };
+    return { mirror, view, started: diff(mirror, view, at, noProviders) };
   };
 
   it("names the turn that delegated the task whose completion woke the session", () => {
@@ -935,18 +942,18 @@ describe("the cause of a turn the engine started on its own", () => {
   it("tells a wake queued behind another turn by its origin from the queue on", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, run("queued", 2));
-    assert.deepStrictEqual(diff(mirror, view, at), []);
+    assert.deepStrictEqual(diff(mirror, view, at, noProviders), []);
     applyEvent(mirror, wakeMessage("run-1"));
-    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+    assert.deepStrictEqual(causes(diff(mirror, view, at, noProviders)), [
       { _tag: "turn-queued", cause: DELEGATED },
     ]);
 
     applyEvent(mirror, run("completed", 1));
     applyEvent(mirror, run("running", 2));
     applyEvent(mirror, notice);
-    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+    assert.deepStrictEqual(causes(diff(mirror, view, at, noProviders)), [
       { _tag: "turn-started", cause: DELEGATED },
     ]);
   });
@@ -955,7 +962,7 @@ describe("the cause of a turn the engine started on its own", () => {
     const { mirror, view } = startedWake("run-1");
     applyEvent(mirror, steerItem);
     applyEvent(mirror, run("completed", 2));
-    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+    assert.deepStrictEqual(causes(diff(mirror, view, at, noProviders)), [
       { _tag: "turn-finished", cause: DELEGATED },
     ]);
   });
@@ -967,10 +974,10 @@ describe("the cause of a turn the engine started on its own", () => {
     applyEvent(mirror, steerItem);
     applyEvent(mirror, run("running", 2, { userMessageId: steer }));
     applyEvent(mirror, run("completed", 2, { userMessageId: steer }));
-    assert.deepStrictEqual(causes(diff(mirror, view, at)), [
+    assert.deepStrictEqual(causes(diff(mirror, view, at, noProviders)), [
       { _tag: "turn-finished", cause: DELEGATED },
     ]);
-    const { event: replaced } = replacement(mirror, true, at);
+    const { event: replaced } = replacement(mirror, true, at, new Map(), noProviders);
     assert.deepStrictEqual(
       replaced.endedTurns.flatMap((turn) =>
         turn.turnId === TurnId.make("run-2") ? [turn.cause] : [],
@@ -1009,7 +1016,13 @@ describe("the cause of a turn the engine started on its own", () => {
       visibleTurnItems: [],
       updatedAt: at,
     });
-    const { event: replaced } = replacement(mirrorOf(projection), false, at);
+    const { event: replaced } = replacement(
+      mirrorOf(projection),
+      false,
+      at,
+      new Map(),
+      noProviders,
+    );
     assert.deepStrictEqual(
       replaced.openTurns.map((turn) => [turn.turnId, turn.cause]),
       [[TurnId.make("run-2"), DELEGATED]],
@@ -1111,13 +1124,13 @@ describe("what a Stop leaves to run", () => {
     applyEvent(mirror, event("thread.created", appThread));
     applyEvent(mirror, run("starting", 1));
     applyEvent(mirror, run("queued", 2));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, event("thread.archived", { ...appThread, archivedAt: at }));
     assert.isFalse(isOver(mirror));
     applyEvent(mirror, run("cancelled", 2, { startedAt: null, queuePosition: null }));
     assert.isTrue(isOver(mirror));
     assert.deepStrictEqual(
-      diff(mirror, view, at).flatMap((body) =>
+      diff(mirror, view, at, noProviders).flatMap((body) =>
         body._tag === "turn-finished" ? [[body.turnId, body.outcome._tag]] : [],
       ),
       [[TurnId.make("run-2"), "cancelled"]],
@@ -1141,22 +1154,22 @@ describe("a `j3` call recorded before its arguments", () => {
       const args = { text: "The build is green.", done: true };
       const mirror = emptyMirror();
       applyEvent(mirror, run("running", 1));
-      const { view } = replacement(mirror, false, at);
+      const { view } = replacement(mirror, false, at, new Map(), noProviders);
 
       applyEvent(mirror, say({}, "running"));
       yield* digestToolCalls(mirror);
-      assert.deepStrictEqual(told(diff(mirror, view, at)), [
+      assert.deepStrictEqual(told(diff(mirror, view, at, noProviders)), [
         { state: "open", digest: yield* toolInputDigest({}) },
       ]);
 
       applyEvent(mirror, say(args, "running"));
       yield* digestToolCalls(mirror);
-      assert.deepStrictEqual(told(diff(mirror, view, at)), [
+      assert.deepStrictEqual(told(diff(mirror, view, at, noProviders)), [
         { state: "open", digest: yield* toolInputDigest(args) },
       ]);
       // A subscriber that starts now is told the arguments at once.
       assert.deepStrictEqual(
-        replacement(mirror, false, at).event.openTurns.flatMap((turn) =>
+        replacement(mirror, false, at, new Map(), noProviders).event.openTurns.flatMap((turn) =>
           turn.toolCalls.map((call) => call.inputDigest),
         ),
         [yield* toolInputDigest(args)],
@@ -1164,7 +1177,7 @@ describe("a `j3` call recorded before its arguments", () => {
 
       applyEvent(mirror, say({ text: "Another." }, "completed"));
       yield* digestToolCalls(mirror);
-      assert.deepStrictEqual(told(diff(mirror, view, at)), [
+      assert.deepStrictEqual(told(diff(mirror, view, at, noProviders)), [
         { state: "closed", digest: yield* toolInputDigest({ text: "Another." }) },
       ]);
     }),
@@ -1179,7 +1192,7 @@ describe("a connector's `j3` call", () => {
         const args = { query: "the operator's private roadmap" };
         const mirror = emptyMirror();
         applyEvent(mirror, run("running", 1));
-        const { view } = replacement(mirror, false, at);
+        const { view } = replacement(mirror, false, at, new Map(), noProviders);
         for (const [id, toolName, input] of [
           ["item-say", "j3.say", { text: "Looking." }],
           ["item-search", "j3.notion__search", args],
@@ -1190,7 +1203,7 @@ describe("a connector's `j3` call", () => {
           );
         }
         yield* digestToolCalls(mirror);
-        const events = diff(mirror, view, at);
+        const events = diff(mirror, view, at, noProviders);
 
         assert.deepStrictEqual(
           events.flatMap((event) => (event._tag === "tool-call" ? [event.call.tool] : [])),
@@ -1223,7 +1236,7 @@ describe("a connector's `j3` call", () => {
       );
       yield* digestToolCalls(mirror);
 
-      const [turn] = replacement(mirror, false, at).event.openTurns;
+      const [turn] = replacement(mirror, false, at, new Map(), noProviders).event.openTurns;
       assert.deepStrictEqual(turn?.toolCalls, []);
       assert.deepStrictEqual(
         turn?.closedToolCalls.map(({ tool, inputDigest }) => ({ tool, inputDigest })),
@@ -1238,7 +1251,7 @@ describe("a connector's `j3` call", () => {
       const ref = { driver: "claudeAgent", nativeId: "toolu-1", strength: "strong" };
       const mirror = emptyMirror();
       applyEvent(mirror, run("running", 1));
-      const { view } = replacement(mirror, false, at);
+      const { view } = replacement(mirror, false, at, new Map(), noProviders);
       applyEvent(
         mirror,
         item({
@@ -1277,7 +1290,7 @@ describe("a connector's `j3` call", () => {
         }),
       );
       yield* digestToolCalls(mirror);
-      const events = diff(mirror, view, at);
+      const events = diff(mirror, view, at, noProviders);
 
       const calls = events.flatMap((event) => (event._tag === "tool-call" ? [event.call] : []));
       const held = events.flatMap((event) =>
@@ -1295,7 +1308,7 @@ describe("a connector's `j3` call", () => {
     Effect.gen(function* () {
       const mirror = emptyMirror();
       applyEvent(mirror, run("running", 1));
-      const { view } = replacement(mirror, false, at);
+      const { view } = replacement(mirror, false, at, new Map(), noProviders);
       for (const [id, toolName, message] of [
         ["item-host", "send_to_user", "Shown to the operator."],
         ["item-claude", "mcp__j3__example__send_to_user", "Sent through a connector."],
@@ -1307,7 +1320,7 @@ describe("a connector's `j3` call", () => {
         );
       }
       yield* digestToolCalls(mirror);
-      const events = diff(mirror, view, at);
+      const events = diff(mirror, view, at, noProviders);
 
       assert.deepStrictEqual(
         events.flatMap((event) => (event._tag === "host-speech" ? [event.text] : [])),
@@ -1337,7 +1350,7 @@ describe("a `j3` call that manages MCP servers or skills", () => {
         };
         const mirror = emptyMirror();
         applyEvent(mirror, run("running", 1));
-        const { view } = replacement(mirror, false, at);
+        const { view } = replacement(mirror, false, at, new Map(), noProviders);
         for (const [id, toolName] of [
           ["item-add", "mcp__j3__add_mcp_server"],
           ["item-skill", "j3.save_skill"],
@@ -1349,7 +1362,7 @@ describe("a `j3` call that manages MCP servers or skills", () => {
           );
         }
         yield* digestToolCalls(mirror);
-        const events = diff(mirror, view, at);
+        const events = diff(mirror, view, at, noProviders);
 
         assert.deepStrictEqual(
           events.flatMap((event) => (event._tag === "tool-call" ? [event.call.tool] : [])),
@@ -1388,22 +1401,22 @@ describe("a turn the engine ran on recovered context", () => {
 
   it("tells so when the turn ends, live and on resume", () => {
     const mirror = emptyMirror();
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, run("running", 1));
     applyEvent(mirror, handoff);
     applyEvent(mirror, run("completed", 1));
-    assert.deepStrictEqual(recovered(diff(mirror, view, at)), [true]);
+    assert.deepStrictEqual(recovered(diff(mirror, view, at, noProviders)), [true]);
 
-    const { event: resumed } = replacement(mirror, true, at);
+    const { event: resumed } = replacement(mirror, true, at, new Map(), noProviders);
     assert.isTrue(resumed.endedTurns[0]?.contextRecovered);
   });
 
   it("does not for a turn that kept its conversation", () => {
     const mirror = emptyMirror();
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, run("running", 1));
     applyEvent(mirror, run("completed", 1));
-    assert.deepStrictEqual(recovered(diff(mirror, view, at)), [false]);
+    assert.deepStrictEqual(recovered(diff(mirror, view, at, noProviders)), [false]);
   });
 });
 
@@ -1412,7 +1425,7 @@ describe("a turn told after it ran", () => {
     const startedAt = DateTime.makeUnsafe("2026-11-20T09:00:00Z");
     const finishedAt = DateTime.makeUnsafe("2026-11-20T09:05:00Z");
     const mirror = emptyMirror();
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     // Started and ended while the stream was down: the replay tells both at once, later.
     applyEvent(
       mirror,
@@ -1434,7 +1447,7 @@ describe("a turn told after it ran", () => {
         contextHandoffId: null,
       }),
     );
-    const times = diff(mirror, view, at).flatMap((told) =>
+    const times = diff(mirror, view, at, noProviders).flatMap((told) =>
       told._tag === "turn-started"
         ? [told.startedAt]
         : told._tag === "turn-finished"
@@ -1458,7 +1471,7 @@ describe("a Claude Code tool's step", () => {
   const stepOfCall = (id: string, toolName: string, title: string, input: unknown) => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1, { providerInstanceId: "claudeAgent" }));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(
       mirror,
       item({
@@ -1471,7 +1484,7 @@ describe("a Claude Code tool's step", () => {
         completedAt: at,
       }),
     );
-    return steps(diff(mirror, view, at));
+    return steps(diff(mirror, view, at, noProviders));
   };
 
   it("reads a file it read as the file, and a search as what it looked for", () => {
@@ -1490,5 +1503,336 @@ describe("a Claude Code tool's step", () => {
       stepOfCall("item-skill", "Skill", "Skill: release-notes", { skill: "release-notes" }),
       [{ kind: "tool", tool: null, label: "Skill: release-notes" }],
     );
+  });
+});
+
+describe("what a running turn takes from outside it", () => {
+  const message = (fields: Record<string, unknown>) =>
+    event("message.updated", {
+      threadId: "thread-1",
+      nodeId: null,
+      role: "user",
+      attachments: [],
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+      createdBy: "agent",
+      creationSource: "server",
+      ...fields,
+    });
+  /** A completion of a task `run-1` delegated, as the engine records it in `runId`. */
+  const completion = (runId: string) =>
+    message({
+      id: "message-result",
+      runId,
+      text: "Delegated task node-1 [completed]:\nThe report is ready.",
+      delegatedCompletion: { parentRunId: "run-1", generation: 1, taskIds: ["node-1"] },
+    });
+  const results = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((body) => (body._tag === "delegated-result" ? [body.result] : []));
+  const RESULT = {
+    resultId: DelegatedResultId.make("message-result"),
+    turnId: TurnId.make("run-2"),
+    origin: TurnId.make("run-1"),
+    text: "Delegated task node-1 [completed]:\nThe report is ready.",
+  };
+
+  /**
+   * The engine's record of a report it steered into `run-2`, at `status`: a
+   * notice, not a user message (**Read** at `59651c1`, `notificationTurnItem`).
+   */
+  const steeredIn = (messageId: string, status: string) =>
+    item({
+      id: `item-${messageId}`,
+      runId: "run-2",
+      ordinal: 20,
+      type: "notification",
+      source: { kind: "delegated_task", taskIds: ["node-1"], childThreadId: "thread-child" },
+      outcome: "completed",
+      summary: "Delegated task completed",
+      status,
+    });
+
+  // **Read** at `59651c1`, `Orchestrator.ts`, L7631-7673: the engine steers a
+  // completion into whatever run is running.
+  it("tells a delegated task's result steered into another turn once that turn ends with it", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, run("running", 2));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+
+    applyEvent(mirror, completion("run-2"));
+    applyEvent(mirror, steeredIn("message-result", "completed"));
+    assert.deepStrictEqual(results(diff(mirror, view, at, noProviders)), []);
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(results(diff(mirror, view, at, noProviders)), [RESULT]);
+    applyEvent(mirror, completion("run-2"));
+    assert.deepStrictEqual(results(diff(mirror, view, at, noProviders)), []);
+    // A subscriber that resumes after a gap is told it again, by the same id.
+    assert.deepStrictEqual(
+      replacement(mirror, true, at, new Map(), noProviders).event.delegatedResults,
+      [RESULT],
+    );
+  });
+
+  // The engine runs a report whose hand-over failed as a run of its own
+  // (**Read** at `59651c1`, `EffectWorker.ts`, L362-420), and that run is
+  // where the report is answered.
+  it("tells no result the engine runs as a turn of its own after the turn it landed in", () => {
+    // The engine sends it again as the turn ends, and its message moves there.
+    const moved = emptyMirror();
+    applyEvent(moved, run("completed", 1));
+    applyEvent(moved, run("running", 2));
+    const { view: movedView } = replacement(moved, false, at, new Map(), noProviders);
+    applyEvent(moved, completion("run-2"));
+    applyEvent(moved, steeredIn("message-result", "completed"));
+    applyEvent(moved, run("queued", 3, { userMessageId: "message-result" }));
+    applyEvent(moved, completion("run-3"));
+    applyEvent(moved, run("completed", 2));
+    assert.deepStrictEqual(results(diff(moved, movedView, at, noProviders)), []);
+
+    // The new run shows before the message moves.
+    const late = emptyMirror();
+    applyEvent(late, run("completed", 1));
+    applyEvent(late, run("running", 2));
+    const { view: lateView } = replacement(late, false, at, new Map(), noProviders);
+    applyEvent(late, completion("run-2"));
+    applyEvent(late, steeredIn("message-result", "completed"));
+    applyEvent(late, run("completed", 2));
+    applyEvent(late, run("queued", 3, { userMessageId: "message-result" }));
+    assert.deepStrictEqual(results(diff(late, lateView, at, noProviders)), []);
+    assert.deepStrictEqual(
+      replacement(late, true, at, new Map(), noProviders).event.delegatedResults,
+      [],
+    );
+  });
+
+  it("tells no result that opens a turn of its own, or reaches the turn that delegated it", () => {
+    const own = emptyMirror();
+    applyEvent(own, run("completed", 1));
+    const { view: ownView } = replacement(own, false, at, new Map(), noProviders);
+    applyEvent(own, run("starting", 2, { userMessageId: "message-result" }));
+    applyEvent(own, completion("run-2"));
+    applyEvent(own, run("running", 2, { userMessageId: "message-result" }));
+    assert.deepStrictEqual(results(diff(own, ownView, at, noProviders)), []);
+
+    const parent = emptyMirror();
+    applyEvent(parent, run("running", 1));
+    const { view: parentView } = replacement(parent, false, at, new Map(), noProviders);
+    applyEvent(parent, completion("run-1"));
+    assert.deepStrictEqual(results(diff(parent, parentView, at, noProviders)), []);
+  });
+
+  /** The task `run-1` delegated, as its item there records it. */
+  const delegated = item({
+    id: "item-task",
+    type: "subagent",
+    subagentId: "node-1",
+    origin: "app_owned",
+    driver: "codex",
+    providerInstanceId: "codex",
+    childThreadId: "thread-child",
+    prompt: "Find a venue.",
+    result: null,
+    status: "running",
+  });
+  const QUESTION = "Delegated task node-1 asked a question and is still working.";
+  /** The task's question, as the engine tells the session of it, in `runId`. */
+  const question = (runId: string) =>
+    message({
+      id: "message-question",
+      runId,
+      text: QUESTION,
+      notification: {
+        source: { kind: "delegated_task", taskIds: ["node-1"], childThreadId: "thread-child" },
+        outcome: "updated",
+        summary: "Delegated task has a question",
+      },
+    });
+
+  // The engine steers a delegated task's notice as it does its completion
+  // (**Read** at `59651c1`, `Orchestrator.ts`, L7631-7673).
+  it("tells a delegated task's question steered into another turn, by the turn that delegated it", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, delegated);
+    applyEvent(mirror, run("running", 2));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+
+    applyEvent(mirror, question("run-2"));
+    applyEvent(mirror, steeredIn("message-question", "completed"));
+    applyEvent(mirror, run("completed", 2));
+    assert.deepStrictEqual(results(diff(mirror, view, at, noProviders)), [
+      {
+        resultId: DelegatedResultId.make("message-question"),
+        turnId: TurnId.make("run-2"),
+        origin: TurnId.make("run-1"),
+        text: QUESTION,
+      },
+    ]);
+  });
+
+  it("names the turn that delegated a task whose question opens a turn", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, delegated);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("starting", 2, { userMessageId: "message-question" }));
+    applyEvent(mirror, question("run-2"));
+    applyEvent(mirror, run("running", 2, { userMessageId: "message-question" }));
+
+    const events = diff(mirror, view, at, noProviders);
+    assert.deepStrictEqual(results(events), []);
+    assert.deepStrictEqual(
+      events.flatMap((body) => (body._tag === "turn-started" ? [body.cause] : [])),
+      [{ _tag: "background", origin: TurnId.make("run-1") }],
+    );
+  });
+
+  /** A J3 Bots steer of `run-1`, its record in the run at `status`. */
+  const steerKey = IdempotencyKey.make("steer-1");
+  const steerItem = (status: string) =>
+    item({
+      id: "item-steer",
+      runId: "run-1",
+      ordinal: 20,
+      type: "user_message",
+      messageId: messageIdFor("steer", steerKey),
+      createdBy: "user",
+      creationSource: "server",
+      inputIntent: "steer",
+      text: "Also check the logs.",
+      attachments: [],
+      status,
+    });
+  const taken = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((body) => (body._tag === "steer-taken" ? [[body.key, body.turnId]] : []));
+
+  // The engine requeues only a steer whose record still waits (**Read** at
+  // `59651c1`, `Orchestrator.ts`, `requeueUnreadSteers`).
+  it("tells a steer taken once its record no longer waits, while the turn runs, on Codex", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+
+    applyEvent(mirror, steerItem("pending"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, noProviders)), []);
+    applyEvent(mirror, steerItem("completed"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, noProviders)), [
+      [steerKey, TurnId.make("run-1")],
+    ]);
+    assert.deepStrictEqual(
+      replacement(mirror, false, at, new Map(), noProviders).event.openTurns.map(
+        (turn) => turn.takenSteers,
+      ),
+      [[steerKey]],
+    );
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, noProviders)), []);
+  });
+
+  // The engine records a steer as handed over before Claude has it, and
+  // Claude's driver then holds it waiting until Claude echoes it (**Read** at
+  // `59651c1`, `Orchestrator.ts` L6442-6470, `ClaudeAdapterV2.ts` L14061,
+  // L9366).
+  it("tells a steer taken on Claude Code only once Claude echoed it", () => {
+    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at, new Map(), claude);
+
+    applyEvent(mirror, steerItem("completed"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), []);
+    assert.deepStrictEqual(
+      replacement(mirror, false, at, new Map(), claude).event.openTurns.map(
+        (turn) => turn.takenSteers,
+      ),
+      [[]],
+    );
+    applyEvent(mirror, steerItem("pending"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), []);
+    applyEvent(mirror, steerItem("completed"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), [
+      [steerKey, TurnId.make("run-1")],
+    ]);
+  });
+
+  it("tells no steer taken on Claude Code from a snapshot that shows it handed over", () => {
+    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    // The snapshot falls between the engine's hand-over and Claude's hold.
+    const mirror = mirrorOf(
+      Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
+        thread: appThread,
+        runs: [run("running", 1).payload],
+        attempts: [],
+        nodes: [],
+        subagents: [],
+        providerSessions: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        messages: [],
+        plans: [],
+        turnItems: [steerItem("completed").payload],
+        checkpointScopes: [],
+        checkpoints: [],
+        contextHandoffs: [],
+        contextTransfers: [],
+        visibleTurnItems: [],
+        updatedAt: at,
+      }),
+    );
+    const { event, view } = replacement(mirror, false, at, new Map(), claude);
+    assert.deepStrictEqual(
+      event.openTurns.map((turn) => turn.takenSteers),
+      [[]],
+    );
+    applyEvent(mirror, steerItem("pending"));
+    applyEvent(mirror, steerItem("completed"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), [
+      [steerKey, TurnId.make("run-1")],
+    ]);
+  });
+
+  it("tells no steer taken that is still waiting when its turn ends", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, steerItem("pending"));
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, noProviders)), []);
+  });
+
+  it("tells the model a turn starts on, and the session's now, by J3 Bots' provider", () => {
+    const providerId = ProviderId.make("claude");
+    const providers: Providers = {
+      modelOf: (selection) =>
+        selection.instanceId === "codex"
+          ? { providerId, modelId: ModelId.make(selection.model) }
+          : null,
+      echoesSteers: () => false,
+    };
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), providers);
+    applyEvent(mirror, run("running", 1));
+    assert.deepStrictEqual(
+      diff(mirror, view, at, providers).flatMap((body) =>
+        body._tag === "turn-started" ? [body.model] : [],
+      ),
+      [{ providerId, modelId: ModelId.make("gpt-5") }],
+    );
+    // The engine moves the session's selection to each turn's as it starts it.
+    applyEvent(
+      mirror,
+      event("thread.model-selection-updated", {
+        ...appThread,
+        modelSelection: { instanceId: "codex", model: "gpt-5-mini" },
+      }),
+    );
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(replacement(mirror, true, at, new Map(), providers).event.model, {
+      providerId,
+      modelId: ModelId.make("gpt-5-mini"),
+    });
   });
 });

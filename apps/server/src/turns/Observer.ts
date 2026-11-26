@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type Entry, EntryId, RoomId, WorkStep } from "@j3-bots/contracts";
+import { BotId, type Entry, EntryId, type ModelChoice, RoomId, WorkStep } from "@j3-bots/contracts";
 import {
   type BackgroundWork,
+  type DelegatedResult,
   Engine,
   type EngineDown,
   type EngineIncompatible,
@@ -54,7 +55,9 @@ import {
   audienceOf,
   conversation,
   type DispatchRowId,
+  DispatchSeq,
   NotObserved,
+  sameAudience,
   SessionRowId,
   StoredResponse,
   SYNC_DEADLINE,
@@ -166,6 +169,8 @@ const changesWork = (event: SessionEvent): boolean => {
     case "request-closed":
       return true;
     case "turn-queued":
+    case "steer-taken":
+    case "delegated-result":
     case "request-updated":
     case "step":
     case "host-speech":
@@ -528,6 +533,7 @@ export const layer = Layer.effect(
       turnId: TurnId,
       cause: TurnCause,
       at: DateTime.Utc,
+      model: ModelChoice | null,
     ) {
       if (Option.isSome(yield* turnOf(session.id, turnId))) return;
       let audience: Audience = conversation;
@@ -540,6 +546,7 @@ export const layer = Layer.effect(
         if (Option.isSome(dispatch)) {
           audience = audienceOf(dispatch.value);
           fencedBy = dispatch.value.fenced_by_stop_id;
+          origin = yield* resultOrigin(session.id, dispatch.value.id);
           yield* ledger.deliver(dispatch.value.id, turnId);
         }
       } else if (cause._tag === "continuation") {
@@ -605,6 +612,115 @@ export const layer = Layer.effect(
       // A Stop round already sent missed this turn, or the engine applied a
       // key a Stop had fenced: it is stopped on sight.
       if (yield* stops.openRound(session.id, fencedBy)) yield* sql.afterCommit(signals.stops.fire);
+      if (model !== null) yield* modelStarted(session, model);
+    }, Effect.orDie);
+
+    /**
+     * The turn of the session the dispatch goes on with: the one that
+     * delegated the task whose result a `delegated-result` wake it carries
+     * brings back. The engine names the same turn when a completion starts a
+     * turn of its own (`background`), and so the turn counts its hops and its
+     * Stops as that turn's work does.
+     */
+    const resultOrigin = Effect.fn("Observer.resultOrigin")(function* (
+      sessionId: SessionRowId,
+      dispatchId: DispatchRowId,
+    ) {
+      for (const wake of yield* ledger.wakesOf(dispatchId)) {
+        if (wake.payload_json._tag !== "delegated-result") continue;
+        const origin = wake.payload_json.origin;
+        if (Option.isSome(yield* turnOf(sessionId, origin))) return origin;
+      }
+      return null;
+    });
+
+    /**
+     * The engine started a turn of the bot's main session on another model
+     * of the bot's provider than the bot's: a turn queued before the model
+     * changed, a steer it requeued among them, starts on the model it was
+     * queued with and moves the session back to it. The session waits for
+     * its alignment again, as after a change of the bot's settings, so no
+     * other turn goes into it on that model. A session on a provider the bot
+     * left is replaced instead (`Rotations`).
+     */
+    const modelStarted = Effect.fn("Observer.modelStarted")(function* (
+      session: Watched,
+      model: ModelChoice,
+    ) {
+      if (session.purpose !== "main") return;
+      const behind = yield* sql`
+        UPDATE sessions SET settings_pending = settings_pending + 1
+        WHERE id = ${session.id} AND EXISTS (
+          SELECT 1 FROM bots b WHERE b.id = sessions.bot_id
+            AND b.provider_id = ${model.providerId} AND b.model_id <> ${model.modelId}
+        )
+        RETURNING id
+      `;
+      if (behind.length > 0) yield* sql.afterCommit(signals.rotations.fire);
+    });
+
+    /**
+     * The turn the steer rides took it: the operator's word counts there
+     * from now on (`hopCounts`). A dispatch the server does not know is not
+     * its own.
+     */
+    const steerTaken = Effect.fn("Observer.steerTaken")(function* (
+      session: Watched,
+      key: IdempotencyKey,
+    ) {
+      yield* sql`
+        UPDATE dispatches SET steer_taken = 1
+        WHERE id = ${dispatchOfKey(key)} AND session_id = ${session.id} AND steer_taken = 0
+      `;
+    }, Effect.orDie);
+
+    /**
+     * The engine put a delegated task's report (its result, or a notice such
+     * as its question) into a turn of another audience than the turn that
+     * delegated the task: the bot read it where it cannot answer for it, so
+     * it is brought to that turn's audience as a wake of its own, once. The
+     * turn it starts goes on with the delegating turn's work
+     * (`resultOrigin`), and a Stop that covers that work ends it before it is
+     * sent (`Wakes`); a chain no dispatch began is covered by no Stop ahead
+     * of time, as the turns the engine starts for it are not. A report whose
+     * delegating turn the server never admitted has no audience to go to.
+     */
+    const delegatedResult = Effect.fn("Observer.delegatedResult")(function* (
+      session: Watched,
+      result: DelegatedResult,
+    ) {
+      const origin = yield* turnOf(session.id, result.origin);
+      if (Option.isNone(origin)) return;
+      const audience = audienceOf(origin.value);
+      const landed = yield* turnOf(session.id, result.turnId);
+      if (Option.isSome(landed) && sameAudience(audienceOf(landed.value), audience)) return;
+      const fresh = yield* sql`
+        INSERT INTO delegated_results (session_id, engine_result_id)
+        VALUES (${session.id}, ${result.resultId})
+        ON CONFLICT DO NOTHING
+        RETURNING 1 AS n
+      `;
+      if (fresh.length === 0) return;
+      const [began] = yield* sql<{ readonly seq: number | null }>`
+        SELECT MIN(d.seq) AS seq FROM dispatches d
+        WHERE d.session_id = ${session.id}
+          AND d.engine_turn_id IN (${chains.chainSql(session.id, result.origin)})
+      `;
+      yield* wakes.record([
+        {
+          botId: session.bot_id,
+          kind: "system",
+          audience,
+          payload: { _tag: "delegated-result", origin: result.origin, text: result.text },
+          sourceEntryId: null,
+          hops: 0,
+          retryOf: null,
+          cause:
+            began?.seq === null || began?.seq === undefined
+              ? { _tag: "operator" }
+              : { _tag: "work", seq: DispatchSeq.make(began.seq) },
+        },
+      ]);
     }, Effect.orDie);
 
     /**
@@ -1239,8 +1355,9 @@ export const layer = Layer.effect(
         DateTime.isLessThan(a.finishedAt, b.finishedAt) ? -1 : 1,
       );
       for (const turn of ended) {
+        // Over: the model the session is on now is the replacement's own, below.
         if (turn.startedAt !== null)
-          yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt);
+          yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt, null);
         for (const work of turn.steps) yield* step(session, turn.turnId, work, turn.finishedAt);
         yield* finishTurn(session, {
           turnId: turn.turnId,
@@ -1255,10 +1372,11 @@ export const layer = Layer.effect(
       }
       for (const turn of event.openTurns) {
         if (turn.startedAt !== null) {
-          yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt);
+          yield* startTurn(session, turn.turnId, turn.cause, turn.startedAt, turn.model);
         } else {
           yield* queuedTurn(session, turn.turnId, turn.cause);
         }
+        for (const key of turn.takenSteers) yield* steerTaken(session, key);
         for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
         for (const call of turn.toolCalls)
           yield* toolCall(session, turn.turnId, call, true, event.at);
@@ -1312,6 +1430,10 @@ export const layer = Layer.effect(
         }
       }
       for (const speech of event.hostSpeech) yield* hostSpeech(session, speech);
+      for (const result of event.delegatedResults) yield* delegatedResult(session, result);
+      // A turn that started on an older model during the gap, and has ended
+      // since, left the session on it.
+      if (event.model !== null) yield* modelStarted(session, event.model);
       if (event.queueHeld) {
         yield* queueHeld(session, event.cursor);
       } else {
@@ -1350,11 +1472,15 @@ export const layer = Layer.effect(
         case "replaced":
           return yield* replaced(session, event);
         case "turn-started":
-          return yield* startTurn(session, event.turnId, event.cause, event.startedAt);
+          return yield* startTurn(session, event.turnId, event.cause, event.startedAt, event.model);
         case "turn-queued":
           return yield* queuedTurn(session, event.turnId, event.cause);
         case "steered":
           return yield* steered(session, event.key, event.turnId);
+        case "steer-taken":
+          return yield* steerTaken(session, event.key);
+        case "delegated-result":
+          return yield* delegatedResult(session, event.result);
         case "steer-dropped":
           return yield* steerDropped(session, event.key, event.turnId);
         case "steer-requeued":

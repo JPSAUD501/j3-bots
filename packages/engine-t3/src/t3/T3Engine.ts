@@ -3,6 +3,7 @@ import {
   type BrowserHostStatus,
   EngineStatus,
   type ModelChoice,
+  ModelId,
   PermissionMode,
   type ProviderId,
 } from "@j3-bots/contracts";
@@ -170,6 +171,7 @@ import {
   keepFetched,
   knowsDispatch,
   mirrorOf,
+  type Providers,
   nothingToStop,
   queuedRuns,
   replacement,
@@ -294,6 +296,8 @@ const decodeUploadInput = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlIn
 
 const PairingResult = Schema.Struct({ pairUrl: Schema.String });
 const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingResult));
+/** A model slug the engine names, in J3 Bots' terms; one it does not accept names none. */
+const decodeModelId = Schema.decodeUnknownOption(ModelId);
 
 const instanceSpecOf =
   (toolBridge: ToolBridge) =>
@@ -412,6 +416,25 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.provide(SecureRandom.layerWebCrypto),
   );
   const providerIds = new Set(options.providers.map((provider) => provider.id));
+  const providerOfInstance = new Map(
+    options.providers.map((provider) => [instanceIdFor(provider.id), provider.id]),
+  );
+  const echoingInstances = new Set(
+    options.providers.flatMap((provider) =>
+      provider.harness === "claude-code" ? [instanceIdFor(provider.id)] : [],
+    ),
+  );
+  /** What the adapter reads of the providers, which are the same for the engine's life. */
+  const providerReads: Providers = {
+    modelOf: (selection) => {
+      const providerId = providerOfInstance.get(selection.instanceId);
+      if (providerId === undefined) return null;
+      return Option.getOrNull(
+        Option.map(decodeModelId(selection.model), (modelId) => ({ providerId, modelId })),
+      );
+    },
+    echoesSteers: (instanceId) => echoingInstances.has(instanceId),
+  };
   /**
    * The providers as each provisioning writes them, with the executable
    * each runs now (`setHarnessExecutable`).
@@ -1849,7 +1872,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
          */
         const replace = Effect.fnUntraced(function* (history: boolean) {
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
-          const replaced = replacement(mirror, history, now, batches.toldHandoffs(input.sessionId));
+          const replaced = replacement(
+            mirror,
+            history,
+            now,
+            batches.toldHandoffs(input.sessionId),
+            providerReads,
+          );
           view = replaced.view;
           yield* emit([replaced.event]);
         });
@@ -1870,7 +1899,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               sequence = item.sequence;
               if (!applyEvent(mirror, item.event) || view === undefined) return;
               yield* digestToolCalls(mirror);
-              yield* emit(diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis)));
+              yield* emit(
+                diff(
+                  mirror,
+                  view,
+                  DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+                  providerReads,
+                ),
+              );
               return;
             }
             default:
@@ -2076,7 +2112,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               // card changes only while the approval is open and holds the item at that version.
               if (keepFetched(mirror, next.item) && view !== undefined) {
                 yield* emit(
-                  diff(mirror, view, DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+                  diff(
+                    mirror,
+                    view,
+                    DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+                    providerReads,
+                  ),
                 );
               }
               break;

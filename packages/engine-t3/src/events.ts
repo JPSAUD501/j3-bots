@@ -3,12 +3,14 @@ import {
   ApprovalEntry,
   FailureClass,
   MAX_CARD_QUESTIONS,
+  ModelChoice,
   Question,
   SecretRequestEntry,
   WorkStep,
 } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import {
+  DelegatedResultId,
   EventCursor,
   HostSpeechId,
   IdempotencyKey,
@@ -44,9 +46,11 @@ export const TurnCause = Schema.Union([
    * another client of the engine started it. Such a turn answers no dispatch.
    *
    * `origin` is the turn whose work woke the session, when the engine names
-   * it, which at `db51b67` it does only for the engine's own delegated tasks:
-   * their completion's message carries the run that delegated them
-   * (`delegatedCompletion.parentRunId`). A harness's wake (a background
+   * it, which it does only for the engine's own delegated tasks: their
+   * completion's message carries the run that delegated them
+   * (`delegatedCompletion.parentRunId`), and a notice of one, such as its
+   * question, names the task, whose `subagent` item is in that run (**Read**
+   * at `59651c1`, `DelegatedTaskQuestionReactor.ts`, L35-61). A harness's wake (a background
    * command, a monitor, a subagent) carries no run id: its notice says what
    * kind of work reported and, for a single native subagent, may name the
    * child thread it ran in (`childThreadId`), never the run that started it.
@@ -219,10 +223,14 @@ export const OpenTurn = Schema.Struct({
    * waits behind another turn of the session, or for the engine to start it.
    */
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** As on `turn-started`. */
+  model: Schema.NullOr(ModelChoice),
   /** Every step so far, in the order they started. */
   steps: Schema.Array(WorkStep),
   /** Its `j3` tool calls still in progress. */
   toolCalls: Schema.Array(ToolCall),
+  /** The `steered` dispatches it has taken so far, as `steer-taken` tells each. */
+  takenSteers: Schema.Array(IdempotencyKey),
   /**
    * Its `j3` tool calls the engine closed. A connector's call can still be
    * claimed then: Codex's record of one closes while it waits on its approval.
@@ -275,6 +283,22 @@ export const SteerSettlement = Schema.Struct({
 });
 export type SteerSettlement = typeof SteerSettlement.Type;
 
+/**
+ * A delegated task's report (its result, or a notice such as its question)
+ * the engine steered into a running turn other than the one that delegated
+ * the task, and that turn ended with, as `delegated-result` carries it.
+ */
+export const DelegatedResult = Schema.Struct({
+  resultId: DelegatedResultId,
+  /** The turn the engine put it in. */
+  turnId: TurnId,
+  /** The turn whose `delegate_task` call started the work. */
+  origin: TurnId,
+  /** What the engine told the turn, as it wrote it. */
+  text: Schema.String,
+});
+export type DelegatedResult = typeof DelegatedResult.Type;
+
 const at = { cursor: EventCursor, at: Schema.DateTimeUtc };
 
 /**
@@ -306,8 +330,15 @@ export const SessionEvent = Schema.Union([
    *   with its resolution, and may repeat ones already applied;
    * - `steers` is how every steer settled on the ended turns listed, read or
    *   dropped. A steer of an open turn is not listed: it settles when that turn
-   *   ends. One that was requeued shows as its follow-up turn, with the
-   *   dispatch as its cause;
+   *   ends, and shows in the turn's `takenSteers` once taken. One that was
+   *   requeued shows as its follow-up turn, with the dispatch as its cause;
+   * - `delegatedResults` is at least every `delegated-result` after the
+   *   cursor, and may repeat ones already applied (by `resultId`);
+   * - `model` is the session's model as the engine holds it now: the model
+   *   of the last turn it started, since it moves the session's selection to
+   *   each turn's as the turn starts (**Read** at `59651c1`, `Orchestrator.ts`,
+   *   `startNextQueuedRun`, L3191). `null` on an instance J3 Bots did not set
+   *   up;
    * - `queueHeld` says the session's queue is held now. If it is, this event
    *   stands for the hold, as a `queue-held` would, and its cursor is the
    *   hold's.
@@ -328,6 +359,8 @@ export const SessionEvent = Schema.Union([
       }),
     ),
     steers: Schema.Array(SteerSettlement),
+    delegatedResults: Schema.Array(DelegatedResult),
+    model: Schema.NullOr(ModelChoice),
     queueHeld: Schema.Boolean,
   }),
   /**
@@ -344,6 +377,15 @@ export const SessionEvent = Schema.Union([
      * the event was sent, which a replay after a reconnect puts later.
      */
     startedAt: Schema.DateTimeUtc,
+    /**
+     * The model the turn runs on, as the engine started it; null for one
+     * J3 Bots has no provider for. It need not be the session's latest
+     * model: the engine starts a waiting turn on the model it was queued
+     * with, an unread steer it requeued included, and moves the session back
+     * to it (**Read** at `59651c1`, `Orchestrator.ts`, `requeueUnreadSteers`
+     * and `startNextQueuedRun`).
+     */
+    model: Schema.NullOr(ModelChoice),
   }),
   /**
    * The engine queued a start behind another turn: it has the turn, which has
@@ -378,6 +420,24 @@ export const SessionEvent = Schema.Union([
    */
   Schema.TaggedStruct("steered", { ...at, key: IdempotencyKey, turnId: TurnId }),
   /**
+   * The steered turn took the steer while it runs: the engine's record of
+   * the steer in the turn is no longer waiting for the provider, so the
+   * engine will not run it as a turn of its own (`requeueUnreadSteers`
+   * requeues only a steer still waiting). Sent at most once per steer,
+   * before the turn's `turn-finished`, and only while the turn runs; the
+   * steer then settles as `steered`, or `steer-dropped` if a Stop cancelled
+   * its record first. The engine records the steer as handed over before
+   * the provider has it (**Read** at `59651c1`, `Orchestrator.ts`,
+   * L6442-6470). On Claude Code the record then waits until Claude echoes
+   * the steer as it starts on it, or offering it failed, so a steer there is
+   * taken only once its record has waited and moved on; Codex acknowledges
+   * it when it is sent, so there the first record counts (`ClaudeAdapterV2.ts`
+   * L14061, L9366 and L14069; `CodexAdapterV2.ts`). A steer kept aside until
+   * its target's provider turn starts is taken, if at all, once the engine
+   * steered it in.
+   */
+  Schema.TaggedStruct("steer-taken", { ...at, key: IdempotencyKey, turnId: TurnId }),
+  /**
    * `stop` ended the steered turn before the agent took the message. It was not
    * delivered and will not be; the engine shows the operator a notice of its
    * own in that turn.
@@ -394,6 +454,21 @@ export const SessionEvent = Schema.Union([
     turnId: TurnId,
     followUpTurnId: TurnId,
   }),
+  /**
+   * The engine steered a delegated task's report into a running turn other
+   * than the one that delegated the task. It does so whenever a turn of the
+   * session runs as the task ends or asks, whichever turn delegated it, on Codex and,
+   * since `0.1.11`, on Claude Code; only with no turn running does it start
+   * a turn that names the turn that delegated it, which is a `background`
+   * turn with that `origin` (**Read** at `59651c1`, `Orchestrator.ts`,
+   * L7631-7673). Sent once per result, by `resultId`, once the turn it
+   * landed in has ended with it, after that turn's `turn-finished`: the turn
+   * reads it all the same. A report whose hand-over failed, which the
+   * engine runs as a turn of its own, is not sent: that turn is a
+   * `background` turn whose `origin` is the delegating turn (**Read** at
+   * `59651c1`, `EffectWorker.ts` L362-420).
+   */
+  Schema.TaggedStruct("delegated-result", { ...at, result: DelegatedResult }),
   /**
    * A step was added or changed. Steps replace by id; the latest running step is
    * what the bot is doing right now.

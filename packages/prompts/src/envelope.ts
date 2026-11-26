@@ -271,6 +271,15 @@ export type SystemEvent =
     }
   | { readonly name: "undelivered" }
   | {
+      readonly name: "delegated-result";
+      /**
+       * What the host told of a task the bot delegated in an earlier turn for
+       * this conversation (its result, or a notice such as its question),
+       * which reached the bot in a turn for another one.
+       */
+      readonly text: string;
+    }
+  | {
       readonly name: "browser-help";
       /**
        * How the step the bot asked for in its browser ended: the operator did
@@ -412,6 +421,8 @@ const eventLine = (event: SystemEvent): string => {
       return PROFILE_CHANGED_LINE;
     case "undelivered":
       return "Your last turn for your user ended without delivering an answer.";
+    case "delegated-result":
+      return "A task you delegated from here reported while you were working for another conversation, so its report, below, reached you there. It belongs here: act on it here, as on any report of a delegated task. A result goes to those who asked for the work, in a `say` with `done: true`.";
     case "browser-help":
       return BROWSER_HELP_LINES[event.outcome];
     case "secret-ask":
@@ -771,6 +782,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         w.empty("browser-tab", [["site", event.site]]);
       }
       if (event.name === "secret-ask") w.empty("secret", [["reference", event.reference]]);
+      if (event.name === "delegated-result") w.data([["source", "delegated-task"]], event.text);
       return;
     }
   }

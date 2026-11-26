@@ -51,6 +51,7 @@ import Migration0045 from "./migrations/0045_requested_openings.ts";
 import Migration0046 from "./migrations/0046_refusal_engine_start.ts";
 import Migration0047 from "./migrations/0047_browser_help_pushes.ts";
 import Migration0048 from "./migrations/0048_stop_reach.ts";
+import Migration0049 from "./migrations/0049_engine_edges.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -103,6 +104,7 @@ const migrations = SqliteMigrator.fromRecord({
   "46_refusal_engine_start": Migration0046,
   "47_browser_help_pushes": Migration0047,
   "48_stop_reach": Migration0048,
+  "49_engine_edges": Migration0049,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

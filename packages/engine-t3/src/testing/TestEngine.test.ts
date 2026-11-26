@@ -173,36 +173,44 @@ describe("TestEngine", () => {
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 
-  it.effect("settles a steer the turn took once the turn ends, and makes a late one a turn", () =>
-    Effect.gen(function* () {
-      const engine = yield* Engine;
-      const control = yield* TestEngine.TestEngineControl;
-      const sessionId = yield* openSession;
-      const [first] = yield* take(sessionId, null, 1);
-      const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
+  it.effect(
+    "tells a steer taken at once, settles it once the turn ends, and makes a late one a turn",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const control = yield* TestEngine.TestEngineControl;
+        const sessionId = yield* openSession;
+        const [first] = yield* take(sessionId, null, 1);
+        const turnId = turnOf(yield* engine.dispatch({ ...start("dispatch-1"), sessionId }));
 
-      assert.deepStrictEqual(
-        yield* engine.dispatch({ ...steer("dispatch-2", turnId), sessionId }),
-        { _tag: "steered", turnId },
-      );
-      yield* control.readSteers({ sessionId, turnId });
-      yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "completed" } });
-      const late = yield* engine.dispatch({ ...steer("dispatch-3", turnId), sessionId });
+        assert.deepStrictEqual(
+          yield* engine.dispatch({ ...steer("dispatch-2", turnId), sessionId }),
+          { _tag: "steered", turnId },
+        );
+        yield* control.readSteers({ sessionId, turnId });
+        yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "completed" } });
+        const late = yield* engine.dispatch({ ...steer("dispatch-3", turnId), sessionId });
 
-      assert.strictEqual(late._tag, "new-turn");
-      const events = yield* take(sessionId, cursorOf(first), 4);
-      assert.deepStrictEqual(tags(events), [
-        "turn-started",
-        "turn-finished",
-        "steered",
-        "turn-started",
-      ]);
-      const settled = [...events][2];
-      assert.deepStrictEqual(settled?._tag === "steered" && [settled.key, settled.turnId], [
-        key("dispatch-2"),
-        turnId,
-      ]);
-    }).pipe(Effect.provide(TestEngine.layer)),
+        assert.strictEqual(late._tag, "new-turn");
+        const events = yield* take(sessionId, cursorOf(first), 5);
+        assert.deepStrictEqual(tags(events), [
+          "turn-started",
+          "steer-taken",
+          "turn-finished",
+          "steered",
+          "turn-started",
+        ]);
+        const taken = [...events][1];
+        assert.deepStrictEqual(taken?._tag === "steer-taken" && [taken.key, taken.turnId], [
+          key("dispatch-2"),
+          turnId,
+        ]);
+        const settled = [...events][3];
+        assert.deepStrictEqual(settled?._tag === "steered" && [settled.key, settled.turnId], [
+          key("dispatch-2"),
+          turnId,
+        ]);
+      }).pipe(Effect.provide(TestEngine.layer)),
   );
 
   it.effect("requeues a steer the turn never took as a follow-up turn of the same dispatch", () =>
