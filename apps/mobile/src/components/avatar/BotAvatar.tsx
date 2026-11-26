@@ -141,6 +141,8 @@ function level(n: number): number {
 const LIST_SIZE = 44;
 /** How long an avatar takes to show as its entrance begins, in ms: it fades in as it starts to fall. */
 const ENTRANCE_FADE = 140;
+/** How long an avatar with an entrance waits for a frame to draw it falling before it simply shows, in ms. */
+const ENTRANCE_WAIT = 500;
 /** How far from an avatar's centre a finger still lands on it, in its own widths. */
 const ON_IT = 0.6;
 
@@ -425,8 +427,10 @@ function MovingAvatar({
   const box = useAnimatedRef<Animated.View>();
   // Whether a finger that landed on it holds it down.
   const pressed = useSharedValue(false);
-  // An avatar with an entrance is not there until it starts to fall.
+  // An avatar with an entrance is not there until it starts to fall: `entered` once its
+  // entrance was asked for, and shown by the first frame that draws it in the air.
   const shown = useSharedValue(entrance === false ? 1 : 0);
+  const entered = useSharedValue(false);
   const visible = useContext(Visible);
   const held = useContext(Held);
   const focused = useScreenFocused();
@@ -476,26 +480,33 @@ function MovingAvatar({
     owed.set(0);
     sim.set(next);
     face.set(avatarFace(next));
+    if (entered.get() && shown.get() === 0) shown.set(withTiming(1, { duration: ENTRANCE_FADE }));
   }, false);
 
-  // Its entrance, once, as it first shows. Under reduced motion no frame runs, so it is simply
-  // there in its still form, and Reanimated shows it at once.
+  // Its entrance, once, as it first shows. It appears with the first frame that draws it
+  // falling, so it is never seen standing in its place first. Where no frame comes, off screen,
+  // over the cap or under reduced motion, it is simply there a moment later, in its still form.
   const entranceAt = useRef(entrance);
   useEffect(() => {
     const due = entranceAt.current;
     if (due === false) return;
-    const enter = setTimeout(
-      () => {
-        sim.modify((current) => {
-          "worklet";
-          return pokeAvatar(current, size < LIST_SIZE ? "drop" : "arrive");
-        });
-        shown.set(withTiming(1, { duration: ENTRANCE_FADE }));
-      },
-      due === true ? 0 : due.delay,
+    const delay = due === true ? 0 : due.delay;
+    const enter = setTimeout(() => {
+      sim.modify((current) => {
+        "worklet";
+        return pokeAvatar(current, size < LIST_SIZE ? "drop" : "arrive");
+      });
+      entered.set(true);
+    }, delay);
+    const anyway = setTimeout(
+      () => shown.set(withTiming(1, { duration: ENTRANCE_FADE })),
+      delay + ENTRANCE_WAIT,
     );
-    return () => clearTimeout(enter);
-  }, [sim, shown, size]);
+    return () => {
+      clearTimeout(enter);
+      clearTimeout(anyway);
+    };
+  }, [sim, shown, entered, size]);
   const appearing = useAnimatedStyle(() => ({ opacity: shown.get() }));
 
   useEffect(() => {
