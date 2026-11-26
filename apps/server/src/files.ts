@@ -5,10 +5,13 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
+import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 
 // A file the server writes is never seen half-written: its contents go to a
 // new file beside it first, which then takes its name. A full disk or a crash
 // leaves at most that temporary file, never a partial one at the name.
+// Windows refuses that rename while another program, such as a scanner
+// looking at the new file, holds one of the two: it is tried again a while.
 
 /** Random bytes in a temporary file's name: never guessed ahead of the write. */
 const TEMPORARY_NAME_BYTES = 12;
@@ -58,6 +61,10 @@ export const removeLeftovers = Effect.fn("files.removeLeftovers")(function* (fol
   }
 });
 
+/** Renames `from` to `to`, tried again while Windows says another program holds either (`whileHeld`). */
+const renamePatiently = (fs: FileSystem.FileSystem, from: string, to: string) =>
+  whileHeld(fs.rename(from, to), { platform: process.platform, codeOf: platformErrorCode });
+
 /** Replaces `file` with `data`, whole. A link at `file` itself is replaced, not followed. */
 export const replaceFile = Effect.fn("files.replaceFile")(function* (
   file: string,
@@ -65,7 +72,7 @@ export const replaceFile = Effect.fn("files.replaceFile")(function* (
   mode: number,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  yield* writeBeside(file, data, mode, (temporary) => fs.rename(temporary, file));
+  yield* writeBeside(file, data, mode, (temporary) => renamePatiently(fs, temporary, file));
 });
 
 /**
@@ -106,7 +113,7 @@ export const replaceFileDurably = Effect.fn("files.replaceFileDurably")(function
   const path = yield* Path.Path;
   yield* writeBeside(file, data, mode, (temporary) =>
     flushFile(temporary).pipe(
-      Effect.andThen(fs.rename(temporary, file)),
+      Effect.andThen(renamePatiently(fs, temporary, file)),
       Effect.andThen(flushFolder(path.dirname(file))),
       Effect.provideService(FileSystem.FileSystem, fs),
     ),

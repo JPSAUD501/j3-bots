@@ -12,7 +12,6 @@ import {
   SignInHarness as SignInHarnessSchema,
 } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
-import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -362,19 +361,12 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
               }),
             );
           if (!taken) return { _tag: "waiting" } as const;
-          // The write ends in a rename over the file, which Windows refuses
-          // while another program holds it, as it may just after the write.
-          yield* whileHeld(
-            currentText(copy).pipe(
-              // An installed copy always encodes: a failure is a defect.
-              Effect.orDie,
-              Effect.flatMap((text) => files.writeFile(layout.current, text)),
-            ),
-            {
-              platform: options.platform,
-              codeOf: (error) => (renameRefused(error) ? platformErrorCode(error) : null),
-            },
-          ).pipe(
+          yield* currentText(copy).pipe(
+            // An installed copy always encodes: a failure is a defect.
+            Effect.orDie,
+            Effect.flatMap((text) => files.writeFile(layout.current, text)),
+            // The write ends in a rename over the file, which Windows refuses
+            // while another program holds it; it was tried again a while.
             Effect.catch((error) => fileFailed(options.platform, renameRefused(error))(error)),
             Effect.tapError(() => putBack),
           );
