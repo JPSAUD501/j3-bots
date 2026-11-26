@@ -213,8 +213,14 @@ export function Onboarding({
   const name = typed ?? fallbackName;
   const [look, setLook] = useState<AvatarChoice>(saved?.look ?? avatarCast[0]);
   const [failure, setFailure] = useState<Failure | null>(null);
+  // Where it starts: the welcome, or the step this phone left it at.
+  const [started] = useState<OnboardingStep>(() =>
+    saved === null ? "welcome" : resumedStep(saved.step, { connect: showsConnect(engine, false) }),
+  );
   // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
-  const [connectShown, setConnectShown] = useState(false);
+  // Starting on it counts, so a provider that connects while the operator reads it does not
+  // take the step, its dot and the way Back away under them.
+  const [connectShown, setConnectShown] = useState(started === "connect");
   // Whether the bot exists: the arrival names it only then.
   const [created, setCreated] = useState(false);
   const flow: OnboardingFlow = {
@@ -223,7 +229,7 @@ export function Onboarding({
   const [view, setView] = useState<{
     readonly step: OnboardingStep;
     readonly move: number;
-  }>(() => ({ step: saved === null ? "welcome" : resumedStep(saved.step, flow), move: 0 }));
+  }>({ step: started, move: 0 });
   const { step } = view;
   const botName = name.trim() === "" ? fallbackName : name.trim();
   // The bot being made, which answers what the operator does.

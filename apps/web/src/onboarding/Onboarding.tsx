@@ -127,8 +127,18 @@ export function Onboarding({
   const [typed, setTyped] = useState<string | null>(saved?.name ?? null);
   const name = typed ?? fallbackName;
   const [look, setLook] = useState<AvatarChoice>(saved?.look ?? avatarCast[0]);
+  // Where it starts: the step given, the welcome, or the step this browser left it at.
+  const [started] = useState<OnboardingStep>(
+    () =>
+      initialStep ??
+      (saved === null
+        ? "welcome"
+        : resumedStep(saved.step, { connect: showsConnect(engine, false) })),
+  );
   // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
-  const [connectShown, setConnectShown] = useState(initialStep === "connect");
+  // Starting on it counts, so a provider that connects while the operator reads it does not
+  // take the step, its dot and the way Back away under them.
+  const [connectShown, setConnectShown] = useState(started === "connect");
   const flow: OnboardingFlow = {
     connect: showsConnect(engine, connectShown),
   };
@@ -139,7 +149,7 @@ export function Onboarding({
     /** Counts moves, so each one's layers are new. */
     readonly move: number;
   }>(() => ({
-    step: initialStep ?? (saved === null ? "welcome" : resumedStep(saved.step, flow)),
+    step: started,
     leaving: null,
     move: 0,
   }));
