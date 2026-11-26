@@ -254,6 +254,8 @@ interface Controller {
 
 /** Under this size, in px, an avatar is at list size: its entrance comes from just above its row. */
 const LIST_SIZE = 44;
+/** How long an avatar that was asked to answer something moves before those that only idle, in ms. */
+const ASKED_FOR = 1500;
 /** How long an avatar takes to show as its entrance begins, in ms: it fades in as it starts to fall. */
 const ENTRANCE_FADE = 140;
 
@@ -284,10 +286,13 @@ function mountAvatar(
     !reducedMotion() &&
     (!live.still || avatarBusy(sim));
   const drawStill = () => draw(stillFace(live.state, sim.traits, live.stalled));
+  // Until when it answers something it was asked: over the cap, it moves before the idle ones.
+  let asked = 0;
   const running = animate(
     {
       size,
       moving,
+      urgent: () => performance.now() < asked,
       measure: () => svg.getBoundingClientRect(),
       step: (dt, near) => {
         sim = stepAvatar(sim, dt, near);
@@ -302,6 +307,7 @@ function mountAvatar(
     // A still avatar is in a quiet place: it comes in when it is new, and answers nothing else.
     if (live.still && how !== "arrive" && how !== "drop") return;
     sim = pokeAvatar(sim, how);
+    asked = performance.now() + ASKED_FOR;
     nudge();
   };
   let waiting = 0;

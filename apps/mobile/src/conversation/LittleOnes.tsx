@@ -90,7 +90,20 @@ interface LittleOnesProps {
   readonly avatar: Avatar;
   /** The bot's face beside the turn, which answers as they come and go. */
   readonly face: RefObject<AvatarHandle | null>;
+  /**
+   * The family starts as this mounts, as when a room's member first splits:
+   * its little ones come out of the bot. Without it, the ones already at work
+   * as this mounts are simply there, as when a conversation opens on them.
+   */
+  readonly born?: boolean;
 }
+
+/**
+ * How long a family that may move waits for a frame to step it before its
+ * little ones are simply where they were going, in ms: over the cap of what
+ * moves at once, or with the app behind another, no frame comes.
+ */
+const FRAME_WAIT = 400;
 
 /**
  * A bot's little ones, under its face, as on the web: the small copies of
@@ -106,7 +119,7 @@ interface LittleOnesProps {
  * motion. Where it does not move, the little ones are simply at their lines,
  * and one that ends is simply gone.
  */
-export function LittleOnes({ littleOnes, live, avatar, face }: LittleOnesProps) {
+export function LittleOnes({ littleOnes, live, avatar, face, born = false }: LittleOnesProps) {
   const { plural } = useI18n();
   const { shape, color } = resolveAvatar(avatar);
   const theme = useUniwind().theme === "dark" ? "dark" : "light";
@@ -117,7 +130,8 @@ export function LittleOnes({ littleOnes, live, avatar, face }: LittleOnesProps) 
   const failedKey = shown.failed.join("\n");
   const more = shown.more > 0;
 
-  const [initial] = useState(() => createLitter(working, more, PLACE));
+  // One that starts now starts empty, and is told who works right after.
+  const [initial] = useState(() => createLitter(born ? [] : working, !born && more, PLACE));
   const sim = useSharedValue(initial);
   // Whether the family is drawn still: until a frame steps it, and wherever none does.
   const still = useSharedValue(true);
@@ -184,6 +198,8 @@ export function LittleOnes({ littleOnes, live, avatar, face }: LittleOnesProps) 
   useEffect(() => {
     const joined = join({
       size: SIZE,
+      // Small as its little ones are, a family is the turn at work: it moves before idle avatars.
+      urgent: true,
       run: (on) => {
         frames.setActive(on);
         setRunning(on);
@@ -197,37 +213,46 @@ export function LittleOnes({ littleOnes, live, avatar, face }: LittleOnesProps) 
     };
   }, [frames]);
 
-  // Who works now. Where nothing steps the family, everyone is where they were going at once;
+  // Who works now. Where the family cannot move, everyone is where they were going at once;
   // reduced motion keeps one that failed, grey at its line, and lets it go a moment later.
+  // Whether it can is this render's own knowledge, never the scheduler's answer, which comes a
+  // tick later: the first little ones of a turn wait their turn to come out until a frame steps
+  // them.
+  const canMove = wants && !reduced;
   useEffect(() => {
     const now = key === "" ? [] : key.split("\n");
     const failed = failedKey === "" ? [] : failedKey.split("\n");
-    const moving = running && !reduced;
     sim.modify((current) => {
       "worklet";
-      const next = live ? syncLitter(current, now, failed, more, PLACE) : dismissLitter(current);
-      if (moving) {
+      const next = live
+        ? syncLitter(current, now, failed, more, PLACE)
+        : dismissLitter(current, false);
+      if (canMove) {
         const pokes = litterPokes(current, next);
         if (pokes.length > 0) scheduleOnRN(poke, pokes);
       }
-      const drawn = moving ? next : settleLitter(next, PLACE, reduced);
-      if (drawn.ones.length !== current.ones.length) {
-        scheduleOnRN(left, drawn.ones.map((one) => one.id).join("\n"));
-      }
+      const drawn = canMove ? next : settleLitter(next, PLACE, reduced);
+      scheduleOnRN(left, drawn.ones.map((one) => one.id).join("\n"));
       return drawn;
     });
-    if (!moving) still.set(true);
-    if (!reduced || failed.length === 0) return;
-    const timer = setTimeout(() => {
+    if (!canMove) still.set(true);
+    /** Everyone where they were going at once, and React told who is left. */
+    const settle = () => {
       sim.modify((current) => {
         "worklet";
         const drawn = settleLitter(current, PLACE, false);
         scheduleOnRN(left, drawn.ones.map((one) => one.id).join("\n"));
         return drawn;
       });
-    }, litter.failed * 1000);
-    return () => clearTimeout(timer);
-  }, [key, failedKey, more, live, running, reduced, sim, still, poke, left]);
+      still.set(true);
+    };
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    if (reduced && failed.length > 0) timers.push(setTimeout(settle, litter.failed * 1000));
+    // A family that may move and that no frame steps is simply there a moment later. The
+    // scheduler's answer restarts the wait: it comes a tick after the first little ones.
+    if (canMove && !running) timers.push(setTimeout(settle, FRAME_WAIT));
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  }, [key, failedKey, more, live, canMove, running, reduced, sim, still, poke, left]);
 
   const [open, setOpen] = useState<{ readonly one: LittleOne; readonly anchor: Anchor } | null>(
     null,
@@ -235,9 +260,13 @@ export function LittleOnes({ littleOnes, live, avatar, face }: LittleOnesProps) 
   const block = useAnimatedStyle(() => ({ height: Math.max(0, sim.get().height.x) }));
   const strand = useDerivedValue(() => (still.get() ? "" : litterStrands(sim.get(), PLACE)));
   const strandProps = useAnimatedProps(() => ({ d: strand.get() }));
+  // Read through values that change only when the answer does, so the spring under the count
+  // starts when the lines change and not on every frame.
+  const lines = useDerivedValue(() => litterLines(sim.get()));
+  const counted = useDerivedValue(() => sim.get().more);
   const count = useAnimatedStyle(() => ({
-    transform: [{ translateY: withSpring(litterLines(sim.get()) * PLACE.row, slide) }],
-    opacity: withTiming(sim.get().more ? 1 : 0, { duration: 200 }),
+    transform: [{ translateY: withSpring(lines.get() * PLACE.row, slide) }],
+    opacity: withTiming(counted.get() ? 1 : 0, { duration: 200 }),
   }));
   const bot = avatarBodyColor(color, theme, false);
   const paint = littleColors(color, theme, false);
@@ -360,8 +389,10 @@ function LittleRow({
       ],
     };
   });
+  // Its words come and go once, when the answer changes, not on every frame the family moves.
+  const worded = useDerivedValue(() => spot.get()?.words === true);
   const words = useAnimatedStyle(() => {
-    const shown = spot.get()?.words === true;
+    const shown = worded.get();
     return {
       opacity: shown
         ? withSpring(1, soft)

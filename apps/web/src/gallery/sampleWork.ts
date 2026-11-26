@@ -149,3 +149,21 @@ export const playedTurn: ReadonlyArray<PlayedBeat> = [
     doing: "",
   },
 ];
+
+/** One beat of the room the gallery plays: a member's work from `at` ms on, null once its turn there is over. */
+export interface PlayedRoomBeat {
+  readonly at: number;
+  readonly work: TurnWork | null;
+}
+
+/**
+ * A member's turn in a room, played whole, with no plan: it splits into two
+ * little ones, one does its part, the other fails, and its turn ends.
+ */
+export const playedRoom: ReadonlyArray<PlayedRoomBeat> = [
+  { at: 0, work: null },
+  { at: 900, work: { plan: null, littleOnes: sampleLittleOnes(["working", "working"]) } },
+  { at: 4600, work: { plan: null, littleOnes: sampleLittleOnes(["done", "working"]) } },
+  { at: 6400, work: { plan: null, littleOnes: sampleLittleOnes(["done", "failed"]) } },
+  { at: 10_500, work: null },
+];

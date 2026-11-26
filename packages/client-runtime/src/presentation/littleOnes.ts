@@ -502,11 +502,20 @@ export function syncLitter(
 
 /**
  * `sim` once the turn is over: the bot's face has left the turn's row, so its
- * family goes with it, at once, and the block closes behind them on `slide`.
+ * family goes with it, at once. The block closes behind them on `slide`, or,
+ * `shut`, is closed at once, where what holds it plays the change of height
+ * itself.
  */
-export function dismissLitter(sim: LitterSim): LitterSim {
+export function dismissLitter(sim: LitterSim, shut: boolean): LitterSim {
   "worklet";
-  return { ...sim, ones: [], heightTo: 0, more: false, nextPop: sim.time };
+  return {
+    ...sim,
+    ones: [],
+    height: shut ? { x: 0, v: 0 } : sim.height,
+    heightTo: 0,
+    more: false,
+    nextPop: sim.time,
+  };
 }
 
 /** `sim` with the little one `id` perked up: the pointer came over it, or a finger. */
@@ -815,7 +824,8 @@ export function litterPokes(before: LitterSim, after: LitterSim): ReadonlyArray<
 /**
  * Whether something of `sim` travels: one on its way out or home, a line
  * closing up, the block making room. A renderer draws every frame meanwhile;
- * little ones that only bob at their lines can do with fewer.
+ * little ones that only bob at their lines, or stand grey there, can do with
+ * fewer.
  */
 export function litterTravels(sim: LitterSim): boolean {
   "worklet";

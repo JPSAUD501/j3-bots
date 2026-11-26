@@ -24,7 +24,7 @@ import { type AvatarShapeName, litter, resolveAvatar } from "@j3-bots/design-tok
 import * as DateTime from "effect/DateTime";
 import { useLittleRows } from "@j3-bots/client-runtime/react";
 import { littleOneText } from "@j3-bots/client-runtime/wording";
-import { type CSSProperties, type RefObject, useEffect, useRef } from "react";
+import { type CSSProperties, type RefObject, useEffect, useLayoutEffect, useRef } from "react";
 import { useSeconds } from "../app/clock";
 import { useI18n } from "../app/context";
 import { type AvatarHandle, AvatarParts, AVATAR_VIEW_BOX, painter } from "./avatar/BotAvatar";
@@ -173,6 +173,8 @@ function mountLitter(
       },
       still: settle,
       everyFrame: () => litterTravels(sim),
+      // Small as its little ones are, a family is the turn at work: it moves before idle avatars.
+      urgent: () => true,
     },
     root,
   );
@@ -205,9 +207,11 @@ function mountLitter(
       changed(before);
     },
     dismiss: () => {
-      const before = sim;
-      sim = dismissLitter(sim);
-      changed(before);
+      // The row plays the change of its own height as it folds, so the block is shut at once,
+      // and written now: the row measures itself before the next frame.
+      sim = dismissLitter(sim, true);
+      draw(true);
+      report();
     },
     perk: (id) => {
       if (reducedMotion()) return;
@@ -232,6 +236,12 @@ interface LittleOnesProps {
   readonly face: RefObject<AvatarHandle | null>;
   /** The element that frames that face: the little ones come out from under it. */
   readonly anchor: RefObject<HTMLElement | null>;
+  /**
+   * The family starts as this mounts, as when a room's member first splits:
+   * its little ones come out of the bot. Without it, the ones already at work
+   * as this mounts are simply there, as when a conversation opens on them.
+   */
+  readonly born?: boolean;
 }
 
 /**
@@ -247,7 +257,14 @@ interface LittleOnesProps {
  * component moves anything. Under reduced motion they appear by their lines
  * and leave, with no travel.
  */
-export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOnesProps) {
+export function LittleOnes({
+  littleOnes,
+  live,
+  avatar,
+  face,
+  anchor,
+  born = false,
+}: LittleOnesProps) {
   const { plural } = useI18n();
   const { shape, color } = resolveAvatar(avatar);
   // The ones that no longer work stay drawn until the family says they are home.
@@ -269,9 +286,10 @@ export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOne
     const path = strand.current;
     const line = count.current;
     if (element === null || path === null || line === null) return;
-    // A family there as the conversation opens is simply there: nothing plays for it.
+    // A family there as the conversation opens is simply there: nothing plays for it. One that
+    // starts now starts empty, and is told who works right after.
     const { working, more: counted } = latest.current;
-    const mounted = mountLitter(element, path, line, working, counted, {
+    const mounted = mountLitter(element, path, line, born ? [] : working, !born && counted, {
       shape: () => latest.current.shape,
       anchor: () => anchor.current,
       poke: (poke) => face.current?.poke(poke),
@@ -282,7 +300,7 @@ export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOne
       mounted.stop();
       controller.current = null;
     };
-  }, [anchor, face, held]);
+  }, [anchor, face, held, born]);
 
   const failedKey = shown.failed.join("\n");
   useEffect(() => {
@@ -290,8 +308,11 @@ export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOne
     latest.current = { shape, working, more };
     if (live)
       controller.current?.sync(working, failedKey === "" ? [] : failedKey.split("\n"), more);
-    else controller.current?.dismiss();
   }, [key, failedKey, more, live, shape]);
+  // The turn is over: the family goes before the row measures the height it folds to.
+  useLayoutEffect(() => {
+    if (!live) controller.current?.dismiss();
+  }, [live]);
 
   const colors = {
     "--avatar-body": `var(--bot-little-${color})`,

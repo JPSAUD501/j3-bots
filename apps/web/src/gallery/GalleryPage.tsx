@@ -188,7 +188,14 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
-import { longPlan, playedTurn, sampleLittleOnes, samplePlan, unnamedLittleOne } from "./sampleWork";
+import {
+  longPlan,
+  playedRoom,
+  playedTurn,
+  sampleLittleOnes,
+  samplePlan,
+  unnamedLittleOne,
+} from "./sampleWork";
 import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import {
   connectorsHolder,
@@ -1709,6 +1716,45 @@ function PlayedOnce() {
   );
 }
 
+/**
+ * A member's turn in a room played whole, with no plan: its place arrives as
+ * it splits into two, one does its part, the other fails, and its place goes
+ * once the last is home. Replay starts it again.
+ */
+function PlayedRoom() {
+  const [run, setRun] = useState(0);
+  return (
+    <div className="flex min-h-48 max-w-(--layout-text-column) flex-col items-start gap-2">
+      <Button variant="outline" size="sm" onClick={() => setRun(run + 1)}>
+        Replay
+      </Button>
+      <PlayedRoomOnce key={run} />
+    </div>
+  );
+}
+
+function PlayedRoomOnce() {
+  const [beat, setBeat] = useState(0);
+  useEffect(() => {
+    const timers = playedRoom.map((played, index) =>
+      window.setTimeout(() => setBeat(index), played.at),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, []);
+  const work = playedRoom[beat]?.work ?? null;
+  const room = {
+    ...team.room,
+    answering: [ids.juniper],
+    memberWork: work === null ? [] : [{ botId: ids.juniper, work }],
+  };
+  return (
+    <div className="flex w-full flex-col">
+      <RoomWork room={room} />
+      <AnsweringLine room={room} />
+    </div>
+  );
+}
+
 function PlanAndLittleOnesSection() {
   const none = sampleLittleOnes([]);
   const turn = (id: string, work: TurnWork, live = true) => (
@@ -1779,6 +1825,9 @@ function PlanAndLittleOnesSection() {
           />
           <AnsweringLine room={team.room} />
         </div>
+      </Labeled>
+      <Labeled label="A member's turn in a room played whole, with no plan: it splits into two, one does its part, one fails, and its place goes once the last is home">
+        <PlayedRoom />
       </Labeled>
       <Labeled label="In the roster: a dot by the avatar for each little one at work, four at most">
         <ul className="flex w-(--layout-roster-width) max-w-full flex-col gap-px rounded-md bg-sidebar p-2">

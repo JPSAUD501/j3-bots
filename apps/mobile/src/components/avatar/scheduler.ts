@@ -6,8 +6,8 @@
  * - none while the app is not in the foreground;
  * - none that is off screen, under reduced motion, still or stalled: those
  *   say they do not want to move;
- * - at most `MAX_MOVING` at once, the largest first; the others hold their
- *   still form until one stops.
+ * - at most `MAX_MOVING` at once: what is `urgent` first, then the largest;
+ *   the others hold their still form until one stops.
  */
 import { AppState, type NativeEventSubscription } from "react-native";
 
@@ -20,6 +20,11 @@ export interface Mover {
   readonly size: number;
   /** Starts or stops its frame callback; stopped, it draws its still form. */
   readonly run: (on: boolean) => void;
+  /**
+   * It is something happening, not something idling, as a bot's little ones
+   * are: under the cap it moves before the avatars, whatever its size.
+   */
+  readonly urgent?: boolean;
 }
 
 interface Entry {
@@ -40,7 +45,12 @@ function reschedule() {
   const chosen = new Set(
     [...entries]
       .filter((entry) => entry.wants && foreground)
-      .sort((a, b) => b.mover.size - a.mover.size || a.order - b.order)
+      .sort(
+        (a, b) =>
+          Number(b.mover.urgent === true) - Number(a.mover.urgent === true) ||
+          b.mover.size - a.mover.size ||
+          a.order - b.order,
+      )
       .slice(0, MAX_MOVING),
   );
   for (const entry of entries) {

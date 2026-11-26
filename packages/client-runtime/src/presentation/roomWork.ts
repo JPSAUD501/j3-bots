@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, Room, TurnWork } from "@j3-bots/contracts";
+import { litter } from "@j3-bots/design-tokens";
 import { shownLittleOnes, shownPlan } from "./turnWork.ts";
+
+/**
+ * How long a member's place at the end of a room stays once its turn has
+ * nothing left to show, in ms: long enough for its last little one to stand
+ * grey, if it failed, and get home.
+ */
+export const MEMBER_WORK_LINGER = (litter.failed + litter.failedDuck + 0.6) * 1000;
 
 /**
  * Whether a turn's work has something to draw now: a plan that shows as one,

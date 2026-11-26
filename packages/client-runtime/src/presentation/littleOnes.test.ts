@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { at } from "../../test/fixtures.ts";
 import {
   createLitter,
+  dismissLitter,
   drawnLittleOnes,
   type LitterPlace,
   litterPokes,
@@ -227,6 +228,25 @@ describe("one that ends", () => {
     const watching = run(leaving, 0.4).sim;
     const a = watching.ones.find((each) => each.id === "a");
     expect(a === undefined ? 0 : littleFace(a, watching.time).gazeY).toBeLessThan(-0.5);
+  });
+});
+
+describe("a turn that ends", () => {
+  it("takes its family with it at once, and the block closes behind them without a jump", () => {
+    const landed = run(three(), 1.5).sim;
+    const gone = dismissLitter(landed, false);
+    expect(gone.ones).toEqual([]);
+    expect(litterPokes(landed, gone)).toEqual([]);
+    const heights = [gone.height.x, ...run(gone, 1, 240).frames.map((frame) => frame.height.x)];
+    expect(heights[0]).toBeCloseTo(3 * place.row + litter.foot, 1);
+    expect(heights.at(-1)).toBeCloseTo(0, 1);
+    for (let i = 1; i < heights.length; i++) {
+      expect(Math.abs((heights[i] ?? 0) - (heights[i - 1] ?? 0))).toBeLessThan(3);
+    }
+  });
+
+  it("shuts the block at once where what holds it plays the change of height itself", () => {
+    expect(dismissLitter(run(three(), 1.5).sim, true).height).toEqual({ x: 0, v: 0 });
   });
 });
 

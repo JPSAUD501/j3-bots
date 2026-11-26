@@ -78,7 +78,7 @@ export {
   planWindow,
   type PlanWindow,
 } from "./plan.ts";
-export { type MemberWork, roomMemberWork, showsTurnWork } from "./roomWork.ts";
+export { MEMBER_WORK_LINGER, type MemberWork, roomMemberWork, showsTurnWork } from "./roomWork.ts";
 export {
   type BotEdits,
   botPatch,

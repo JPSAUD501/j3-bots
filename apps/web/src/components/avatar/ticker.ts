@@ -9,9 +9,9 @@
  * - an avatar scrolled out of view (IntersectionObserver) is not stepped;
  * - an avatar at list size, under 44 px, steps every other frame, unless
  *   something of it travels (`everyFrame`);
- * - at most `MAX_MOVING` avatars move at once, the largest first; the others
- *   hold their still form until one stops, and draw it again when their state
- *   changes;
+ * - at most `MAX_MOVING` avatars move at once: those asked to do something
+ *   first (`urgent`), then the largest; the others hold their still form until
+ *   one stops, and draw it again when their state changes;
  * - under reduced motion nothing moves, and every avatar shows its still form.
  *
  * Each frame first reads what it must of the layout, then writes, so drawing
@@ -42,6 +42,12 @@ export interface Animated {
    * would draw in jumps.
    */
   readonly everyFrame?: () => boolean;
+  /**
+   * Whether it is in the middle of something it was asked to do: a bot told
+   * to answer, a family of little ones. Under the cap, such a one moves before
+   * those that only idle, whatever its size.
+   */
+  readonly urgent?: () => boolean;
 }
 
 /** An avatar on the loop, as its owner drives it. */
@@ -77,6 +83,13 @@ const LONGEST_FRAME = 0.1;
 interface Entry {
   readonly avatar: Animated;
   visible: boolean;
+  /**
+   * Whether the loop knows if it is in view: one it watches is not told until
+   * the observer first reports, a moment after it joined. Until then it is
+   * neither stepped nor drawn still again, so what was asked of it as it
+   * joined, as a family's first little ones, is still to play once it is seen.
+   */
+  known: boolean;
   /** Time it has not been stepped for, carried into its next step. */
   owed: number;
   /** Whether the loop last drew it moving; when that changes, it draws its still form once. */
@@ -118,6 +131,7 @@ const observer =
             const entry = observed.get(target);
             if (entry === undefined) continue;
             entry.visible = isIntersecting;
+            entry.known = true;
             if (!isIntersecting) settle(entry);
           }
           wake();
@@ -189,11 +203,19 @@ function loop(now: number) {
   last = now;
   frame++;
 
-  // Which avatars move this frame: visible, allowed to, the largest first, up to the cap.
-  const candidates = [...entries].filter((e) => e.visible && e.avatar.moving());
-  candidates.sort((a, b) => b.avatar.size - a.avatar.size || a.order - b.order);
-  const moving = new Set(candidates.slice(0, MAX_MOVING));
-  for (const entry of entries) if (!moving.has(entry)) settle(entry);
+  // Which avatars move this frame: visible, allowed to, those asked to do something first, then
+  // the largest, up to the cap.
+  const candidates = [...entries]
+    .filter((e) => e.visible && e.avatar.moving())
+    .map((entry) => ({ entry, urgent: entry.avatar.urgent?.() === true }));
+  candidates.sort(
+    (a, b) =>
+      Number(b.urgent) - Number(a.urgent) ||
+      b.entry.avatar.size - a.entry.avatar.size ||
+      a.entry.order - b.entry.order,
+  );
+  const moving = new Set(candidates.slice(0, MAX_MOVING).map(({ entry }) => entry));
+  for (const entry of entries) if (!moving.has(entry) && entry.known) settle(entry);
 
   // Reads first: the boxes of the avatars, when a pointer that moved lately may be near one.
   const following = now - pointer.at < POINTER_HOLD;
@@ -261,6 +283,7 @@ export function animate(avatar: Animated, element?: Element): Running {
   const entry: Entry = {
     avatar,
     visible: watched === null,
+    known: watched === null,
     owed: 0,
     drawnMoving: false,
     restated: false,
