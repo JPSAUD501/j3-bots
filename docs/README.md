@@ -40,7 +40,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [Installing J3 Bots](operations/install.md): the one-command install, supported systems, what `doctor` says, providers, pairing, Raspberry Pi notes.
 - [Operating J3 Bots](operations/operating.md): configuration, the service, logs, updates, back up and restore, removal.
 - [Reaching J3 Bots from elsewhere](operations/exposing.md): HTTPS, Tailscale, a domain through a proxy, `publicOrigin`, webhooks, a sign-in gate.
-- [A bot's browser, the vault and connectors](operations/browser-vault-and-connectors.md): turning on a bot's browser, watching it and taking it over, the vault's master password and saved logins, connecting a service, and what backups and updates do with each.
+- [A bot's browser, secrets and connectors](operations/browser-secrets-and-connectors.md): turning on a bot's browser, watching it and taking it over, the secrets you type for bots and the cards bots ask with, connecting a service, and what backups and updates do with each.
 - [A Google connector with your own app](operations/connector-google.md) and [a Slack one](operations/connector-slack.md) (drafts): registering the app, the addresses sign-ins return to, and giving J3 Bots its client.
 - [Releasing](operations/releasing.md): cutting a release of the desktop app and the server, what the release workflow may do, signing, and trying an update or an install locally.
 - [The release notes template](releases/TEMPLATE.md): the sections every release's notes have, the order of updating, and the highlights the update prompt shows.

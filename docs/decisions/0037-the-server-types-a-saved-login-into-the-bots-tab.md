@@ -1,6 +1,6 @@
 # 0037: The server types a saved login into the bot's tab, unattended
 
-**Status:** Proposed
+**Status:** Proposed. Its per-bot vault switch is superseded by [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md): a login fills for the bots it allows, while the bot's browser is on.
 
 ## Context
 

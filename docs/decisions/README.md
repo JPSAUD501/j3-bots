@@ -33,8 +33,8 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0025](0025-a-file-stands-where-the-operator-placed-it.md) | A file stands where the operator placed it, as a mark in the draft's text | Accepted |
 | [0026](0026-a-bot-uses-connected-services-through-j3-bots.md) | A bot uses connected services through J3 Bots, which holds the sign-in | Accepted; "the operator connects, a bot only suggests" superseded by [0049](0049-the-bots-manage-mcp-servers-and-skills.md) |
 | [0027](0027-connector-tools-reach-a-bot-through-the-j3-bridge.md) | Connector tools reach a bot through the `j3` bridge, under the bot's permission mode | Accepted |
-| [0028](0028-one-secret-store-for-logins-and-connector-secrets.md) | One secret store for logins and connector secrets | Proposed |
-| [0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Proposed |
+| [0028](0028-one-secret-store-for-logins-and-connector-secrets.md) | One secret store for logins and connector secrets | Superseded by [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md) |
+| [0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Superseded by [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md) |
 | [0030](0030-a-visual-is-part-of-say.md) | A visual is part of `say`, drawn by J3 Bots' clients in a sandbox | Proposed |
 | [0031](0031-a-release-is-signed-and-a-nightly-is-a-pre-release-of-the-next-patch.md) | A release is signed, and a nightly is a pre-release of the next patch | Accepted |
 | [0032](0032-updates-are-served-outside-the-protocol.md) | Updates are served outside the protocol, and offer only a signed, newer release | Proposed; fields added as [0051](0051-an-update-asks-in-front-and-goes-server-first.md) says |
@@ -42,7 +42,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0034](0034-the-desktop-app-installs-only-a-signed-download.md) | The desktop app installs only a download its release signed | Proposed |
 | [0035](0035-the-android-app-installs-its-update-through-a-session.md) | The Android app installs its own update through an installer session, after checking it | Proposed |
 | [0036](0036-phone-access-restarts-the-local-server-on-the-network.md) | Phone access restarts the local server on the network, under the server's own `lan` rules | Accepted |
-| [0037](0037-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Proposed |
+| [0037](0037-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Proposed; its vault switch superseded by [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md) |
 | [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Accepted |
 | [0039](0039-a-room-has-no-host.md) | A room has no host, and a message for nobody wakes everyone | Accepted; its loop guard superseded by [0042](0042-a-room-counts-rounds.md) |
 | [0040](0040-the-members-of-a-room-run-in-parallel.md) | The members of a room run in parallel | Accepted |
@@ -51,6 +51,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0043](0043-a-bot-reads-its-rooms-from-anywhere-and-posts-there-only-on-what-it-has-seen.md) | A bot reads its rooms from anywhere, and posts there only on what it has seen | Accepted |
 | [0044](0044-j3-bots-installs-and-updates-the-harnesses.md) | J3 Bots installs and updates the harnesses | Accepted |
 | [0045](0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md) | J3 Bots keeps its own copies of the harnesses, checked against the makers' checksums | Accepted |
+| [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md) | Secrets: the operator types, a bot uses a reference | Accepted |
 | [0049](0049-the-bots-manage-mcp-servers-and-skills.md) | The bots manage MCP servers and skills | Accepted |
 | [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |
 

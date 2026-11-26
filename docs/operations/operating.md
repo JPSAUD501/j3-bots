@@ -128,7 +128,7 @@ The release it fetched and the snapshot stay on disk until a later update succee
 j3-bots update --rollback
 ```
 
-It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither is the vault, whose logins, connectors' secrets and master password stay as they are; a release older than the vault's file reports it as written by a newer release and leaves it alone until you update again. A save-login card you answered since the snapshot shows as waiting again while its login stays in the vault: dismiss it rather than save the login twice. Nor are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
+It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are the secrets and their key, which stay as they are; a release older than the secrets' file reports it as written by a newer release and leaves it alone until you update again. An ask for a secret you answered since the snapshot shows as waiting again while the secret stays saved: decline it rather than save the secret twice. Nor are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
 
 The browser bots use keeps its profile, with the sites you signed in to, outside the snapshot, so a rollback leaves it as it is. The release you go back to may run an older version of that browser, which may not open a profile a newer version wrote; it then starts with an empty one, signed out of every site, and you sign in again. Rolling back to 0.3, from before each bot had a browser switch, gives every bot the browser again: the engine's settings go back to 0.3's, which leave it allowed everywhere.
 
@@ -210,16 +210,17 @@ The first writes the AppArmor profile that lets the browser J3 Bots' engine down
 
 **Sign out of all sites**, in Settings under Bots' browser, deletes the engine's `default` browser profile, the one every bot's browser uses: you are signed out everywhere, for every bot, and its open tabs close. A profile made in the engine's own console is left alone.
 
-## The vault
+## Secrets
 
-The vault keeps the logins you save and what connectors need to reach their services, in `~/.j3-bots/vault/vault.sqlite`, sealed under your master password ([Server: the vault](../architecture/server.md#the-vault)). You create the password during onboarding, from the first save-login card a bot shows you, or in Settings → Vault.
+Secrets keep the logins and values you type for bots, and what connectors need to reach their services, in `~/.j3-bots/vault/vault.sqlite`, sealed under a key the server keeps beside it, `~/.j3-bots/vault/key` ([Server: secrets](../architecture/server.md#secrets)). There is no password and nothing to unlock: they work from the server's start, also after an update or a reboot.
 
-- **It is locked every time the server starts**, also after an update or a reboot, and stays locked until you unlock it from any of your devices: in Settings → Vault, or on a save-login card. Until then, no connector that needs a secret can reach its service, and no login can be saved, shown or filled.
-- **Lock now** in Settings locks it for every device. Nothing locks it on a timer.
-- **A bot signs in with a saved login only if you let it**: turn on its vault access in the bot's details, next to its browser switch, and allow the bot on the login. The server then types the login into the bot's browser tab when the bot asks, without asking you each time, and the bot never sees it. Each fill shows in the bot's work. What a page could still do with it is in [Security: filling a login](../architecture/security.md#filling-a-login).
-- **After five wrong passwords**, unlocking waits, starting at 30 seconds and doubling up to an hour. The screen says until when. Restarting the server does not end the wait; the right password, or a day with no wrong one, starts the count over.
-- **If Settings says something in the vault does not open**, its file was changed or damaged. The server's log names the record. Restore the vault's folder from a backup taken under the same master password.
-- **A lost password cannot be recovered**, by you or anyone else. To start over without it, stop the service, move the vault's folder aside and start again:
+- **Add one** in Settings → Secrets, or on the card a bot shows when it asks for one. A bot never sees a value: it uses the secret by its reference, `secret:<name>`, and only if the secret lets that bot use it. A secret a bot asked for is that bot's until you widen it, in Settings → Secrets, to more bots or every bot.
+- **A bot signs in with a login** when the login allows it and its browser is on. The server types the login into the bot's browser tab when the bot asks, without asking you each time. Each fill shows in the bot's work. What a page could still do with it is in [Security: filling a login](../architecture/security.md#filling-a-login).
+- **The key file opens everything**, for whoever has it with the secrets' file, and any program running as the server's user can read it, a bot's shell included. Keep it out of copies you hand around ([Back up](#back-up)), and keep the server to a [dedicated user](../architecture/security.md#running-on-a-machine-that-matters) on a computer that matters. What that leaves open is in [Security: the operator's secrets](../architecture/security.md#the-operators-secrets).
+- **Coming from a vault with a master password** (before 0.9.0): Settings → Secrets asks for that password one last time. From then on the server keeps the key itself and never asks again. Until you type it, no connector that needs a secret can reach its service, and no login can be filled. Each login gets a name from its old label, such as `github-work`, which you can change.
+- **If Settings says the secrets can't be read**, the key file is missing or is another one. The server changes nothing meanwhile: stop it, put `vault/key` back from your backup (readable by you alone: `chmod 600`), and start it again.
+- **If Settings says something does not open**, the secrets' file was changed or damaged. The server's log names the record. Restore the `vault` folder, file and key together, from a backup.
+- **To start over with no secrets**, as when an old vault's password is lost, or the key is: stop the service, move the folder aside and start again:
 
   ```sh
   systemctl --user stop j3-bots
@@ -227,7 +228,7 @@ The vault keeps the logins you save and what connectors need to reach their serv
   systemctl --user start j3-bots
   ```
 
-  The vault is then empty and asks for a new password. Save each login again and sign in to each connector again. Keep the moved folder if you might remember the password: putting it back while the service is stopped brings everything back.
+  The secrets are then empty. Add each login again and sign in to each connector again. Keep the moved folder if you might find the password or the key: putting it back while the service is stopped brings everything back.
 
 ## J3 Bots' own harnesses
 
@@ -248,12 +249,14 @@ Everything J3 Bots keeps is in the data directory: the configuration, the databa
 ```sh
 systemctl --user stop j3-bots
 (umask 077 && tar -C ~/.j3-bots --exclude=./engine/j3/runtime --exclude=./engine/tools \
-  --exclude=./engine/userdata/server-browser --exclude=./admin.sock \
-  -czf ~/j3-bots-$(date +%F).tar.gz .)
+  --exclude=./engine/userdata/server-browser --exclude=./admin.sock --exclude=./vault/key \
+  -czf ~/j3-bots-$(date +%F).tar.gz . && cp ~/.j3-bots/vault/key ~/j3-bots-key-$(date +%F))
 systemctl --user start j3-bots
 ```
 
-`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the vault (sealed, and of no use without its master password), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, and `engine/tools` the browser it downloaded, which it downloads again. `engine/userdata/server-browser` is that browser's profile: it holds live session cookies for every site you signed in to there, which let whoever has them act on those sites as you, so the command above leaves it out, and after a restore you sign in again. Moving bots to another server with `j3-bots export` and `import` ([#154](https://github.com/JPSAUD501/j3-bots/issues/154), planned) leaves out the engine's directory, and the profile with it. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
+The archive leaves out the secrets' key file, which `cp` copies on its own. Keep that copy apart from the archive, on another disk or in a password manager: either one alone opens no secret.
+
+`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the secrets (sealed, and of no use without the key file you keep apart), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, and `engine/tools` the browser it downloaded, which it downloads again. `engine/userdata/server-browser` is that browser's profile: it holds live session cookies for every site you signed in to there, which let whoever has them act on those sites as you, so the command above leaves it out, and after a restore you sign in again. Moving bots to another server with `j3-bots export` and `import` ([#154](https://github.com/JPSAUD501/j3-bots/issues/154), planned) leaves out the engine's directory, and the profile with it. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
 
 ## Restore
 
@@ -261,11 +264,12 @@ systemctl --user start j3-bots
 systemctl --user stop j3-bots
 mv ~/.j3-bots ~/.j3-bots.before-restore
 mkdir -m 700 ~/.j3-bots && tar -C ~/.j3-bots -xzf ~/j3-bots-<date>.tar.gz
+install -m 600 ~/j3-bots-key-<date> ~/.j3-bots/vault/key
 systemctl --user start j3-bots
 j3-bots doctor
 ```
 
-Restore onto the version the backup was taken with, or a newer one. The vault comes back locked, under the master password it had when the backup was taken. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
+Restore onto the version the backup was taken with, or a newer one. The secrets come back as they were when the backup was taken; without the key file they stay unreadable until you put it back. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
 
 ## Remove
 
