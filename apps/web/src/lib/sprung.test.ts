@@ -7,6 +7,8 @@ let now = 0;
 
 beforeEach(() => {
   vi.stubGlobal("window", { addEventListener: () => {}, removeEventListener: () => {} });
+  // The loop's clock is the frames' own, so a frame is 16 ms whatever the machine's clock says.
+  vi.stubGlobal("performance", { now: () => now });
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
   vi.stubGlobal("cancelAnimationFrame", () => {
     frames.length = 0;

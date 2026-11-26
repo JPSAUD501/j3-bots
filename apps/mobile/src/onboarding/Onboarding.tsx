@@ -419,11 +419,7 @@ export function Onboarding({
             ref={heroRef}
             botRef={bot}
             look={look}
-            name={
-              step === "name" || step === "look" || step === "connect"
-                ? botName
-                : null
-            }
+            name={step === "name" || step === "look" || step === "connect" ? botName : null}
             arrived={step === "arrival" && created}
             reduced={reduced}
             home={home}
