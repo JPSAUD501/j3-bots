@@ -6,7 +6,7 @@ import {
   stillFace,
 } from "@j3-bots/client-runtime/presentation";
 import type { Avatar, BotId } from "@j3-bots/contracts";
-import { colors, resolveAvatar, type Themed } from "@j3-bots/design-tokens";
+import { resolveAvatar, type Themed } from "@j3-bots/design-tokens";
 import {
   Canvas,
   drawAvatar,
@@ -52,13 +52,13 @@ const ICON_FACE = 0.58;
 
 /**
  * A bot's face at rest as an adaptive icon, `size` px square and full bleed:
- * on the light theme's muted plate, which the launcher's mask shapes, with the
- * face inside the part no mask cuts.
+ * on `plate`, the light muted color of the theme shown, which the launcher's
+ * mask shapes, with the face inside the part no mask cuts.
  */
-export function iconFace(avatar: Avatar, botId: BotId, size: number): string {
+export function iconFace(avatar: Avatar, botId: BotId, plate: string, size: number): string {
   const { shape, color } = resolveAvatar(avatar);
-  return once(`icon:${botId}:${shape}:${color}:${size}`, () => {
-    const canvas = new Canvas(size, size, toSrgb8(parseColor(colors.muted.light)));
+  return once(`icon:${botId}:${shape}:${color}:${plate}:${size}`, () => {
+    const canvas = new Canvas(size, size, toSrgb8(parseColor(plate)));
     const side = Math.round(size * ICON_FACE);
     const at = Math.round((size - side) / 2);
     drawAvatar(canvas, { shape, color }, faceOf(botId, "idle"), "light", {

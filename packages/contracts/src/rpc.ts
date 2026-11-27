@@ -5,6 +5,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import { AttachmentOffsets, BotFile, MessageAttachments } from "./attachment.ts";
 import { SkillRpcs } from "./skill.ts";
+import { ThemeRpcs } from "./theme.ts";
 import { VoiceRpcs } from "./voice.ts";
 import {
   AttachmentId,
@@ -157,9 +158,9 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 // only once it carries `conversationMentions`, Reply and Quote only once it
 // carries `quotes`, a comment on a quoted passage only once it carries
 // `quoteComments`, to record the screen only once it carries
-// `screenRecordings`, and writes down a recording's voice only once it
-// carries `recordingTranscripts` (docs/architecture/clients.md, "Protocol
-// compatibility").
+// `screenRecordings`, writes down a recording's voice only once it carries
+// `recordingTranscripts`, and offers saved themes only once it carries
+// `themes` (docs/architecture/clients.md, "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
 const after = { after: Schema.NullOr(Sequence) };
@@ -231,6 +232,12 @@ export const RosterRpcs = RpcGroup.make(
          * screen recording's voice through it only then.
          */
         recordingTranscripts: Schema.optionalKey(Schema.Literal(true)),
+        /**
+         * Always `true` from a server that serves `ThemeRpcs` and takes
+         * `say`'s theme offer; a client offers saved themes, the server's
+         * default and Create from colors only then.
+         */
+        themes: Schema.optionalKey(Schema.Literal(true)),
       }),
       Schema.TaggedStruct("changed", {
         upsert: Schema.Array(RosterItem),
@@ -1626,4 +1633,5 @@ export const J3Rpcs = RosterRpcs.merge(
   ConnectorAppRpcs,
   SkillRpcs,
   VoiceRpcs,
+  ThemeRpcs,
 );

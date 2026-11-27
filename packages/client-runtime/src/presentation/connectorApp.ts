@@ -16,7 +16,7 @@ import {
   PROTOCOL_VERSION,
   visualEscapesGuard,
 } from "@j3-bots/contracts";
-import { appStyleVariables } from "@j3-bots/design-tokens";
+import { appStyleVariables, type Palette } from "@j3-bots/design-tokens";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -318,6 +318,8 @@ export type ConnectorAppDisplay =
 /** What a client tells an app of where it is drawn (`hostContext`), apart from the tool. */
 export interface ConnectorAppPlace {
   readonly appearance: VisualAppearance;
+  /** The colors of the theme the device shows, in `appearance`; the stock ones when left out. */
+  readonly palette?: Palette;
   /** BCP 47, as the interface speaks it. */
   readonly locale: string;
   /** IANA, as the device keeps it. */
@@ -460,7 +462,9 @@ const containerOf = (display: ConnectorAppDisplay): Schema.JsonObject => {
 const placeContext = (place: ConnectorAppPlace): Schema.JsonObject => ({
   theme: place.appearance,
   styles: {
-    variables: { ...appStyleVariables(place.appearance, place.touch ? "touch" : "pointer") },
+    variables: {
+      ...appStyleVariables(place.appearance, place.touch ? "touch" : "pointer", place.palette),
+    },
   },
   displayMode: place.display.mode,
   availableDisplayModes: [...place.modes],

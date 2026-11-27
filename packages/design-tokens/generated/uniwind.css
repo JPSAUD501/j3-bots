@@ -21,9 +21,9 @@
       --color-accent: #101012;
       --color-accent-foreground: #ffffff;
       --color-waiting: oklch(0.52 0.12 65);
-      --color-waiting-surface: oklch(0.975 0.03 85);
+      --color-waiting-surface: oklch(0.975 0.026 85);
       --color-blocked: oklch(0.53 0.2 27);
-      --color-blocked-surface: oklch(0.975 0.015 20);
+      --color-blocked-surface: oklch(0.975 0.012 20);
       --color-success: oklch(0.52 0.12 160);
       --color-control-on: oklch(0.52 0.12 160);
       --color-control-off: #82828a;

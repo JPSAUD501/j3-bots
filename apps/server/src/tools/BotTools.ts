@@ -3,13 +3,17 @@ import {
   BotId,
   CommandId,
   type FillOutcome,
+  MAX_THEME_BACKGROUND_SIZE,
   Profile,
   type Room,
   RoomId,
   Routine,
   type Secret,
+  type SavedTheme,
   secretReference,
+  type ThemeDefinition,
 } from "@j3-bots/contracts";
+import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "@j3-bots/design-tokens";
 import type { SessionId } from "@j3-bots/engine-t3";
 import {
   APP_SHOWN_LINE,
@@ -17,6 +21,9 @@ import {
   FILL_NOTES,
   inputCapRefusal,
   isConnectorTool,
+  THEME_GUIDE,
+  THEME_NOTES,
+  type ToolInput,
   type ToolName,
   tools,
 } from "@j3-bots/prompts";
@@ -44,6 +51,15 @@ import { CredentialFills } from "../secrets/Fill.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { modelListing, modelSettingsOf } from "./models.ts";
+import { imageTypeOf } from "../attachments/WorkImages.ts";
+import { type WorkspaceRead, workspaceReader } from "../attachments/workspaceFile.ts";
+import {
+  type BackgroundImage,
+  MAX_SAVED_THEMES,
+  Themes,
+  type ThemeRefused,
+} from "../themes/Themes.ts";
+import { isAnimated, isWhole } from "../themes/stillImage.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
@@ -92,6 +108,61 @@ const listAnswer = (secrets: ReadonlyArray<Secret>): Schema.Json => ({
   note: FILL_NOTES.listed,
 });
 
+/** A theme's definition as `theme_read` gives it: the shape `theme_save` takes. */
+const definitionAnswer = (definition: ThemeDefinition): { readonly [key: string]: Schema.Json } => {
+  const { name, description, canvas, accent, colors, variants, css } = definition;
+  return {
+    name,
+    ...(description === undefined ? {} : { description }),
+    canvas,
+    accent,
+    ...(colors === undefined ? {} : { colors }),
+    ...(variants === undefined
+      ? {}
+      : {
+          variants: {
+            ...(variants.light === undefined ? {} : { light: variants.light }),
+            ...(variants.dark === undefined ? {} : { dark: variants.dark }),
+          },
+        }),
+    ...(css === undefined ? {} : { css }),
+  };
+};
+
+/** A theme's definition from `theme_save`'s arguments. */
+const definitionOf = (input: ToolInput<"theme_save">): ThemeDefinition => {
+  const { name, description, canvas, accent, colors, variants, css } = input;
+  return {
+    name,
+    ...(description === undefined ? {} : { description }),
+    canvas,
+    accent,
+    ...(colors === undefined ? {} : { colors }),
+    ...(variants === undefined ? {} : { variants }),
+    ...(css === undefined ? {} : { css }),
+  };
+};
+
+/** Why a background image a bot named cannot be a theme's, in the words `THEME_NOTES.background` takes. */
+const BACKGROUND_PROBLEMS: Readonly<Record<Exclude<WorkspaceRead["_tag"], "read">, string>> = {
+  missing: "is not in your workspace at that path.",
+  outside: "leads out of your workspace: name a file inside it.",
+  "not-a-file": "is not a file.",
+  "too-large": `is larger than ${MAX_THEME_BACKGROUND_SIZE / (1024 * 1024)} MB: make it smaller first.`,
+  unreadable: "could not be read.",
+};
+
+const refusedTheme = (id: string, refused: ThemeRefused): string => {
+  switch (refused.reason) {
+    case "definition":
+      return THEME_NOTES.refused(refused.detail);
+    case "taken":
+      return THEME_NOTES.taken(id);
+    case "limit":
+      return THEME_NOTES.limit(MAX_SAVED_THEMES);
+  }
+};
+
 /**
  * The `j3` tools' server side. A call is accepted only from a live session of
  * a bot, with arguments that decode under the tool's own schema. The tools
@@ -124,6 +195,8 @@ export const layer = Layer.effect(
     const apps = yield* ConnectorApps;
     const inputs = yield* ConnectorInputs;
     const steps = yield* ConnectorSteps;
+    const themes = yield* Themes;
+    const readWorkspaceFile = yield* workspaceReader;
 
     /** What a bot's read of a connector reaches: the operator, when the connector's server asks for something. */
     const askFor = (botId: BotId): Pick<ConnectorCallHooks, "ask"> => ({
@@ -180,6 +253,39 @@ export const layer = Layer.effect(
       if (Option.isNone(self) || !self.value.bot.primary) {
         return yield* new Refused({ reason: "Only the primary bot can do this." });
       }
+    });
+
+    /** The image a bot named for its theme's background, read from its workspace and typed by its bytes. */
+    const backgroundOf = Effect.fn("BotTools.backgroundOf")(function* (
+      root: Option.Option<string>,
+      given: string,
+    ) {
+      if (Option.isNone(root)) {
+        return yield* new Refused({ reason: THEME_NOTES.background(BACKGROUND_PROBLEMS.missing) });
+      }
+      const read = yield* readWorkspaceFile(root.value, given, MAX_THEME_BACKGROUND_SIZE);
+      if (read._tag !== "read") {
+        return yield* new Refused({
+          reason: THEME_NOTES.background(BACKGROUND_PROBLEMS[read._tag]),
+        });
+      }
+      const mediaType = imageTypeOf(read.bytes);
+      if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp") {
+        return yield* new Refused({
+          reason: THEME_NOTES.background("is not a JPEG, PNG or WebP image."),
+        });
+      }
+      if (!isWhole(read.bytes, mediaType)) {
+        return yield* new Refused({
+          reason: THEME_NOTES.background("is cut short: the image does not hold its whole file."),
+        });
+      }
+      if (isAnimated(read.bytes, mediaType)) {
+        return yield* new Refused({
+          reason: THEME_NOTES.background("is animated, and a theme's background stays still."),
+        });
+      }
+      return { bytes: read.bytes, mediaType } satisfies BackgroundImage;
     });
 
     interface Call {
@@ -586,6 +692,85 @@ export const layer = Layer.effect(
       ),
       remove_skill: handler(tools.remove_skill.input, (input, call) =>
         changing("remove_skill", call, management.removeSkill(callerOf(call), input)),
+      ),
+      theme_read: handler(tools.theme_read.input, (input, { caller }) =>
+        Effect.gen(function* () {
+          const library = yield* themes.library;
+          const maker = (theme: SavedTheme) =>
+            theme.madeBy._tag === "operator"
+              ? "your user"
+              : theme.madeBy.botId === caller.botId
+                ? "you"
+                : "another bot";
+          const builtIn = BUILT_IN_THEME_IDS.find((id) => id === input.theme);
+          const asked =
+            input.theme === undefined
+              ? undefined
+              : builtIn !== undefined
+                ? { id: builtIn, ...definitionAnswer(BUILT_IN_THEMES[builtIn]) }
+                : yield* themes.find(input.theme).pipe(
+                    Effect.flatMap(
+                      Option.match({
+                        onNone: () =>
+                          new Refused({
+                            reason: `There is no theme ${input.theme}. Call \`theme_read\` without \`theme\` to list them.`,
+                          }),
+                        onSome: (theme) =>
+                          Effect.succeed({
+                            id: theme.id,
+                            ...definitionAnswer(theme.definition),
+                            hasBackground: theme.background !== null,
+                          }),
+                      }),
+                    ),
+                  );
+          return {
+            guide: THEME_GUIDE,
+            builtIn: BUILT_IN_THEME_IDS.map((id) => ({
+              id,
+              name: BUILT_IN_THEMES[id].name,
+              description: BUILT_IN_THEMES[id].description ?? "",
+            })),
+            saved: library.themes.map((theme) => ({
+              id: theme.id,
+              name: theme.definition.name,
+              madeBy: maker(theme),
+              hasBackground: theme.background !== null,
+            })),
+            defaultTheme: library.defaultTheme,
+            ...(asked === undefined ? {} : { theme: asked }),
+          } satisfies Schema.Json;
+        }),
+      ),
+      theme_save: handler(tools.theme_save.input, (input, call) =>
+        Effect.gen(function* () {
+          const self = yield* store.find(call.caller.botId);
+          if (Option.isNone(self)) return yield* new Refused({ reason: "You are not a bot here." });
+          const background =
+            input.background === undefined
+              ? null
+              : yield* backgroundOf(self.value.workspaceRoot, input.background);
+          const saved = yield* themes
+            .saveFromBot({
+              commandId: commandIdOf(call.requestId),
+              botId: call.caller.botId,
+              themeId: input.id,
+              definition: definitionOf(input),
+              background,
+            })
+            .pipe(
+              Effect.catchTags({
+                ThemeRefused: (refused) => new Refused({ reason: refusedTheme(input.id, refused) }),
+                Conflict: (error) => new Refused({ reason: error.message }),
+              }),
+            );
+          return {
+            status: "saved",
+            id: saved.theme.id,
+            adjustments: saved.adjustments.map((a) => ({ ...a })),
+            note: THEME_NOTES.saved,
+          } satisfies Schema.Json;
+        }),
       ),
       // A bot or a room, by its id: bots are looked up first, as ids of both
       // kinds are never the same (`Ids`). Both store one receipt

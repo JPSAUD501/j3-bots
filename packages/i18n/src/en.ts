@@ -207,6 +207,9 @@ export const en = {
   "message.offer.recordScreen": "Record your screen",
   "message.offer.recordScreen.elsewhere":
     "To record your screen, open the J3 Bots app on your computer.",
+  "message.offer.applyTheme": "Apply theme",
+  "message.offer.applyTheme.inUse": "In use on this device",
+  "message.offer.applyTheme.gone": "This theme was deleted.",
 
   "recordSheet.title": "Record your screen",
   "recordSheet.what.everything":
@@ -1047,7 +1050,6 @@ export const en = {
   "settings.notifications.description":
     "When J3 Bots tells you a bot needs you, and how much it says.",
   "settings.appearance.description": "How J3 Bots looks on this device, and its language.",
-  "settings.theme": "Theme",
   "settings.providers": "Providers",
   "settings.providers.description": "The AI accounts your bots think with.",
   "settings.usage.description":
@@ -1068,6 +1070,59 @@ export const en = {
   "settings.system.short": "System",
   "settings.light": "Light",
   "settings.dark": "Dark",
+  "settings.mode": "Light or dark",
+
+  "settings.themes": "Theme",
+  "settings.themes.inUse": "In use",
+  "settings.themes.use": "Use {name}",
+  "settings.themes.byYou": "Made by you",
+  "settings.themes.byBot": "Made by {name}",
+  "settings.themes.byRemovedBot": "Made by a bot",
+  "settings.themes.startsNew": "New devices start with it",
+  "settings.themes.makeStart": "Start new devices with it",
+  "settings.themes.delete": "Delete {name}",
+  "settings.themes.delete.title": "Delete {name}?",
+  "settings.themes.delete.body":
+    "Devices that show it go back to the theme new devices start with. This cannot be undone.",
+  "settings.themes.delete.confirm": "Delete",
+  "settings.themes.failed": "That didn't work. Check the connection and try again.",
+  "settings.themes.styledElsewhere":
+    "Some themes also change shapes and spacing, which shows only on a computer. Here they show their colors.",
+  "settings.themes.preview.bot": "The report is ready. Want me to send it?",
+  "settings.themes.preview.you": "Yes, send it.",
+  "settings.themes.create": "Create from colors",
+  "settings.themes.create.title": "A theme from your colors",
+  "settings.themes.create.name": "Name",
+  "settings.themes.create.namePlaceholder": "My theme",
+  "settings.themes.create.canvas": "Background",
+  "settings.themes.create.canvas.hint": "What everything sits on. Light and dark are made from it.",
+  "settings.themes.create.accent": "Accent",
+  "settings.themes.create.accent.hint": "Your messages, the main buttons and what is new.",
+  "settings.themes.create.hex": "Color code, such as #3d6fd9",
+  "settings.themes.create.adjusted":
+    "Some colors were adjusted a little, so every word stays easy to read.",
+  "settings.themes.create.refused": "These colors don't make a readable theme. Try others.",
+  "settings.themes.create.save": "Save theme",
+  "settings.themes.create.cancel": "Cancel",
+  "settings.themes.edit": "Change colors",
+
+  "theme.palco.name": "Palco",
+  "theme.palco.description":
+    "Monochrome, pure black in the dark. Color belongs to the bots and to what needs you.",
+  "theme.grafite.name": "Graphite",
+  "theme.grafite.description":
+    "Bluish gray instead of pure black. Softer for long hours with the app open.",
+  "theme.oceano.name": "Ocean",
+  "theme.oceano.description": "Deep petrol blue with a cyan accent. Calm, like the sea at night.",
+  "theme.floresta.name": "Forest",
+  "theme.floresta.description": "Dark moss green with a mint accent. Natural and quiet.",
+  "theme.brasa.name": "Ember",
+  "theme.brasa.description": "Warm brown with a copper accent. Cozy, best at night.",
+  "theme.lavanda.name": "Lavender",
+  "theme.lavanda.description": "Grayish purple with a lilac accent. Soft, with character.",
+  "theme.papel.name": "Paper",
+  "theme.papel.description":
+    "Warm cream with navy ink. Made for reading: it feels like a notebook.",
 
   "firstRun.connecting.title": "Connecting to J3 Bots",
   "firstRun.connecting.body": "Waiting for J3 Bots. This page updates as soon as it answers.",
@@ -2177,6 +2232,7 @@ export const en = {
   "desktop.menu.previous": "Previous bot or room",
   "desktop.menu.stop": "Stop",
   "desktop.menu.closeDetails": "Close details",
+  "desktop.menu.settings": "Settings",
   "desktop.menu.view": "View",
   "desktop.menu.reload": "Reload",
   "desktop.menu.devTools": "Developer tools",

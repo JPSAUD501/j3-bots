@@ -8,6 +8,7 @@ import { App } from "./src/App.tsx";
 import { session } from "./src/platform/platform.ts";
 import { keepPushRegistered, setUpNotifications } from "./src/platform/push.ts";
 import { applyAppearance } from "./src/preferences.ts";
+import { applyKeptLook } from "./src/themes/look.ts";
 import { ShareRoot } from "./src/share/ShareSheet.tsx";
 import { keepShareTargets } from "./src/share/shortcuts.ts";
 import { receiveViewedTemplates } from "./src/template/opened.ts";
@@ -19,6 +20,7 @@ import { WidgetSetupRoot } from "./src/widget/WidgetSetup.tsx";
 // kept, it hides as the app first renders: nothing to handle.
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 applyAppearance();
+applyKeptLook();
 setUpNotifications(session);
 void session.start();
 keepPushRegistered(session);

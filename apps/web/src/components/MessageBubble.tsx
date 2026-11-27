@@ -24,6 +24,7 @@ import { MessageFile } from "./FileCard";
 import { MessageText } from "./MessageText";
 import { ReplyButton, SentQuotes } from "./Quotes";
 import { type OnReact, ReactButton, ReactionPills, type ReactionView } from "./Reactions";
+import { ApplyThemeOffer } from "./ApplyThemeOffer";
 import { RecordOffer, type RecordScreen } from "./RecordOffer";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
@@ -169,6 +170,12 @@ export function MessageBubble({
     message.offer?.kind === "record-screen"
       ? (recordScreen ?? null)
       : null;
+  const offeredTheme =
+    message._tag === "message" &&
+    message.author._tag === "bot" &&
+    message.offer?.kind === "apply-theme"
+      ? (message.offer.themeId ?? null)
+      : null;
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
@@ -227,6 +234,8 @@ export function MessageBubble({
     <div
       ref={target}
       tabIndex={-1}
+      data-slot="message"
+      data-author={fromOperator ? "operator" : "bot"}
       className={cn(
         "group/message flex flex-col gap-1 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         fromOperator ? "origin-bottom-right items-end" : "origin-bottom-left items-start",
@@ -267,6 +276,7 @@ export function MessageBubble({
         {(message.text !== "" || quotes.length > 0) && (
           <div
             ref={bubbleRef}
+            data-slot="bubble"
             title={time}
             className={cn(
               "max-w-full rounded-bubble px-3.5 py-2 text-base pointer-coarse:text-lg",
@@ -333,6 +343,7 @@ export function MessageBubble({
         )}
       </div>
       {recording !== null && <RecordOffer recording={recording} />}
+      {offeredTheme !== null && <ApplyThemeOffer themeId={offeredTheme} />}
       {reactions !== null && (
         <ReactionPills
           reactions={reactions}

@@ -99,7 +99,7 @@ interface PanelFrameProps {
 function PanelFrame({ title, onClose, headingRef, headingId, children }: PanelFrameProps) {
   const { t } = useI18n();
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div data-slot="details" className="flex h-full min-h-0 flex-col">
       <header className="flex h-14 shrink-0 items-center gap-1 px-2">
         <Button
           variant="ghost"

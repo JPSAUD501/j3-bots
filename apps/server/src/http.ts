@@ -26,6 +26,7 @@ import {
   ServerInfo,
   type ServerOrigin,
   SocketTicketGrant,
+  ThemeId,
   UPDATE_API_VERSION,
   WorkImageId,
 } from "@j3-bots/contracts";
@@ -44,6 +45,7 @@ import { PUBLIC_NAME, REFUSED_NAME } from "./logs/annotations.ts";
 import { Attachments } from "./attachments/Attachments.ts";
 import { PieceCutOff, RecordingUploads } from "./attachments/RecordingUploads.ts";
 import { WorkImages } from "./attachments/WorkImages.ts";
+import { Themes } from "./themes/Themes.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { Diagnostics } from "./diagnostics/Diagnostics.ts";
 import { readBody, readText } from "./body.ts";
@@ -387,6 +389,37 @@ const workImage = HttpRouter.add(
   }),
 );
 
+/**
+ * A saved theme's background image, at the revision the library names. A
+ * new image has a new revision, so a device keeps the one it has for good;
+ * a revision the theme no longer has is gone.
+ */
+const themeBackground = HttpRouter.add(
+  "GET",
+  `${HTTP_PATHS.themeBackgrounds}/:themeId`,
+  Effect.gen(function* () {
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const params = yield* HttpRouter.schemaPathParams(Schema.Struct({ themeId: ThemeId })).pipe(
+      Effect.option,
+    );
+    const revision = new URL(request.url, "http://localhost").searchParams.get("revision");
+    const image =
+      Option.isSome(params) && revision !== null
+        ? yield* (yield* Themes).background(params.value.themeId, revision)
+        : Option.none();
+    if (Option.isNone(image)) return HttpServerResponse.empty({ status: 404 });
+    return HttpServerResponse.uint8Array(image.value.bytes, {
+      contentType: image.value.mediaType,
+      headers: {
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "cache-control": "private, max-age=31536000, immutable",
+      },
+    });
+  }),
+);
+
 const desktopOrigins: ReadonlySet<string> = new Set(Object.values(DESKTOP_APP_ORIGINS));
 const isDesktopOrigin = (origin: string | undefined) =>
   origin !== undefined && desktopOrigins.has(origin);
@@ -504,6 +537,7 @@ export const routes = Layer.mergeAll(
   recordingPiece,
   cancelRecording,
   workImage,
+  themeBackground,
   diagnostics,
   Webhook.route,
   EventWebhook.route,

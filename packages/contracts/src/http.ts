@@ -89,6 +89,15 @@ export const HTTP_PATHS = {
    */
   workImages: "/work-images",
   /**
+   * `GET <path>/<themeId>?revision=<revision>` with the device token as a
+   * bearer answers a saved theme's background image (`SavedTheme.background`),
+   * with its media type; the response may be cached for good, since a new
+   * image has a new revision. 404 when the theme has no image, or no longer
+   * this revision of it. Only a server whose roster snapshot carries `themes`
+   * has it.
+   */
+  themeBackgrounds: "/theme-backgrounds",
+  /**
    * The RPC socket (`J3Rpcs`, JSON frames). The upgrade carries the device token
    * as `Authorization: Bearer`, or a ticket in the `ticket` query parameter. An
    * upgrade without a valid one is answered 401 and never becomes a socket.

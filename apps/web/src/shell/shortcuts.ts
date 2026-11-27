@@ -32,6 +32,12 @@ export function shellShortcuts() {
       aria: "Alt+ArrowUp",
       matches: (e) => e.altKey && !modifier(e) && e.key === "ArrowUp",
     },
+    // A way to Settings no theme's CSS can hide (decision 0104).
+    settings: {
+      label: mac ? "⌘," : "Ctrl+,",
+      aria: mac ? "Meta+," : "Control+,",
+      matches: (e) => modifier(e) && !e.shiftKey && !e.altKey && e.key === ",",
+    },
     focusComposer: {
       label: "/",
       aria: "/",

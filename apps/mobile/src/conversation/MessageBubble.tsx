@@ -52,6 +52,7 @@ import { SwipeToReply } from "./SwipeToReply.tsx";
 import { VisualCard } from "./VisualCard.tsx";
 import { AnimatedView } from "./animated.ts";
 import { useTint } from "./tint.ts";
+import { ApplyThemeOffer } from "../themes/ApplyThemeOffer.tsx";
 import { EntryWidths } from "./widths.ts";
 
 // On the speaker's side, the bottom corner tightens, pointing at who spoke, and so does the top
@@ -160,7 +161,7 @@ function LineAction(props: {
  * replies too. Above its words, the messages it quotes. The message a quote
  * leads to is highlighted for a moment. Under a bot's offer to record the
  * screen, a line saying to open the app on the computer, as a phone records
- * nothing.
+ * nothing; under a bot's offer of a theme, Apply theme.
  */
 export function MessageBubble({
   message,
@@ -253,6 +254,12 @@ export function MessageBubble({
     message._tag === "message" &&
     message.author._tag === "bot" &&
     message.offer?.kind === "record-screen";
+  const offeredTheme =
+    message._tag === "message" &&
+    message.author._tag === "bot" &&
+    message.offer?.kind === "apply-theme"
+      ? (message.offer.themeId ?? null)
+      : null;
   const highlight = useHighlight(message._tag === "message" ? message.id : null);
   const messageView = useRef<ComponentRef<typeof Pressable>>(null);
   const wordsView = useRef<ComponentRef<typeof View>>(null);
@@ -324,6 +331,7 @@ export function MessageBubble({
           </Text>
         </View>
       )}
+      {offeredTheme !== null && <ApplyThemeOffer themeId={offeredTheme} maxWidth={bubbleWidth} />}
     </>
   );
   const openBar = () => {

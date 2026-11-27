@@ -194,6 +194,13 @@ export const serve = Effect.fn("desktop.menus")(function* ({
             ...pageKey("Escape"),
             click: () => send({ _tag: "closeDetails" }),
           },
+          { type: "separator" },
+          {
+            id: "settings",
+            label: t("desktop.menu.settings"),
+            ...pageKey("CommandOrControl+,"),
+            click: () => send({ _tag: "settings" }),
+          },
         ];
         const template: MenuItemConstructorOptions[] = [
           {

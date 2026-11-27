@@ -19,14 +19,16 @@ export function useReportLanguage(): void {
 }
 
 /**
- * Tells the desktop app the appearance the operator chose, as the page starts
- * and as it changes, so its next launch opens the window in it.
+ * Tells the desktop app the appearance the operator chose and the theme's
+ * window colors, as the page starts and as they change, so its windows fill
+ * with the theme's canvas, now and from its next launch's first paint.
  */
 export function useReportAppearance(): void {
-  const { appearance } = usePreferences();
+  const { appearance, look } = usePreferences();
+  const colors = look?.window ?? null;
   useEffect(() => {
-    desktop?.reportAppearance(appearance);
-  }, [appearance]);
+    desktop?.reportAppearance(appearance, colors);
+  }, [appearance, colors]);
 }
 
 /**

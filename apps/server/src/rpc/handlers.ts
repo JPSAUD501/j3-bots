@@ -61,6 +61,7 @@ import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { Voice } from "../voice/Voice.ts";
 import { Skills } from "../skills/Skills.ts";
+import { Themes } from "../themes/Themes.ts";
 import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
 import { Management } from "../tools/Management.ts";
 import { TelemetryClients } from "../telemetry/Clients.ts";
@@ -88,6 +89,7 @@ export const handlers = J3Rpcs.toLayer(
     const settings = yield* SettingsService;
     const devices = yield* Devices;
     const skills = yield* Skills;
+    const themes = yield* Themes;
     const pipeline = yield* Pipeline;
     const reactions = yield* Reactions;
     const cards = yield* Cards;
@@ -382,6 +384,10 @@ export const handlers = J3Rpcs.toLayer(
           }),
         ),
       "skill.remove": (input) => skills.remove(input),
+      "themes.subscribe": () => themes.changes,
+      "theme.save": (input) => themes.save(input),
+      "theme.delete": (input) => themes.remove(input),
+      "theme.setDefault": (input) => themes.setDefault(input),
       // The page names where an own app's sign-ins return, as `begin` would send them.
       "connectors.get": Effect.fn("connectors.get")(function* ({ ref, language }) {
         const details = yield* connectorSources.get(ref, language);

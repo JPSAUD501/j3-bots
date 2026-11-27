@@ -2,7 +2,6 @@
 import type { Avatar } from "@j3-bots/contracts";
 import {
   botPalette,
-  colors,
   easeOutCurve,
   motion,
   reanimatedSpring,
@@ -36,6 +35,7 @@ import Svg, {
 import { scheduleOnRN } from "react-native-worklets";
 import { useUniwind } from "uniwind";
 import { useReducedMotion } from "../motion.ts";
+import { useShownPalette } from "../themes/look.ts";
 import type { AvatarEntrance } from "./avatar/BotAvatar.tsx";
 
 const easeOut = Easing.bezier(...easeOutCurve);
@@ -195,8 +195,10 @@ export function RowLight({
   readonly arrival: RowArrival;
 }) {
   const theme = useUniwind().theme === "dark" ? "dark" : "light";
+  // A room's light is the theme's text color; a bot's color is its own in every theme.
+  const foreground = useShownPalette(theme).foreground;
   const tone = rowLightColors(
-    avatar === null ? colors.foreground[theme] : botPalette[resolveAvatar(avatar).color][theme],
+    avatar === null ? foreground : botPalette[resolveAvatar(avatar).color][theme],
     theme,
   );
   const id = useId();

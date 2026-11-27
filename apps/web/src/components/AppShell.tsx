@@ -79,6 +79,7 @@ export function AppShell({
         </aside>
         <main
           ref={conversationRef}
+          data-slot="conversation"
           data-active={active === "conversation" ? "" : undefined}
           inert={covered}
           className="hidden min-w-0 flex-1 flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] data-active:flex @max-tablet:pl-[env(safe-area-inset-left)] @tablet:flex"

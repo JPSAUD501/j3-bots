@@ -50,7 +50,7 @@ Ten pages, each saying in one line what it holds:
 
 - **You:** what the bots call your user, and the time zone routines follow.
 - **Notifications:** "Notify me", and "Show what the bot wrote" in each notification; and allowing notifications on this browser or phone.
-- **Appearance:** theme and language, for this device only.
+- **Appearance:** light, dark or the system's; the theme, as live previews of the seven built-in themes and those saved, marking those a bot made, which can be deleted; "Create from colors", from a canvas and an accent; the theme new devices start with; and the language. The appearance, theme and language are this device's only. A theme's custom styles show only on a computer, in the browser or the desktop app; a phone or a tablet shows its colors.
 - **Providers:** the engine and each provider's status, why one cannot run, and updates to the coding tools behind the bots.
 - **Usage:** how close each provider is to its limit, and which bots and routines used it.
 - **MCP and skills:** the connectors the bots added, who may use each, and the skills bots saved, every bot's or one bot's. A connector's page signs in again, changes who uses it, or disconnects it. Nothing there adds a connector or a skill: your user asks a bot. J3 Bots' own skills (`j3-…`) aren't listed there.

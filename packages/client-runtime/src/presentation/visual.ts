@@ -4,7 +4,7 @@ import {
   VISUAL_CONTENT_SECURITY_POLICY,
   visualEscapesGuard,
 } from "@j3-bots/contracts";
-import { visualVariables } from "@j3-bots/design-tokens";
+import { type Palette, visualVariables } from "@j3-bots/design-tokens";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -123,8 +123,8 @@ const HEIGHT_REPORTER = `(function(){var p=window.parent,l=-1,ready=false;functi
 // width (a chart scaled to fit) could stay shorter than it is without one:
 // shown first in a frame too short for it, it gets a scrollbar, narrows,
 // reports the narrower height, and the scrollbar never goes away.
-const themeStyle = (appearance: VisualAppearance): string => {
-  const variables = Object.entries(visualVariables(appearance))
+const themeStyle = (appearance: VisualAppearance, palette: Palette | undefined): string => {
+  const variables = Object.entries(visualVariables(appearance, palette))
     .map(([name, value]) => `--${name}:${value};`)
     .join("");
   return (
@@ -147,13 +147,17 @@ const themeStyle = (appearance: VisualAppearance): string => {
  * document or a declarative shadow root (`visualEscapesGuard`): the client
  * shows that it could not show it.
  */
-export const visualDocument = (html: string, appearance: VisualAppearance): string | null =>
+export const visualDocument = (
+  html: string,
+  appearance: VisualAppearance,
+  palette?: Palette,
+): string | null =>
   visualEscapesGuard(html)
     ? null
     : "<!doctype html>" +
       `<meta http-equiv="Content-Security-Policy" content="${VISUAL_CONTENT_SECURITY_POLICY}">` +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-      `<style>${themeStyle(appearance)}</style>` +
+      `<style>${themeStyle(appearance, palette)}</style>` +
       `<script>${PAGE_GUARD}</script>` +
       `<script>${HEIGHT_REPORTER}</script>` +
       html;

@@ -23,6 +23,7 @@ import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } fr
 import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
+import { ThemeId } from "./theme.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_TURN } from "./connectorApp.ts";
 import {
   EVENT_STOP_REASONS,
@@ -238,17 +239,23 @@ export const MessageQuote = Schema.Struct({
 export type MessageQuote = typeof MessageQuote.Type;
 
 /**
- * What a bot's message can offer the operator, as one button under it
- * (decision 0098): `record-screen` opens the desktop app's screen recorder.
+ * What a bot's message can offer the operator, as one button under it:
+ * `record-screen` opens the desktop app's screen recorder (decision 0098);
+ * `apply-theme` shows the theme `themeId` on the device it is pressed on
+ * (decision 0104).
  */
-export const MESSAGE_OFFER_KINDS = ["record-screen"] as const;
+export const MESSAGE_OFFER_KINDS = ["record-screen", "apply-theme"] as const;
 
 /**
  * An offer a bot's message carries. Its kind stays open, and a client shows
  * none for one added after it (`unknown`); fields added later to an offer are
- * passed over by a client that predates them.
+ * passed over by a client that predates them. `themeId` comes with
+ * `apply-theme` only.
  */
-export const MessageOffer = Schema.Struct({ kind: OpenLiterals(MESSAGE_OFFER_KINDS) });
+export const MessageOffer = Schema.Struct({
+  kind: OpenLiterals(MESSAGE_OFFER_KINDS),
+  themeId: Schema.optionalKey(ThemeId),
+});
 export type MessageOffer = typeof MessageOffer.Type;
 
 /** The most UTF-16 code units one reaction's emoji takes: a long ZWJ sequence fits. */

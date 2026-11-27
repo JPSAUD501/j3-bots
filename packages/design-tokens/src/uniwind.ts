@@ -6,7 +6,8 @@ import {
   typeEntries,
   type Entry,
 } from "./themeEntries.ts";
-import { layout, spacingUnit } from "./tokens.ts";
+import { nativeColor } from "./color.ts";
+import { layout, type Palette, spacingUnit, stockPalette } from "./tokens.ts";
 
 const px = (value: number) => `${value}px`;
 
@@ -35,8 +36,8 @@ const px = (value: number) => `${value}px`;
  * `uniwind`. Written for Uniwind 1.13.2 and Tailwind 4.3.3.
  */
 export function renderUniwindCss(): string {
-  const light = colorEntries("light", "color-");
-  const dark = colorEntries("dark", "color-");
+  const light = colorEntries(stockPalette("light"), "light", "color-");
+  const dark = colorEntries(stockPalette("dark"), "dark", "color-");
 
   return `/* Generated from packages/design-tokens/src by \`pnpm --filter @j3-bots/design-tokens generate\`. Do not edit. */
 
@@ -80,4 +81,19 @@ ${declarations(
 )}
 }
 `;
+}
+
+/**
+ * One appearance of a theme as the variables Uniwind's theme declares
+ * (`--color-background`…), in `#rrggbb` or `#rrggbbaa`, which a native
+ * renderer parses: what the app hands `Uniwind.updateCSSVariables` to
+ * repaint in a theme without a rebuild.
+ */
+export function nativeThemeVariables(
+  palette: Palette,
+  mode: "light" | "dark",
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    colorEntries(palette, mode, "color-").map(([name, value]) => [`--${name}`, nativeColor(value)]),
+  );
 }

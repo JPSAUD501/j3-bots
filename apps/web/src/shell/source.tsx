@@ -2,6 +2,7 @@
 import { createContext, use, type ReactNode } from "react";
 import { OperatorTimeZone } from "../app/clock";
 import type { BrowserSource } from "../browser/source";
+import { ThemeRuntime } from "../themes/ThemeRuntime";
 import type { ShellData, ShellIntents } from "./data";
 
 export interface ShellSource {
@@ -14,8 +15,9 @@ export interface ShellSource {
 const ShellSourceContext = createContext<ShellSource | null>(null);
 
 /**
- * Gives everything under it the shell's data and intents, and shows every
- * time in the operator's time zone once the settings are read.
+ * Gives everything under it the shell's data and intents, shows every time in
+ * the operator's time zone once the settings are read, and the page in the
+ * theme this device shows.
  */
 export function ShellSourceProvider({
   source,
@@ -26,9 +28,11 @@ export function ShellSourceProvider({
 }) {
   return (
     <ShellSourceContext value={source}>
-      <OperatorTimeZone timeZone={source.data.settings?.timeZone ?? null}>
-        {children}
-      </OperatorTimeZone>
+      <ThemeRuntime themes={source.data.themes} intents={source.intents.themes}>
+        <OperatorTimeZone timeZone={source.data.settings?.timeZone ?? null}>
+          {children}
+        </OperatorTimeZone>
+      </ThemeRuntime>
     </ShellSourceContext>
   );
 }

@@ -98,6 +98,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0101](0101-a-bot-is-its-name-and-its-title-and-a-helper-waits-behind-the-scenes.md) | A bot is its name and its title, and a helper waits behind the scenes | Accepted |
 | [0102](0102-a-bots-card-opens-from-its-face-and-name.md) | A bot's card opens from its face and name | Accepted |
 | [0103](0103-a-room-of-bots-only-is-read-and-never-written-by-the-operator.md) | A room of bots only is read, never written, by the operator | Accepted |
+| [0104](0104-a-theme-is-data-two-colors-and-the-person-applies-it.md) | A theme is data, made from two colors, and the person applies it | Accepted |
 | [0105](0105-the-web-client-loads-what-a-window-shows-and-ci-holds-it-to-a-budget.md) | The web client loads what a window shows, and CI holds it and a turn's traffic to a budget | Accepted |
 | [0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md) | Quotes sit in the field, a passage takes a comment, and nothing sits under the field | Accepted |
 | [0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md) | Dictation goes to the operator's cloud provider, and the server runs no speech model | Accepted |

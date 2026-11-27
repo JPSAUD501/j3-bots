@@ -24,7 +24,11 @@ const toLinear = (channel: number) =>
   channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 
 const HEX = /^#([0-9a-f]{6})$/i;
-const OKLCH = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*([\d.]+)(%?))?\s*\)$/i;
+const NUMBER = String.raw`(\d+(?:\.\d+)?|\.\d+)`;
+const OKLCH = new RegExp(
+  String.raw`^oklch\(\s*${NUMBER}\s+${NUMBER}\s+${NUMBER}\s*(?:\/\s*${NUMBER}(%?))?\s*\)$`,
+  "i",
+);
 
 /** Parses `#rrggbb` or `oklch(L C H)` / `oklch(L C H / A)`. Throws on anything else. */
 export function parseColor(value: string): LinearRgb {
@@ -44,6 +48,8 @@ export function parseColor(value: string): LinearRgb {
     const c = Number(lch[2]);
     const h = (Number(lch[3]) * Math.PI) / 180;
     const alpha = lch[4] === undefined ? 1 : Number(lch[4]) / (lch[5] === "%" ? 100 : 1);
+    // Past these the browser clamps what it draws, and the checks would read another color.
+    if (l > 1 || alpha > 1) throw new Error(`Out of range: ${value}`);
     return { ...oklabToLinear({ l, a: c * Math.cos(h), b: c * Math.sin(h) }), alpha };
   }
   throw new Error(`Unsupported color notation: ${value}`);
@@ -86,11 +92,40 @@ export function mixOklab(a: string, b: string, share: number): string {
   const at = (p: number, q: number) => p * share + q * (1 - share);
   const ab = { a: at(x.a, y.a), b: at(x.b, y.b) };
   const c = Math.hypot(ab.a, ab.b);
-  const l = Number(at(x.l, y.l).toFixed(3));
-  const h =
-    c < 1e-4 ? 0 : Number((((Math.atan2(ab.b, ab.a) * 180) / Math.PI + 360) % 360).toFixed(1));
+  const h = c < 1e-4 ? 0 : (Math.atan2(ab.b, ab.a) * 180) / Math.PI;
+  return oklchText({ l: at(x.l, y.l), c, h });
+}
+
+/** A color in OKLCH: lightness 0 to 1, chroma from 0, hue in degrees, and alpha. */
+export interface Oklch {
+  readonly l: number;
+  readonly c: number;
+  readonly h: number;
+  readonly alpha?: number;
+}
+
+/** Any color the tokens' notations write, in OKLCH. A grey's hue is 0. */
+export function toOklch(value: string | LinearRgb): Oklch {
+  const color = typeof value === "string" ? parseColor(value) : value;
+  const { l, a, b } = linearToOklab(color);
+  const c = Math.hypot(a, b);
+  const h = c < 1e-4 ? 0 : ((((Math.atan2(b, a) * 180) / Math.PI) % 360) + 360) % 360;
+  return { l, c, h, alpha: color.alpha };
+}
+
+/**
+ * `color` as `oklch(L C H)` (with `/ A` when it is translucent), lightness
+ * and chroma to three places and hue to one. A color sRGB cannot show is
+ * brought into it the way CSS Color 4 maps one for display: its chroma is
+ * reduced, at the same lightness and hue, until it fits.
+ */
+export function oklchText(color: Oklch): string {
+  const l = Number(Math.min(1, Math.max(0, color.l)).toFixed(3));
+  const h = Number((((color.h % 360) + 360) % 360).toFixed(1));
+  const alpha =
+    color.alpha === undefined || color.alpha >= 1 ? "" : ` / ${Number(color.alpha.toFixed(3))}`;
   const fits = (chroma: number) => inSrgbGamut(parseColor(`oklch(${l} ${chroma} ${h})`));
-  let chroma = Number(c.toFixed(3));
+  let chroma = Number(Math.max(0, color.c).toFixed(3));
   if (!fits(chroma)) {
     // The chromas sRGB shows at one lightness and hue run from 0 to a limit: find the limit.
     let low = 0;
@@ -102,7 +137,7 @@ export function mixOklab(a: string, b: string, share: number): string {
     }
     chroma = Math.floor(low * 1000) / 1000;
   }
-  return `oklch(${l} ${chroma} ${h})`;
+  return `oklch(${l} ${chroma === 0 ? 0 : chroma} ${chroma === 0 ? 0 : h}${alpha})`;
 }
 
 /** Whether the color can be shown on an sRGB display without clipping. */
@@ -128,6 +163,27 @@ export function hexColor(value: string | LinearRgb): string {
   const color = typeof value === "string" ? parseColor(value) : value;
   const hex = toSrgb8(color).map((c) => c.toString(16).padStart(2, "0"));
   return `#${hex.join("")}`;
+}
+
+/**
+ * A color as `#rrggbb`, or `#rrggbbaa` when it is translucent: the form a
+ * native renderer parses, which has no OKLCH.
+ */
+export function nativeColor(value: string): string {
+  const color = parseColor(value);
+  if (color.alpha >= 1) return hexColor(color);
+  const alpha = Math.round(Math.min(1, Math.max(0, color.alpha)) * 255);
+  return `${hexColor(color)}${alpha.toString(16).padStart(2, "0")}`;
+}
+
+/** Whether `value` is a color in one of the tokens' notations, `#rrggbb` or `oklch(…)`. */
+export function isColor(value: string): boolean {
+  try {
+    parseColor(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

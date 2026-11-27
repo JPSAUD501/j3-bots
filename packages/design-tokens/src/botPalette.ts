@@ -13,7 +13,7 @@
  */
 import { hexColor, mixOklab, parseColor, washedOut } from "./color.ts";
 import type { BotColor } from "./names.ts";
-import { colors, type Themed } from "./tokens.ts";
+import { type Palette, stockPalette, type Themed } from "./tokens.ts";
 
 const themed = (light: string, dark: string): Themed => ({ light, dark });
 
@@ -46,9 +46,13 @@ export const botBubbleTint = { light: 0.11, dark: 0.28 } as const satisfies Reco
  * `botPalette`, so every color there has its bubble.
  */
 export const botBubble = (color: BotColor): Themed => ({
-  light: mixOklab(botPalette[color].light, colors.background.light, botBubbleTint.light),
-  dark: mixOklab(botPalette[color].dark, colors.background.dark, botBubbleTint.dark),
+  light: botBubbleIn(color, stockPalette("light"), "light"),
+  dark: botBubbleIn(color, stockPalette("dark"), "dark"),
 });
+
+/** A bot's bubble in one appearance of a theme: its color tinted over that theme's canvas. */
+export const botBubbleIn = (color: BotColor, palette: Palette, appearance: keyof Themed): string =>
+  mixOklab(botPalette[color][appearance], palette.background, botBubbleTint[appearance]);
 
 /**
  * How strongly a bot's color washes the row of a routine's step it is doing
@@ -61,9 +65,16 @@ export const trackLitTint = { light: 0.08, dark: 0.18 } as const satisfies Recor
 
 /** The row of a routine's step a bot is doing now: its color over the card's surface. */
 export const botTrackLit = (color: BotColor): Themed => ({
-  light: mixOklab(botPalette[color].light, colors.surface.light, trackLitTint.light),
-  dark: mixOklab(botPalette[color].dark, colors.surface.dark, trackLitTint.dark),
+  light: botTrackLitIn(color, stockPalette("light"), "light"),
+  dark: botTrackLitIn(color, stockPalette("dark"), "dark"),
 });
+
+/** The lit row of a routine's step in one appearance of a theme, over its card's surface. */
+export const botTrackLitIn = (
+  color: BotColor,
+  palette: Palette,
+  appearance: keyof Themed,
+): string => mixOklab(botPalette[color][appearance], palette.surface, trackLitTint[appearance]);
 
 /**
  * How much of a bot's color one of its little ones keeps in its body: the

@@ -1,43 +1,56 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { botPalette } from "./botPalette.ts";
 import { hexColor, over, parseColor } from "./color.ts";
-import { colors, fonts, radii, shadows, type Themed, type TypeInput, typeScale } from "./tokens.ts";
+import {
+  fonts,
+  type Palette,
+  radii,
+  shadows,
+  stockPalette,
+  type Themed,
+  type TypeInput,
+  typeScale,
+} from "./tokens.ts";
 
 /**
  * The colors a visual's page is given, as CSS variables on its `:root`
  * (`--background`, `--chart-1`…), each read through `pick`. The page sits on
- * `surface`, as a card does. The chart colors are six of the bot palette that
+ * `surface`, as a card does, in the theme shown. The chart colors are six of the bot palette that
  * stay apart from each other. docs/design/design-language.md, "Visuals".
  */
-const visualRoles = (pick: (value: Themed) => string) => ({
-  background: pick(colors.surface),
-  foreground: pick(colors.foreground),
-  muted: pick(colors.muted),
-  "muted-foreground": pick(colors["muted-foreground"]),
-  border: pick(colors.border),
-  accent: pick(colors.accent),
-  "accent-foreground": pick(colors["accent-foreground"]),
-  success: pick(colors.success),
-  warning: pick(colors.waiting),
-  destructive: pick(colors.blocked),
-  "chart-1": pick(botPalette.cobalt),
-  "chart-2": pick(botPalette.tangerine),
-  "chart-3": pick(botPalette.mint),
-  "chart-4": pick(botPalette.orchid),
-  "chart-5": pick(botPalette.honey),
-  "chart-6": pick(botPalette.sky),
+const visualRoles = (palette: Palette, theme: keyof Themed, pick: (value: string) => string) => ({
+  background: pick(palette.surface),
+  foreground: pick(palette.foreground),
+  muted: pick(palette.muted),
+  "muted-foreground": pick(palette["muted-foreground"]),
+  border: pick(palette.border),
+  accent: pick(palette.accent),
+  "accent-foreground": pick(palette["accent-foreground"]),
+  success: pick(palette.success),
+  warning: pick(palette.waiting),
+  destructive: pick(palette.blocked),
+  "chart-1": pick(botPalette.cobalt[theme]),
+  "chart-2": pick(botPalette.tangerine[theme]),
+  "chart-3": pick(botPalette.mint[theme]),
+  "chart-4": pick(botPalette.orchid[theme]),
+  "chart-5": pick(botPalette.honey[theme]),
+  "chart-6": pick(botPalette.sky[theme]),
 });
 
 export type VisualColor = keyof ReturnType<typeof visualRoles>;
 
 /**
- * Every visual color in one theme, as opaque `#rrggbb`: a translucent token is
- * laid over the page's background first, so a chart library that reads a
- * color as hex, or mixes its own alpha into it, gets the color it shows.
+ * Every visual color in one appearance of a theme (the stock one unless a
+ * `palette` is given), as opaque `#rrggbb`: a translucent token is laid over
+ * the page's background first, so a chart library that reads a color as hex,
+ * or mixes its own alpha into it, gets the color it shows.
  */
-export const visualColors = (theme: keyof Themed): Readonly<Record<VisualColor, string>> => {
-  const background = parseColor(colors.surface[theme]);
-  return visualRoles((value) => hexColor(over(parseColor(value[theme]), background)));
+export const visualColors = (
+  theme: keyof Themed,
+  palette: Palette = stockPalette(theme),
+): Readonly<Record<VisualColor, string>> => {
+  const background = parseColor(palette.surface);
+  return visualRoles(palette, theme, (value) => hexColor(over(parseColor(value), background)));
 };
 
 /**
@@ -46,8 +59,11 @@ export const visualColors = (theme: keyof Themed): Readonly<Record<VisualColor, 
  * (the stacks only: a visual has none of the app's font files) and the
  * corner radius. Clients set exactly these, and the bot is told their names.
  */
-export const visualVariables = (theme: keyof Themed): Readonly<Record<string, string>> => ({
-  ...visualColors(theme),
+export const visualVariables = (
+  theme: keyof Themed,
+  palette: Palette = stockPalette(theme),
+): Readonly<Record<string, string>> => ({
+  ...visualColors(theme, palette),
   "font-sans": fonts.sans,
   "font-mono": fonts.mono,
   radius: `${radii.md}px`,
@@ -66,8 +82,9 @@ export const visualVariables = (theme: keyof Themed): Readonly<Record<string, st
 export const appStyleVariables = (
   theme: keyof Themed,
   input: TypeInput,
+  palette: Palette = stockPalette(theme),
 ): Readonly<Record<string, string>> => {
-  const color = visualColors(theme);
+  const color = visualColors(theme, palette);
   const px = (value: number) => `${value}px`;
   const type = (name: string, step: keyof typeof typeScale) => ({
     [`--font-${name}-size`]: px(typeScale[step][input].size),

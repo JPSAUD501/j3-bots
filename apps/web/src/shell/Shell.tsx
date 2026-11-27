@@ -63,7 +63,7 @@ import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
 import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
-import { SettingsButton, settingsPanel } from "../components/SettingsButton";
+import { openSettings, SettingsButton, settingsPanel } from "../components/SettingsButton";
 import { SignOutDevice } from "../components/SignOutDevice";
 import { Button } from "../components/ui/button";
 import { recordScreenIn } from "../components/RecordOffer";
@@ -267,6 +267,10 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         if (aside === null) return false;
         closeAside();
         return true;
+      case "settings":
+        if (data.settingsOpen) return false;
+        openSettings(intents);
+        return true;
       case "next":
       case "previous": {
         // In the order the roster draws them, so the keys walk what the operator sees.
@@ -329,7 +333,9 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               ? "composer"
               : shortcuts.stop.matches(event)
                 ? "stop"
-                : null;
+                : shortcuts.settings.matches(event)
+                  ? "settings"
+                  : null;
     if (action !== null && act(action)) event.preventDefault();
   });
   // The same actions asked for from outside, as the desktop app's menus do,

@@ -13,7 +13,7 @@ import {
 } from "@j3-bots/client-runtime/react";
 import type { BotId, EntryTarget } from "@j3-bots/contracts";
 import type { Destination } from "@j3-bots/desktop-bridge";
-import { use, useEffect, useEffectEvent, useLayoutEffect, useState } from "react";
+import { use, useEffect, useEffectEvent, useLayoutEffect, useMemo, useState } from "react";
 import { OperatorTimeZone } from "../app/clock";
 import { useReportSaving } from "../live/appUpdate";
 import { useAttachments } from "../live/attachments";
@@ -24,9 +24,11 @@ import type { Desktop } from "../live/desktop";
 import { useInView } from "../live/inView";
 import { useNotice } from "../live/notices";
 import { useSavesUnderWay } from "../live/savesUnderWay";
+import { themesIntents, useThemesView } from "../live/themes";
 import { useWorkFolds } from "../live/workFolds";
 import type { BotCardIntents } from "../components/BotCard";
 import type { ConversationView } from "../shell/data";
+import { ThemeRuntime } from "../themes/ThemeRuntime";
 import { QuickAccess, type QuickAccessData, type QuickAccessIntents } from "./QuickAccess";
 import { useWindowContext } from "./windowContext";
 
@@ -110,6 +112,8 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   const settings = useSettings();
   const connectors = useConnectors();
   const secrets = useReadable(j3.secrets.view);
+  const themes = useThemesView(j3);
+  const themeIntents = useMemo(() => themesIntents(j3), [j3]);
   const folds = useWorkFolds();
   const { say, toast } = useNotice();
   const attachments = useAttachments(j3, say);
@@ -252,35 +256,37 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
     secrets: { ...j3.secrets, copy: app.copySecret },
   };
   return (
-    // Every time in the operator's time zone, as the main window shows it.
-    <OperatorTimeZone timeZone={settings._tag === "ready" ? settings.value.timeZone : null}>
-      {attachments.host(
-        <QuickAccess
-          // One per bot: another primary bot opens afresh, at its own end.
-          key={primary.bot.id}
-          bot={primary.bot}
-          lastEntry={primary.lastEntry}
-          data={data}
-          intents={intents}
-          card={card}
-          solid={solid}
-          shown={shown}
-          asked={asked}
-          onOpenConversation={() => openInMain(conversationOf)}
-          onOpenPair={(botIds, at) => openInMain({ _tag: "pair", botIds, at })}
-          onOpenRoom={(roomId) => openInMain({ _tag: "room", roomId })}
-          onOpenBot={(botId) => openInMain({ _tag: "conversation", botId })}
-          onClose={() => setShown(false)}
-          onLeft={() => app.quickAccess.hide(asked)}
-          overlay={toast}
-          window={
-            windowContext.view === null
-              ? null
-              : { view: windowContext.view, intents: windowContext.intents }
-          }
-        />,
-      )}
-      {folds.readers}
-    </OperatorTimeZone>
+    // Every time in the operator's time zone, and the theme, as the main window shows them.
+    <ThemeRuntime themes={themes} intents={themeIntents}>
+      <OperatorTimeZone timeZone={settings._tag === "ready" ? settings.value.timeZone : null}>
+        {attachments.host(
+          <QuickAccess
+            // One per bot: another primary bot opens afresh, at its own end.
+            key={primary.bot.id}
+            bot={primary.bot}
+            lastEntry={primary.lastEntry}
+            data={data}
+            intents={intents}
+            card={card}
+            solid={solid}
+            shown={shown}
+            asked={asked}
+            onOpenConversation={() => openInMain(conversationOf)}
+            onOpenPair={(botIds, at) => openInMain({ _tag: "pair", botIds, at })}
+            onOpenRoom={(roomId) => openInMain({ _tag: "room", roomId })}
+            onOpenBot={(botId) => openInMain({ _tag: "conversation", botId })}
+            onClose={() => setShown(false)}
+            onLeft={() => app.quickAccess.hide(asked)}
+            overlay={toast}
+            window={
+              windowContext.view === null
+                ? null
+                : { view: windowContext.view, intents: windowContext.intents }
+            }
+          />,
+        )}
+        {folds.readers}
+      </OperatorTimeZone>
+    </ThemeRuntime>
   );
 }
