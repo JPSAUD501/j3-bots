@@ -44,6 +44,7 @@ export {
   pickedModel,
   searchModels,
   shownFavorites,
+  starChange,
   withModel,
   withStar,
 } from "./modelPicker.ts";

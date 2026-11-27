@@ -8,7 +8,7 @@ import {
   modelOffersFast,
   type ProviderStatus,
 } from "@j3-bots/contracts";
-import type { FavoriteChanges, SettingsSave } from "../stores/Settings.ts";
+import type { FavoriteChanges, SettingsChange, SettingsSave } from "../stores/Settings.ts";
 import { aiAccountNames } from "./aiAccount.ts";
 import { sameModel } from "./botEdit.ts";
 
@@ -188,6 +188,16 @@ export const withStar = (
   const without = favorites.filter((star) => !sameModel(star, choice));
   return starred ? [...without, choice] : without;
 };
+
+/** The settings change that stars `choice`, or takes its star off, from the stars shown. */
+export const starChange = (
+  shown: ReadonlyArray<ModelChoice>,
+  choice: ModelChoice,
+  starred: boolean,
+): SettingsChange => ({
+  section: "favorites",
+  changes: { favoriteModels: withStar(shown, choice, starred) },
+});
 
 /**
  * `setting` once the operator picks `model`: its effort where the new model
