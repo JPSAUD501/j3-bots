@@ -47,6 +47,7 @@ export const avatarStates = [
   "blocked",
   "unread",
   "speaking",
+  "listening",
   "offline",
 ] as const;
 
@@ -220,6 +221,9 @@ const POSES: Readonly<Record<AvatarState, Pose>> = {
     lightScale: 1.3,
   }),
   speaking: pose({ lidTop: 0.06, pupil: 6.4, antennaAngle: 6, eyeLift: -3, signal: "arcs" }),
+  // Recording the operator's screen: the eye wide on them, the head turned
+  // to hear, the antenna up, and no signal of its own (decision 0098).
+  listening: pose({ pupil: 8.2, antennaAngle: -6, antennaLength: 20, tilt: 6, eyeLift: -1.5 }),
   offline: pose({
     shut: { curve: -5, roll: 0 },
     antennaAngle: 84,
@@ -620,6 +624,15 @@ function motionAt(
       return { x: 0, y: 0, bob: 0, lean: 0, mouth: 0 };
     case "unread":
       return { x: 0, y: -0.25, bob: 0, lean: 0, mouth: 0 };
+    case "listening":
+      // A slow nod, the eye a little to the side it turned to.
+      return {
+        x: 0.18,
+        y: -0.08,
+        bob: t === null ? 0 : Math.sin(t * 1.7 + ph) * 0.45,
+        lean: 0,
+        mouth: 0,
+      };
     case "speaking": {
       const mouth =
         t === null ? 0.8 : 0.3 + 0.7 * Math.abs(Math.sin(t * 10.5 + ph) * Math.sin(t * 3.7));
@@ -920,8 +933,8 @@ export function pokeAvatar(sim: AvatarSim, poke: AvatarPoke): AvatarSim {
 /**
  * `sim` turned to `state`. The pose eases over on the next frames; the turn
  * itself moves the body once, in the state's own way: thinking tips its head,
- * working ducks to it, waiting and unread hop for attention, blocked slumps,
- * and a bot back to idle from anything but unread blinks.
+ * working ducks to it, waiting and unread hop for attention, listening perks
+ * up, blocked slumps, and a bot back to idle from anything but unread blinks.
  */
 export function setAvatarState(sim: AvatarSim, state: AvatarState): AvatarSim {
   "worklet";
@@ -947,6 +960,8 @@ export function setAvatarState(sim: AvatarSim, state: AvatarState): AvatarSim {
       return begin(turned, "wave");
     case "blocked":
       return begin(turned, "slump");
+    case "listening":
+      return begin(turned, "perk");
     case "idle":
       return sim.state === "unread" ? turned : { ...turned, blinkAt: sim.time };
     case "speaking":

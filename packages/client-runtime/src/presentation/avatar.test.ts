@@ -160,6 +160,7 @@ describe("still forms", () => {
     blocked: { ...plain, eye: "shut", light: "blocked", cut: true },
     unread: { ...plain, eye: "open", smiling: true, light: "foreground", cut: true },
     speaking: { ...plain, eye: "open", signal: "arcs" },
+    listening: { ...plain, eye: "wide" },
     offline: { ...plain, eye: "shut", asleep: true },
   };
 

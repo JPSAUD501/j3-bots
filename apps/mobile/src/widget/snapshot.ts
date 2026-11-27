@@ -19,6 +19,7 @@ const widgetLight = (state: AvatarState): WidgetLight => {
     case "thinking":
     case "working":
     case "speaking":
+    case "listening":
       return "working";
     case "waiting":
     case "blocked":
