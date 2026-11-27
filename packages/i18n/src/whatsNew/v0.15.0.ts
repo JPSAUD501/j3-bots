@@ -19,7 +19,8 @@ export const v0_15_0: WhatsNewRelease = {
       },
       where: {
         en: "Rest the pointer on a bot’s face or name. On Android, press and hold its face.",
-        "pt-BR": "Pare o ponteiro sobre o rosto ou o nome de um bot. No Android, toque e segure no rosto dele.",
+        "pt-BR":
+          "Pare o ponteiro sobre o rosto ou o nome de um bot. No Android, toque e segure no rosto dele.",
       },
     },
     {
@@ -107,7 +108,8 @@ export const v0_15_0: WhatsNewRelease = {
       },
       where: {
         en: "To let an older bot browse, turn on Can browse the web in its details.",
-        "pt-BR": "Para deixar um bot mais antigo navegar, ligue Pode navegar na internet nos detalhes dele.",
+        "pt-BR":
+          "Para deixar um bot mais antigo navegar, ligue Pode navegar na internet nos detalhes dele.",
       },
     },
     {
