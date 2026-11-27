@@ -2098,8 +2098,8 @@ export const layer = Layer.effect(
             ON CONFLICT (id) DO UPDATE
             SET instance_id = excluded.instance_id, recorded_at = excluded.recorded_at
           `;
-          // None recorded yet: a new database, whose sessions are this
-          // engine's.
+          // None recorded yet: a database from before the record, whose
+          // sessions are this engine's.
           if (Option.isNone(recorded)) return [];
           const sessions = yield* sessionsInEngine(undefined).pipe(Effect.orDie);
           for (const { id } of sessions) yield* sessionLost(id);

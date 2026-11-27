@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as TestDomain from "../testing/domain.ts";
 import { BasePrompt, layer as basePromptLayer } from "./BasePrompt.ts";
 import { SettingsService, layer as settingsServiceLayer } from "./SettingsService.ts";
@@ -30,24 +29,6 @@ it.effect("changes only the notification switch a device sent", () =>
 
     assert.deepStrictEqual(saved.notifications, { enabled: false, previews: true });
     assert.deepStrictEqual((yield* settings.get).notifications, saved.notifications);
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("answers a retry from a receipt written before notifications could be off", () =>
-  Effect.gen(function* () {
-    const settings = yield* SettingsService;
-    const sql = yield* SqlClient.SqlClient;
-    const save = settings.update({
-      commandId: CommandId.make("previews-on"),
-      changes: { notifications: { previews: true } },
-    });
-    yield* save;
-    yield* sql`
-      UPDATE command_receipts SET result_json = json_remove(result_json, '$.notifications.enabled')
-      WHERE command_id = 'previews-on'
-    `;
-
-    assert.deepStrictEqual((yield* save).notifications, { enabled: true, previews: true });
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

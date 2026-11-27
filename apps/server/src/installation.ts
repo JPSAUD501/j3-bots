@@ -33,7 +33,8 @@ export const ReleaseManifest = Schema.Struct({
   node: Schema.String,
   /**
    * The T3 Code release it is pinned to, which `j3-bots engine fetch`
-   * installs. Absent from releases built before `j3-bots update` existed.
+   * installs. Every release's build writes it; a manifest without it reads
+   * as one that names no engine.
    */
   engine: Schema.optionalKey(Schema.String),
 });
