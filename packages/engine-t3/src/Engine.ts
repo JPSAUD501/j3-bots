@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   ApprovalDecision,
+  EffortLevel,
   EngineStatus,
   ModelChoice,
   PermissionMode,
@@ -360,6 +361,14 @@ export interface SessionSuggestedReply {
 }
 
 /**
+ * A session's model and the effort asked of it, which `configureSession`
+ * takes together, or neither.
+ */
+export type ModelSetting =
+  | { readonly model?: undefined; readonly effort?: undefined }
+  | { readonly model: ModelChoice; readonly effort: EffortLevel | null };
+
+/**
  * The engine, in J3 Bots terms: projects for bot workspaces, sessions for
  * working context, turns that run in them, and the requests a turn holds on.
  *
@@ -543,10 +552,13 @@ export class Engine extends Context.Service<
 
     /**
      * A new, idle session in the project. `key` is written by the server
-     * before this call, so a retry returns the same session: with the model
-     * and permission mode it was first opened with, which a retry with other
-     * settings does not change. `configureSession` sets them. The session's id
-     * is derived from the key, so another key opens another session.
+     * before this call, so a retry returns the same session: with the model,
+     * effort and permission mode it was first opened with, which a retry with
+     * other settings does not change. `configureSession` sets them. The
+     * session's id is derived from the key, so another key opens another
+     * session. The effort is asked of the model only while the engine
+     * reports it as one of the model's levels: otherwise, as for null, the
+     * harness picks its own, and the turn runs.
      *
      * `OpenRejected`: the engine refused it and keeps that refusal for the
      * key, which is spent. The caller opens the session later under a fresh
@@ -560,6 +572,7 @@ export class Engine extends Context.Service<
       readonly projectId: EngineProjectId;
       readonly title: string;
       readonly model: ModelChoice;
+      readonly effort: EffortLevel | null;
       readonly permissionMode: PermissionMode;
     }) => Effect.Effect<
       SessionId,
@@ -567,9 +580,10 @@ export class Engine extends Context.Service<
     >;
 
     /**
-     * Changes the model or permission mode of a session, from its next turn.
-     * Sends only what differs from what the session runs, so it also brings a
-     * session to settings it may already have.
+     * Changes the model, its effort or the permission mode of a session, from
+     * its next turn. The model and its effort go together, the effort as
+     * `openSession` asks it. Sends only what differs from what the session
+     * runs, so it also brings a session to settings it may already have.
      *
      * A change can replace the session's provider session: on Claude Code a
      * permission mode always does, which ends a turn running there (**Read**
@@ -584,19 +598,20 @@ export class Engine extends Context.Service<
      * before a refused permission mode stays applied; calling again sends what
      * still differs.
      */
-    readonly configureSession: (input: {
-      readonly sessionId: SessionId;
-      readonly model?: ModelChoice;
-      readonly permissionMode?: PermissionMode;
-      /**
-       * Starts the session's provider again before its next turn, so it
-       * takes the tools its project allows now (`setBrowserAccess`) and
-       * runs the provider's executable now (`setHarnessExecutable`). The
-       * conversation resumes where it was. Refused as a change is: while a
-       * turn runs, and while background work it would end runs.
-       */
-      readonly reloadTools?: boolean;
-    }) => Effect.Effect<
+    readonly configureSession: (
+      input: {
+        readonly sessionId: SessionId;
+        readonly permissionMode?: PermissionMode;
+        /**
+         * Starts the session's provider again before its next turn, so it
+         * takes the tools its project allows now (`setBrowserAccess`) and
+         * runs the provider's executable now (`setHarnessExecutable`). The
+         * conversation resumes where it was. Refused as a change is: while a
+         * turn runs, and while background work it would end runs.
+         */
+        readonly reloadTools?: boolean;
+      } & ModelSetting,
+    ) => Effect.Effect<
       void,
       | EngineDown
       | SessionNotFound

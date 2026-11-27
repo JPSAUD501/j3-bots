@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type ModelChoice, type PermissionMode, ProviderId } from "@j3-bots/contracts";
+import {
+  BotId,
+  type EffortLevel,
+  type ModelChoice,
+  type PermissionMode,
+  ProviderId,
+} from "@j3-bots/contracts";
 import {
   Engine,
   type EngineDown,
@@ -65,6 +71,7 @@ export interface Opening {
   readonly projectId: EngineProjectId;
   readonly title: string;
   readonly model: ModelChoice;
+  readonly effort: EffortLevel | null;
   readonly permissionMode: PermissionMode;
 }
 
@@ -87,7 +94,7 @@ const Alignment = Schema.Struct({
 });
 
 /**
- * How many times the bot's model or permission mode changed, and the count at
+ * How many times the bot's model, effort or permission mode changed, and the count at
  * which the engine refused its permission mode, if it did.
  */
 const Revision = Schema.Struct({
@@ -108,6 +115,7 @@ const revisionState = (row: typeof Revision.Type) => ({
 interface Pending {
   readonly sessionId: SessionId;
   readonly model: ModelChoice;
+  readonly effort: EffortLevel | null;
   readonly permissionMode: PermissionMode;
   readonly browser: boolean;
   /** The session's tools were brought to the other browser setting: they are reloaded. */
@@ -483,6 +491,7 @@ export const layer = Layer.effect(
         return {
           sessionId: session.engine_session_id,
           model: bot.model,
+          effort: bot.effort,
           permissionMode: bot.permissionMode,
           browser: bot.browser,
           reloadTools: session.browser !== bot.browser,
@@ -635,6 +644,7 @@ export const layer = Layer.effect(
               .configureSession({
                 sessionId: due.sessionId,
                 model: due.model,
+                effort: due.effort,
                 permissionMode: due.permissionMode,
                 reloadTools: due.reloadTools,
               })
@@ -768,6 +778,7 @@ export const layer = Layer.effect(
           projectId: engineProjectId.value,
           title: session.purpose === "main" ? "Main" : "Routine",
           model: bot.model,
+          effort: bot.effort,
           permissionMode: "supervised",
         })
         .pipe(
@@ -815,6 +826,7 @@ export const layer = Layer.effect(
           projectId,
           title: "Main",
           model: settings.model,
+          effort: settings.effort,
           permissionMode: settings.permissionMode,
         }).pipe(
           Effect.map((sessionId) => ({ _tag: "opened" as const, sessionId })),

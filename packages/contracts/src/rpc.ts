@@ -10,6 +10,7 @@ import {
   BotId,
   CommandId,
   DeviceId,
+  EffortLevel,
   EntryId,
   EntryOrder,
   Language,
@@ -406,14 +407,18 @@ export const BotRpcs = RpcGroup.make(
     error: CommandError,
   }),
   /**
-   * Succeeds once the change is saved. A new model or permission mode reaches
-   * the bot's working session before its next turn: until the engine has it,
-   * the bot takes no new work, and the server keeps trying while the engine
-   * is unavailable. A turn already running keeps the settings it started with,
-   * and background work still running holds the change, which a
+   * Succeeds once the change is saved. A new model, effort or permission mode
+   * reaches the bot's working session before its next turn: until the engine
+   * has it, the bot takes no new work, and the server keeps trying while the
+   * engine is unavailable. A turn already running keeps the settings it
+   * started with, and background work still running holds the change, which a
    * `settings-held` notice says and the bot's `settingsHeld` shows; a Stop
    * ends both. Turning the browser on or off reaches it the same way: from
    * its next turn.
+   *
+   * A new model the bot's effort is not a level of, with no effort given,
+   * takes the bot back to the default effort (null). `Invalid("model")`: the
+   * model, or the effort asked of it, is not one the engine offers now.
    */
   Rpc.make("bot.update", {
     payload: {
@@ -421,6 +426,11 @@ export const BotRpcs = RpcGroup.make(
       botId: BotId,
       profile: Schema.optionalKey(ProfileChanges),
       model: Schema.optionalKey(ModelChoice),
+      /**
+       * A level the engine reports for the bot's model, the new one when
+       * `model` changes it, or null for the harness's own default (`Bot.effort`).
+       */
+      effort: Schema.optionalKey(Schema.NullOr(EffortLevel)),
       permissionMode: Schema.optionalKey(PermissionMode),
       /**
        * Making a bot primary makes the one that was primary before not, in the

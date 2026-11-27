@@ -53,7 +53,7 @@ const provider = (
   name: id,
   harness,
   status,
-  models: [{ id: ModelId.make(model), name: model }],
+  models: [{ id: ModelId.make(model), name: model, efforts: [] }],
   usage: [],
 });
 

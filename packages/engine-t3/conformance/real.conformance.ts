@@ -322,6 +322,7 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
     projectId,
     title: name,
     model: bench.model,
+    effort: null,
     permissionMode: "supervised",
   });
   const queue = yield* engine
@@ -708,6 +709,7 @@ describe("Engine conformance, real engine only", () => {
             projectId,
             title: "refused-opening",
             model: bench.model,
+            effort: null,
             permissionMode: "supervised",
           })
           .pipe(Effect.flip);
@@ -740,6 +742,7 @@ describe("Engine conformance, real engine only", () => {
             projectId,
             title: "mode-ceiling",
             model: bench.model,
+            effort: null,
             permissionMode,
           });
 
@@ -787,6 +790,7 @@ describe("Engine conformance, real engine only", () => {
               projectId,
               title: "turn-ceiling",
               model: bench.model,
+              effort: null,
               permissionMode: "full-access",
             }),
           );

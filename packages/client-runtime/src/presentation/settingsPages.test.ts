@@ -8,7 +8,7 @@ const provider = (id: string, status: ProviderStatus["status"]): ProviderStatus 
   name: id,
   harness: "claude-code",
   status,
-  models: [{ id: ModelId.make("m"), name: "Model" }],
+  models: [{ id: ModelId.make("m"), name: "Model", efforts: [] }],
   usage: [],
 });
 

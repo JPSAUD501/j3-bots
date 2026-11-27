@@ -6,6 +6,7 @@ import { useEffect, useId } from "react";
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
 import type { ProfileField } from "@j3-bots/client-runtime/presentation";
 import { useBotEdit } from "@j3-bots/client-runtime/react";
+import { effortText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
@@ -39,7 +40,7 @@ const keyOf = (choice: Bot["model"]) => JSON.stringify([choice.providerId, choic
 
 /**
  * Everything the operator changes about a bot itself: its name, title, look
- * and job, the model it runs on, how much it may do without asking, and
+ * and job, the model it runs on and the effort it puts in, how much it may do without asking, and
  * whether it is hidden. Save sends only what changed. While a save is under way the form shows what it sends
  * and takes no edit; a save that fails leaves the edits in place and says
  * why, beside the field when one field is the reason.
@@ -54,19 +55,23 @@ export function EditBotForm({
   onUnsavedChange,
   titleId,
 }: EditBotFormProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const ids = {
     name: useId(),
     title: useId(),
     job: useId(),
     jobHint: useId(),
     model: useId(),
+    effort: useId(),
+    effortHint: useId(),
     mode: useId(),
   };
   const errorIds = { name: useId(), title: useId(), job: useId(), model: useId() };
   const form = useBotEdit({ bot, engine, save, connected });
   const { name, title, job, model, saving, problem, choices, unsaved } = form;
   const mode = form.permissionMode;
+  const { effort } = form;
   const modelMessage = form.modelUnavailable ? t("editBot.model.unavailable") : null;
 
   useEffect(() => {
@@ -225,6 +230,49 @@ export function EditBotForm({
             <p className="text-2xs text-muted-foreground">{t("editBot.model.someNotReady")}</p>
           )}
         </div>
+
+        {(effort.levels.length > 0 || effort.fallback !== null) && (
+          <div className="flex flex-col gap-1">
+            {effort.levels.length > 0 && (
+              <>
+                <label htmlFor={ids.effort} className="text-xs">
+                  {t("editBot.effort")}
+                </label>
+                <select
+                  id={ids.effort}
+                  value={effort.shown ?? ""}
+                  disabled={saving}
+                  aria-describedby={ids.effortHint}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    const level = effort.levels.find((choice) => choice.id === value);
+                    form.edit({ effort: { level: level?.id ?? null } });
+                  }}
+                  className={cn(lineField, "disabled:text-muted-foreground")}
+                >
+                  <option value="">{effortText(null, i18n)}</option>
+                  {effort.levels.map((level) => (
+                    <option key={level.id} value={level.id}>
+                      {effortText(level, i18n)}
+                    </option>
+                  ))}
+                </select>
+                <p id={ids.effortHint} className="text-2xs text-muted-foreground">
+                  {t("editBot.effort.hint")}
+                </p>
+              </>
+            )}
+            {effort.fallback !== null && (
+              <p role="status" className="text-xs text-muted-foreground">
+                {t("editBot.effort.fallback", {
+                  model: effort.fallback.modelName,
+                  level: effortText(effort.fallback.level, i18n),
+                  name: bot.profile.name,
+                })}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <p id={ids.mode} className="text-xs">

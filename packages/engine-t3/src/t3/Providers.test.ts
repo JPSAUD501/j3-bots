@@ -99,7 +99,7 @@ describe("providerStatuses", () => {
     const status = statusOf(claude, {});
     assert.deepStrictEqual(status?.status, { _tag: "ready" });
     assert.deepStrictEqual(status?.models, [
-      { id: ModelId.make("claude-haiku-5-5"), name: "Haiku 5.5" },
+      { id: ModelId.make("claude-haiku-5-5"), name: "Haiku 5.5", efforts: [] },
     ]);
   });
 

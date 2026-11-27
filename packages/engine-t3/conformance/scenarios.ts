@@ -78,6 +78,7 @@ const session = Effect.fnUntraced(function* (name: string) {
     projectId,
     title: name,
     model: bench.model,
+    effort: null,
     permissionMode: "supervised",
   });
   const events = yield* watch(sessionId, null);

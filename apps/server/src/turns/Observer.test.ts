@@ -652,8 +652,8 @@ it.effect(
       const { providerId, modelId } = TestDomain.DEFAULT_MODEL;
       const newer = { providerId, modelId: ModelId.make("sonnet") };
       yield* providerLists(providerId, [
-        { id: modelId, name: "Claude Opus" },
-        { id: newer.modelId, name: "Claude Sonnet" },
+        { id: modelId, name: "Claude Opus", efforts: [] },
+        { id: newer.modelId, name: "Claude Sonnet", efforts: [] },
       ]);
       const { bot, session, turnId } = yield* steering;
       // The operator moves the bot to another model while the engine queues a

@@ -2,7 +2,16 @@
 import { avatarShapeNames, botColors } from "@j3-bots/design-tokens/names";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BotId, EntryId, Label, ModelId, OpenLiterals, ProviderId, SectionId } from "./base.ts";
+import {
+  BotId,
+  EffortLevel,
+  EntryId,
+  Label,
+  ModelId,
+  OpenLiterals,
+  ProviderId,
+  SectionId,
+} from "./base.ts";
 import { StepTool } from "./work.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
@@ -205,6 +214,14 @@ export const Bot = Schema.Struct({
   id: BotId,
   profile: Profile,
   model: ModelChoice,
+  /**
+   * How much the bot's AI thinks before it acts: one of the levels the engine
+   * reports for its model (`ProviderStatus.models`), or null for the
+   * harness's own default, for which nothing is sent. A level its model does
+   * not offer now runs as the default, and never fails a turn. Only the
+   * operator chooses it. Null from a server that predates it.
+   */
+  effort: Schema.NullOr(EffortLevel).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   permissionMode: PermissionMode,
   /** The operator's default contact. At most one bot is primary. */
   primary: Schema.Boolean,

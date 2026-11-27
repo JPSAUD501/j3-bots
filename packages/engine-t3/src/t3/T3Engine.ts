@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type BrowserHostStatus,
+  type EffortLevel,
   EngineStatus,
   type ModelChoice,
   ModelId,
@@ -58,6 +59,7 @@ import { isInlineImage, normalizeAttachmentMetadata } from "../attachments.ts";
 import {
   Engine,
   type DispatchInput,
+  type ModelSetting,
   type EngineOptions,
   type ConnectionOutcome,
   type ProviderConnection,
@@ -133,6 +135,7 @@ import {
   versionNumberIn,
   withFirstCheckBudget,
 } from "./Providers.ts";
+import { effortOptions, sameOptions } from "./Effort.ts";
 import {
   activeConnection,
   driverOf,
@@ -444,6 +447,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * each runs now (`setHarnessExecutable`).
    */
   const providers = yield* Ref.make(options.providers);
+  /** The engine's own report of its provider instances, kept while it is ready. */
+  const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
    * The providers whose instance the engine may run with another executable
    * than `providers` names: an upsert whose outcome is not known, or one the
@@ -970,13 +975,31 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const refused = (error: { readonly message: string }) =>
     Effect.die(new Error(`The engine refused a command: ${error.message}`));
 
-  const modelSelection = (model: ModelChoice) =>
-    providerIds.has(model.providerId)
-      ? Effect.succeed({
-          instanceId: ProviderInstanceId.make(instanceIdFor(model.providerId)),
-          model: model.modelId,
-        })
-      : Effect.fail(new ModelUnavailable({ providerId: model.providerId, modelId: model.modelId }));
+  /**
+   * The engine's selection of `model`, asking it for `effort` while the engine
+   * reports that level for the model (`effortOptions`).
+   */
+  const modelSelection = (model: ModelChoice, effort: EffortLevel | null) => {
+    if (!providerIds.has(model.providerId)) {
+      return Effect.fail(
+        new ModelUnavailable({ providerId: model.providerId, modelId: model.modelId }),
+      );
+    }
+    const instanceId = ProviderInstanceId.make(instanceIdFor(model.providerId));
+    return Effect.map(SubscriptionRef.get(reported), (providers) => {
+      const options = effortOptions(
+        providers
+          .find((provider) => provider.instanceId === instanceId)
+          ?.models.find((candidate) => candidate.slug === model.modelId),
+        effort,
+      );
+      return {
+        instanceId,
+        model: model.modelId,
+        ...(options === undefined ? {} : { options }),
+      };
+    });
+  };
 
   const commandId = (purpose: string, key: string) => CommandId.make(commandIdFor(purpose, key));
   // Commands that are idempotent by nature still need distinct ids, or the engine
@@ -1321,10 +1344,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly projectId: EngineProjectId;
     readonly title: string;
     readonly model: ModelChoice;
+    readonly effort: EffortLevel | null;
     readonly permissionMode: PermissionMode;
   }) {
     const sessionId = SessionId.make(threadIdFor(input.key));
-    const selection = yield* modelSelection(input.model);
+    const selection = yield* modelSelection(input.model, input.effort);
     const sentTo = yield* Ref.get(starts);
     // Settled by the key's receipt, as a dispatch is: the engine keeps a
     // refusal for the key, so a refused opening is never sent again.
@@ -1392,24 +1416,27 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       ),
     );
 
-  const configureSession = Effect.fn("Engine.configureSession")(function* (input: {
-    readonly sessionId: SessionId;
-    readonly model?: ModelChoice;
-    readonly permissionMode?: PermissionMode;
-    readonly reloadTools?: boolean;
-  }) {
+  const configureSession = Effect.fn("Engine.configureSession")(function* (
+    input: {
+      readonly sessionId: SessionId;
+      readonly permissionMode?: PermissionMode;
+      readonly reloadTools?: boolean;
+    } & ModelSetting,
+  ) {
     // Only what differs from what the thread runs is sent: a session opened
     // again under its key is the one the engine opened first, as it was
     // opened then, and is set to the caller's settings this way.
     const mirror = yield* liveProjection(input.sessionId);
     const thread = mirror.thread;
     const threadId = ThreadId.make(input.sessionId);
-    const wanted = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    const wanted =
+      input.model === undefined ? undefined : yield* modelSelection(input.model, input.effort);
     const selection =
       wanted !== undefined &&
       (thread === undefined ||
         thread.modelSelection.instanceId !== wanted.instanceId ||
-        thread.modelSelection.model !== wanted.model)
+        thread.modelSelection.model !== wanted.model ||
+        !sameOptions(thread.modelSelection.options, wanted.options))
         ? wanted
         : undefined;
     const mode =
@@ -2295,8 +2322,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
-  /** The engine's own report of its provider instances, kept while it is ready. */
-  const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
    * Every report the engine sends, from a subscription opened again a few
    * seconds after it ends or fails, for as long as the engine is ready.

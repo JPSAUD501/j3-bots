@@ -60,6 +60,7 @@ import Migration0054 from "./migrations/0054_suggested_replies.ts";
 import Migration0055 from "./migrations/0055_turn_work.ts";
 import Migration0056 from "./migrations/0056_retries_and_ignored_stops.ts";
 import Migration0057 from "./migrations/0057_engine_release.ts";
+import Migration0058 from "./migrations/0058_bot_effort.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -121,6 +122,7 @@ const migrations = SqliteMigrator.fromRecord({
   "55_turn_work": Migration0055,
   "56_retries_and_ignored_stops": Migration0056,
   "57_engine_release": Migration0057,
+  "58_bot_effort": Migration0058,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

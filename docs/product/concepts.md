@@ -64,6 +64,8 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Model.** What the bot runs on: a provider instance and a model slug from the engine, such as Claude Code with a specific Claude model. Chosen per bot and changeable.
 
+**Effort.** How much the bot's AI thinks before it acts: Default, which leaves it to the AI, or one of the levels the bot's model offers, such as Low, Medium or High. More effort is slower and uses more of the operator's plan. Chosen per bot, beside its model, by the operator only. The interface says "Effort" in English and "Esforço" in Portuguese ([0082](../decisions/0082-a-bots-effort-sits-beside-its-model-and-the-default-is-the-harnesss-own.md)).
+
 ## Where the bots live
 
 The bots live where J3 Bots runs. The operator chooses where in the desktop app's first screen and changes it in Settings, under "Where your bots live". There are two places:

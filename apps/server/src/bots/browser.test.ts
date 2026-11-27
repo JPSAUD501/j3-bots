@@ -99,6 +99,7 @@ it.effect(
         projectId: Option.getOrThrow(stored.engineProjectId),
         title: "Delegate",
         model: stored.bot.model,
+        effort: stored.bot.effort,
         permissionMode: stored.bot.permissionMode,
       });
       yield* control.startEngineTurn(delegate);

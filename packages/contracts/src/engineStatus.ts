@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   BotId,
+  EffortLevel,
   Label,
   ModelId,
   NonNegativeInt,
@@ -88,6 +89,27 @@ export const ProviderUpdate = Schema.Struct({
 });
 export type ProviderUpdate = typeof ProviderUpdate.Type;
 
+/**
+ * One level of effort a model takes, with the engine's English name for it
+ * (`Label`), which a client shows only for a level it has no words of its own
+ * for.
+ */
+export const EffortChoice = Schema.Struct({ id: EffortLevel, name: Label });
+export type EffortChoice = typeof EffortChoice.Type;
+
+/**
+ * A model the engine offers on a provider. `efforts`: the levels of effort it
+ * takes, lowest first, as the engine reports them; empty for a model that
+ * takes no choice of effort, and from a server older than it, at the same
+ * protocol version. An older client ignores it.
+ */
+export const ProviderModel = Schema.Struct({
+  id: ModelId,
+  name: Label,
+  efforts: Schema.Array(EffortChoice).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+});
+export type ProviderModel = typeof ProviderModel.Type;
+
 export const ProviderStatus = Schema.Struct({
   id: ProviderId,
   name: Label,
@@ -135,7 +157,7 @@ export const ProviderStatus = Schema.Struct({
       retryAt: Schema.optionalKey(Schema.DateTimeUtc),
     }),
   ]),
-  models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),
+  models: Schema.Array(ProviderModel),
   usage: Schema.Array(UsageWindow),
   /**
    * Its harness's version (`ProviderVersion`), absent when the engine did
@@ -274,6 +296,18 @@ export const defaultPermissionMode = (status: EngineStatus, model: ModelChoice):
   const provider = status.providers.find((candidate) => candidate.id === model.providerId);
   return provider !== undefined && provider.harness !== "other" ? "auto" : "supervised";
 };
+
+/**
+ * The levels of effort `model` takes, as `status` reports them; null while the
+ * engine does not list the model, whose levels are then not known.
+ */
+export const modelEfforts = (
+  status: EngineStatus,
+  model: ModelChoice,
+): ReadonlyArray<EffortChoice> | null =>
+  status.providers
+    .find((provider) => provider.id === model.providerId)
+    ?.models.find((candidate) => candidate.id === model.modelId)?.efforts ?? null;
 
 /** The routine whose run a turn was part of. */
 export const UsageRoutine = Schema.Union([

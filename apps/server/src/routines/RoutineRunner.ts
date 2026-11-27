@@ -440,6 +440,7 @@ export const layer = Layer.effect(
           projectId: found.engineProjectId.value,
           title: `Routine: ${attempt.name}`,
           model: found.bot.model,
+          effort: found.bot.effort,
           permissionMode: found.bot.permissionMode,
         })
         .pipe(Effect.result);

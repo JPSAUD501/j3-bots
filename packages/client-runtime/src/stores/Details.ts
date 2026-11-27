@@ -5,6 +5,7 @@ import type {
   BotFile,
   BotId,
   BotTemplate,
+  EffortLevel,
   MemoryDocument,
   MemoryFile,
   MemoryPath,
@@ -89,6 +90,8 @@ export interface TemplateDraft {
 export interface BotChanges {
   readonly profile?: ProfileChanges;
   readonly model?: ModelChoice;
+  /** A level of the bot's model, or null for the default (`Bot.effort`). */
+  readonly effort?: EffortLevel | null;
   readonly permissionMode?: PermissionMode;
   /** Whether the bot may use the engine's browser, from its next turn. */
   readonly browser?: boolean;

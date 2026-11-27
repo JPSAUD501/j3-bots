@@ -8,7 +8,7 @@ import {
   useJ3Client,
   useReadable,
 } from "@j3-bots/client-runtime/react";
-import { permissionModeText } from "@j3-bots/client-runtime/wording";
+import { effortText, permissionModeText } from "@j3-bots/client-runtime/wording";
 import { type Bot, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useLayoutEffect, useRef } from "react";
@@ -82,7 +82,7 @@ export function EditBotScreen({ navigation, route }: Props) {
 }
 
 /**
- * The form: name, title, look and job, the model, the permission mode, and
+ * The form: name, title, look and job, the model and its effort, the permission mode, and
  * whether it is hidden from the roster's list. Save sends only what changed. While a save is under way the form shows what it
  * sends and takes no edit; a save that fails leaves the edits in place and
  * says why, beside the field when one field is the reason.
@@ -106,7 +106,7 @@ function EditBotForm({
   const connected = useConnection()._tag === "connected";
   const save: Save<BotChanges> | undefined = useReadable(client.botSaves).get(bot.id);
   const form = useBotEdit({ bot, engine, save, connected });
-  const { saving, problem, choices, model } = form;
+  const { saving, problem, choices, model, effort } = form;
   const leave = useDiscardGuard(form.unsaved && !saving, () => client.dismissBotSave(bot.id));
 
   const fieldError = (field: ProfileField) => {
@@ -218,6 +218,46 @@ function EditBotForm({
           <Text className="text-xs text-muted-foreground">{t("editBot.model.someNotReady")}</Text>
         )}
       </View>
+
+      {(effort.levels.length > 0 || effort.fallback !== null) && (
+        <View
+          accessibilityRole={effort.levels.length > 0 ? "radiogroup" : undefined}
+          className="gap-2"
+        >
+          {effort.levels.length > 0 && (
+            <>
+              <Text className="text-sm text-foreground">{t("editBot.effort")}</Text>
+              <Text className="text-xs text-muted-foreground">{t("editBot.effort.hint")}</Text>
+              <ChoiceRow
+                kind="one"
+                label={effortText(null, i18n)}
+                selected={effort.shown === null}
+                unavailable={saving}
+                onPress={() => form.edit({ effort: { level: null } })}
+              />
+              {effort.levels.map((level) => (
+                <ChoiceRow
+                  key={level.id}
+                  kind="one"
+                  label={effortText(level, i18n)}
+                  selected={effort.shown === level.id}
+                  unavailable={saving}
+                  onPress={() => form.edit({ effort: { level: level.id } })}
+                />
+              ))}
+            </>
+          )}
+          {effort.fallback !== null && (
+            <Text accessibilityLiveRegion="polite" className="text-sm text-muted-foreground">
+              {t("editBot.effort.fallback", {
+                model: effort.fallback.modelName,
+                level: effortText(effort.fallback.level, i18n),
+                name: bot.profile.name,
+              })}
+            </Text>
+          )}
+        </View>
+      )}
 
       <View accessibilityRole="radiogroup" className="gap-2">
         <Text className="text-sm text-foreground">{t("editBot.permissionMode")}</Text>

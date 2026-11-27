@@ -32,7 +32,7 @@ const provider = (
   name: account,
   harness: account,
   status,
-  models: [{ id: ModelId.make("model"), name: "Model" }],
+  models: [{ id: ModelId.make("model"), name: "Model", efforts: [] }],
   usage: [],
   ...(copy === undefined ? {} : { copy }),
 });

@@ -1552,6 +1552,18 @@ const sentences = {
   "editBot.model.someNotReady":
     "Provedores que não podem rodar um bot agora não aparecem. As Configurações mostram o motivo.",
   "editBot.model.unavailable": "O motor não oferece mais este modelo. Escolha outro para salvar.",
+  "editBot.effort": "Esforço",
+  "editBot.effort.hint":
+    "Mais esforço demora mais e gasta mais do seu plano, em troca de um trabalho mais cuidadoso. No Padrão, a IA decide.",
+  "editBot.effort.fallback": "{model} não oferece {level}, então {name} usa o Padrão.",
+  "editBot.effort.level.default": "Padrão",
+  "editBot.effort.level.none": "Nenhum",
+  "editBot.effort.level.minimal": "Mínimo",
+  "editBot.effort.level.low": "Baixo",
+  "editBot.effort.level.medium": "Médio",
+  "editBot.effort.level.high": "Alto",
+  "editBot.effort.level.xhigh": "Muito alto",
+  "editBot.effort.level.max": "Máximo",
   "editBot.permissionMode": "Modo de permissão",
   "editBot.nextTurn": "{name} usa as novas configurações a partir do próximo turno.",
   "editBot.providerChangeStops":
