@@ -71,6 +71,13 @@ const SMALL_HOST_BYTES = 8 * 1024 ** 3;
  */
 const CLIENT_SILENCE = "15 seconds";
 
+/**
+ * How long a client may take to send its first piece once the server
+ * listens: a browser asks the operator for the microphone the first time,
+ * and they may take a while to answer.
+ */
+const FIRST_AUDIO_WAIT = "2 minutes";
+
 /** The secret a cloud provider's key is kept in. */
 export const cloudKeySecret = (provider: CloudVoiceProvider): SecretName =>
   SecretName.make(`voice-${provider}`);
@@ -408,7 +415,8 @@ export const layer = Layer.effect(
     /**
      * What the client sends until `finish`, each piece of audio handed to
      * `heard`. Answers the draft `finish` carries. While it `records`, a
-     * client silent for `CLIENT_SILENCE` has hung up.
+     * client that sends nothing for `FIRST_AUDIO_WAIT` at first, then for
+     * `CLIENT_SILENCE` between pieces, has hung up.
      */
     const listen = Effect.fn("Voice.listen")(function* <E>(
       inbox: Queue.Dequeue<VoiceClientFrame | Uint8Array, Cause.Done>,
@@ -416,17 +424,16 @@ export const layer = Layer.effect(
       heard: (pcm: Uint8Array) => Effect.Effect<void, E>,
     ) {
       const take = Queue.take(inbox).pipe(Effect.mapError(() => new HungUp()));
-      const nextFrame = records
-        ? take.pipe(
-            Effect.timeoutOrElse({
-              duration: CLIENT_SILENCE,
-              orElse: () => Effect.fail(new HungUp()),
-            }),
-          )
-        : take;
       let received = 0;
       while (true) {
-        const next = yield* nextFrame;
+        const next = yield* records
+          ? take.pipe(
+              Effect.timeoutOrElse({
+                duration: received === 0 ? FIRST_AUDIO_WAIT : CLIENT_SILENCE,
+                orElse: () => Effect.fail(new HungUp()),
+              }),
+            )
+          : take;
         if (next instanceof Uint8Array) {
           if (next.byteLength > MAX_VOICE_FRAME_BYTES || next.byteLength % 4 !== 0) {
             return yield* refuse("failed");

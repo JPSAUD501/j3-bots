@@ -376,6 +376,26 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
   );
 
   it.effect(
+    "waits for the first piece while the operator answers the browser's microphone prompt",
+    () =>
+      Effect.gen(function* () {
+        const { speech } = yield* scene({ place: "openai" });
+        const voice = yield* Voice;
+        yield* voice.setCloudKey("openai", Redacted.make("sk-test-voice"));
+        yield* speech.scriptText({ cloud: "Allowed at last." });
+        const client = yield* fakeLink;
+        yield* voice.dictate(client.link).pipe(Effect.forkScoped);
+        yield* client.say({ type: "start" });
+        assert.deepStrictEqual(yield* client.next, { type: "listening", live: false });
+        yield* TestClock.adjust("20 seconds");
+        yield* client.say(audio());
+        yield* client.say({ type: "finish" });
+        assert.deepStrictEqual(yield* client.next, { type: "done", text: "Allowed at last." });
+        yield* voice.setCloudKey("openai", null);
+      }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
+  );
+
+  it.effect(
     "sends nothing to a cloud provider whose key was removed while the operator spoke",
     () =>
       Effect.gen(function* () {

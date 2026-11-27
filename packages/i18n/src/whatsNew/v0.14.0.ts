@@ -47,9 +47,9 @@ export const v0_14_0: WhatsNewRelease = {
         "pt-BR": "Dite sua mensagem",
       },
       body: {
-        en: "Talk instead of typing: your words appear in the message as you speak, and nothing is sent until you send it. Your voice becomes text on your own computer or phone, unless you choose an online service for it.",
+        en: "Talk instead of typing: what you say becomes the text of your message, and nothing is sent until you send it. Your voice becomes text on your own computer or phone, unless you choose an online service for it.",
         "pt-BR":
-          "Fale em vez de digitar: suas palavras aparecem na mensagem enquanto você fala, e nada é enviado até você enviar. Sua voz vira texto no seu próprio computador ou celular, a não ser que você escolha um serviço online para isso.",
+          "Fale em vez de digitar: o que você diz vira o texto da sua mensagem, e nada é enviado até você enviar. Sua voz vira texto no seu próprio computador ou celular, a não ser que você escolha um serviço online para isso.",
       },
       where: {
         en: "Tap the microphone beside the send button, and tap it again when you’re done. On a computer, Ctrl+Shift+Space does the same (⇧⌘Space on a Mac). Language, words to spell right and where your voice becomes text are in Settings → Voice.",
