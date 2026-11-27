@@ -12,7 +12,8 @@
     "test": "vp run -r test && vp test run --dir scripts",
     "knip": "knip",
     "vendor:t3-contracts": "scripts/vendor-t3-contracts.sh",
-    "release": "node scripts/build-release.ts"
+    "release": "node scripts/build-release.ts",
+    "web-budget": "node scripts/web-budget.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
