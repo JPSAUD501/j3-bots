@@ -62,6 +62,7 @@ function useLiveState(live: LiveApp | null, app: ConnectorAppRef): LiveAppState 
         page: null,
         failed: false,
         height: connectorAppStartHeight(app.viewId),
+        pinnedHeight: null,
         modes: [],
         asks: [],
       }),
@@ -196,11 +197,15 @@ function PinnedApp({ staged }: { readonly staged: StagedApp }) {
           live={live}
           page={state.page}
           mode="pip"
-          height={Math.min(state.height, MAX_CONNECTOR_APP_PIP_HEIGHT)}
+          height={Math.min(state.pinnedHeight ?? state.height, MAX_CONNECTOR_APP_PIP_HEIGHT)}
           asks={state.asks}
         />
       ) : (
-        <View style={{ height: Math.min(state.height, MAX_CONNECTOR_APP_PIP_HEIGHT) }} />
+        <View
+          style={{
+            height: Math.min(state.pinnedHeight ?? state.height, MAX_CONNECTOR_APP_PIP_HEIGHT),
+          }}
+        />
       )}
     </AnimatedView>
   );

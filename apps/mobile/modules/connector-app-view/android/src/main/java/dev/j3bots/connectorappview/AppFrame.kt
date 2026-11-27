@@ -28,15 +28,19 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 import org.json.JSONObject
 
 /**
- * The longest message the app may pass to the host: a tool call's arguments,
- * at most 2 MiB as JSON (`MAX_CONNECTOR_APP_DATA_BYTES`), with room for the
- * request around them.
+ * The longest message the app may pass to the host, as the page's relay
+ * answers a longer one (`CONNECTOR_APP_BRIDGE_MAX_LENGTH`): the most files
+ * one download may offer, 16 MiB as base64, with room for the request around them.
  */
-private const val MAX_MESSAGE_LENGTH = 3 * 1024 * 1024
+private const val MAX_MESSAGE_LENGTH = 24 * 1024 * 1024
+
+/** The most characters of the app's messages that wait for the main thread together; past these, one is dropped. */
+private const val MAX_PENDING_LENGTH = 2L * MAX_MESSAGE_LENGTH
 
 /** The most messages of the app's that wait for the main thread; any past these are dropped. */
 private const val MAX_PENDING = 64
@@ -138,6 +142,7 @@ internal class AppFrame(context: Context, private val key: String, document: Str
   /** The app's messages, in order, waiting for the main thread. */
   private val pending = ConcurrentLinkedQueue<String>()
   private val pendingCount = AtomicInteger(0)
+  private val pendingLength = AtomicLong(0)
 
   init {
     configure(view)
@@ -297,7 +302,13 @@ internal class AppFrame(context: Context, private val key: String, document: Str
     @JavascriptInterface
     fun postMessage(data: String?) {
       if (data == null || data.length > MAX_MESSAGE_LENGTH) return
+      val length = data.length.toLong()
       if (pendingCount.incrementAndGet() > MAX_PENDING) {
+        pendingCount.decrementAndGet()
+        return
+      }
+      if (pendingLength.addAndGet(length) > MAX_PENDING_LENGTH) {
+        pendingLength.addAndGet(-length)
         pendingCount.decrementAndGet()
         return
       }
@@ -305,6 +316,7 @@ internal class AppFrame(context: Context, private val key: String, document: Str
       main.post {
         val message = pending.poll() ?: return@post
         pendingCount.decrementAndGet()
+        pendingLength.addAndGet(-message.length.toLong())
         if (!closed) AppFrames.send("onAppMessage", mapOf("key" to key, "data" to message))
       }
     }

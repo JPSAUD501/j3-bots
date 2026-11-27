@@ -12,10 +12,17 @@ import {
   connectorAppHost,
   connectorAppShell,
   connectorAppStartHeight,
+  readThrough,
+  rowOrder,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
-import type { ConnectorAppRef, ConnectorAppViewId, MessageEntry } from "@j3-bots/contracts";
+import type {
+  ConnectorAppRef,
+  ConnectorAppViewId,
+  EntryOrder,
+  MessageEntry,
+} from "@j3-bots/contracts";
 import {
   createContext,
   use,
@@ -64,8 +71,10 @@ export interface LiveAppState {
   /** The page its frame loads, once the app is opened; null while it opens or once it failed. */
   readonly page: string | null;
   readonly failed: boolean;
-  /** The height it asked for, within bounds; the last it had while it opens again. */
+  /** The height it asked for in the reply, within bounds; the last it had while it opens again. */
   readonly height: number;
+  /** The height it asked for pinned, laid out at the pinned width; null until it did. */
+  readonly pinnedHeight: number | null;
   /** The modes it can be shown in here, once it said. */
   readonly modes: ReadonlyArray<ConnectorAppDisplayMode>;
   readonly asks: ReadonlyArray<AppAsk>;
@@ -240,7 +249,8 @@ function liveApps(first: Surroundings, unstage: (viewId: ConnectorAppViewId) => 
           asked<boolean>((id, done) => ({
             _tag: "download",
             id,
-            names: files.map((file) => file.name),
+            // A file by the name it is saved under; an address as itself, which is where it goes.
+            names: files.map((file) => (file._tag === "file" ? file.name : file.url.href)),
             done,
           })).then((save) => {
             if (!save) return false;
@@ -252,7 +262,15 @@ function liveApps(first: Surroundings, unstage: (viewId: ConnectorAppViewId) => 
           }),
         setDisplayMode: (mode) => now().show(viewId, mode),
         onModes: (modes) => entry.state.update((state) => ({ ...state, modes })),
-        onHeight: (height) => entry.state.update((state) => ({ ...state, height })),
+        // Full screen, it fills the room it has: what it reports there says nothing of the reply.
+        onHeight: (height, mode) =>
+          entry.state.update((state) =>
+            mode === "inline"
+              ? { ...state, height }
+              : mode === "pip"
+                ? { ...state, pinnedHeight: height }
+                : state,
+          ),
       });
       entry.host = host;
       listenToFrame(entry.live.key, {
@@ -268,6 +286,7 @@ function liveApps(first: Surroundings, unstage: (viewId: ConnectorAppViewId) => 
       page: null,
       failed: false,
       height: connectorAppStartHeight(app.viewId),
+      pinnedHeight: null,
       modes: [],
       asks: [],
     });
@@ -376,14 +395,14 @@ export function useAppStageState({
   readonly base: PlaceBase;
 }): AppStageState {
   const client = useJ3Client();
-  const [staged, setStaged] = useState<(StagedApp & { readonly since: string | null }) | null>(
+  const [staged, setStaged] = useState<(StagedApp & { readonly since: EntryOrder | null }) | null>(
     null,
   );
 
   // What is in the conversation as an app goes full screen: only what comes after shows over it.
-  const latest = useRef<string | null>(null);
+  const latest = useRef<EntryOrder | null>(null);
   useLayoutEffect(() => {
-    latest.current = rows.at(-1)?.key ?? null;
+    latest.current = readThrough(rows.map(rowOrder));
   }, [rows]);
 
   // What the apps reach of the conversation is set again below as it changes, and once `show` is made.
