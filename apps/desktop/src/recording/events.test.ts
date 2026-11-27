@@ -294,8 +294,9 @@ describe("a recording's events", () => {
     ]);
   });
 
-  it("goes by the last reading for keys still waiting when the recording stops", () => {
-    const lines = run([{ kind: "secure", at: 0, on: true }, ...typing(100, "hi")], {
+  it("keeps keys no reading followed when the recording stops as a password's", () => {
+    // The last reading said no password; a field may have taken the keys since.
+    const lines = run([{ kind: "secure", at: 0, on: false }, ...typing(100, "hi")], {
       secureSignal: true,
       stopAt: 300,
     });

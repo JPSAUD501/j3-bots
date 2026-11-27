@@ -317,11 +317,11 @@ export const makeEvents = (options: {
 
   /**
    * Applies the inputs that can be told now. A key with no reading after it
-   * waits while the signal answers (`open`); once the recording stopped, it
-   * goes by the last reading; once the signal was lost, it is a password's,
-   * since nothing read it.
+   * waits while the signal answers (`open`); once the recording stopped or
+   * the signal was lost, it is a password's, since no reading covers it.
+   * Where the system gives no signal, nothing is a password.
    */
-  const drain = (end: "open" | "stopped" | "lost"): Output => {
+  const drain = (end: "open" | "ended"): Output => {
     const lines: Array<EventLine> = [];
     const frames: Array<FrameWanted> = [];
     while (waiting.length > 0) {
@@ -331,9 +331,9 @@ export const makeEvents = (options: {
         const known = secureAt(input.at);
         if (blind) secure = true;
         else if (known !== null) secure = known;
-        else if (end === "lost") secure = true;
-        else if (secureSignal && end === "open") break;
-        else secure = readings.at(-1)?.on === true;
+        else if (!secureSignal) secure = false;
+        else if (end === "open") break;
+        else secure = true;
       }
       waiting.shift();
       apply(input, secure, lines, frames);
@@ -357,14 +357,14 @@ export const makeEvents = (options: {
      * every character typed from now on, since nothing can tell it is not one.
      */
     signalLost: (): Output => {
-      const output = drain("lost");
+      const output = drain("ended");
       secureSignal = false;
       blind = true;
       return output;
     },
-    /** The recording stopped at `at`: what waits goes by the last reading, and every run ends. */
+    /** The recording stopped at `at`: a key no reading followed is a password's, and every run ends. */
     finish: (at: number): Output => {
-      const { lines, frames } = drain("stopped");
+      const { lines, frames } = drain("ended");
       const all = [...lines];
       closeAll(all);
       all.push({ t: at, type: "stop" });
