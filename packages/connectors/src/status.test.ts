@@ -49,7 +49,7 @@ describe("statusOf", () => {
 });
 
 describe("observe", () => {
-  it("counts credentials a service refused, or a sign-in that moved, against the connector, and a step left unfinished against no one", () => {
+  it("counts credentials a service refused, or a sign-in that moved, against the connector, and a scope missing or a step left unfinished against no one", () => {
     const secret = SecretName.make("builds-client-secret");
     expect(observe(new SecretNeeded({ secret, reason: "refused" }), "call")).toEqual({
       _tag: "secret-refused",
@@ -61,6 +61,7 @@ describe("observe", () => {
       _tag: "failing",
       reason: "issuer-changed",
     });
+    expect(observe(new AuthFailing({ reason: "scope-refused" }), "call")._tag).toBe("unchanged");
     expect(observe(new StepNotFinished({ outcome: "declined" }), "call")._tag).toBe("unchanged");
   });
 

@@ -7,6 +7,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -52,6 +53,7 @@ const NO_CREDENTIALS = {
 const overHttp = (
   revision: Revision,
   onListChanged: (kind: ListKind) => Effect.Effect<void> = () => Effect.void,
+  limits = DEFAULT_SESSION_LIMITS,
 ) =>
   Effect.gen(function* () {
     const fake = yield* sdkHttpServer({ revision });
@@ -59,7 +61,7 @@ const overHttp = (
       url: new URL(fake.url),
       policy: POLICY,
       credentials: NO_CREDENTIALS,
-      limits: DEFAULT_SESSION_LIMITS,
+      limits,
       client: CLIENT,
       cache: new InMemoryResponseCacheStore(),
       onListChanged,
@@ -327,6 +329,41 @@ describe("steps on a server's own pages (-32042)", () => {
         );
       }
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "stops waiting for an unanswered page when the call's time runs out, closing its card",
+    () =>
+      Effect.gen(function* () {
+        const { session } = yield* overHttp("2025-11-25", undefined, {
+          ...DEFAULT_SESSION_LIMITS,
+          callDeadline: Duration.seconds(2),
+        });
+        let closed = false;
+        const hooks: CallHooks = {
+          progress: () => Effect.void,
+          // The operator never answers the card.
+          elicit: () =>
+            Effect.never.pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  closed = true;
+                }),
+              ),
+            ),
+        };
+        const exit = yield* Effect.exit(textOf(session, "connect_drive", hooks));
+        assert.isTrue(closed);
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          assert.deepStrictEqual(
+            Option.map(Cause.findErrorOption(exit.cause), (error) =>
+              error._tag === "StepNotFinished" ? error.outcome : error._tag,
+            ),
+            Option.some("unfinished"),
+          );
+        }
+      }).pipe(Effect.scoped),
   );
 });
 

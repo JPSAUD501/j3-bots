@@ -257,9 +257,10 @@ export const credentialsOf = (
     if (now.value.signIn === "oauth") {
       return yield* signIns.rejected(now.value.id, wwwAuthenticate, sent.bearer);
     }
-    // A service token the server refused: the request goes again with a new one.
+    // A service token the server refused: the request goes again with a new
+    // one, unless it was refused for a scope the credentials lack.
     if (Option.isSome(sent.bearer)) {
-      return yield* signIns.serviceRejected(now.value.id, sent.bearer);
+      return yield* signIns.serviceRejected(now.value.id, wwwAuthenticate, sent.bearer);
     }
     // Headers given again since the request was signed (new values, a secret
     // they name changed): the refusal was of the old ones, so the request goes

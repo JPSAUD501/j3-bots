@@ -244,14 +244,18 @@ export class ConnectorAuth extends Context.Service<
       readonly secret: SecretName;
     }) => Effect.Effect<Redacted.Redacted<string>, CredentialsUnavailable>;
     /**
-     * The connector's server refused `sent`, a service token: the next call
-     * gets a new one, unless another replaced it meanwhile. A second refusal
-     * is `serviceRefused`'s.
+     * The connector's server refused `sent`, a service token, with this
+     * `WWW-Authenticate`: the next call gets a new one, unless another
+     * replaced it meanwhile. A second refusal is `serviceRefused`'s. A token
+     * refused for a scope it lacks (`insufficient_scope`) is kept, since the
+     * credentials would get the same one: that request fails `AuthFailing`
+     * (`scope-refused`).
      */
     readonly serviceRejected: (
       connectorId: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
       sent: Option.Option<Redacted.Redacted<string>>,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<void, AuthFailing>;
     /**
      * The connector's server refused `sent`, a token got just now: the
      * credentials it was got with are refused until others are given. Fails
@@ -1274,8 +1278,17 @@ export const layer = Layer.effect(
       );
     });
 
-    const serviceRejected = (id: ConnectorId, sent: Option.Option<Redacted.Redacted<string>>) =>
-      Effect.sync(() => {
+    const serviceRejected = (
+      id: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
+      sent: Option.Option<Redacted.Redacted<string>>,
+    ): Effect.Effect<void, AuthFailing> => {
+      const insufficient = Option.exists(
+        Option.flatMap(wwwAuthenticate, parseBearerChallenge),
+        ({ error }) => Option.contains(error, "insufficient_scope"),
+      );
+      if (insufficient) return Effect.fail(new AuthFailing({ reason: "scope-refused" }));
+      return Effect.sync(() => {
         const cached = serviceTokensOf.get(id);
         // A token another call replaced meanwhile is not the one refused.
         if (
@@ -1285,6 +1298,7 @@ export const layer = Layer.effect(
           serviceTokensOf.delete(id);
         }
       });
+    };
 
     const serviceRefused = (input: {
       readonly connectorId: ConnectorId;

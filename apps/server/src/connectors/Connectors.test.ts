@@ -517,6 +517,38 @@ describe("Connectors", () => {
     SLOW,
   );
 
+  it.effect("changes nothing when the credentials given with new values are refused", () =>
+    Effect.gen(function* () {
+      const { connectors } = yield* setUp(
+        { tools: [{ name: "search" }], call: () => ({ _tag: "result", text: "found it" }) },
+        [{ name: "X-Api-Key", value: KEY }],
+      );
+      const refused = yield* Effect.flip(
+        connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          values: [{ key: FieldKey.make("X-Api-Key"), value: Redacted.make(NEW_KEY) }],
+          // A secret typed in place of a reference to the operator's secrets.
+          service: {
+            clientId: Redacted.make("${secret:tracker-client-id}"),
+            credential: { _tag: "client-secret", value: Redacted.make("typed-in-secret") },
+            issuer: Option.none(),
+            scope: null,
+          },
+        }),
+      );
+      assert.strictEqual(refused._tag === "Invalid" ? refused.reason : null, "connector-fields");
+      const secret = yield* (yield* Secrets).connectorSecrets.get(connectorSecretIdOf(ID));
+      assert.deepStrictEqual(
+        Option.map(secret, ({ headers, service }) => ({
+          headers: headers.map(({ name, value }) => [name, Redacted.value(value)]),
+          service,
+        })),
+        Option.some({ headers: [["X-Api-Key", KEY]], service: null }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  );
+
   it.effect(
     "offers no tools while the secrets cannot be read, and answers again at a start that reads them",
     () =>

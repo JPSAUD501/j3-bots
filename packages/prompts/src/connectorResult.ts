@@ -57,6 +57,7 @@ export type ConnectorData =
  * - `credentials-refused`: the service refused the credentials it signs in as a service with;
  * - `sign-in-moved`: its server now names another authorization server than its credentials are for;
  * - `sign-in-unsupported`: its authorization server no longer signs in services that way;
+ * - `scope-refused`: the service took its credentials, but not for this: they lack a permission;
  * - `step-declined`, `step-unfinished`: its server needed your user to finish a step on a page
  *   of its own first, and they declined, or did not finish while the call waited;
  * - `busy`: J3 Bots has as many connector sessions open as it keeps, every one in use.
@@ -68,6 +69,7 @@ export const CONNECTOR_UNAVAILABLE = [
   "credentials-refused",
   "sign-in-moved",
   "sign-in-unsupported",
+  "scope-refused",
   "step-declined",
   "step-unfinished",
   "unreachable",
@@ -91,6 +93,8 @@ const UNAVAILABLE: { readonly [K in ConnectorUnavailable]: (connector: string) =
     `${c}'s server now sends sign-ins to another authorization server than the one its credentials were issued by, so J3 Bots sent them nowhere. Tell your user: they can remove ${c} and add it again if the new one is right. Don't retry.`,
   "sign-in-unsupported": (c) =>
     `${c}'s authorization server no longer signs in services with the kind of credentials it has. Tell your user briefly; don't retry.`,
+  "scope-refused": (c) =>
+    `The service took the credentials ${c} signs in with, but they lack a permission (a scope) this needs, so the call did nothing. Other calls to ${c} still work. Tell your user: the client they registered at the service needs that permission. Don't retry until they say it has it.`,
   "step-declined": (c) =>
     `${c}'s server needed your user to finish a step on a page of its own first, and they declined it, so the call did nothing. Don't retry unless they ask.`,
   "step-unfinished": (c) =>

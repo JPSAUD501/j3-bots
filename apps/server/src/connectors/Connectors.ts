@@ -585,6 +585,8 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
           return "sign-in-unsupported";
         case "refresh-failed":
           return "unreachable";
+        case "scope-refused":
+          return "scope-refused";
       }
     case "SecretsUnavailable":
       return "secrets-unavailable";
@@ -2460,6 +2462,14 @@ export const layer = Layer.effect(
       const now = yield* DateTime.now;
       yield* perConnector.run(input.connectorId)(
         Effect.gen(function* () {
+          // Credentials are checked, and bound, before anything is written:
+          // a refusal leaves the connector as it was, values and all.
+          const service =
+            input.service === undefined
+              ? Option.none<ServiceCredentials>()
+              : Option.some(
+                  yield* checkedService(yield* require(input.connectorId), input.service, input.by),
+                );
           if (input.command !== undefined) {
             const current = yield* require(input.connectorId);
             if (!isCommand(current)) return yield* new Invalid({ reason: "connector-unsupported" });
@@ -2475,8 +2485,8 @@ export const layer = Layer.effect(
           if (input.values !== undefined && input.command === undefined) {
             yield* replaceValues(connector, input.values, input.by, now);
           }
-          if (input.service !== undefined) {
-            yield* replaceService(yield* require(input.connectorId), input.service, input.by, now);
+          if (Option.isSome(service)) {
+            yield* replaceService(yield* require(input.connectorId), service.value, now);
           }
           yield* store.update(
             connector.id,
@@ -2496,17 +2506,20 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Signs the connector in as a service with `service` from now on: in
-     * place of the credentials it had, or of a person's sign-in, which ends.
-     * Credentials bound to an authorization server stay bound to it.
+     * The credentials `service` gives a connector added by address, checked
+     * as any reference its settings name and bound to its authorization
+     * server, as `replaceService` keeps them. Nothing is written. A gallery
+     * entry takes none: its address may carry a key its form took, which
+     * would go to the authorization server as the token's `resource`.
      */
-    const replaceService = Effect.fn("Connectors.replaceService")(function* (
+    const checkedService = Effect.fn("Connectors.checkedService")(function* (
       connector: StoredConnector,
       service: ServiceSignIn,
       by: ChangeAuthor,
-      now: DateTime.Utc,
     ) {
-      if (isCommand(connector)) return yield* new Invalid({ reason: "connector-unsupported" });
+      if (isCommand(connector) || connector.listing !== null) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
       const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
       const address = Option.flatMapNullishOr(Option.fromNullOr(secret.value.address), (value) =>
@@ -2518,14 +2531,28 @@ export const layer = Layer.effect(
         service,
         Option.fromNullishOr(secret.value.service?.issuer),
       );
-      const next = { ...secret.value, service: credentials } satisfies ConnectorSecret;
-      yield* checkDestination(secret.value, next, by);
       yield* checkSecrets({
-        secret: next,
+        secret: { ...secret.value, service: credentials },
         grant: connector.grant,
         by,
         written: referencesInValues([credentials.clientId, credentials.credential.value]),
       });
+      return credentials;
+    });
+
+    /**
+     * Signs the connector in as a service with `credentials`, as
+     * `checkedService` gave them, from now on: in place of the credentials it
+     * had, or of a person's sign-in, which ends.
+     */
+    const replaceService = Effect.fn("Connectors.replaceService")(function* (
+      connector: StoredConnector,
+      credentials: ServiceCredentials,
+      now: DateTime.Utc,
+    ) {
+      const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
+      if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      const next = { ...secret.value, service: credentials } satisfies ConnectorSecret;
       // A person's sign-in gives way to the service's: its headers, if any, are its fields.
       const signIn =
         connector.signIn === "oauth"

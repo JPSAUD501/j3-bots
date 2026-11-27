@@ -108,6 +108,12 @@ export const AuthFailure = Schema.Literals([
    * need: the client credentials grant, or the way they authenticate.
    */
   "sign-in-unsupported",
+  /**
+   * The service took the token its client credentials got, but not for
+   * this request: it lacks a scope the server needs (`insufficient_scope`).
+   * The credentials are not refused; other requests go on.
+   */
+  "scope-refused",
 ]);
 export type AuthFailure = typeof AuthFailure.Type;
 

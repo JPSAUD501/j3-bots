@@ -111,6 +111,8 @@ export const observe = (failure: ConnectorFailure, activity: Activity): Observat
           return { _tag: "failing", reason: failure.reason };
         case "refresh-failed":
           return { _tag: "failing", reason: "unreachable" };
+        case "scope-refused":
+          return { _tag: "unchanged" };
       }
     case "UrlRefused":
       return { _tag: "failing", reason: "refused-address" };

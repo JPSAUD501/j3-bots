@@ -1202,9 +1202,10 @@ export const sessionOf = (
 
   /**
    * Puts each step a server needs finished on a page of its own (`-32042`)
-   * to the operator, as a request for input, and waits, for at most `left`,
-   * until the server says they finished it. A step that is not a page J3
-   * Bots shows, or one the operator does not open, ends the call.
+   * to the operator, as a request for input, and waits until the server says
+   * they finished it: for at most `left` in all, the card's answer included,
+   * whose card closes when it runs out. A step that is not a page J3 Bots
+   * shows, or one the operator does not open, ends the call.
    */
   const finishSteps = Effect.fn("McpSession.finishSteps")(function* (
     asked: UrlElicitationRequiredError["elicitations"],
@@ -1214,46 +1215,61 @@ export const sessionOf = (
     if (hooks === undefined || asked.length === 0 || asked.length > MAX_STEPS) {
       return yield* new StepNotFinished({ outcome: "declined" });
     }
-    for (const step of asked) {
-      const shown = elicitationOf(step);
-      if (Result.isFailure(shown)) {
-        yield* Effect.logInfo("A connector's step on a page of its own was declined unseen").pipe(
-          Effect.annotateLogs({ reason: shown.failure }),
-        );
-        return yield* new StepNotFinished({ outcome: "declined" });
+    yield* Effect.gen(function* () {
+      for (const step of asked) {
+        yield* finishStep(step, hooks);
       }
-      // Listened for before it is shown: the server may say it is done at once.
-      let finish: () => void = () => {};
-      const finished = new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-      steps.set(step.elicitationId, finish);
-      yield* Effect.gen(function* () {
-        const answer = yield* hooks.elicit(shown.success);
-        if (answer._tag !== "accept") return yield* new StepNotFinished({ outcome: "declined" });
-        yield* Effect.promise(() => finished).pipe(
-          Effect.timeoutOrElse({
-            duration: left,
-            orElse: () => Effect.fail(new StepNotFinished({ outcome: "unfinished" })),
-          }),
-        );
-      }).pipe(Effect.ensuring(Effect.sync(() => steps.delete(step.elicitationId))));
-    }
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: left,
+        orElse: () => Effect.fail(new StepNotFinished({ outcome: "unfinished" })),
+      }),
+    );
   });
 
-  const callTool: McpSession["callTool"] = (input) => callOnce(input, true);
+  /** One step of `finishSteps`: shown, opened, then finished on the server's page. */
+  const finishStep = Effect.fn("McpSession.finishStep")(function* (
+    step: UrlElicitationRequiredError["elicitations"][number],
+    hooks: CallHooks,
+  ) {
+    const shown = elicitationOf(step);
+    if (Result.isFailure(shown)) {
+      yield* Effect.logInfo("A connector's step on a page of its own was declined unseen").pipe(
+        Effect.annotateLogs({ reason: shown.failure }),
+      );
+      return yield* new StepNotFinished({ outcome: "declined" });
+    }
+    // Listened for before it is shown: the server may say it is done at once.
+    let finish: () => void = () => {};
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    steps.set(step.elicitationId, finish);
+    yield* Effect.gen(function* () {
+      const answer = yield* hooks.elicit(shown.success);
+      if (answer._tag !== "accept") return yield* new StepNotFinished({ outcome: "declined" });
+      yield* Effect.promise(() => finished);
+    }).pipe(Effect.ensuring(Effect.sync(() => steps.delete(step.elicitationId))));
+  });
 
+  const callTool: McpSession["callTool"] = (input) =>
+    callOnce(input, { deadline: limits.callDeadline, mayAskSteps: true });
+
+  /**
+   * One attempt at a call, within `deadline`. After the operator finished the
+   * steps a server asked for, it goes again once, within what is left.
+   */
   const callOnce: (
     input: Parameters<McpSession["callTool"]>[0],
-    mayAskSteps: boolean,
+    attempt: { readonly deadline: Duration.Duration; readonly mayAskSteps: boolean },
   ) => ReturnType<McpSession["callTool"]> = Effect.fn("McpSession.callTool")(function* (
     input: Parameters<McpSession["callTool"]>[0],
-    mayAskSteps: boolean,
+    attempt: { readonly deadline: Duration.Duration; readonly mayAskSteps: boolean },
   ) {
     const progress = yield* progressQueue(input.hooks);
     const began = yield* Clock.currentTimeMillis;
     const answer = yield* tagged(
-      limits.callDeadline,
+      attempt.deadline,
       input.hooks,
       (tag, signal) =>
         client
@@ -1267,7 +1283,7 @@ export const sessionOf = (
                 ...(input.hooks === undefined ? {} : { progressToken: tag }),
               },
             },
-            { signal, timeout: sdkTimeout(limits.callDeadline) },
+            { signal, timeout: sdkTimeout(attempt.deadline) },
           )
           .then(
             (result) => ({ _tag: "answer", result }) as const,
@@ -1298,14 +1314,18 @@ export const sessionOf = (
     yield* progress.delivered;
     if (answer.value._tag === "steps") {
       // Asked once: a server that needs another step after the operator finished one is not answering.
-      if (!mayAskSteps) return yield* new StepNotFinished({ outcome: "unfinished" });
-      const spent = (yield* Clock.currentTimeMillis) - began;
+      if (!attempt.mayAskSteps) return yield* new StepNotFinished({ outcome: "unfinished" });
+      const left = (spent: number) =>
+        Duration.millis(Math.max(0, Duration.toMillis(attempt.deadline) - spent));
       yield* finishSteps(
         answer.value.asked,
         input.hooks,
-        Duration.millis(Math.max(0, Duration.toMillis(limits.callDeadline) - spent)),
+        left((yield* Clock.currentTimeMillis) - began),
       );
-      return yield* callOnce(input, false);
+      return yield* callOnce(input, {
+        deadline: left((yield* Clock.currentTimeMillis) - began),
+        mayAskSteps: false,
+      });
     }
     const result =
       answer.value._tag === "task"

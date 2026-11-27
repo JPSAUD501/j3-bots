@@ -574,7 +574,7 @@ const ClientCredentials = described(
       ),
     ),
   }),
-  "For a server that signs in as a service, with a client your user registered there: its client ID, and its client secret or its private key, never both. Values go in as references to secrets your user saved; J3 Bots gets the server's tokens with them.",
+  "For a server added by `url` that signs in as a service, with a client your user registered there: its client ID, and its client secret or its private key, never both. Values go in as references to secrets your user saved; J3 Bots gets the server's tokens with them.",
 );
 
 const AddMcpServerFields = toolInput({

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AuthFailure, CredentialsUnavailable, SecretsUnavailable } from "@j3-bots/connectors";
+import type {
+  AuthFailing,
+  AuthFailure,
+  CredentialsUnavailable,
+  SecretsUnavailable,
+} from "@j3-bots/connectors";
 import type {
   BotId,
   CommandError,
@@ -80,11 +85,16 @@ export class ConnectorSignIns extends Context.Service<
       readonly service: ServiceCredentials;
       readonly secret: SecretName;
     }) => Effect.Effect<Redacted.Redacted<string>, CredentialsUnavailable>;
-    /** The connector's server refused `sent`, a service token: the request goes again with a new one. */
+    /**
+     * The connector's server refused `sent`, a service token, with this
+     * `WWW-Authenticate`: the request goes again with a new one, or fails
+     * `AuthFailing` (`scope-refused`) when the token lacks a scope.
+     */
     readonly serviceRejected: (
       id: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
       sent: Option.Option<Redacted.Redacted<string>>,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<void, AuthFailing>;
     /** The connector's server refused a new service token too: the credentials are refused. */
     readonly serviceRefused: (input: {
       readonly connectorId: ConnectorId;

@@ -1187,6 +1187,30 @@ it.effect("gets a service a new token a minute before the one it has expires", (
   );
 });
 
+it.effect("keeps a service's credentials and token when a request needs a scope they lack", () => {
+  const fake = new FakeAuthorizationServer();
+  fake.addSecretClient(SERVICE_CLIENT, "s3cret-value");
+  const service = withSecret(fake, "s3cret-value");
+  return run(
+    fake,
+    Effect.gen(function* () {
+      const signIns = yield* auth;
+      const token = yield* serviceToken(service);
+      const rejected = yield* Effect.exit(
+        signIns.serviceRejected(
+          NOTION,
+          Option.some('Bearer error="insufficient_scope", scope="builds:write"'),
+          Option.some(token),
+        ),
+      );
+      assert.strictEqual(refusal(rejected), "scope-refused");
+      // Other requests go on with the same token, and the service is asked nothing.
+      assert.strictEqual(Redacted.value(yield* serviceToken(service)), Redacted.value(token));
+      assert.lengthOf(tokenRequests(fake), 1);
+    }),
+  );
+});
+
 it.effect(
   "asks for other credentials once the service refuses them, and asks it nothing more with them",
   () => {
@@ -1200,7 +1224,7 @@ it.effect(
         const token = yield* serviceToken(service);
         // The operator revokes the client at the service; its server refuses the token.
         fake.revokeClient(SERVICE_CLIENT);
-        yield* signIns.serviceRejected(NOTION, Option.some(token));
+        yield* signIns.serviceRejected(NOTION, Option.none(), Option.some(token));
         const refused = yield* Effect.exit(serviceToken(service));
         assert.strictEqual(refusal(refused), "refused");
         const again = yield* Effect.exit(serviceToken(service));
