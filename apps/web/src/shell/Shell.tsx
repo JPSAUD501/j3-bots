@@ -34,7 +34,7 @@ import {
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
-import type { BrowserViewerHandle } from "../browser/BrowserViewer";
+import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
@@ -45,6 +45,7 @@ import { DraftComposer } from "../components/DraftComposer";
 import { AppStageProvider } from "../components/AppStage";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { type BotCardIntents, BotCardProvider } from "../components/BotCard";
+import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { connectPlaceOf } from "../components/AiConnect";
 import {
   Connecting,
@@ -69,7 +70,7 @@ import { tintOf } from "../lib/botTint";
 import { onboarding } from "../onboarding/deferred";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
-import { deferred, preloadWhenIdle } from "../lib/deferred";
+import { preloadWhenIdle } from "../lib/deferred";
 import { isCovered, useCovered } from "../lib/covered";
 import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useConversationView } from "./conversationView";
@@ -78,17 +79,10 @@ import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
-// Not part of the app's first load: what shows only once the operator opens it.
+// Not part of the app's first load: the first run. The details and the
+// browser beside a conversation are: the shell moves focus into them, and hands
+// them Escape, as they open.
 const Onboarding = onboarding.Component;
-const browserViewer = deferred(() =>
-  import("../browser/BrowserViewer").then((viewer) => viewer.BrowserViewer),
-);
-const BrowserViewer = browserViewer.Component;
-const botDetails = deferred(() => import("../components/DetailsPanel").then((d) => d.BotDetails));
-const BotDetails = botDetails.Component;
-const RoomDetails = deferred(() =>
-  import("../components/DetailsPanel").then((d) => d.RoomDetails),
-).Component;
 
 interface ShellNavigation {
   readonly selected: RosterItemKey | null;
@@ -144,7 +138,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
   // What the operator opens most once the app is up, fetched when the page is idle.
-  useEffect(() => preloadWhenIdle(settingsPanel.preload, botDetails.preload), []);
+  useEffect(() => preloadWhenIdle(settingsPanel.preload), []);
 
   const rosterItems = data.roster ?? [];
   const pairs = data.pairs ?? [];

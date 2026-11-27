@@ -12,8 +12,9 @@ import { deferred } from "../lib/deferred";
 import { deliverFile, reserveWindow } from "./openFile";
 
 /** Opens only when the operator reads a document: not part of the app's first load. */
-const DocumentViewer = deferred(() =>
-  import("../components/documents/DocumentViewer").then((viewer) => viewer.DocumentViewer),
+const DocumentViewer = deferred(
+  () => import("../components/documents/DocumentViewer").then((viewer) => viewer.DocumentViewer),
+  (props) => props.attachment !== null,
 ).Component;
 
 /** The files and images of a conversation, as the page opens them. */

@@ -11,8 +11,9 @@ import type { RecordSheetFor } from "../record/RecordSheet";
 import type { Desktop } from "./desktop";
 
 /** Opens only when the operator records the screen: not part of the app's first load. */
-const RecordSheet = deferred(() =>
-  import("../record/RecordSheet").then((sheet) => sheet.RecordSheet),
+const RecordSheet = deferred(
+  () => import("../record/RecordSheet").then((sheet) => sheet.RecordSheet),
+  (props) => props.recording !== null,
 ).Component;
 
 /** Who a recording is for, as the sheet names them and the control shows them. */

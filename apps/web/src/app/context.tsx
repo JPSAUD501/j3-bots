@@ -28,6 +28,8 @@ const i18nFor = (locale: Language): Promise<I18n> => {
   if (known !== undefined) return known;
   const loading = loadI18n(locale);
   loaded.set(locale, loading);
+  // One that failed is fetched again the next time it is read.
+  loading.catch(() => loaded.delete(locale));
   return loading;
 };
 

@@ -63,11 +63,11 @@ The figures behind the budgets, before and after the changes of decision 0105 on
 
 | Window | Before | After |
 | --- | --- | --- |
-| `app` | 768.6 KiB (2,462.9 KiB) | 650.8 KiB (2,022.9 KiB) |
-| `quick` | 602.1 KiB (1,924.1 KiB) | 574.9 KiB (1,785.6 KiB) |
-| `record` | 365.7 KiB (1,202.5 KiB) | 330.5 KiB (1,062.1 KiB) |
+| `app` | 782.7 KiB (2,504.4 KiB) | 680.5 KiB (2,112.5 KiB) |
+| `quick` | 614.2 KiB (1,959.9 KiB) | 586.9 KiB (1,819.5 KiB) |
+| `record` | 368.0 KiB (1,210.3 KiB) | 332.2 KiB (1,067.6 KiB) |
 
-Before, the server sent these files uncompressed, so their raw size is what crossed the network. The budgets were set after the bot card and the other work of 0.15.0 had landed: 662.8 KiB, 586.5 KiB and 332.2 KiB gzip.
+Before, the server sent these files uncompressed, so their raw size is what crossed the network: 2,504.4 KiB for the app, against 680.5 KiB after.
 
 **One turn on the socket.** 28,663 B before, when 9 of the roster's 21 frames repeated the frame before them. 18,749 B after.
 

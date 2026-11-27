@@ -159,31 +159,47 @@ import { signInUnencrypted } from "./platform";
 import { useSavesUnderWay } from "./savesUnderWay";
 
 // Not part of the app's first load: the first run, and dialogs that open only
-// when the operator asks; their code follows once the app is up.
+// when the operator asks, whose code is fetched the first time one opens.
 const Onboarding = onboarding.Component;
-const ConnectorsDialog = deferred(() =>
+const ConnectorsDialog = deferred(
+  () =>
   import("../components/connectors/ConnectorsDialog").then((m) => m.ConnectorsDialog),
+  (props) => props.opening !== null,
 ).Component;
-const EditBotDialog = deferred(() =>
+const EditBotDialog = deferred(
+  () =>
   import("../components/EditBotDialog").then((m) => m.EditBotDialog),
+  (props) => props.bot !== null,
 ).Component;
-const MemoryViewer = deferred(() =>
+const MemoryViewer = deferred(
+  () =>
   import("../components/MemoryViewer").then((m) => m.MemoryViewer),
+  (props) => props.file !== null,
 ).Component;
-const NewBotDialog = deferred(() =>
+const NewBotDialog = deferred(
+  () =>
   import("../components/NewBotDialog").then((m) => m.NewBotDialog),
+  (props) => props.open,
 ).Component;
-const RoomDialog = deferred(() =>
+const RoomDialog = deferred(
+  () =>
   import("../components/RoomDialog").then((m) => m.RoomDialog),
+  (props) => props.mode !== null,
 ).Component;
-const RoutineRunsDialog = deferred(() =>
+const RoutineRunsDialog = deferred(
+  () =>
   import("../components/RoutineRuns").then((m) => m.RoutineRunsDialog),
+  (props) => props.open,
 ).Component;
-const NewFromTemplateDialog = deferred(() =>
+const NewFromTemplateDialog = deferred(
+  () =>
   import("../components/TemplateDialogs").then((m) => m.NewFromTemplateDialog),
+  (props) => props.opened !== null,
 ).Component;
-const ShareTemplateDialog = deferred(() =>
+const ShareTemplateDialog = deferred(
+  () =>
   import("../components/TemplateDialogs").then((m) => m.ShareTemplateDialog),
+  (props) => props.share !== null,
 ).Component;
 
 /**
