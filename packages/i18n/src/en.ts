@@ -191,6 +191,7 @@ export const en = {
   "conversation.openDetails": "Show details for {name}",
   "conversation.details": "Details",
 
+  "message.lookingAt": "Looking at {window}",
   "message.queued": "Queued",
   "message.waitingForModel": "Sent once the AI is connected",
   "message.waitingForReset": "Sent when the usage limit resets",
@@ -1701,12 +1702,47 @@ export const en = {
     "This desktop doesn’t let apps use a shortcut outside their own window, so {shortcut} opens quick access only while J3 Bots is in front.",
   "settings.shortcut.requested":
     "On Wayland your desktop decides whether J3 Bots may use {shortcut}, and may refuse it without telling J3 Bots. If pressing it does nothing outside J3 Bots, your desktop didn’t allow it; it still works while J3 Bots is in front.",
+  "settings.lookingAt": "When you open quick access over another app",
+  "settings.lookingAt.title": "Include the window’s title",
+  "settings.lookingAt.title.hint":
+    "Quick access shows the app you were in, and its window’s title, above your message. It goes with your message unless you remove it.",
+  "settings.lookingAt.picture": "Add a picture of the window",
+  "settings.lookingAt.picture.hint":
+    "A picture of the window you were in goes with every message from quick access. Off, you can still add one to a single message.",
+  "settings.lookingAt.screen":
+    "macOS needs you to allow J3 Bots under Screen Recording before quick access can read a window’s title or take its picture.",
+  "settings.lookingAt.none":
+    "This desktop doesn’t let apps see other apps’ windows, so quick access doesn’t show the app you were in.",
   "desktop.menu.app": "J3 Bots",
   "desktop.menu.show": "Show J3 Bots",
   "desktop.menu.quickAccess": "Quick access",
   "quickAccess.label": "Quick access to {name}",
   "quickAccess.openConversation": "Open conversation",
   "quickAccess.close": "Close quick access",
+  "quickAccess.window.label": "What goes with your message",
+  "quickAccess.window.show": "See what {name} gets about {app}",
+  "quickAccess.window.remove": "Don’t send {app}",
+  "quickAccess.window.app": "App",
+  "quickAccess.window.title": "Window",
+  "quickAccess.window.hint":
+    "{name} gets this with your message, so it knows what you were looking at.",
+  "quickAccess.picture.off": "Picture of the window",
+  "quickAccess.picture.add": "Add a picture of {app}",
+  "quickAccess.picture.taking": "Taking a picture…",
+  "quickAccess.picture.on": "Picture",
+  "quickAccess.picture.show": "See the picture of {app}",
+  "quickAccess.picture.remove": "Don’t send the picture",
+  "quickAccess.picture.failed": "No picture. Try again",
+  "quickAccess.picture.hint": "{name} gets this picture with your message.",
+  "quickAccess.picture.name": "Picture of {app}",
+  "quickAccess.picture.notSent":
+    "The picture couldn’t go with your message, so nothing was sent. Try again, or remove the picture.",
+  "quickAccess.screen.title": "Let J3 Bots see the window",
+  "quickAccess.screen.body":
+    "To take a picture of a window or read its title, macOS needs you to allow J3 Bots under Screen Recording. J3 Bots looks only when you press the shortcut, and takes a picture only when you ask for one.",
+  "quickAccess.screen.allow": "Allow in System Settings",
+  "quickAccess.screen.notNow": "Not now",
+  "quickAccess.screen.reopen": "Once you allow it, macOS may ask you to quit and reopen J3 Bots.",
   "desktop.menu.hide": "Hide J3 Bots",
   "desktop.menu.hideOthers": "Hide others",
   "desktop.menu.showAll": "Show all",

@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Draft, type J3Client, targetKey } from "@j3-bots/client-runtime";
+import {
+  type Addressing,
+  type Draft,
+  type DraftSendResult,
+  type J3Client,
+  targetKey,
+  type WindowContext,
+} from "@j3-bots/client-runtime";
+import type { EntryTarget } from "@j3-bots/contracts";
 import { useReadable } from "@j3-bots/client-runtime/react";
 import { useI18n } from "../app/context";
 import type { ShellData, ShellIntents } from "../shell/data";
@@ -24,6 +32,16 @@ export interface ComposerSource {
     | "connectorPrompts"
     | "renderPrompt"
   >;
+  /**
+   * Sends the draft of `target`, with `context` when the window the
+   * operator was looking at goes with it; telling the operator when it
+   * could not go.
+   */
+  readonly send: (
+    target: EntryTarget,
+    addressing: Addressing | undefined,
+    context?: WindowContext,
+  ) => Promise<DraftSendResult>;
 }
 
 /**
@@ -37,6 +55,12 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
   const draftsLoading = useReadable(j3.draftsSwitching);
   const draftsFailed = useReadable(j3.draftsReadFailed);
   const notSaved = useReadable(j3.draftsNotSaved);
+  const send: ComposerSource["send"] = (target, addressing, context) =>
+    j3.sendDraft(target, addressing, context).then((result) => {
+      if (result === "not-kept") say(t("composer.notKept"));
+      if (result === "picture-failed") say(t("quickAccess.picture.notSent"));
+      return result;
+    });
   return {
     data: {
       draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
@@ -57,10 +81,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
       restoreDraft: j3.restoreDraft,
       retryDrafts: j3.retryDrafts,
       dismissDraftOffer: j3.dismissDraftOffer,
-      sendDraft: (asked, addressing) =>
-        void j3.sendDraft(asked, addressing).then((result) => {
-          if (result === "not-kept") say(t("composer.notKept"));
-        }),
+      sendDraft: (asked, addressing) => void send(asked, addressing),
       connectorPrompts: (botId) =>
         j3.connectors
           .prompts(botId)
@@ -75,5 +96,6 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
           })
           .then((result) => (result._tag === "done" ? result.value : null)),
     },
+    send,
   };
 }

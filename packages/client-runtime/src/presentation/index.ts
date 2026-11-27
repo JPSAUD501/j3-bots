@@ -160,6 +160,7 @@ export {
 } from "../files/placed.ts";
 export { type FileIcon, fileIcon, fileKind, showsImage } from "./files.ts";
 export { webAddress } from "./links.ts";
+export { lookingAtLine } from "./lookingAt.ts";
 export {
   type DeviceClipboard,
   type Foreground,

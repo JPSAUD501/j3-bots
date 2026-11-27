@@ -32,6 +32,7 @@ import { sprung, type Sprung } from "../lib/sprung";
 import { useConversationView } from "../shell/conversationView";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { shellShortcuts } from "../shell/shortcuts";
+import { WindowChips, type WindowChipsIntents, type WindowChipsView } from "./WindowChips";
 
 /** What quick access shows: the shell's own data, as far as one conversation needs it. */
 export type QuickAccessData = Pick<
@@ -99,6 +100,12 @@ interface QuickAccessProps {
   readonly onLeft: () => void;
   /** What the page shows over the card, as its toast: drawn inside it, so it stays on the card. */
   readonly overlay?: ReactNode;
+  /** The window the operator was in as they opened it, which goes with what they send. */
+  readonly window?: {
+    readonly view: WindowChipsView;
+    readonly intents: WindowChipsIntents;
+    readonly initialPreview?: "window" | "picture";
+  } | null;
 }
 
 /** How far below its place the card starts from, in px. */
@@ -136,6 +143,7 @@ export function QuickAccess({
   onClose,
   onLeft,
   overlay,
+  window: seenWindow = null,
 }: QuickAccessProps) {
   const ctx = usePresentation();
   const { t } = useI18n();
@@ -429,6 +437,16 @@ export function QuickAccess({
                 </div>
               )}
               <div className="px-2.5 pt-1 pb-2.5">
+                {seenWindow !== null && (
+                  <WindowChips
+                    view={seenWindow.view}
+                    intents={seenWindow.intents}
+                    botName={name}
+                    {...(seenWindow.initialPreview === undefined
+                      ? {}
+                      : { initialPreview: seenWindow.initialPreview })}
+                  />
+                )}
                 <DraftComposer
                   target={target}
                   recipient={name}

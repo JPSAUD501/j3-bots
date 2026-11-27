@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DeviceId, RosterItem } from "@j3-bots/contracts";
-import type { ShortcutStatus } from "@j3-bots/desktop-bridge";
+import type { LookingAtSettings, ShortcutStatus } from "@j3-bots/desktop-bridge";
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../app/context";
 import { usePreferences } from "../preferences/preferences";
-import type { DesktopShortcut } from "../shell/data";
+import type { DesktopLookingAt, DesktopShortcut } from "../shell/data";
 import { desktop } from "./desktop";
 import { trayReport } from "./tray";
 
@@ -66,5 +66,30 @@ export function useDesktopShortcut(): DesktopShortcut | undefined {
         if (change !== null) setStatus(change.status);
         return change;
       }),
+  };
+}
+
+/** What quick access reads of the window in front, read once; absent in a browser, and until the app answers. */
+export function useDesktopLookingAt(): DesktopLookingAt | undefined {
+  const [settings, setSettings] = useState<LookingAtSettings | null>(null);
+  useEffect(() => {
+    let current = true;
+    void desktop?.lookingAt().then((read) => {
+      if (current && read !== null) setSettings(read);
+    });
+    return () => {
+      current = false;
+    };
+  }, []);
+  const app = desktop;
+  if (app === null || settings === null) return undefined;
+  const kept = (read: LookingAtSettings | null) => {
+    if (read !== null) setSettings(read);
+    return read;
+  };
+  return {
+    settings,
+    change: (change) => app.setLookingAt(change).then(kept),
+    askScreenAccess: () => app.askScreenAccess().then(kept),
   };
 }

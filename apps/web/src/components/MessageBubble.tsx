@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Attachment, Avatar, BotId } from "@j3-bots/contracts";
 import { eases, springs } from "@j3-bots/design-tokens";
+import { AppWindowIcon } from "lucide-react";
 import { type RefObject, useLayoutEffect, useRef } from "react";
 import { messageStatus } from "@j3-bots/client-runtime";
 import {
   clockTime,
   type GroupPosition,
+  lookingAtLine,
   type MentionName,
   type OpeningHold,
   type TimelineMessage,
@@ -249,6 +251,15 @@ export function MessageBubble({
             />
           ),
         )}
+      {fromOperator && message.lookingAt !== undefined && (
+        // The window the operator wrote it over, from quick access, which went with it.
+        <p className="flex max-w-(--layout-bubble-width) min-w-0 items-center gap-1 pe-1 text-2xs text-muted-foreground">
+          <AppWindowIcon aria-hidden className="size-3 shrink-0" />
+          <span className="truncate" title={lookingAtLine(message.lookingAt)}>
+            {t("message.lookingAt", { window: lookingAtLine(message.lookingAt) })}
+          </span>
+        </p>
+      )}
       {fromOperator && (
         // How the operator's message fares. Its text is a live region from the moment the message
         // is queued, so a change to it, such as a failure, is announced once, and Send again is not

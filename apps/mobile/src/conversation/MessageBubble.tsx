@@ -2,6 +2,7 @@
 import { messageStatus } from "@j3-bots/client-runtime";
 import {
   type GroupPosition,
+  lookingAtLine,
   type MentionName,
   type OpeningHold,
   type TimelineMessage,
@@ -246,6 +247,16 @@ export function MessageBubble({
             {said}
           </Speaker>
         </View>
+      )}
+      {fromOperator && message.lookingAt !== undefined && (
+        // The window the operator wrote it over, from the desktop app's quick access.
+        <Text
+          numberOfLines={1}
+          style={{ maxWidth: widths.bubble }}
+          className="text-2xs text-muted-foreground"
+        >
+          {t("message.lookingAt", { window: lookingAtLine(message.lookingAt) })}
+        </Text>
       )}
       {delivery !== null && (
         <View
