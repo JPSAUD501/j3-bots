@@ -59,13 +59,14 @@ export const routineSpeech = (
     yield* sql`UPDATE entries SET wake_id = ${wakeId} WHERE id = ${input.entryId}`;
     // Speech after its first turn completed in silence, once background work
     // it started woke it: the run said something after all.
-    const spoke = yield* sql<{ readonly routine_id: string }>`
+    const spoke = yield* sql<{ readonly routine_id: string; readonly owner_id: BotId }>`
       UPDATE routine_runs SET status = 'delivered'
       WHERE wake_id = ${wakeId} AND status = 'silent'
-      RETURNING routine_id
+      RETURNING routine_id, (SELECT bot_id FROM routines WHERE id = routine_id) AS owner_id
     `;
-    for (const { routine_id: routineId } of spoke) {
-      yield* changes.record({ _tag: "routines", botId: input.botId }, routineId);
+    // A step's bot speaks for a routine that is another bot's: the change is the owner's.
+    for (const { routine_id: routineId, owner_id: ownerId } of spoke) {
+      yield* changes.record({ _tag: "routines", botId: ownerId }, routineId);
     }
     // A routine deleted while its run went on has no name left to report it by.
     if (routine === null) return;

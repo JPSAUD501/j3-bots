@@ -762,6 +762,8 @@ export const layer = Layer.effect(
             result: Schema.Void,
             apply: Effect.gen(function* () {
               yield* require(input.botId);
+              // Its routines go with it: a run of their steps that is going ends first.
+              yield* stops.stopRoutineRuns(input.botId);
               yield* rooms.releaseBot(input.botId);
               // What teammates sent it and it never read will not reach it:
               // their cards say so before its wakes and inbox go.

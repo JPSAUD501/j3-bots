@@ -161,6 +161,37 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       dueAt: at,
     })),
   ),
+  // A step of a routine with several steps: the first, and a later one after a yes, with every report it asks for.
+  ...[
+    {
+      number: 1,
+      earlier: [],
+      approved: null,
+      next: { condition: "text", yes: { onlyIf: "text" } },
+    },
+    {
+      number: 2,
+      earlier: [{ bot: "Bot", action: "text", result: "text", handoff: "text" }],
+      approved: { question: "text", note: "text" },
+      next: { condition: null, yes: { onlyIf: null } },
+    },
+    { number: 3, earlier: [], approved: null, next: null },
+  ].map((step): Wake => ({
+    ...base,
+    kind: "routine",
+    routine: {
+      id: Schema.decodeSync(RoutineId)("routine"),
+      name: "Routine",
+      trigger: { type: "schedule", cron: "3 8 * * *" },
+      instruction: "text",
+    },
+    step: { ...step, of: 3, action: "text" },
+    runId: Schema.decodeSync(RoutineRunId)("run"),
+    recentRuns: [],
+    recentRunsLeftOut: false,
+    triggerData: null,
+    dueAt: null,
+  })),
   ...[false, true].flatMap((askName) =>
     [false, true].map((fromTemplate): Wake => ({
       ...base,

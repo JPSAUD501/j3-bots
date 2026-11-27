@@ -6,6 +6,7 @@ import {
   MAX_BROWSER_HELP_NOTE_LENGTH,
   MAX_SECRET_ASK_NOTE_LENGTH,
   MAX_SECRET_NAME_LENGTH,
+  MAX_YES_HOURS,
   MAX_VISUAL_BYTES,
   MAX_VISUAL_HEIGHT,
   MAX_VISUAL_TITLE_LENGTH,
@@ -324,12 +325,61 @@ const LocalTime = Schema.String.check(
 
 const RoutineAction = Schema.Literals(["create", "update", "pause", "resume", "delete"]);
 
+/** A phrase a bot writes for a step: what it does, what must hold, when a yes is asked. */
+const Phrase = (description: string) => described(text(1, 120), description);
+
+const RoutineStepInput = Schema.Struct({
+  kind: described(
+    Schema.Literals(["bot", "condition", "yes"]),
+    "bot: one bot does work. condition: the routine goes on only if something holds, which the bot step before judges. yes: the run waits for your user's yes before the next bot step.",
+  ),
+  bot: Schema.optionalKey(
+    described(
+      Id,
+      "A bot step's bot: a teammate's id from `list_teammates`. Leave it out for a step you do yourself.",
+    ),
+  ),
+  action: Schema.optionalKey(
+    Phrase(
+      "A bot step: what it does, in a few words that follow the bot's name, in your user's language: gathers last week's emails.",
+    ),
+  ),
+  instruction: Schema.optionalKey(
+    described(
+      RoutineInstruction,
+      "A bot step: the complete brief its turn starts from, standing alone like a routine's instruction, and saying what its result line and handoff should hold.",
+    ),
+  ),
+  check: Schema.optionalKey(
+    Phrase(
+      "A condition: what must hold for the routine to go on, as a clause after 'only if': there's something new.",
+    ),
+  ),
+  onlyIf: Schema.optionalKey(
+    Phrase(
+      "A yes: ask only when this holds, as a clause after 'only if': something needs a reply. Leave it out to ask every run.",
+    ),
+  ),
+  waitHours: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_YES_HOURS })),
+      "A yes: how many hours it waits at most; never past the routine's next run. Defaults to 24.",
+    ),
+  ),
+});
+
 const SetRoutineFields = toolInput({
   action: RoutineAction,
   id: Schema.optionalKey(described(Id, "The routine's id. Required except for create.")),
   name: Schema.optionalKey(described(text(1, 200), "A short name your user will recognize.")),
   instruction: Schema.optionalKey(
     described(RoutineInstruction, "The complete brief a run starts from."),
+  ),
+  steps: Schema.optionalKey(
+    described(
+      Schema.Array(RoutineStepInput).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+      "Instead of `instruction`, for a routine done in steps: bot steps, each optionally followed by a condition, a yes, or a condition then a yes, before the next bot step. It starts and ends with a bot step, at most six of them.",
+    ),
   ),
   schedule: Schema.optionalKey(
     described(Cron, "Five-field cron, in your user's time zone: 3 8 * * 1-5."),
@@ -347,30 +397,141 @@ const SetRoutineFields = toolInput({
 
 type SetRoutineFields = typeof SetRoutineFields.Type;
 
+/** A step as `set_routine` takes it: flat, as an MCP schema states it. */
+type RoutineStepInput = typeof RoutineStepInput.Type;
+
+/** A step `set_routine` took, read as its kind: what `readSteps` gives. */
+export type RoutineStepDraft =
+  | {
+      readonly kind: "bot";
+      /** A teammate's id; undefined for the caller's own step. */
+      readonly bot: string | undefined;
+      readonly action: string;
+      readonly instruction: string;
+    }
+  | { readonly kind: "condition"; readonly check: string }
+  | {
+      readonly kind: "yes";
+      readonly onlyIf: string | undefined;
+      readonly waitHours: number | undefined;
+    };
+
+/**
+ * The steps of a `set_routine` call, each read as its kind, or what one
+ * lacks or carries that is not its kind's, in words for the bot.
+ */
+export const readSteps = (
+  steps: ReadonlyArray<RoutineStepInput>,
+):
+  | { readonly _tag: "steps"; readonly steps: ReadonlyArray<RoutineStepDraft> }
+  | { readonly _tag: "problem"; readonly problem: string } => {
+  const read: Array<RoutineStepDraft> = [];
+  for (const [index, step] of steps.entries()) {
+    const at = `Step ${index + 1}`;
+    const extra = (keys: ReadonlyArray<keyof RoutineStepInput>) =>
+      keys.some((key) => step[key] !== undefined);
+    const problem = (text: string) => ({ _tag: "problem", problem: text }) as const;
+    switch (step.kind) {
+      case "bot":
+        if (step.action === undefined || step.instruction === undefined) {
+          return problem(`${at} is a bot step: it needs an action and an instruction`);
+        }
+        if (extra(["check", "onlyIf", "waitHours"])) {
+          return problem(`${at} is a bot step: it takes only bot, action and instruction`);
+        }
+        read.push({
+          kind: "bot",
+          bot: step.bot,
+          action: step.action,
+          instruction: step.instruction,
+        });
+        break;
+      case "condition":
+        if (step.check === undefined) return problem(`${at} is a condition: it needs a check`);
+        if (extra(["bot", "action", "instruction", "onlyIf", "waitHours"])) {
+          return problem(`${at} is a condition: it takes only check`);
+        }
+        read.push({ kind: "condition", check: step.check });
+        break;
+      case "yes":
+        if (extra(["bot", "action", "instruction", "check"])) {
+          return problem(`${at} is a yes: it takes only onlyIf and waitHours`);
+        }
+        read.push({ kind: "yes", onlyIf: step.onlyIf, waitHours: step.waitHours });
+        break;
+    }
+  }
+  return { _tag: "steps", steps: read };
+};
+
 const triggerCount = (input: SetRoutineFields): number =>
   [input.schedule, input.at, input.webhook].filter((trigger) => trigger !== undefined).length;
 
 /** The combinations a flat MCP schema cannot express, checked on decode. */
 const routineCallProblem = (input: SetRoutineFields): string | undefined => {
   if (triggerCount(input) > 1) return "Give at most one of schedule, at and webhook";
+  if (input.instruction !== undefined && input.steps !== undefined) {
+    return "Give either instruction or steps, not both";
+  }
+  if (input.steps !== undefined) {
+    const steps = readSteps(input.steps);
+    if (steps._tag === "problem") return steps.problem;
+  }
   if (input.action === "create") {
     if (input.id !== undefined) return "create takes no id";
-    if (input.name === undefined || input.instruction === undefined) {
-      return "create needs a name and an instruction";
+    if (
+      input.name === undefined ||
+      (input.instruction === undefined && input.steps === undefined)
+    ) {
+      return "create needs a name and an instruction or steps";
     }
     if (triggerCount(input) === 0) return "create needs one of schedule, at and webhook";
     return undefined;
   }
   if (input.id === undefined) return `${input.action} needs the routine's id`;
-  const changes = [input.name, input.instruction].filter((field) => field !== undefined).length;
+  const changes = [input.name, input.instruction, input.steps].filter(
+    (field) => field !== undefined,
+  ).length;
   if (input.action === "update") {
     return changes + triggerCount(input) === 0
-      ? "update needs a name, an instruction or a trigger to change"
+      ? "update needs a name, an instruction, steps or a trigger to change"
       : undefined;
   }
   if (changes > 0 || triggerCount(input) > 0) return `${input.action} takes only an id`;
   return undefined;
 };
+
+/**
+ * The most a step's handoff may hold. The server also refuses one that would
+ * leave a later step's envelope past the engine's input, as it renders.
+ */
+export const MAX_HANDOFF = 6_000;
+
+const FinishStepInput = toolInput({
+  result: described(text(1, 200), "One short line of what came of your step, for the card."),
+  handoff: Schema.optionalKey(
+    described(
+      text(1, MAX_HANDOFF),
+      "What the next steps need from yours, complete and concise: data, names, links, decisions.",
+    ),
+  ),
+  goOn: Schema.optionalKey(
+    described(Schema.Boolean, "When a condition follows your step: whether it holds."),
+  ),
+  ask: Schema.optionalKey(
+    described(
+      Schema.Struct({
+        question: described(text(1, 2_000), "The question, standing alone for your user."),
+        yes: described(text(1, 40), "The label of the choice that goes on: Send the replies."),
+        no: described(text(1, 40), "The label of the choice that stops: Don't send."),
+      }),
+      "When your user's yes follows your step: what to ask them.",
+    ),
+  ),
+  blocked: Schema.optionalKey(
+    described(Schema.Literal(true), "You could not do the step; `result` says why."),
+  ),
+});
 
 const SetRoutineInput = SetRoutineFields.check(
   Schema.makeFilter((input) => routineCallProblem(input) ?? true),
@@ -826,9 +987,23 @@ export const tools = {
       'Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user. A reminder, or a report your user wants every time, is sent when due; a report that depends on a condition is sent only when it holds, and otherwise the run ends without a message. A watch for one event ("let me know when X") checks on a schedule until X happens, not once at a guessed time, and has a cutoff: the end date or deadline your user gave, otherwise the same local time 14 calendar days from now, so an X a minute before that time on the last day still counts. A date when X is only expected never changes it, since the watch stops once X happens. Write the cutoff as its weekday, date and local time. Its delivery line reads: "If a recent run already told your user that X happened or that the watch ended, pause this routine now, without a message. At or after <cutoff>, the watch is over: if X happened before <cutoff>, tell your user it did; otherwise tell them once that the watch has ended, saying in that message if <source> could not be reached; an X at or after <cutoff> does not count. Before <cutoff>, once X has happened, tell your user in one short message; until then, end without a message. Once the message that X happened, or that the watch has ended, has returned, pause this routine. Send that `say` alone and wait for its result; the pause is then your last call, never alongside it. A message before <cutoff> about a source you could not reach does not end the watch." Give the same weekday, date and local time in your confirmation. A recurring check or report never pauses itself.',
       "A run that fails before it says anything is retried without knowing what the failed attempt did, so every other send or change in the instruction must be safe to repeat, as `j3-routines` describes, or your user must accept the risk before you save it. Every attempt of a run sees the same run id (`run` in its wake), which is the idempotency key for a send that is about that occurrence and has no id of its own.",
       "A file under `files/` keeps what the next run needs; a record of what was reported is written only after the `say` that reported it has returned.",
+      "When your user wants a routine done by several teammates in turn, or one that waits for their yes, give `steps` instead of an instruction: each bot step names the teammate who does it (none for yourself), what it does in a few words, and its own standing brief; a condition after a bot step lets the routine go on only when it holds; a yes after a bot step, or after its condition, waits for your user to approve before the next bot step, every run or only when something calls for it. Write every phrase in your user's language, short enough to read after the bot's name. Each step's bot reports to the next, so each brief says what its result line and handoff must hold. Only for what your user asked to be done in steps; one bot doing one job is an instruction. An `update` with `steps` replaces all of them, and one with `instruction` changes the first step's brief only.",
+      "During a step of a routine with several steps, `set_routine` is refused: the step ends with `finish_step`.",
       "Returns the routine as saved, with its id and next run; tell your user the exact schedule.",
     ],
     SetRoutineInput,
+  ),
+  finish_step: define(
+    "finish_step",
+    [
+      "Report the end of your step of a routine with several steps. Call it once, as your last call, then end your turn: the routine goes on to its next step only after your turn has ended.",
+      "`result` is one short line your user reads on the routine's card, in their language: what came of your step (14 new emails). `handoff` is what the next steps need, complete, since they start without your session: data, names, links, decisions.",
+      "When your wake says a condition follows your step, `goOn` says whether it holds. When it says your user's yes follows, `ask` is the question to put to them, with the labels of its two choices; when that yes is asked only if something holds, leave `ask` out when it does not.",
+      "When you cannot do the step, set `blocked` and say in `result`, for your user, what stopped it: the routine stops there, and they can try it again once it is fixed.",
+      "Only in a step of a routine with several steps; a second call in the same turn is refused.",
+      BOT_ONLY,
+    ],
+    FinishStepInput,
   ),
   list_routines: define(
     "list_routines",
