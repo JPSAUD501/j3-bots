@@ -1819,7 +1819,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       if (Option.isSome(busy)) {
         return yield* new SessionBusy({ sessionId: input.sessionId, turnId: busy.value });
       }
-      yield* alignLevel(input.sessionId, before);
+      // Nothing of the dispatch has gone out yet: a lost answer to the
+      // level's change leaves its key unsent, and the next first send aligns
+      // the level again, which a resend would not.
+      yield* alignLevel(input.sessionId, before).pipe(
+        Effect.catchTag("EngineIndeterminate", () => Effect.fail(new EngineUnavailable())),
+      );
     }
     yield* sendDispatch(input);
     const after = yield* projection(input.sessionId).pipe(
