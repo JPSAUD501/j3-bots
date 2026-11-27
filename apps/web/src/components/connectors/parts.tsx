@@ -45,7 +45,7 @@ export function ConnectorTile({
 }: {
   name: string;
   glyph: ConnectorGlyph | null;
-  size?: "md" | "lg";
+  size?: "sm" | "md" | "lg";
 }) {
   const paths = glyph === null ? null : glyphPaths(glyph);
   return (
@@ -53,7 +53,7 @@ export function ConnectorTile({
       aria-hidden
       className={cn(
         "display-type flex shrink-0 items-center justify-center rounded-md bg-muted font-semibold text-foreground",
-        size === "lg" ? "size-12 text-xl" : "size-9 text-base",
+        size === "lg" ? "size-12 text-xl" : size === "sm" ? "size-6 text-xs" : "size-9 text-base",
       )}
     >
       {paths === null ? (
@@ -66,7 +66,7 @@ export function ConnectorTile({
           strokeWidth={2}
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={size === "lg" ? "size-6" : "size-[1.125rem]"}
+          className={size === "lg" ? "size-6" : size === "sm" ? "size-3.5" : "size-[1.125rem]"}
         >
           {paths.map((d) => (
             <path key={d} d={d} />

@@ -413,9 +413,17 @@ export function sampleTeam(now: DateTime.Utc) {
       createdAt: ago(7),
       turnStartedAt: ago(9),
       stepCount: 2,
-      apps: [sampleConnectorAppRef],
+      apps: [],
       work: null,
       status: { _tag: "running" },
+    },
+    // What Scout's lookup in the shop's connector opened, in its reply.
+    {
+      _tag: "connector-app",
+      id: entryId("app"),
+      author: by(ids.scout),
+      createdAt: ago(7),
+      app: sampleConnectorAppRef,
     },
     message(operator, ago(1), "Also check whether any of them fold", {
       delivery: { _tag: "pending" },

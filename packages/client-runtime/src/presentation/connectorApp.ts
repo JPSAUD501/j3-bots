@@ -509,7 +509,11 @@ const safeInName = (char: string): boolean => {
  * "download" when nothing is left.
  */
 export const connectorAppFileName = (named: string): string => {
-  const last = named.split(/[/\\]/).filter((part) => part !== "").at(-1) ?? "";
+  const last =
+    named
+      .split(/[/\\]/)
+      .filter((part) => part !== "")
+      .at(-1) ?? "";
   let decoded = last;
   try {
     decoded = decodeURIComponent(last);

@@ -14,6 +14,8 @@ import { useMemo } from "react";
 import { useI18n } from "../app/context";
 import type { ConnectorAppAccess } from "../components/ConnectorAppCard";
 import type { TimelineIntents } from "../components/Timeline";
+import { desktop } from "./desktop";
+import { saveBytes } from "./openFile";
 
 /**
  * What a timeline's cards and messages ask of the server, the same wherever
@@ -79,16 +81,21 @@ export function useCardIntents(
     ) => (result._tag === "done" ? result.value : null);
     return {
       server: origin,
+      platform: desktop === null ? "web" : "desktop",
       open: (viewId) => j3.connectors.app.open(viewId).then(value),
       callTool: (viewId, name, args, allowed) =>
         j3.connectors.app.callTool(viewId, name, args, allowed).then(value),
       readResource: (viewId, uri) => j3.connectors.app.readResource(viewId, uri).then(value),
+      setContext: (viewId, context) => j3.connectors.app.setContext(viewId, context).then(value),
       sendMessage: (botId, text) =>
         j3
           .send({ target: { _tag: "conversation", botId }, text })
           .then((result) => result._tag === "done"),
       openLink: (url) => {
         window.open(url.href, "_blank", "noopener,noreferrer");
+      },
+      save: (files) => {
+        for (const file of files) saveBytes(file.name, file.bytes);
       },
     };
   }, [j3, origin]);

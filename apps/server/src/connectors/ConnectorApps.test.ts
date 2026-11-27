@@ -13,7 +13,6 @@ import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { Bots } from "../bots/Bots.ts";
 import { fakeConnector, reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -173,7 +172,11 @@ it.effect(
       // The operator's message, the app, then what the bot said after the call.
       const shown = (yield* conversation(ana.bot.id)).flatMap((entry) =>
         entry._tag === "message" || entry._tag === "connector-app"
-          ? [entry._tag === "message" ? entry.text : `app: ${entry.app.connector} ${entry.app.tool}`]
+          ? [
+              entry._tag === "message"
+                ? entry.text
+                : `app: ${entry.app.connector} ${entry.app.tool}`,
+            ]
           : [],
       );
       assert.deepStrictEqual(shown, [
@@ -290,17 +293,22 @@ it.effect(
 
       const replies: Array<string> = [];
       for (let call = 0; call <= MAX_CONNECTOR_APPS_PER_TURN; call++) {
-        const reply = yield* callInTurn(ana, "wheelhouse__stock", { model: "Ridge 7" }, `call-${call}`);
+        const reply = yield* callInTurn(
+          ana,
+          "wheelhouse__stock",
+          { model: "Ridge 7" },
+          `call-${call}`,
+        );
         replies.push(textOf(reply));
       }
 
-      assert.strictEqual(appsIn(yield* conversation(ana.bot.id)).length, MAX_CONNECTOR_APPS_PER_TURN);
+      assert.strictEqual(
+        appsIn(yield* conversation(ana.bot.id)).length,
+        MAX_CONNECTOR_APPS_PER_TURN,
+      );
       assert.deepStrictEqual(
         replies.map((text) => [text.includes("stock answered"), text.includes(APP_SHOWN_LINE)]),
-        [
-          ...Array.from({ length: MAX_CONNECTOR_APPS_PER_TURN }, () => [true, true]),
-          [true, false],
-        ],
+        [...Array.from({ length: MAX_CONNECTOR_APPS_PER_TURN }, () => [true, true]), [true, false]],
       );
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,

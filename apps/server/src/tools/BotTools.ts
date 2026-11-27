@@ -626,7 +626,12 @@ export const layer = Layer.effect(
         })
         .pipe(Effect.catchTag("ToolNotOffered", (error) => new Refused({ reason: error.message })));
       if (Option.isNone(answer.app)) return answer;
-      const shown = yield* apps.record({ place, botId: call.caller.botId, input, app: answer.app.value });
+      const shown = yield* apps.record({
+        place,
+        botId: call.caller.botId,
+        input,
+        app: answer.app.value,
+      });
       // The bot reads that its user sees the app, only once it is shown.
       return shown ? { ...answer, text: `${answer.text}\n${APP_SHOWN_LINE}` } : answer;
     });

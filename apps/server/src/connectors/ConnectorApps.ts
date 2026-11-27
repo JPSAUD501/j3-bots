@@ -32,7 +32,13 @@ import { Ids } from "../Ids.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import type { CallPlace } from "../turns/ConnectorSteps.ts";
-import { type Audience, AudienceColumn, audienceColumns, audienceOf, targetOf } from "../turns/model.ts";
+import {
+  type Audience,
+  AudienceColumn,
+  audienceColumns,
+  audienceOf,
+  targetOf,
+} from "../turns/model.ts";
 import type { OpenedApp } from "./Connectors.ts";
 import { Connectors } from "./Connectors.ts";
 
@@ -348,7 +354,9 @@ export const layer = Layer.effect(
       }
       const { text, structured } = input.context;
       if (text.trim() === "" && structured === null) {
-        yield* sql`DELETE FROM connector_app_contexts WHERE view_id = ${view.id}`.pipe(Effect.orDie);
+        yield* sql`DELETE FROM connector_app_contexts WHERE view_id = ${view.id}`.pipe(
+          Effect.orDie,
+        );
         return yield* outcome({ _tag: "kept" });
       }
       const room = Option.flatMap(yield* shownIn(view.id).pipe(Effect.orDie), (row) =>

@@ -293,6 +293,14 @@ export const en = {
   "connectorApp.askLink": "This app wants to open {url}",
   "connectorApp.open": "Open",
   "connectorApp.dismiss": "Not now",
+  "connectorApp.expand": "Show {tool} full screen",
+  "connectorApp.close": "Put {tool} back in the reply",
+  "connectorApp.shownFull": "Shown full screen",
+  "connectorApp.shownPinned": "Pinned at the top",
+  "connectorApp.backToReply": "Put it back here",
+  "connectorApp.hideReply": "Hide",
+  "connectorApp.askDownload": "This app offers to save: {names}",
+  "connectorApp.save": "Save",
 
   "card.waiting": "Waiting for you",
 

@@ -65,6 +65,8 @@ export type TimelineItem =
       readonly kind: "app";
       readonly key: string;
       readonly app: ConnectorAppRef;
+      /** The app's entry, or the fold's for an app an older server kept there. */
+      readonly id: EntryId;
       readonly order: EntryOrder;
     }
   /**
@@ -160,11 +162,17 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
     } else if (card === null)
       items.push({ kind: "unknown", key, id: entry.id, order: entry.order });
     else if (card._tag === "connector-app")
-      items.push({ kind: "app", key, app: card.app, order: card.order });
+      items.push({ kind: "app", key, app: card.app, id: card.id, order: card.order });
     else {
       items.push({ kind: "work", key, fold: card, live: false });
       for (const app of card.apps) {
-        items.push({ kind: "app", key: `${key}-${app.viewId}`, app, order: card.order });
+        items.push({
+          kind: "app",
+          key: `${key}-${app.viewId}`,
+          app,
+          id: card.id,
+          order: card.order,
+        });
       }
     }
   }

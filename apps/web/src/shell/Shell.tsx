@@ -41,6 +41,7 @@ import { AppShell, type Region } from "../components/AppShell";
 import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
 import { focusAtEnd } from "../components/Composer";
 import { DraftComposer } from "../components/DraftComposer";
+import { AppStageProvider } from "../components/AppStage";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { connectPlaceOf } from "../components/AiConnect";
@@ -122,6 +123,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const detailsHeadingId = useId();
   // State, not a ref: each conversation mounts its own timeline, and what watches it follows.
   const [timeline, setTimeline] = useState<HTMLDivElement | null>(null);
+  // Between the header and the composer: a connector's app full screen covers it.
+  const [appArea, setAppArea] = useState<HTMLDivElement | null>(null);
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
 
@@ -533,7 +536,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
           // conversation, so each opens at its own end rather than where the last one was left,
           // and settles in as it opens.
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div ref={setAppArea} className="relative flex min-h-0 flex-1 flex-col">
             <div
               key={`timeline:${rosterKeyText(key)}`}
               ref={setTimeline}
@@ -559,37 +562,44 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                     </Button>
                   </div>
                 )}
-                <Timeline
+                <AppStageProvider
+                  key={rosterKeyText(key)}
+                  area={appArea}
+                  scroller={timeline}
                   rows={rows}
-                  room={item._tag === "room" ? item.room : null}
-                  workSteps={data.workSteps}
-                  submitting={data.submitting}
-                  openingHold={item._tag === "bot" ? openingHeld(item.bot, data.engine) : null}
-                  intents={intents}
-                  secrets={{ view: data.secrets, intents: intents.secrets }}
-                  arrived={arrived}
-                  flyFrom={composerRef}
-                  turnBot={
-                    item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null
-                  }
-                  onOpenPair={navigation.openPair}
-                  onOpenRoom={(roomId) => navigation.select({ _tag: "room", roomId })}
-                  onOpenBot={(botId) => navigation.select({ _tag: "bot", botId })}
-                  quotes={{
-                    reveal: (entryId) => intents.revealEntry(target, entryId),
-                    drafting,
-                  }}
-                  {...(browserBot === null
-                    ? {}
-                    : {
-                        turnExtra: (
-                          <BrowserPanel
-                            bot={browserBot}
-                            onOpen={(tab) => navigation.setBrowser(tab.ref)}
-                          />
-                        ),
-                      })}
-                />
+                >
+                  <Timeline
+                    rows={rows}
+                    room={item._tag === "room" ? item.room : null}
+                    workSteps={data.workSteps}
+                    submitting={data.submitting}
+                    openingHold={item._tag === "bot" ? openingHeld(item.bot, data.engine) : null}
+                    intents={intents}
+                    secrets={{ view: data.secrets, intents: intents.secrets }}
+                    arrived={arrived}
+                    flyFrom={composerRef}
+                    turnBot={
+                      item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null
+                    }
+                    onOpenPair={navigation.openPair}
+                    onOpenRoom={(roomId) => navigation.select({ _tag: "room", roomId })}
+                    onOpenBot={(botId) => navigation.select({ _tag: "bot", botId })}
+                    quotes={{
+                      reveal: (entryId) => intents.revealEntry(target, entryId),
+                      drafting,
+                    }}
+                    {...(browserBot === null
+                      ? {}
+                      : {
+                          turnExtra: (
+                            <BrowserPanel
+                              bot={browserBot}
+                              onOpen={(tab) => navigation.setBrowser(tab.ref)}
+                            />
+                          ),
+                        })}
+                  />
+                </AppStageProvider>
               </div>
             </div>
             <ToLatest

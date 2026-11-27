@@ -43,11 +43,14 @@ const intents: TimelineIntents = {
   declineConnectorAsk: nothing,
   connectorApp: {
     server: new URL("https://bots.example.com"),
+    platform: "web",
     open: () => Promise.resolve(null),
     callTool: () => Promise.resolve(null),
     readResource: () => Promise.resolve(null),
+    setContext: () => Promise.resolve(null),
     sendMessage: () => Promise.resolve(false),
     openLink: nothing,
+    save: nothing,
   },
 };
 

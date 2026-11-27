@@ -515,7 +515,11 @@ describe("connectorAppHost", () => {
         contents: [
           {
             type: "resource",
-            resource: { uri: "file:///../../etc/stock%20list.csv", mimeType: "text/csv", text: "a,b" },
+            resource: {
+              uri: "file:///../../etc/stock%20list.csv",
+              mimeType: "text/csv",
+              text: "a,b",
+            },
           },
           { type: "resource", resource: { uri: "ui://x/logo.png", blob: "aGk=" } },
           { type: "resource_link", uri: "https://wheelhouse.example/q4.pdf", name: "Q4 report" },

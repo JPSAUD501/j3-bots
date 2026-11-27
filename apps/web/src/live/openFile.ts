@@ -55,3 +55,19 @@ export function saveText(name: string, text: string, mediaType: string) {
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/**
+ * Saves bytes a page was handed, such as a file a connector's app offered,
+ * through the browser's download: always as a download, never shown here.
+ */
+export function saveBytes(name: string, bytes: Uint8Array) {
+  const url = URL.createObjectURL(
+    new Blob([new Uint8Array(bytes)], { type: "application/octet-stream" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.rel = "noopener";
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

@@ -69,7 +69,7 @@ import { RoutineTrack } from "./RoutineTrack";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretAskCard } from "./SecretAskCard";
 import { SecretRequestCard } from "./SecretRequestCard";
-import { type ConnectorAppAccess, ConnectorApps } from "./ConnectorAppCard";
+import { type ConnectorAppAccess, ConnectorAppBlock } from "./ConnectorAppCard";
 import type { SecretsAccess } from "./secrets/parts";
 import { TimeDivider } from "./TimeDivider";
 import { type TurnBot, WorkFold } from "./WorkFold";
@@ -122,7 +122,7 @@ export interface TimelineIntents {
   /** The operator's yes to a bot's ask to add a connector, with their app's client when it takes one. */
   readonly allowConnectorAsk: (entryId: EntryId, client: OwnAppClient | null) => void;
   readonly declineConnectorAsk: (entryId: EntryId) => void;
-  /** The apps connectors' tools opened, which turns' work shows. */
+  /** The apps connectors' tools opened, which the bots' replies show. */
   readonly connectorApp: ConnectorAppAccess;
 }
 
@@ -303,9 +303,13 @@ export function Timeline({
                       else intents.closeWorkFold(fold.id);
                     }}
                   />
-                  {fold !== null && (
-                    <ConnectorApps apps={fold.apps} access={intents.connectorApp} />
-                  )}
+                </div>
+              );
+            }
+            if (item.kind === "app") {
+              return (
+                <div key={item.key} data-seen-id={item.id} className={settles}>
+                  <ConnectorAppBlock app={item.app} access={intents.connectorApp} />
                 </div>
               );
             }

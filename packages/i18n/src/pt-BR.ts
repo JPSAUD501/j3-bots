@@ -290,6 +290,14 @@ const sentences = {
   "connectorApp.askLink": "Este app quer abrir {url}",
   "connectorApp.open": "Abrir",
   "connectorApp.dismiss": "Agora não",
+  "connectorApp.expand": "Mostrar {tool} em tela cheia",
+  "connectorApp.close": "Devolver {tool} à resposta",
+  "connectorApp.shownFull": "Aberto em tela cheia",
+  "connectorApp.shownPinned": "Fixado no topo",
+  "connectorApp.backToReply": "Trazer de volta para cá",
+  "connectorApp.hideReply": "Ocultar",
+  "connectorApp.askDownload": "Este app oferece para salvar: {names}",
+  "connectorApp.save": "Salvar",
 
   "card.waiting": "Esperando por você",
 

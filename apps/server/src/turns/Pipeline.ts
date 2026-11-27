@@ -1934,7 +1934,11 @@ export const layer = Layer.effect(
             return null;
           }
           yield* reactionsRide(plan);
-          const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId, plan.audience), room);
+          const fitted = yield* envelopeOf(
+            plan,
+            yield* sinceLastTurn(plan.botId, plan.audience),
+            room,
+          );
           yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;
           if (wake === null) {
