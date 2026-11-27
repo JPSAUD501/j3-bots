@@ -9,6 +9,14 @@ import type {
 } from "@j3-bots/contracts";
 import {
   type Appearance,
+  BrowserFound,
+  type BrowserLink,
+  type BrowserPlacement,
+  BrowserShortcut,
+  BrowserStill,
+  BrowserSuggestion,
+  DesktopBrowserCommand,
+  DesktopBrowserState,
   type ThemeWindowColors,
   AppLink,
   BRIDGE_KEY,
@@ -74,8 +82,27 @@ interface SealedToken {
   readonly protection: TokenProtection;
 }
 
+/** The desktop app's own browser, as a window's page drives it. */
+export interface DesktopBrowserBridge {
+  /** Tells the app which server its browser serves, or that it serves none. */
+  readonly link: (link: BrowserLink) => void;
+  /** The browser now; `null` when the app gave no answer the page understands. */
+  readonly state: () => Promise<DesktopBrowserState | null>;
+  /** Calls `listener` with the browser each time it changes; answers a function that stops it. */
+  readonly onChange: (listener: (state: DesktopBrowserState) => void) => () => void;
+  readonly command: (command: DesktopBrowserCommand) => void;
+  /** Where this window draws its place's front tab. */
+  readonly place: (placement: BrowserPlacement) => void;
+  readonly onStill: (listener: (still: BrowserStill) => void) => () => void;
+  readonly onFound: (listener: (found: BrowserFound) => void) => () => void;
+  readonly onShortcut: (listener: (shortcut: BrowserShortcut) => void) => () => void;
+  /** What the address bar suggests for `text`, best first; with `recent`, the latest visits. */
+  readonly suggest: (text: string, recent?: boolean) => Promise<ReadonlyArray<BrowserSuggestion>>;
+}
+
 /** What the desktop app offers the page it hosts. */
 export interface Desktop {
+  readonly browser: DesktopBrowserBridge;
   /** The server the operator named, or `null` until they have. */
   readonly server: URL | null;
   /**
@@ -389,7 +416,26 @@ const decodeRecorderCue = Schema.decodeUnknownOption(RecorderCue);
 const encodeStart = Schema.encodeSync(RecordingStart);
 const encodeKeep = Schema.encodeSync(RecordingTranscriptKeep);
 const decodeZipSize = Schema.decodeUnknownOption(Schema.Int.check(Schema.isGreaterThan(0)));
+const decodeBrowserState = Schema.decodeUnknownOption(DesktopBrowserState);
+const decodeStill = Schema.decodeUnknownOption(BrowserStill);
+const decodeFound = Schema.decodeUnknownOption(BrowserFound);
+const decodeBrowserShortcut = Schema.decodeUnknownOption(BrowserShortcut);
+const decodeSuggestions = Schema.decodeUnknownOption(Schema.Array(BrowserSuggestion));
+const encodeCommand = Schema.encodeSync(DesktopBrowserCommand);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
+
+/** Listens through `subscribe` to what `decode` takes; answers a function that stops it. */
+const following =
+  <A>(
+    subscribe: (listener: (value: unknown) => void) => unknown,
+    decode: (value: unknown) => Option.Option<A>,
+  ) =>
+  (listener: (value: A) => void) => {
+    const stop = subscribe((value: unknown) => Option.map(decode(value), listener));
+    return () => {
+      if (typeof stop === "function") stop();
+    };
+  };
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
 const ask = <A>(call: () => unknown, decode: (answer: unknown) => Option.Option<A>) =>
@@ -407,6 +453,29 @@ const ask = <A>(call: () => unknown, decode: (answer: unknown) => Option.Option<
 export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
   onNone: () => null,
   onSome: (bridge) => ({
+    browser: {
+      link: (link) => {
+        bridge.linkBrowser(link);
+      },
+      state: () => ask(() => bridge.browserState(), decodeBrowserState),
+      onChange: following((listener) => bridge.onBrowser(listener), decodeBrowserState),
+      command: (command) => {
+        bridge.browserCommand(encodeCommand(command));
+      },
+      place: (placement) => {
+        bridge.placeBrowser(placement);
+      },
+      onStill: following((listener) => bridge.onBrowserStill(listener), decodeStill),
+      onFound: following((listener) => bridge.onBrowserFound(listener), decodeFound),
+      onShortcut: following(
+        (listener) => bridge.onBrowserShortcut(listener),
+        decodeBrowserShortcut,
+      ),
+      suggest: (text, recent = false) =>
+        ask(() => bridge.browserSuggest({ text, recent }), decodeSuggestions).then(
+          (answer) => answer ?? [],
+        ),
+    },
     server: bridge.state.server === null ? null : new URL(bridge.state.server),
     pairingCode: bridge.state.pairingCode,
     mode: bridge.state.mode,

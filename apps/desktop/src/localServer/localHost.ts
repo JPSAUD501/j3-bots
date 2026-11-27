@@ -129,6 +129,8 @@ export const serverEnvironment = (
   ...commandEnvironment(env, options),
   J3_HOST: options.host,
   J3_WEB_CLIENT: options.webClient,
+  // The app's own browser runs the tabs (decision 0110): the server starts no browser of its own.
+  J3_BROWSER_SERVER_HOST: "off",
 });
 
 const decodeOrigin = Schema.decodeUnknownEffect(ServerOrigin);

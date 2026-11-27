@@ -53,7 +53,7 @@ export const cookieFromCdp = (cookie: CdpCookie): BrowserCookie => {
 };
 
 /** `cookie` as the desktop keeps it: what reading it back would give. */
-export const asKept = (cookie: BrowserCookie): BrowserCookie =>
+const asKept = (cookie: BrowserCookie): BrowserCookie =>
   cookie.expires === undefined ? cookie : { ...cookie, expires: Math.floor(cookie.expires) };
 
 /** An address the cookie is sent to, which is what both of Electron's APIs place it by. */

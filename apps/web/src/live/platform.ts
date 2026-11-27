@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type CredentialEnded,
+  type DeviceCredential,
   alwaysForeground,
   Cell,
   ClientStorage,
@@ -19,11 +21,12 @@ import {
   type UploadResponse,
   WindowLocks,
 } from "@j3-bots/client-runtime";
-import type { DeviceId } from "@j3-bots/contracts";
+import { type DeviceId, ServerOrigin } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -73,7 +76,7 @@ const credentialCell = (observe: (stored: unknown) => void): CredentialCell => (
  */
 export const signInUnencrypted = new Cell(false);
 
-const credentials = (codec: CredentialCodec, cell: CredentialCell) =>
+const credentials = (codec: CredentialCodec, cell: CredentialCell, linked: BrowserLinking) =>
   Layer.effect(
     CredentialStore,
     Effect.gen(function* () {
@@ -81,15 +84,51 @@ const credentials = (codec: CredentialCodec, cell: CredentialCell) =>
         Effect.sync(() => new BroadcastChannel(CREDENTIAL_CHANNEL)),
         (opened) => Effect.sync(() => opened.close()),
       );
-      return makeCredentialStore({
+      const store = makeCredentialStore({
         codec,
         cell,
         // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a BroadcastChannel stays within its origin and takes no target
         announce: Effect.sync(() => channel.postMessage(null)),
         changes: Stream.fromEventListener(channel, "message").pipe(Stream.as(undefined)),
       });
+      // The desktop app's browser serves the server as this device, for as long as it is paired.
+      return CredentialStore.of({
+        ...store,
+        load: Effect.tap(store.load, linked),
+        save: Effect.fn("CredentialStore.save")(function* (credential: DeviceCredential) {
+          yield* store.save(credential);
+          yield* linked(Option.some(credential));
+        }),
+        clear: Effect.fn("CredentialStore.clear")(function* (
+          credential: DeviceCredential,
+          ended: CredentialEnded,
+        ) {
+          const left = yield* store.clear(credential, ended);
+          yield* linked(left);
+          return left;
+        }),
+      });
     }),
   );
+
+/** Tells the desktop app's browser which device this page is, on its server, or that it is none. */
+type BrowserLinking = (credential: Option.Option<DeviceCredential>) => Effect.Effect<void>;
+
+const browserLinking =
+  (server: URL): BrowserLinking =>
+  (credential) =>
+    Effect.sync(() =>
+      desktop?.browser.link(
+        Option.match(credential, {
+          onNone: () => null,
+          onSome: ({ deviceId, token }) => ({
+            server: ServerOrigin.make(server.origin),
+            deviceId,
+            token: Redacted.value(token),
+          }),
+        }),
+      ),
+    );
 
 const idbRecord = ({ table, key, value }: LocalRecord) => ({ store: table, key, value });
 
@@ -324,7 +363,7 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> => {
   );
   return Layer.mergeAll(
     Layer.succeed(ServerAddress, { origin: server }),
-    credentials(codec, cell),
+    credentials(codec, cell, desktop === null ? () => Effect.void : browserLinking(server)),
     storage(codec),
     locks,
     Layer.succeed(FileTransfer, browserTransfer),

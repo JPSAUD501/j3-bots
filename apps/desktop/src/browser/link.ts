@@ -21,14 +21,14 @@ const GOOD_LINK = Duration.seconds(30);
 const OPEN_TIMEOUT = Duration.seconds(10);
 
 /** The page host socket of the server at `origin` (`http(s)://host[:port]`). */
-export const hostSocketUrl = (origin: string): string => {
+const hostSocketUrl = (origin: string): string => {
   const url = new URL(HTTP_PATHS.browserHost, origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.href;
 };
 
 /** The wait before dialing again, after a link that lasted `lasted` and the wait before it. */
-export const nextWait = (lasted: Duration.Duration, previous: Duration.Duration | null) =>
+const nextWait = (lasted: Duration.Duration, previous: Duration.Duration | null) =>
   previous === null || Duration.isGreaterThanOrEqualTo(lasted, GOOD_LINK)
     ? FIRST_WAIT
     : Duration.min(Duration.times(previous, 2), LONGEST_WAIT);

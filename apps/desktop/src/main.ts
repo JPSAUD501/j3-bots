@@ -61,6 +61,8 @@ import * as Appearance from "./appearance.ts";
 import * as AppLinks from "./appLinks.ts";
 import * as Autostart from "./autostart.ts";
 import { inlineScriptSources, policyFor, resolveAsset } from "./assets.ts";
+import { serveBrowser } from "./browser/app.ts";
+import { isBrowserSession } from "./browser/host.ts";
 import { commandSender } from "./commands.ts";
 import { transparencyHere } from "./compositing.ts";
 import { onWayland } from "./displayServer.ts";
@@ -595,7 +597,10 @@ const program = Effect.gen(function* () {
       details.isMainFrame &&
       isAppUrl(requestingOrigin, APP_ORIGIN),
   );
-  app.on("web-contents-created", (_event, contents) => lockNavigation(contents));
+  // The browser's tabs keep their own rules (`browser/tab.ts`): they show the web, not the app.
+  app.on("web-contents-created", (_event, contents) => {
+    if (!isBrowserSession(contents.session)) lockNavigation(contents);
+  });
 
   const placed = openingBounds(
     (yield* settings.get).window,
@@ -638,6 +643,15 @@ const program = Effect.gen(function* () {
     installFailed: choice.whileLocal(supervisor.start).pipe(Effect.asVoid),
   });
   yield* Autostart.serve(fromApp);
+  const preload = path.join(app.getAppPath(), "dist", "preload.cjs");
+  yield* serveBrowser({
+    main: window,
+    appOrigin: APP_ORIGIN,
+    preload,
+    fromApp,
+    server: Effect.map(settings.get, ({ server }) => server),
+    backgroundColor: () => appearance.windowBackground(),
+  });
 
   // Quit, from the tray, the menu or the system, waits for the server this
   // computer runs to stop, and for a move under way to end, its export kept
@@ -716,7 +730,6 @@ const program = Effect.gen(function* () {
     locale: app.getLocale(),
     ownProcess: process.pid,
   });
-  const preload = path.join(app.getAppPath(), "dist", "preload.cjs");
   const quickAccess = yield* QuickAccess.serve({
     appearance,
     main: window,
@@ -803,6 +816,8 @@ const program = Effect.gen(function* () {
     if (launchedWhileStarting) window.focus();
   });
   app.on("window-all-closed", () => app.quit());
+  // The browser keeps a window no one sees: the main window closing is the app closing.
+  window.on("closed", () => app.quit());
   // macOS: a click on the dock's icon brings back a window that was hidden.
   app.on("activate", forward);
 

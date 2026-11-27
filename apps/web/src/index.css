@@ -1703,6 +1703,13 @@
  * (`--pane-from`, set per direction), by a transform, so nothing is laid out
  * again while they move.
  */
+/* The address bar while a page loads: it fills slowly, and never quite to the end. */
+@keyframes address-fill {
+  to {
+    width: 85%;
+  }
+}
+
 @keyframes pane-in {
   from {
     translate: var(--pane-from) 0;

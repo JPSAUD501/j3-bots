@@ -192,6 +192,27 @@ export const IPC_CHANNELS = {
   recorderFailed: "j3bots:recorder-failed",
   /** From the main process, to the recorder's page: `RecorderCue`. */
   recorderCue: "j3bots:recorder-cue",
+  /**
+   * `BrowserLink`, from the main window's page: the server the browser serves,
+   * as the page is signed in to it, or `null`. Not answered.
+   */
+  browserLink: "j3bots:browser-link",
+  /** Answers `DesktopBrowserState`. */
+  browserState: "j3bots:browser-state",
+  /** From the main process, each time the browser changes: `DesktopBrowserState`. */
+  browserChanged: "j3bots:browser-changed",
+  /** `DesktopBrowserCommand`. Not answered: the browser's state follows. */
+  browserCommand: "j3bots:browser-command",
+  /** `BrowserPlacement`: where the window's page draws its place's front tab. Not answered. */
+  browserPlace: "j3bots:browser-place",
+  /** From the main process: `BrowserStill`, while the page covers the tab. */
+  browserStill: "j3bots:browser-still",
+  /** From the main process: `BrowserFound`, as finding in a page goes. */
+  browserFound: "j3bots:browser-found",
+  /** From the main process: `BrowserShortcut`, pressed while a tab's page had the keys. */
+  browserShortcut: "j3bots:browser-shortcut",
+  /** `BrowserSuggestRequest`, answered with the address bar's `BrowserSuggestion`s. */
+  browserSuggest: "j3bots:browser-suggest",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -326,4 +347,21 @@ export interface DesktopBridge {
   readonly recorderFailed: (failure: unknown) => void;
   /** Calls `listener` with each cue for the recorder (a `RecorderCue`); answers a function that stops it. */
   readonly onRecorderCue: (listener: (cue: unknown) => void) => () => void;
+  /** Tells the app which server its browser serves (a `BrowserLink`). */
+  readonly linkBrowser: (link: unknown) => void;
+  readonly browserState: () => Promise<unknown>;
+  /** Calls `listener` with each `DesktopBrowserState`; answers a function that stops it. */
+  readonly onBrowser: (listener: (state: unknown) => void) => () => void;
+  /** A `DesktopBrowserCommand`. */
+  readonly browserCommand: (command: unknown) => void;
+  /** Where this window draws its front tab (a `BrowserPlacement`). */
+  readonly placeBrowser: (placement: unknown) => void;
+  /** Calls `listener` with each `BrowserStill`; answers a function that stops it. */
+  readonly onBrowserStill: (listener: (still: unknown) => void) => () => void;
+  /** Calls `listener` with each `BrowserFound`; answers a function that stops it. */
+  readonly onBrowserFound: (listener: (found: unknown) => void) => () => void;
+  /** Calls `listener` with each `BrowserShortcut`; answers a function that stops it. */
+  readonly onBrowserShortcut: (listener: (shortcut: unknown) => void) => () => void;
+  /** The address bar's suggestions for what is typed (a `BrowserSuggestRequest`). */
+  readonly browserSuggest: (request: unknown) => Promise<unknown>;
 }

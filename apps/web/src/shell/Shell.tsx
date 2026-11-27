@@ -33,6 +33,10 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
+import { BrowserToggle } from "../browser/desktop/BrowserToggle";
+import { DesktopBrowserPanel } from "../browser/desktop/DesktopBrowserPanel";
+import { useDesktopBrowserHere } from "../browser/desktop/state";
+import { desktop } from "../live/desktop";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import type { BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
@@ -190,6 +194,14 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     if (viewerRef.current === null) next();
     else viewerRef.current.requestClose(next);
   };
+  // In the desktop app, its own browser: a tab on this computer opens there, beside the conversation.
+  const desktopBrowser = useDesktopBrowserHere(desktop?.browser ?? null);
+  const [resizingBrowser, setResizingBrowser] = useState(false);
+  const inDesktopBrowser =
+    desktop !== null &&
+    browserTarget !== null &&
+    (browserTarget === "front" ||
+      desktopBrowser?.tabs.some((tab) => tab.ref === browserTarget) === true);
   const closeAside = () => {
     if (aside === "browser") closeBrowser();
     else navigation.setDetailsOpen(false);
@@ -541,17 +553,28 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           }
           {...(browserBot === null
             ? {}
-            : {
-                actions: (
-                  <BrowserIndicator
-                    bot={browserBot}
-                    open={browserTarget !== null}
-                    onOpen={() =>
-                      browserTarget === null ? navigation.setBrowser("front") : closeAside()
-                    }
-                  />
-                ),
-              })}
+            : desktop !== null
+              ? {
+                  actions: (
+                    <BrowserToggle
+                      open={browserTarget !== null}
+                      onToggle={() =>
+                        browserTarget === null ? navigation.setBrowser("front") : closeAside()
+                      }
+                    />
+                  ),
+                }
+              : {
+                  actions: (
+                    <BrowserIndicator
+                      bot={browserBot}
+                      open={browserTarget !== null}
+                      onOpen={() =>
+                        browserTarget === null ? navigation.setBrowser("front") : closeAside()
+                      }
+                    />
+                  ),
+                })}
         />
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
@@ -720,7 +743,21 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         </div>
       </>
     );
-    if (browserBot !== null && browserTarget !== null) {
+    if (desktop !== null && browserTarget !== null && inDesktopBrowser) {
+      details = (
+        <DesktopBrowserPanel
+          bridge={desktop.browser}
+          target={browserTarget}
+          over={detailsModal}
+          onClose={() => navigation.setBrowser(null)}
+          onSignIns={() => openSettings(intents)}
+          headingRef={detailsHeadingRef}
+          headingId={detailsHeadingId}
+          held={resizingBrowser}
+          ref={viewerRef}
+        />
+      );
+    } else if (browserBot !== null && browserTarget !== null) {
       // Below the wide layout, the browser is the phone's live view; beside the conversation, the viewer.
       details =
         layout === "wide" ? (
@@ -852,6 +889,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               containerRef={containerRef}
               conversationRef={setConversationRegion}
               onCloseDetails={closeAside}
+              onBrowserResizing={setResizingBrowser}
             />
           </AvatarConnection>
         </BrowserProvider>

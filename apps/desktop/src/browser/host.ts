@@ -194,6 +194,12 @@ interface Entry {
  */
 export const makeDesktopBrowser = (options: {
   readonly scratch: string;
+  /** Told of each download as it begins: the person's, or a bot's on `tab`. */
+  readonly downloading?: (
+    item: DownloadItem,
+    by: "person" | "bot",
+    tab: BrowserTabRef | null,
+  ) => void;
 }): Effect.Effect<DesktopBrowser, BrowserHostError, Scope.Scope> =>
   Effect.gen(function* () {
     const hostScope = yield* Effect.scope;
@@ -300,7 +306,8 @@ export const makeDesktopBrowser = (options: {
     const entryOf = (contents: WebContents) =>
       [...entries.values()].find((entry) => entry.tab.contents === contents);
 
-    const personDownload = (item: DownloadItem) => {
+    const personDownload = (item: DownloadItem, tab: BrowserTabRef | null) => {
+      options.downloading?.(item, "person", tab);
       const folder = app.getPath("downloads");
       item.setSavePath(
         NodePath.join(
@@ -314,9 +321,10 @@ export const makeDesktopBrowser = (options: {
     const onDownload = (_event: Electron.Event, item: DownloadItem, source: WebContents) => {
       const entry = entryOf(source);
       if (entry === undefined || !entry.reported || entry.tab.private || !entry.tab.botLed()) {
-        personDownload(item);
+        personDownload(item, entry?.tab.ref ?? null);
         return;
       }
+      options.downloading?.(item, "bot", entry.tab.ref);
       const download = mintDownload();
       const name = savedName(item.getFilename());
       const folder = NodePath.join(options.scratch, "downloads", download);
@@ -510,7 +518,9 @@ export const makeDesktopBrowser = (options: {
     const newPrivateSession = () => {
       const session = electronSession.fromPartition(`${PRIVATE_PARTITION_PREFIX}${randomId()}`);
       prepareSession(session, identity);
-      session.on("will-download", (_event, item) => personDownload(item));
+      session.on("will-download", (_event, item, source) =>
+        personDownload(item, entryOf(source)?.tab.ref ?? null),
+      );
       return session;
     };
 
@@ -658,8 +668,6 @@ export const makeDesktopBrowser = (options: {
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
-        // Every origin's storage is read once more as the app quits cleanly.
-        yield* tellStorage(sharedOrigins());
         yield* Effect.forEach([...entries.values()], (entry) => ended(entry, false), {
           discard: true,
         });

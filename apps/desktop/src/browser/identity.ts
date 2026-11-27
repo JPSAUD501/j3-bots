@@ -13,13 +13,13 @@ export type IdentityPlatform = "linux" | "darwin" | "win32";
 export type IdentityArch = "x64" | "arm64";
 
 /** One brand and its version, as `Sec-CH-UA` and `userAgentData.brands` list them. */
-export interface Brand {
+interface Brand {
   readonly brand: string;
   readonly version: string;
 }
 
 /** What `Emulation.setUserAgentOverride` takes as `userAgentMetadata`. */
-export interface UserAgentMetadata {
+interface UserAgentMetadata {
   readonly brands: ReadonlyArray<Brand>;
   readonly fullVersionList: ReadonlyArray<Brand>;
   readonly platform: string;
@@ -139,7 +139,7 @@ export const identityOf = (input: {
  * Whether Chromium sends client hints to `url`: only to a potentially
  * trustworthy origin, HTTPS or a loopback name.
  */
-export const takesClientHints = (url: string): boolean => {
+const takesClientHints = (url: string): boolean => {
   if (!URL.canParse(url)) return false;
   const { protocol, hostname } = new URL(url);
   if (protocol === "https:") return true;

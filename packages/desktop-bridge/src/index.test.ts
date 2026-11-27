@@ -265,6 +265,15 @@ describe("the desktop bridge", () => {
       recorderControl: call,
       recorderFailed: call,
       onRecorderCue: call,
+      linkBrowser: call,
+      browserState: call,
+      onBrowser: call,
+      browserCommand: call,
+      placeBrowser: call,
+      onBrowserStill: call,
+      onBrowserFound: call,
+      onBrowserShortcut: call,
+      browserSuggest: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));

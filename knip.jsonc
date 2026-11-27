@@ -11,8 +11,14 @@
     "apps/desktop": {
       // The main process, and the preload script Electron loads by the path
       // the window names: built into dist, which knip does not map back. The
-      // hook electron-builder.yml names, which electron-builder loads.
-      "entry": ["src/main.ts", "src/preload.ts", "scripts/afterPack.ts"],
+      // hook electron-builder.yml names, which electron-builder loads. The
+      // main process of the browser's Electron test, which the test starts by path.
+      "entry": [
+        "src/main.ts",
+        "src/preload.ts",
+        "scripts/afterPack.ts",
+        "test/browserHost.main.ts",
+      ],
       // The input hook's prebuilt binary, which the build copies out of the
       // package by path (vite.config.ts) and the app loads itself: nothing
       // imports the package.
