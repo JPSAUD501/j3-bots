@@ -14,6 +14,7 @@ export {
   type PairHandle,
   type PairResult,
   type Platform,
+  type RecordingAttachment,
   type SecretsHandle,
   type ServerUpdateHandle,
   type SendWithFilesResult,
@@ -134,7 +135,7 @@ export {
   ProviderSetup,
   type SignInView,
 } from "./stores/ProviderSetup.ts";
-export type { Loaded } from "./stores/reads.ts";
+export { type Loaded, loadedList } from "./stores/reads.ts";
 export {
   type BotPlacement,
   isHidden,

@@ -49,8 +49,8 @@ import { BetweenBots } from "./PairRow";
 import { ReorderList, ReorderRow } from "./ReorderList";
 import {
   type FoldedSections,
-  HiddenConversations,
-  HiddenRow,
+  Backstage,
+  BackstageRow,
   memberAvatarsOf,
   PinnedBots,
   SectionBlock,
@@ -207,7 +207,7 @@ export function Roster({
   const { t } = useI18n();
   const bots = useBots();
   const [query, setQuery] = useState("");
-  const [showHidden, setShowHidden] = useState(false);
+  const [showBackstage, setShowBackstage] = useState(false);
   const [question, setQuestion] = useState<RosterQuestion | null>(null);
   const [renaming, setRenaming] = useState<SectionId | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -263,14 +263,14 @@ export function Roster({
   );
 
   let body: ReactNode;
-  if (showHidden && !searching) {
+  if (showBackstage && !searching) {
     body = (
-      <HiddenConversations
+      <Backstage
         items={arranged.hidden}
         selected={selected}
         rowLink={rowLink}
-        onBack={() => setShowHidden(false)}
-        onShow={(item) =>
+        onBack={() => setShowBackstage(false)}
+        onBringBack={(item) =>
           item._tag === "bot"
             ? intents.placeBot(item.bot.id, { hidden: false })
             : intents.placeRoom(item.room.id, { hidden: false })
@@ -332,7 +332,7 @@ export function Roster({
           intents={pairIntents}
         />
         {arranged.hidden.length > 0 && (
-          <HiddenRow items={arranged.hidden} onOpen={() => setShowHidden(true)} />
+          <BackstageRow items={arranged.hidden} onOpen={() => setShowBackstage(true)} />
         )}
       </>
     );

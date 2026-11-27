@@ -22,9 +22,9 @@ import {
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotTools } from "../tools/BotTools.ts";
 
-// Bots and rooms are visible or hidden (decision 0050): the operator sets it,
-// and so does a bot, for what it made, or as the primary bot, for anything
-// but itself, unless the operator chose.
+// Bots and rooms are in the operator's list or behind the scenes (decisions
+// 0050 and 0101): the operator sets it, and so does a bot, for what it made,
+// or as the primary bot, for anything but itself, unless the operator chose.
 
 let calls = 0;
 
@@ -46,25 +46,25 @@ const call = (sessionId: SessionId, turnId: TurnId, tool: string, args: Schema.J
     });
   });
 
-/** `set_visibility`, which acts for no turn, from any session of the bot. */
-const setVisibility = (
+/** `set_listed`, which acts for no turn, from any session of the bot. */
+const setListed = (
   sessionId: SessionId,
   id: string,
-  hidden: boolean,
+  listed: boolean,
   requestId = `visibility-call-${++calls}`,
 ) =>
   Effect.gen(function* () {
     return yield* (yield* BotTools).call({
       requestId,
       sessionId,
-      tool: "set_visibility",
-      arguments: { id, hidden },
+      tool: "set_listed",
+      arguments: { id, listed },
     });
   });
 
 const decodeMade = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String }));
 const decodeShown = Schema.decodeUnknownSync(
-  Schema.Struct({ id: Schema.String, hidden: Schema.Boolean }),
+  Schema.Struct({ id: Schema.String, listed: Schema.Boolean }),
 );
 
 const resultOf = (response: ToolCallResponse) =>
@@ -77,7 +77,7 @@ const refusalOf = (response: ToolCallResponse) =>
     ? response.message
     : assert.fail(`expected a refusal, got ${JSON.stringify(response)}`);
 
-const hiddenNow = (response: ToolCallResponse) => decodeShown(resultOf(response)).hidden;
+const listedNow = (response: ToolCallResponse) => decodeShown(resultOf(response)).listed;
 
 const storedBot = (id: BotId) =>
   Effect.gen(function* () {
@@ -111,7 +111,7 @@ const operatorAsks = (bot: Bot, text: string) =>
     return { session, turnId: yield* nextTurn(bot.id) };
   });
 
-it.effect("makes a hidden helper and a hidden room, which still work", () =>
+it.effect("makes a helper and a room behind the scenes, which still work", () =>
   Effect.gen(function* () {
     const scout = yield* primaryBot("Scout");
     const { session, turnId } = yield* operatorAsks(scout, "Get the launch notes written.");
@@ -120,8 +120,9 @@ it.effect("makes a hidden helper and a hidden room, which still work", () =>
       resultOf(
         yield* call(session, turnId, "create_bot", {
           name: "Quill",
+          title: "Launch notes",
           job: "Drafts notes.",
-          hidden: true,
+          listed: false,
         }),
       ),
     );
@@ -132,7 +133,8 @@ it.effect("makes a hidden helper and a hidden room, which still work", () =>
           name: "Notes desk",
           members: [quill],
           kickoff: "Quill drafts the notes, I review them.",
-          hidden: true,
+          with_user: true,
+          listed: false,
         }),
       ),
     );
@@ -140,7 +142,7 @@ it.effect("makes a hidden helper and a hidden room, which still work", () =>
 
     assert.isTrue(yield* botHidden(quill));
     assert.isTrue(yield* roomHidden(roomId));
-    // Hidden from the list, not from the work: the kickoff reaches the helper.
+    // Out of the list, not out of the work: the kickoff reaches the helper.
     const caller: Member = { bot: scout, session };
     const helper: Member = { bot: yield* storedBot(quill), session: yield* engineSession(quill) };
     yield* say(caller, turnId, { text: "Quill is on the notes.", done: true });
@@ -165,6 +167,8 @@ it.effect(
             name: "Pairing",
             members: [pip.bot.id],
             kickoff: "Pip, let's pair on the parser.",
+            with_user: true,
+            listed: true,
           }),
         ),
       );
@@ -173,27 +177,29 @@ it.effect(
         resultOf(
           yield* call(scouting.session, scouting.turnId, "create_bot", {
             name: "Ledger",
+            title: "Invoices",
             job: "Keeps invoices.",
+            listed: true,
           }),
         ),
       );
 
-      // Wren started the room: it may hide it and show it again.
-      assert.isTrue(hiddenNow(yield* setVisibility(wren.session, started.id, true)));
+      // Wren started the room: it may move it behind the scenes and back.
+      assert.isFalse(listedNow(yield* setListed(wren.session, started.id, false)));
       assert.isTrue(yield* roomHidden(RoomId.make(started.id)));
-      assert.isFalse(hiddenNow(yield* setVisibility(wren.session, started.id, false)));
+      assert.isTrue(listedNow(yield* setListed(wren.session, started.id, true)));
       // Not what another bot made.
       assert.include(
-        refusalOf(yield* setVisibility(wren.session, made.id, true)),
+        refusalOf(yield* setListed(wren.session, made.id, false)),
         "only the bots and rooms you made",
       );
       assert.isFalse(yield* botHidden(BotId.make(made.id)));
       // The primary bot may change what any bot made.
-      assert.isTrue(hiddenNow(yield* setVisibility(scouting.session, started.id, true)));
-      assert.isTrue(hiddenNow(yield* setVisibility(scouting.session, made.id, true)));
-      // No bot hides the primary bot, the primary bot itself included.
+      assert.isFalse(listedNow(yield* setListed(scouting.session, started.id, false)));
+      assert.isFalse(listedNow(yield* setListed(scouting.session, made.id, false)));
+      // No bot moves the primary bot, the primary bot itself included.
       for (const caller of [scouting.session, wren.session]) {
-        assert.include(refusalOf(yield* setVisibility(caller, scout.id, true)), "primary bot");
+        assert.include(refusalOf(yield* setListed(caller, scout.id, false)), "primary bot");
       }
       assert.isFalse(yield* botHidden(scout.id));
     }).pipe(Effect.provide(TestDomain.layer)),
@@ -208,7 +214,12 @@ it.effect("keeps every bot from changing what the operator made, showed or hid",
     const { session, turnId } = yield* operatorAsks(scout, "Make a helper and a room for it.");
     const made = decodeMade(
       resultOf(
-        yield* call(session, turnId, "create_bot", { name: "Ledger", job: "Keeps invoices." }),
+        yield* call(session, turnId, "create_bot", {
+          name: "Ledger",
+          title: "Invoices",
+          job: "Keeps invoices.",
+          listed: true,
+        }),
       ),
     );
     const ledger = BotId.make(made.id);
@@ -218,7 +229,8 @@ it.effect("keeps every bot from changing what the operator made, showed or hid",
           name: "Books",
           members: [ledger],
           kickoff: "Ledger, keep the books.",
-          hidden: true,
+          with_user: true,
+          listed: false,
         }),
       ),
     );
@@ -238,11 +250,11 @@ it.effect("keeps every bot from changing what the operator made, showed or hid",
     yield* (yield* Bots).update({ commandId: command(), botId: ledger, changes: { hidden: true } });
 
     const operatorChose = "your user chose";
-    assert.include(refusalOf(yield* setVisibility(session, books, true)), operatorChose);
-    assert.include(refusalOf(yield* setVisibility(session, ledger, false)), operatorChose);
+    assert.include(refusalOf(yield* setListed(session, books, false)), operatorChose);
+    assert.include(refusalOf(yield* setListed(session, ledger, true)), operatorChose);
     // What the operator made is theirs from the start, visible as they made it.
-    assert.include(refusalOf(yield* setVisibility(session, wren.bot.id, true)), operatorChose);
-    assert.include(refusalOf(yield* setVisibility(session, operatorRoom.id, true)), operatorChose);
+    assert.include(refusalOf(yield* setListed(session, wren.bot.id, false)), operatorChose);
+    assert.include(refusalOf(yield* setListed(session, operatorRoom.id, false)), operatorChose);
     assert.isFalse(yield* roomHidden(books));
     assert.isTrue(yield* botHidden(ledger));
     assert.isFalse(yield* botHidden(wren.bot.id));
@@ -256,16 +268,21 @@ it.effect("answers a retried call as it first did, the bot it hid deleted meanwh
     const { session, turnId } = yield* operatorAsks(scout, "Make me a bot for invoices.");
     const made = decodeMade(
       resultOf(
-        yield* call(session, turnId, "create_bot", { name: "Ledger", job: "Keeps invoices." }),
+        yield* call(session, turnId, "create_bot", {
+          name: "Ledger",
+          title: "Invoices",
+          job: "Keeps invoices.",
+          listed: true,
+        }),
       ),
     );
-    assert.isTrue(hiddenNow(yield* setVisibility(session, made.id, true, "hide-ledger")));
+    assert.isFalse(listedNow(yield* setListed(session, made.id, false, "hide-ledger")));
     yield* (yield* Bots).remove({
       commandId: command(),
       botId: BotId.make(made.id),
       deleteFiles: false,
     });
     // The bridge forwards the request again: its id no longer names a bot.
-    assert.isTrue(hiddenNow(yield* setVisibility(session, made.id, true, "hide-ledger")));
+    assert.isFalse(listedNow(yield* setListed(session, made.id, false, "hide-ledger")));
   }).pipe(Effect.provide(TestDomain.layer)),
 );

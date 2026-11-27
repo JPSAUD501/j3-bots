@@ -77,6 +77,12 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     /** The room is archived: it takes no messages and no changes. */
     "room-archived",
     /**
+     * The room is of bots only (`Room.botsOnly`): the operator reads it and
+     * does not write, react or change who is in it. A client that knows it
+     * offers none of these there.
+     */
+    "room-bots-only",
+    /**
      * Where the file would go now leads, through a symbolic link made after
      * start, out of the server's private data. Nothing was written; removing
      * the link lets it through again.

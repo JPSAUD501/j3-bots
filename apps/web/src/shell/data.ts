@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ProviderActions } from "../components/ProviderFix";
+import type { QuickSend } from "@j3-bots/client-runtime/react";
 import type {
   Addressing,
   BotPlacement,
@@ -207,11 +208,14 @@ export interface ShellData {
 type PairingStart = ({ readonly _tag: "started" } & PairingOffer) | { readonly _tag: "failed" };
 
 /**
- * A bot to create: its name, whether it becomes the primary one or starts
- * hidden (visible when left out), and its look, or the server's choice.
+ * A bot to create: its name and title, whether it becomes the primary one or
+ * starts behind the scenes (in the list when left out), and its look, or the
+ * server's choice.
  */
 interface NewBot {
   readonly name: string;
+  /** What it is for: required of every bot the app creates (decision 0101). */
+  readonly title: string;
   readonly primary: boolean;
   readonly hidden?: boolean;
   readonly avatar?: AvatarChoice;
@@ -329,7 +333,15 @@ export interface ShellIntents extends TimelineIntents {
   readonly shareBotTemplate: (botId: BotId) => void;
   readonly newRoom: () => void;
   /** Opens the form for a new room with the two bots of a teammate conversation in it. */
-  readonly startRoomWith: (botIds: PairBotIds) => void;
+  /** Opens the new room form with these bots among its members. */
+  readonly startRoomWith: (botIds: ReadonlyArray<BotId>) => void;
+  /**
+   * Sends a message typed on a bot's card straight to its conversation
+   * (decision 0102), as `J3Client.send` does.
+   */
+  readonly sendQuickMessage: QuickSend;
+  /** The bot whose card shows, or null: its routines are kept live meanwhile. */
+  readonly setCardBot: (botId: BotId | null) => void;
   /** Opens the form that changes a room's name and members. */
   readonly editRoom: (roomId: RoomId) => void;
   /** Resolves once the server answered, whatever it said. */
@@ -340,8 +352,11 @@ export interface ShellIntents extends TimelineIntents {
    */
   readonly unarchiveRoom: (roomId: RoomId) => Promise<void>;
   readonly deleteRoom: (roomId: RoomId) => void;
-  /** Opens the form that edits a bot's profile, model and permission mode. Absent where there is none. */
-  readonly editProfile?: (botId: BotId) => void;
+  /**
+   * Opens the form that edits a bot's profile, model and permission mode, at
+   * its title field for `"title"`. Absent where there is none.
+   */
+  readonly editProfile?: (botId: BotId, at?: "title") => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
   /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
   readonly setBrowser: (bot: Bot, enabled: boolean) => void;

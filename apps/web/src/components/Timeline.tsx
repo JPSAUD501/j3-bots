@@ -423,7 +423,13 @@ export function Timeline({
                     mentionable={highlighted(message, [])}
                     onOpenAttachment={intents.openAttachment}
                     onRetry={() => intents.retryMessage(message.id)}
-                    onReact={(emoji) => intents.react(message.id, emoji)}
+                    // In a room of bots only the operator's part is to read.
+                    {...(room?.botsOnly === true
+                      ? {}
+                      : {
+                          onReact: (emoji: ReactionEmoji | null) =>
+                            intents.react(message.id, emoji),
+                        })}
                     {...(drafting !== null && isQuotable(message)
                       ? {
                           reply: {

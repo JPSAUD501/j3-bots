@@ -57,6 +57,18 @@ describe("botPatch", () => {
     });
   });
 
+  it("refuses to empty a title the bot has, and saves a bot that never had one", () => {
+    const titled = { ...scout, profile: { ...scout.profile, title: "Research" } };
+    expect(botPatch(titled, { ...noBotEdits, title: "  " }, null)).toEqual({
+      _tag: "invalid",
+      fields: new Set(["title"]),
+    });
+    expect(botPatch(scout, { ...noBotEdits, title: "", permissionMode: "auto" }, null)).toEqual({
+      _tag: "changes",
+      changes: { permissionMode: "auto" },
+    });
+  });
+
   it("sends whether the bot is hidden whenever the operator moved the switch", () => {
     const hide = withHiddenEdit(noBotEdits, true, scout.hidden);
     expect(botPatch(scout, hide, null)).toEqual({ _tag: "changes", changes: { hidden: true } });

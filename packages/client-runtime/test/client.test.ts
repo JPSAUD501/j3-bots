@@ -1436,6 +1436,41 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     },
   );
 
+  it.effect(
+    "writes a recording's voice down before it uploads, saying how far, then uploads the zip as it is",
+    () => {
+      const released = { count: 0 };
+      return Effect.gen(function* () {
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Narrator") };
+        const { bytes, recording } = recordingOf(3000, released);
+        const shown: Array<DraftFile | undefined> = [];
+
+        yield* drafts.attachRecording(target, {
+          ...recording,
+          // Its transcript makes the zip larger.
+          size: 2000,
+          transcribe: (progress) =>
+            Effect.sync(() => {
+              progress(0.4);
+              shown.push(drafts.state.get().get(targetKey(target))?.files[0]);
+              return 3000;
+            }),
+        });
+        const file = yield* settledFile(target);
+
+        assert.deepInclude(shown[0], { _tag: "uploading", sent: 0, size: 2000, transcribing: 0.4 });
+        assert.strictEqual(file._tag, "ready");
+        if (file._tag !== "ready") return;
+        assert.strictEqual(file.attachment.size, 3000);
+        const stored = yield* (yield* Files).download(file.attachment);
+        assert.isTrue(Buffer.from(stored.bytes).equals(Buffer.from(bytes)));
+        assert.strictEqual(released.count, 1);
+      }).pipe(Effect.provide(client()));
+    },
+  );
+
   it.effect("begins a recording again once the server no longer knows it", () => {
     const begun = { count: 0 };
     return Effect.gen(function* () {

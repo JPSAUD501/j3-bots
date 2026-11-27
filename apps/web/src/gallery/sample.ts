@@ -69,6 +69,7 @@ export const ids = {
   pip: BotId.make("pip"),
   moss: BotId.make("moss"),
   newsletter: RoomId.make("spring-newsletter"),
+  fairStands: RoomId.make("fair-stands"),
 };
 
 /**
@@ -146,7 +147,7 @@ export function sampleTeam(now: DateTime.Utc) {
     color: string,
     state: BotState,
     extra: Partial<
-      Pick<Bot, "pinned" | "hidden" | "primary" | "permissionMode" | "sectionId">
+      Pick<Bot, "pinned" | "hidden" | "primary" | "permissionMode" | "sectionId" | "madeBy">
     > = {},
   ): Bot {
     return {
@@ -174,6 +175,7 @@ export function sampleTeam(now: DateTime.Utc) {
       opening: false,
       suggestedReply: null,
       createdAt: ago(60 * 24 * 30),
+      ...(extra.madeBy === undefined ? {} : { madeBy: extra.madeBy }),
     };
   }
 
@@ -188,7 +190,7 @@ export function sampleTeam(now: DateTime.Utc) {
     scout: bot(
       ids.scout,
       "Scout",
-      "Research",
+      "Product research",
       "dome",
       "tangerine",
       {
@@ -202,7 +204,12 @@ export function sampleTeam(now: DateTime.Utc) {
         tool: "browser",
         littleOnes: 0,
       },
-      { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
+      {
+        primary: true,
+        pinned: true,
+        permissionMode: "auto-accept-edits",
+        madeBy: { by: "operator", botId: null },
+      },
     ),
     juniper: bot(ids.juniper, "Juniper", "Inbox", "ears", "cobalt", {
       _tag: "waiting",
@@ -217,7 +224,16 @@ export function sampleTeam(now: DateTime.Utc) {
       since: ago(4),
     }),
     // Idle with a reply not yet read: the roster shows Wren as done.
-    wren: bot(ids.wren, "Wren", "Writing", "horns", "orchid", { _tag: "idle" }, { pinned: true }),
+    // Scout made Wren, at the operator's request.
+    wren: bot(
+      ids.wren,
+      "Wren",
+      "Writing",
+      "horns",
+      "orchid",
+      { _tag: "idle" },
+      { pinned: true, madeBy: { by: "bot", botId: ids.scout } },
+    ),
     ledger: bot(ids.ledger, "Ledger", "Receipts", "ghost", "honey", {
       _tag: "blocked",
       failure: "usage-limit",
@@ -227,7 +243,7 @@ export function sampleTeam(now: DateTime.Utc) {
     maple: bot(
       ids.maple,
       "Maple",
-      "Groceries",
+      "Grocery prices at the three markets",
       "toes",
       "tomato",
       {
@@ -266,6 +282,22 @@ export function sampleTeam(now: DateTime.Utc) {
     work: "running",
     forceStop: false,
     answering: [ids.juniper, ids.scout],
+    memberWork: [],
+  };
+
+  // A room of bots only Scout started, kept in the bastidores: the operator reads along.
+  const botsOnlyRoom: Extract<Room, { readonly status: "active" }> = {
+    id: ids.fairStands,
+    name: "Craft fair stands",
+    status: "active",
+    members: [ids.scout, ids.wren],
+    pinned: false,
+    hidden: true,
+    botsOnly: true,
+    createdAt: ago(90),
+    work: "none",
+    forceStop: false,
+    answering: [],
     memberWork: [],
   };
 
@@ -706,6 +738,46 @@ export function sampleTeam(now: DateTime.Utc) {
     },
   ];
 
+  const botsOnlyEntries: DraftEntry[] = [
+    {
+      _tag: "notice",
+      id: entryId("bn"),
+      author: { _tag: "system" },
+      createdAt: ago(90),
+      notice: { _tag: "room-started", botId: ids.scout, roomId: ids.fairStands },
+      retryable: false,
+    },
+    message(
+      by(ids.scout),
+      ago(90),
+      "Let’s place the twelve stands for Saturday. Wren, draft the map; I’ll check who needs power.",
+      { prefix: "b" },
+    ),
+    message(
+      by(ids.wren),
+      ago(84),
+      "Draft is in: bakers by the door, the two potters together, music at the back.",
+      { prefix: "b", reactions: [reacted("👍", ids.scout)] },
+    ),
+    message(
+      by(ids.scout),
+      ago(80),
+      "Three stands need power, and only the back wall has outlets. Can music share it?",
+      { prefix: "b" },
+    ),
+    message(by(ids.wren), ago(78), "Yes: music and the two bakers on the back wall. Map updated.", {
+      prefix: "b",
+    }),
+    {
+      _tag: "notice",
+      id: entryId("bn"),
+      author: { _tag: "system" },
+      createdAt: ago(77),
+      notice: { _tag: "room-paused", botId: ids.scout, roomId: ids.fairStands },
+      retryable: false,
+    },
+  ];
+
   const entries: Record<string, Entry[]> = {
     [`bot:${ids.scout}`]: ordered(scoutEntries),
     [`bot:${ids.juniper}`]: ordered(juniperEntries),
@@ -715,6 +787,7 @@ export function sampleTeam(now: DateTime.Utc) {
     [`bot:${ids.iris}`]: ordered(irisEntries),
     [`bot:${ids.otto}`]: ordered(ottoEntries),
     [`room:${ids.newsletter}`]: ordered(roomEntries),
+    [`room:${ids.fairStands}`]: ordered(botsOnlyEntries),
   };
 
   const lastOf = (key: string) => entries[key]?.at(-1) ?? null;
@@ -731,6 +804,7 @@ export function sampleTeam(now: DateTime.Utc) {
   }
 
   const roomLast = lastOf(`room:${ids.newsletter}`);
+  const botsOnlyLast = lastOf(`room:${ids.fairStands}`);
   const roster: RosterItem[] = [
     botItem(bots.scout),
     botItem(bots.juniper),
@@ -748,6 +822,13 @@ export function sampleTeam(now: DateTime.Utc) {
       lastEntry: roomLast && previewOf(roomLast),
       lastActivityAt: roomLast?.createdAt ?? null,
       unread: true,
+    },
+    {
+      _tag: "room",
+      room: botsOnlyRoom,
+      lastEntry: botsOnlyLast && previewOf(botsOnlyLast),
+      lastActivityAt: botsOnlyLast?.createdAt ?? null,
+      unread: false,
     },
   ];
 

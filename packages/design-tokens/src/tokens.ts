@@ -275,6 +275,19 @@ export const motion = {
   swap: 260,
 } as const;
 
+/**
+ * When a bot's card comes and goes under a pointer (decision 0102), in ms.
+ * `open`: how long the pointer rests on a bot's face or name, or the focus on
+ * it, before the card opens, so passing over a list opens nothing. `close`:
+ * how long after the pointer leaves both, so it can cross the gap to the
+ * card. `switch`: another bot's card, while one is open.
+ */
+export const cardTiming = {
+  open: 500,
+  close: 250,
+  switch: 150,
+} as const;
+
 /** In px. */
 export const layout = {
   rosterWidth: 280,

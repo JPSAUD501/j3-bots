@@ -58,7 +58,7 @@ import {
   type IntentFailure,
   type IntentResult,
   type J3Client,
-  type Loaded,
+  loadedList,
   type MemoryEdit,
   type UpdateResult,
 } from "@j3-bots/client-runtime";
@@ -706,7 +706,7 @@ function useLocalHere(origin: URL) {
           return new Promise<never>(() => {});
         }
         // The first bot is the primary one: there is no other to choose.
-        return j3.createBot({ name, primary: true, avatar });
+        return j3.createBot({ name, title: t("bot.primaryTitle"), primary: true, avatar });
       })
       .then((result): IntentResult<BotId> => {
         if (result._tag === "done") return { _tag: "done", value: result.value.id };
@@ -823,9 +823,6 @@ const loadingPair: PairView = {
   hasOlder: false,
   loadingOlder: false,
 };
-/** A read's value once loaded; a list that is gone reads as empty. */
-const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
-  loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
 
 /** The conversation or room the URL names. */
 const targetOf = (botId: BotId | null, roomId: RoomId | null): EntryTarget | null =>
@@ -897,6 +894,9 @@ function LiveShell({
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
   const routines = useRoutines(detailsBotId);
+  // The bot whose card shows: its routines are read while it does, unless its details hold them.
+  const [cardBotId, setCardBot] = useState<BotId | null>(null);
+  const cardRoutines = useRoutines(cardBotId === detailsBotId ? null : cardBotId);
   // The routine whose runs show over its bot's details, as the address names it.
   const runsOf: RoutineId | null = detailsBotId === null ? null : (search.routine ?? null);
   // Kept while its dialog fades out.
@@ -922,6 +922,8 @@ function LiveShell({
   useTemplateDrop(openTemplate);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
+  // Where the bot editor opens: at its title, for a bot given one from its menu.
+  const [editingAt, setEditingAt] = useState<"title" | null>(null);
   const [roomForm, setRoomForm] = useState<RoomFormTarget | null>(null);
   // Whether New bot, the bot editor and the memory viewer hold what the
   // operator typed and has not saved yet, as they report.
@@ -1057,6 +1059,15 @@ function LiveShell({
           connectorId: opened.connectorId,
           signIn: true,
         });
+      // What a bot's card in quick access leads to.
+      case "details":
+        return void navigate({
+          to: "/bots/$botId",
+          params: { botId: opened.botId },
+          search: { details: true },
+        });
+      case "new-room":
+        return setRoomForm({ _tag: "create", members: opened.members });
     }
   });
   // A link to a conversation or a room opens it as a notification click does,
@@ -1093,15 +1104,15 @@ function LiveShell({
     // purpose; the entry still shows as unread once the roster loads.
     const listed = j3.roster.get();
     const rows = listed._tag === "ready" ? listed.value : [];
-    const botName = (id: BotId) =>
-      rows.flatMap((row) =>
-        row._tag === "bot" && row.bot.id === id ? [row.bot.profile.name] : [],
-      )[0] ?? null;
+    const profileOf = (id: BotId) =>
+      rows.flatMap((row) => (row._tag === "bot" && row.bot.id === id ? [row.bot.profile] : []))[0];
+    const botName = (id: BotId) => profileOf(id)?.name ?? null;
+    const botTitle = (id: BotId) => profileOf(id)?.title ?? "";
     const roomName = (id: RoomId) =>
       rows.flatMap((row) =>
         row._tag === "room" && row.room.id === id ? [row.room.name] : [],
       )[0] ?? null;
-    const content = notificationText(notification, { botName, roomName }, i18n);
+    const content = notificationText(notification, { botName, botTitle, roomName }, i18n);
     if (content === null) return;
     // In the theme the system is in as it shows, since the system draws it.
     // The desktop app overrides the theme Electron reports, which may reach
@@ -1260,7 +1271,12 @@ function LiveShell({
     ...composer.data,
     submitting: cardSubmitting,
     workSteps: folds.steps,
-    routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
+    routines: (botId) =>
+      botId === detailsBotId
+        ? loadedList(routines)
+        : botId === cardBotId
+          ? loadedList(cardRoutines)
+          : null,
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     connectors,
@@ -1533,6 +1549,8 @@ function LiveShell({
     shareBotTemplate: (botId) => shareTemplate(botId),
     newRoom: () => setRoomForm({ _tag: "create" }),
     startRoomWith: (botIds) => setRoomForm({ _tag: "create", members: botIds }),
+    sendQuickMessage: (input) => j3.send(input),
+    setCardBot,
     editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),
     archiveRoom: (roomId) =>
       j3.updateRoom(roomId, { archived: true }).then((result) => {
@@ -1549,7 +1567,10 @@ function LiveShell({
         else say(t("room.deleteFailed", { name }));
       });
     },
-    editProfile: setEditingBot,
+    editProfile: (botId, at) => {
+      setEditingAt(at ?? null);
+      setEditingBot(botId);
+    },
     setBrowser: (bot, enabled) =>
       void j3.updateBot(bot.id, { browser: enabled }).then((result) => {
         if (result._tag !== "failed") return;
@@ -1736,6 +1757,7 @@ function LiveShell({
         bot={editingBotValue}
         engine={data.engine}
         save={editingBot === null ? undefined : botSaves.get(editingBot)}
+        at={editingAt}
         connected={data.connected}
         unsaved={botEditUnsaved}
         onUnsavedChange={setBotEditUnsaved}

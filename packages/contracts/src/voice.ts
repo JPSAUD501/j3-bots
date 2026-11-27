@@ -216,12 +216,22 @@ export const MAX_VOICE_DRAFT_LENGTH = 20_000;
  * `MAX_VOICE_FRAME_BYTES`. Closing the socket before `done` cancels: nothing
  * is kept.
  *
+ * `start` with `transcript` asks for a screen recording's transcript rather
+ * than words for the composer: each `words` frame then says how much of the
+ * audio the words were heard in (`heardMs`), and the AI never tidies them.
+ * It never downloads a model: without one installed, it fails `unavailable`.
+ * Only a server whose roster snapshot carries `recordingTranscripts` takes
+ * it; an older one would dictate as usual.
+ *
  * `finish` may carry the draft the words go into, with where they go
  * (`start` to `end`, in UTF-16 units), for the AI's tidy-up to read the
  * words in their place.
  */
 export const VoiceClientFrame = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("start") }),
+  Schema.Struct({
+    type: Schema.Literal("start"),
+    transcript: Schema.optionalKey(Schema.Literal(true)),
+  }),
   Schema.Struct({
     type: Schema.Literal("finish"),
     draft: Schema.optionalKey(
@@ -269,9 +279,10 @@ export type VoiceFailure = typeof VoiceFailure.Type;
  * `installing` while the model downloads, on first use; `listening` once
  * audio is taken, with whether words come while the operator speaks
  * (`live`); `words` as they are heard, `committed` settled and `tentative`
- * still open to change; `tidying` while the AI tidies them up; then `done`
- * with the final text, or `failed` at any point. The server closes the
- * socket after either.
+ * still open to change, and for a transcript (`start` with `transcript`)
+ * `heardMs`, the milliseconds of audio the engine had taken when it heard
+ * them; `tidying` while the AI tidies them up; then `done` with the final
+ * text, or `failed` at any point. The server closes the socket after either.
  */
 export const VoiceServerFrame = Schema.Union([
   Schema.Struct({
@@ -284,6 +295,7 @@ export const VoiceServerFrame = Schema.Union([
     type: Schema.Literal("words"),
     committed: Schema.String,
     tentative: Schema.String,
+    heardMs: Schema.optionalKey(NonNegativeInt),
   }),
   Schema.Struct({ type: Schema.Literal("tidying") }),
   Schema.Struct({ type: Schema.Literal("done"), text: Schema.String }),

@@ -4,6 +4,7 @@
  * are decided, bots answer after a moment. A stand-in for the client runtime
  * in development only; nothing here reaches a server.
  */
+import type { BotCardIntents } from "../components/BotCard";
 import type { ProviderActions } from "../components/ProviderFix";
 import type {
   Draft,
@@ -656,7 +657,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           ]),
         ),
       })),
-    createBot: ({ name, primary, hidden, avatar }) => {
+    createBot: ({ name, title, primary, hidden, avatar }) => {
       // As on a server: with no model to give the bot, it is refused.
       if (!hasDefaultModel(get().engine)) {
         return Promise.resolve({
@@ -676,7 +677,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           id: botId,
           profile: {
             name,
-            title: "",
+            title,
             avatar: avatar ?? freeAvatar(taken),
             job: "",
           },
@@ -921,6 +922,21 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     // The room form belongs to the client runtime's source; the sample has no dialog for it.
     newRoom: nothing,
     startRoomWith: nothing,
+    // As a draft is sent: the message lands in the bot's conversation, which answers it.
+    sendQuickMessage: ({ target, text }) => {
+      const sent = message({ _tag: "operator" }, text);
+      const key = keyOf(target);
+      update((s) => withEntries(s, key, (es) => appended(es, sent)));
+      if (target._tag === "conversation") {
+        replyLater(
+          target.botId,
+          key,
+          "Noted. This is the sample team, so nothing really runs, but the message is here.",
+        );
+      }
+      return Promise.resolve({ _tag: "done", value: sent.id });
+    },
+    setCardBot: nothing,
     editRoom: nothing,
     archiveRoom: (roomId) => {
       update((s) =>
@@ -1034,6 +1050,17 @@ function toData(state: State, secrets: SecretsView): ShellData {
     secrets,
   };
 }
+
+/** A bot's card over the sample team, outside the shell: it sends, and opens nothing. */
+export const sampleCardIntents = (source: ShellSource): BotCardIntents => ({
+  talk: () => {},
+  startRoom: () => {},
+  openRoutines: () => {},
+  openDetails: () => {},
+  send: source.intents.sendQuickMessage,
+  routines: source.data.routines,
+  showing: () => {},
+});
 
 /**
  * The sample team, with intents that change it. Each call keeps its own copy.

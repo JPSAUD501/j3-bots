@@ -163,7 +163,10 @@
  */
 @layer components {
   .row-stage {
-    /* How far the row reaches above and below its 40 px avatar: negative, as `inset()` takes it. */
+    /*
+     * How far the row reaches above and below its 40 px avatar, at its least height: negative, as
+     * `inset()` takes it. A taller row, a bot's with its title, keeps its light within that.
+     */
     --row-ceiling: calc((2.5rem - var(--layout-row-pointer)) / 2);
   }
 
@@ -282,12 +285,15 @@
     transition: filter var(--row-dim) var(--ease-out) var(--row-hold);
   }
 
-  /* Its words wait for it, then its name and its line come in as it lands, one after the other. */
-  [data-arrival="lit"] :is(.row-name, .row-line) {
+  /*
+   * Its words wait for it, then its name with its title, and its line, come in as it lands, one
+   * after the other.
+   */
+  [data-arrival="lit"] :is(.row-name, .row-title, .row-line) {
     opacity: 0;
   }
 
-  [data-arrival="landed"] .row-name {
+  [data-arrival="landed"] :is(.row-name, .row-title) {
     animation: row-words var(--duration-soft) var(--ease-soft) both;
   }
 

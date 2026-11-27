@@ -68,7 +68,9 @@ import Migration0062 from "./migrations/0062_routine_events.ts";
 import Migration0063 from "./migrations/0063_connector_app_entries.ts";
 import Migration0064 from "./migrations/0064_voice.ts";
 import Migration0065 from "./migrations/0065_telemetry.ts";
-import Migration0066 from "./migrations/0066_themes.ts";
+import Migration0066 from "./migrations/0066_bot_maker.ts";
+import Migration0067 from "./migrations/0067_bots_only_rooms.ts";
+import Migration0068 from "./migrations/0068_themes.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -138,7 +140,9 @@ const migrations = SqliteMigrator.fromRecord({
   "63_connector_app_entries": Migration0063,
   "64_voice": Migration0064,
   "65_telemetry": Migration0065,
-  "66_themes": Migration0066,
+  "66_bot_maker": Migration0066,
+  "67_bots_only_rooms": Migration0067,
+  "68_themes": Migration0068,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

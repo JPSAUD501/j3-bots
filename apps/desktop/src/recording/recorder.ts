@@ -17,6 +17,7 @@ import {
   RecordingRead,
   RecordingRelease,
   RecordingStart,
+  RecordingTranscriptKeep,
   type RecordingStartResult,
   type RecordingId,
   RecorderJob as RecorderJobSchema,
@@ -77,6 +78,7 @@ const decodeControl = Schema.decodeUnknownOption(RecorderControl);
 const decodeFailure = Schema.decodeUnknownOption(RecorderFailure);
 const decodeRead = Schema.decodeUnknownOption(RecordingRead);
 const decodeRelease = Schema.decodeUnknownOption(RecordingRelease);
+const decodeKeep = Schema.decodeUnknownOption(RecordingTranscriptKeep);
 const encodeJob = Schema.encodeSync(RecorderJobSchema);
 const encodeCue = Schema.encodeSync(RecorderCue);
 const encodeDelivery = Schema.encodeSync(RecordingDelivery);
@@ -223,6 +225,7 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
       size: one.size,
       startedAt: DateTime.makeUnsafe(one.startedAt),
       interrupted: one.interrupted,
+      speech: one.speech,
     });
   const cue = (at: Live, value: RecorderCue) => {
     if (!at.pill.isDestroyed())
@@ -627,6 +630,41 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
           ),
         );
       });
+      ipcMain.handle(IPC_CHANNELS.readRecordingSpeech, (event, request: unknown) => {
+        const decoded = decodeRead(request);
+        if (!fromMain(event) || Option.isNone(decoded)) return null;
+        const { id, start: from, end: to } = decoded.value;
+        return runPromise(
+          store.readSpeech(id, from, to).pipe(
+            Effect.map(Option.getOrNull),
+            Effect.orElseSucceed(() => null),
+          ),
+        );
+      });
+      ipcMain.handle(IPC_CHANNELS.keepTranscript, (event, request: unknown) => {
+        const decoded = decodeKeep(request);
+        if (!fromMain(event) || Option.isNone(decoded) || !ready.has(decoded.value.id)) return null;
+        const { id, transcript } = decoded.value;
+        return runPromise(
+          store.keepTranscript(id, transcript).pipe(
+            Effect.map(
+              Option.match({
+                onNone: () => null,
+                onSome: (one) => {
+                  // Released meanwhile, it stays released.
+                  if (ready.has(id)) ready.set(id, one);
+                  return one.size;
+                },
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.logError("Keeping a screen recording's transcript failed", error).pipe(
+                Effect.as(null),
+              ),
+            ),
+          ),
+        );
+      });
       ipcMain.on(IPC_CHANNELS.releaseRecording, (event, request: unknown) => {
         const decoded = decodeRelease(request);
         if (!fromMain(event) || Option.isNone(decoded) || !ready.has(decoded.value.id)) return;
@@ -650,7 +688,11 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
           return;
         write(
           at,
-          store.append(at.id, stream._tag === "voice" ? "voice" : { screen: stream.screen }, bytes),
+          store.append(
+            at.id,
+            stream._tag === "screen" ? { screen: stream.screen } : stream._tag,
+            bytes,
+          ),
         );
       });
       ipcMain.on(IPC_CHANNELS.recorderFrame, (event, frame: unknown) => {
@@ -677,6 +719,8 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
         ipcMain.removeAllListeners(IPC_CHANNELS.openRecorder);
         ipcMain.removeAllListeners(IPC_CHANNELS.recordingsWanted);
         ipcMain.removeHandler(IPC_CHANNELS.readRecording);
+        ipcMain.removeHandler(IPC_CHANNELS.readRecordingSpeech);
+        ipcMain.removeHandler(IPC_CHANNELS.keepTranscript);
         ipcMain.removeAllListeners(IPC_CHANNELS.releaseRecording);
         ipcMain.removeHandler(IPC_CHANNELS.recorderJob);
         ipcMain.removeAllListeners(IPC_CHANNELS.recorderStarted);

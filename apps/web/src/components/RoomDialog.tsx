@@ -15,7 +15,7 @@ import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { BotAvatar } from "./avatar/BotAvatar";
-import { HideSwitch } from "./Visibility";
+import { BackstageSwitch } from "./Visibility";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -241,7 +241,7 @@ export function RoomForm({
 
         {/* Giving an archived room back its bots is about that alone. */}
         {mode._tag !== "unarchive" && (
-          <HideSwitch
+          <BackstageSwitch
             checked={values.hidden}
             readOnly={busy}
             onChange={(hidden) => form.change({ ...values, hidden })}

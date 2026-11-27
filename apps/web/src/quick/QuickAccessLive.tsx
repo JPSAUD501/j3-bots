@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type ConnectionState, targetKey } from "@j3-bots/client-runtime";
+import { type ConnectionState, loadedList, targetKey } from "@j3-bots/client-runtime";
 import {
   J3ClientProvider,
   useConnection,
@@ -8,9 +8,10 @@ import {
   useEngineStatus,
   useJ3Client,
   useReadable,
+  useRoutines,
   useSettings,
 } from "@j3-bots/client-runtime/react";
-import type { EntryTarget } from "@j3-bots/contracts";
+import type { BotId, EntryTarget } from "@j3-bots/contracts";
 import type { Destination } from "@j3-bots/desktop-bridge";
 import { use, useEffect, useEffectEvent, useLayoutEffect, useMemo, useState } from "react";
 import { OperatorTimeZone } from "../app/clock";
@@ -25,6 +26,7 @@ import { useNotice } from "../live/notices";
 import { useSavesUnderWay } from "../live/savesUnderWay";
 import { themesIntents, useThemesView } from "../live/themes";
 import { useWorkFolds } from "../live/workFolds";
+import type { BotCardIntents } from "../components/BotCard";
 import type { ConversationView } from "../shell/data";
 import { ThemeRuntime } from "../themes/ThemeRuntime";
 import { QuickAccess, type QuickAccessData, type QuickAccessIntents } from "./QuickAccess";
@@ -174,11 +176,25 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
     j3.setView(inView ? onScreen : null);
   }, [j3, inView, onScreen]);
 
+  // The bot whose card shows: its routines are read while it does.
+  const [cardBotId, setCardBot] = useState<BotId | null>(null);
+  const cardRoutines = loadedList(useRoutines(cardBotId));
+
   if (primary === null || pairing === null) return null;
 
   /** The main window, at `target`: where everything quick access does not hold opens. */
   const openInMain = (target: Destination) => app.quickAccess.openInMain(target, pairing);
   const conversationOf = { _tag: "conversation", botId: primary.bot.id } as const;
+  // A bot's card here: its conversation, a room with it and its details open in the main window.
+  const card: BotCardIntents = {
+    talk: (botId) => openInMain({ _tag: "conversation", botId }),
+    startRoom: (botId) => openInMain({ _tag: "new-room", members: [botId] }),
+    openRoutines: (botId) => openInMain({ _tag: "details", botId }),
+    openDetails: (botId) => openInMain({ _tag: "details", botId }),
+    send: (input) => j3.send(input),
+    routines: (botId) => (botId === cardBotId ? cardRoutines : null),
+    showing: setCardBot,
+  };
   const view: ConversationView =
     conversation.state === null
       ? loadingView
@@ -251,6 +267,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
             lastEntry={primary.lastEntry}
             data={data}
             intents={intents}
+            card={card}
             solid={solid}
             shown={shown}
             asked={asked}

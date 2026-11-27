@@ -13,10 +13,10 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 
 ## The list
 
-- One row per bot and per room, with the last message or what it is doing. Rows that need your user (a question, an approval, an unread result) come first.
+- One row per bot and per room: a bot's name, its title under it, then the last message or what it is doing. Rows that need your user (a question, an approval, an unread result) come first.
 - "New bot or room" makes a bot, a bot from a template file (`.j3bot`), or a room of two to six bots.
-- Each row has a menu (right-click, the "…" button, or a long press). A bot's: "Mark as read" or "Mark as unread", "Pin", "Move to section", "Make primary bot" (or "Replace primary bot…" when there is one, which asks first), "Hide" or "Show", and under "More", "Details" and "Delete {name}". A room's: "Pin", "Hide" or "Show", and "Details". Sections are named groups your user makes; deleting one keeps its bots.
-- Search finds bots, rooms and messages, hidden ones too. Hidden bots and rooms keep working, and are listed under "Hidden conversations" at the list's end.
+- Each row has a menu (right-click, the "…" button, or a long press). A bot's: "Mark as read" or "Mark as unread", "Pin", "Move to section", "Make primary bot" (or "Replace primary bot…" when there is one, which asks first), "Move behind the scenes" or "Bring back to the list", and under "More", "Details" and "Delete {name}". A bot with no title also has "Give a title". A room's: "Pin", "Move behind the scenes" or "Bring back to the list", and "Details". Sections are named groups your user makes; deleting one keeps its bots.
+- Search finds bots, rooms and messages, those behind the scenes too. Bots and rooms behind the scenes keep working and notifying, and are listed under "Behind the scenes" at the list's end.
 - "Between bots" lists what pairs of bots said to each other. Your user can read those conversations, never write in them.
 
 ## A conversation
@@ -31,7 +31,7 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 
 From top to bottom:
 
-- **Profile:** name, title and job. "Edit {name}" changes the name, title, avatar, job, model and permission mode, and "Hide from the list". "Share as template…" makes a template file of the bot, after showing everything it holds.
+- **Profile:** name, title and job. "Edit {name}" changes the name, title, avatar, job, model and permission mode, and "Keep behind the scenes". "Share as template…" makes a template file of the bot, after showing everything it holds.
 - **"Stop what it's doing"**, while the bot has work running. Stopping does not undo what was already done.
 - **Routines:** each with its schedule, next run and last result, and a switch that pauses or resumes it. Pressing one shows its recent runs. To change, run or delete a routine, your user asks the bot; the app has no button for that.
 - **Files** the bot sent, **Memory** (each file can be opened and edited), **Connectors** this bot may use, with "Manage", and the teammates it talked to.
@@ -50,7 +50,7 @@ Ten pages, each saying in one line what it holds:
 
 - **You:** what the bots call your user, and the time zone routines follow.
 - **Notifications:** "Notify me", and "Show what the bot wrote" in each notification; and allowing notifications on this browser or phone.
-- **Appearance:** light, dark or the system's; the theme, as live previews of the seven built-in themes and those saved, marking those a bot made, which can be deleted; "Create from colours", from a canvas and an accent; the theme new devices start with; and the language. The appearance, theme and language are this device's only. A theme's custom styles show only on the web and in the desktop app.
+- **Appearance:** light, dark or the system's; the theme, as live previews of the seven built-in themes and those saved, marking those a bot made, which can be deleted; "Create from colors", from a canvas and an accent; the theme new devices start with; and the language. The appearance, theme and language are this device's only. A theme's custom styles show only on the web and in the desktop app.
 - **Providers:** the engine and each provider's status, why one cannot run, and updates to the coding tools behind the bots.
 - **Usage:** how close each provider is to its limit, and which bots and routines used it.
 - **MCP and skills:** the connectors the bots added, who may use each, and the skills bots saved, every bot's or one bot's. A connector's page signs in again, changes who uses it, or disconnects it. Nothing there adds a connector or a skill: your user asks a bot. J3 Bots' own skills (`j3-…`) aren't listed there.

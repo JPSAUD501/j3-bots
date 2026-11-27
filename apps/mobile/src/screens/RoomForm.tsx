@@ -136,7 +136,7 @@ function RoomFormFor({
 
 /**
  * A room's name, its bots, and, unless it is being unarchived, whether it is
- * hidden from the roster's list. What is missing is said once
+ * behind the scenes, out of the roster's list. What is missing is said once
  * the operator tries to send; a refusal from the server is said under the
  * form, or beside the bots when they are the reason, and keeps what was
  * typed. What the operator left alone follows the room as the server has it;
@@ -270,8 +270,8 @@ function RoomForm({
       {/* Unarchiving asks only for what the room needs to take messages again. */}
       {mode._tag !== "unarchive" && (
         <SwitchRow
-          label={t("visibility.hide")}
-          hint={t("visibility.hide.hint")}
+          label={t("backstage.keep")}
+          hint={t("backstage.keep.hint")}
           value={values.hidden}
           readOnly={busy}
           onChange={(hidden) => form.change({ ...values, hidden })}

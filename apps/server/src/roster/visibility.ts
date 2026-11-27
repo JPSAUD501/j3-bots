@@ -19,7 +19,7 @@ export interface VisibilityCaller {
   readonly primary: boolean;
 }
 
-/** Why a bot's `set_visibility` changed nothing, in words the bot reads. */
+/** Why a bot's `set_listed` changed nothing, in words the bot reads. */
 export class VisibilityRefused extends Schema.TaggedError<VisibilityRefused>()(
   "VisibilityRefused",
   { reason: Schema.String },
@@ -41,28 +41,29 @@ export const visibilityRefusal = (
 ): VisibilityRefused | undefined => {
   if (target.primary) {
     return new VisibilityRefused({
-      reason: `Nothing changed: ${target.name} is your user's primary bot, which only your user can show or hide.`,
+      reason: `Nothing changed: ${target.name} is your user's primary bot, which only your user can move.`,
     });
   }
   if (target.byOperator) {
     return new VisibilityRefused({
-      reason: `Nothing changed: your user chose whether ${target.name} shows in their list, so only they can change it. Tell them if you think it should change.`,
+      reason: `Nothing changed: your user chose whether ${target.name} is in their list or behind the scenes, so only they can change it. Tell them if you think it should change.`,
     });
   }
   if (caller.primary || target.madeBy === caller.id) return undefined;
   return new VisibilityRefused({
-    reason: `Nothing changed: you can show or hide only the bots and rooms you made, and ${target.name} is not one of them.`,
+    reason: `Nothing changed: you can move only the bots and rooms you made, and ${target.name} is not one of them.`,
   });
 };
 
-/** What a `set_visibility` leaves: the bot or room, and whether it is hidden now. */
+/** What a `set_listed` leaves: the bot or room, and whether it is hidden now. */
 export const Shown = Schema.Struct({ id: Schema.String, hidden: Schema.Boolean });
 export type Shown = typeof Shown.Type;
 
 /**
- * A `set_visibility` as its receipt stores it, the same for a bot and a room:
+ * A `set_listed` as its receipt stores it, the same for a bot and a room:
  * a retry of one that went through gets its result back whichever it finds
- * the id to be then, a bot deleted meanwhile included.
+ * the id to be then, a bot deleted meanwhile included. Its method keeps the
+ * tool's earlier name, so a receipt from before the rename still answers.
  */
 export const visibilityCommand = (input: {
   readonly caller: BotId;
