@@ -1,6 +1,6 @@
 # 0022: The operator arranges the roster in sections the server keeps
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

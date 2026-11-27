@@ -1,6 +1,6 @@
 # 0034: The desktop app installs only a download its release signed
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

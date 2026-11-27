@@ -1,6 +1,6 @@
 # 0033: A client's update runs in a transient unit, and the home records how it ended
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

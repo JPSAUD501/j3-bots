@@ -1,6 +1,6 @@
 # 0032: Updates are served outside the protocol, and offer only a signed, newer release
 
-**Status:** Proposed; how a field is added to the routes' answers is [0051](0051-an-update-asks-in-front-and-goes-server-first.md)'s
+**Status:** Accepted; how a field is added to the routes' answers is [0051](0051-an-update-asks-in-front-and-goes-server-first.md)'s
 
 ## Context
 
@@ -12,7 +12,7 @@ Until now, only the operator could update a server, by running `j3-bots update` 
 
 **The update surface is plain HTTP routes with a version of their own, beside the protocol, and they offer only a release that verifies, newer than the running one, on the server's channel.**
 
-- **Outside the protocol.** The routes are `/api/update/v1/…` (`UPDATE_HTTP_PATHS`, `UPDATE_API_VERSION` 1). A change to `PROTOCOL_VERSION` never touches them, and their shapes are frozen: a later version adds paths. A field is added to an answer only with a decoding default, which a client built before it ignores and one built after reads from an older server ([0051](0051-an-update-asks-in-front-and-goes-server-first.md)). `ServerInfo` gains an optional `updateApi`, which `GET /api/server` answers before any pairing or socket, so a client of any protocol learns whether the server has them. No bump is needed: an older client drops the field.
+- **Outside the protocol.** The routes are `/api/update/v1/…` (`UPDATE_HTTP_PATHS`, `UPDATE_API_VERSION` 1). A change to `PROTOCOL_VERSION` never touches them, and their shapes are frozen: a later version adds paths. A field is added to an answer only with a decoding default, which a client built before it ignores and one built after reads from an older server ([0051](0051-an-update-asks-in-front-and-goes-server-first.md)). Every server a client of the current protocol meets has them, so a client reads an answer outside the contract, a 404 included, as a server not reached. `ServerInfo.updateApi`, which `GET /api/server` answers before any pairing or socket, names the version a server serves; it stays optional until a protocol bump, as the contract's fields do ([decision 0086](0086-code-stays-only-for-the-current-release-a-rollback-and-protocol-11.md)).
 - **Open sets.** Every set in what a client receives (the update's state, its reasons, its outcome, the channel) decodes a value the client does not know as `unknown`, so adding one never needs a new route version.
 - **The device token.** Each route takes a paired device's token. There is no new role: whoever holds a device token is the operator.
 - **Only a signed release.** The server offers a release only once its `SHA256SUMS` carries the release key's Ed25519 signature and names that release, and installs only what matches that list. The signature is checked before any digest in the list is read.

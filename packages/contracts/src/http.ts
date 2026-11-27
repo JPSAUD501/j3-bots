@@ -96,8 +96,8 @@ export const ServerInfo = Schema.Struct({
   startedAt: Schema.DateTimeUtc,
   /**
    * The `UPDATE_API_VERSION` of the update routes the server serves
-   * (`UPDATE_HTTP_PATHS`), outside the protocol; null from a server that
-   * has none. A client offers to update the server only when it is set.
+   * (`UPDATE_HTTP_PATHS`), outside the protocol. Every server of the
+   * protocol sends it; it decodes as null when it is missing.
    */
   updateApi: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });

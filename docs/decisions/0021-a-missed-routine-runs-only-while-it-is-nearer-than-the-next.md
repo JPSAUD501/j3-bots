@@ -1,6 +1,6 @@
 # 0021: A missed routine runs only while it is nearer than the next
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

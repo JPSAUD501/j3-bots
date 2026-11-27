@@ -1,6 +1,6 @@
 # 0035: The Android app installs its own update through an installer session, after checking it
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
