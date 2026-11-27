@@ -204,6 +204,8 @@ const sentences = {
   "recordSheet.title": "Gravar a tela",
   "recordSheet.what.everything":
     "O J3 Bots grava todas as suas telas, a sua voz, as teclas que você aperta e onde você clica, até você parar.",
+  "recordSheet.what.withoutKeys":
+    "O J3 Bots grava todas as suas telas e a sua voz até você parar. Permita Acessibilidade abaixo, e ele grava também as teclas que você aperta e onde você clica.",
   "recordSheet.what.screenAndVoice":
     "O J3 Bots grava a tela que você compartilhar quando o sistema perguntar, e a sua voz, até você parar. Este sistema não deixa apps lerem as suas teclas e cliques.",
   "recordSheet.where":

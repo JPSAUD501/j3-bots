@@ -85,6 +85,13 @@ export function RecordSheetBody({
       : (["screen", "keys"] as const).filter((access) => check[access] !== "not-needed");
   const missing = needs.some((access) => check?.[access] === "needed");
   const blocked = check === null || check.busy || check.screen === "needed";
+  // What a recording started now holds: on a Mac, keys and clicks only once Accessibility is allowed.
+  const recorded =
+    check?.input === "screen-and-voice"
+      ? "screen-and-voice"
+      : check?.keys === "needed"
+        ? "without-keys"
+        : "everything";
   return (
     <>
       <h2 id={titleId} className={dialogTitle}>
@@ -116,13 +123,15 @@ export function RecordSheetBody({
         <>
           <div className="flex flex-col gap-2 text-sm text-muted-foreground">
             <p className="text-foreground">
-              {check?.input === "screen-and-voice"
+              {recorded === "screen-and-voice"
                 ? t("recordSheet.what.screenAndVoice")
-                : t("recordSheet.what.everything")}
+                : recorded === "without-keys"
+                  ? t("recordSheet.what.withoutKeys")
+                  : t("recordSheet.what.everything")}
             </p>
             <p>{t("recordSheet.where", { name: recipient })}</p>
             <p>
-              {check?.input === "screen-and-voice"
+              {recorded !== "everything"
                 ? t("recordSheet.pauseHides")
                 : check?.passwords === "pause"
                   ? t("recordSheet.passwords.pause")

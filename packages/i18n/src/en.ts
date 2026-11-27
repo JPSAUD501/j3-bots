@@ -207,6 +207,8 @@ export const en = {
   "recordSheet.title": "Record your screen",
   "recordSheet.what.everything":
     "J3 Bots records all your screens, your voice, and the keys you press and where you click, until you stop.",
+  "recordSheet.what.withoutKeys":
+    "J3 Bots records all your screens and your voice until you stop. Allow Accessibility below, and it records the keys you press and where you click too.",
   "recordSheet.what.screenAndVoice":
     "J3 Bots records the screen you share when the system asks, and your voice, until you stop. This system doesn’t let apps read your keys and clicks.",
   "recordSheet.where":

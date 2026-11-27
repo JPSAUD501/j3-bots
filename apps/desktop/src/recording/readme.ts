@@ -89,7 +89,7 @@ export const readmeOf = (facts: RecordingFacts): string => {
   const input =
     facts.input === "everything"
       ? `- \`${EVENTS_FILE}\`: one JSON event per line: clicks, typed text, keys and shortcuts, scrolls, the window in front, pauses.`
-      : `- \`${EVENTS_FILE}\`: this computer lets no app read keys and clicks (Linux on Wayland), so it holds only the start, pauses and the stop. Follow the video.`;
+      : `- \`${EVENTS_FILE}\`: J3 Bots could not read keys and clicks on this computer (Linux on Wayland lets no app read them; macOS only once the operator allows J3 Bots under Accessibility), so it holds no clicks, typed text, keys or scrolls: only the window in front, where this system says it, pauses and the stop. Follow the video.`;
   const passwords =
     facts.passwords === "hidden"
       ? "When the system said a password was being typed, or could not say, no character is kept."
