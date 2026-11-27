@@ -48,8 +48,11 @@ describe("moving the engine's browser's sign-ins", () => {
   it.live("waits for the browser that can read them, and removes nothing meanwhile", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const { engine, profile, signIns } = yield* scene();
-      yield* bringInOld(engine).pipe(Effect.provideService(SignIns, signIns));
+      yield* bringInOld(engine, path.join(engine, "moving")).pipe(
+        Effect.provideService(SignIns, signIns),
+      );
       assert.strictEqual(yield* signIns.toBringIn, "due");
       assert.isTrue(yield* fs.exists(profile));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -59,8 +62,11 @@ describe("moving the engine's browser's sign-ins", () => {
     Effect.gen(function* () {
       const { signIns } = yield* scene();
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const empty = yield* fs.makeTempDirectoryScoped({ prefix: "j3-engine-" });
-      yield* bringInOld(empty).pipe(Effect.provideService(SignIns, signIns));
+      yield* bringInOld(empty, path.join(empty, "moving")).pipe(
+        Effect.provideService(SignIns, signIns),
+      );
       assert.strictEqual(yield* signIns.toBringIn, "done");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -77,7 +83,9 @@ describe("moving the engine's browser's sign-ins", () => {
         yield* fs.makeDirectory(browser, { recursive: true });
         yield* fs.symlink(executablePath, path.join(browser, "chrome-headless-shell"));
 
-        yield* bringInOld(engine).pipe(Effect.provideService(SignIns, signIns));
+        yield* bringInOld(engine, path.join(engine, "moving")).pipe(
+          Effect.provideService(SignIns, signIns),
+        );
         assert.deepStrictEqual(yield* sites(signIns), ["example.test", "other.test"]);
         assert.strictEqual(yield* signIns.toBringIn, "done");
         assert.isFalse(yield* fs.exists(path.join(engine, "userdata", "server-browser")));

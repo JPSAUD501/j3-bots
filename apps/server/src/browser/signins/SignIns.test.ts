@@ -4,18 +4,22 @@ import { assert, it } from "@effect/vitest";
 import {
   type BrowserCookie,
   type BrowserHostCapabilities,
+  type BrowserOriginStorage,
   type BrowserSignIns,
+  BrowserTabRef,
   DeviceId,
 } from "@j3-bots/contracts";
 import { type FakePageHost, makeFakePageHost } from "@j3-bots/browser/testing";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as TestClock from "effect/testing/TestClock";
 import { keyOfCookie, makeDigests } from "./canonical.ts";
 import { openJarFile } from "./JarFile.ts";
 import { makeSignIns, type SignInsAttachment } from "./SignIns.ts";
@@ -46,6 +50,11 @@ const sessionCookie = (name: string, value: string, domain: string): BrowserCook
   return session;
 };
 
+const stored = (origin: string, token: string): BrowserOriginStorage => ({
+  origin,
+  localStorage: [{ name: "token", value: token }],
+});
+
 const EVENTS: BrowserHostCapabilities = {
   cookies: true,
   storage: true,
@@ -53,12 +62,14 @@ const EVENTS: BrowserHostCapabilities = {
 };
 const READ_ONLY_AGAIN: BrowserHostCapabilities = { cookies: true, storage: true };
 
-/** A jar in a new folder, under a new key, and the sign-ins over it. */
-const signInsIn = Effect.fn(function* (folder?: string) {
+/** A new key for a jar. */
+const newKey = () => globalThis.crypto.getRandomValues(new Uint8Array(32));
+
+/** A jar in `folder`, or a new one, under `key`, or a new one, and the sign-ins over it. */
+const signInsIn = Effect.fn(function* (folder?: string, key = newKey()) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const where = folder ?? (yield* fs.makeTempDirectoryScoped({ prefix: "j3-signins-" }));
-  const key = globalThis.crypto.getRandomValues(new Uint8Array(32));
   const jar = yield* openJarFile(path.join(where, "signins.sqlite"), key).pipe(
     Effect.provide(SecureRandom.layerWebCrypto),
   );
@@ -72,8 +83,12 @@ const attach = Effect.fn(function* (signIns: Signins, host: FakePageHost) {
   const scope = yield* Scope.make();
   const hello = yield* host.hello;
   const attached: SignInsAttachment = yield* signIns.attach(host, hello).pipe(Scope.provide(scope));
+  yield* settle;
   return { ...attached, detach: Scope.close(scope, Exit.void) };
 });
+
+/** Lets the sign-ins' work in the background, an origin's reconcile or a retry, run to its end. */
+const settle = Effect.repeat(Effect.yieldNow, { times: 100 });
 
 const host = (capabilities: BrowserHostCapabilities, cookieStore?: string) =>
   makeFakePageHost({
@@ -82,9 +97,32 @@ const host = (capabilities: BrowserHostCapabilities, cookieStore?: string) =>
     ...(cookieStore === undefined ? {} : { cookieStore }),
   });
 
+/** A shared tab of the host shows `url`, loaded. */
+const visits = (attached: SignInsAttachment, url: string, tab = "tab-1") =>
+  attached.event({
+    type: "tab.changed",
+    page: {
+      tab: BrowserTabRef.make(tab),
+      url,
+      title: "",
+      loading: false,
+      loadError: null,
+      dialog: null,
+    },
+  });
+
 /** What `host` holds, by name and value. */
 const held = (on: FakePageHost) =>
   Effect.map(on.cookies, (cookies) => cookies.map(({ name, value }) => `${name}=${value}`).sort());
+
+/** The tokens `host` keeps, by origin, leaving out origins that keep none. */
+const tokens = (on: FakePageHost) =>
+  Effect.map(on.storage, (origins) =>
+    origins
+      .filter((origin) => origin.localStorage.length > 0)
+      .map((origin) => `${origin.origin}=${origin.localStorage.map(({ value }) => value).join()}`)
+      .sort(),
+  );
 
 const writes = (on: FakePageHost) =>
   Effect.map(on.calls, (calls) => calls.filter(({ call }) => call === "cookies.write").length);
@@ -94,6 +132,9 @@ const sitesOf = (signIns: Signins) =>
     Stream.runHead(signIns.view),
     Option.getOrElse((): BrowserSignIns => ({ status: "unreadable", sites: [] })),
   );
+
+const listed = (signIns: Signins) =>
+  Effect.map(sitesOf(signIns), ({ sites }) => sites.map(({ site }) => site));
 
 /** The host's site sets cookies, and the host reports it. */
 const siteSets = (
@@ -109,6 +150,12 @@ const siteSets = (
       ),
     );
 
+/** The host's site keeps `storage`, and the host reports it. */
+const siteKeeps = (on: FakePageHost, attached: SignInsAttachment, storage: BrowserOriginStorage) =>
+  on
+    .siteStorage(storage)
+    .pipe(Effect.andThen(attached.event({ type: "storage.changed", origins: [storage.origin] })));
+
 it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
   it.effect("a cookie one host's site sets reaches the others, and its echo changes nothing", () =>
     Effect.gen(function* () {
@@ -118,9 +165,12 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       const onA = yield* attach(signIns, a);
       yield* attach(signIns, b);
 
-      yield* siteSets(a, onA, cookie("sid", "one", "mail.x.test"));
-      assert.deepStrictEqual(yield* held(b), ["sid=one"]);
-      assert.deepStrictEqual((yield* sitesOf(signIns)).sites, [{ site: "x.test" }]);
+      // The page is the site's; the tracker it embeds sets a cookie too, and
+      // is not a site the person signed in to.
+      yield* visits(onA, "https://mail.x.test/inbox");
+      yield* siteSets(a, onA, cookie("sid", "one", "mail.x.test"), cookie("uid", "u", "ads.test"));
+      assert.deepStrictEqual(yield* held(b), ["sid=one", "uid=u"]);
+      assert.deepStrictEqual(yield* listed(signIns), ["x.test"]);
 
       // Chromium replaces a cookie as a removal and a set in one batch: the
       // others get the new value, and lose nothing.
@@ -130,34 +180,55 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
         type: "cookies.changed",
         changes: { set: [next], removed: [keyOfCookie(next)] },
       });
-      assert.deepStrictEqual(yield* held(b), ["sid=two"]);
+      assert.deepStrictEqual(yield* held(b), ["sid=two", "uid=u"]);
 
       // A's write coming back from B as B's own change moves nothing.
       const before = yield* writes(a);
       const onB = yield* attach(signIns, b);
       yield* onB.event({ type: "cookies.changed", changes: { set: [next], removed: [] } });
       assert.strictEqual(yield* writes(a), before);
-      assert.deepStrictEqual(yield* held(a), ["sid=two"]);
+      assert.deepStrictEqual(yield* held(a), ["sid=two", "uid=u"]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("a host that restarts gets back the session cookies it lost", () =>
+  it.effect("cookies one partition keeps apart reach the other hosts apart", () =>
     Effect.gen(function* () {
       const signIns = yield* signInsIn();
       const a = yield* host(EVENTS, "store-a-0000000000");
+      const b = yield* host(EVENTS, "store-b-0000000000");
       const onA = yield* attach(signIns, a);
+      yield* attach(signIns, b);
+      const partitioned = (value: string, hasCrossSiteAncestor: boolean): BrowserCookie => ({
+        ...cookie("chat", value, "widget.test"),
+        partition: { topLevelSite: "https://x.test", hasCrossSiteAncestor },
+      });
+      yield* siteSets(a, onA, partitioned("top", false), partitioned("nested", true));
+      assert.deepStrictEqual(yield* held(b), ["chat=nested", "chat=top"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a host that restarts gets back the session cookies it lost, as renewed since", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const b = yield* host(EVENTS, "store-b-0000000000");
+      const onA = yield* attach(signIns, a);
+      const onB = yield* attach(signIns, b);
       yield* siteSets(
         a,
         onA,
-        sessionCookie("session", "s", "x.test"),
+        sessionCookie("session", "s1", "x.test"),
         cookie("remember", "r", "x.test"),
       );
       yield* onA.detach;
+      // Another host's site renews the session while A is away.
+      yield* siteSets(b, onB, sessionCookie("session", "s2", "x.test"));
 
       yield* a.restart;
       assert.deepStrictEqual(yield* held(a), ["remember=r"]);
       yield* attach(signIns, a);
-      assert.deepStrictEqual(yield* held(a), ["remember=r", "session=s"]);
+      assert.deepStrictEqual(yield* held(a), ["remember=r", "session=s2"]);
+      assert.deepStrictEqual(yield* held(b), ["remember=r", "session=s2"]);
     }).pipe(Effect.scoped),
   );
 
@@ -193,17 +264,79 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       const b = yield* host(EVENTS, "store-b-0000000000");
       const onA = yield* attach(signIns, a);
       yield* attach(signIns, b);
+      yield* visits(onA, "https://x.test/");
+      yield* visits(onA, "https://y.test/");
       yield* siteSets(a, onA, cookie("sid", "one", "x.test"), cookie("theme", "dark", "y.test"));
+      yield* siteKeeps(a, onA, stored("https://x.test", "t1"));
       yield* onA.detach;
 
       yield* a.siteCookies({ set: [cookie("sid", "renewed", "x.test")], removed: [] });
+      yield* a.siteStorage(stored("https://x.test", "t2"));
       yield* signIns.signOutSite("x.test");
       assert.deepStrictEqual(yield* held(b), ["theme=dark"]);
-      assert.deepStrictEqual((yield* sitesOf(signIns)).sites, [{ site: "y.test" }]);
+      assert.deepStrictEqual(yield* tokens(b), []);
+      assert.deepStrictEqual(yield* listed(signIns), ["y.test"]);
 
       yield* attach(signIns, a);
       assert.deepStrictEqual(yield* held(a), ["theme=dark"]);
+      assert.deepStrictEqual(yield* tokens(a), []);
       assert.deepStrictEqual(yield* held(b), ["theme=dark"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a sign-out a host failed to take reaches it when it is synced again", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const onA = yield* attach(signIns, a);
+      yield* siteSets(a, onA, cookie("sid", "one", "x.test"));
+      yield* siteKeeps(a, onA, stored("https://x.test", "t1"));
+
+      yield* a.failNext("storage.clear");
+      yield* signIns.signOutSite("x.test");
+      assert.deepStrictEqual(yield* tokens(a), ["https://x.test=t1"]);
+      // Meanwhile its site's report of what it kept is not taken.
+      yield* onA.event({ type: "storage.changed", origins: ["https://x.test"] });
+
+      yield* TestClock.adjust("5 seconds");
+      yield* settle;
+      assert.deepStrictEqual(yield* held(a), []);
+      assert.deepStrictEqual(yield* tokens(a), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a sign-out goes on to its end when whoever asked for it stops waiting", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const onA = yield* attach(signIns, a);
+      yield* siteSets(a, onA, cookie("sid", "one", "x.test"));
+
+      const release = yield* a.holdNext("cookies.read");
+      const asked = yield* Effect.forkChild(signIns.signOutSite("x.test"));
+      yield* settle;
+      yield* Fiber.interrupt(asked);
+      yield* release;
+      yield* settle;
+      assert.deepStrictEqual(yield* held(a), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a host's report sent before it took a sign-out does not sign back in", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const b = yield* host(EVENTS, "store-b-0000000000");
+      const onA = yield* attach(signIns, a);
+      yield* attach(signIns, b);
+      yield* visits(onA, "https://x.test/");
+      const signedIn = cookie("sid", "one", "x.test");
+      yield* siteSets(a, onA, signedIn);
+
+      yield* signIns.signOutSite("x.test");
+      yield* onA.event({ type: "cookies.changed", changes: { set: [signedIn], removed: [] } });
+      assert.deepStrictEqual(yield* held(b), []);
+      assert.deepStrictEqual(yield* listed(signIns), []);
     }).pipe(Effect.scoped),
   );
 
@@ -251,6 +384,17 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       });
       yield* onServer.flush;
       assert.deepStrictEqual(yield* held(desktop), []);
+
+      // What the last tab's site kept is read once more after the tab closes.
+      yield* visits(onServer, "https://app.x.test/", "tab-9");
+      yield* server.siteStorage(stored("https://app.x.test", "t1"));
+      yield* onServer.event({
+        type: "tab.closed",
+        tab: BrowserTabRef.make("tab-9"),
+        crashed: false,
+      });
+      yield* onServer.flush;
+      assert.deepStrictEqual(yield* tokens(desktop), ["https://app.x.test=t1"]);
     }).pipe(Effect.scoped),
   );
 
@@ -261,21 +405,20 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       const b = yield* host(EVENTS, "store-b-0000000000");
       const onA = yield* attach(signIns, a);
       const onB = yield* attach(signIns, b);
-      const saved = {
-        origin: "https://app.x.test",
-        localStorage: [{ name: "token", value: "t1" }],
-      };
-      yield* a.siteStorage(saved);
-      yield* onA.event({ type: "storage.changed", origins: [saved.origin] });
+      const saved = stored("https://app.x.test", "t1");
+      yield* siteKeeps(a, onA, saved);
       assert.deepStrictEqual(yield* b.storage, [saved]);
 
       yield* onB.detach;
-      const renewed = { ...saved, localStorage: [{ name: "token", value: "t2" }] };
-      yield* a.siteStorage(renewed);
-      yield* onA.event({ type: "storage.changed", origins: [saved.origin] });
+      const renewed = stored("https://app.x.test", "t2");
+      yield* siteKeeps(a, onA, renewed);
+      // B's page reports what it still keeps, from before: the jar's newer
+      // storage wins over it, whichever comes first.
       const again = yield* attach(signIns, b);
+      yield* again.event({ type: "storage.changed", origins: [saved.origin] });
       yield* again.prepare(`${saved.origin}/inbox`);
       assert.deepStrictEqual(yield* b.storage, [renewed]);
+      assert.deepStrictEqual(yield* a.storage, [renewed]);
     }).pipe(Effect.scoped),
   );
 
@@ -287,13 +430,67 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       const onA = yield* attach(signIns, a);
       yield* attach(signIns, b);
       yield* siteSets(a, onA, cookie("sid", "one", "x.test"), cookie("theme", "dark", "y.test"));
-      // One the jar has not heard of yet goes too.
+      yield* siteKeeps(a, onA, stored("https://x.test", "t1"));
+      // What the jar has not heard of yet goes too.
       yield* b.siteCookies({ set: [cookie("late", "l", "z.test")], removed: [] });
+      yield* b.siteStorage(stored("https://z.test", "t9"));
+      // A store away now, new to the jar when it comes back.
+      const away = yield* host(EVENTS, "store-n-0000000000");
+      yield* away.siteCookies({ set: [cookie("sid", "kept", "x.test")], removed: [] });
 
       yield* signIns.signOut;
       assert.deepStrictEqual(yield* held(a), []);
       assert.deepStrictEqual(yield* held(b), []);
+      assert.deepStrictEqual(yield* tokens(a), []);
+      assert.deepStrictEqual(yield* tokens(b), []);
       assert.deepStrictEqual(yield* sitesOf(signIns), { status: "ready", sites: [] });
+
+      yield* attach(signIns, away);
+      assert.deepStrictEqual(yield* held(away), []);
+      assert.deepStrictEqual(yield* held(a), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("signing out of all sites starts an unreadable jar again, and empties its hosts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "j3-signins-" });
+      yield* signInsIn(folder);
+      const signIns = yield* signInsIn(folder);
+      assert.strictEqual((yield* sitesOf(signIns)).status, "unreadable");
+
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      yield* a.siteCookies({ set: [cookie("sid", "one", "x.test")], removed: [] });
+      yield* a.siteStorage(stored("https://x.test", "t1"));
+      yield* attach(signIns, a);
+      assert.deepStrictEqual(yield* held(a), ["sid=one"]);
+
+      yield* signIns.signOut;
+      assert.deepStrictEqual(yield* held(a), []);
+      assert.deepStrictEqual(yield* tokens(a), []);
+      assert.strictEqual((yield* sitesOf(signIns)).status, "ready");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("the sign-ins of before are brought in once, without the sites signed out of", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      yield* signIns.signOutSite("x.test");
+      yield* signIns.bringIn({
+        cookies: [cookie("sid", "old", "x.test"), cookie("sid", "old", "y.test")],
+        origins: [
+          { indexedDb: false, storage: stored("https://x.test", "t0") },
+          { indexedDb: false, storage: stored("https://y.test", "t0") },
+        ],
+        sites: ["x.test", "y.test"],
+      });
+      assert.deepStrictEqual(yield* listed(signIns), ["y.test"]);
+      assert.strictEqual(yield* signIns.toBringIn, "done");
+
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      yield* attach(signIns, a);
+      assert.deepStrictEqual(yield* held(a), ["sid=old"]);
+      assert.deepStrictEqual(yield* tokens(a), ["https://y.test=t0"]);
     }).pipe(Effect.scoped),
   );
 });

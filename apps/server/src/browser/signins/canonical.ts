@@ -63,7 +63,7 @@ export const keyOfCookie = (cookie: BrowserCookie): BrowserCookieKey => ({
   domain: cookie.domain,
   hostOnly: cookie.hostOnly,
   path: cookie.path,
-  ...(cookie.partition === undefined ? {} : { partition: cookie.partition.topLevelSite }),
+  ...(cookie.partition === undefined ? {} : { partition: cookie.partition }),
 });
 
 /**
@@ -136,6 +136,8 @@ export interface Digests {
   readonly siteId: (site: BrowserSite) => Digest;
   /** A host's `cookieStore`, which names its store and nothing else. */
   readonly storeId: (cookieStore: string) => Digest;
+  /** A host's `browserRun`, which names a run of its browser and nothing else. */
+  readonly runId: (browserRun: string) => Digest;
 }
 
 /** The digests under `key`, each kind of name apart from the others. */
@@ -149,5 +151,6 @@ export const makeDigests = (key: Uint8Array): Digests => {
     storageDigest: (storage) => mac("storage", storageText(storage)),
     siteId: (site) => mac("site", site),
     storeId: (cookieStore) => mac("store", cookieStore),
+    runId: (browserRun) => mac("run", browserRun),
   };
 };

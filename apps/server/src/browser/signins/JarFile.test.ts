@@ -10,7 +10,9 @@ import { keyOfCookie, makeDigests } from "./canonical.ts";
 import { openJarFile } from "./JarFile.ts";
 
 // The sign-ins' file: sealed under its key, so it names no site and holds
-// no value a reader of the disk could take, and opens under that key alone.
+// no value a reader of the disk could take, and opens under that key alone;
+// a file that does not open leaves the jar unreadable, never the server
+// stopped, until a reset makes it again.
 
 const SITE = "jar-proof.test";
 const VALUE = "the-session-value-7f3a";
@@ -76,6 +78,7 @@ it.layer(NodeServices.layer)("the sign-ins' file", (it) => {
                   ],
                 ],
                 signouts: [[digests.siteId("other.test"), 1]],
+                sites: { set: [[digests.siteId(SITE), SITE]], removed: [] },
               })
             : Effect.die(new Error("A new jar should open.")),
         ),
@@ -118,6 +121,7 @@ it.layer(NodeServices.layer)("the sign-ins' file", (it) => {
           [...contents.origins.values()].map(({ storage }) => storage.localStorage),
           [[{ name: "token", value: TOKEN }]],
         );
+        assert.deepStrictEqual([...contents.sites.values()], [SITE]);
       }
 
       const other = yield* openAt(location, newKey());
@@ -125,28 +129,33 @@ it.layer(NodeServices.layer)("the sign-ins' file", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("starts again, empty, under a new key, when it is reset", () =>
+  it.effect.each([
+    ["sealed under another key", "key"],
+    ["damaged", "damaged"],
+  ] as const)("is unreadable when %s, and starts again, empty, when it is reset", ([, how]) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const folder = yield* fs.makeTempDirectoryScoped({ prefix: "j3-jar-" });
       const location = path.join(folder, "signins.sqlite");
-      const before = newKey();
-      yield* openAt(location, before);
+      if (how === "key") yield* openAt(location, newKey());
+      else yield* fs.writeFileString(location, "not a database, though it says it is one");
 
-      const after = newKey();
-      yield* openJarFile(location, after).pipe(
+      const key = newKey();
+      const reset = yield* openJarFile(location, key).pipe(
         Effect.flatMap((opened) =>
           opened._tag === "unreadable"
-            ? opened.file.reset
-            : Effect.die(new Error("The jar should not open under another key.")),
+            ? opened.reset
+            : Effect.die(new Error("The jar should not open.")),
         ),
         Effect.provide(SecureRandom.layerWebCrypto),
         Effect.scoped,
       );
-      const reopened = yield* openAt(location, after);
+      assert.strictEqual(reset.contents.cookies.size, 0);
+      assert.isDefined(reset.contents.clearedAt);
+      const reopened = yield* openAt(location, key);
       assert.strictEqual(reopened._tag, "open");
-      if (reopened._tag === "open") assert.strictEqual(reopened.contents.cookies.size, 0);
+      if (reopened._tag === "open") assert.isDefined(reopened.contents.clearedAt);
     }).pipe(Effect.scoped),
   );
 });

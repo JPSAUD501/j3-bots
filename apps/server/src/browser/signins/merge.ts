@@ -22,13 +22,19 @@ import {
 // `SignIns.ts` carries it out.
 //
 // A host's baseline is what it held, by digest, when it last agreed with
-// the jar. With one, a cookie the host changed since and the jar did not is
+// the jar, and its version is the jar's up to which every sign-out reached
+// the host. With one, a cookie the host changed since and the jar did not is
 // the host's to give; one the jar changed and the host did not is the
 // jar's; one both changed is the host's, the last change received, unless
 // its site was signed out since, which wins. A host without a baseline is
 // new to the jar: what it holds and the jar does not is added, what both
 // hold differently is the jar's, and nothing is removed from either, but a
-// cookie the jar removed with the same value is not brought back.
+// cookie the jar removed with the same value is not brought back. An origin
+// a host's baseline names as `UNKNOWN` was the jar's when the host was new,
+// and is still to be brought together so.
+
+/** A baseline's digest for an origin the host was new to: brought together as by a new host. */
+export const UNKNOWN: Digest = "";
 
 /** The jar's cookies, by id. */
 export type JarCookies = ReadonlyMap<Digest, BrowserCookie>;
@@ -62,21 +68,26 @@ export interface CookieReconcile {
  * - `revoked`: whether the person signed out of a cookie's site since the
  *   baseline.
  * - `tombstones`: the digest each cookie the jar removed had.
+ * - `restarted`: whether the host's browser started again since the
+ *   baseline, or cannot say.
  *
- * A session cookie the host held at its baseline and holds no longer was
- * lost to a restart, never removed: the jar keeps it and the host gets it
- * back. Expired cookies leave the jar, and are no host's to give.
+ * After a restart, a session cookie the jar holds and the host does not was
+ * lost to the restart, never removed, whatever value the host last had: the
+ * jar keeps it and the host gets it back. In the same run of its browser, a
+ * cookie the host no longer holds was removed by its site. Expired cookies
+ * leave the jar, and are no host's to give.
  */
 export const reconcileCookies = (input: {
   readonly jar: JarCookies;
   readonly tombstones: ReadonlyMap<Digest, Digest>;
   readonly baseline: BaselineEntries | undefined;
+  readonly restarted: boolean;
   readonly revoked: (cookie: BrowserCookie) => boolean;
   readonly host: ReadonlyArray<BrowserCookie>;
   readonly now: number;
   readonly digests: Digests;
 }): CookieReconcile => {
-  const { jar, tombstones, baseline, revoked, now, digests } = input;
+  const { jar, tombstones, baseline, restarted, revoked, now, digests } = input;
   const host = new Map<Digest, BrowserCookie>();
   for (const cookie of input.host) {
     const normal = normalCookie(cookie);
@@ -104,10 +115,7 @@ export const reconcileCookies = (input: {
     } else {
       const was = baseline.get(id);
       const lostToRestart =
-        held === undefined &&
-        live !== undefined &&
-        live.expires === undefined &&
-        keptDigest === was;
+        restarted && held === undefined && live !== undefined && live.expires === undefined;
       const hostChanged = !lostToRestart && heldDigest !== was;
       const site = held ?? live;
       if (!hostChanged) target = live;
@@ -231,7 +239,7 @@ export interface JarOrigin {
  * The jar's `kept` with a host's `read` of the origin: the host's
  * `localStorage`, and its databases where it read them.
  */
-export const takeOrigin = (kept: JarOrigin | undefined, read: BrowserOriginStorage): JarOrigin => {
+const takeOrigin = (kept: JarOrigin | undefined, read: BrowserOriginStorage): JarOrigin => {
   const indexedDb = kept?.indexedDb ?? false;
   const databases = indexedDb ? (read.indexedDb ?? kept?.storage.indexedDb) : undefined;
   return {

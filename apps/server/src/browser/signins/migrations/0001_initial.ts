@@ -9,7 +9,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 // "Sign-ins").
 //
 // - `meta`: the jar's one row: its version, which moves on every change, the
-//   key check, and when the browser's sign-ins of before 0.16 were brought in.
+//   key check, when the browser's sign-ins of before 0.16 were brought in, and
+//   when the person last signed out of all sites.
 // - `cookies`, `origins`: a cookie by its key, an origin's storage by the
 //   origin. An origin signed out of stays, emptied, until `emptied_at` is old.
 // - `tombstones`: a cookie the jar removed and the digest of its value, so a
@@ -17,8 +18,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 // - `signouts`: a site the person signed out of, or every site (`*`), and
 //   the version that did, which wins over what a host changed before it
 //   connected again.
+// - `sites`: the sites a shared tab showed as its page, which the list of
+//   sites signed in to is drawn from.
 // - `stores`, `store_entries`: a host's store (its `cookieStore`), the
-//   version it last agreed with the jar at, and what it held then.
+//   version up to which every sign-out reached it, the run of its browser
+//   (an HMAC of `browserRun`), and what it held when it last agreed with the
+//   jar.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -28,7 +33,8 @@ export default Effect.gen(function* () {
       version INTEGER NOT NULL CHECK (version >= 0),
       check_nonce TEXT NOT NULL,
       check_sealed TEXT NOT NULL,
-      migrated_at INTEGER
+      migrated_at INTEGER,
+      cleared_at INTEGER
     )
   `;
   yield* sql`
@@ -60,9 +66,17 @@ export default Effect.gen(function* () {
     ) WITHOUT ROWID
   `;
   yield* sql`
+    CREATE TABLE sites (
+      id TEXT PRIMARY KEY,
+      nonce TEXT NOT NULL,
+      sealed TEXT NOT NULL
+    ) WITHOUT ROWID
+  `;
+  yield* sql`
     CREATE TABLE stores (
       id TEXT PRIMARY KEY,
       version INTEGER NOT NULL,
+      run TEXT,
       seen_at INTEGER NOT NULL
     ) WITHOUT ROWID
   `;
