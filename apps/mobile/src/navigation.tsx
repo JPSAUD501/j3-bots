@@ -30,7 +30,7 @@ import {
   type NativeStackNavigationProp,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useState } from "react";
+import { type ReactElement, useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
@@ -60,6 +60,7 @@ import { SecretFormScreen } from "./secrets/SecretFormScreen.tsx";
 import { SecretScreen } from "./secrets/SecretScreen.tsx";
 import { SecretsScreen } from "./secrets/SecretsScreen.tsx";
 import { Toasts } from "./toast.tsx";
+import { BotCardProvider } from "./components/BotCard.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
 import { FlightHost } from "./onboarding/handoff.tsx";
 
@@ -82,7 +83,8 @@ export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
   /** `arriving` while the first bot travels in from the first run: the screen fades in, holding still. */
   conversation: { readonly item: RosterItemKey; readonly arriving?: true | undefined };
-  details: { readonly item: RosterItemKey };
+  /** `at` opens a bot's details at its routines, as its card's Routines does. */
+  details: { readonly item: RosterItemKey; readonly at?: "routines" };
   /**
    * The teammate conversation of two bots, read-only, opened at its latest
    * message or, with `at`, at the message one of whose cards that entry is.
@@ -217,6 +219,11 @@ const screenOptions = {
 
 const sheet = { animation: "slide_from_bottom" } as const satisfies NativeStackNavigationOptions;
 
+/** Each screen holds its own bot card, which opens from where the operator is. */
+function withBotCard({ children }: { readonly children: ReactElement }) {
+  return <BotCardProvider>{children}</BotCardProvider>;
+}
+
 /** What a paired device shows. */
 export function Main() {
   const i18n = useI18n();
@@ -230,7 +237,7 @@ export function Main() {
         <Toasts>
           <FileOpenerProvider>
             <NavigationContainer ref={navigation} onReady={() => setReady(true)} theme={theme}>
-              <Stack.Navigator screenOptions={screenOptions}>
+              <Stack.Navigator screenOptions={screenOptions} screenLayout={withBotCard}>
                 {/* The roster and the conversation draw their own headers, which hold more than a title. */}
                 <Stack.Screen
                   name="roster"

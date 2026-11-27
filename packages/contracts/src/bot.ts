@@ -223,9 +223,27 @@ export const SuggestedReply = Schema.Struct({
 });
 export type SuggestedReply = typeof SuggestedReply.Type;
 
+/**
+ * Who made a bot: the operator, or one of their bots with `create_bot`,
+ * which only does so at the operator's request.
+ */
+export const BotMaker = Schema.Struct({
+  /** Open: a client says nothing of a maker it does not know. */
+  by: OpenLiterals(["operator", "bot"]),
+  /** The bot that made it, while that bot exists; null for the operator's. */
+  botId: Schema.NullOr(BotId),
+});
+export type BotMaker = typeof BotMaker.Type;
+
 export const Bot = Schema.Struct({
   id: BotId,
   profile: Profile,
+  /**
+   * Who made it, for its card to say (decision 0102). Absent when the server
+   * does not know: for a bot made before it kept that, and from a server
+   * that predates it.
+   */
+  madeBy: Schema.optionalKey(BotMaker),
   model: ModelChoice,
   /**
    * How much the bot's AI thinks before it acts: one of the levels the engine

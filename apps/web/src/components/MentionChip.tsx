@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Avatar, BotId, ConversationMention } from "@j3-bots/contracts";
+import type { Avatar, Bot, BotId, ConversationMention } from "@j3-bots/contracts";
 import { createContext, type ReactNode, use } from "react";
 import { useBots, useI18n, useRooms } from "../app/context";
 import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
+import { useBotCard } from "./BotCard";
 import {
   AvatarsAsleep,
   BotAvatar,
@@ -85,21 +86,25 @@ export function RoomMentionChip({
  */
 export const OpenMention = createContext<((named: ConversationMention) => void) | null>(null);
 
-/** A chip that opens what it names, when something can open it. */
+/** A chip that opens what it names, when something can open it, and a bot's card (`useBotCard`). */
 function Opens({
   named,
   name,
+  card = { hover: {}, focus: {} },
   children,
 }: {
   named: ConversationMention;
   name: string;
+  card?: ReturnType<typeof useBotCard>;
   children: ReactNode;
 }) {
   const open = use(OpenMention);
   const { t } = useI18n();
-  if (open === null) return children;
+  if (open === null) return <span {...card.hover}>{children}</span>;
   return (
     <button
+      {...card.hover}
+      {...card.focus}
       type="button"
       aria-label={t("mention.open", { name })}
       onClick={() => open(named)}
@@ -123,17 +128,23 @@ export function TextMention({ name, of }: { name: string; of: ConversationMentio
   if (of._tag === "bot") {
     const bot = bots.get(of.botId);
     if (bot === undefined) return plain;
-    return (
-      <Opens named={of} name={bot.profile.name}>
-        <MentionChip avatar={bot.profile.avatar} seed={bot.id} name={name} />
-      </Opens>
-    );
+    return <BotMention named={of} bot={bot} name={name} />;
   }
   const room = rooms.get(of.roomId);
   if (room === undefined) return plain;
   return (
     <Opens named={of} name={room.name}>
       <RoomMentionChip members={roomAvatarMembers(room, bots)} name={name} />
+    </Opens>
+  );
+}
+
+/** A bot's mention in a message: its chip, which opens its conversation and, under a resting pointer, its card. */
+function BotMention({ named, bot, name }: { named: ConversationMention; bot: Bot; name: string }) {
+  const card = useBotCard(bot.id);
+  return (
+    <Opens named={named} name={bot.profile.name} card={card}>
+      <MentionChip avatar={bot.profile.avatar} seed={bot.id} name={name} />
     </Opens>
   );
 }

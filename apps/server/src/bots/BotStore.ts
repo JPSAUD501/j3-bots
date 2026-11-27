@@ -41,6 +41,7 @@ const BotRow = Schema.Struct({
   pinned: Flag,
   hidden: Flag,
   made_by_bot_id: Schema.NullOr(BotId),
+  made_by: Schema.NullOr(Schema.Literals(["operator", "bot"])),
   visibility_by_operator: Flag,
   browser: Flag,
   section_id: Schema.NullOr(SectionId),
@@ -83,6 +84,7 @@ const toStored = (
       avatar: { shape: row.avatar_shape, color: row.avatar_color },
       job: row.job,
     },
+    ...(row.made_by === null ? {} : { madeBy: { by: row.made_by, botId: row.made_by_bot_id } }),
     model: { providerId: row.provider_id, modelId: row.model_id },
     effort: row.effort,
     permissionMode: row.permission_mode,
@@ -151,7 +153,8 @@ export interface BotChanges {
 
 const SELECT = `
   SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id, effort,
-    permission_mode, is_primary, pinned, hidden, made_by_bot_id, visibility_by_operator, browser,
+    permission_mode, is_primary, pinned, hidden, made_by_bot_id, made_by, visibility_by_operator,
+    browser,
     section_id, workspace_path, workspace_root, engine_project_id, created_at
   FROM bots
 `;
@@ -229,13 +232,14 @@ export const layer = Layer.effect(
         INSERT INTO bots (
           id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
           model_by_server, permission_mode, permission_mode_by_server, is_primary, hidden,
-          made_by_bot_id, visibility_by_operator, workspace_path, created_at, updated_at
+          made_by_bot_id, made_by, visibility_by_operator, workspace_path, created_at, updated_at
         ) VALUES (
           ${bot.id}, ${bot.profile.name}, ${bot.profile.title}, ${bot.profile.avatar.shape},
           ${bot.profile.avatar.color}, ${bot.profile.job}, ${bot.model.providerId},
           ${bot.model.modelId}, ${bot.modelChooser === "server" ? 1 : 0}, ${bot.permissionMode},
           ${bot.permissionModeChooser === "server" ? 1 : 0}, ${bot.primary ? 1 : 0},
-          ${bot.hidden ? 1 : 0}, ${bot.madeBy}, ${bot.madeBy === null ? 1 : 0},
+          ${bot.hidden ? 1 : 0}, ${bot.madeBy}, ${bot.madeBy === null ? "operator" : "bot"},
+          ${bot.madeBy === null ? 1 : 0},
           ${bot.workspacePath}, ${at}, ${at}
         )
       `;

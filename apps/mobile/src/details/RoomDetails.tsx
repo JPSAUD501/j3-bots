@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { roomStop, unarchivable } from "@j3-bots/client-runtime/presentation";
-import type { Room } from "@j3-bots/contracts";
+import type { Bot, Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
-import { ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
+import { useBotCardPress } from "../components/BotCard.tsx";
 import { DeleteButton, PendingButton, Quiet, Section } from "../components/form.tsx";
 import { useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
@@ -110,21 +111,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>
         ) : (
-          members.map((bot) => (
-            <View key={bot.id} className="min-h-12 flex-row items-center gap-3">
-              <LiveBotAvatar bot={bot} size={32} />
-              <View className="min-w-0 flex-1">
-                <Text numberOfLines={1} className="text-base font-medium text-foreground">
-                  {bot.profile.name}
-                </Text>
-                {bot.profile.title !== "" && (
-                  <Text numberOfLines={1} className="text-xs text-muted-foreground">
-                    {bot.profile.title}
-                  </Text>
-                )}
-              </View>
-            </View>
-          ))
+          members.map((bot) => <MemberRow key={bot.id} bot={bot} />)
         )}
       </Section>
 
@@ -160,5 +147,31 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         />
       </Apart>
     </ScrollView>
+  );
+}
+
+/** A member: its face, name and title. A long press opens its card (decision 0102). */
+function MemberRow({ bot }: { readonly bot: Bot }) {
+  const card = useBotCardPress(bot.id, bot.profile.name);
+  return (
+    <Pressable
+      accessibilityLabel={[bot.profile.name, bot.profile.title]
+        .filter((part) => part !== "")
+        .join(", ")}
+      {...card?.props}
+      className="-mx-2 min-h-12 flex-row items-center gap-3 rounded-md px-2 active:bg-muted"
+    >
+      <LiveBotAvatar bot={bot} size={32} />
+      <View className="min-w-0 flex-1">
+        <Text numberOfLines={1} className="text-base font-medium text-foreground">
+          {bot.profile.name}
+        </Text>
+        {bot.profile.title !== "" && (
+          <Text numberOfLines={1} className="text-xs text-muted-foreground">
+            {bot.profile.title}
+          </Text>
+        )}
+      </View>
+    </Pressable>
   );
 }

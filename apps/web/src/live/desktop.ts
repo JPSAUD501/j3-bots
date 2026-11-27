@@ -44,6 +44,8 @@ import {
   type RecordingId,
   RecordingStart,
   RecordingStartResult,
+  type RecordingTranscript,
+  RecordingTranscriptKeep,
   ShellCommand,
   ShortcutChange,
   ShortcutStatus,
@@ -287,6 +289,19 @@ interface DesktopRecording {
   readonly onRecording: (listener: (delivery: RecordingDelivery) => void) => () => void;
   /** Bytes `[start, end)` of a ready recording's zip; `null` once it is gone or the app could not read it. */
   readonly read: (id: RecordingId, start: number, end: number) => Promise<Uint8Array | null>;
+  /**
+   * Bytes `[start, end)` of a ready recording's voice as it is kept for its
+   * transcript; `null` once it is gone or the app could not read it.
+   */
+  readonly readSpeech: (id: RecordingId, start: number, end: number) => Promise<Uint8Array | null>;
+  /**
+   * Puts the transcript in the recording's zip, or settles with `null` that
+   * it goes without one: answers the zip's size then, `null` once it is gone.
+   */
+  readonly keepTranscript: (
+    id: RecordingId,
+    transcript: RecordingTranscript | null,
+  ) => Promise<number | null>;
   /** The page no longer needs the recording: the app deletes it. */
   readonly release: (id: RecordingId) => void;
 }
@@ -367,6 +382,8 @@ const decodeRecordingBytes = Schema.decodeUnknownOption(Schema.Uint8Array);
 const decodeJob = Schema.decodeUnknownOption(RecorderJob);
 const decodeRecorderCue = Schema.decodeUnknownOption(RecorderCue);
 const encodeStart = Schema.encodeSync(RecordingStart);
+const encodeKeep = Schema.encodeSync(RecordingTranscriptKeep);
+const decodeZipSize = Schema.decodeUnknownOption(Schema.Int.check(Schema.isGreaterThan(0)));
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -588,6 +605,10 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
       },
       read: (id, start, end) =>
         ask(() => bridge.readRecording({ id, start, end }), decodeRecordingBytes),
+      readSpeech: (id, start, end) =>
+        ask(() => bridge.readRecordingSpeech({ id, start, end }), decodeRecordingBytes),
+      keepTranscript: (id, transcript) =>
+        ask(() => bridge.keepTranscript(encodeKeep({ id, transcript })), decodeZipSize),
       release: (id) => {
         bridge.releaseRecording({ id });
       },

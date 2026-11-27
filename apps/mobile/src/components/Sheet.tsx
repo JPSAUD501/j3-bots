@@ -3,7 +3,9 @@ import { motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { type ComponentRef, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   useWindowDimensions,
@@ -59,9 +61,15 @@ export function Sheet({
       animationType="none"
       onRequestClose={onClose}
     >
-      <SheetPanel open={open} title={title} lead={lead} onClose={onClose} footer={footer}>
-        {children}
-      </SheetPanel>
+      {/* A field in it, as a bot card's quick message, stays above the keyboard. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        className="flex-1"
+      >
+        <SheetPanel open={open} title={title} lead={lead} onClose={onClose} footer={footer}>
+          {children}
+        </SheetPanel>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

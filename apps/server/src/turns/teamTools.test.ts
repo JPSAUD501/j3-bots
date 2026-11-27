@@ -188,6 +188,24 @@ it.effect("creates a bot on the operator's word, and holds its hello until that 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("records who made a bot, and that a bot did once its maker is deleted", () =>
+  Effect.gen(function* () {
+    const scout = yield* primaryBot("Scout");
+    const { session, turnId } = yield* operatorAsks(scout, "Make me a bot for invoices.");
+    const created = decodeCreated(resultOf(yield* createIn(session, turnId, "Ledger")));
+    yield* endTurn(scout.id, session, turnId);
+    const store = yield* BotStore;
+    const madeBy = (id: BotId) =>
+      Effect.map(store.find(id), (found) => Option.getOrThrow(found).bot.madeBy);
+
+    assert.deepStrictEqual(yield* madeBy(scout.id), { by: "operator", botId: null });
+    assert.deepStrictEqual(yield* madeBy(created.id), { by: "bot", botId: scout.id });
+
+    yield* (yield* Bots).remove({ commandId: command(), botId: scout.id, deleteFiles: true });
+    assert.deepStrictEqual(yield* madeBy(created.id), { by: "bot", botId: null });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "makes a bot on its maker's model, and on the default while that provider is not ready",
   () =>

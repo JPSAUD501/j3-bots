@@ -93,6 +93,7 @@ import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
 import { refuseRedirects } from "./connection/http.ts";
 import * as Files from "./files/Files.ts";
+import * as Transcript from "./recording/transcript.ts";
 import { type FileProblem, type MessageProblem, normalizeMediaType } from "./files/limits.ts";
 import * as Actions from "./intents/Actions.ts";
 import * as SignOut from "./intents/SignOut.ts";
@@ -519,7 +520,7 @@ export interface J3Client {
    */
   readonly attachRecording: (
     target: EntryTarget,
-    recording: Drafts.DraftRecording,
+    recording: RecordingAttachment,
     at?: number,
   ) => Promise<boolean>;
   readonly detachFile: (target: EntryTarget, key: string) => void;
@@ -785,6 +786,20 @@ export interface ServerUpdateHandle {
   readonly start: (version: ReleaseVersion, stopWork: boolean) => Promise<ServerUpdateStart>;
 }
 
+/**
+ * A screen recording to put in a draft (`J3Client.attachRecording`): its zip,
+ * and, when its voice is still to be written down, that voice with where its
+ * transcript goes. `keep` puts the transcript in the zip, or settles that the
+ * zip goes without one (null), and answers the zip's size then; null once
+ * the recording is gone.
+ */
+export interface RecordingAttachment extends Files.RecordingSource {
+  readonly release: () => void;
+  readonly speech?: Transcript.RecordingSpeech & {
+    readonly keep: (transcript: Transcript.RecordingTranscript | null) => Promise<number | null>;
+  };
+}
+
 /** Starts the client runtime on `platform`. */
 export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Promise<J3Client> => {
   const runtime = ManagedRuntime.make(layer.pipe(Layer.provide(platform)));
@@ -826,6 +841,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     }),
   );
   const { connection, conversations } = services;
+  const transcriptServices: Transcript.TranscriptServices = {
+    takesTranscripts: services.roster.recordingTranscripts,
+    connection: connection.state,
+    settings: services.settings.state,
+    voiceStatus: services.voice.status,
+    transcribe: services.voice.transcribe,
+  };
 
   /** `sendWithFiles`: each file uploaded in turn, under the pairing followed as it began, then the message. */
   const sendingWithFiles = Effect.fnUntraced(function* (input: {
@@ -1032,8 +1054,35 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     setDraftText: (target, text, mentions, order) =>
       run.sync(services.drafts.setText(target, text, mentions, order)),
     attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
-    attachRecording: (target, recording, at) =>
-      run.promise(services.drafts.attachRecording(target, recording, at)),
+    attachRecording: (target, { speech, ...recording }, at) =>
+      run.promise(
+        services.drafts.attachRecording(
+          target,
+          speech === undefined
+            ? recording
+            : {
+                ...recording,
+                transcribe: (progress) =>
+                  Transcript.writeDown(transcriptServices, speech, progress).pipe(
+                    Effect.flatMap((transcript) =>
+                      Effect.promise(async () => {
+                        const keep = (kept: Transcript.RecordingTranscript | null) =>
+                          speech.keep(kept).catch(() => null);
+                        const size = await keep(transcript);
+                        // A transcript the device could not put in the zip: it goes without one.
+                        return size === null && transcript !== null ? keep(null) : size;
+                      }),
+                    ),
+                    // Gone meanwhile, the recording cannot be read for its upload either.
+                    Effect.filterOrFail(
+                      (size): size is number => size !== null,
+                      () => new Files.UploadRefused({ problem: "unreadable" }),
+                    ),
+                  ),
+              },
+          at,
+        ),
+      ),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     quoteInDraft: (target, quote) => run.sync(services.drafts.quote(target, quote)),
     unquoteInDraft: (target, index) => run.sync(services.drafts.unquote(target, index)),
