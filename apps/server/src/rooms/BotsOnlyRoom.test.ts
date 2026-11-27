@@ -197,20 +197,22 @@ it.effect(
 
 /**
  * Pip and Wren answer each other in `roomId`, each naming the other, from Pip's
- * answer to the kickoff to the first answer past the limit, which pauses it.
+ * answer to the kickoff to round `last`: by default the first answer past the
+ * limit, which pauses it. The last room turn each had.
  */
-const talkToTheLimit = (roomId: RoomId, pip: Member, wren: Member) =>
+const talkTo = (roomId: RoomId, pip: Member, wren: Member, last = ROOM_QUIET_ROUND + 1) =>
   Effect.gen(function* () {
     const members = [pip, wren];
     const turns = new Map<BotId, TurnId>();
-    for (let round = 1; round <= ROOM_QUIET_ROUND + 1; round++) {
+    for (let round = 1; round <= last; round++) {
       const [one, other] = round % 2 === 1 ? [pip, wren] : [wren, pip];
       const turnId = yield* nextTurn(one.bot.id, turns.get(one.bot.id) ?? null);
       turns.set(one.bot.id, turnId);
       yield* say(one, turnId, { text: `Round ${round}.`, mention: [other.bot.id] });
       yield* finish(one, turnId, members);
     }
-    assert.strictEqual((yield* roundsIn(roomId)).at(-1)?.[1], ROOM_QUIET_ROUND + 1);
+    assert.strictEqual((yield* roundsIn(roomId)).at(-1)?.[1], last);
+    return turns;
   });
 
 /** The `room-paused` wakes the bot has, by status. */
@@ -248,7 +250,7 @@ it.effect("drops the starter's word of a pause once the operator stops the room"
     ];
     // Scout's turn runs on while the others talk, so the pause's wake waits for it.
     const { roomId, turnId } = yield* startForPip(scout, pip, wren);
-    yield* talkToTheLimit(roomId, pip, wren);
+    yield* talkTo(roomId, pip, wren);
     assert.deepStrictEqual(yield* pausedWakes(scout.bot.id), ["pending"]);
 
     yield* stopRoom(roomId);
@@ -257,6 +259,36 @@ it.effect("drops the starter's word of a pause once the operator stops the room"
     yield* say(scout, turnId, { text: "Pip and Wren are on it.", done: true });
     yield* finish(scout, turnId, [scout, pip, wren]);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "drops it too when the post that paused the room came from a member's own conversation",
+  () =>
+    Effect.gen(function* () {
+      const [scout, pip, wren] = [
+        yield* member("Scout"),
+        yield* member("Pip"),
+        yield* member("Wren"),
+      ];
+      const { roomId, turnId } = yield* startForPip(scout, pip, wren);
+      const turns = yield* talkTo(roomId, pip, wren, ROOM_QUIET_ROUND);
+      // Pip reads Wren's last answer in a room turn and says nothing there; then,
+      // in its own conversation, posts in the room, which pauses it.
+      const read = yield* nextTurn(pip.bot.id, turns.get(pip.bot.id) ?? null);
+      yield* finish(pip, read, [pip, wren]);
+      yield* sendToBot(pip.bot.id, "Tell the room the venue is booked.");
+      const own = yield* nextTurn(pip.bot.id, read);
+      yield* call(pip, own, "message_bot", { to: roomId, text: "The venue is booked." });
+      yield* say(pip, own, { text: "Told them.", done: true });
+      yield* finish(pip, own, [pip, wren]);
+      assert.deepStrictEqual(yield* pausedWakes(scout.bot.id), ["pending"]);
+
+      yield* stopRoom(roomId);
+
+      assert.deepStrictEqual(yield* pausedWakes(scout.bot.id), ["cancelled"]);
+      yield* say(scout, turnId, { text: "Pip and Wren are on it.", done: true });
+      yield* finish(scout, turnId, [scout, pip, wren]);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("shows the pause of a room of bots only whose starter was deleted, telling nobody", () =>
@@ -271,7 +303,7 @@ it.effect("shows the pause of a room of bots only whose starter was deleted, tel
     yield* finish(scout, turnId, [scout, pip, wren]);
     yield* (yield* Bots).remove({ commandId: command(), botId: scout.bot.id, deleteFiles: true });
 
-    yield* talkToTheLimit(roomId, pip, wren);
+    yield* talkTo(roomId, pip, wren);
 
     assert.deepStrictEqual((yield* noticesIn(roomId)).at(-1), {
       _tag: "room-paused",

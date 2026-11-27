@@ -245,6 +245,7 @@ export const layer = Layer.effect(
             senderId: input.botId,
             audience: input.turn.audience,
             seq: input.seq,
+            room: input.room.id,
           },
         },
       ]);
