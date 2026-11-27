@@ -79,16 +79,20 @@ describe("where an AI account stands", () => {
     });
     const page = "https://example.com/oauth/authorize";
     const waiting = { _tag: "waiting-for-browser", url: page, opened: true } as const;
-    expect(aiAccountState(first("claude-code"), facts(engine, [["claude-code", waiting]]))).toEqual({
-      _tag: "signing-in",
-      step: "browser",
-      page,
-    });
+    expect(aiAccountState(first("claude-code"), facts(engine, [["claude-code", waiting]]))).toEqual(
+      {
+        _tag: "signing-in",
+        step: "browser",
+        page,
+      },
+    );
   });
 
   it("is finishing between a sign-in that succeeded and the engine's next check, then connected", () => {
     const done = [["codex", { _tag: "succeeded", endpoint: null }]] as const;
-    expect(aiAccountState(first("codex"), facts(engineWith(provider("codex", signedOut)), done))).toEqual({
+    expect(
+      aiAccountState(first("codex"), facts(engineWith(provider("codex", signedOut)), done)),
+    ).toEqual({
       _tag: "finishing",
     });
     expect(
@@ -102,7 +106,10 @@ describe("where an AI account stands", () => {
       ...facts(engineWith(provider("codex", signedOut)), done),
       spent: new Set([first("codex").providerId]),
     };
-    expect(aiAccountState(first("codex"), signedOutAgain)).toEqual({ _tag: "sign-in", failed: null });
+    expect(aiAccountState(first("codex"), signedOutAgain)).toEqual({
+      _tag: "sign-in",
+      failed: null,
+    });
   });
 
   it("keeps why the last sign-in ended on the signed-out account, so it can be tried again", () => {
@@ -118,12 +125,14 @@ describe("where an AI account stands", () => {
       task: { _tag: "downloading", receivedBytes: 50, totalBytes: 200 },
     } as const;
     expect(
-      aiAccountState(first("claude-code"),
+      aiAccountState(
+        first("claude-code"),
         facts(engineWith(provider("claude-code", notInstalled, downloading))),
       ),
     ).toEqual({ _tag: "getting", task: "downloading", progress: 0.25 });
     expect(
-      aiAccountState(first("claude-code"),
+      aiAccountState(
+        first("claude-code"),
         facts(engineWith(provider("claude-code", notInstalled, noCopy))),
       ),
     ).toEqual({ _tag: "missing", canGet: true, failed: null, page: null });
@@ -132,13 +141,15 @@ describe("where an AI account stands", () => {
       last: { _tag: "failed", reason: "unreachable", at: DateTime.makeUnsafe(0) },
     };
     expect(
-      aiAccountState(first("claude-code"),
+      aiAccountState(
+        first("claude-code"),
         facts(engineWith(provider("claude-code", notInstalled, failed))),
       ),
     ).toEqual({ _tag: "missing", canGet: true, failed: "unreachable", page: null });
     // A machine the server installs no build for: the maker's own page.
     expect(
-      aiAccountState(first("codex"),
+      aiAccountState(
+        first("codex"),
         facts(engineWith(provider("codex", notInstalled, { ...noCopy, installable: false }))),
       ),
     ).toEqual({

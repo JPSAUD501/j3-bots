@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { defaultModel, type EngineStatus, type ModelChoice, type ProviderId } from "@j3-bots/contracts";
+import {
+  defaultModel,
+  type EngineStatus,
+  type ModelChoice,
+  type ProviderId,
+} from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

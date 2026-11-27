@@ -2,7 +2,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { type Bot, type EngineStatus, PROFILE_LIMITS } from "@j3-bots/contracts";
 import { XIcon } from "lucide-react";
-import { type Ref, useEffect, useId, useRef } from "react";
+import { type Ref, useEffect, useId, useRef, useState } from "react";
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
 import type { ProfileField } from "@j3-bots/client-runtime/presentation";
 import { useBotEdit } from "@j3-bots/client-runtime/react";
@@ -11,6 +11,8 @@ import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarPicker } from "./avatar/AvatarPicker";
+import { ModelPicker } from "./ModelPicker";
+import type { ModelStars } from "./modelStars";
 import { BackstageSwitch } from "./Visibility";
 import { PermissionModeChoices } from "./PermissionModeChoices";
 import { Button } from "./ui/button";
@@ -35,10 +37,11 @@ export interface EditBotFormProps {
   readonly titleId: string;
   /** The title field, which the dialog may open at. */
   readonly titleRef?: Ref<HTMLInputElement>;
+  /** The starred models; null from a server that keeps none. */
+  readonly stars: ModelStars | null;
+  /** Opens with the model picker open, to choose another AI. */
+  readonly openPicker?: boolean;
 }
-
-/** A model choice as a `<select>` value. */
-const keyOf = (choice: Bot["model"]) => JSON.stringify([choice.providerId, choice.modelId]);
 
 /**
  * Everything the operator changes about a bot itself: its name, title, look
@@ -57,6 +60,8 @@ export function EditBotForm({
   onUnsavedChange,
   titleId,
   titleRef,
+  stars,
+  openPicker = false,
 }: EditBotFormProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -66,16 +71,26 @@ export function EditBotForm({
     job: useId(),
     jobHint: useId(),
     model: useId(),
-    effort: useId(),
-    effortHint: useId(),
     mode: useId(),
   };
   const errorIds = { name: useId(), title: useId(), job: useId(), model: useId() };
   const form = useBotEdit({ bot, engine, save, connected });
-  const { name, title, job, model, saving, problem, choices, unsaved } = form;
+  const { name, title, job, saving, problem, unsaved } = form;
   const mode = form.permissionMode;
   const { effort } = form;
   const modelMessage = form.modelUnavailable ? t("editBot.model.unavailable") : null;
+  const [pickerOpen, setPickerOpen] = useState(openPicker);
+  const accountNotice =
+    form.account === "gone"
+      ? t("botAccount.gone", { name: bot.profile.name })
+      : form.account === "off"
+        ? t("botAccount.off", {
+            account:
+              engine?.providers.find((provider) => provider.id === form.model.providerId)?.name ??
+              form.model.providerId,
+            name: bot.profile.name,
+          })
+        : null;
 
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
@@ -190,93 +205,41 @@ export function EditBotForm({
         </div>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor={ids.model} className="text-xs">
+          <p id={ids.model} className="text-xs">
             {t("editBot.model")}
-          </label>
-          <select
-            id={ids.model}
-            value={keyOf(model)}
+          </p>
+          <ModelPicker
+            engine={engine}
+            value={form.setting}
+            onChange={form.editModel}
+            offerEffort
+            stars={stars}
+            labelledBy={ids.model}
             disabled={saving}
-            aria-invalid={modelMessage !== null || undefined}
-            aria-describedby={modelMessage === null ? undefined : errorIds.model}
-            onChange={(event) => {
-              const key = event.currentTarget.value;
-              const picked = [
-                ...choices.unoffered,
-                ...choices.groups.flatMap((group) => group.models.map((option) => option.choice)),
-              ].find((choice) => keyOf(choice) === key);
-              form.edit({ model: picked ?? bot.model });
-            }}
-            className={cn(lineField, "disabled:text-muted-foreground")}
-          >
-            {choices.unoffered.map((choice) => (
-              <option key={keyOf(choice)} value={keyOf(choice)}>
-                {engine === null
-                  ? choice.modelId
-                  : t("editBot.model.notOffered", { model: choice.modelId })}
-              </option>
-            ))}
-            {choices.groups.map((group) => (
-              <optgroup key={group.providerName} label={group.providerName}>
-                {group.models.map((option) => (
-                  <option key={keyOf(option.choice)} value={keyOf(option.choice)}>
-                    {option.name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            invalid={modelMessage !== null || accountNotice !== null}
+            describedBy={errorIds.model}
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+          />
           {/* Exposed while empty, so a refusal that arrives later is announced. */}
           <p id={errorIds.model} role="alert" className="text-xs text-blocked empty:sr-only">
-            {modelMessage}
+            {modelMessage ?? accountNotice}
           </p>
-          {choices.someNotReady && (
-            <p className="text-2xs text-muted-foreground">{t("editBot.model.someNotReady")}</p>
+          {accountNotice !== null && !saving && (
+            <Button size="sm" className="self-start" onClick={() => setPickerOpen(true)}>
+              {t("botAccount.choose")}
+            </Button>
+          )}
+          {effort.fallback !== null && (
+            <p role="status" className="text-xs text-muted-foreground">
+              {t("editBot.effort.fallback", {
+                model: effort.fallback.modelName,
+                level: effortText(effort.fallback.level, i18n),
+                name: bot.profile.name,
+              })}
+            </p>
           )}
         </div>
-
-        {(effort.levels.length > 0 || effort.fallback !== null) && (
-          <div className="flex flex-col gap-1">
-            {effort.levels.length > 0 && (
-              <>
-                <label htmlFor={ids.effort} className="text-xs">
-                  {t("editBot.effort")}
-                </label>
-                <select
-                  id={ids.effort}
-                  value={effort.shown ?? ""}
-                  disabled={saving}
-                  aria-describedby={ids.effortHint}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    const level = effort.levels.find((choice) => choice.id === value);
-                    form.edit({ effort: { level: level?.id ?? null } });
-                  }}
-                  className={cn(lineField, "disabled:text-muted-foreground")}
-                >
-                  <option value="">{effortText(null, i18n)}</option>
-                  {effort.levels.map((level) => (
-                    <option key={level.id} value={level.id}>
-                      {effortText(level, i18n)}
-                    </option>
-                  ))}
-                </select>
-                <p id={ids.effortHint} className="text-2xs text-muted-foreground">
-                  {t("editBot.effort.hint")}
-                </p>
-              </>
-            )}
-            {effort.fallback !== null && (
-              <p role="status" className="text-xs text-muted-foreground">
-                {t("editBot.effort.fallback", {
-                  model: effort.fallback.modelName,
-                  level: effortText(effort.fallback.level, i18n),
-                  name: bot.profile.name,
-                })}
-              </p>
-            )}
-          </div>
-        )}
 
         <div className="flex flex-col gap-1.5">
           <p id={ids.mode} className="text-xs">
@@ -333,8 +296,11 @@ interface EditBotDialogProps extends Omit<
 > {
   /** The bot being edited; null closes the dialog. */
   readonly bot: Bot | null;
-  /** Opens at the title field, as Give a title does; otherwise where a dialog starts. */
-  readonly at: "title" | null;
+  /**
+   * Opens at the title field, as Give a title does, or with the model picker
+   * open, as Choose another AI does; otherwise where a dialog starts.
+   */
+  readonly at: "title" | "model" | null;
   /**
    * Whether the form holds edits that are not saved, as it reports through
    * `onUnsavedChange`. Held by the owner, which keeps such a form open.
@@ -383,6 +349,7 @@ export function EditBotDialog({
               onUnsavedChange={onUnsavedChange}
               titleId={titleId}
               titleRef={titleRef}
+              openPicker={at === "model"}
               {...form}
             />
           )}

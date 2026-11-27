@@ -120,19 +120,17 @@ export function modelPicker(
   });
   const models = providers.flatMap((provider, index) => {
     const account = accounts[index];
-    return provider.models.map(
-      (model): PickerModel => ({
-        choice: { providerId: provider.id, modelId: model.id },
-        name: model.name,
-        accountName: account?.name ?? provider.name,
-        efforts: model.efforts ?? [],
-        fast: model.fast === true,
-        starred: favorites.some(
-          (star) => star.providerId === provider.id && star.modelId === model.id,
-        ),
-        choosable: account?.choosable === true,
-      }),
-    );
+    return provider.models.map((model): PickerModel => ({
+      choice: { providerId: provider.id, modelId: model.id },
+      name: model.name,
+      accountName: account?.name ?? provider.name,
+      efforts: model.efforts ?? [],
+      fast: model.fast === true,
+      starred: favorites.some(
+        (star) => star.providerId === provider.id && star.modelId === model.id,
+      ),
+      choosable: account?.choosable === true,
+    }));
   });
   const starred = favorites.flatMap((star) => {
     const found = models.find((model) => sameModel(model.choice, star));
@@ -158,7 +156,9 @@ const folded = (text: string): string =>
  * query with no words.
  */
 export function searchModels(picker: ModelPicker, query: string): ReadonlyArray<PickerModel> {
-  const words = folded(query).split(/\s+/u).filter((word) => word.length > 0);
+  const words = folded(query)
+    .split(/\s+/u)
+    .filter((word) => word.length > 0);
   if (words.length === 0) return picker.models;
   return picker.models.filter((model) => {
     const text = folded(`${model.name} ${model.choice.modelId} ${model.accountName}`);

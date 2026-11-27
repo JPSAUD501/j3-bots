@@ -42,6 +42,7 @@ import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
 import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
 import { focusAtEnd } from "../components/Composer";
+import { BotAccountNotice } from "../components/BotAccountNotice";
 import { DraftComposer } from "../components/DraftComposer";
 import { AppStageProvider } from "../components/AppStage";
 import { ConversationHeader } from "../components/ConversationHeader";
@@ -647,6 +648,15 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             tintOf(item._tag === "bot" ? item.bot.profile.avatar : null),
           )}
         >
+          {item._tag === "bot" && (
+            <BotAccountNotice
+              bot={item.bot}
+              engine={data.engine}
+              onChoose={
+                editProfile === undefined ? undefined : () => editProfile(item.bot.id, "model")
+              }
+            />
+          )}
           {archivedRoom === null && botsOnly ? (
             <ReadOnlyMark label={t("room.readOnly")} />
           ) : archivedRoom === null ? (

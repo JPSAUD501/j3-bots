@@ -281,6 +281,7 @@ export const useRecentTurns = (
 export { type ConversationEnd, useArrivals, useConversationEnd, useRestored } from "./arrivals.ts";
 export {
   type AiAccountModel,
+  type AiConnectInput,
   type AiConnectModel,
   type AiIntents,
   AiSessionProvider,

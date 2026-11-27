@@ -34,6 +34,7 @@ import type {
   ConnectorPrompt,
   Device,
   DeviceId,
+  EffortLevel,
   EngineStatus,
   EntryId,
   EntryOrder,
@@ -41,6 +42,7 @@ import type {
   MemoryFile,
   MemoryPath,
   MessageQuote,
+  ModelChoice,
   PairBotIds,
   PairSeq,
   PromptArguments,
@@ -199,6 +201,12 @@ interface NewBot {
   readonly primary: boolean;
   readonly hidden?: boolean;
   readonly avatar?: AvatarChoice;
+  /** The model the operator picked; the server's default when left out. */
+  readonly model?: ModelChoice;
+  /** A level of `model`; its default when left out. */
+  readonly effort?: EffortLevel;
+  /** Fast mode, for a `model` that has one. */
+  readonly fast?: true;
 }
 
 /** What the operator can ask for from the shell. Every intent is carried out by the client runtime. */
@@ -333,9 +341,10 @@ export interface ShellIntents extends TimelineIntents {
   readonly deleteRoom: (roomId: RoomId) => void;
   /**
    * Opens the form that edits a bot's profile, model and permission mode, at
-   * its title field for `"title"`. Absent where there is none.
+   * its title field for `"title"`, or with its model picker open for
+   * `"model"`. Absent where there is none.
    */
-  readonly editProfile?: (botId: BotId, at?: "title") => void;
+  readonly editProfile?: (botId: BotId, at?: "title" | "model") => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
   /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
   readonly setBrowser: (bot: Bot, enabled: boolean) => void;

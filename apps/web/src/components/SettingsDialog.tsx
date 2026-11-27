@@ -9,6 +9,7 @@ import {
   type NotificationSettingsChange,
   type PairingCode,
   PairingLink,
+  type ProviderStatus,
   type ServerOrigin,
   type Settings,
 } from "@j3-bots/contracts";
@@ -38,8 +39,8 @@ import {
   type SettingsSaves,
 } from "@j3-bots/client-runtime";
 import {
-  type AiAccount,
   aiAccountProvider,
+  canSetUpAccounts,
   clockTime,
   connectorNeedsYou,
   connectorTone,
@@ -94,6 +95,7 @@ import {
   connectPlaceOf,
   useWebAiConnect,
 } from "./AiConnect";
+import { SetUpAccountList } from "./AiAccountSetup";
 import { ProviderRow } from "./EmptyStates";
 import { OwnHarnessLine, type ProviderActions } from "./ProviderFix";
 import { ProviderUpdate } from "./ProviderUpdate";
@@ -650,8 +652,7 @@ function AiAccounts({
   connect: ConnectPlace;
 }) {
   const ai = useWebAiConnect({ engine, connect, actions });
-  const version = (account: AiAccount) => {
-    const provider = aiAccountProvider(engine, account);
+  const version = (provider: ProviderStatus | undefined) => {
     if (provider === undefined) return null;
     const own = ownHarness(provider);
     return own === null ? (
@@ -662,7 +663,22 @@ function AiAccounts({
   };
   return (
     <>
-      <AiAccountList ai={ai} paths stale={stale} extra={version} />
+      {canSetUpAccounts(engine) ? (
+        <SetUpAccountList
+          ai={ai}
+          engine={engine}
+          actions={actions}
+          stale={stale}
+          version={(entry) => version(entry.provider)}
+        />
+      ) : (
+        <AiAccountList
+          ai={ai}
+          paths
+          stale={stale}
+          extra={(account) => version(aiAccountProvider(engine, account))}
+        />
+      )}
       {!stale && <AdvancedEndpoint ai={ai} />}
     </>
   );

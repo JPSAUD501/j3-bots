@@ -118,25 +118,27 @@ it.effect("only follows a sign-in once a status of it came back", () =>
   }),
 );
 
-it.effect("names an added account to the server, and the first of a harness by the harness alone", () =>
-  Effect.gen(function* () {
-    const asked: Array<unknown> = [];
-    const named = (account: SignInAccount) =>
-      followSignIn(
-        (use) =>
-          use((payload) => {
-            asked.push(payload);
-            return Stream.fromIterable(statuses);
-          }),
-        account,
-        () => Effect.void,
-      );
-    yield* named(firstAccountOf("codex"));
-    yield* named({ harness: "codex", providerId: ProviderId.make("codex_work") });
-    // A server older than added accounts takes the first's request as it always did.
-    assert.deepStrictEqual(asked, [
-      { harness: "codex", start: true },
-      { harness: "codex", providerId: "codex_work", start: true },
-    ]);
-  }),
+it.effect(
+  "names an added account to the server, and the first of a harness by the harness alone",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<unknown> = [];
+      const named = (account: SignInAccount) =>
+        followSignIn(
+          (use) =>
+            use((payload) => {
+              asked.push(payload);
+              return Stream.fromIterable(statuses);
+            }),
+          account,
+          () => Effect.void,
+        );
+      yield* named(firstAccountOf("codex"));
+      yield* named({ harness: "codex", providerId: ProviderId.make("codex_work") });
+      // A server older than added accounts takes the first's request as it always did.
+      assert.deepStrictEqual(asked, [
+        { harness: "codex", start: true },
+        { harness: "codex", providerId: "codex_work", start: true },
+      ]);
+    }),
 );

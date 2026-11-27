@@ -66,7 +66,8 @@ describe("an AI account, in words", () => {
     const engine = ready(
       claude({ _tag: "unavailable", checking: false, reason: "failed", detail: said }),
     );
-    const text = aiAccountText(firstAccountOf("claude-code"),
+    const text = aiAccountText(
+      firstAccountOf("claude-code"),
       { _tag: "problem", kind: "failed" },
       at("here", engine),
       ctx,
@@ -77,7 +78,8 @@ describe("an AI account, in words", () => {
   });
 
   it("says a failed sign-in plainly, with what repairs it under the details", () => {
-    const text = aiAccountText(firstAccountOf("codex"),
+    const text = aiAccountText(
+      firstAccountOf("codex"),
       { _tag: "sign-in", failed: "needs-terminal" },
       at("here"),
       ctx,
@@ -97,9 +99,10 @@ describe("an AI account, in words", () => {
       line: "Downloading Claude… 42%",
       hint: null,
     });
-    expect(aiAccountText(firstAccountOf("claude-code"), getting, { ...at("here"), queued: true }, ctx).hint).toBe(
-      "Your browser opens as soon as this is done.",
-    );
+    expect(
+      aiAccountText(firstAccountOf("claude-code"), getting, { ...at("here"), queued: true }, ctx)
+        .hint,
+    ).toBe("Your browser opens as soon as this is done.");
   });
 
   it("names its button for what it does next", () => {

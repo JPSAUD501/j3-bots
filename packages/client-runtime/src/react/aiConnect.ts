@@ -90,11 +90,7 @@ const createAiSession = (): AiSession => {
   });
   // The accounts a download was asked for and has not been seen to start.
   const asked = new Set<ProviderId>();
-  const mark = (
-    key: "wanted" | "spent" | "refused",
-    account: SignInAccount,
-    present: boolean,
-  ) =>
+  const mark = (key: "wanted" | "spent" | "refused", account: SignInAccount, present: boolean) =>
     cell.update((now) => {
       const next = withMember(now[key], account.providerId, present);
       return next === now[key] ? now : { ...now, [key]: next };

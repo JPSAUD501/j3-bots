@@ -2,6 +2,8 @@
 import { Dialog } from "@base-ui/react/dialog";
 import type { TemplateDraft } from "@j3-bots/client-runtime";
 import {
+  canSetUpAccounts,
+  type ModelSetting,
   type TemplateRead,
   templateStart,
   templateAsksTitle,
@@ -14,16 +16,20 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import {
   type BotTemplate,
+  type EffortLevel,
   type EngineStatus,
+  type ModelChoice,
   type PermissionMode,
   PROFILE_LIMITS,
   type TemplateTooLarge,
 } from "@j3-bots/contracts";
-import { CopyIcon, CpuIcon, DownloadIcon, ShieldAlertIcon, XIcon } from "lucide-react";
+import { CopyIcon, DownloadIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { BackstageSwitch } from "./Visibility";
+import { ModelPicker } from "./ModelPicker";
+import type { ModelStars } from "./modelStars";
 import { PermissionModeChoices } from "./PermissionModeChoices";
 import { TemplatePreview } from "./TemplatePreview";
 import { Button } from "./ui/button";
@@ -226,6 +232,10 @@ export type TemplateCreated = "done" | "schedule" | "failed";
 interface TemplateFormProps {
   readonly template: BotTemplate;
   readonly engine: EngineStatus | null;
+  /** The starred models; null from a server that keeps none. */
+  readonly stars: ModelStars | null;
+  /** A model already picked in place of the template's, as the gallery shows it. */
+  readonly defaultPick?: ModelSetting;
   readonly connected: boolean;
   /** Resolves once the server answered; the owner closes the form on `done`. */
   readonly onCreate: (draft: TemplateDraft) => Promise<TemplateCreated>;
@@ -243,6 +253,8 @@ interface TemplateFormProps {
 export function TemplateForm({
   template,
   engine,
+  stars,
+  defaultPick,
   connected,
   onCreate,
   onClose,
@@ -251,7 +263,14 @@ export function TemplateForm({
   const i18n = useI18n();
   const { t } = i18n;
   const modeId = useId();
-  const start = templateStart(template, engine);
+  const modelId = useId();
+  // The model the operator picked in place of the one the preview starts with.
+  const [pickedModel, setPickedModel] = useState<ModelChoice | null>(defaultPick?.model ?? null);
+  const [effort, setEffort] = useState<EffortLevel | null>(defaultPick?.effort ?? null);
+  const [fast, setFast] = useState(defaultPick?.fast ?? false);
+  const start = templateStart(template, engine, pickedModel);
+  // An older server creates the bot at the default effort whatever it is sent.
+  const offerEffort = canSetUpAccounts(engine);
   const [picked, setPicked] = useState<PermissionMode | null>(null);
   const [hidden, setHidden] = useState(false);
   // Asked only of a template shared from a bot with no title.
@@ -264,7 +283,12 @@ export function TemplateForm({
   const mode = picked ?? start.permissionMode;
   const { name } = template.profile;
   const creating = state === "creating";
-  const picks = templateSubmission(template, start, picked, title);
+  const picks = templateSubmission(
+    template,
+    start,
+    { permissionMode: picked, effort: offerEffort ? effort : null, fast },
+    title,
+  );
   // A bot in the list says nothing of it, as the server's default.
   const submission = picks === null ? null : { ...picks, ...(hidden ? { hidden: true } : {}) };
   const ready = submission !== null && connected && !creating;
@@ -306,25 +330,36 @@ export function TemplateForm({
             </section>
           )}
           <section className="flex flex-col gap-2 border-t border-border pt-4">
-            <h3 className="text-xs font-medium text-muted-foreground">{t("template.model")}</h3>
+            <h3 id={modelId} className="text-xs font-medium text-muted-foreground">
+              {t("template.model")}
+            </h3>
             {start.model._tag === "none" ? (
               <p className="text-sm text-blocked">{t("template.create.noModel")}</p>
             ) : (
-              <div className="flex items-start gap-2.5 text-sm">
-                <CpuIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span className="flex flex-col">
-                  <span>{start.model.name}</span>
-                  {start.model._tag === "replaced" && (
-                    <span className="text-xs text-muted-foreground">
-                      {t("template.model.replaced", {
-                        model: start.model.asked,
-                        name,
-                        replacement: start.model.name,
-                      })}
-                    </span>
-                  )}
-                </span>
-              </div>
+              <>
+                <ModelPicker
+                  engine={engine}
+                  value={{ model: start.model.choice, effort, fast }}
+                  onChange={(setting: ModelSetting) => {
+                    setPickedModel(setting.model);
+                    setEffort(setting.effort);
+                    setFast(setting.fast);
+                  }}
+                  offerEffort={offerEffort}
+                  stars={stars}
+                  labelledBy={modelId}
+                  disabled={creating}
+                />
+                {start.model._tag === "replaced" && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("template.model.replaced", {
+                      model: start.model.asked,
+                      name,
+                      replacement: start.model.name,
+                    })}
+                  </p>
+                )}
+              </>
             )}
           </section>
           <section className="flex flex-col gap-2 border-t border-border pt-4">

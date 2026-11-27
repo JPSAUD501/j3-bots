@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type AvatarChoice, type Bot, PROFILE_LIMITS } from "@j3-bots/contracts";
+import { canSetUpAccounts, type ModelSetting } from "@j3-bots/client-runtime/presentation";
+import {
+  type AvatarChoice,
+  type Bot,
+  defaultModel,
+  type EffortLevel,
+  type EngineStatus,
+  type ModelChoice,
+  PROFILE_LIMITS,
+} from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import { useEffect, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { AvatarPicker } from "./avatar/AvatarPicker";
+import { ModelPicker } from "./ModelPicker";
+import type { ModelStars } from "./modelStars";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { lineField } from "./ui/field";
@@ -19,11 +30,19 @@ export interface NewBot {
   readonly primary: boolean;
   readonly hidden: boolean;
   readonly avatar: AvatarChoice;
+  /** The model the operator picked, with its effort and fast mode; the server's default when left out. */
+  readonly model?: ModelChoice;
+  readonly effort?: EffortLevel;
+  readonly fast?: true;
 }
 
 interface NewBotFormProps {
   /** Every bot there is, those behind the scenes included, so the look offered first is the one they use least. */
   readonly bots: ReadonlyArray<Bot>;
+  /** Where the models come from; null until the server reported it. */
+  readonly engine: EngineStatus | null;
+  /** The starred models; null from a server that keeps none. */
+  readonly stars: ModelStars | null;
   /** Resolves once the bot exists. */
   readonly onCreate: (bot: NewBot) => Promise<void>;
   readonly onCancel: () => void;
@@ -49,6 +68,8 @@ type FormState =
  */
 export function NewBotForm({
   bots,
+  engine,
+  stars,
   onCreate,
   onCancel,
   onUnsavedChange,
@@ -59,6 +80,7 @@ export function NewBotForm({
   const titleId = useId();
   const titleErrorId = useId();
   const hideHintId = useId();
+  const modelId = useId();
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   // Said once Create was pressed without a title, until one is typed.
@@ -66,6 +88,13 @@ export function NewBotForm({
   const [primary, setPrimary] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
+  // Until the operator picks one, the bot runs on the server's default, which the picker shows.
+  const [model, setModel] = useState<ModelSetting | null>(null);
+  const serverModel = engine === null ? null : defaultModel(engine);
+  const shownModel: ModelSetting | null =
+    model ?? (serverModel === null ? null : { model: serverModel, effort: null, fast: false });
+  // An older server creates a bot at the default effort whatever it is sent.
+  const offerEffort = canSetUpAccounts(engine);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
   // While the bot is created it joins the list, so the look it was created with stays on show.
   // Otherwise, until the operator picks one, the look follows the bots there are, which may
@@ -95,9 +124,18 @@ export function NewBotForm({
         setState({ _tag: "creating", avatar });
         // A created bot opens, which takes the form off the screen: until then it stays
         // creating, so Create cannot make a second bot.
-        onCreate({ name: trimmed, title: trimmedTitle, primary, hidden, avatar }).catch(() =>
-          setState({ _tag: "failed" }),
-        );
+        onCreate({
+          name: trimmed,
+          title: trimmedTitle,
+          primary,
+          hidden,
+          avatar,
+          ...(model === null ? {} : { model: model.model }),
+          ...(model === null || model.effort === null || !offerEffort
+            ? {}
+            : { effort: model.effort }),
+          ...(model?.fast === true ? { fast: true } : {}),
+        }).catch(() => setState({ _tag: "failed" }));
       }}
     >
       <label htmlFor={nameId} className="sr-only">
@@ -139,6 +177,22 @@ export function NewBotForm({
         seed="new-bot"
         readOnly={state._tag === "creating"}
       />
+      {shownModel !== null && (
+        <div className="flex flex-col gap-1">
+          <p id={modelId} className="text-xs text-muted-foreground">
+            {t("newBot.model")}
+          </p>
+          <ModelPicker
+            engine={engine}
+            value={shownModel}
+            onChange={setModel}
+            offerEffort={offerEffort}
+            stars={stars}
+            labelledBy={modelId}
+            disabled={state._tag === "creating"}
+          />
+        </div>
+      )}
       <label className="flex items-start gap-2 text-xs text-muted-foreground">
         <span className="mt-px">
           <Checkbox checked={primary} onCheckedChange={setPrimary} />

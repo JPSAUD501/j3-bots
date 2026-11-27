@@ -63,6 +63,7 @@ import {
   type UpdateResult,
 } from "@j3-bots/client-runtime";
 import { providerActionsOf } from "./providerActions";
+import { modelStarsOf } from "../components/modelStars";
 import {
   type ConnectorsPlace,
   notificationOpening,
@@ -951,7 +952,7 @@ function LiveShell({
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
   // Where the bot editor opens: at its title, for a bot given one from its menu.
-  const [editingAt, setEditingAt] = useState<"title" | null>(null);
+  const [editingAt, setEditingAt] = useState<"title" | "model" | null>(null);
   const [roomForm, setRoomForm] = useState<RoomFormTarget | null>(null);
   // Whether New bot, the bot editor and the memory viewer hold what the
   // operator typed and has not saved yet, as they report.
@@ -1693,6 +1694,7 @@ function LiveShell({
     );
   }
 
+  const modelStars = modelStarsOf(data.settings, favoritesSave, intents.updateSettings);
   return (
     <ShellSourceProvider source={{ data, intents, browser: j3 }}>
       {attachments.host(children)}
@@ -1700,6 +1702,8 @@ function LiveShell({
       {folds.readers}
       <NewBotDialog
         bots={bots}
+        engine={data.engine}
+        stars={modelStars}
         open={newBot}
         onOpenChange={setNewBot}
         onUnsavedChange={setNewBotUnsaved}
@@ -1734,6 +1738,7 @@ function LiveShell({
       <NewFromTemplateDialog
         opened={opened}
         engine={data.engine}
+        stars={modelStars}
         connected={data.connected}
         onCreate={(draft) =>
           j3.createBotFromTemplate(draft).then((result) => {
@@ -1786,6 +1791,7 @@ function LiveShell({
         engine={data.engine}
         save={editingBot === null ? undefined : botSaves.get(editingBot)}
         at={editingAt}
+        stars={modelStars}
         connected={data.connected}
         unsaved={botEditUnsaved}
         onUnsavedChange={setBotEditUnsaved}

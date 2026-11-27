@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { Bot } from "@j3-bots/contracts";
+import type { Bot, EngineStatus } from "@j3-bots/contracts";
 import { useId } from "react";
 import { useI18n } from "../app/context";
+import type { ModelStars } from "./modelStars";
 import { type NewBot, NewBotForm } from "./NewBotForm";
 import { alertDialog, dialogBackdrop, dialogTitle } from "./ui/dialog";
 
 interface NewBotDialogProps {
   /** Every bot there is: the form offers the look they use least. */
   readonly bots: ReadonlyArray<Bot>;
+  /** Where the models the bot can run on come from; null until the server reported it. */
+  readonly engine: EngineStatus | null;
+  readonly stars: ModelStars | null;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves once the bot exists; the dialog then closes and its conversation opens. */
@@ -20,6 +24,8 @@ interface NewBotDialogProps {
 /** A name, a title, a look, and whether the bot is primary or behind the scenes. The bot asks the rest itself. */
 export function NewBotDialog({
   bots,
+  engine,
+  stars,
   open,
   onOpenChange,
   onCreate,
@@ -41,6 +47,8 @@ export function NewBotDialog({
           {/* Mounted with the popup, so each opening starts empty. */}
           <NewBotForm
             bots={bots}
+            engine={engine}
+            stars={stars}
             onCreate={onCreate}
             onCancel={() => onOpenChange(false)}
             onUnsavedChange={onUnsavedChange}

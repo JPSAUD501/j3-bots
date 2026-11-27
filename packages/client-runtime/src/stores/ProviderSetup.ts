@@ -71,7 +71,10 @@ export class ProviderSetup extends Context.Service<
      * `openPage` opens the page it waits on, once, as soon as the server
      * has it: the operator never presses anything to see it.
      */
-    readonly signIn: (account: SignInAccount, openPage: (url: string) => void) => Effect.Effect<void>;
+    readonly signIn: (
+      account: SignInAccount,
+      openPage: (url: string) => void,
+    ) => Effect.Effect<void>;
     /** Stops the account's sign-in under way. */
     readonly cancelSignIn: (account: SignInAccount) => Effect.Effect<void>;
     /** Where the server finds each harness; null when it cannot say. */
