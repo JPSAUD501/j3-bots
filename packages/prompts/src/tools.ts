@@ -1076,7 +1076,7 @@ const ThemeRoleColors = (scope: string) =>
 const ThemeSaveInput = toolInput({
   id: described(
     SavedThemeId,
-    "Lowercase letters, digits and hyphens, at most 48: a new id makes a theme; the id of one you made changes it, whole. Never a built-in's.",
+    "Lowercase letters, digits and hyphens, at most 48, never used by a theme before. A saved theme never changes, since your user may have applied it: another look is a new theme, under a new id.",
   ),
   name: described(ThemeName, "What your user sees it called."),
   description: Schema.optionalKey(
@@ -1105,8 +1105,8 @@ const ThemeSaveInput = toolInput({
   ),
   background: Schema.optionalKey(
     described(
-      Schema.NullOr(text(1, 500)),
-      "An image in your workspace, such as files/dusk.jpg, shown behind the conversation; null removes the theme's image. Left out, a changed theme keeps its image.",
+      text(1, 500),
+      "An image in your workspace, such as files/dusk.jpg, shown behind the conversation.",
     ),
   ),
 });
@@ -1507,7 +1507,7 @@ export const tools = {
   theme_save: define(
     "theme_save",
     [
-      "Save a theme for J3 Bots, new or one you made before, when your user asks for one.",
+      "Save a new theme for J3 Bots when your user asks for one. A saved theme never changes: to change one, save another under a new id and offer that.",
       "J3 Bots checks its colors can be read, moves those that fall short and tells you what moved, or refuses it with the reason.",
       "Saving applies it nowhere: then offer it with `say`'s `offer: { apply_theme: id }`, and your user picks it on the device they want it on. Never say it is applied.",
       "Returns what was saved and what moved.",
@@ -1617,10 +1617,8 @@ export const MANAGEMENT_NOTES = {
 export const THEME_NOTES = {
   saved:
     "Saved, and shown nowhere yet. Offer it with `say`'s `offer: { apply_theme: id }`; your user presses Apply theme on the device they want it on. Tell them in a sentence what moved, if anything did.",
-  operatorMade: (id: string) =>
-    `${id} is a theme your user made, which only they change. Save yours under another id. Nothing changed.`,
-  notYours: (id: string) =>
-    `${id} is another bot's theme, which only it or the primary bot changes. Save yours under another id. Nothing changed.`,
+  taken: (id: string) =>
+    `${id} is, or was, a theme's id, and a saved theme never changes, since your user may have applied it. Save the new look under a new id and offer that. Nothing changed.`,
   refused: (reason: string) => `That theme cannot be saved: ${reason} Nothing changed.`,
   background: (problem: string) => `The background image ${problem} Nothing changed.`,
   limit: (most: number) =>

@@ -96,29 +96,40 @@ for (const [why, args, reason] of [
   );
 }
 
-it.effect("leaves the operator's themes and another bot's to them", () =>
+it.effect("never changes a saved theme, nor gives a deleted one's id to another", () =>
   Effect.gen(function* () {
     const themes = yield* Themes;
-    yield* themes.save({
+    const mine = yield* themes.save({
       commandId: CommandId.make("cmd-mine"),
       definition: { name: "Mine", canvas: "#101820", accent: "#3fd0e0" },
     });
     const ana = yield* createBot("Ana");
-    const bia = yield* createBot("Bia");
+    // Not the operator's, not her own: a person may have applied either.
+    assert.include(refusal(yield* callAs(ana.id, "theme_save", { ...dusk, id: "mine" })), "new id");
+    yield* callAs(ana.id, "theme_save", dusk, 2);
     assert.include(
-      refusal(yield* callAs(ana.id, "theme_save", { ...dusk, id: "mine" })),
-      "your user made",
+      refusal(yield* callAs(ana.id, "theme_save", { ...dusk, name: "Dusk 2" }, 3)),
+      "new id",
     );
-    yield* callAs(ana.id, "theme_save", dusk);
+    // A device that picked a deleted theme never shows another under its id.
+    yield* themes.remove({ commandId: CommandId.make("cmd-gone"), themeId: mine.id });
     assert.include(
-      refusal(yield* callAs(bia.id, "theme_save", { ...dusk, name: "Not Dusk" })),
-      "another bot's",
+      refusal(yield* callAs(ana.id, "theme_save", { ...dusk, id: "mine" }, 4)),
+      "new id",
     );
-    // Ana changes her own.
-    const again = yield* callAs(ana.id, "theme_save", { ...dusk, name: "Dusk 2" }, 2);
-    assert.strictEqual(again._tag, "result");
-    const saved = (yield* themes.library).themes.map((t) => t.definition.name);
-    assert.sameMembers([...saved], ["Mine", "Dusk 2"]);
+    const again = yield* themes.save({
+      commandId: CommandId.make("cmd-again"),
+      definition: { name: "Mine", canvas: "#101820", accent: "#3fd0e0" },
+    });
+    assert.strictEqual(again.id, "mine-2");
+    const saved = (yield* themes.library).themes.map((t) => [String(t.id), t.definition.name]);
+    assert.sameDeepMembers(
+      [...saved],
+      [
+        ["dusk", "Dusk"],
+        ["mine-2", "Mine"],
+      ],
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -147,11 +158,8 @@ it.effect("keeps a theme's image from the bot's workspace, served by its revisio
       Option.some([...PNG]),
     );
 
-    // Saved again without `background`, it keeps the image; with null, it drops it.
-    yield* callAs(ana.id, "theme_save", { ...dusk, name: "Dusk again" }, 4);
-    assert.deepStrictEqual((yield* themes.library).themes[0]?.background, background);
-    yield* callAs(ana.id, "theme_save", { ...dusk, background: null }, 5);
-    assert.isNull((yield* themes.library).themes[0]?.background ?? null);
+    // Deleted, its image goes with it.
+    yield* themes.remove({ commandId: CommandId.make("cmd-gone"), themeId: ThemeId.make("dusk") });
     assert.isTrue(
       Option.isNone(yield* themes.background(ThemeId.make("dusk"), background?.revision ?? "")),
     );

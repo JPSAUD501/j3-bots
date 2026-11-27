@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { isAnimated } from "./stillImage.ts";
+import { isAnimated, isWhole } from "./stillImage.ts";
 
 const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
 const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
@@ -29,7 +29,7 @@ const png = (...chunks: ReadonlyArray<readonly [string, number]>) =>
 const webp = (chunk: string, flags: number) =>
   Uint8Array.from([
     ...ascii("RIFF"),
-    ...le32(30),
+    ...le32(22),
     ...ascii("WEBP"),
     ...ascii(chunk),
     ...le32(10),
@@ -48,5 +48,21 @@ describe("a theme's background", () => {
     expect(isAnimated(webp("VP8X", 0x10), "image/webp")).toBe(false);
     expect(isAnimated(webp("VP8 ", 0x02), "image/webp")).toBe(false);
     expect(isAnimated(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]), "image/jpeg")).toBe(false);
+  });
+});
+
+describe("a theme's background file", () => {
+  it("is whole when it ends as its format ends", () => {
+    expect(isWhole(png(["IHDR", 13], ["IDAT", 4], ["IEND", 0]), "image/png")).toBe(true);
+    expect(
+      isWhole(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0xff, 0xd9, 0]), "image/jpeg"),
+    ).toBe(true);
+    expect(isWhole(webp("VP8 ", 0), "image/webp")).toBe(true);
+  });
+
+  it("is cut short when its end is missing", () => {
+    expect(isWhole(png(["IHDR", 13], ["IDAT", 4]), "image/png")).toBe(false);
+    expect(isWhole(Uint8Array.from([0xff, 0xd8, 0xff]), "image/jpeg")).toBe(false);
+    expect(isWhole(webp("VP8 ", 0).slice(0, 24), "image/webp")).toBe(false);
   });
 });

@@ -52,12 +52,12 @@ import { Secrets } from "../secrets/Secrets.ts";
 import { imageTypeOf } from "../attachments/WorkImages.ts";
 import { type WorkspaceRead, workspaceReader } from "../attachments/workspaceFile.ts";
 import {
-  type BackgroundChange,
+  type BackgroundImage,
   MAX_SAVED_THEMES,
   Themes,
   type ThemeRefused,
 } from "../themes/Themes.ts";
-import { isAnimated } from "../themes/stillImage.ts";
+import { isAnimated, isWhole } from "../themes/stillImage.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
@@ -154,10 +154,8 @@ const refusedTheme = (id: string, refused: ThemeRefused): string => {
   switch (refused.reason) {
     case "definition":
       return THEME_NOTES.refused(refused.detail);
-    case "operator-made":
-      return THEME_NOTES.operatorMade(id);
-    case "not-yours":
-      return THEME_NOTES.notYours(id);
+    case "taken":
+      return THEME_NOTES.taken(id);
     case "limit":
       return THEME_NOTES.limit(MAX_SAVED_THEMES);
   }
@@ -274,12 +272,17 @@ export const layer = Layer.effect(
           reason: THEME_NOTES.background("is not a JPEG, PNG or WebP image."),
         });
       }
+      if (!isWhole(read.bytes, mediaType)) {
+        return yield* new Refused({
+          reason: THEME_NOTES.background("is cut short: the image does not hold its whole file."),
+        });
+      }
       if (isAnimated(read.bytes, mediaType)) {
         return yield* new Refused({
           reason: THEME_NOTES.background("is animated, and a theme's background stays still."),
         });
       }
-      return { _tag: "set", image: { bytes: read.bytes, mediaType } } satisfies BackgroundChange;
+      return { bytes: read.bytes, mediaType } satisfies BackgroundImage;
     });
 
     interface Call {
@@ -722,17 +725,14 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const self = yield* store.find(call.caller.botId);
           if (Option.isNone(self)) return yield* new Refused({ reason: "You are not a bot here." });
-          const background: BackgroundChange =
+          const background =
             input.background === undefined
-              ? { _tag: "keep" }
-              : input.background === null
-                ? { _tag: "remove" }
-                : yield* backgroundOf(self.value.workspaceRoot, input.background);
+              ? null
+              : yield* backgroundOf(self.value.workspaceRoot, input.background);
           const saved = yield* themes
             .saveFromBot({
               commandId: commandIdOf(call.requestId),
               botId: call.caller.botId,
-              primary: self.value.bot.primary,
               themeId: input.id,
               definition: definitionOf(input),
               background,

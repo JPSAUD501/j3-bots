@@ -41,15 +41,12 @@ export interface BackgroundImage {
   readonly mediaType: ThemeBackground["mediaType"];
 }
 
-/** What a bot's save does to its theme's image: keeps it, removes it, or sets this one. */
-export type BackgroundChange =
-  | { readonly _tag: "keep" }
-  | { readonly _tag: "remove" }
-  | { readonly _tag: "set"; readonly image: BackgroundImage };
-
-/** Why a bot's theme was not saved, in words the bot reads. */
+/**
+ * Why a bot's theme was not saved, in words the bot reads. `taken`: the id
+ * is a theme's, or was one's.
+ */
 export class ThemeRefused extends Schema.TaggedError<ThemeRefused>()("ThemeRefused", {
-  reason: Schema.Literals(["definition", "operator-made", "not-yours", "limit"]),
+  reason: Schema.Literals(["definition", "taken", "limit"]),
   /** For `definition`: what `@j3-bots/design-tokens` refused, in its words. */
   detail: Schema.String,
 }) {}
@@ -145,17 +142,17 @@ export class Themes extends Context.Service<
       readonly themeId: ThemeId;
     }) => Effect.Effect<void, NotFound | Conflict>;
     /**
-     * Saves a theme a bot made, under `themeId`: a new one, or one a bot
-     * made, which only that bot or the primary bot (`primary`) changes. A
-     * theme the operator made is theirs to change.
+     * Saves a new theme a bot made, under `themeId`, with `background`
+     * behind it. A bot never changes a saved theme: a person may have
+     * applied it, and what they applied stays what they saw. So an id a
+     * theme has, or had, is refused (`taken`).
      */
     readonly saveFromBot: (input: {
       readonly commandId: CommandId;
       readonly botId: BotId;
-      readonly primary: boolean;
       readonly themeId: ThemeId;
       readonly definition: ThemeDefinition;
-      readonly background: BackgroundChange;
+      readonly background: BackgroundImage | null;
     }) => Effect.Effect<BotSave, ThemeRefused | Conflict>;
     /** A saved theme's image, while `revision` is its revision. */
     readonly background: (
@@ -202,6 +199,11 @@ export const layer = Layer.effect(
       Result: Schema.Struct({ count: Schema.Int }),
       execute: () => sql`SELECT COUNT(*) AS count FROM themes`,
     });
+    const retiredRow = SqlSchema.findOneOption({
+      Request: ThemeId,
+      Result: Schema.Struct({ id: ThemeId }),
+      execute: (id) => sql`SELECT id FROM retired_theme_ids WHERE id = ${id}`,
+    });
     const imageRow = SqlSchema.findOneOption({
       Request: Schema.Struct({ themeId: ThemeId, revision: Schema.String }),
       Result: Schema.Struct({
@@ -235,12 +237,18 @@ export const layer = Layer.effect(
     const exists = (id: ThemeId) =>
       isBuiltInThemeId(id) ? Effect.succeed(true) : Effect.map(find(id), Option.isSome);
 
+    /** Whether `id` is a theme's, or was one's before it was deleted. */
+    const taken = Effect.fn("Themes.taken")(function* (id: ThemeId) {
+      if (yield* exists(id)) return true;
+      return Option.isSome(yield* retiredRow(id).pipe(Effect.orDie));
+    });
+
     /** An id for a new theme of the operator's: its name's stem, numbered past any taken. */
     const freshId = Effect.fn("Themes.freshId")(function* (name: string) {
       const stem = idStem(name);
       for (let n = 1; ; n++) {
         const id = ThemeId.make(n === 1 ? stem : `${stem}-${n}`);
-        if (!isBuiltInThemeId(id) && !(yield* exists(id))) return id;
+        if (!(yield* taken(id))) return id;
       }
     });
 
@@ -300,8 +308,11 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           yield* require(input.themeId);
-          // The image goes with it (`ON DELETE CASCADE`).
+          // The image goes with it (`ON DELETE CASCADE`), and its id is never a theme's again.
           yield* sql`DELETE FROM themes WHERE id = ${input.themeId}`.pipe(Effect.orDie);
+          yield* sql`INSERT INTO retired_theme_ids (id) VALUES (${input.themeId})`.pipe(
+            Effect.orDie,
+          );
           yield* sql`
             UPDATE settings SET default_theme = ${DEFAULT_THEME_ID}
             WHERE default_theme = ${input.themeId}
@@ -331,10 +342,9 @@ export const layer = Layer.effect(
     const saveFromBot = Effect.fn("Themes.saveFromBot")(function* (input: {
       readonly commandId: CommandId;
       readonly botId: BotId;
-      readonly primary: boolean;
       readonly themeId: ThemeId;
       readonly definition: ThemeDefinition;
-      readonly background: BackgroundChange;
+      readonly background: BackgroundImage | null;
     }) {
       const resolution = resolveTheme(input.definition);
       if (resolution._tag === "refused") {
@@ -342,15 +352,15 @@ export const layer = Layer.effect(
       }
       // The receipt is keyed on the image's digest, never on its bytes.
       const image =
-        input.background._tag === "set"
-          ? {
-              ...input.background.image,
-              revision: (yield* digest.digestHex(
-                Digest.sha256,
-                input.background.image.bytes,
-              )).slice(0, 32),
-            }
-          : undefined;
+        input.background === null
+          ? null
+          : {
+              ...input.background,
+              revision: (yield* digest.digestHex(Digest.sha256, input.background.bytes)).slice(
+                0,
+                32,
+              ),
+            };
       const saved = yield* receipts.once({
         commandId: input.commandId,
         method: "theme_save",
@@ -358,40 +368,25 @@ export const layer = Layer.effect(
           botId: input.botId,
           themeId: input.themeId,
           definition: input.definition,
-          background: image === undefined ? input.background._tag : { revision: image.revision },
+          background: image === null ? null : { revision: image.revision },
         },
         result: BotSave,
         apply: Effect.gen(function* () {
-          const found = yield* find(input.themeId);
-          if (Option.isSome(found)) {
-            const maker = found.value.madeBy;
-            if (maker._tag === "operator") {
-              return yield* new ThemeRefused({ reason: "operator-made", detail: "" });
-            }
-            if (!input.primary && maker.botId !== input.botId) {
-              return yield* new ThemeRefused({ reason: "not-yours", detail: "" });
-            }
-          } else if ((yield* countRow(undefined).pipe(Effect.orDie)).count >= MAX_SAVED_THEMES) {
+          if (yield* taken(input.themeId)) {
+            return yield* new ThemeRefused({ reason: "taken", detail: "" });
+          }
+          if ((yield* countRow(undefined).pipe(Effect.orDie)).count >= MAX_SAVED_THEMES) {
             return yield* new ThemeRefused({ reason: "limit", detail: "" });
           }
-          // A changed theme stays the bot's that made it, whoever changed it.
-          const madeBy: ThemeMaker = Option.isSome(found)
-            ? found.value.madeBy
-            : { _tag: "bot", botId: input.botId };
-          yield* write({ id: input.themeId, definition: input.definition, madeBy });
-          if (input.background._tag === "remove") {
-            yield* sql`DELETE FROM theme_backgrounds WHERE theme_id = ${input.themeId}`.pipe(
-              Effect.orDie,
-            );
-          }
-          if (image !== undefined) {
+          yield* write({
+            id: input.themeId,
+            definition: input.definition,
+            madeBy: { _tag: "bot", botId: input.botId },
+          });
+          if (image !== null) {
             yield* sql`
               INSERT INTO theme_backgrounds (theme_id, revision, media_type, bytes)
               VALUES (${input.themeId}, ${image.revision}, ${image.mediaType}, ${image.bytes})
-              ON CONFLICT (theme_id) DO UPDATE SET
-                revision = excluded.revision,
-                media_type = excluded.media_type,
-                bytes = excluded.bytes
             `.pipe(Effect.orDie);
           }
           const theme = yield* require(input.themeId).pipe(Effect.orDie);

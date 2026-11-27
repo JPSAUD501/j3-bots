@@ -5,8 +5,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 // Themes (decision 0104). The themes the operator and the bots saved, each
 // its definition as JSON (`ThemeDefinition`) and who made it; the image one
 // shows behind the conversation, kept apart so listing themes never reads
-// it; and the theme a device shows until its person picks one, a built-in's
-// id or a saved theme's, `palco` until the operator chooses.
+// it; the ids of themes deleted, which no theme takes again, so a device
+// that still picked one never shows another theme under its id; and the
+// theme a device shows until its person picks one, a built-in's id or a
+// saved theme's, `palco` until the operator chooses.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
@@ -27,5 +29,6 @@ export default Effect.gen(function* () {
       bytes BLOB NOT NULL
     )
   `;
+  yield* sql`CREATE TABLE retired_theme_ids (id TEXT PRIMARY KEY)`;
   yield* sql`ALTER TABLE settings ADD COLUMN default_theme TEXT NOT NULL DEFAULT 'palco'`;
 });
