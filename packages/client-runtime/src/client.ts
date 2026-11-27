@@ -425,6 +425,7 @@ export interface J3Client {
   readonly sendDraft: (
     target: EntryTarget,
     addressing?: Drafts.Addressing,
+    context?: Drafts.WindowContext,
   ) => Promise<Drafts.DraftSendResult>;
   /**
    * Calls `listener` for each draft another window sent or changed under this
@@ -821,7 +822,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       run.sync(services.drafts.setText(target, text, mentions, order)),
     attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
-    sendDraft: (target, addressing) => run.promise(services.drafts.send(target, addressing)),
+    sendDraft: (target, addressing, context) =>
+      run.promise(services.drafts.send(target, addressing, context)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
     draftOffers: services.drafts.offers,
     draftsSwitching: services.drafts.switching,

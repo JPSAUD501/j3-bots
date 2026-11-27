@@ -115,6 +115,7 @@ export {
   type DraftFile,
   DraftMention,
   type DraftSendResult,
+  type WindowContext,
 } from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";
