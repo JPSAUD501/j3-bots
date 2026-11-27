@@ -17,6 +17,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [Vision and principles](vision.md): what J3 Bots is for and what it refuses to become.
 - [Concepts](product/concepts.md): the vocabulary. Read this before anything else.
 - [Experience](product/experience.md): the flows a user goes through and the screens that serve them.
+- [Usage data](product/usage-data.md): what J3 Bots sends about how it is used, what it never sends, and how to turn it off.
 
 ## Architecture
 

@@ -33,6 +33,11 @@ import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as SuggestReplies from "./settings/SuggestReplies.ts";
 import * as SharedSkills from "./skills/SharedSkills.ts";
+import * as Telemetry from "./telemetry/Telemetry.ts";
+import * as TelemetryConfig from "./telemetry/config.ts";
+import * as TelemetryReports from "./telemetry/Reports.ts";
+import * as TelemetryStore from "./telemetry/TelemetryStore.ts";
+import * as TelemetrySwitch from "./telemetry/TelemetrySwitch.ts";
 import * as SkillRepositories from "./skills/SkillRepositories.ts";
 import * as Host from "./system/Host.ts";
 import * as Network from "./system/Network.ts";
@@ -123,6 +128,8 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
   Layer.mergeAll(
     ToolEndpoint.layer,
     AdminSocket.layer,
+    // Usage data's own reports, once everything else runs.
+    TelemetryReports.layer,
     Option.match(options.adminFd, { onNone: () => Layer.empty, onSome: AdminSocket.pipeLayer }),
     logShutdown,
   ).pipe(
@@ -152,11 +159,20 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     Layer.provide(Layer.merge(McpRegistry.layer, SkillRepositories.layer)),
     // One key, made for this start, for the bridges the engine starts and the endpoint they reach.
     Layer.provideMerge(BridgeKey.layer),
-    // One base prompt, and one switch for suggested replies, for the engine
-    // and the settings that change them.
+    // One base prompt, one switch for suggested replies, and the usage data
+    // the domain records, for the engine and the settings that change them.
+    // Usage data is built beneath the domain and the engine, so its last
+    // send, bounded in time, comes after they stopped.
     Layer.provide(
-      Layer.merge(BasePrompt.layer, SuggestReplies.layer).pipe(Layer.provide(SettingsStore.layer)),
+      Telemetry.layer().pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(BasePrompt.layer, SuggestReplies.layer, TelemetrySwitch.layer),
+        ),
+        Layer.provide(SettingsStore.layer),
+        Layer.provideMerge(TelemetryStore.layer),
+      ),
     ),
+    Layer.provideMerge(TelemetryConfig.layer(Option.isSome(options.adminFd) ? "desktop" : "cli")),
     Layer.provide(Sqlite.layer),
     // The log's copy in the home, once this process holds the home.
     Layer.provide(ServerLogFile.layer),

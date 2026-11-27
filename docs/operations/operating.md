@@ -35,7 +35,7 @@ systemctl --user restart j3-bots
 
 An unknown key or an invalid value stops the start with a message that names it; `j3-bots doctor` shows the same before you restart. The full reference, with the environment variables that override each setting for `j3-bots serve`, is in [Server: configuration](../architecture/server.md#configuration).
 
-The service does not see `J3_*` variables from your shell, nor from the user manager's environment (the unit unsets them): it runs with `config.json` alone. `doctor` warns about each one set in your shell while the service is installed. Put lasting settings in `config.json`.
+The service does not see the variables of your shell, and the unit unsets the ones that override a setting (`J3_HOST`, `J3_PORT` and the others in that reference) from the user manager's environment: it runs with `config.json` alone. `doctor` warns about each of those set in your shell while the service is installed. Put lasting settings in `config.json`. Usage data has its own variables ([Usage data](#usage-data)).
 
 ## The service
 
@@ -73,14 +73,14 @@ The server also keeps its own copy of the same lines in `~/.j3-bots/logs/server.
 
 When something behaves oddly and you want help, send a diagnostics zip to whoever helps you. It says how the server runs, and holds no messages, no names and no secrets ([decision 0100](../decisions/0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md)). `README.md` inside lists each file and what it holds.
 
-From any paired device, open **Settings → About and updates → Download diagnostics**. The web client and the desktop app save the file; the Android app opens the share sheet. From a shell on the server's machine, for when no client opens:
+From any paired device, open **Settings → About and updates**, and under **Privacy**, **Download diagnostics**. The web client and the desktop app save the file; the Android app opens the share sheet. From a shell on the server's machine, for when no client opens:
 
 ```sh
 j3-bots diagnostics                     # j3-bots-diagnostics-<date>-<time>.zip in this folder
 j3-bots diagnostics --out support.zip
 ```
 
-Like `doctor` ([What doctor says](install.md#what-doctor-says)), it acts on the installed service's data directory, else on the one `j3-bots serve` would use from this shell. It changes nothing, and it never writes over anything already at the file's name. With the server stopped it still writes the zip, without the engine's state or the providers'; it says so.
+Like `doctor` ([What doctor says](install.md#what-doctor-says)), it acts on the installed service's data directory, else on the one `j3-bots serve` would use from this shell. It changes nothing, and it never writes over anything already at the file's name. With the server stopped it still writes the zip, without the engine's state or the providers'; it says so. Its shell is not the server's environment, so its zip says whether usage data is on only when the switch is off; otherwise it says it does not know.
 
 The zip holds:
 
@@ -89,9 +89,31 @@ The zip holds:
 - the update and the migrations;
 - each provider's state;
 - the settings, with secrets reduced to set or not set;
-- counts of bots, rooms, routines, connectors and conversations.
+- counts of bots, rooms, routines, connectors and conversations;
+- whether usage data is on, and the last events it sent.
 
 A secret value the server keeps, anything shaped like a token, your home folder, your user name, the machine's name, IP addresses and email addresses are replaced before anything is written. The zip is at most 24 MiB. Read `README.md` before you send it, and send it where you choose: J3 Bots never sends it anywhere.
+
+## Usage data
+
+The server sends anonymous usage data until you turn it off: what it sends and what it never does is in [Usage data](../product/usage-data.md). The switch is in Settings → About and updates → Privacy, and takes effect at once for the whole server. To keep it off from the server's environment instead, whatever the switch says:
+
+| Variable | What it does |
+| --- | --- |
+| `DO_NOT_TRACK=1` | Keeps usage data off. Wins over everything else. |
+| `J3_TELEMETRY_ENABLED=false` | Keeps usage data off. A value that is neither a yes nor a no also does, with a warning in the log. `true` turns it on for a source checkout or a CI runner, which otherwise send nothing. |
+| `J3_TELEMETRY_HOST`, `J3_TELEMETRY_KEY` | Send it to another PostHog project, for a fork. An address that is not `http` or `https`, or an empty key, keeps it off. |
+
+For the service, put them in a drop-in, which `j3-bots service install` leaves alone:
+
+```sh
+mkdir -p ~/.config/systemd/user/j3-bots.service.d
+printf '[Service]\nEnvironment=DO_NOT_TRACK=1\n' > ~/.config/systemd/user/j3-bots.service.d/usage-data.conf
+systemctl --user daemon-reload
+systemctl --user restart j3-bots
+```
+
+The server the desktop app runs gets these variables from the app's environment, though no other `J3_*` one. A server that keeps usage data off says why once in its log as it starts.
 
 ## Quick access in the desktop app
 

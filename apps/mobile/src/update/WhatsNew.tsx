@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { releaseName } from "@j3-bots/client-runtime";
+import { useJ3Client } from "@j3-bots/client-runtime/react";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import { ChevronRight, Sparkles } from "lucide-react-native";
@@ -23,10 +24,14 @@ import { useWhatsNew } from "./whatsNew.ts";
 export function WhatsNewScreen() {
   const { t, locale } = useI18n();
   const insets = useSafeAreaInsets();
+  const client = useJ3Client();
   const { view, open } = useWhatsNew();
   useEffect(() => {
     if (view.mark !== null) open();
   }, [view.mark, open]);
+  useEffect(() => {
+    client.recordUsage({ event: "feature.used", properties: { feature: "whats-new" } });
+  }, [client]);
   return (
     <ScrollView
       className="flex-1 bg-background"

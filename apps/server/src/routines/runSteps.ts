@@ -29,6 +29,7 @@ import { conversation, DispatchRowId, SessionRowId, TurnsInvariant } from "../tu
 import type { Signals } from "../turns/Signals.ts";
 import type { Wakes } from "../turns/Wakes.ts";
 import { runView } from "./runView.ts";
+import type { Telemetry } from "../telemetry/Telemetry.ts";
 
 /**
  * What a step's bot reported with `finish_step` (decision 0080): its line of
@@ -177,6 +178,7 @@ export const runStops = (
   ledger: Ledger["Service"],
   changes: ChangeLog["Service"],
   cards: RunCards,
+  telemetry: Telemetry["Service"],
 ) => {
   const goingOf = SqlSchema.findAll({
     Request: Schema.Struct({ runId: Schema.NullOr(RoutineRunId), ownerId: Schema.NullOr(BotId) }),
@@ -238,10 +240,16 @@ export const runStops = (
       `;
     }
     yield* sql`UPDATE routine_run_steps SET state = 'skipped' WHERE run_id = ${run.id} AND state = 'todo'`;
-    yield* sql`
+    const stopped = yield* sql`
       UPDATE routine_runs SET status = 'failed', stopped = 1, finished_at = ${at}, retry_at = NULL
       WHERE id = ${run.id} AND status = 'running'
+      RETURNING id
     `;
+    if (stopped.length > 0) {
+      yield* sql.afterCommit(
+        telemetry.record({ event: "routine.ran", properties: { outcome: "stopped" } }),
+      );
+    }
     const turns: Array<StepTurn> = [];
     if (run.wake_id !== null) {
       const wake = yield* wakeState(run.wake_id);

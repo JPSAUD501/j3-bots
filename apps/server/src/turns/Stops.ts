@@ -46,6 +46,7 @@ import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
 import { stopKey, stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 
 /** What a Stop ends: all of a bot's work, or only the work addressed to one room. */
 export type StopScope =
@@ -228,7 +229,13 @@ export const layer = Layer.effect(
     const targets = stopTargets(sql);
     const entries = yield* Entries;
     const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
-    const routineRuns = runStops(sql, ledger, changes, runCards(sql, entries, changes));
+    const routineRuns = runStops(
+      sql,
+      ledger,
+      changes,
+      runCards(sql, entries, changes),
+      yield* Telemetry,
+    );
 
     /** Whether an audience column pair is in a Stop's scope. */
     const inScope = (scope: StopScope) =>

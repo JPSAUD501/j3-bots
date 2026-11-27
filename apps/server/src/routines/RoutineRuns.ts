@@ -46,6 +46,7 @@ import {
   type StepReport,
 } from "./runSteps.ts";
 import { isLate, runView } from "./runView.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 
 /** How many settled runs each routine keeps, newest first, beside the one still going. */
 export const RUN_HISTORY = 100;
@@ -302,6 +303,7 @@ export const layer = Layer.effect(
   RoutineRuns,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const telemetry = yield* Telemetry;
     const transaction = transactional(sql);
     const stops = stopTargets(sql);
     const ids = yield* Ids;
@@ -382,10 +384,16 @@ export const layer = Layer.effect(
       status: "delivered" | "silent" | "failed",
       at: DateTime.Utc,
     ) {
-      yield* sql`
+      const ended = yield* sql`
         UPDATE routine_runs SET status = ${status}, finished_at = ${timeText(at)}, retry_at = NULL
         WHERE id = ${run.id} AND status = 'running'
+        RETURNING id
       `;
+      if (ended.length > 0) {
+        yield* sql.afterCommit(
+          telemetry.record({ event: "routine.ran", properties: { outcome: status } }),
+        );
+      }
       // The cap on the kept history holds there too.
       yield* prune(run.routine_id);
       yield* recordChange(run.bot_id, run.routine_id);
@@ -557,6 +565,9 @@ export const layer = Layer.effect(
             id, routine_id, status, request_key, due_at, started_at, finished_at
           ) VALUES (${runId}, ${routine.id}, 'skipped', ${request.key}, ${dueAt}, ${at}, ${at})
         `;
+        yield* sql.afterCommit(
+          telemetry.record({ event: "routine.ran", properties: { outcome: "skipped" } }),
+        );
       } else if (stepped !== null) {
         // A routine with several steps: its run copies them, and the step
         // machine starts its first bot step and posts its card.

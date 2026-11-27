@@ -24,6 +24,7 @@ export * from "./secrets.ts";
 export * from "./section.ts";
 export * from "./settings.ts";
 export * from "./skill.ts";
+export * from "./telemetry.ts";
 export * from "./template.ts";
 export * from "./visual.ts";
 export * from "./voice.ts";

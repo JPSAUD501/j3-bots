@@ -118,6 +118,7 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
@@ -187,6 +188,7 @@ import {
   skillsListed,
   statusOfConnector,
 } from "./view.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 
 /**
  * The operator's connectors (`docs/architecture/server.md`, "Connectors"):
@@ -883,6 +885,8 @@ export const layer = Layer.effect(
   Connectors,
   Effect.gen(function* () {
     const store = yield* ConnectorStore;
+    const sql = yield* SqlClient.SqlClient;
+    const telemetry = yield* Telemetry;
     const secrets = yield* Secrets;
     const signIns = yield* ConnectorSignIns;
     const bots = yield* BotStore;
@@ -3034,7 +3038,20 @@ export const layer = Layer.effect(
      * with one id leave the row and the connector secret of the same one.
      */
     const add = (input: Parameters<typeof addOnce>[0]) =>
-      perConnector.run(input.id)(addOnce(input));
+      perConnector.run(input.id)(
+        Effect.gen(function* () {
+          const existed = Option.isSome(yield* store.get(input.id));
+          const added = yield* addOnce(input);
+          // Whether it has an app is known only once its server lists its tools.
+          if (!existed) {
+            yield* telemetry.record({
+              event: "connector.added",
+              properties: { source: input.source._tag === "listing" ? "catalog" : "custom" },
+            });
+          }
+          return added;
+        }),
+      );
 
     /**
      * Adds a connector started by command, the command line as the operator
@@ -3452,7 +3469,25 @@ export const layer = Layer.effect(
         method: "connector.remove",
         payload: input,
         result: Schema.Void,
-        apply: store.remove(input.connectorId),
+        apply: store.remove(input.connectorId).pipe(
+          Effect.andThen(
+            Option.match(connector, {
+              onNone: () => Effect.void,
+              onSome: (removed) =>
+                sql.afterCommit(
+                  telemetry.record({
+                    event: "connector.removed",
+                    properties: {
+                      source: removed.listing === null ? "custom" : "catalog",
+                      hasApp:
+                        removed.tools?.some((tool) => toolUiOf(tool.ui).resourceUri !== null) ??
+                        false,
+                    },
+                  }),
+                ),
+            }),
+          ),
+        ),
       });
       // Safe to repeat: a retry after a lost reply finishes what the first left.
       yield* forget(input.connectorId);

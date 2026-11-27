@@ -115,6 +115,8 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
           J3_TOOL_PORT: String(yield* freePort),
           J3_ENGINE_PORT: String(yield* freePort),
           J3_SCRIPTED_AGENT: path.resolve(SCRIPTED_AGENT),
+          // A runner's CI variables are left out above, and a test install is not one to count.
+          DO_NOT_TRACK: "1",
         };
         // The engine starts each provider in a systemd scope of the user's manager.
         for (const name of ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) {

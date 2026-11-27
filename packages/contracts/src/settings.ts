@@ -2,6 +2,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Label, MAX_LABEL_LENGTH, PositiveInt } from "./base.ts";
+import { TelemetrySetting } from "./telemetry.ts";
 import { UpdateChannel } from "./update.ts";
 import { VoiceSettings, VoiceSettingsChange } from "./voice.ts";
 
@@ -142,6 +143,13 @@ export const Settings = Schema.Struct({
    * then offers only what its own device recognizes.
    */
   voice: Schema.NullOr(VoiceSettings).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * Anonymous usage data: the operator's switch, on by default, and whether
+   * the server's environment keeps it off anyway (decision 0099). Absent from
+   * a server that predates it, which sends none; a client then shows no
+   * switch and sends it no event.
+   */
+  telemetry: Schema.optionalKey(TelemetrySetting),
 });
 export type Settings = typeof Settings.Type;
 
@@ -171,5 +179,10 @@ export const SettingsChange = Schema.Struct({
    * take the rest of the change and drop it.
    */
   voice: Schema.optionalKey(VoiceSettingsChange),
+  /**
+   * The usage data switch. Sent only to a server whose settings carry
+   * `telemetry`: an older one would take the rest of the change and drop it.
+   */
+  telemetry: Schema.optionalKey(Schema.Boolean),
 });
 export type SettingsChange = typeof SettingsChange.Type;

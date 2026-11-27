@@ -190,7 +190,12 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
     Option.match(decodeModelId(model.slug), {
       onNone: () => [],
       onSome: (id) => [
-        { id, name: model.name.slice(0, MAX_LABEL_LENGTH), efforts: effortsOf(model) },
+        {
+          id,
+          name: model.name.slice(0, MAX_LABEL_LENGTH),
+          efforts: effortsOf(model),
+          ...(model.isCustom ? { custom: true as const } : {}),
+        },
       ],
     }),
   );

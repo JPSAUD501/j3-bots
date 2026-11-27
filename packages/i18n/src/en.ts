@@ -980,7 +980,7 @@ export const en = {
   "settings.devices.paired": "Paired devices",
   "settings.thisPhone": "This phone",
   "settings.where.description": "Where your bots run, and moving them.",
-  "settings.about.description": "The versions you run, and updating them.",
+  "settings.about.description": "The versions you run, updating them, and usage data.",
   "settings.needsYou": "Needs you",
   "settings.appearance": "Appearance",
   "settings.language": "Language",
@@ -2079,7 +2079,6 @@ export const en = {
   "desktop.tray.phoneOn": "Phone access on",
   "settings.about": "About and updates",
 
-  "diagnostics.title": "Diagnostics",
   "diagnostics.hint": "A file that says how the server runs, for whoever helps you with a problem.",
   "diagnostics.download": "Download diagnostics",
   "diagnostics.sheet.title": "Download diagnostics",
@@ -2090,6 +2089,7 @@ export const en = {
   "diagnostics.sheet.inside.failures": "What failed, and when",
   "diagnostics.sheet.inside.setup":
     "Versions, settings, and how many bots, rooms and routines there are",
+  "diagnostics.sheet.inside.usageData": "Whether usage data is on, and what it last sent",
   "diagnostics.sheet.never": "Never in it",
   "diagnostics.sheet.never.messages": "Your messages",
   "diagnostics.sheet.never.names": "Names of bots, rooms or people",
@@ -2099,6 +2099,18 @@ export const en = {
   "diagnostics.sheet.share": "Share",
   "diagnostics.sheet.preparing": "Preparing…",
   "diagnostics.sheet.failed": "Couldn’t get the file from the server. Try again.",
+  "usageData.switch": "Share anonymous usage data",
+  "usageData.body":
+    "Tells the people who make J3 Bots which features get used and what goes wrong. Never what you or your bots write, names, files or addresses.",
+  "usageData.heldOff": "Turned off on the server’s computer, which overrides this switch.",
+  "usageData.learnMore": "What’s shared, and what never is",
+  "usageData.seeSent": "See what is sent",
+  "usageData.sent.title": "What was sent",
+  "usageData.sent.description": "The last events this server sent, exactly as they left it.",
+  "usageData.sent.empty": "Nothing has been sent yet.",
+  "usageData.sent.failed": "Couldn’t read what was sent. Try again.",
+  "usageData.sent.retry": "Try again",
+  "usageData.sent.close": "Close",
 
   "serverUpdate.title": "The server",
   "serverUpdate.runs": "J3 Bots {version}",
@@ -2172,6 +2184,7 @@ export const en = {
 
   "about.server": "The server",
   "about.thisApp": "This app",
+  "about.privacy": "Privacy",
   "phoneUpdate.unchecked": "Not checked for updates yet.",
   "phoneUpdate.available": "J3 Bots {version} is available for this app.",
   "phoneUpdate.available.hint":

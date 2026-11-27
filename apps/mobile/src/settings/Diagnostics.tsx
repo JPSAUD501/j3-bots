@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
+import { useJ3Client } from "@j3-bots/client-runtime/react";
 import {
   DIAGNOSTICS_MEDIA_TYPE,
   type DiagnosticsClient,
@@ -12,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
 import { View } from "react-native";
-import { Problem, Quiet, Section } from "../components/form.tsx";
+import { Problem, Quiet } from "../components/form.tsx";
 import { Sheet } from "../components/Sheet.tsx";
 import { useI18n } from "../i18n.ts";
 import { shareAppFiles } from "../platform/openFile.ts";
@@ -32,18 +32,16 @@ const client: DiagnosticsClient = {
 };
 
 /**
- * Settings → About's row for the server's diagnostics zip, from a server
- * that makes one: what it is for, and Download diagnostics, which opens the
- * sheet that says what is in it. Share gets the file and hands it to the
- * system's share sheet, for the operator to send where they choose.
+ * The About page's privacy area's row for the server's diagnostics zip, on a
+ * server that makes one: what it is for, and Download diagnostics, which
+ * opens the sheet that says what is in it. Share gets the file and hands it
+ * to the system's share sheet, for the operator to send where they choose.
  */
-export function DiagnosticsSection() {
+export function DiagnosticsRow() {
   const { t } = useI18n();
   const j3 = useJ3Client();
-  const server = useReadable(j3.server);
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<SheetState>("ready");
-  if (server?.diagnostics === undefined) return null;
   const close = () => {
     if (state === "preparing") return;
     setOpen(false);
@@ -71,7 +69,7 @@ export function DiagnosticsSection() {
       });
   };
   return (
-    <Section open title={t("diagnostics.title")}>
+    <View className="gap-2">
       <Quiet>{t("diagnostics.hint")}</Quiet>
       <View className="items-start">
         <Button
@@ -115,6 +113,7 @@ export function DiagnosticsSection() {
               t("diagnostics.sheet.inside.logs"),
               t("diagnostics.sheet.inside.failures"),
               t("diagnostics.sheet.inside.setup"),
+              t("diagnostics.sheet.inside.usageData"),
             ]}
           />
           <SheetList
@@ -128,7 +127,7 @@ export function DiagnosticsSection() {
           <Problem>{state === "failed" ? t("diagnostics.sheet.failed") : null}</Problem>
         </View>
       </Sheet>
-    </Section>
+    </View>
   );
 }
 

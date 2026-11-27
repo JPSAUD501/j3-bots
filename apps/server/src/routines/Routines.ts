@@ -51,6 +51,7 @@ import { RUN_COLUMNS, RunRow, runView } from "./runView.ts";
 import { plannedRun } from "./schedule.ts";
 import { Scheduler } from "./Scheduler.ts";
 import { WEBHOOK_PATH } from "./webhook.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 
 /** The bytes of a webhook's secret: 256 bits, drawn once per webhook trigger. */
 const SECRET_BYTES = 32;
@@ -279,7 +280,13 @@ export const layer = Layer.effect(
     const routineRuns = yield* RoutineRuns;
     const stops = yield* Stops;
     const view = runView(sql);
-    const runStopper = runStops(sql, ledger, changes, runCards(sql, entries, changes));
+    const runStopper = runStops(
+      sql,
+      ledger,
+      changes,
+      runCards(sql, entries, changes),
+      yield* Telemetry,
+    );
     const scheduler = yield* Scheduler;
     const network = yield* Network;
     const listener = yield* Listener;

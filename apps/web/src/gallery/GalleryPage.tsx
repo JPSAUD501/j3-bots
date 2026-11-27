@@ -91,6 +91,7 @@ import {
   type RecentTurnsState,
   type Revealed,
   type RoutineCardCommand,
+  type SettingsSaves,
   type SignInView,
 } from "@j3-bots/client-runtime";
 import {
@@ -230,6 +231,7 @@ import type {
   DiagnosticsIntents,
   RemoteServerUpdate,
 } from "../shell/data";
+import { PrivacySection } from "../components/Privacy";
 import { DiagnosticsSheet, type DiagnosticsSheetState } from "../components/Diagnostics";
 import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
@@ -259,6 +261,8 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
+import { sampleSentEvents } from "./usageData";
+import { SentPanel } from "../components/UsageData";
 import { useSampleSecrets } from "./sampleSecrets";
 import { ordered, withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
@@ -380,6 +384,7 @@ export default function GalleryPage() {
                 <EngineSettingsSection />
                 <SecretsGallerySection />
                 <UsageGallerySection />
+                <PrivacyGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
                 <FirstRunWideSection />
@@ -388,7 +393,6 @@ export default function GalleryPage() {
                 <WhereBotsLiveSection />
                 <PhoneAccessSection />
                 <UpdatesGallerySection />
-                <DiagnosticsGallerySection />
                 <QuickAccessSection />
                 <ShellSection />
               </div>
@@ -4362,6 +4366,113 @@ function SecretsGallerySection() {
   );
 }
 
+/** A diagnostics zip that never arrives: the gallery has no server to make one. */
+const sampleDiagnostics: DiagnosticsIntents = { save: () => Promise.resolve(false) };
+
+/**
+ * The About page's privacy area, on a server whose `telemetry` is `setting`,
+ * with `save`, and which makes a diagnostics zip.
+ */
+function PrivacyFrame({
+  label,
+  setting,
+  save = { _tag: "idle" },
+  connected = true,
+}: {
+  label: string;
+  setting: { readonly enabled: boolean; readonly heldOff: boolean };
+  save?: SettingsSaves["usage-data"];
+  connected?: boolean;
+}) {
+  return (
+    <Frame label={label} width={390} height={340} padded>
+      <PrivacySection
+        settings={{ ...team.settings, telemetry: setting }}
+        save={save}
+        connected={connected}
+        intents={{
+          updateSettings: nothing,
+          usageData: { sent: () => Promise.resolve(sampleSentEvents), record: nothing },
+        }}
+        diagnostics={sampleDiagnostics}
+      />
+    </Frame>
+  );
+}
+
+/** The sheet before Download diagnostics saves, as its popup shows it, in `state`. */
+function DiagnosticsSheetFrame({ label, state }: { label: string; state: DiagnosticsSheetState }) {
+  return (
+    <Frame label={label} width={390} height={460}>
+      <div className="flex h-full items-center bg-scrim p-4">
+        <div className="w-full rounded-xl border border-border bg-surface p-5 shadow-overlay">
+          <DiagnosticsSheet
+            titleId={`diagnostics-${state}`}
+            state={state}
+            onSave={nothing}
+            onCancel={nothing}
+          />
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
+function PrivacyGallerySection() {
+  return (
+    <Section title="Settings → About: privacy (usage data and diagnostics)">
+      <div className="flex flex-wrap gap-4">
+        <PrivacyFrame
+          label="On, as a new install starts"
+          setting={{ enabled: true, heldOff: false }}
+        />
+        <PrivacyFrame label="Usage data turned off" setting={{ enabled: false, heldOff: false }} />
+        <PrivacyFrame
+          label="Turning off: the switch shows the save under way"
+          setting={{ enabled: true, heldOff: false }}
+          save={{ _tag: "saving", changes: { enabled: false } }}
+        />
+        <PrivacyFrame
+          label="The save failed"
+          setting={{ enabled: true, heldOff: false }}
+          save={{ _tag: "failed", changes: { enabled: false } }}
+        />
+        <PrivacyFrame
+          label="Held off on the server's computer (DO_NOT_TRACK, CI, or J3_TELEMETRY_ENABLED)"
+          setting={{ enabled: true, heldOff: true }}
+        />
+        <Frame label="See what is sent" width={448} height={640}>
+          <SentPanel
+            titleId="gallery-usage-sent"
+            sent={{ _tag: "read", events: sampleSentEvents }}
+            onRetry={nothing}
+            onClose={nothing}
+          />
+        </Frame>
+        <Frame label="See what is sent: nothing yet" width={448} height={260}>
+          <SentPanel
+            titleId="gallery-usage-sent-empty"
+            sent={{ _tag: "read", events: [] }}
+            onRetry={nothing}
+            onClose={nothing}
+          />
+        </Frame>
+        <Frame label="See what is sent: the read failed" width={448} height={260}>
+          <SentPanel
+            titleId="gallery-usage-sent-failed"
+            sent={{ _tag: "failed" }}
+            onRetry={nothing}
+            onClose={nothing}
+          />
+        </Frame>
+        <DiagnosticsSheetFrame label="Diagnostics: what is in it, and Save" state="ready" />
+        <DiagnosticsSheetFrame label="Diagnostics: the server makes the file" state="preparing" />
+        <DiagnosticsSheetFrame label="Diagnostics: the file did not arrive" state="failed" />
+      </div>
+    </Section>
+  );
+}
+
 function UsageGallerySection() {
   const usage = (
     engine: EngineStatus | null,
@@ -5625,71 +5736,18 @@ function UpdatesFrame({
   server,
   app,
   local,
-  diagnostics,
   height = 420,
 }: {
   label: string;
   server?: RemoteServerUpdate;
   app?: DesktopUpdate;
   local?: DesktopLocal;
-  diagnostics?: DiagnosticsIntents;
   height?: number;
 }) {
   return (
     <Frame label={label} width={390} height={height} padded>
-      <UpdatesSection
-        server={server}
-        app={app}
-        local={local}
-        onUpdate={nothing}
-        diagnostics={diagnostics}
-      />
+      <UpdatesSection server={server} app={app} local={local} onUpdate={nothing} />
     </Frame>
-  );
-}
-
-/** A diagnostics zip that never arrives: the gallery has no server to make one. */
-const sampleDiagnostics: DiagnosticsIntents = { save: () => Promise.resolve(false) };
-
-/** The sheet before Download diagnostics saves, as its popup shows it, in `state`. */
-function DiagnosticsSheetFrame({ label, state }: { label: string; state: DiagnosticsSheetState }) {
-  return (
-    <Frame label={label} width={390} height={460}>
-      <div className="flex h-full items-center bg-scrim p-4">
-        <div className="w-full rounded-xl border border-border bg-surface p-5 shadow-overlay">
-          <DiagnosticsSheet
-            titleId={`diagnostics-${state}`}
-            state={state}
-            onSave={nothing}
-            onCancel={nothing}
-          />
-        </div>
-      </div>
-    </Frame>
-  );
-}
-
-function DiagnosticsGallerySection() {
-  return (
-    <Section title="Settings → About: the server's diagnostics" stacked>
-      <div className="flex flex-wrap gap-4">
-        <UpdatesFrame
-          label="In a browser, on a server that makes diagnostics"
-          server={serverUpdate(said(serverStatuses.upToDate))}
-          diagnostics={sampleDiagnostics}
-        />
-        <UpdatesFrame
-          label="On the desktop: the app's update, then diagnostics"
-          server={serverUpdate(said(serverStatuses.upToDate))}
-          app={appUpdate(appPhases.upToDate)}
-          diagnostics={sampleDiagnostics}
-          height={520}
-        />
-        <DiagnosticsSheetFrame label="The sheet: what is in it, and Save" state="ready" />
-        <DiagnosticsSheetFrame label="The sheet: the server makes the file" state="preparing" />
-        <DiagnosticsSheetFrame label="The sheet: the file did not arrive" state="failed" />
-      </div>
-    </Section>
   );
 }
 

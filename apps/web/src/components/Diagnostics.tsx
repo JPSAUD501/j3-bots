@@ -11,9 +11,9 @@ import { alertDialog, dialogBackdrop, dialogTitle } from "./ui/dialog";
 export type DiagnosticsSheetState = "ready" | "preparing" | "failed";
 
 /**
- * Settings → About's row for the server's diagnostics zip: what it is for,
- * and Download diagnostics, which opens the sheet that says what is in it
- * before anything is saved.
+ * The About page's privacy area's row for the server's diagnostics zip: what
+ * it is for, and Download diagnostics, which opens the sheet that says what
+ * is in it before anything is saved.
  */
 export function DiagnosticsRow({ diagnostics }: { diagnostics: DiagnosticsIntents }) {
   const { t } = useI18n();
@@ -30,7 +30,6 @@ export function DiagnosticsRow({ diagnostics }: { diagnostics: DiagnosticsIntent
   };
   return (
     <div className="flex flex-col items-start gap-1.5">
-      <h4 className="text-xs font-medium">{t("diagnostics.title")}</h4>
       <p className="text-2xs text-muted-foreground">{t("diagnostics.hint")}</p>
       <Dialog.Root
         open={open}
@@ -95,6 +94,7 @@ export function DiagnosticsSheet({
           t("diagnostics.sheet.inside.logs"),
           t("diagnostics.sheet.inside.failures"),
           t("diagnostics.sheet.inside.setup"),
+          t("diagnostics.sheet.inside.usageData"),
         ]}
       />
       <SheetList

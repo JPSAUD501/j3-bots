@@ -430,7 +430,7 @@ The bots add, change and remove MCP servers and skills ([decision 0049](../decis
 
 - Conversations, rooms and memory are the operator's data, stored on their disk, in the clear.
 - Server logs record wakes, dispatches and outcomes with identifiers, not message text, and, for each provider the engine cannot run, the engine's account of why, with J3 Bots' secrets taken out ([The harnesses](#the-harnesses)).
-- No telemetry leaves the machine by default.
+- Anonymous usage data leaves the machine by default, sent by the server alone, until the operator turns it off in Settings or with `DO_NOT_TRACK` or `J3_TELEMETRY_ENABLED=false`. Every event and every property is a closed set of words, a boolean, a bucketed count or a version, checked against the contract before it leaves, so no text, name, path, address, id or secret can be one; the install and each device are told apart by the hash of a random id. The newest 100 events sent are kept, as they left, for the operator to read ([Server: usage data](server.md#usage-data), [decision 0099](../decisions/0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md)). The engine's own analytics and tracing are always off ([Engine](engine.md)).
 - The server keeps a copy of its log in its home (`logs/`), private to the server's user like the rest of it, at most 20 MiB. Its writes follow the home's rule for private state ([Server: data](server.md#data)): the folder is checked before each write, and a link at the file's name is refused rather than followed, except on Windows, which has no such open.
 
 ### The diagnostics zip
@@ -438,6 +438,7 @@ The bots add, change and remove MCP servers and skills ([decision 0049](../decis
 A diagnostics zip ([decision 0100](../decisions/0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md), [Server: diagnostics](server.md#diagnostics)) is made to leave the machine: the operator sends it to someone they choose. So what goes in it is chosen for that.
 
 - **No message, entry body, memory, file or name is read into it.** Failures carry their kind and ids; counts are numbers; the words taught to dictation are a count.
+- **Usage data enters as it left.** Its events are typed so that no text or name can be one ([decision 0099](../decisions/0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md)), and they go through the scrubber like every other file, which takes their hashed ids out too. The install's own random id is never read into the zip.
 - **Logs are allow-listed.** The server's log enters only as lines that decode as its own shape, without the annotations that name something of the operator's network, as the name a refused request asked for. The engine's log enters only in J3 Bots' own shape, without the span attributes the engine records.
 - **One scrubber goes over every file.** It takes out:
   - every value the server holds as a secret, the engine's included, read fresh for each zip; of a record kept as a JSON document, only the values typed as secret;

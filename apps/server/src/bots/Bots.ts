@@ -58,6 +58,8 @@ import { type BotChanges, BotStore, type Chooser, type StoredBot } from "./BotSt
 import { EngineSessions } from "./EngineSessions.ts";
 import { SKILL_FILE } from "./Templates.ts";
 import { Workspaces } from "./Workspaces.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
+import { harnessOf } from "../telemetry/events.ts";
 import {
   type Shown,
   visibilityCommand,
@@ -239,6 +241,7 @@ export const layer = Layer.effect(
     const attachments = yield* Attachments;
     const sessions = yield* EngineSessions;
     const engineState = yield* EngineState;
+    const telemetry = yield* Telemetry;
     const workspaces = yield* Workspaces;
     const receipts = yield* CommandReceipts;
     const changes = yield* ChangeLog;
@@ -587,6 +590,16 @@ export const layer = Layer.effect(
               yield* Ref.set(started, Option.some(id));
               if (input.madeBy !== null) yield* input.madeBy.claim(id);
               if (draft.primary === true) yield* makePrimary(at);
+              yield* sql.afterCommit(
+                telemetry.record({
+                  event: "bot.created",
+                  properties: {
+                    harness: harnessOf(status, model.providerId),
+                    fromTemplate: input.fromTemplate,
+                    by: input.madeBy === null ? "operator" : "bot",
+                  },
+                }),
+              );
               yield* store.insert({
                 id,
                 profile: {

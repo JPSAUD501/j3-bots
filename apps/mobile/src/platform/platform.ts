@@ -30,6 +30,7 @@ import { AppState } from "react-native";
 import { makeSession } from "../session.ts";
 import { phoneTimeZone } from "./timeZone.ts";
 import { forgetDocuments } from "./documents.ts";
+import { identity } from "./identity.ts";
 import { forgetImages } from "./images.ts";
 import { forgetOpenedFiles } from "./openFile.ts";
 import { endPush } from "./push.ts";
@@ -186,6 +187,7 @@ const makePlatform = (origin: URL): Layer.Layer<Platform> =>
     network,
     lifecycle,
     timeZone,
+    identity,
     FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, nativeFetch))),
     Socket.layerWebSocketConstructorGlobal,
     secureRandom,
