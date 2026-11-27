@@ -48,6 +48,8 @@ export const Resource = Schema.Literals([
   "skill",
   /** A connector's app, which only `connectorApp` requests, new in 0.9.0, name. */
   "connector-app",
+  /** A saved theme, which only theme requests, new in 0.15.0, name. */
+  "theme",
 ]);
 export type Resource = typeof Resource.Type;
 
@@ -223,6 +225,11 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
      * older client never sends one.
      */
     "quotes",
+    /**
+     * The theme cannot be one: `@j3-bots/design-tokens` refused its
+     * definition. Only `theme.save`, new in 0.15.0, answers it.
+     */
+    "theme",
   ]),
 }) {
   override get message(): string {
