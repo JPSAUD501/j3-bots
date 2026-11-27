@@ -1985,9 +1985,7 @@ export const layer = Layer.effect(
             .open({
               name: input.name,
               members: [found.botId, ...members],
-              // A room of bots only lands among the hidden conversations
-              // unless the bot shows it (decision 0103).
-              hidden: input.hidden ?? !input.with_user,
+              hidden: !input.listed,
               botsOnly: !input.with_user,
               madeBy: found.botId,
             })
@@ -2039,9 +2037,9 @@ export const layer = Layer.effect(
             note:
               posted?.note ??
               [
-                room.hidden
-                  ? "The room is among your user's hidden conversations, and the members the kickoff wakes answer it there."
-                  : "The room is in your user's list, and the members the kickoff wakes answer it there.",
+                input.listed
+                  ? "The room is in your user's list, and the members the kickoff wakes answer it there."
+                  : "The room is behind the scenes, out of your user's list, and the members the kickoff wakes answer it there.",
                 ...(input.with_user
                   ? []
                   : [

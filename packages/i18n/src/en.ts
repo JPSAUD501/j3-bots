@@ -6,6 +6,8 @@
  */
 export const en = {
   "bot.unknown": "A deleted bot",
+  "bot.nameAndTitle": "{name} · {title}",
+  "bot.primaryTitle": "Main assistant",
   "room.unknown": "A deleted room",
 
   "avatar.shape": "Shape",
@@ -60,6 +62,7 @@ export const en = {
   "roster.newSection": "New section",
   "roster.moveToSection": "Move to section",
   "roster.leaveSection": "Take out of {section}",
+  "roster.giveTitle": "Give a title",
   "roster.makePrimary": "Make primary bot",
   "roster.replacePrimary": "Replace primary bot…",
   "roster.replacePrimary.title": "Make {name} your primary bot?",
@@ -67,8 +70,8 @@ export const en = {
     "Requests that belong to nobody will go to {name}. {previous} stays on the team as an ordinary bot.",
   "roster.replacePrimary.confirm": "Make {name} primary",
   "roster.replacePrimary.cancel": "Keep {previous}",
-  "roster.hide": "Hide",
-  "roster.unhide": "Show",
+  "backstage.move": "Move behind the scenes",
+  "backstage.bringBack": "Bring back to the list",
   "roster.more": "More",
   "roster.openDetails": "Details",
   "roster.changeFailed": "That change didn’t save. Try again.",
@@ -82,13 +85,14 @@ export const en = {
   "roster.section.delete.title": "Delete “{section}”?",
   "roster.section.delete.body": "Its bots stay, back in the main list.",
   "roster.section.delete.cancel": "Keep it",
-  "roster.hidden": "Hidden conversations",
-  "roster.hidden.back": "Back to bots and rooms",
-  "roster.hidden.empty": "No hidden conversations.",
+  "backstage.title": "Behind the scenes",
+  "backstage.row": "Behind the scenes · {count}",
+  "backstage.back": "Back to bots and rooms",
+  "backstage.empty": "Nothing behind the scenes.",
   "roster.menu.back": "Back",
-  "roster.hidden.count.one": "{count} hidden conversation",
-  "roster.hidden.count.other": "{count} hidden conversations",
-  "roster.hidden.unhideName": "Show {name}",
+  "backstage.count.one": "{count} conversation behind the scenes",
+  "backstage.count.other": "{count} conversations behind the scenes",
+  "backstage.bringBackName": "Bring {name} back to the list",
   "roster.section": "Section {name}",
   "roster.section.count.one": "{count} bot",
   "roster.section.count.other": "{count} bots",
@@ -1766,13 +1770,16 @@ export const en = {
   "empty.gone.back": "Back to the list",
 
   "newBot.title": "New bot",
-  "newBot.body": "Give it a name. It will ask what you want it for, one question at a time.",
+  "newBot.body":
+    "Give it a name, and a title that says in a few words what it is for. It will ask the rest, one question at a time.",
+  "newBot.titleField": "Title",
+  "newBot.titleField.placeholder": "What it’s for, such as Instagram posts",
   "newBot.cancel": "Cancel",
 
-  "visibility.hide": "Hide from the list",
-  "visibility.hide.hint":
-    "It goes to Hidden conversations, which you can open at any time. It keeps working and notifying you.",
-  "visibility.notice": "This conversation is hidden from your list.",
+  "backstage.keep": "Keep behind the scenes",
+  "backstage.keep.hint":
+    "Out of your conversation list, under Behind the scenes, which you can open at any time. It keeps working and notifying you.",
+  "backstage.notice": "This conversation is behind the scenes, out of your list.",
 
   "roster.newFromTemplate": "New bot from a template",
   "details.shareTemplate": "Share as template…",
@@ -1796,6 +1803,7 @@ export const en = {
   "template.part.routine": "the routine “{name}”",
   "template.close": "Close",
   "template.create.title": "New bot from a template",
+  "template.create.title.label": "A title for {name}: what it is for, in a few words",
   "template.create.body":
     "This is everything {name} will be and do. Nothing is created until you choose Create.",
   "template.create.untrusted":
@@ -1843,7 +1851,8 @@ export const en = {
   "editBot.name.required": "A bot needs a name.",
   "editBot.tooLong": "Use {max} characters at most.",
   "editBot.titleField": "Title",
-  "editBot.titleField.placeholder": "Such as Research",
+  "editBot.titleField.placeholder": "Such as Bakery competitors",
+  "editBot.title.required": "A bot needs a title: what it is for, in a few words.",
   "editBot.job": "Job",
   "editBot.job.hint": "What {name} is for and where its limits are, in plain words.",
   "editBot.model": "Model",

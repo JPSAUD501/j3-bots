@@ -17,20 +17,26 @@ type FormState =
   | { readonly _tag: "failed" };
 
 /**
- * A name, a look, whether the bot becomes the primary one, and whether it
- * starts among the hidden conversations; the bot asks the rest itself. The look starts as the one the server would give it, which
- * sits apart from the bots there are. `onCreated` gets the new bot once it exists.
+ * A name, a title, a look, whether the bot becomes the primary one, and
+ * whether it stays behind the scenes; the bot asks the rest itself. The name
+ * makes it a person and the title says what it is for, so Create needs both;
+ * pressed with a name and no title, it says the title is missing. The look
+ * starts as the one the server would give it, which sits apart from the bots
+ * there are. `onCreated` gets the new bot once it exists.
  */
 export function NewBotForm(props: {
   readonly onCreated: (botId: BotId) => void;
-  /** Told whether a name is typed and not created yet. */
-  readonly onNameChange?: (typed: boolean) => void;
+  /** Told whether a name or a title is typed and not created yet. */
+  readonly onTypedChange?: (typed: boolean) => void;
   /** Before Create, as Cancel; absent where there is nothing to go back to. */
   readonly cancel?: ReactNode;
 }) {
   const { t } = useI18n();
   const client = useJ3Client();
   const [name, setName] = useState("");
+  const [title, setTitle] = useState("");
+  // Said once Create was pressed without a title, until one is typed.
+  const [titleMissing, setTitleMissing] = useState(false);
   const [primary, setPrimary] = useState(false);
   const [hidden, setHidden] = useState(false);
   const bots = useBots();
@@ -44,7 +50,8 @@ export function NewBotForm(props: {
       ? state.avatar
       : (picked ?? freeAvatar([...bots.values()].map((bot) => bot.profile.avatar)));
   const trimmed = name.trim();
-  const ready = trimmed !== "" && state._tag !== "creating";
+  const trimmedTitle = title.trim();
+  const ready = trimmed !== "" && trimmedTitle !== "" && state._tag !== "creating";
   return (
     <View className="gap-4">
       <TextField
@@ -56,7 +63,20 @@ export function NewBotForm(props: {
         readOnly={state._tag === "creating"}
         onChange={(text) => {
           setName(text);
-          props.onNameChange?.(text.trim() !== "");
+          props.onTypedChange?.(text.trim() !== "" || trimmedTitle !== "");
+        }}
+      />
+      <TextField
+        label={t("newBot.titleField")}
+        value={title}
+        placeholder={t("newBot.titleField.placeholder")}
+        maxLength={PROFILE_LIMITS.title}
+        readOnly={state._tag === "creating"}
+        error={titleMissing ? t("editBot.title.required") : null}
+        onChange={(text) => {
+          setTitle(text);
+          setTitleMissing(false);
+          props.onTypedChange?.(trimmed !== "" || text.trim() !== "");
         }}
       />
       <AvatarPicker
@@ -73,8 +93,8 @@ export function NewBotForm(props: {
         onChange={setPrimary}
       />
       <SwitchRow
-        label={t("visibility.hide")}
-        hint={t("visibility.hide.hint")}
+        label={t("backstage.keep")}
+        hint={t("backstage.keep.hint")}
         value={hidden}
         readOnly={state._tag === "creating"}
         onChange={setHidden}
@@ -85,11 +105,18 @@ export function NewBotForm(props: {
         <Button
           variant="primary"
           label={t("firstRun.create.submit")}
-          disabled={!ready}
+          disabled={trimmed === "" || state._tag === "creating"}
           onPress={() => {
+            if (trimmedTitle === "") setTitleMissing(true);
             if (!ready) return;
             setState({ _tag: "creating", avatar });
-            const draft = { name: trimmed, primary, avatar, ...(hidden ? { hidden } : {}) };
+            const draft = {
+              name: trimmed,
+              title: trimmedTitle,
+              primary,
+              avatar,
+              ...(hidden ? { hidden } : {}),
+            };
             void client.createBot(draft).then((result) => {
               // A created bot opens, which takes the form off the screen: until then it stays
               // creating, so Create cannot make a second bot.

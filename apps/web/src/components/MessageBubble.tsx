@@ -140,8 +140,8 @@ export function MessageBubble({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const bots = useBots();
-  const speakerName =
-    speaker === null ? null : (bots.get(speaker)?.profile.name ?? t("bot.unknown"));
+  const speakerProfile = speaker === null ? null : (bots.get(speaker)?.profile ?? null);
+  const speakerName = speaker === null ? null : (speakerProfile?.name ?? t("bot.unknown"));
   const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
   const time = clockTime(message.createdAt, ctx);
@@ -229,7 +229,12 @@ export function MessageBubble({
       )}
     >
       {speaker !== null && speakerName !== null && (
-        <SpeakerName position={position} name={speakerName} botId={speaker} />
+        <SpeakerName
+          position={position}
+          name={speakerName}
+          title={speakerProfile?.title ?? ""}
+          botId={speaker}
+        />
       )}
       {speaker !== null && (
         <SpeakerFace position={position} botId={speaker}>

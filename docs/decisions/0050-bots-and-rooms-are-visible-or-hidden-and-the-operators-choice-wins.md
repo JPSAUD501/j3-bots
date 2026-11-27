@@ -1,6 +1,6 @@
 # 0050: Bots and rooms are visible or hidden, and the operator's choice wins
 
-**Status:** Accepted
+**Status:** Accepted, amended by [0101](0101-a-bot-is-its-name-and-its-title-and-a-helper-waits-behind-the-scenes.md): the operator reads "behind the scenes" where this record says hidden, the bots' tools take a required `listed` and `set_listed` in place of `hidden` and `set_visibility`, and a helper a bot makes behind the scenes says no hello. The rest stands.
 
 ## Context
 

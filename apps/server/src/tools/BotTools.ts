@@ -431,14 +431,14 @@ export const layer = Layer.effect(
               name: bot.profile.name,
               title: bot.profile.title,
               job: bot.profile.job,
-              hidden: bot.hidden,
+              listed: !bot.hidden,
             }));
           const listed = (room: Room) => ({
             id: room.id,
             name: room.name,
             members: [...room.members],
             archived: room.status === "archived",
-            hidden: room.hidden,
+            listed: !room.hidden,
             // A room of bots only, which the operator reads and never writes in.
             withUser: room.botsOnly !== true,
           });
@@ -476,14 +476,25 @@ export const layer = Layer.effect(
               caller: call.caller,
               arguments: call.arguments,
               create: (madeBy) =>
-                bots.create({ commandId: commandIdOf(call.requestId), draft: input, madeBy }).pipe(
-                  Effect.map((bot) => bot.id),
-                  Effect.catchTags({
-                    NotFound: (error) => new TurnToolRefused({ reason: error.message }),
-                    Invalid: (error) => new TurnToolRefused({ reason: error.message }),
-                    Conflict: (error) => new TurnToolRefused({ reason: error.message }),
-                  }),
-                ),
+                bots
+                  .create({
+                    commandId: commandIdOf(call.requestId),
+                    draft: {
+                      name: input.name,
+                      title: input.title,
+                      ...(input.job === undefined ? {} : { job: input.job }),
+                      hidden: !input.listed,
+                    },
+                    madeBy,
+                  })
+                  .pipe(
+                    Effect.map((bot) => bot.id),
+                    Effect.catchTags({
+                      NotFound: (error) => new TurnToolRefused({ reason: error.message }),
+                      Invalid: (error) => new TurnToolRefused({ reason: error.message }),
+                      Conflict: (error) => new TurnToolRefused({ reason: error.message }),
+                    }),
+                  ),
             })
             .pipe(
               Effect.catchTags({
@@ -557,23 +568,25 @@ export const layer = Layer.effect(
       ),
       // A bot or a room, by its id: bots are looked up first, as ids of both
       // kinds are never the same (`Ids`). Both store one receipt
-      // (`visibilityCommand`), so a retry finds its result either way.
-      set_visibility: handler(tools.set_visibility.input, (input, call) =>
+      // (`visibilityCommand`), so a retry finds its result either way. The
+      // server keeps the operator's word for it, hidden; the bot reads listed.
+      set_listed: handler(tools.set_listed.input, (input, call) =>
         Effect.gen(function* () {
           const commandId = commandIdOf(call.requestId);
           const botId = BotId.make(input.id);
+          const hidden = !input.listed;
           if (Option.isSome(yield* store.find(botId))) {
             const shown = yield* bots
-              .showOrHide({ commandId, caller: call.caller.botId, botId, hidden: input.hidden })
+              .showOrHide({ commandId, caller: call.caller.botId, botId, hidden })
               .pipe(refuseFailure);
-            return { ...shown } satisfies Schema.Json;
+            return { id: shown.id, listed: !shown.hidden } satisfies Schema.Json;
           }
           const shown = yield* rooms
             .showOrHide({
               commandId,
               caller: call.caller.botId,
               roomId: RoomId.make(input.id),
-              hidden: input.hidden,
+              hidden,
             })
             .pipe(
               Effect.catchTag(
@@ -585,7 +598,7 @@ export const layer = Layer.effect(
               ),
               refuseFailure,
             );
-          return { ...shown } satisfies Schema.Json;
+          return { id: shown.id, listed: !shown.hidden } satisfies Schema.Json;
         }),
       ),
       update_profile: handler(tools.update_profile.input, (input, call) =>

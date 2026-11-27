@@ -434,7 +434,8 @@ export function BotCard({
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <h2 className="truncate text-base font-semibold">{name}</h2>
-          {title !== "" && <p className="truncate text-xs text-muted-foreground">{title}</p>}
+          {/* Two lines at most, as in the roster: what it is for is not cut short. */}
+          {title !== "" && <p className="line-clamp-2 text-xs text-muted-foreground">{title}</p>}
           {lines.status !== "working" && (
             <p className={cn("mt-0.5 text-xs", STATUS_TEXT[lines.status])}>{lines.statusText}</p>
           )}

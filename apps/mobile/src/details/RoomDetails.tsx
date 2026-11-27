@@ -16,7 +16,7 @@ import { useBots } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 import { useRoomPlacing } from "../screens/placing.ts";
 import { useRoomActions } from "./actions.ts";
-import { HiddenNotice } from "./HiddenNotice.tsx";
+import { BackstageNotice } from "./BackstageNotice.tsx";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
 
@@ -24,7 +24,7 @@ import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
  * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first; a
- * hidden room says so after it, with Show.
+ * room behind the scenes says so after it, with Bring back to the list.
  */
 export function RoomDetails({ room }: { readonly room: Room }) {
   const { t, plural } = useI18n();
@@ -105,7 +105,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         />
       )}
 
-      {room.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(room)} />}
+      {room.hidden && <BackstageNotice name={name} onBringBack={() => placing.bringBack(room)} />}
 
       <Section open title={t("room.membersTitle")}>
         {members.length === 0 ? (

@@ -190,7 +190,7 @@ export function sampleTeam(now: DateTime.Utc) {
     scout: bot(
       ids.scout,
       "Scout",
-      "Research",
+      "Product research",
       "dome",
       "tangerine",
       {
@@ -243,7 +243,7 @@ export function sampleTeam(now: DateTime.Utc) {
     maple: bot(
       ids.maple,
       "Maple",
-      "Groceries",
+      "Grocery prices at the three markets",
       "toes",
       "tomato",
       {

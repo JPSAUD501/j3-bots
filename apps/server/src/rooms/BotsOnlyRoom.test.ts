@@ -105,6 +105,7 @@ const startBotsOnly = (starter: Member, others: ReadonlyArray<Member>) =>
       members: others.map((one) => one.bot.id),
       kickoff: "Settle the launch plan: Pip the date, then me the checklist.",
       with_user: false,
+      listed: false,
     });
     return { roomId: decodeStarted(resultOf(started)).id, turnId };
   });
@@ -117,7 +118,7 @@ it.effect("starts a room of bots only on the operator's word, hidden, its member
 
     const room = Option.getOrThrow(yield* (yield* Rooms).find(roomId));
     assert.isTrue(room.botsOnly);
-    // It lands among the hidden conversations, as the bot did not show it.
+    // Behind the scenes, as the bot asked.
     assert.isTrue(room.hidden);
     yield* nextTurn(pip.bot.id);
     const envelope = yield* lastEnvelope(pip);
@@ -136,6 +137,7 @@ it.effect("starts no room whose call leaves out whether the operator takes part"
       name: "Launch plan",
       members: [pip.bot.id],
       kickoff: "Pip, the date.",
+      listed: true,
     });
 
     assert.include(refusalOf(started), "with_user");
@@ -237,6 +239,7 @@ const startForPip = (scout: Member, pip: Member, wren: Member) =>
       kickoff: "Pip the date, Wren the checklist.",
       mention: [pip.bot.id],
       with_user: false,
+      listed: false,
     });
     return { roomId: decodeStarted(resultOf(started)).id, turnId };
   });

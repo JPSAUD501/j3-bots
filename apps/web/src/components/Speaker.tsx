@@ -13,21 +13,28 @@ import { useBotCard } from "./BotCard";
  */
 export const speakerGutter = "relative ps-9";
 
-/** The speaker's name, over the first bubble of its run. */
+/**
+ * The speaker's name, and its title after it, over the first bubble of its
+ * run: who speaks and what they are there for, as on a team's chat.
+ */
 export function SpeakerName({
   position,
   name,
+  title,
   botId,
 }: {
   position: GroupPosition;
   name: string;
+  /** Empty for a bot that has none. */
+  title: string;
   botId: BotId;
 }) {
   const card = useBotCard(botId);
   if (position !== "single" && position !== "first") return null;
   return (
-    <span {...card.hover} className="ps-1 pt-1 text-xs font-medium text-muted-foreground">
-      {name}
+    <span {...card.hover} className="max-w-full truncate ps-1 pt-1 text-xs text-muted-foreground">
+      <span className="font-medium">{name}</span>
+      {title !== "" && <span> · {title}</span>}
     </span>
   );
 }

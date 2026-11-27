@@ -569,10 +569,7 @@ const namesMadeProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
 /** The bots made, as the judge reads them: each name with its title. */
 const madeForJudge = (calls: ReadonlyArray<Call>): string =>
   `Created ${botsMade(calls)
-    .map(
-      (made) =>
-        `${made.name}, titled ${made.title === undefined || made.title === "" ? "(none)" : made.title}`,
-    )
+    .map((made) => `${made.name}, titled ${made.title}`)
     .join("; ")}.`;
 
 const NAMED_LIKE_PEOPLE: Check = {
@@ -581,14 +578,31 @@ const NAMED_LIKE_PEOPLE: Check = {
   what: "every name as a Brazilian person's",
   asked: TEAM_ASKED,
   accept: [
-    "Created Bia, titled Pesquisa; Davi, titled Instagram.",
-    "Created Lívia, titled Concorrência; Rafa, titled Conteúdo.",
+    "Created Bia, titled Concorrentes das confeitarias; Davi, titled Posts do Instagram.",
+    "Created Lívia, titled Olho na concorrência; Rafa, titled Conteúdo do Instagram.",
   ],
   reject: [
     "Created Pesquisador, titled Pesquisa; Redator, titled Instagram.",
     "Created Scout, titled Pesquisa; Quill, titled Instagram.",
     "Created Ethan, titled Pesquisa; Madison, titled Instagram.",
     "Created Bia, titled Pesquisa; Docinho, titled Instagram.",
+  ],
+};
+
+const TITLED_FOR_THEIR_WORK: Check = {
+  question:
+    "Does every bot have a title of two to four words in Portuguese that says what it does for the user, with no tool, model or AI word in it, and do the titles tell the two bots' work apart?",
+  what: "every title as what the bot is for",
+  asked: TEAM_ASKED,
+  accept: [
+    "Created Bia, titled Concorrentes das confeitarias; Davi, titled Posts do Instagram.",
+    "Created Lívia, titled Olho na concorrência; Rafa, titled Conteúdo do Instagram.",
+  ],
+  reject: [
+    "Created Bia, titled Assistente; Davi, titled Assistente.",
+    "Created Bia, titled Competitor tracking; Davi, titled Instagram posts.",
+    "Created Bia, titled Agente de IA de pesquisa; Davi, titled Bot do Instagram.",
+    "Created Bia, titled Acompanha tudo o que as confeitarias concorrentes fazem na cidade; Davi, titled Posts.",
   ],
 };
 
@@ -1226,6 +1240,7 @@ const ROOM_STARTED: EarlierTurn = {
         kickoff:
           "This room tests the docs release before Friday. Ana: the search on the staging site. Bo: the changelog against the merged pull requests. Rui will say when the test starts; until then, just say you are ready.",
         with_user: true,
+        listed: true,
       },
       output: JSON.stringify({
         status: "started",
@@ -1631,6 +1646,7 @@ const CHECKS: ReadonlyArray<Check> = [
   CANCELS_BLINDLY,
   ALREADY_DELIVERED_SAID,
   NAMED_LIKE_PEOPLE,
+  TITLED_FOR_THEIR_WORK,
 ];
 
 /** Problems with a closing message the judge must read as `check` says, `expected` true or false. */
@@ -2048,7 +2064,7 @@ const cases: ReadonlyArray<Case> = [
     ],
   },
   {
-    name: "names the teammates it creates as people on its user's team, in their language",
+    name: "names and titles the teammates it creates as people on its user's team, in their language",
     scenario: {
       wake: teamWake,
       workspace: docsWorkspace(teamWake),
@@ -2064,6 +2080,13 @@ const cases: ReadonlyArray<Case> = [
           botsMade(calls).length === 0
             ? Effect.succeed(["made no bot"])
             : judged(NAMED_LIKE_PEOPLE, TEAM_ASKED, madeForJudge(calls)),
+      },
+      {
+        name: "titled for what each is for",
+        problems:
+          botsMade(calls).length === 0
+            ? Effect.succeed(["made no bot"])
+            : judged(TITLED_FOR_THEIR_WORK, TEAM_ASKED, madeForJudge(calls)),
       },
     ],
   },

@@ -231,20 +231,35 @@ export interface TemplateSubmission {
  * mode only when the operator picked one. Left untouched, the mode is the
  * server's to decide as the preview did (`templatePermissionMode`), from the
  * model's default when the bot is made, never a copy of what the preview
- * worked out before. Null while there is no model to make the bot on.
+ * worked out before. A template shared from a bot with no title takes the
+ * one the operator typed, `title`, since every bot the app creates has one
+ * (decision 0101). Null while there is no model to make the bot on, or no
+ * title to give it.
  */
+/**
+ * Whether a template's bot came without a title, so creating from it asks
+ * for one: a title of spaces alone counts as none.
+ */
+export const templateAsksTitle = (template: BotTemplate): boolean =>
+  template.profile.title.trim() === "";
+
 export const templateSubmission = (
   template: BotTemplate,
   start: TemplateStart,
   picked: PermissionMode | null,
-): TemplateSubmission | null =>
-  start.model._tag === "none"
-    ? null
-    : {
-        template,
-        model: start.model.choice,
-        ...(picked === null ? {} : { permissionMode: picked }),
-      };
+  title: string,
+): TemplateSubmission | null => {
+  const given = templateAsksTitle(template) ? title.trim() : template.profile.title;
+  if (start.model._tag === "none" || given === "") return null;
+  return {
+    template:
+      given === template.profile.title
+        ? template
+        : { ...template, profile: { ...template.profile, title: given } },
+    model: start.model.choice,
+    ...(picked === null ? {} : { permissionMode: picked }),
+  };
+};
 
 const startWith = (
   model: TemplateModel,

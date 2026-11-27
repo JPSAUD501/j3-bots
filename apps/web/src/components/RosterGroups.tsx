@@ -14,7 +14,7 @@ import {
 import { type BotItem, rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, EyeOffIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, TheaterIcon } from "lucide-react";
 import { type ComponentProps, type ReactElement, type ReactNode, useState } from "react";
 import { useBots, useI18n } from "../app/context";
 import { cn } from "../lib/cn";
@@ -112,6 +112,8 @@ function PinnedTile({ item, selected, render, ...props }: PinnedTileProps) {
           <span className={cn("truncate text-xs", item.unread ? "font-semibold" : "font-medium")}>
             {bot.profile.name}
           </span>
+          {/* The tile has room for the name alone; its title is still heard. */}
+          {bot.profile.title !== "" && <span className="sr-only">, {bot.profile.title}</span>}
           {item.unread && (
             <span className="size-1.5 shrink-0 rounded-pill bg-accent">
               <span className="sr-only">{t("roster.unread")}</span>
@@ -277,8 +279,8 @@ export function SectionBlock({
   );
 }
 
-/** The last row of the roster: how many bots and rooms are hidden, and the way to them. */
-export function HiddenRow({
+/** The last row of the roster: how many bots and rooms are behind the scenes, and the way to them. */
+export function BackstageRow({
   items,
   onOpen,
 }: {
@@ -293,53 +295,57 @@ export function HiddenRow({
       onClick={onOpen}
       className="pressable mt-2 flex h-10 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-start text-sm text-muted-foreground hover:bg-row-hover hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent pointer-coarse:h-(--layout-touch-target)"
     >
-      <EyeOffIcon aria-hidden className="size-4 shrink-0" />
-      <span className="min-w-0 flex-1 truncate">{t("roster.hidden")}</span>
+      <TheaterIcon aria-hidden className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate tabular-nums">
+        {t("backstage.row", { count: items.length })}
+      </span>
       {unread && (
         <span className="size-2 shrink-0 rounded-pill bg-accent">
           <span className="sr-only">{t("roster.unread")}</span>
         </span>
       )}
-      <span className="tabular-nums">{items.length}</span>
       <ChevronRightIcon aria-hidden className="size-4 shrink-0" />
     </button>
   );
 }
 
-/** The hidden bots and rooms, each still a way into its conversation, and each with Show. */
-export function HiddenConversations({
+/**
+ * The bots and rooms behind the scenes, each still a way into its
+ * conversation, and each with Bring back to the list.
+ */
+export function Backstage({
   items,
   selected,
   rowLink,
   onBack,
-  onShow,
+  onBringBack,
 }: {
   items: ReadonlyArray<RosterItem>;
   selected: RosterItemKey | null;
   rowLink: (item: RosterItem) => ReactElement;
   onBack: () => void;
-  onShow: (item: RosterItem) => void;
+  onBringBack: (item: RosterItem) => void;
 }) {
   const { t } = useI18n();
   const bots = useBots();
   return (
-    <section aria-labelledby="roster-hidden-title" className="appear">
+    <section aria-labelledby="roster-backstage-title" className="appear">
       <div className="flex items-center gap-1 pb-1">
         <Button
           variant="ghost-muted"
           size="icon-sm"
-          aria-label={t("roster.hidden.back")}
+          aria-label={t("backstage.back")}
           onClick={onBack}
         >
           <ChevronLeftIcon />
         </Button>
-        <h2 id="roster-hidden-title" className="text-sm font-semibold">
-          {t("roster.hidden")}
+        <h2 id="roster-backstage-title" className="text-sm font-semibold">
+          {t("backstage.title")}
         </h2>
       </div>
       {items.length === 0 ? (
         <p className="px-2.5 py-6 text-center text-sm text-muted-foreground">
-          {t("roster.hidden.empty")}
+          {t("backstage.empty")}
         </p>
       ) : (
         items.map((item) => (
@@ -355,12 +361,12 @@ export function HiddenConversations({
             <Button
               variant="secondary"
               size="sm"
-              aria-label={t("roster.hidden.unhideName", {
+              aria-label={t("backstage.bringBackName", {
                 name: item._tag === "bot" ? item.bot.profile.name : item.room.name,
               })}
-              onClick={() => onShow(item)}
+              onClick={() => onBringBack(item)}
             >
-              {t("roster.unhide")}
+              {t("backstage.bringBack")}
             </Button>
           </div>
         ))
