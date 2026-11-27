@@ -231,7 +231,14 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
   const settings = yield* SettingsService;
   const api = yield* feedBase;
   const downloads = yield* releaseBase;
-  const client = (yield* HttpClient.HttpClient).pipe(onlyToReleaseHosts([api, downloads]));
+  // Each answer belongs to the scope of the read that asked for it, which ends
+  // it however the read ends: unscoped, one left unread, by a refusal or an
+  // interruption such as the server's stop, stayed open until a garbage
+  // collection, and kept the stopped server's process alive.
+  const client = (yield* HttpClient.HttpClient).pipe(
+    onlyToReleaseHosts([api, downloads]),
+    HttpClient.withScope,
+  );
   const check = signatureCheck(yield* trustedReleaseKeys);
   const file = layout.releaseFeed;
 
@@ -367,7 +374,7 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
             Effect.mapError(unreadable),
           );
     return { etag: response.headers["etag"] ?? null, newest: Option.getOrNull(newest) };
-  });
+  }, Effect.scoped);
 
   /**
    * A file of the release tagged `tag`, from the folder its tag names; none
@@ -400,7 +407,7 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
       offset += chunk.byteLength;
     }
     return Option.some(body);
-  });
+  }, Effect.scoped);
 
   /** What `release`'s `SHA256SUMS` comes to: verified, with its evidence, or refused, with why. */
   const verify = Effect.fn("ReleaseFeed.verify")(function* (release: Candidate) {

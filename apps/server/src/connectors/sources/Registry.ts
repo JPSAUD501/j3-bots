@@ -156,7 +156,13 @@ const normalizeQuery = (query: string) => query.trim().toLowerCase().replace(/\s
 export const layer = Layer.effect(
   McpRegistry,
   Effect.gen(function* () {
-    const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+    // Each answer belongs to the scope of the read that asked for it, which
+    // ends it however the read ends: one refused or cut off at the size cap
+    // is never left open.
+    const client = (yield* HttpClient.HttpClient).pipe(
+      HttpClient.filterStatusOk,
+      HttpClient.withScope,
+    );
     const permits = yield* Semaphore.make(CONCURRENT_REQUESTS);
 
     /**
@@ -172,6 +178,7 @@ export const layer = Layer.effect(
           duration: timeout,
           orElse: () => Effect.fail(new RegistryUnavailable()),
         }),
+        Effect.scoped,
         Effect.catchTags({
           HttpClientError: (error) =>
             error.reason._tag === "StatusCodeError" && error.reason.response.status === 404

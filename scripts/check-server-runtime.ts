@@ -27,7 +27,11 @@ import {
   platformBuild,
 } from "./release-layout.ts";
 
-/** How long the server may take to answer /health, and then to stop. */
+/**
+ * How long the server may take to answer /health, and then to stop. A server
+ * still running 15 s after its stop began writes what keeps it running, which
+ * a stop that times out here prints with the rest of what it wrote.
+ */
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 30_000;
 

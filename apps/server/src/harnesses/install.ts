@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -93,46 +94,54 @@ export const installRelease = Effect.fn("harnesses.installRelease")(function* (i
 
   const limit = release.size ?? MAX_DOWNLOAD_BYTES;
   if (release.size === null || have < release.size) {
-    const response = yield* input.client
-      .execute(
-        HttpClientRequest.get(release.url).pipe(
-          have > 0 ? HttpClientRequest.setHeader("range", `bytes=${have}-`) : (request) => request,
-        ),
-      )
-      .pipe(Effect.mapError(unreachable));
-    // 416: what was kept is the whole file already; the digest says whether it is.
-    if (response.status !== 416) {
-      const appending = have > 0 && response.status === 206;
-      if (!appending && response.status !== 200) return yield* unreachable();
-      const from = appending ? have : 0;
-      const length = Number(response.headers["content-length"]);
-      const totalBytes =
-        release.size ?? (Number.isSafeInteger(length) && length >= 0 ? from + length : null);
-      let received = from;
-      let reportedAt: number | null = null;
-      yield* report({ _tag: "downloading", receivedBytes: received, totalBytes });
-      const arriving = response.stream.pipe(
-        Stream.mapError(unreachable),
-        Stream.mapEffect((chunk) =>
-          Effect.gen(function* () {
-            received += chunk.byteLength;
-            // More than the maker said it is: not the release.
-            if (received > limit) return yield* checksum();
-            const now = yield* Clock.currentTimeMillis;
-            if (reportedAt === null || now - reportedAt >= PROGRESS_INTERVAL_MS) {
-              reportedAt = now;
-              yield* report({ _tag: "downloading", receivedBytes: received, totalBytes });
-            }
-            return chunk;
-          }),
-        ),
-      );
-      // Written in place, so that a download cut off resumes; a link at its name is refused.
-      // A write that fails is the file system's, not the network's.
-      yield* writeInPlace(partial, appending, arriving).pipe(
-        Effect.catchTag("InPlaceFailure", writeFailed),
-      );
-    }
+    yield* Effect.gen(function* () {
+      // The answer belongs to this scope, which ends it however the download
+      // ends. Unscoped, a download interrupted after the answer came but
+      // before its body was read, as by the server's stop, left it open until
+      // a garbage collection: bytes still arriving that kept the process alive.
+      const response = yield* HttpClient.withScope(input.client)
+        .execute(
+          HttpClientRequest.get(release.url).pipe(
+            have > 0
+              ? HttpClientRequest.setHeader("range", `bytes=${have}-`)
+              : (request) => request,
+          ),
+        )
+        .pipe(Effect.mapError(unreachable));
+      // 416: what was kept is the whole file already; the digest says whether it is.
+      if (response.status !== 416) {
+        const appending = have > 0 && response.status === 206;
+        if (!appending && response.status !== 200) return yield* unreachable();
+        const from = appending ? have : 0;
+        const length = Number(response.headers["content-length"]);
+        const totalBytes =
+          release.size ?? (Number.isSafeInteger(length) && length >= 0 ? from + length : null);
+        let received = from;
+        let reportedAt: number | null = null;
+        yield* report({ _tag: "downloading", receivedBytes: received, totalBytes });
+        const arriving = response.stream.pipe(
+          Stream.mapError(unreachable),
+          Stream.mapEffect((chunk) =>
+            Effect.gen(function* () {
+              received += chunk.byteLength;
+              // More than the maker said it is: not the release.
+              if (received > limit) return yield* checksum();
+              const now = yield* Clock.currentTimeMillis;
+              if (reportedAt === null || now - reportedAt >= PROGRESS_INTERVAL_MS) {
+                reportedAt = now;
+                yield* report({ _tag: "downloading", receivedBytes: received, totalBytes });
+              }
+              return chunk;
+            }),
+          ),
+        );
+        // Written in place, so that a download cut off resumes; a link at its name is refused.
+        // A write that fails is the file system's, not the network's.
+        yield* writeInPlace(partial, appending, arriving).pipe(
+          Effect.catchTag("InPlaceFailure", writeFailed),
+        );
+      }
+    }).pipe(Effect.scoped);
   }
 
   yield* report({ _tag: "verifying" });
