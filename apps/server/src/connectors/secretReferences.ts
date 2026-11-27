@@ -25,14 +25,16 @@ import type { SecretUnavailable } from "../secrets/Secrets.ts";
 
 /**
  * The values of a connector's settings a reference resolves in: its headers',
- * its command's arguments' and its variables', and a gallery form's secret
- * values, which its headers were made from.
+ * its command's arguments' and its variables', a gallery form's secret
+ * values, which its headers were made from, and the client ID and credential
+ * it signs in as a service with.
  */
 const resolvedValues = (secret: ConnectorSecret): ReadonlyArray<Redacted.Redacted<string>> => [
   ...secret.headers.map((header) => header.value),
   ...(secret.command?.args ?? []),
   ...secret.env.map((variable) => variable.value),
   ...secret.formSecrets.map((named) => named.value),
+  ...(secret.service === null ? [] : [secret.service.clientId, secret.service.credential.value]),
 ];
 
 /** Each reference once, in the order they first appear. */
@@ -105,6 +107,17 @@ export const withValues = (
           : { ...secret.command, args: secret.command.args.map(resolve) },
       env: secret.env.map((variable) => ({ ...variable, value: resolve(variable.value) })),
       formSecrets: secret.formSecrets.map((named) => ({ ...named, value: resolve(named.value) })),
+      service:
+        secret.service === null
+          ? null
+          : {
+              ...secret.service,
+              clientId: resolve(secret.service.clientId),
+              credential: {
+                ...secret.service.credential,
+                value: resolve(secret.service.credential.value),
+              },
+            },
     },
     values: [...values].filter(([text]) => !isUserName(text)).map(([, value]) => value),
     userNames: [...values].filter(([text]) => isUserName(text)).map(([, value]) => value),
@@ -119,7 +132,9 @@ export const usersOf = (grant: ConnectorGrant): SecretAccess =>
  * What the connector's status says of a reference that does not resolve:
  * none when only the secrets cannot be read now, which is their own status.
  */
-export const needOf = (error: SecretUnavailable): Option.Option<SecretNeed> => {
+export const needOf = (
+  error: SecretUnavailable,
+): Option.Option<SecretNeed & { readonly reason: "missing" | "no-value" | "not-shared" }> => {
   const { reason } = error;
   if (reason === "unavailable") return Option.none();
   return Option.some({

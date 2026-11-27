@@ -5,8 +5,10 @@ import * as NodeUrl from "node:url";
 import type { Elicitation, ElicitationAnswer } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -22,7 +24,7 @@ import {
   type McpSession,
   openSession,
 } from "./session.ts";
-import { APPROVAL_URL } from "./testing/notesServer.ts";
+import { APPROVAL_URL, DRIVE_STEP, DRIVE_STEP_URL } from "./testing/notesServer.ts";
 import { type Revision, sdkHttpServer } from "./testing/sdkHttpServer.ts";
 import { serverEnvironment, STDIO_SERVER } from "./testing/stdioFixture.ts";
 
@@ -278,6 +280,52 @@ describe.each(transports)("over $name", ({ open, revision }) => {
         { message: "Counted 1", fraction: 0.5 },
         { message: "Counted 2", fraction: 1 },
       ]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("steps on a server's own pages (-32042)", () => {
+  it.live(
+    "puts the step to the operator, waits until the server says it is finished, and calls again",
+    () =>
+      Effect.gen(function* () {
+        const { fake, session } = yield* overHttp("2025-11-25");
+        const shown: Array<Elicitation> = [];
+        const hooks: CallHooks = {
+          progress: () => Effect.void,
+          elicit: (elicitation) =>
+            Effect.gen(function* () {
+              shown.push(elicitation);
+              // The operator opens the page and finishes there; the server says so.
+              yield* Effect.promise(() => fake.stepFinished(DRIVE_STEP));
+              return { _tag: "accept", content: {} } as const;
+            }),
+        };
+        assert.strictEqual(yield* textOf(session, "connect_drive", hooks), "connected");
+        assert.deepStrictEqual(shown, [
+          {
+            _tag: "url",
+            message: "Connect your drive to the notes app.",
+            url: DRIVE_STEP_URL,
+            host: "drive.notes.example",
+          },
+        ]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("ends the call, saying so, when the operator does not open the page", () =>
+    Effect.gen(function* () {
+      const { session } = yield* overHttp("2025-11-25");
+      const exit = yield* Effect.exit(
+        textOf(session, "connect_drive", answering({ _tag: "decline" }).hooks),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.deepStrictEqual(
+          Option.map(Cause.findErrorOption(exit.cause), (error) => error._tag),
+          Option.some("StepNotFinished"),
+        );
+      }
     }).pipe(Effect.scoped),
   );
 });

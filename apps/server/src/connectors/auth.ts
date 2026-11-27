@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { AuthFailure, CredentialsUnavailable, SecretsUnavailable } from "@j3-bots/connectors";
-import type { BotId, CommandError, ConnectorId, OAuthClientInput } from "@j3-bots/contracts";
+import type {
+  BotId,
+  CommandError,
+  ConnectorId,
+  OAuthClientInput,
+  SecretName,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as DateTime from "effect/DateTime";
 import type * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
+import type { ServiceCredentials } from "../secrets/ConnectorSecret.ts";
 
 /**
  * Where an OAuth connector's sign-in stands, as its sign-in reports it. That
@@ -45,7 +52,50 @@ export class ConnectorSignIns extends Context.Service<
       wwwAuthenticate: Option.Option<string>,
       sent: Option.Option<Redacted.Redacted<string>>,
     ) => Effect.Effect<void, CredentialsUnavailable>;
-    /** A bot's call needed a sign-in it did not have: show the operator the card for it. */
+    /**
+     * The authorization server credentials of `kind` for a connector at
+     * `address` are sent to, which must be `issuer` when one is named: it
+     * must sign in services with such a credential.
+     */
+    readonly serviceIssuer: (input: {
+      readonly address: URL;
+      readonly kind: ServiceCredentials["credential"]["_tag"];
+      readonly issuer: Option.Option<string>;
+    }) => Effect.Effect<string, CommandError>;
+    /**
+     * The connector signs in as a service from now on: a person's sign-in to
+     * it ends, and the cards that asked for one close as signed in.
+     */
+    readonly useServiceCredentials: (id: ConnectorId) => Effect.Effect<void>;
+    /** Whether no person's sign-in can work at the connector's service: it signs in services only. */
+    readonly signsInServicesOnly: (id: ConnectorId) => Effect.Effect<boolean>;
+    /**
+     * The token to send now for a connector that signs in as a service, with
+     * `service`, its credentials resolved; `secret` is the credential's
+     * secret, which a refusal names.
+     */
+    readonly serviceToken: (input: {
+      readonly connectorId: ConnectorId;
+      readonly address: URL;
+      readonly service: ServiceCredentials;
+      readonly secret: SecretName;
+    }) => Effect.Effect<Redacted.Redacted<string>, CredentialsUnavailable>;
+    /** The connector's server refused `sent`, a service token: the request goes again with a new one. */
+    readonly serviceRejected: (
+      id: ConnectorId,
+      sent: Option.Option<Redacted.Redacted<string>>,
+    ) => Effect.Effect<void>;
+    /** The connector's server refused a new service token too: the credentials are refused. */
+    readonly serviceRefused: (input: {
+      readonly connectorId: ConnectorId;
+      readonly sent: Option.Option<Redacted.Redacted<string>>;
+      readonly secret: SecretName;
+    }) => Effect.Effect<never, CredentialsUnavailable>;
+    /**
+     * A bot's call needed a sign-in it did not have: show the operator the
+     * card for it, unless the service signs in services only, where no
+     * sign-in of theirs would work.
+     */
     readonly needed: (input: {
       readonly botId: BotId;
       readonly connectorId: ConnectorId;

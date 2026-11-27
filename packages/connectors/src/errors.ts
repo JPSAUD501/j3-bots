@@ -98,6 +98,16 @@ export const AuthFailure = Schema.Literals([
   "refresh-failed",
   /** The connector's saved secret is not one this release can use. */
   "secret-unusable",
+  /**
+   * The connector's server now names another authorization server than the
+   * one its client credentials were issued by: they are sent nowhere.
+   */
+  "issuer-changed",
+  /**
+   * Its authorization server does not offer what its client credentials
+   * need: the client credentials grant, or the way they authenticate.
+   */
+  "sign-in-unsupported",
 ]);
 export type AuthFailure = typeof AuthFailure.Type;
 
@@ -191,6 +201,19 @@ export class CommandFailed extends Schema.TaggedError<CommandFailed>()("CommandF
   }
 }
 
+/**
+ * The server needed the operator to finish a step on a page of its own
+ * before it could answer (`-32042`, URL elicitation required), and they
+ * declined it, or did not finish it while the call could wait.
+ */
+export class StepNotFinished extends Schema.TaggedError<StepNotFinished>()("StepNotFinished", {
+  outcome: Schema.Literals(["declined", "unfinished"]),
+}) {
+  override get message(): string {
+    return `A connector's server needed a step the operator did not finish: ${this.outcome}.`;
+  }
+}
+
 /** Every way a request to a connector can fail. */
 export type ConnectorFailure =
   | CredentialsUnavailable
@@ -200,4 +223,5 @@ export type ConnectorFailure =
   | TimedOut
   | ServerError
   | NotMcp
-  | CommandFailed;
+  | CommandFailed
+  | StepNotFinished;

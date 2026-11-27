@@ -34,6 +34,7 @@ import {
   preApprovedTools,
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
+  SECRET_ASK_VALUES_SHOWN,
   toolList,
 } from "./tools.ts";
 
@@ -185,7 +186,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   ...(["saved", "declined", "expired"] as const).map((outcome): Wake => ({
     ...base,
     kind: "system",
-    event: { name: "secret-ask", outcome, reference: "secret:name" },
+    event: { name: "secret-ask", outcome, references: ["secret:name", "secret:other"] },
   })),
   ...(["added", "declined", "failed", "expired"] as const).map((outcome): Wake => ({
     ...base,
@@ -318,6 +319,7 @@ const fingerprint = (): string => {
     JSON.stringify(toolList),
     BROWSER_HELP_REQUESTED,
     SECRET_ASK_SHOWN,
+    SECRET_ASK_VALUES_SHOWN,
     SECRET_ASK_EXISTS,
     ...Object.values(FILL_NOTES),
     ...Object.values(MANAGEMENT_NOTES),

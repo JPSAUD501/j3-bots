@@ -10,6 +10,7 @@ import {
   statusOf,
 } from "@j3-bots/connectors";
 import {
+  type SecretName,
   type Connector,
   type ConnectorServer,
   ConnectorToolName,
@@ -35,6 +36,11 @@ export interface Seen {
   /** Its server refused the credentials it was sent, and nothing has worked since. */
   readonly refused: boolean;
   /**
+   * The service refused the credentials it signs in as a service with, kept
+   * in this secret, and none were given since.
+   */
+  readonly refusedSecret: Option.Option<SecretName>;
+  /**
    * How many times what signs its requests changed since this server started:
    * its sessions closed for it. An outcome says something of the connector
    * only while what signed its request still signs them.
@@ -53,6 +59,7 @@ export const NOTHING_SEEN: Seen = {
   served: Option.none(),
   failing: Option.none(),
   refused: false,
+  refusedSecret: Option.none(),
   signing: 0,
 };
 
@@ -122,7 +129,9 @@ export const statusOfConnector = (
     secretsUnavailable:
       state.secretsUnavailable ||
       Option.exists(state.signIn, (signIn) => signIn._tag === "secrets-unavailable"),
-    secretNeed: state.secretNeed,
+    secretNeed: Option.orElse(state.secretNeed, () =>
+      Option.map(state.seen.refusedSecret, (secret) => ({ secret, reason: "refused" as const })),
+    ),
     signIn: signInNeedOf(connector, state.seen, state.signIn),
     failing: state.seen.failing,
   });

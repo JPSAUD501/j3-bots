@@ -10,7 +10,12 @@ import {
   SecretsUnavailable,
   Withdrawn,
 } from "@j3-bots/connectors";
-import { codeFromSecret, type Conflict, type ConnectorId } from "@j3-bots/contracts";
+import {
+  codeFromSecret,
+  type Conflict,
+  type ConnectorId,
+  type SecretName,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -18,7 +23,9 @@ import * as Schema from "effect/Schema";
 import {
   type ConnectorSecret,
   ConnectorId as SecretsConnectorId,
+  type ServiceCredentials,
 } from "../secrets/ConnectorSecret.ts";
+import { referencesIn } from "../secrets/references.ts";
 import type { Secrets } from "../secrets/Secrets.ts";
 import type { ConnectorSignIns } from "./auth.ts";
 import type { StoredConnector } from "./ConnectorStore.ts";
@@ -164,8 +171,51 @@ export const commandOf = (
   });
 
 /**
+ * The secret holding the credential a connector signs in as a service with,
+ * which its status names when the service refuses it: the credential is a
+ * reference to it alone.
+ */
+const credentialSecretOf = (service: ServiceCredentials): Option.Option<SecretName> =>
+  Option.fromNullishOr(referencesIn(Redacted.value(service.credential.value))[0]?.name);
+
+/**
+ * What signs in as a service for a connector that does: its address, its
+ * credentials resolved, and the credential's secret. None for any other.
+ */
+const serviceOf = (
+  connector: StoredConnector,
+  stored: ConnectorSecret,
+  resolved: Resolved,
+): Effect.Effect<
+  Option.Option<{
+    readonly connectorId: ConnectorId;
+    readonly address: URL;
+    readonly service: ServiceCredentials;
+    readonly secret: SecretName;
+  }>,
+  AuthFailing
+> => {
+  const service = resolved.secret.service;
+  if (stored.service === null || service === null) return Effect.succeedNone;
+  const secret = credentialSecretOf(stored.service);
+  const address = Option.flatMapNullishOr(Option.fromNullOr(stored.address), (value) =>
+    URL.parse(Redacted.value(value)),
+  );
+  if (Option.isNone(secret) || Option.isNone(address)) {
+    return Effect.fail(new AuthFailing({ reason: "secret-unusable" }));
+  }
+  return Effect.succeedSome({
+    connectorId: connector.id,
+    address: address.value,
+    service,
+    secret: secret.value,
+  });
+};
+
+/**
  * Signs the connector's requests from its secret and, for an OAuth connector,
- * its sign-in. `current` is asked right before each request goes out, and
+ * its sign-in; for one that signs in as a service, a token got with its
+ * credentials. `current` is asked right before each request goes out, and
  * again when its server refuses one: the connector as stored now, or none
  * once the session's holder may no longer use it, which withdraws the
  * request unsigned. Its references resolve for the bots it goes to now, not
@@ -179,17 +229,26 @@ export const credentialsOf = (
   current: Effect.gen(function* () {
     const now = yield* current;
     if (Option.isNone(now)) return yield* new Withdrawn();
-    const resolved = yield* resolvedOf(secrets, now.value);
+    const stored = yield* secretOf(secrets, now.value);
+    const resolved = Option.isNone(stored)
+      ? Option.none<Resolved>()
+      : Option.some(yield* resolve(secrets, now.value, stored.value));
     const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
     const hidden = Option.match(resolved, { onNone: () => [], onSome: hiddenOfResolved });
     const carried = Option.match(resolved, {
       onNone: () => [],
       onSome: (r) => hiddenOf(r.userNames),
     });
+    const service =
+      Option.isSome(stored) && Option.isSome(resolved)
+        ? yield* serviceOf(now.value, stored.value, resolved.value)
+        : Option.none();
     const bearer =
       now.value.signIn === "oauth"
         ? Option.some(yield* signIns.accessToken(now.value.id))
-        : Option.none();
+        : Option.isSome(service)
+          ? Option.some(yield* signIns.serviceToken(service.value))
+          : Option.none();
     return { bearer, headers, hidden, carried } satisfies CallCredentials;
   }),
   rejected: Effect.fn("ConnectorCredentials.rejected")(function* (wwwAuthenticate, sent) {
@@ -198,11 +257,29 @@ export const credentialsOf = (
     if (now.value.signIn === "oauth") {
       return yield* signIns.rejected(now.value.id, wwwAuthenticate, sent.bearer);
     }
+    // A service token the server refused: the request goes again with a new one.
+    if (Option.isSome(sent.bearer)) {
+      return yield* signIns.serviceRejected(now.value.id, sent.bearer);
+    }
     // Headers given again since the request was signed (new values, a secret
     // they name changed): the refusal was of the old ones, so the request goes
     // again with the new; only a refusal of what signs it now needs the operator.
     const resolved = yield* resolvedOf(secrets, now.value);
     const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
     if (sameHeaders(headers, sent.headers)) return yield* new NeedsSignIn();
+  }),
+  refusedAgain: Effect.fn("ConnectorCredentials.refusedAgain")(function* (sent) {
+    const now = yield* current;
+    if (Option.isNone(now)) return yield* new Withdrawn();
+    const stored = yield* secretOf(secrets, now.value);
+    const service = Option.flatMapNullishOr(stored, (secret) => secret.service);
+    const secret = Option.flatMap(service, credentialSecretOf);
+    // Only a connector that signs in as a service has credentials of its own to refuse.
+    if (now.value.signIn === "oauth" || Option.isNone(secret)) return;
+    return yield* signIns.serviceRefused({
+      connectorId: now.value.id,
+      sent: sent.bearer,
+      secret: secret.value,
+    });
   }),
 });

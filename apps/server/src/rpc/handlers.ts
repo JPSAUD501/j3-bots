@@ -281,6 +281,7 @@ export const handlers = J3Rpcs.toLayer(
       "secrets.list": () => secrets.list,
       "secrets.reveal": ({ id, field }) => secrets.reveal({ id, field, deviceId: device.id }),
       "secrets.add": (input) => secretAsks.add(input),
+      "secrets.addFromAsk": (input) => secretAsks.addFromAsk(input),
       "secrets.update": (input) => secrets.update(input),
       "secrets.delete": ({ id }) => secrets.remove(id),
       "secrets.setAccess": ({ id, access }) => secrets.setAccess(id, access),

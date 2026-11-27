@@ -13,6 +13,7 @@ import {
   SdkHttpError,
   StreamableHTTPClientTransport,
   type Transport,
+  UrlElicitationRequiredError,
 } from "@modelcontextprotocol/client";
 import {
   fitsUtf8,
@@ -52,6 +53,7 @@ import {
   UrlRefused,
   SecretNeeded,
   SecretsUnavailable,
+  StepNotFinished,
   Withdrawn,
 } from "./errors.ts";
 import { entryBytes, type Prompt, promptsOf, type Resource, resourcesOf } from "./features.ts";
@@ -146,6 +148,13 @@ export interface ConnectorCredentials {
     wwwAuthenticate: Option.Option<string>,
     sent: CallCredentials,
   ) => Effect.Effect<void, CredentialsUnavailable>;
+  /**
+   * The server refused the credentials sent again, `sent`, after `rejected`:
+   * what that means for them. It fails for a connector that signs in as a
+   * service, whose credentials were refused; when it succeeds, or is left
+   * out, the operator must sign in again (`NeedsSignIn`).
+   */
+  readonly refusedAgain?: (sent: CallCredentials) => Effect.Effect<void, CredentialsUnavailable>;
 }
 
 export interface SessionLimits {
@@ -469,6 +478,7 @@ const signingFetch =
     const second = await attempt();
     if (!refusedCredentials(second.response)) return answered(second.response);
     await second.response.body?.cancel();
+    if (credentials.refusedAgain !== undefined) await run(credentials.refusedAgain(second.sent));
     throw new NeedsSignIn({ renewed: !sameCredentials(first.sent, second.sent) });
   };
 
@@ -477,6 +487,7 @@ const isConnectorFailure = Schema.is(
     NeedsSignIn,
     SecretsUnavailable,
     SecretNeeded,
+    StepNotFinished,
     AuthFailing,
     UrlRefused,
     Unreachable,
@@ -713,6 +724,16 @@ const cut = (text: string, max: number): { readonly text: string; readonly cut: 
  * elicitation, in both modes, tasks, and showing a tool's app as an HTML
  * document of the MCP Apps extension (decision 0048). Never sampling or roots.
  */
+/**
+ * The OAuth client credentials extension (2026-07-28): J3 Bots can sign in to
+ * a server as a service, with credentials the operator registered there, so
+ * it says so in every request's capabilities.
+ */
+/** The most steps on its own pages one call's server may ask the operator to finish. */
+const MAX_STEPS = 3;
+
+export const CLIENT_CREDENTIALS_EXTENSION = "io.modelcontextprotocol/oauth-client-credentials";
+
 export const makeClient = (
   setup: ClientSetup,
   limits: SessionLimits,
@@ -729,6 +750,7 @@ export const makeClient = (
       extensions: {
         [TASKS_EXTENSION]: {},
         [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        [CLIENT_CREDENTIALS_EXTENSION]: {},
       },
     },
     versionNegotiation: {
@@ -923,6 +945,16 @@ export const sessionOf = (
       signal: AbortSignal.any([ctx.mcpReq.signal, flight.signal]),
     });
     return elicitResultOf(answer);
+  });
+
+  /**
+   * Steps on a server's own pages a call waits for the operator to finish,
+   * by the id the server gave each: its `notifications/elicitation/complete`
+   * names it when they did.
+   */
+  const steps = new Map<string, () => void>();
+  client.setNotificationHandler("notifications/elicitation/complete", (notification) => {
+    steps.get(notification.params.elicitationId)?.();
   });
 
   let logWindow = { startedAt: 0, lines: 0 };
@@ -1168,7 +1200,56 @@ export const sessionOf = (
     return elicitResultOf(yield* hooks.elicit(shown.success));
   });
 
-  const callTool: McpSession["callTool"] = Effect.fn("McpSession.callTool")(function* (input) {
+  /**
+   * Puts each step a server needs finished on a page of its own (`-32042`)
+   * to the operator, as a request for input, and waits, for at most `left`,
+   * until the server says they finished it. A step that is not a page J3
+   * Bots shows, or one the operator does not open, ends the call.
+   */
+  const finishSteps = Effect.fn("McpSession.finishSteps")(function* (
+    asked: UrlElicitationRequiredError["elicitations"],
+    hooks: CallHooks | undefined,
+    left: Duration.Duration,
+  ) {
+    if (hooks === undefined || asked.length === 0 || asked.length > MAX_STEPS) {
+      return yield* new StepNotFinished({ outcome: "declined" });
+    }
+    for (const step of asked) {
+      const shown = elicitationOf(step);
+      if (Result.isFailure(shown)) {
+        yield* Effect.logInfo("A connector's step on a page of its own was declined unseen").pipe(
+          Effect.annotateLogs({ reason: shown.failure }),
+        );
+        return yield* new StepNotFinished({ outcome: "declined" });
+      }
+      // Listened for before it is shown: the server may say it is done at once.
+      let finish: () => void = () => {};
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      steps.set(step.elicitationId, finish);
+      yield* Effect.gen(function* () {
+        const answer = yield* hooks.elicit(shown.success);
+        if (answer._tag !== "accept") return yield* new StepNotFinished({ outcome: "declined" });
+        yield* Effect.promise(() => finished).pipe(
+          Effect.timeoutOrElse({
+            duration: left,
+            orElse: () => Effect.fail(new StepNotFinished({ outcome: "unfinished" })),
+          }),
+        );
+      }).pipe(Effect.ensuring(Effect.sync(() => steps.delete(step.elicitationId))));
+    }
+  });
+
+  const callTool: McpSession["callTool"] = (input) => callOnce(input, true);
+
+  const callOnce: (
+    input: Parameters<McpSession["callTool"]>[0],
+    mayAskSteps: boolean,
+  ) => ReturnType<McpSession["callTool"]> = Effect.fn("McpSession.callTool")(function* (
+    input: Parameters<McpSession["callTool"]>[0],
+    mayAskSteps: boolean,
+  ) {
     const progress = yield* progressQueue(input.hooks);
     const began = yield* Clock.currentTimeMillis;
     const answer = yield* tagged(
@@ -1199,6 +1280,9 @@ export const sessionOf = (
               ) {
                 return { _tag: "task", task } as const;
               }
+              if (UrlElicitationRequiredError.isInstance(error)) {
+                return { _tag: "steps", asked: error.elicitations } as const;
+              }
               throw error;
             },
           ),
@@ -1212,6 +1296,17 @@ export const sessionOf = (
         }),
     );
     yield* progress.delivered;
+    if (answer.value._tag === "steps") {
+      // Asked once: a server that needs another step after the operator finished one is not answering.
+      if (!mayAskSteps) return yield* new StepNotFinished({ outcome: "unfinished" });
+      const spent = (yield* Clock.currentTimeMillis) - began;
+      yield* finishSteps(
+        answer.value.asked,
+        input.hooks,
+        Duration.millis(Math.max(0, Duration.toMillis(limits.callDeadline) - spent)),
+      );
+      return yield* callOnce(input, false);
+    }
     const result =
       answer.value._tag === "task"
         ? yield* followTask(

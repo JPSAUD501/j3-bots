@@ -77,7 +77,9 @@ export function connectorStatusText(
               ? "connector.status.secretNoValue"
               : status.reason === "not-shared"
                 ? "connector.status.secretNotShared"
-                : "connector.status.secretOther",
+                : status.reason === "refused"
+                  ? "connector.status.secretRefused"
+                  : "connector.status.secretOther",
           { secret: status.secret },
         ),
         next: null,
@@ -117,6 +119,11 @@ export function connectorStatusText(
           detail: "connector.status.commandRefused",
           next: "connector.status.commandRefused.next",
         },
+        "issuer-changed": {
+          detail: "connector.status.issuerChanged",
+          next: "connector.status.issuerChanged.next",
+        },
+        "sign-in-unsupported": { detail: "connector.status.signInUnsupported", next: null },
         unknown: { detail: "connector.status.failingOther", next: null },
       } as const;
       const { detail, next } = failing[status.reason];

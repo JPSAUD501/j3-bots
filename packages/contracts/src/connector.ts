@@ -340,6 +340,10 @@ export const SIGN_IN_REASONS = ["not-signed-in", "expired", "rejected"] as const
  *   variable that decides which code runs taking its value from a secret,
  *   saved before the server refused that); it runs once the operator
  *   confirms a new command line.
+ * - `issuer-changed`: it now names another sign-in service than the one
+ *   its client credentials were issued by, so J3 Bots sends them nowhere;
+ * - `sign-in-unsupported`: its sign-in service does not offer what its
+ *   client credentials need, such as signing with a private key.
  */
 export const FAILURE_REASONS = [
   "unreachable",
@@ -350,15 +354,18 @@ export const FAILURE_REASONS = [
   "command-not-found",
   "command-exited",
   "command-refused",
+  "issuer-changed",
+  "sign-in-unsupported",
 ] as const;
 
 /**
  * Why a connector cannot use a secret its settings name:
  * - `missing`: no secret has that name;
  * - `no-value`: the secret has no such value, as a single value's user name;
- * - `not-shared`: a bot the connector goes to may not use the secret.
+ * - `not-shared`: a bot the connector goes to may not use the secret;
+ * - `refused`: the service refused the client credentials the secret holds.
  */
-export const SECRET_NEED_REASONS = ["missing", "no-value", "not-shared"] as const;
+export const SECRET_NEED_REASONS = ["missing", "no-value", "not-shared", "refused"] as const;
 
 /**
  * Whether bots can use a connector now. The reasons are open: one added after

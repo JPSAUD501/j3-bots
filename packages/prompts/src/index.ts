@@ -80,6 +80,7 @@ export {
   ROOM_READ_COUNT,
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
+  SECRET_ASK_VALUES_SHOWN,
   type ToolDefinition,
   type ToolInput,
   type ToolName,

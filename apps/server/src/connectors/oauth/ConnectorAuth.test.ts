@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { DeviceId, ServerOrigin } from "@j3-bots/contracts";
+import { DeviceId, SecretName, ServerOrigin } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -25,7 +25,7 @@ import {
   PUBLIC_ORIGIN,
   requestGate,
 } from "../../testing/oauth.ts";
-import { ConnectorId } from "../../secrets/ConnectorSecret.ts";
+import { ConnectorId, type ServiceCredentials } from "../../secrets/ConnectorSecret.ts";
 import { Secrets } from "../../secrets/Secrets.ts";
 import * as ConnectorAuth from "./ConnectorAuth.ts";
 
@@ -86,6 +86,7 @@ const run = <A, E>(
       env: [],
       formSecrets: [],
       formValues: [],
+      service: null,
     });
     return yield* use;
   }).pipe(
@@ -1016,6 +1017,199 @@ it.effect(
           service.rejected(NOTION, Option.some('Bearer error="invalid_token"'), current),
         );
         assert.strictEqual(refusal(exit), "NeedsSignIn");
+      }),
+    );
+  },
+);
+
+// Signing in as a service: the client credentials grant, with the client's
+// secret or an assertion its key signs, from the issuer the credentials were
+// given for.
+
+const SERVICE_CLIENT = "builds-client";
+const SERVICE_SECRET = SecretName.make("builds-client-secret");
+
+const serviceOf = (
+  fake: FakeAuthorizationServer,
+  credential: ServiceCredentials["credential"],
+): ServiceCredentials => ({
+  issuer: fake.issuer,
+  clientId: Redacted.make(SERVICE_CLIENT),
+  credential,
+  scope: null,
+});
+
+const withSecret = (fake: FakeAuthorizationServer, secret: string) =>
+  serviceOf(fake, { _tag: "client-secret", value: Redacted.make(secret) });
+
+const serviceToken = (service: ServiceCredentials) =>
+  Effect.flatMap(auth, (signIns) =>
+    signIns.serviceToken({
+      connectorId: NOTION,
+      address: new URL(MCP_URL),
+      service,
+      secret: SERVICE_SECRET,
+    }),
+  );
+
+it.effect(
+  "signs a service in with its client secret in a Basic header, for the connector's server",
+  () => {
+    const fake = new FakeAuthorizationServer();
+    fake.addSecretClient(SERVICE_CLIENT, "s3cret-value");
+    return run(
+      fake,
+      Effect.gen(function* () {
+        const token = yield* serviceToken(withSecret(fake, "s3cret-value"));
+        assert.deepStrictEqual(
+          Option.some(Redacted.value(token)),
+          Option.map(fake.bearer, Redacted.value),
+        );
+        const [request] = tokenRequests(fake);
+        const form = new URLSearchParams(request?.body);
+        assert.strictEqual(form.get("grant_type"), "client_credentials");
+        assert.strictEqual(form.get("resource"), MCP_URL);
+        assert.strictEqual(form.get("scope"), "read write");
+        assert.isNull(form.get("client_secret"));
+        assert.isTrue(request?.headers["authorization"]?.startsWith("Basic "));
+      }),
+    );
+  },
+);
+
+it.effect(
+  "signs a service in with an assertion its key signs, for the issuer alone, and keeps no secret in the request",
+  () => {
+    const fake = new FakeAuthorizationServer({ signingAlgorithms: ["ES256"] });
+    const privateKey = fake.addKeyClient(SERVICE_CLIENT);
+    return run(
+      fake,
+      Effect.gen(function* () {
+        yield* serviceToken(
+          serviceOf(fake, { _tag: "private-key", value: Redacted.make(privateKey) }),
+        );
+        // The fake took it only signed by the client's key and for its issuer alone.
+        const [assertion] = fake.assertions;
+        assert.strictEqual(assertion?.header["alg"], "ES256");
+        assert.strictEqual(assertion?.claims["aud"], fake.issuer);
+        assert.strictEqual(assertion?.claims["iss"], SERVICE_CLIENT);
+        const lifetime = Number(assertion?.claims["exp"]) - Number(assertion?.claims["iat"]);
+        assert.strictEqual(lifetime, 300);
+        const [request] = tokenRequests(fake);
+        assert.isUndefined(request?.headers["authorization"]);
+        assert.notInclude(request?.body ?? "", "PRIVATE");
+      }),
+    );
+  },
+);
+
+it.effect(
+  "sends a service's credentials to no authorization server but the one they were given for",
+  () => {
+    const fake = new FakeAuthorizationServer();
+    fake.addSecretClient(SERVICE_CLIENT, "s3cret-value");
+    return run(
+      fake,
+      Effect.gen(function* () {
+        const signIns = yield* auth;
+        // Given: the issuer the operator named must be the one the server names.
+        const named = yield* Effect.exit(
+          signIns.serviceIssuer({
+            address: new URL(MCP_URL),
+            kind: "client-secret",
+            issuer: Option.some("https://other.example.test"),
+          }),
+        );
+        assert.strictEqual(refusal(named), "issuer-mismatch");
+        const pinned = yield* signIns.serviceIssuer({
+          address: new URL(MCP_URL),
+          kind: "client-secret",
+          issuer: Option.none(),
+        });
+        assert.strictEqual(pinned, fake.issuer);
+        // Later: the server names another than the one they were given for.
+        const moved = yield* Effect.exit(
+          serviceToken({
+            ...withSecret(fake, "s3cret-value"),
+            issuer: "https://other.example.test",
+          }),
+        );
+        assert.strictEqual(refusal(moved), "issuer-changed");
+        assert.lengthOf(tokenRequests(fake), 0);
+      }),
+    );
+  },
+);
+
+it.effect("refuses to take a service's credentials where the server signs in no service", () => {
+  const fake = new FakeAuthorizationServer({ grantTypes: ["authorization_code"] });
+  return run(
+    fake,
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        (yield* auth).serviceIssuer({
+          address: new URL(MCP_URL),
+          kind: "private-key",
+          issuer: Option.none(),
+        }),
+      );
+      assert.strictEqual(refusal(exit), "grant-unsupported");
+      assert.isFalse(yield* (yield* auth).signsInServicesOnly(NOTION));
+    }),
+  );
+});
+
+it.effect("tells a server that signs in services only, where no person's sign-in works", () => {
+  const fake = new FakeAuthorizationServer({ grantTypes: ["client_credentials"] });
+  return run(
+    fake,
+    Effect.gen(function* () {
+      assert.isTrue(yield* (yield* auth).signsInServicesOnly(NOTION));
+    }),
+  );
+});
+
+it.effect("gets a service a new token a minute before the one it has expires", () => {
+  const fake = new FakeAuthorizationServer({ lifetime: 120 });
+  fake.addSecretClient(SERVICE_CLIENT, "s3cret-value");
+  const service = withSecret(fake, "s3cret-value");
+  return run(
+    fake,
+    Effect.gen(function* () {
+      const first = yield* serviceToken(service);
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.strictEqual(Redacted.value(yield* serviceToken(service)), Redacted.value(first));
+      assert.lengthOf(tokenRequests(fake), 1);
+      yield* TestClock.adjust(Duration.seconds(31));
+      assert.notStrictEqual(Redacted.value(yield* serviceToken(service)), Redacted.value(first));
+      assert.lengthOf(tokenRequests(fake), 2);
+    }),
+  );
+});
+
+it.effect(
+  "asks for other credentials once the service refuses them, and asks it nothing more with them",
+  () => {
+    const fake = new FakeAuthorizationServer();
+    fake.addSecretClient(SERVICE_CLIENT, "s3cret-value");
+    const service = withSecret(fake, "s3cret-value");
+    return run(
+      fake,
+      Effect.gen(function* () {
+        const signIns = yield* auth;
+        const token = yield* serviceToken(service);
+        // The operator revokes the client at the service; its server refuses the token.
+        fake.revokeClient(SERVICE_CLIENT);
+        yield* signIns.serviceRejected(NOTION, Option.some(token));
+        const refused = yield* Effect.exit(serviceToken(service));
+        assert.strictEqual(refusal(refused), "refused");
+        const again = yield* Effect.exit(serviceToken(service));
+        assert.strictEqual(refusal(again), "refused");
+        assert.lengthOf(tokenRequests(fake), 2);
+        // Others, given, are asked with.
+        fake.addSecretClient(SERVICE_CLIENT, "new-s3cret-value");
+        yield* serviceToken(withSecret(fake, "new-s3cret-value"));
+        assert.lengthOf(tokenRequests(fake), 3);
       }),
     );
   },

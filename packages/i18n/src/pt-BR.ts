@@ -301,6 +301,7 @@ const sentences = {
 
   "ask.title.login": "{name} pede um login",
   "ask.title.value": "{name} pede um segredo",
+  "ask.title.values": "{name} pede segredos",
   "ask.savedAs": "Salvo como {secret}, o nome pelo qual {name} o usa.",
   "ask.site": "Site",
   "ask.username": "Usuário ou email",
@@ -310,21 +311,31 @@ const sentences = {
     "A chave de configuração ou o endereço otpauth:// que o site mostra quando você ativa a verificação em duas etapas.",
   "ask.value": "Valor",
   "ask.valueHint": "O token ou a chave, exatamente como o serviço fornece.",
+  "ask.savedAsEach": "Salvo como {secret}.",
+  "ask.setup": "Onde o serviço fornece",
+  "ask.setup.values": "Onde o serviço fornece",
   "ask.everyBot": "Deixar todos os bots usarem",
+  "ask.everyBot.values": "Deixar todos os bots usarem",
   "ask.unseen": "Fica no seu servidor do J3 Bots. {name} usa sem nunca ver o que você digita aqui.",
+  "ask.unseen.values":
+    "Ficam no seu servidor do J3 Bots. {name} os usa sem nunca ver o que você digita aqui.",
   "ask.save": "Salvar",
   "ask.decline": "Recusar",
   "ask.saved": "Salvo como {secret}. {name} foi avisado.",
+  "ask.saved.values": "Salvos. {name} foi avisado.",
   "ask.declined": "Recusado. {name} foi avisado.",
   "ask.expired":
     "Esperou demais, e {name} foi avisado. Adicione em Configurações → Segredos se ainda quiser.",
   "ask.failed": "Não foi possível salvar. Tente de novo.",
   "ask.nameTaken":
     "Já existe um segredo chamado {secret}. Renomeie esse em Configurações → Segredos e depois salve este.",
+  "ask.nameTaken.values":
+    "Outro segredo já tem um destes nomes. Renomeie esse em Configurações → Segredos e depois salve estes.",
   "ask.unavailable":
     "Seus segredos não podem ser usados agora. Abra Configurações → Segredos para ver por quê.",
   "ask.passwordRequired": "Digite a senha.",
   "ask.valueRequired": "Digite o valor.",
+  "ask.valuesRequired": "Digite todos os valores.",
   "ask.totpInvalid": "Isso não é uma chave de código único.",
   "secrets.title": "Segredos",
   "secrets.intro":
@@ -2177,6 +2188,8 @@ const sentences = {
     "Nem todo bot que o usa pode usar o segredo {secret}. Compartilhe o segredo com eles em Segredos, ou escolha menos bots aqui.",
   "connector.status.secretOther":
     "As configurações dele usam o segredo {secret}, que ele não pode usar agora.",
+  "connector.status.secretRefused":
+    "O serviço recusou as credenciais do segredo {secret}. Os bots não podem usá-lo até receberem outras.",
   "connector.status.notSignedIn": "Você ainda não entrou.",
   "connector.status.expired": "A sessão acabou. Os bots não podem usá-lo até você entrar de novo.",
   "connector.status.rejected":
@@ -2201,6 +2214,11 @@ const sentences = {
     "O J3 Bots não inicia o comando dele como está salvo: uma verificação que ele faz antes de cada início o recusa.",
   "connector.status.commandRefused.next":
     "Altere o comando e confirme de novo. Uma variável que decide qual código roda precisa do valor digitado, não de um segredo.",
+  "connector.status.issuerChanged":
+    "O login dele agora vai para outro lugar, diferente de quando as credenciais foram dadas, então o J3 Bots não as manda para lá.",
+  "connector.status.issuerChanged.next":
+    "Se o serviço mudou mesmo o login de lugar, remova-o e peça a um bot para adicioná-lo de novo.",
+  "connector.status.signInUnsupported": "Ele pede um tipo de login que o J3 Bots não sabe fazer.",
   "connector.status.since": "Começou {when}.",
   "connector.status.secretsUnavailableDetail":
     "O acesso dele está nos seus segredos, que não podem ser lidos agora. Abra Configurações → Segredos para ver por quê.",

@@ -57,6 +57,13 @@ export const OAuthFailureReason = Schema.Literals([
   "address-mismatch",
   /** The authorization server answered with an error, such as the operator declining. */
   "denied",
+  /**
+   * The authorization server does not offer the client credentials grant,
+   * or no way for the credential given to prove itself there.
+   */
+  "grant-unsupported",
+  /** The private key given is not one an assertion can be signed with there. */
+  "key-unusable",
 ]);
 export type OAuthFailureReason = typeof OAuthFailureReason.Type;
 
@@ -84,6 +91,7 @@ export const toCommandError = (error: OAuthFailure): CommandError => {
     case "address-mismatch":
       return new Invalid({ reason: "sign-in-url" });
     case "denied":
+    case "key-unusable":
     case "invalid-grant":
     case "invalid-client":
     case "token-refused":
@@ -101,6 +109,7 @@ export const toCommandError = (error: OAuthFailure): CommandError => {
     case "pkce-unsupported":
     case "registration-unsupported":
     case "client-mismatch":
+    case "grant-unsupported":
       return new Conflict({ reason: "sign-in-unsupported" });
   }
 };

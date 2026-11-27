@@ -166,6 +166,9 @@ export interface SecretsHandle {
     secret: Secrets.NewSecret,
     request: EntryId | null,
   ) => Promise<Secrets.SecretsResult<Secret>>;
+  readonly addFromAsk: (
+    asked: Secrets.AskedValues,
+  ) => Promise<Secrets.SecretsResult<ReadonlyArray<Secret>>>;
   readonly update: (id: SecretId, changes: SecretChanges) => Promise<Secrets.SecretsResult<Secret>>;
   readonly remove: (id: SecretId) => Promise<Secrets.SecretsResult>;
   readonly setAccess: (
@@ -911,6 +914,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       view: services.secrets.view,
       openOldVault: (password) => run.promise(services.secrets.openOldVault(password)),
       add: (secret, request) => run.promise(services.secrets.add(secret, request)),
+      addFromAsk: (asked) => run.promise(services.secrets.addFromAsk(asked)),
       update: (id, changes) => run.promise(services.secrets.update(id, changes)),
       remove: (id) => run.promise(services.secrets.remove(id)),
       setAccess: (id, access) => run.promise(services.secrets.setAccess(id, access)),

@@ -3,7 +3,15 @@ import { SecretName } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { NotMcp, ServerError, TimedOut, Unreachable } from "./errors.ts";
+import {
+  AuthFailing,
+  NotMcp,
+  SecretNeeded,
+  ServerError,
+  StepNotFinished,
+  TimedOut,
+  Unreachable,
+} from "./errors.ts";
 import { nextFailing, observe, statusOf } from "./status.ts";
 
 const first = DateTime.makeUnsafe("2026-11-20T12:00:00Z");
@@ -41,6 +49,21 @@ describe("statusOf", () => {
 });
 
 describe("observe", () => {
+  it("counts credentials a service refused, or a sign-in that moved, against the connector, and a step left unfinished against no one", () => {
+    const secret = SecretName.make("builds-client-secret");
+    expect(observe(new SecretNeeded({ secret, reason: "refused" }), "call")).toEqual({
+      _tag: "secret-refused",
+      secret,
+    });
+    // A secret its settings need reaches the connector from the secrets.
+    expect(observe(new SecretNeeded({ secret, reason: "missing" }), "call")._tag).toBe("unchanged");
+    expect(observe(new AuthFailing({ reason: "issuer-changed" }), "call")).toEqual({
+      _tag: "failing",
+      reason: "issuer-changed",
+    });
+    expect(observe(new StepNotFinished({ outcome: "declined" }), "call")._tag).toBe("unchanged");
+  });
+
   it("counts a slow or refused call against the call, and the same while connecting against the server", () => {
     expect(observe(new TimedOut(), "call")._tag).toBe("unchanged");
     expect(observe(new ServerError({ status: 400 }), "call")._tag).toBe("unchanged");

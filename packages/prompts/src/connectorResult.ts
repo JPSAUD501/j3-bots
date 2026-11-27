@@ -54,12 +54,22 @@ export type ConnectorData =
  * - `needs-sign-in`: the operator must sign in again, and was shown a card;
  * - `secrets-unavailable`: the operator's secrets cannot be read now (`SecretsState`);
  * - `needs-secret`: a secret its settings name is missing, or not shared with every bot it goes to;
+ * - `credentials-refused`: the service refused the credentials it signs in as a service with;
+ * - `sign-in-moved`: its server now names another authorization server than its credentials are for;
+ * - `sign-in-unsupported`: its authorization server no longer signs in services that way;
+ * - `step-declined`, `step-unfinished`: its server needed your user to finish a step on a page
+ *   of its own first, and they declined, or did not finish while the call waited;
  * - `busy`: J3 Bots has as many connector sessions open as it keeps, every one in use.
  */
 export const CONNECTOR_UNAVAILABLE = [
   "needs-sign-in",
   "secrets-unavailable",
   "needs-secret",
+  "credentials-refused",
+  "sign-in-moved",
+  "sign-in-unsupported",
+  "step-declined",
+  "step-unfinished",
   "unreachable",
   "timed-out",
   "too-large",
@@ -75,6 +85,16 @@ const UNAVAILABLE: { readonly [K in ConnectorUnavailable]: (connector: string) =
     `${c} can't be used until your user opens their secrets in J3 Bots' settings. Tell them briefly; don't retry.`,
   "needs-secret": (c) =>
     `${c}'s settings name a secret it can't use: missing, or not shared with every bot that uses ${c}. \`list_mcp_servers\` names it. Tell your user briefly; don't retry.`,
+  "credentials-refused": (c) =>
+    `The service refused the credentials ${c} signs in with: they may be wrong, revoked or expired. Ask your user for new ones with one \`ask_for_secret\` card, then give them to ${c} with \`update_mcp_server\`. Don't retry until then.`,
+  "sign-in-moved": (c) =>
+    `${c}'s server now sends sign-ins to another authorization server than the one its credentials were issued by, so J3 Bots sent them nowhere. Tell your user: they can remove ${c} and add it again if the new one is right. Don't retry.`,
+  "sign-in-unsupported": (c) =>
+    `${c}'s authorization server no longer signs in services with the kind of credentials it has. Tell your user briefly; don't retry.`,
+  "step-declined": (c) =>
+    `${c}'s server needed your user to finish a step on a page of its own first, and they declined it, so the call did nothing. Don't retry unless they ask.`,
+  "step-unfinished": (c) =>
+    `${c}'s server needed your user to finish a step on a page of its own first, and they had not finished it when the call stopped waiting. Tell them briefly, and call again once they say they finished.`,
   unreachable: (c) => `${c}'s server could not be reached. Try again later, or tell your user.`,
   "timed-out": (c) =>
     `${c}'s server did not answer in time, so the call was stopped. It may or may not have taken effect.`,

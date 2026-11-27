@@ -44,6 +44,7 @@ export {
   NotMcp,
   ResponseTooLarge,
   SecretNeeded,
+  StepNotFinished,
   SecretsUnavailable,
   ServerError,
   TimedOut,

@@ -306,6 +306,7 @@ export const en = {
 
   "ask.title.login": "{name} asks for a login",
   "ask.title.value": "{name} asks for a secret",
+  "ask.title.values": "{name} asks for secrets",
   "ask.savedAs": "Saved as {secret}, the name {name} uses it by.",
   "ask.site": "Site",
   "ask.username": "User name or email",
@@ -315,21 +316,31 @@ export const en = {
     "The setup key or otpauth:// address the site shows when you turn on two-step sign-in.",
   "ask.value": "Value",
   "ask.valueHint": "The token or key, exactly as the service gives it.",
+  "ask.savedAsEach": "Saved as {secret}.",
+  "ask.setup": "Where the service gives it",
+  "ask.setup.values": "Where the service gives them",
   "ask.everyBot": "Let every bot use it",
+  "ask.everyBot.values": "Let every bot use them",
   "ask.unseen":
     "It stays on your J3 Bots server. {name} uses it without ever seeing what you type here.",
+  "ask.unseen.values":
+    "They stay on your J3 Bots server. {name} uses them without ever seeing what you type here.",
   "ask.save": "Save",
   "ask.decline": "Decline",
   "ask.saved": "Saved as {secret}. {name} was told.",
+  "ask.saved.values": "Saved. {name} was told.",
   "ask.declined": "Declined. {name} was told.",
   "ask.expired":
     "It waited too long, and {name} was told. Add it in Settings → Secrets if you still want to.",
   "ask.failed": "Could not save it. Try again.",
   "ask.nameTaken":
     "Another secret is already named {secret}. Rename that one in Settings → Secrets, then save this.",
+  "ask.nameTaken.values":
+    "Another secret already has one of these names. Rename that one in Settings → Secrets, then save these.",
   "ask.unavailable": "Your secrets can’t be used right now. Open Settings → Secrets to see why.",
   "ask.passwordRequired": "Type its password.",
   "ask.valueRequired": "Type the value.",
+  "ask.valuesRequired": "Type every value.",
   "ask.totpInvalid": "That is not a one-time code key.",
   "secrets.title": "Secrets",
   "secrets.intro":
@@ -2140,6 +2151,8 @@ export const en = {
   "connector.status.secretNotShared":
     "Not every bot that uses it may use the secret {secret}. Share the secret with them in Secrets, or choose fewer bots here.",
   "connector.status.secretOther": "Its settings use the secret {secret}, which it can’t use now.",
+  "connector.status.secretRefused":
+    "The service refused the credentials in the secret {secret}. Bots can’t use it until they’re given new ones.",
   "connector.status.notSignedIn": "Not signed in yet.",
   "connector.status.expired": "The sign-in ended. Bots can't use it until you sign in again.",
   "connector.status.rejected":
@@ -2164,6 +2177,11 @@ export const en = {
     "J3 Bots won't start its command as it's saved: a check it makes before each start refuses it.",
   "connector.status.commandRefused.next":
     "Change the command and confirm it again. A variable that decides which code runs needs its value typed in, not a secret.",
+  "connector.status.issuerChanged":
+    "Its sign-in now goes to a different place than when its credentials were given, so J3 Bots doesn’t send them there.",
+  "connector.status.issuerChanged.next":
+    "If the service really moved its sign-in, remove it and ask a bot to add it again.",
+  "connector.status.signInUnsupported": "It asks for a kind of sign-in J3 Bots can’t do.",
   "connector.status.since": "It started {when}.",
   "connector.status.secretsUnavailableDetail":
     "Its sign-in is in your secrets, which can’t be read right now. Open Settings → Secrets to see why.",

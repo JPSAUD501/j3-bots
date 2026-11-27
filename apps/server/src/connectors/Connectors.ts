@@ -112,8 +112,17 @@ import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Layout } from "../Layout.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
-import type { ConnectorSecret, NamedSecret } from "../secrets/ConnectorSecret.ts";
-import { outsideReferences, referenceText, type SecretReference } from "../secrets/references.ts";
+import type {
+  ConnectorSecret,
+  NamedSecret,
+  ServiceCredentials,
+} from "../secrets/ConnectorSecret.ts";
+import {
+  outsideReferences,
+  referencesIn,
+  referenceText,
+  type SecretReference,
+} from "../secrets/references.ts";
 import { Secrets, type SecretUnavailable } from "../secrets/Secrets.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
@@ -319,6 +328,8 @@ export class Connectors extends Context.Service<
       readonly source: ConnectorSource;
       /** Which bots get it; every bot when left out. */
       readonly grant?: ConnectorGrant;
+      /** How it signs in as a service, for a server added by its address that does. */
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, ConnectorCommandError>;
     readonly update: (input: {
@@ -326,6 +337,11 @@ export class Connectors extends Context.Service<
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
+      /**
+       * The credentials it signs in as a service with, from now on: in place
+       * of a person's sign-in, or of the credentials it had.
+       */
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, ConnectorCommandError>;
     readonly remove: (input: {
@@ -340,6 +356,20 @@ export class Connectors extends Context.Service<
     }) => Effect.Effect<Connector, ConnectorCommandError>;
   }
 >()("@j3-bots/server/connectors/Connectors") {}
+
+/**
+ * Credentials a connector signs in as a service with (the OAuth client
+ * credentials extension), as a bot gives them: the credential is a whole
+ * reference to one of the operator's secrets, the client ID one or the ID
+ * itself. `issuer` is the authorization server the operator says issued
+ * them, which the connector's server must name; none takes the one it names.
+ */
+export interface ServiceSignIn {
+  readonly clientId: Redacted.Redacted<string>;
+  readonly credential: ServiceCredentials["credential"];
+  readonly issuer: Option.Option<string>;
+  readonly scope: string | null;
+}
 
 /** A connector as a bot's `list_mcp_servers` names it: as clients see it, and its tools' prefix. */
 export interface ListedConnector {
@@ -546,11 +576,20 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
     case "NeedsSignIn":
       return "needs-sign-in";
     case "AuthFailing":
-      return failure.reason === "secret-unusable" ? "needs-sign-in" : "unreachable";
+      switch (failure.reason) {
+        case "secret-unusable":
+          return "needs-sign-in";
+        case "issuer-changed":
+          return "sign-in-moved";
+        case "sign-in-unsupported":
+          return "sign-in-unsupported";
+        case "refresh-failed":
+          return "unreachable";
+      }
     case "SecretsUnavailable":
       return "secrets-unavailable";
     case "SecretNeeded":
-      return "needs-secret";
+      return failure.reason === "refused" ? "credentials-refused" : "needs-secret";
     case "TimedOut":
       return "timed-out";
     case "ResponseTooLarge":
@@ -563,6 +602,8 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
       return "failed";
     case "CommandFailed":
       return "unreachable";
+    case "StepNotFinished":
+      return failure.outcome === "declined" ? "step-declined" : "step-unfinished";
   }
 };
 
@@ -786,6 +827,7 @@ export const layer = Layer.effect(
             listed: Option.some(catalog),
             failing: Option.none(),
             refused: false,
+            refusedSecret: Option.none(),
           }));
           const connector = yield* store.get(id);
           if (
@@ -867,11 +909,18 @@ export const layer = Layer.effect(
                   : observation._tag === "answered"
                     ? false
                     : seen.refused,
+              refusedSecret:
+                observation._tag === "secret-refused"
+                  ? Option.some(observation.secret)
+                  : observation._tag === "answered"
+                    ? Option.none()
+                    : seen.refusedSecret,
             },
       );
       const after = yield* seenOf(id);
       if (
         before.refused !== after.refused ||
+        Option.isSome(before.refusedSecret) !== Option.isSome(after.refusedSecret) ||
         Option.isSome(before.failing) !== Option.isSome(after.failing)
       ) {
         yield* touch(id);
@@ -1204,8 +1253,15 @@ export const layer = Layer.effect(
           if (Option.isNone(connector)) return;
           yield* closeSessions(id);
           // A server that refused the old values is tried with the new, as when they are given again.
-          const wasRefused = valuesChanged && (yield* seenOf(id)).refused;
-          if (wasRefused) yield* updateSeen(id, (seen) => ({ ...seen, refused: false }));
+          const seen = yield* seenOf(id);
+          const wasRefused = valuesChanged && (seen.refused || Option.isSome(seen.refusedSecret));
+          if (wasRefused) {
+            yield* updateSeen(id, (seen) => ({
+              ...seen,
+              refused: false,
+              refusedSecret: Option.none(),
+            }));
+          }
           if (needChanged || wasRefused) {
             yield* touch(id);
             yield* toolsTouched(yield* botsOf(connector.value));
@@ -2142,15 +2198,34 @@ export const layer = Layer.effect(
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
       readonly grant?: ConnectorGrant;
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) {
       const existing = yield* store.get(input.id);
       if (Option.isSome(existing)) return yield* render(existing.value);
       const { source } = input;
+      const service = input.service;
+      if (service !== undefined && (source._tag !== "remote" || source.oauthClient !== null)) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
       if (source._tag === "command") return yield* addCommand({ ...input, source });
       const prepared = source._tag === "remote" ? fromAddress(source) : yield* fromListing(source);
       const { headers } = prepared;
       const grant = input.grant ?? EVERY_BOT;
+      const policy = policyOf(prepared.privateNetwork);
+      const checked = checkUrl(Redacted.value(prepared.url), policy);
+      if (service !== undefined && Result.isFailure(checked)) {
+        return yield* checked.failure._tag === "UrlRefused" &&
+        checked.failure.reason === "private-network"
+          ? new Conflict({ reason: "private-network" })
+          : new Invalid({ reason: "connector-unsupported" });
+      }
+      // Credentials go to the authorization server the connector's server
+      // names now, and to no other after: found before anything is kept.
+      const pinned =
+        service === undefined || Result.isFailure(checked)
+          ? null
+          : yield* serviceCredentialsOf(checked.success, service, Option.none());
       const sealed: ConnectorSecret = {
         connectorId: connectorSecretIdOf(input.id),
         address: prepared.url,
@@ -2160,27 +2235,29 @@ export const layer = Layer.effect(
         env: [],
         formSecrets: prepared.formSecrets,
         formValues: prepared.formValues,
+        service: pinned,
       };
       // What the probe sends is what bots' sessions will: the secrets it names, resolved.
       const resolved = withValues(
         sealed,
         yield* checkSecrets({ secret: sealed, grant, by: input.by, written: referencesOf(sealed) }),
       );
-      const policy = policyOf(prepared.privateNetwork);
-      const checked = checkUrl(Redacted.value(prepared.url), policy);
+      // One that signs in as a service is listed once it is kept, with a token its credentials get.
       const listing: Result.Result<ReadonlyArray<CatalogTool>, ConnectorFailure> = Result.isFailure(
         checked,
       )
         ? Result.fail(checked.failure)
-        : prepared.oauthClient === null
-          ? yield* probe(
-              checked.success,
-              policy,
-              resolved.secret.headers,
-              [...resolved.secret.formSecrets.map((named) => named.value), ...resolved.values],
-              resolved.userNames,
-            )
-          : Result.fail(new NeedsSignIn());
+        : pinned !== null
+          ? Result.succeed([])
+          : prepared.oauthClient === null
+            ? yield* probe(
+                checked.success,
+                policy,
+                resolved.secret.headers,
+                [...resolved.secret.formSecrets.map((named) => named.value), ...resolved.values],
+                resolved.userNames,
+              )
+            : Result.fail(new NeedsSignIn());
       if (
         Result.isFailure(listing) &&
         listing.failure._tag === "UrlRefused" &&
@@ -2189,11 +2266,13 @@ export const layer = Layer.effect(
         return yield* new Conflict({ reason: "private-network" });
       }
       const refused = Result.isFailure(listing) && listing.failure._tag === "NeedsSignIn";
-      const signIn = prepared.signIn(listing);
+      const signIn =
+        pinned !== null ? (headers.length > 0 ? "fields" : "none") : prepared.signIn(listing);
       // A retry of the same add seals the same values under the same id.
       yield* secrets.connectorSecrets.put(sealed);
       const now = yield* DateTime.now;
-      const catalog = Result.isSuccess(listing) ? Option.some(listing.success) : Option.none();
+      const catalog =
+        Result.isSuccess(listing) && pinned === null ? Option.some(listing.success) : Option.none();
       const inserted = yield* store
         .insert({
           id: input.id,
@@ -2227,6 +2306,7 @@ export const layer = Layer.effect(
           ? nextFailing(Option.none(), observe(listing.failure, "connect"), now)
           : Option.none(),
         refused: refused && signIn === "fields",
+        refusedSecret: Option.none(),
         signing: seen.signing,
       }));
       if (prepared.oauthClient !== null) {
@@ -2237,10 +2317,51 @@ export const layer = Layer.effect(
           );
       }
       yield* recheck(input.id);
+      // Whether the service takes its credentials is part of the answer to the add.
+      if (pinned !== null) yield* relist(input.id);
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
-      return yield* render(connector);
+      return yield* render(yield* require(input.id));
+    });
+
+    /**
+     * The credentials a connector at `address` signs in as a service with, as
+     * they are kept: bound to the authorization server its server names now,
+     * which must be `service`'s issuer when it names one, and `pinned`, the
+     * one they were bound to before, when they were. The credential must be
+     * one whole reference to the operator's secrets.
+     */
+    const serviceCredentialsOf = Effect.fn("Connectors.serviceCredentialsOf")(function* (
+      address: URL,
+      service: ServiceSignIn,
+      pinned: Option.Option<string>,
+    ) {
+      const credential = Redacted.value(service.credential.value).trim();
+      const named = referencesIn(credential);
+      const whole =
+        named.length === 1 && named[0] !== undefined && referenceText(named[0]) === credential;
+      if (!whole || Redacted.value(service.clientId).trim() === "") {
+        return yield* new Invalid({ reason: "connector-fields" });
+      }
+      if (
+        Option.isSome(pinned) &&
+        Option.isSome(service.issuer) &&
+        service.issuer.value !== pinned.value
+      ) {
+        return yield* new Conflict({ reason: "sign-in-unsupported" });
+      }
+      const issuer = yield* signIns.serviceIssuer({
+        address,
+        kind: service.credential._tag,
+        issuer: Option.orElse(pinned, () => service.issuer),
+      });
+      return {
+        issuer,
+        clientId: Redacted.make(Redacted.value(service.clientId).trim()),
+        credential: { _tag: service.credential._tag, value: Redacted.make(credential) },
+        scope: service.scope,
+      } satisfies ServiceCredentials;
     });
 
     /**
@@ -2272,6 +2393,7 @@ export const layer = Layer.effect(
         env: source.env.map((variable) => ({ name: variable.name, value: variable.value })),
         formSecrets: [],
         formValues: [],
+        service: null,
       };
       yield* checkSecrets({ secret: sealed, grant, by: input.by, written: referencesOf(sealed) });
       // A retry of the same add seals the same values under the same id.
@@ -2332,6 +2454,7 @@ export const layer = Layer.effect(
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) {
       const now = yield* DateTime.now;
@@ -2352,6 +2475,9 @@ export const layer = Layer.effect(
           if (input.values !== undefined && input.command === undefined) {
             yield* replaceValues(connector, input.values, input.by, now);
           }
+          if (input.service !== undefined) {
+            yield* replaceService(yield* require(input.connectorId), input.service, input.by, now);
+          }
           yield* store.update(
             connector.id,
             {
@@ -2363,8 +2489,73 @@ export const layer = Layer.effect(
         }),
       );
       yield* recheck(input.connectorId);
+      // Whether the service takes the credentials is part of the answer.
+      if (input.service !== undefined) yield* relist(input.connectorId);
       yield* touch(input.connectorId);
       return yield* render(yield* require(input.connectorId));
+    });
+
+    /**
+     * Signs the connector in as a service with `service` from now on: in
+     * place of the credentials it had, or of a person's sign-in, which ends.
+     * Credentials bound to an authorization server stay bound to it.
+     */
+    const replaceService = Effect.fn("Connectors.replaceService")(function* (
+      connector: StoredConnector,
+      service: ServiceSignIn,
+      by: ChangeAuthor,
+      now: DateTime.Utc,
+    ) {
+      if (isCommand(connector)) return yield* new Invalid({ reason: "connector-unsupported" });
+      const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
+      if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      const address = Option.flatMapNullishOr(Option.fromNullOr(secret.value.address), (value) =>
+        URL.parse(Redacted.value(value)),
+      );
+      if (Option.isNone(address)) return yield* new Invalid({ reason: "connector-unsupported" });
+      const credentials = yield* serviceCredentialsOf(
+        address.value,
+        service,
+        Option.fromNullishOr(secret.value.service?.issuer),
+      );
+      const next = { ...secret.value, service: credentials } satisfies ConnectorSecret;
+      yield* checkDestination(secret.value, next, by);
+      yield* checkSecrets({
+        secret: next,
+        grant: connector.grant,
+        by,
+        written: referencesInValues([credentials.clientId, credentials.credential.value]),
+      });
+      // A person's sign-in gives way to the service's: its headers, if any, are its fields.
+      const signIn =
+        connector.signIn === "oauth"
+          ? next.headers.length > 0
+            ? "fields"
+            : "none"
+          : connector.signIn;
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* secrets.connectorSecrets.put(next);
+          yield* store.update(
+            connector.id,
+            signIn === connector.signIn
+              ? {}
+              : {
+                  signIn,
+                  fields: signIn === "fields" ? next.headers.map(fieldOf) : [],
+                  signedInAt: signIn === "fields" ? now : null,
+                },
+            now,
+          );
+          yield* updateSeen(connector.id, (seen) => ({
+            ...seen,
+            refused: false,
+            refusedSecret: Option.none(),
+          }));
+          yield* closeSessions(connector.id);
+          if (connector.signIn === "oauth") yield* signIns.useServiceCredentials(connector.id);
+        }),
+      );
     });
 
     /** `command` with each of `values` as the value of its variable of that name, which it must have. */
