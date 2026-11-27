@@ -372,6 +372,13 @@ export interface Conversation {
   /** Reads the page before the oldest entry held. Does nothing while a read runs or at the start. */
   readonly loadOlder: Effect.Effect<void>;
   /**
+   * Reads back, page by page, until the entry `entryId` is held, as for the
+   * source of a quote the operator taps: `shown` once it is; `missing` when
+   * the conversation's start is reached without it; `unreachable` when a
+   * page could not be read.
+   */
+  readonly reveal: (entryId: EntryId) => Effect.Effect<"shown" | "missing" | "unreachable">;
+  /**
    * Moves the operator's read mark forward to `through`, the newest entry
    * they have seen. A mark this conversation already sent, or one before it,
    * is not sent again, until the server says the target is unread
@@ -757,6 +764,22 @@ export const layer = Layer.effect(
             );
         });
 
+        const reveal = Effect.fn("Conversations.reveal")(function* (entryId: EntryId) {
+          while (!entries.has(entryId)) {
+            if (phase === "not-found") return "missing" as const;
+            // A read under way finishes first: what it brings may be the entry.
+            yield* waitFor(state, (now) => !now.loadingOlder);
+            if (entries.has(entryId)) break;
+            if (!hasOlder) return "missing" as const;
+            const oldest = sorted()[0]?.id;
+            yield* loadOlder;
+            if (!entries.has(entryId) && hasOlder && sorted()[0]?.id === oldest) {
+              return "unreachable" as const;
+            }
+          }
+          return "shown" as const;
+        });
+
         const markRead = (through: EntryOrder) =>
           Effect.suspend(() => {
             if (readThrough !== null && through <= readThrough) return Effect.void;
@@ -812,7 +835,7 @@ export const layer = Layer.effect(
             ),
           );
         };
-        const conversation: Conversation = { target, state, loadOlder, markRead };
+        const conversation: Conversation = { target, state, loadOlder, reveal, markRead };
         return { value: conversation, run, close };
       });
 

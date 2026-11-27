@@ -5,7 +5,7 @@ import {
   DeviceId,
   DeviceToken,
   type Entry,
-  type EntryId,
+  EntryId,
   type QuestionEntry,
   type EntryTarget,
   HTTP_PATHS,
@@ -1253,6 +1253,27 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* waitFor(roster.conversationMentions, (takes) => takes);
         yield* waitFor(roster.quotes, (takes) => takes);
       }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("reads back until a quoted message is held, and says when it is not there", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Archivist");
+      const first = yield* botSays(botId, "the first word");
+      // More than a snapshot and a page of history come after it.
+      for (let index = 0; index < 160; index++) yield* botSays(botId, `later ${index}`);
+      const conversation = yield* (yield* Conversations).open({ _tag: "conversation", botId });
+      yield* waitFor(conversation.state, (state) => state.phase === "ready");
+      const held = () =>
+        conversation.state
+          .get()
+          .items.some((item) => item._tag !== "outgoing" && item.id === first.id);
+      assert.isFalse(held());
+
+      assert.strictEqual(yield* conversation.reveal(first.id), "shown");
+      assert.isTrue(held());
+      assert.strictEqual(yield* conversation.reveal(EntryId.make("never-written")), "missing");
+    }).pipe(Effect.provide(client())),
   );
 
   it.effect("sends a draft's reply and passages with it, and the next draft quotes nothing", () =>
