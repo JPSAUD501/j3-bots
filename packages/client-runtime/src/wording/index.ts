@@ -5,6 +5,7 @@
  * Built from the catalog in `@j3-bots/i18n`, free of any interface library.
  */
 export { resendLabel } from "./addressee.ts";
+export { botNames, tabLineWords, type TabLineWords } from "./browser.ts";
 export {
   CARD_ROOMS,
   type CardLines,

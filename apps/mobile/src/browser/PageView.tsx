@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserPicture, BrowserProbe, BrowserViewHandle } from "@j3-bots/client-runtime";
 import {
+  dragged,
   dragWheel,
+  drawnRect,
+  fitted,
+  keptInView,
+  NO_ZOOM,
   pagePoint,
   type PageSize,
+  pinched,
   type Point,
+  type Size,
+  type Zoom,
 } from "@j3-bots/client-runtime/presentation";
 import type { BrowserInput } from "@j3-bots/contracts";
 import * as Base64 from "effect/encoding/Base64";
@@ -12,16 +20,6 @@ import { type ComponentRef, useEffect, useEffectEvent, useRef, useState } from "
 import { type GestureResponderEvent, Image, type LayoutChangeEvent, View } from "react-native";
 import { TextInput } from "../text.tsx";
 import { fieldChange, keyPress, relayed } from "./typing.ts";
-import {
-  dragged,
-  drawnRect,
-  fitted,
-  keptInView,
-  NO_ZOOM,
-  pinched,
-  type Size,
-  type Zoom,
-} from "./zoom.ts";
 
 /** How far a finger moves before a touch is a drag, not a tap, in points. */
 const TAP_SLOP = 8;
