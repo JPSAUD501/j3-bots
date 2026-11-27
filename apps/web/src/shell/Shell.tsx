@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   BotId,
-  BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
   MessageQuote,
@@ -699,26 +698,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       </>
     );
     if (browserBot !== null && browserTarget !== null) {
-      // The step the bot asked for in its browser, while it waits on the operator.
-      const help = view.items.findLast(
-        (entry): entry is BrowserHelpEntry =>
-          entry._tag === "browser-help" && entry.status._tag === "pending",
-      );
       details = (
         <BrowserViewer
           // One viewer per bot: another bot's browser opens afresh.
           key={browserBot.id}
           bot={browserBot}
           target={browserTarget}
-          help={
-            help === undefined
-              ? null
-              : {
-                  tab: help.tab,
-                  onDone: () => intents.answerBrowserHelp(help.id, "done"),
-                  onDecline: () => intents.answerBrowserHelp(help.id, "declined"),
-                }
-          }
           onClose={() => navigation.setBrowser(null)}
           headingRef={detailsHeadingRef}
           headingId={detailsHeadingId}

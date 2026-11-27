@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserCursor, BrowserViewHandle } from "@j3-bots/client-runtime";
-import type { BrowserInput } from "@j3-bots/contracts";
-import { MousePointer2Icon } from "lucide-react";
+import type { BotId, BrowserInput } from "@j3-bots/contracts";
 import {
   useEffect,
   useEffectEvent,
@@ -10,7 +9,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { useBots } from "../app/context";
 import { cn } from "../lib/cn";
+import { BotCursor } from "./BotCursor";
 import {
   buttonOf,
   buttonsOf,
@@ -29,8 +30,8 @@ const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_PX = 5;
 /** A touch that moves this far is a scroll, not a tap. */
 const TOUCH_SLOP = 8;
-/** The bot's cursor fades once it has stood still this long. */
-const CURSOR_REST_MS = 2_000;
+/** A bot's pointer folds its name to its face once it has stood still this long. */
+const NAME_FOR_MS = 2_000;
 
 interface SurfaceProps {
   readonly view: BrowserViewHandle;
@@ -38,15 +39,19 @@ interface SurfaceProps {
   readonly viewport: Size | null;
   /** The stage's size: the picture is drawn as large as fits in it. */
   readonly box: Size;
-  /** This device controls the tab: input goes to the page. */
-  readonly control: boolean;
+  /** What the person does over the picture goes to the page: touching it is using it. */
+  readonly usable: boolean;
+  /** Sends what the person did, as their use of the page (`usePageUse`). */
+  readonly send: (input: BrowserInput) => void;
+  /** This device holds the tab: the bots' pointers step aside, and the person's moves reach the page. */
+  readonly holding: boolean;
+  /** The bots on the tab, the most recent first: whose pointers show. */
+  readonly onIt: ReadonlyArray<BotId>;
   /** What the page's text field is called to assistive technology. */
   readonly label: string;
   readonly description: string;
   /** The operator pressed the key that leaves the page. */
   readonly onLeave: () => void;
-  /** The page takes the keyboard as soon as this device has control. */
-  readonly focusPage: boolean;
 }
 
 /**
@@ -72,11 +77,13 @@ export function BrowserSurface({
   view,
   viewport,
   box,
-  control,
+  usable,
+  send,
+  holding,
+  onIt,
   label,
   description,
   onLeave,
-  focusPage,
 }: SurfaceProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   // The page's text field, which holds the focus while the operator types into the page.
@@ -136,7 +143,6 @@ export function BrowserSurface({
         : 16 / 10;
   const fitted = contain(box, aspect);
 
-  const send = (input: BrowserInput) => view.send(input);
   const pointAt = (clientX: number, clientY: number) => {
     const target = canvas.current;
     if (target === null || viewport === null) return null;
@@ -204,7 +210,7 @@ export function BrowserSurface({
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!control) return;
+    if (!usable) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = pointAt(event.clientX, event.clientY);
@@ -228,7 +234,7 @@ export function BrowserSurface({
     click("down", point, event.button, event.buttons, count, modifiersOf(event));
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!control) return;
+    if (!usable) return;
     const finger = touch.current;
     if (event.pointerType === "touch") {
       if (finger === null || viewport === null || canvas.current === null) return;
@@ -252,10 +258,11 @@ export function BrowserSurface({
       });
       return;
     }
-    queueMove(event);
+    // Pointing is only reading: it reaches the page while the person holds it, or drags on it.
+    if (holding || event.buttons !== 0) queueMove(event);
   };
   const onPointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!control) return;
+    if (!usable) return;
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
     if (event.pointerType === "touch") {
@@ -272,12 +279,12 @@ export function BrowserSurface({
 
   // A tap that lands in a field brings the keyboard up; one elsewhere puts it away.
   useEffect(() => {
-    if (!control) return;
+    if (!usable) return;
     return view.onProbe((probe) => {
       if (probe.editable) field.current?.focus({ preventScroll: true });
       else if (document.activeElement === field.current) field.current?.blur();
     });
-  }, [view, control]);
+  }, [view, usable]);
 
   // The wheel scrolls the page, not the viewer: its listener must be able to prevent that.
   const wheel = useRef<{
@@ -288,7 +295,7 @@ export function BrowserSurface({
     modifiers: number;
   } | null>(null);
   const onWheel = useEffectEvent((event: WheelEvent) => {
-    if (!control || viewport === null || canvas.current === null) return;
+    if (!usable || viewport === null || canvas.current === null) return;
     event.preventDefault();
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
@@ -315,11 +322,10 @@ export function BrowserSurface({
     return () => target.removeEventListener("wheel", listener);
   }, []);
 
-  // Taking control puts the keyboard on the page; losing it puts the keyboard away.
+  // A page that can no longer be used puts the keyboard away.
   useEffect(() => {
-    if (control && focusPage) field.current?.focus({ preventScroll: true });
-    else if (!control && document.activeElement === field.current) field.current?.blur();
-  }, [control, focusPage]);
+    if (!usable && document.activeElement === field.current) field.current?.blur();
+  }, [usable]);
 
   const keyOf = (event: ReactKeyboardEvent<HTMLTextAreaElement>): KeyLike => ({
     key: event.key,
@@ -333,7 +339,7 @@ export function BrowserSurface({
     altGraph: event.getModifierState("AltGraph"),
   });
   const onKey = (action: "down" | "up") => (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!control) return;
+    if (!usable) return;
     if (
       action === "down" &&
       event.key === LEAVE_PAGE_KEY &&
@@ -387,16 +393,16 @@ export function BrowserSurface({
           touch.current = null;
         }}
         onContextMenu={(event) => {
-          if (control) event.preventDefault();
+          if (usable) event.preventDefault();
         }}
         className={cn(
           "block size-full rounded-md bg-muted select-none",
           pictureSize === null && "invisible",
-          control ? "cursor-default touch-none" : "pointer-events-none",
+          usable ? "cursor-default touch-none" : "pointer-events-none",
         )}
       />
-      {!control && <BotCursor view={view} viewport={viewport} />}
-      {control && (
+      <BotCursors view={view} viewport={viewport} onIt={onIt} faded={holding} />
+      {usable && (
         <textarea
           ref={field}
           data-browser-page=""
@@ -441,46 +447,72 @@ export function BrowserSurface({
   );
 }
 
-/** Where the bot points while it acts, over the picture; it fades once still. */
-function BotCursor({
+interface ShownCursor {
+  readonly cursor: BrowserCursor;
+  /** The name shows from each move until the pointer has been still a while. */
+  readonly named: boolean;
+}
+
+/**
+ * Each bot's pointer over the picture, where it last pointed, while the bot
+ * is on the tab. A server before shared tabs names no bot: its pointer is
+ * the tab's one bot's.
+ */
+function BotCursors({
   view,
   viewport,
+  onIt,
+  faded,
 }: {
   readonly view: BrowserViewHandle;
   readonly viewport: Size | null;
+  readonly onIt: ReadonlyArray<BotId>;
+  readonly faded: boolean;
 }) {
-  const [cursor, setCursor] = useState<BrowserCursor | null>(null);
+  const bots = useBots();
+  const [cursors, setCursors] = useState<ReadonlyMap<BotId, ShownCursor>>(new Map());
+  const whose = useEffectEvent((cursor: BrowserCursor) => cursor.botId ?? onIt[0] ?? null);
   useEffect(() => {
-    let timer: number | undefined;
-    const stop = view.onCursor((next) => {
-      window.clearTimeout(timer);
-      setCursor(next);
-      timer = window.setTimeout(() => setCursor(null), CURSOR_REST_MS);
+    const timers = new Map<BotId, number>();
+    const stop = view.onCursor((cursor) => {
+      const botId = whose(cursor);
+      if (botId === null) return;
+      setCursors((now) => new Map(now).set(botId, { cursor, named: true }));
+      window.clearTimeout(timers.get(botId));
+      timers.set(
+        botId,
+        window.setTimeout(
+          () =>
+            setCursors((now) => {
+              const shown = now.get(botId);
+              return shown === undefined
+                ? now
+                : new Map(now).set(botId, { ...shown, named: false });
+            }),
+          NAME_FOR_MS,
+        ),
+      );
     });
     return () => {
-      window.clearTimeout(timer);
       stop();
+      for (const timer of timers.values()) window.clearTimeout(timer);
     };
   }, [view]);
-  if (cursor === null || viewport === null || viewport.width === 0 || viewport.height === 0) {
-    return null;
-  }
-  return (
-    <span
-      aria-hidden
-      className="pointer-events-none absolute transition-[left,top] duration-(--duration-state) ease-out"
-      style={{
-        left: `${(cursor.x / viewport.width) * 100}%`,
-        top: `${(cursor.y / viewport.height) * 100}%`,
-      }}
-    >
-      {cursor.action === "click" && (
-        <span
-          key={cursor.sequence}
-          className="pop-in absolute -start-3 -top-3 size-6 rounded-pill border-2 border-foreground/70"
-        />
-      )}
-      <MousePointer2Icon className="size-5 fill-foreground stroke-background" />
-    </span>
-  );
+  if (viewport === null || viewport.width === 0 || viewport.height === 0) return null;
+  return onIt.flatMap((botId) => {
+    const bot = bots.get(botId);
+    const shown = cursors.get(botId);
+    if (bot === undefined || shown === undefined) return [];
+    const { cursor, named } = shown;
+    return [
+      <BotCursor
+        key={botId}
+        bot={bot}
+        at={{ x: cursor.x / viewport.width, y: cursor.y / viewport.height }}
+        clicked={cursor.action === "click" && named ? cursor.sequence : null}
+        named={named}
+        faded={faded}
+      />,
+    ];
+  });
 }

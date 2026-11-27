@@ -13,6 +13,7 @@ import {
   type BrowserInput,
   type BrowserTab,
   BrowserTabRef,
+  type DeviceId,
 } from "@j3-bots/contracts";
 import type { BrowserSource } from "../browser/source";
 
@@ -104,6 +105,7 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
     sample.tab.update((tab) => ({ ...tab, controller }));
 
   return {
+    pairing: new Cell<DeviceId | null>(null),
     openBrowserTabs: (botId) => {
       const sample = tabs.get(botId);
       const state = new Cell<Loaded<ReadonlyArray<BrowserTab>>>({
