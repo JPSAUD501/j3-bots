@@ -15,6 +15,8 @@ import {
 } from "@j3-bots/contracts";
 import { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -33,9 +35,13 @@ import {
   command,
   conversation,
   createBot,
+  engineSession,
   eventually,
   stopSettled,
+  nextTurn,
+  sendToBot,
   timesSent,
+  turnEnded,
   until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
@@ -43,6 +49,7 @@ import { BotStates } from "../turns/BotStates.ts";
 import { Stops } from "../turns/Stops.ts";
 import { TestPushService } from "../testing/push.ts";
 import { RoutineRunner } from "./RoutineRunner.ts";
+import { WEBHOOK_BODY_LIMIT } from "./webhook.ts";
 import { Routines } from "./Routines.ts";
 
 const GATHER = "Gather last week's emails into a list.";
@@ -579,6 +586,84 @@ it.effect("ends the background work of the step before a yes when Stop ends the 
 
     yield* (yield* Routines).stopRun({ commandId: command(), runId: waiting.id });
     yield* until(runner.pass.pipe(Effect.andThen(archived)));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "ends the background work of the step before a yes when Stop ends the run before the next step starts",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const ana = yield* createBot("Ana");
+      const bia = yield* createBot("Bia");
+      const cia = yield* createBot("Cia");
+      const routine = yield* ranRoutine(ana, [gather(bia.id), yes, draft(ana.id)]);
+      const turn = yield* stepTurn(routine.id, bia.id);
+      yield* control.startBackgroundWork({
+        sessionId: turn.engine_session_id,
+        turnId: turn.admitted_turn_id,
+      });
+      yield* doStep(turn, { result: "3 need a reply", ask: ASK });
+      const waiting = yield* runWhen(routine, (run) => states(run)[1] === "waiting");
+
+      // The provider meets its usage limit, so Ana's step waits for its session.
+      const main = yield* engineSession(cia.id);
+      yield* sendToBot(cia.id, "Plan the sprint.");
+      const limited = yield* nextTurn(cia.id);
+      yield* control.finishTurn({
+        sessionId: main,
+        turnId: limited,
+        outcome: {
+          _tag: "failed",
+          failure: "usage-limit",
+          retryAt: DateTime.addDuration(yield* DateTime.now, Duration.hours(1)),
+        },
+      });
+      yield* turnEnded(cia.id);
+      yield* answer(waiting.id, "yes");
+      const runner = yield* RoutineRunner;
+      yield* runner.pass;
+      const archived = sql`
+        SELECT 1 FROM sessions
+        WHERE engine_session_id = ${turn.engine_session_id} AND engine_retired_at IS NOT NULL
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+      assert.isFalse(yield* archived);
+
+      yield* (yield* Routines).stopRun({ commandId: command(), runId: waiting.id });
+      yield* until(runner.pass.pipe(Effect.andThen(archived)));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a handoff the steps after it could not start with", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* createBot("Ana");
+    const bia = yield* createBot("Bia");
+    const long: RoutineStep = {
+      _tag: "bot",
+      botId: bia.id,
+      action: "drafts the replies",
+      instruction: "x".repeat(10_000),
+    };
+    const routine = yield* ranRoutine(ana, [gather(ana.id), long]);
+    const turn = yield* stepTurn(routine.id, ana.id);
+    // A webhook's body of tags, which grow as the envelope defuses them.
+    const tags = "<step>".repeat(Math.floor(WEBHOOK_BODY_LIMIT / 6));
+    yield* sql`UPDATE routine_runs SET trigger_data = ${tags} WHERE routine_id = ${routine.id}`.pipe(
+      Effect.orDie,
+    );
+
+    const large = yield* finishStep(turn, {
+      result: "14 new emails",
+      handoff: "<step>".repeat(1_000),
+    });
+    assert.include(large._tag === "refused" ? large.message : "", "too large to start");
+    yield* doStep(turn, { result: "14 new emails", handoff: "The list is in the inbox." });
+    yield* stepTurn(routine.id, bia.id);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

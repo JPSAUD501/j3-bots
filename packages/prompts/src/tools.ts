@@ -502,8 +502,8 @@ const routineCallProblem = (input: SetRoutineFields): string | undefined => {
 };
 
 /**
- * The most a step's handoff may hold. Five of them, with the longest brief
- * and webhook body, still fit the last step's envelope in the engine's input.
+ * The most a step's handoff may hold. The server also refuses one that would
+ * leave a later step's envelope past the engine's input, as it renders.
  */
 export const MAX_HANDOFF = 6_000;
 

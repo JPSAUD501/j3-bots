@@ -262,9 +262,14 @@ export const layer = Layer.effect(
             SELECT 1 FROM wakes n JOIN sessions ns ON ns.side_wake_id = n.id
             WHERE n.routine_id = w.routine_id AND n.retry_of IS NULL AND n.rowid > w.rowid
           )
-          -- A Stop ended its run, a yes it waited for included.
+          -- A Stop ended its run: at its step, or at a later one, a yes it
+          -- waited for and a step still waiting for its session included.
           OR EXISTS (
             SELECT 1 FROM routine_runs r WHERE r.wake_id = s.side_wake_id AND r.stopped = 1
+          )
+          OR EXISTS (
+            SELECT 1 FROM routine_run_steps rs JOIN routine_runs r ON r.id = rs.run_id
+            WHERE rs.report_wake_id = s.side_wake_id AND r.stopped = 1
           ) AS superseded
         FROM sessions s
         LEFT JOIN wakes w ON w.id = s.side_wake_id

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoutineRunId, RoutineStep } from "@j3-bots/contracts";
+import { RoutineId, RoutineRunId, RoutineStep } from "@j3-bots/contracts";
 import type { ToolInput } from "@j3-bots/prompts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -8,7 +9,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { json } from "../persistence/columns.ts";
 import { RoutineRuns } from "../routines/RoutineRuns.ts";
-import type { StepReport } from "../routines/runSteps.ts";
+import { StepReport } from "../routines/runSteps.ts";
+import { laterStepsFit } from "../routines/stepFit.ts";
 import { TurnToolRefused } from "../tools/TurnTools.ts";
 import { SessionRowId } from "./model.ts";
 import type { Once } from "./routineTool.ts";
@@ -18,9 +20,14 @@ type FinishStepInput = ToolInput<"finish_step">;
 const StepOfSession = Schema.Struct({
   wake_id: Schema.String,
   run_id: RoutineRunId,
+  routine_id: RoutineId,
+  name: Schema.String,
+  trigger_data: Schema.NullOr(Schema.String),
   position: Schema.Int,
   steps_json: json(Schema.Array(RoutineStep)),
 });
+
+const ReportRow = Schema.Struct({ position: Schema.Int, report_json: json(StepReport) });
 
 const refuse = (reason: string) => new TurnToolRefused({ reason });
 
@@ -77,10 +84,22 @@ export const finishStepTool = Effect.gen(function* () {
     Request: SessionRowId,
     Result: StepOfSession,
     execute: (sessionId) => sql`
-      SELECT s.side_wake_id AS wake_id, r.id AS run_id, r.step AS position, r.steps_json
+      SELECT s.side_wake_id AS wake_id, r.id AS run_id, r.routine_id, ro.name, r.trigger_data,
+        r.step AS position, r.steps_json
       FROM sessions s JOIN routine_runs r ON r.wake_id = s.side_wake_id
+      JOIN routines ro ON ro.id = r.routine_id
       WHERE s.id = ${sessionId} AND s.purpose = 'side' AND r.status = 'running'
         AND r.steps_json IS NOT NULL AND r.step IS NOT NULL
+    `,
+  });
+
+  /** What the steps before this one reported, in this run. */
+  const reportsBefore = SqlSchema.findAll({
+    Request: Schema.Struct({ runId: RoutineRunId, position: Schema.Int }),
+    Result: ReportRow,
+    execute: ({ runId, position }) => sql`
+      SELECT position, report_json FROM routine_run_steps
+      WHERE run_id = ${runId} AND position < ${position} AND report_json IS NOT NULL
     `,
   });
 
@@ -105,6 +124,31 @@ export const finishStepTool = Effect.gen(function* () {
       ask: input.ask ?? null,
       blocked: input.blocked === true,
     };
+    if (report.handoff !== null) {
+      const before = yield* reportsBefore({ runId, position }).pipe(Effect.orDie);
+      const fits = laterStepsFit({
+        at: yield* DateTime.now,
+        routineId: found.value.routine_id,
+        runId,
+        name: found.value.name,
+        steps,
+        position,
+        reports: [
+          ...before.map((row) => ({
+            position: row.position,
+            result: row.report_json.result,
+            handoff: row.report_json.handoff,
+          })),
+          { position, result: report.result, handoff: report.handoff },
+        ],
+        triggerData: found.value.trigger_data,
+      });
+      if (!fits) {
+        return yield* refuse(
+          "Your handoff makes the steps after yours too large to start: shorten it to only what they need, and call finish_step again.",
+        );
+      }
+    }
     return yield* once(
       Effect.gen(function* () {
         if (!(yield* runs.report({ runId, wakeId, report }))) {
