@@ -22,7 +22,7 @@ The owner wants a browser that is well made and works with real sites, for bots 
 - **The desktop first.** A bot's new tab opens in the desktop app the person used last. Sites see a real browser on the person's own connection.
 - **The server as fallback.** With no desktop connected, the tab opens in the server's own browser, which keeps at most three tabs live: past that, the least used idle one is parked, and with none idle a new one is refused.
 - **A tab outlives its host.** A desktop that goes away has its tabs parked after a short grace, and a server tab unused and unwatched for a few minutes is parked too. A parked tab keeps its ref and its address, and opens again where tabs open now when a bot uses it; the bot is told the page was opened again.
-- **Local mode** uses the desktop app's browser only. It never starts one on the server.
+- **Local mode** uses the desktop app's browser only. It never starts one on the server: the app starts its server with the server's browser off (`J3_BROWSER_SERVER_HOST=off`).
 - Both hosts ship in 0.16.
 - **The server's browser is full Chrome for Testing** in its new headless mode. It is not `chrome-headless-shell`, which sites can tell from Chrome. The server downloads it on first use into J3 Bots' own home. Playwright, which drives it, reads its own files from beside its modules, so the server build carries it as a package in `node_modules/` beside the bundle instead of bundling it. Each platform's version and SHA-256 are pinned. It renders at a device scale factor of 1.
 - **Each host shows sites an honest identity:** Chrome of its own major version, on its own system, with the Google Chrome brand and client hints. The desktop drops `Electron` and the app's name from its user agent.
@@ -35,6 +35,11 @@ The owner wants a browser that is well made and works with real sites, for bots 
 - **The person always wins.** Their input takes the tab at once. Their hold ends 10 s after their last input, and bots may act again. "Wait for me" holds the tab until the person says to go on.
 - **Reading is not using.** A bot's snapshot or wait never takes the tab, and the person moving the pointer over it does not either. Their click, scroll, key, typing or address does.
 - **The person sees who is there:** the faces of the bots on the tab, the acting bot's own cursor with its name, and one quiet line by the address bar. No coloured frames or bands.
+
+### The person's browser
+
+- **The desktop app is a browser the person uses**, beside the conversation or in a window of its own, with what they expect of one: tabs, history, downloads, find, zoom, print and a browser's shortcuts. Typed text that is no address searches with Google.
+- **Its history stays on the computer.** It is never sent to the server.
 
 ### Private tabs
 
@@ -55,14 +60,16 @@ The owner wants a browser that is well made and works with real sites, for bots 
 
 ### What comes from T3 Code
 
-T3 Code's MIT license lets J3 Bots reuse its code with attribution. J3 Bots does not fork it, and the engine runs unmodified. Ported, with attribution in each file and in `packages/browser/NOTICE`:
+T3 Code's MIT license lets J3 Bots reuse its code with attribution. J3 Bots does not fork it, and the engine runs unmodified. Ported, with attribution in each file and in `packages/browser/NOTICE` and `apps/desktop/NOTICE`:
 
 - the accessibility snapshot, its refs per page generation, and the refusal of a stale ref;
 - the masking of password values and of `data:` payloads;
 - the page actions, script evaluation and waiting;
-- the CDP relay that lets Playwright drive one desktop tab.
+- the CDP relay that lets Playwright drive one desktop tab, through that page's own debugger;
+- a hidden desktop tab that keeps painting while it is driven, and a download placed by who began it;
+- the permissions a desktop page holds without asking, and the client hints.
 
-The page hardening and the import of sign-ins follow in later work.
+The import of sign-ins follows in later work.
 
 ### What the engine keeps
 

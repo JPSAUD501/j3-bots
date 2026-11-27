@@ -34,7 +34,6 @@ import {
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserToggle } from "../browser/desktop/BrowserToggle";
-import { DesktopBrowserPanel } from "../browser/desktop/DesktopBrowserPanel";
 import { useDesktopBrowserHere } from "../browser/desktop/state";
 import { desktop } from "../live/desktop";
 import { BrowserPanel } from "../browser/BrowserPanel";
@@ -78,7 +77,7 @@ import { tintOf } from "../lib/botTint";
 import { onboarding } from "../onboarding/deferred";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
-import { preloadWhenIdle } from "../lib/deferred";
+import { deferred, preloadWhenIdle } from "../lib/deferred";
 import { isCovered, useCovered } from "../lib/covered";
 import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useConversationView } from "./conversationView";
@@ -86,6 +85,11 @@ import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
+
+/** The desktop app's own browser beside the conversation: only the desktop app loads it, and only once opened. */
+const DesktopBrowserPanel = deferred(() =>
+  import("../browser/desktop/DesktopBrowserPanel").then((panel) => panel.DesktopBrowserPanel),
+).Component;
 
 // Not part of the app's first load: the first run. The details and the
 // browser beside a conversation are: the shell moves focus into them, and hands
