@@ -130,6 +130,8 @@ class Taps extends Context.Service<
      * without `conversationMentions`, `quotes`, `screenRecordings` and `themes`.
      */
     readonly olderRoster: { value: boolean };
+    /** How many times a client subscribed to the themes. */
+    readonly themeSubscribes: { count: number };
   }
 >()("@j3-bots/client-runtime/test/client.test/Taps") {}
 
@@ -150,6 +152,7 @@ const taps = Layer.effect(
       reacts: yield* Queue.unbounded<ReactionEmoji | null>(),
       silentReacts: { count: 0 },
       olderRoster: { value: false },
+      themeSubscribes: { count: 0 },
     });
   }),
 );
@@ -241,6 +244,17 @@ const tapped = Layer.mergeAll(
             }),
           ),
         );
+    }),
+  ),
+  J3Rpcs.toLayerHandler(
+    "themes.subscribe",
+    Effect.gen(function* () {
+      const { themeSubscribes } = yield* Taps;
+      const subscribe = yield* J3Rpcs.accessHandler("themes.subscribe");
+      return (input, options) => {
+        themeSubscribes.count += 1;
+        return subscribe(input, options);
+      };
     }),
   ),
   J3Rpcs.toLayerHandler(
@@ -1660,6 +1674,16 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* waitFor(roster.screenRecordings, (takes) => takes);
         const library = yield* waitFor((yield* Themes).state, (state) => state._tag === "ready");
         assert.deepStrictEqual(library._tag === "ready" ? library.value.themes : null, []);
+
+        // The server goes back to an older release: the next connection asks it for no
+        // themes, though the last one's snapshot said the server kept them.
+        const { themeSubscribes } = yield* Taps;
+        const before = themeSubscribes.count;
+        olderRoster.value = true;
+        yield* (yield* TestPlatform.TestNetwork).dropSockets;
+        yield* waitFor(roster.quotes, (takes) => !takes);
+        yield* waitFor(roster.state, (state) => state._tag === "ready" && !state.stale);
+        assert.strictEqual(themeSubscribes.count, before);
       }).pipe(Effect.provide(client())),
   );
 

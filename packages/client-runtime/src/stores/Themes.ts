@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { Connection } from "../connection/Connection.ts";
 import { Actions, type IntentResult, intentResult } from "../intents/Actions.ts";
-import { Cell, type Readable, waitFor } from "../Store.ts";
+import { Cell, type Readable } from "../Store.ts";
 import { Roster } from "./Roster.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
@@ -44,11 +44,13 @@ export const layer = Layer.effect(
     yield* connection
       .eachSession((client) =>
         // An older server has no themes: nothing is asked of it.
-        waitFor(roster.themes, (has) => has).pipe(
-          Effect.andThen(
-            client["themes.subscribe"]().pipe(
-              Stream.runForEach((library) => Effect.sync(() => state.set(ready(library)))),
-            ),
+        roster.themesOn(client).pipe(
+          Effect.andThen((has) =>
+            has
+              ? client["themes.subscribe"]().pipe(
+                  Stream.runForEach((library) => Effect.sync(() => state.set(ready(library)))),
+                )
+              : Effect.void,
           ),
           Effect.ensuring(Effect.sync(() => state.update(markStale))),
         ),

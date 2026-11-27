@@ -47,7 +47,7 @@ function readStored<A extends string>(key: string, schema: Schema.Codec<A>, fall
 
 function writeStored(key: string, value: string | null) {
   try {
-    if (value === "system" || value === null) localStorage.removeItem(key);
+    if (value === null) localStorage.removeItem(key);
     else localStorage.setItem(key, value);
   } catch {
     // The choice still applies to this page; it is just not remembered.
@@ -109,7 +109,7 @@ window.addEventListener("storage", (event) => {
 });
 
 export function setAppearance(appearance: Appearance) {
-  writeStored(KEYS.appearance, appearance);
+  writeStored(KEYS.appearance, appearance === "system" ? null : appearance);
   refresh();
 }
 
@@ -129,7 +129,7 @@ export function showLook(next: ThemeLook | null) {
 }
 
 export function setLanguage(language: LanguageChoice) {
-  writeStored(KEYS.language, language);
+  writeStored(KEYS.language, language === "system" ? null : language);
   refresh();
 }
 

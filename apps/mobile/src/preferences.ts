@@ -46,7 +46,7 @@ function readStored<A extends string>(key: string, schema: Schema.Codec<A>, fall
 /** Keeps `value`, or forgets the key for the default, which is never stored. */
 function writeStored(key: string, value: string | null) {
   try {
-    if (value === null || value === "system") Storage.removeItemSync(key);
+    if (value === null) Storage.removeItemSync(key);
     else Storage.setItemSync(key, value);
   } catch {
     // The choice still applies until the app restarts; it is just not remembered.
@@ -80,13 +80,13 @@ const apply = (appearance: Appearance) => {
 export const applyAppearance = (): void => apply(current.appearance);
 
 export function setAppearance(appearance: Appearance): void {
-  writeStored(KEYS.appearance, appearance);
+  writeStored(KEYS.appearance, appearance === "system" ? null : appearance);
   apply(appearance);
   update({ ...current, appearance });
 }
 
 export function setLanguage(language: LanguageChoice): void {
-  writeStored(KEYS.language, language);
+  writeStored(KEYS.language, language === "system" ? null : language);
   update({ ...current, language });
 }
 

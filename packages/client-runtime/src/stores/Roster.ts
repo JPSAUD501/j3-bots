@@ -14,7 +14,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { Connection } from "../connection/Connection.ts";
+import { Connection, type J3RpcClient } from "../connection/Connection.ts";
 import {
   Actions,
   type IntentResult,
@@ -22,7 +22,7 @@ import {
   roomStopAction,
   stopAction,
 } from "../intents/Actions.ts";
-import { Cell, type Readable } from "../Store.ts";
+import { Cell, type Readable, waitFor } from "../Store.ts";
 import { Conversations } from "./Conversations.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
@@ -99,6 +99,12 @@ export class Roster extends Context.Service<
      * server's default and Create from colors.
      */
     readonly themes: Readable<boolean>;
+    /**
+     * Whether the server behind `client`, one session's, keeps themes, once
+     * that session's roster snapshot has said so. A client asks a server for
+     * themes only then: the last session's word may be an older server's.
+     */
+    readonly themesOn: (client: J3RpcClient) => Effect.Effect<boolean>;
     /** Pins, hides, makes primary or moves the bot between sections. */
     readonly placeBot: (botId: BotId, placement: BotPlacement) => Effect.Effect<IntentResult<Bot>>;
     /**
@@ -155,6 +161,10 @@ export const layer = Layer.effect(
     const screenRecordings = new Cell(false);
     const recordingTranscripts = new Cell(false);
     const themes = new Cell(false);
+    // The session whose snapshot came last, with what it said of themes.
+    const snapshotOf = new Cell<{ readonly client: J3RpcClient; readonly themes: boolean } | null>(
+      null,
+    );
 
     yield* connection
       .eachSession((client) =>
@@ -180,6 +190,7 @@ export const layer = Layer.effect(
                     screenRecordings.set(frame.screenRecordings === true);
                     recordingTranscripts.set(frame.recordingTranscripts === true);
                     themes.set(frame.themes === true);
+                    snapshotOf.set({ client, themes: frame.themes === true });
                     return state.set(ready(frame.items));
                   }
                   if (frame.sections !== undefined) sections.set(frame.sections);
@@ -292,6 +303,10 @@ export const layer = Layer.effect(
       screenRecordings,
       recordingTranscripts,
       themes,
+      themesOn: Effect.fn("Roster.themesOn")(function* (client: J3RpcClient) {
+        const last = yield* waitFor(snapshotOf, (now) => now?.client === client);
+        return last?.themes === true;
+      }),
       stop,
       stopRoom,
       forceStop,
