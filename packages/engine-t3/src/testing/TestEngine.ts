@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  answersSecretRequest,
   type EngineStatus,
   type FailureClass,
   type ModelChoice,
@@ -41,6 +42,7 @@ import {
   PermissionModeRefused,
   RequestClosed,
   RetireRejected,
+  SecretAnswerMismatch,
   SessionBusy,
   SessionNotFound,
   StopRejected,
@@ -1931,11 +1933,14 @@ const make = Effect.gen(function* () {
             if (open === undefined || open.request._tag !== "secret") {
               return yield* new RequestClosed({ requestId });
             }
+            if (!answersSecretRequest(open.request.fields, answer)) {
+              return yield* new SecretAnswerMismatch({ requestId });
+            }
             session.secretAnswers.push({ requestId, answer });
             closeRequest(
               session,
               open,
-              answer._tag === "provide" ? "provided" : "declined",
+              answer._tag === "decline" ? "declined" : "provided",
               yield* DateTime.now,
             );
           }),

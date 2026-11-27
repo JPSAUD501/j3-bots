@@ -4,9 +4,11 @@ import {
   FailureClass,
   FailureDetails,
   LittleOne,
+  MAX_SECRET_REQUEST_FIELDS,
   ModelChoice,
   Plan,
   SecretRequestEntry,
+  SecretRequestField,
   WholeQuestion,
   WorkStep,
 } from "@j3-bots/contracts";
@@ -85,12 +87,18 @@ export const EngineRequest = Schema.Union([
   Schema.TaggedStruct("question", {
     questions: Schema.NonEmptyArray(WholeQuestion),
   }),
-  /** A credential only the operator can give. Answered with `Engine.respondSecret`. */
+  /**
+   * Credentials only the operator can give: one value, or the values `fields`
+   * names. Answered with `Engine.respondSecret`.
+   */
   Schema.TaggedStruct("secret", {
     label: SecretRequestEntry.fields.label,
     reason: SecretRequestEntry.fields.reason,
     url: SecretRequestEntry.fields.url,
     placeholder: SecretRequestEntry.fields.placeholder,
+    /** Empty for a request for one masked value. Ids are J3 Bots' own, by position. */
+    fields: Schema.Array(SecretRequestField).check(Schema.isMaxLength(MAX_SECRET_REQUEST_FIELDS)),
+    delivery: Schema.Literals(["reference", "file"]),
   }),
 ]);
 export type EngineRequest = typeof EngineRequest.Type;

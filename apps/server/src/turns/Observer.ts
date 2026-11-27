@@ -1357,6 +1357,8 @@ export const layer = Layer.effect(
             reason: request.reason,
             url: request.url,
             placeholder: request.placeholder,
+            fields: request.fields,
+            delivery: request.delivery,
             status: "pending",
           };
       }

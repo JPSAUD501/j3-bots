@@ -80,6 +80,7 @@ import {
   PermissionModeRefused,
   RequestClosed,
   RetireRejected,
+  SecretAnswerMismatch,
   SessionBusy,
   SessionNotFound,
   StopRejected,
@@ -101,6 +102,7 @@ import { type BrowserHostNeeds, inspectBrowserHost } from "./BrowserHost.ts";
 import { boundedCommand } from "./Command.ts";
 import { makeBrowserBridge } from "./BrowserBridge.ts";
 import { makeEngineRpc } from "./Connection.ts";
+import { secretAnswerFor } from "./secretAnswer.ts";
 import {
   checkAccess,
   ensureCredential,
@@ -1879,18 +1881,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         if (found.answerTo._tag !== "secret" || found.closed !== undefined) {
           return yield* new RequestClosed({ requestId: input.requestId });
         }
+        const answer = secretAnswerFor(found.answerTo.fieldNames, input.answer);
+        if (answer === undefined) {
+          return yield* new SecretAnswerMismatch({ requestId: input.requestId });
+        }
         yield* rpc["secrets.answerRequest"]({
           threadId: ThreadId.make(input.sessionId),
           turnItemId: TurnItemId.make(found.answerTo.turnItemId),
-          answer:
-            input.answer._tag === "decline"
-              ? { type: "decline" }
-              : found.answerTo.field === null
-                ? { type: "save", secret: Redacted.value(input.answer.value) }
-                : {
-                    type: "save",
-                    values: { [found.answerTo.field]: Redacted.value(input.answer.value) },
-                  },
+          answer,
         }).pipe(
           Effect.timeoutOrElse({
             duration: COMMAND_TIMEOUT,

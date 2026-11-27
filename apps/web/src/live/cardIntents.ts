@@ -92,7 +92,7 @@ export function useCardIntents(
     dismissQuestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     decideApproval: (entryId, decision) =>
       void j3.answerCard(entryId, { _tag: "approval", decision }),
-    provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
+    provideSecret: (entryId, answer) => void j3.provideSecret(entryId, answer),
     declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
     answerBrowserHelp: (entryId, outcome) =>
       void j3.answerCard(entryId, { _tag: "browser-help", outcome }),

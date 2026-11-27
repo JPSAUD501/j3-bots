@@ -493,6 +493,8 @@ it.effect(
             reason: "To publish.",
             url: null,
             placeholder: null,
+            fields: [],
+            delivery: "reference",
           },
         });
         yield* awaitEntry(bot.id, "secret-request");

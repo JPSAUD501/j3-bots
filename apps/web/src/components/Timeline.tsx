@@ -17,7 +17,6 @@ import type {
   WorkImageId,
   WorkStep,
 } from "@j3-bots/contracts";
-import type * as Redacted from "effect/Redacted";
 import type { ReactNode, RefObject } from "react";
 import type { IntentResult, MentionLabel } from "@j3-bots/client-runtime";
 import {
@@ -28,6 +27,7 @@ import {
   type OpeningHold,
   type OwnAppClient,
   type OwnAppSetup,
+  type SecretRequestValues,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
@@ -56,7 +56,7 @@ export interface TimelineIntents {
   readonly answerQuestion: (entryId: EntryId, answers: QuestionAnswers) => void;
   readonly dismissQuestion: (entryId: EntryId) => void;
   readonly decideApproval: (entryId: EntryId, decision: ApprovalDecision) => void;
-  readonly provideSecret: (entryId: EntryId, value: Redacted.Redacted<string>) => void;
+  readonly provideSecret: (entryId: EntryId, answer: SecretRequestValues) => void;
   readonly declineSecret: (entryId: EntryId) => void;
   /** The operator did the step a bot asked for in its browser, or could not. */
   readonly answerBrowserHelp: (entryId: EntryId, outcome: "done" | "declined") => void;
@@ -324,7 +324,7 @@ function Card({
       return (
         <SecretRequestCard
           entry={entry}
-          onProvide={(value) => intents.provideSecret(entry.id, value)}
+          onProvide={(answer) => intents.provideSecret(entry.id, answer)}
           onDecline={() => intents.declineSecret(entry.id)}
           submitting={submitting(entry.id)}
         />

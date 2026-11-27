@@ -13,8 +13,10 @@ import {
   MAX_LITTLE_ONE_LABEL_LENGTH,
   MAX_PLAN_STEP_LENGTH,
   MAX_PLAN_STEPS,
+  MAX_SECRET_REQUEST_FIELDS,
   type Plan,
   type PlanStepStatus,
+  secretRequestFieldId,
   WorkStepId,
 } from "@j3-bots/contracts";
 import {
@@ -1637,8 +1639,11 @@ type AnswerTarget =
   | {
       readonly _tag: "secret";
       readonly turnItemId: string;
-      /** The name the value is saved under, when the request asked for it as its one field. */
-      readonly field: string | null;
+      /**
+       * The names the bot asked for its values under, in the order of the
+       * card's fields; empty for a request for one value.
+       */
+      readonly fieldNames: ReadonlyArray<string>;
     };
 
 /** A request item, its state, and what the operator sees of it. */
@@ -1730,26 +1735,44 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
       };
     }
     case "secret_request": {
-      // A card takes one value. A request for several has none, and is left to
-      // time out (docs/architecture/engine.md, "The adapter's interface"); one asked for as a
-      // single field is the card's value, labelled as the field and saved under its name, as
-      // the engine's own client labels it (**Read** at bc0f04d,
-      // `client-runtime/src/secretRequest.ts`).
+      // A request names its values by the bot's own names; the card numbers them, and an
+      // answer is mapped back by position (`T3Engine.respondSecret`). The engine takes at most
+      // eight (**Read** at `bc0f04d`, `orchestratorMcp.ts`, `RequestSecretFields`); a record
+      // with more is not a card this adapter offers, and the request waits out its timeout.
       const fields = item.fields ?? [];
-      if (fields.length > 1) return undefined;
-      const field = fields[0];
-      const placeholder = field === undefined ? item.placeholder : field.placeholder;
+      if (fields.length > MAX_SECRET_REQUEST_FIELDS) return undefined;
       return {
         requestId: RequestId.make(localIdFor(item.id)),
-        answerTo: { _tag: "secret", turnItemId: item.id, field: field?.name ?? null },
+        answerTo: {
+          _tag: "secret",
+          turnItemId: item.id,
+          fieldNames: fields.map((field) => field.name),
+        },
         turnId,
         openedAt,
         request: {
           _tag: "secret",
-          label: label(field?.label ?? item.label, "Secret"),
+          label: label(item.label, "Secret"),
           reason: item.reason.slice(0, 2000),
           url: item.url?.slice(0, 2000) ?? null,
-          placeholder: placeholder === undefined ? null : label(placeholder, "Secret"),
+          placeholder:
+            fields.length > 0 || item.placeholder === undefined
+              ? null
+              : label(item.placeholder, "Secret"),
+          fields: fields.map((field, index) => ({
+            id: secretRequestFieldId(index),
+            label: label(field.label, "Value"),
+            placeholder:
+              field.placeholder === undefined || field.placeholder.trim() === ""
+                ? null
+                : label(field.placeholder, "Value"),
+            // Masked unless the bot said the value is not secret (**Read** at `bc0f04d`,
+            // `orchestrationV2.ts`, `OrchestrationV2SecretRequestField`).
+            masked: field.secret !== false,
+          })),
+          // A request with fields always goes to files (**Read** at `bc0f04d`,
+          // `OrchestratorMcpService.ts`, `requestSecret`), and says so in its record.
+          delivery: item.delivery === "file" ? "file" : "reference",
         },
         heldCall: null,
         closed: secretClose(item),

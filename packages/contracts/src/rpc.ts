@@ -60,6 +60,7 @@ import {
   PREVIEW_LENGTH,
   QuestionAnswers,
   ReceivedEntry,
+  SecretRequestAnswer,
   WorkStep,
 } from "./entry.ts";
 import { CommandError, Conflict, ConnectorCommandError, NotFound } from "./errors.ts";
@@ -336,8 +337,14 @@ export const EntryRpcs = RpcGroup.make(
     error: CommandError,
   }),
   /**
-   * Answers a secret request. The value goes straight to the engine and is not
-   * stored, logged or kept in a receipt.
+   * Answers a secret request. The values go straight to the engine and are
+   * not stored, logged or kept in a receipt.
+   *
+   * A request for one value takes `provide`; one with `fields` takes
+   * `provide-fields`, with a value for each of its fields and no other. A
+   * request with one field also takes `provide`, as a client before 0.12.0
+   * sends it. Any other answer fails with `Invalid("answer")`, leaving the
+   * card open.
    *
    * Success means this call's answer is the one the engine took. When the
    * card had closed another way, or the engine's reply was lost and a retry
@@ -348,14 +355,7 @@ export const EntryRpcs = RpcGroup.make(
   Rpc.make("secret.provide", {
     payload: {
       entryId: EntryId,
-      answer: Schema.Union([
-        Schema.TaggedStruct("provide", {
-          value: Schema.Redacted(
-            Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(10_000)),
-          ),
-        }),
-        Schema.TaggedStruct("decline", {}),
-      ]),
+      answer: SecretRequestAnswer,
     },
     error: CommandError,
   }),

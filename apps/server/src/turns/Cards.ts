@@ -587,6 +587,8 @@ export const layer = Layer.effect(
             // Another answer, or the turn's end, closed it first.
             RequestClosed: () => Effect.andThen(cleared, new Conflict({ reason: "card-closed" })),
             SessionNotFound: () => Effect.andThen(cleared, new Conflict({ reason: "card-closed" })),
+            // Nothing was sent: the answer does not fit the card's values, which stays open.
+            SecretAnswerMismatch: () => Effect.andThen(cleared, new Invalid({ reason: "answer" })),
             // Nothing was sent.
             EngineUnavailable: () =>
               Effect.andThen(cleared, new Conflict({ reason: "engine-unavailable" })),

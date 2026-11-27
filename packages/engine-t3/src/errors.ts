@@ -193,6 +193,21 @@ export class AnswerRejected extends Schema.TaggedError<AnswerRejected>()("Answer
 }
 
 /**
+ * `respondSecret`: the answer does not give a value for exactly the fields the
+ * request asks for: one value for a request without fields or with one field,
+ * else a value for each field and no other. Nothing reached the engine, and
+ * the request stays open.
+ */
+export class SecretAnswerMismatch extends Schema.TaggedError<SecretAnswerMismatch>()(
+  "SecretAnswerMismatch",
+  { requestId: RequestId },
+) {
+  override get message(): string {
+    return `The answer to the secret request ${this.requestId} does not match the values it asks for.`;
+  }
+}
+
+/**
  * The engine refused to open a session under the key, and nothing was
  * opened. The adapter reports it only once a resend of the key found its
  * rejected receipt (`OrchestratorCommandPreviouslyRejectedError`), as for

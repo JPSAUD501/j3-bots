@@ -463,8 +463,9 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  * - `steps`: thinks for `think` ms (default 2000), runs `count` commands
  *   (default 3) of `each` ms (default 4000), then answers `text` as `speak`
  *   does. For a turn's work as a client shows it while it runs.
- * - `secret`: asks for a secret through the engine's `request_secret` tool,
- *   as its one field named `field` when given.
+ * - `secret`: asks for a secret through the engine's `request_secret` tool:
+ *   one value, or the comma-separated `fields`, each labelled with its name
+ *   and masked unless `plain` names it too.
  * - `browse`: opens `url` in the engine's browser (`preview_open`), then acts
  *   on the tab every `every` ms (default 1000) for up to `for` ms (default
  *   60000). It speaks through the engine's `send_to_user` the first time an
@@ -653,11 +654,20 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     return turn.signal.aborted ? "cancelled" : "end_turn";
   },
   secret: async (turn) => {
-    const field = turn.args.get("field");
+    const fields = turn.args.get("fields")?.split(",");
+    const plain = new Set(turn.args.get("plain")?.split(",") ?? []);
     const result = await callHostTool(turn, "request_secret", {
       label: turn.args.get("label") ?? "Scripted token",
       reason: "The conformance suite asks for a secret.",
-      ...(field === undefined ? {} : { fields: [{ name: field, label: "Token" }] }),
+      ...(fields === undefined
+        ? {}
+        : {
+            fields: fields.map((name) => ({
+              name,
+              label: name,
+              ...(plain.has(name) ? { secret: false } : {}),
+            })),
+          }),
     });
     if (turn.signal.aborted) return "cancelled";
     await stream(turn, result.failed ? "Secret request failed." : "Secret request finished.");

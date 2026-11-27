@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, type Conflict, Invalid, type NotFound, WorkStepId } from "@j3-bots/contracts";
+import {
+  type BotId,
+  type Conflict,
+  Invalid,
+  type NotFound,
+  secretRequestFieldId,
+  WorkStepId,
+} from "@j3-bots/contracts";
 import { Engine, type TurnOutcome } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
@@ -60,6 +67,8 @@ const submittedThenStopped = Effect.gen(function* () {
       reason: "To publish.",
       url: null,
       placeholder: null,
+      fields: [],
+      delivery: "reference",
     },
   });
   const card = yield* awaitEntry(bot.id, "secret-request");
@@ -112,6 +121,61 @@ it.effect("takes a value again after a restart when the submission never landed"
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
+it.effect("asks for several values in one card, and takes them only all together", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const cards = yield* Cards;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Check my mail.");
+    const turnId = yield* nextTurn(bot.id);
+    const fields = [
+      { id: secretRequestFieldId(0), label: "Email", placeholder: null, masked: false },
+      { id: secretRequestFieldId(1), label: "Password", placeholder: null, masked: true },
+    ];
+    yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "secret",
+        label: "Sign in to Mail",
+        reason: "To read your inbox.",
+        url: null,
+        placeholder: null,
+        fields,
+        delivery: "file",
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "secret-request");
+    assert.deepStrictEqual(card.fields, fields);
+    assert.strictEqual(card.delivery, "file");
+
+    // A client before 0.12.0 sends one value: refused, and the card stays open.
+    const alone = yield* cards.provideSecret({ entryId: card.id, answer: value }).pipe(Effect.flip);
+    assert.deepStrictEqual(alone, new Invalid({ reason: "answer" }));
+    const markers = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM secret_submissions
+    `;
+    assert.strictEqual(markers[0]?.n, 0);
+    assert.strictEqual(yield* secretStatus(bot.id), "pending");
+
+    const both = {
+      _tag: "provide-fields",
+      values: {
+        [secretRequestFieldId(0)]: Redacted.make("someone@example.com"),
+        [secretRequestFieldId(1)]: Redacted.make("example-password"),
+      },
+    } as const;
+    yield* cards.provideSecret({ entryId: card.id, answer: both });
+    yield* until(secretStatus(bot.id).pipe(Effect.map((status) => status === "provided")));
+    assert.deepStrictEqual(
+      (yield* control.secretAnswers(session)).map((sent) => sent.answer),
+      [both],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("lets one submission at a time reach a card, when the first one's reply is lost", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
@@ -129,6 +193,8 @@ it.effect("lets one submission at a time reach a card, when the first one's repl
         reason: "To publish.",
         url: null,
         placeholder: null,
+        fields: [],
+        delivery: "reference",
       },
     });
     const card = yield* awaitEntry(bot.id, "secret-request");

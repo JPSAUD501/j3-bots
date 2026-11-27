@@ -1566,7 +1566,7 @@ function CardsSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Credential: pending with a link, provided, declined, expired">
+      <Labeled label="Credential: one value pending with a link, provided, declined, expired; a sign-in asking for an email and a password, pending, provided, declined, expired">
         <div className="flex flex-col gap-3">
           {variants.secrets.map((entry) => (
             <SecretRequestCard
