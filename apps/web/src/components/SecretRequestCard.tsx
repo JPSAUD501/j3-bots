@@ -3,11 +3,11 @@ import type { SecretRequestEntry } from "@j3-bots/contracts";
 import { EyeIcon, EyeOffIcon, ExternalLinkIcon, KeyRoundIcon } from "lucide-react";
 import { type Ref, useId, useRef, useState } from "react";
 import {
-  MAX_SECRET_REQUEST_VALUE_LENGTH,
   type SecretRequestInput,
   secretRequestAnswer,
   secretRequestInputs,
   type SecretRequestValues,
+  secretValueTooLong,
   webAddress,
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
@@ -98,8 +98,8 @@ export function SecretRequestCard({
 
 /**
  * The inputs and their actions. Unmounted with the request, taking the typed
- * values with it. Enter moves to the first input still empty, and sends once
- * every one is filled. While an answer is on its way they stay focusable but
+ * values with it. Enter moves to the first input still empty, or to one too
+ * long to send, and sends once every one fits. While an answer is on its way they stay focusable but
  * take no second one.
  */
 function SecretForm({
@@ -135,7 +135,7 @@ function SecretForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (submitting) return;
-        if (result._tag === "blank") {
+        if (result._tag === "unfit") {
           fields.current[result.position]?.focus();
           return;
         }
@@ -191,7 +191,7 @@ function SecretForm({
             type="submit"
             variant="primary"
             size="sm"
-            aria-disabled={result._tag === "blank" || submitting}
+            aria-disabled={result._tag === "unfit" || submitting}
           >
             {t("secret.provide")}
           </Button>
@@ -228,6 +228,8 @@ function SecretInput({
   const { t } = useI18n();
   const [shown, setShown] = useState(false);
   const hidden = input.masked && !shown;
+  const tooLong = secretValueTooLong(value);
+  const problemId = `${id}-problem`;
   return (
     <div className="flex flex-col gap-1">
       {labelled && (
@@ -244,7 +246,8 @@ function SecretInput({
           readOnly={submitting}
           aria-disabled={submitting}
           aria-required
-          maxLength={MAX_SECRET_REQUEST_VALUE_LENGTH}
+          aria-invalid={tooLong}
+          aria-describedby={tooLong ? problemId : undefined}
           onChange={(event) => onChange(event.currentTarget.value)}
           placeholder={input.placeholder ?? undefined}
           autoComplete={input.autofill === null ? "off" : autoComplete[input.autofill]}
@@ -252,7 +255,8 @@ function SecretInput({
           autoCorrect="off"
           spellCheck={false}
           className={cn(
-            "h-9 w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11",
+            "h-9 w-full rounded-md border bg-surface px-3 text-sm placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11",
+            tooLong ? "border-blocked" : "border-input",
             input.masked && "pe-11 font-mono",
           )}
         />
@@ -276,6 +280,11 @@ function SecretInput({
           </button>
         )}
       </div>
+      {tooLong && (
+        <p id={problemId} className="text-xs text-blocked">
+          {t("secret.tooLong")}
+        </p>
+      )}
     </div>
   );
 }

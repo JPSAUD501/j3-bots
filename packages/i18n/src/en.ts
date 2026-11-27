@@ -278,6 +278,7 @@ export const en = {
   "secret.inFile.other":
     "Kept out of this conversation, in private files your bot can read for the next 24 hours.",
   "secret.show": "Show {label}",
+  "secret.tooLong": "This is too long to send. Check that you pasted only the value.",
   "secret.getOne": "Get one",
   "secret.decline": "Decline",
   "secret.provide": "Send",

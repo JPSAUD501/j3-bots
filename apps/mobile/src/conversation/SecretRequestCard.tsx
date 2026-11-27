@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  MAX_SECRET_REQUEST_VALUE_LENGTH,
   type SecretRequestInput,
   secretRequestAnswer,
   secretRequestInputs,
+  secretValueTooLong,
   webAddress,
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
@@ -60,7 +60,7 @@ export function SecretRequestCard({ entry }: { readonly entry: SecretRequestEntr
 /**
  * The inputs and their actions. Unmounted with the request, taking the typed
  * values with it. The keyboard's action moves to the first input still empty,
- * and sends once every one is filled. While an answer is on its way they take
+ * or to one too long to send, and sends once every one fits. While an answer is on its way they take
  * no second one but keep their place.
  */
 function SecretForm({
@@ -89,7 +89,7 @@ function SecretForm({
         : null;
   const provide = () => {
     if (submitting) return;
-    if (result._tag === "blank") {
+    if (result._tag === "unfit") {
       fields.current[result.position]?.focus();
       return;
     }
@@ -145,7 +145,7 @@ function SecretForm({
             variant="primary"
             label={t("secret.provide")}
             onPress={provide}
-            disabled={result._tag === "blank"}
+            disabled={result._tag === "unfit"}
             held={submitting}
           />
         </View>
@@ -187,6 +187,7 @@ function SecretInput({
   const placeholderColor = useColor("accent-muted-foreground");
   const [shown, setShown] = useState(false);
   const autofill = input.autofill;
+  const tooLong = secretValueTooLong(value);
   return (
     <View className="gap-1">
       {labelled && <Text className="text-xs font-medium text-foreground">{input.label}</Text>}
@@ -198,7 +199,6 @@ function SecretInput({
           editable={!submitting}
           secureTextEntry={input.masked && !shown}
           keyboardType={input.masked && shown ? "visible-password" : "default"}
-          maxLength={MAX_SECRET_REQUEST_VALUE_LENGTH}
           autoComplete={autofill ?? "off"}
           importantForAutofill={autofill === null ? "no" : "yes"}
           textContentType={autofill ?? "none"}
@@ -211,8 +211,9 @@ function SecretInput({
           placeholder={input.placeholder ?? undefined}
           placeholderTextColor={placeholderColor}
           accessibilityLabel={input.label}
-          accessibilityHint={hint}
-          className={`min-h-11 rounded-md border border-input bg-surface px-3 text-base text-foreground ${input.masked ? "pe-12" : ""}`}
+          accessibilityHint={tooLong ? t("secret.tooLong") : hint}
+          aria-invalid={tooLong}
+          className={`min-h-11 rounded-md border ${tooLong ? "border-blocked" : "border-input"} bg-surface px-3 text-base text-foreground ${input.masked ? "pe-12" : ""}`}
         />
         {input.masked && (
           <PressScale
@@ -226,6 +227,11 @@ function SecretInput({
           </PressScale>
         )}
       </View>
+      {tooLong && (
+        <Text accessibilityLiveRegion="polite" className="text-xs text-blocked">
+          {t("secret.tooLong")}
+        </Text>
+      )}
     </View>
   );
 }

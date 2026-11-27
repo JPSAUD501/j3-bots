@@ -273,6 +273,7 @@ const sentences = {
   "secret.inFile.other":
     "Ficam fora desta conversa, em arquivos privados que o bot pode ler nas próximas 24 horas.",
   "secret.show": "Mostrar {label}",
+  "secret.tooLong": "Isto é longo demais para enviar. Confira se colou só o valor.",
   "secret.getOne": "Obter uma",
   "secret.decline": "Recusar",
   "secret.provide": "Enviar",

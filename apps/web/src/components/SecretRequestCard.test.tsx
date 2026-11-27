@@ -5,6 +5,7 @@ import {
   BotId,
   EntryId,
   EntryOrder,
+  MAX_SECRET_REQUEST_VALUE_LENGTH,
   type SecretRequestEntry,
   secretRequestFieldId,
 } from "@j3-bots/contracts";
@@ -109,6 +110,23 @@ describe("a secret request card with several values", () => {
     );
     // What was typed does not stay in the card.
     expect([field("Email").value, field("Password").value]).toEqual(["", ""]);
+  });
+
+  it("keeps a value too long whole, says so, and sends nothing", () => {
+    show(signIn);
+    act(() => type(field("Email"), "someone@example.com"));
+    act(() => type(field("Password"), "k".repeat(MAX_SECRET_REQUEST_VALUE_LENGTH + 1)));
+
+    enter(field("Email"));
+
+    expect(sent).toEqual([]);
+    expect(document.activeElement).toBe(field("Password"));
+    expect(field("Password").value).toHaveLength(MAX_SECRET_REQUEST_VALUE_LENGTH + 1);
+    expect(field("Password").getAttribute("aria-invalid")).toBe("true");
+    const problem = field("Password").getAttribute("aria-describedby");
+    expect(problem === null ? null : document.getElementById(problem)?.textContent).toBe(
+      "This is too long to send. Check that you pasted only the value.",
+    );
   });
 
   it("shows the email as typed and hides the password until asked to show it", () => {

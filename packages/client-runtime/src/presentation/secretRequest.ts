@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  SecretRequestAnswer,
-  SecretRequestEntry,
-  SecretRequestFieldId,
+import {
+  MAX_SECRET_REQUEST_VALUE_LENGTH,
+  type SecretRequestAnswer,
+  type SecretRequestEntry,
+  type SecretRequestFieldId,
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
 
 /** What a secret request's answer carries when it is not a decline: its values. */
 export type SecretRequestValues = Exclude<SecretRequestAnswer, { readonly _tag: "decline" }>;
-
-/** The longest value a secret request card's input takes, as the contract does. */
-export const MAX_SECRET_REQUEST_VALUE_LENGTH = 10_000;
 
 /**
  * One input of a secret request card. `autofill` is what a password manager
@@ -67,18 +65,33 @@ export const secretRequestInputs = (
 };
 
 /**
+ * Whether a typed value is longer than a secret request takes. A card says so
+ * at the input, rather than cutting the value short: a credential sent in part
+ * would fail later, somewhere the operator cannot see why.
+ */
+export const secretValueTooLong = (value: string): boolean =>
+  value.length > MAX_SECRET_REQUEST_VALUE_LENGTH;
+
+/**
  * The answer to send for the `values` typed into `inputs`, in the same order,
- * or the position of the first input still blank. A value of spaces alone is
- * blank: the engine takes none.
+ * or the first input whose value cannot be sent and why: still blank (spaces
+ * alone count, since the engine takes none) or too long.
  */
 export const secretRequestAnswer = (
   inputs: ReadonlyArray<SecretRequestInput>,
   values: ReadonlyArray<string>,
 ):
   | { readonly _tag: "answer"; readonly answer: SecretRequestValues }
-  | { readonly _tag: "blank"; readonly position: number } => {
-  const blank = inputs.findIndex((_, position) => (values[position] ?? "").trim() === "");
-  if (blank !== -1) return { _tag: "blank", position: blank };
+  | {
+      readonly _tag: "unfit";
+      readonly position: number;
+      readonly problem: "blank" | "tooLong";
+    } => {
+  for (const position of inputs.keys()) {
+    const value = values[position] ?? "";
+    if (value.trim() === "") return { _tag: "unfit", position, problem: "blank" };
+    if (secretValueTooLong(value)) return { _tag: "unfit", position, problem: "tooLong" };
+  }
   const [only] = inputs;
   if (inputs.length === 1 && only?.id === null) {
     return { _tag: "answer", answer: { _tag: "provide", value: Redacted.make(values[0] ?? "") } };

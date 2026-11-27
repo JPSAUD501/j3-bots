@@ -421,11 +421,14 @@ export type SecretDelivery = typeof SecretDelivery.Type;
  * one of them not a space, redacted as soon as it is decoded and checked only
  * then, so neither a refused value nor a log of the request prints it.
  */
+/** The longest value a secret request takes, in UTF-16 code units. */
+export const MAX_SECRET_REQUEST_VALUE_LENGTH = 10_000;
+
 export const SecretRequestValue = Schema.Redacted(Schema.String).check(
   Schema.makeFilter(
     (value: Redacted.Redacted<string>) => {
       const text = Redacted.value(value);
-      return text.length <= 10_000 && text.trim() !== "";
+      return text.length <= MAX_SECRET_REQUEST_VALUE_LENGTH && text.trim() !== "";
     },
     { expected: "a value of 1 to 10,000 characters that is not only spaces" },
   ),

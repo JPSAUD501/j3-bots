@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { secretRequestFieldId, type SecretRequestField } from "@j3-bots/contracts";
+import {
+  MAX_SECRET_REQUEST_VALUE_LENGTH,
+  secretRequestFieldId,
+  type SecretRequestField,
+} from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Redacted from "effect/Redacted";
 import { secretRequestAnswer, secretRequestInputs } from "./secretRequest.ts";
@@ -63,12 +67,25 @@ describe("secretRequestAnswer", () => {
 
   it("names the first value still blank, spaces alone included, and sends nothing", () => {
     assert.deepStrictEqual(secretRequestAnswer(login, ["someone@example.com", ""]), {
-      _tag: "blank",
+      _tag: "unfit",
       position: 1,
+      problem: "blank",
     });
     assert.deepStrictEqual(secretRequestAnswer(login, ["   ", ""]), {
-      _tag: "blank",
+      _tag: "unfit",
       position: 0,
+      problem: "blank",
+    });
+  });
+
+  it("sends nothing rather than a value cut short", () => {
+    const longest = "k".repeat(MAX_SECRET_REQUEST_VALUE_LENGTH);
+
+    assert.strictEqual(secretRequestAnswer(login, ["someone@example.com", longest])._tag, "answer");
+    assert.deepStrictEqual(secretRequestAnswer(login, ["someone@example.com", `${longest}k`]), {
+      _tag: "unfit",
+      position: 1,
+      problem: "tooLong",
     });
   });
 
