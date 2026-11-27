@@ -92,6 +92,7 @@ import {
   type RecentTurnsState,
   type Revealed,
   type RoutineCardCommand,
+  type SettingsSaves,
   type SignInView,
 } from "@j3-bots/client-runtime";
 import {
@@ -257,6 +258,8 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
+import { sampleSentEvents } from "./usageData";
+import { SentPanel, UsageDataSection } from "../components/UsageData";
 import { useSampleSecrets } from "./sampleSecrets";
 import { ordered, withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
@@ -380,6 +383,7 @@ export default function GalleryPage() {
                 <EngineSettingsSection />
                 <SecretsGallerySection />
                 <UsageGallerySection />
+                <UsageDataGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
                 <FirstRunWideSection />
@@ -4561,6 +4565,85 @@ function SecretsGallerySection() {
         </Frame>
         <Frame padded label="Changed by a newer release" width={420} height={180}>
           <SecretsSection secrets={newer} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/** The About page's usage data switch, on a server whose `telemetry` is `setting`, with `save`. */
+function UsageDataFrame({
+  label,
+  setting,
+  save = { _tag: "idle" },
+  connected = true,
+}: {
+  label: string;
+  setting: { readonly enabled: boolean; readonly heldOff: boolean };
+  save?: SettingsSaves["usage-data"];
+  connected?: boolean;
+}) {
+  return (
+    <Frame label={label} width={390} height={260} padded>
+      <UsageDataSection
+        settings={{ ...team.settings, telemetry: setting }}
+        save={save}
+        connected={connected}
+        intents={{
+          updateSettings: nothing,
+          usageData: { sent: () => Promise.resolve(sampleSentEvents), record: nothing },
+        }}
+      />
+    </Frame>
+  );
+}
+
+function UsageDataGallerySection() {
+  return (
+    <Section title="Usage data">
+      <div className="flex flex-wrap gap-4">
+        <UsageDataFrame
+          label="On, as a new install starts"
+          setting={{ enabled: true, heldOff: false }}
+        />
+        <UsageDataFrame label="Turned off" setting={{ enabled: false, heldOff: false }} />
+        <UsageDataFrame
+          label="Turning off: the switch shows the save under way"
+          setting={{ enabled: true, heldOff: false }}
+          save={{ _tag: "saving", changes: { enabled: false } }}
+        />
+        <UsageDataFrame
+          label="The save failed"
+          setting={{ enabled: true, heldOff: false }}
+          save={{ _tag: "failed", changes: { enabled: false } }}
+        />
+        <UsageDataFrame
+          label="Held off on the server's computer (DO_NOT_TRACK, CI, or J3_TELEMETRY_ENABLED)"
+          setting={{ enabled: true, heldOff: true }}
+        />
+        <Frame label="See what is sent" width={448} height={640}>
+          <SentPanel
+            titleId="gallery-usage-sent"
+            sent={{ _tag: "read", events: sampleSentEvents }}
+            onRetry={nothing}
+            onClose={nothing}
+          />
+        </Frame>
+        <Frame label="See what is sent: nothing yet" width={448} height={260}>
+          <SentPanel
+            titleId="gallery-usage-sent-empty"
+            sent={{ _tag: "read", events: [] }}
+            onRetry={nothing}
+            onClose={nothing}
+          />
+        </Frame>
+        <Frame label="See what is sent: the read failed" width={448} height={260}>
+          <SentPanel
+            titleId="gallery-usage-sent-failed"
+            sent={{ _tag: "failed" }}
+            onRetry={nothing}
+            onClose={nothing}
+          />
         </Frame>
       </div>
     </Section>

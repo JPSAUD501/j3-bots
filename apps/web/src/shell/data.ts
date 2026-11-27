@@ -23,6 +23,8 @@ import type {
 } from "@j3-bots/client-runtime";
 import type { ConnectorsPlace, SettingsPage } from "@j3-bots/client-runtime/presentation";
 import type {
+  ClientTelemetryEvent,
+  SentTelemetryEvent,
   AvatarChoice,
   Bot,
   BotFile,
@@ -376,6 +378,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly updatePrompt?: UpdatePromptIntents;
   /** What each release lets people do, up to the server's, and its mark after an update. */
   readonly whatsNew: WhatsNewIntents;
+  /** The server's anonymous usage data: what it sent, and what only this window sees. */
+  readonly usageData: UsageDataIntents;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
   readonly shortcut?: DesktopShortcut;
   /** In the desktop app, what quick access reads of the window in front. Absent in a browser. */
@@ -385,6 +389,14 @@ export interface ShellIntents extends TimelineIntents {
    * providers in from here. Absent elsewhere, where the command connects them.
    */
   readonly providerSetup?: ProviderSetupIntents;
+}
+
+/** The server's anonymous usage data (decision 0099), as a window takes part in it. */
+interface UsageDataIntents {
+  /** The newest events the server sent, as they left, newest first; null when they could not be read. */
+  readonly sent: () => Promise<ReadonlyArray<SentTelemetryEvent> | null>;
+  /** Something only this window sees, told while usage data is on. */
+  readonly record: (event: ClientTelemetryEvent) => void;
 }
 
 /** The server the desktop app talks to, and a way to leave it for another. */

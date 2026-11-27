@@ -32,6 +32,7 @@ import * as Socket from "effect/socket/Socket";
 import { systemTimeZone } from "../lib/timeZone";
 import { type CredentialCell, type CredentialCodec, makeCredentialStore } from "./credentialStore";
 import { type Desktop, desktop } from "./desktop";
+import { identityLayer } from "./identity";
 import * as Idb from "./idb";
 import { sealedCredential, storedProtection } from "./sealedCredential";
 import { credentialRecord, plainCredential } from "./storedCredential";
@@ -332,6 +333,7 @@ export const makePlatform = (server: URL): Layer.Layer<Platform> => {
     // hidden or not, and the server tells them there.
     alwaysForeground,
     timeZone,
+    identityLayer(desktop),
     FetchHttpClient.layer,
     Socket.layerWebSocketConstructorGlobal,
     SecureRandom.layerWebCrypto,

@@ -35,6 +35,7 @@ export {
 } from "./connection/Connection.ts";
 export { type ConnectorChanges, Connectors } from "./stores/Connectors.ts";
 export { Skills } from "./stores/Skills.ts";
+export { RECORD_WAIT, UsageData, usageDataOn } from "./stores/UsageData.ts";
 export { type Download } from "./files/Files.ts";
 export {
   admitFiles,
@@ -65,6 +66,7 @@ export {
   CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
+  ClientIdentity,
   DeviceTimeZone,
   FileTransfer,
   type LocalRecord,
@@ -145,6 +147,7 @@ export {
   type ProfileChanges,
   type SettingsChange,
   type SettingsSave,
+  type UsageDataChanges,
   type SettingsSaves,
 } from "./stores/Settings.ts";
 export {

@@ -98,7 +98,7 @@ function PageBody({ page }: { readonly page: SettingsPage }) {
     case "where":
       return <ServerSection />;
     case "updates":
-      return <AboutSection />;
+      return <AboutSection connected={connected} />;
   }
 }
 

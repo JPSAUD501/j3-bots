@@ -278,6 +278,9 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
               yield* fs.remove(manager.unitFile);
               yield* runToEnd(ChildProcess.make("systemctl", ["--user", "daemon-reload"]));
             }
+            if (yield* fs.exists(`${manager.unitFile}.d`)) {
+              yield* fs.remove(`${manager.unitFile}.d`, { recursive: true });
+            }
           }).pipe(Effect.orDie),
         );
 
@@ -292,6 +295,14 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
           path.join(data, HOME_ENTRIES.config),
           `${JSON.stringify({ host: "127.0.0.1", ...ports, scriptedAgent: path.resolve(SCRIPTED_AGENT) }, null, 2)}\n`,
           { mode: 0o600 },
+        );
+
+        // The service sees none of the runner's CI variables, and a test install is not one to
+        // count: it keeps usage data off as an operator would, in a drop-in the install leaves alone.
+        yield* fs.makeDirectory(`${manager.unitFile}.d`, { recursive: true });
+        yield* fs.writeFileString(
+          `${manager.unitFile}.d/usage-data.conf`,
+          "[Service]\nEnvironment=DO_NOT_TRACK=1\n",
         );
 
         /** The manifest of an installed release. */

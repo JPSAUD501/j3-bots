@@ -334,6 +334,8 @@ export function useDictation({
         return;
       }
       current.device = { heard: nothingHeard, stopping: false };
+      // Dictation through the server tells it as it starts (`voice.dictate`); this one does here.
+      client.recordUsage({ event: "feature.used", properties: { feature: "voice-input" } });
       setPhase({ _tag: "device" });
       AccessibilityInfo.announceForAccessibility(t("dictation.listening"));
       try {

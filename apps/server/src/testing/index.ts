@@ -27,6 +27,7 @@ export { Usage } from "../turns/Usage.ts";
 export { botHasTabs, type FakeViewer, TestBrowserControl, ViewerClosed } from "./browser.ts";
 export { TestDiskSpace } from "./diskSpace.ts";
 export { botAsks } from "./turns.ts";
+export { recorded as recordedTelemetry } from "./telemetry.ts";
 export { pastTurns, turnRecorded } from "./usage.ts";
 
 /** Every handler of the contract, as the server answers it. */

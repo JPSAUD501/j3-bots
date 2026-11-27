@@ -93,6 +93,9 @@ import { WorkSteps } from "./WorkSteps.ts";
 import { WorkImages } from "../attachments/WorkImages.ts";
 import { annotate } from "./ConnectorSteps.ts";
 import { endedTurnWork, sameWork, shownWork, WorkColumn } from "./turnWork.ts";
+import { EngineState } from "../engine/EngineState.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
+import { turnFinishedEvent } from "../telemetry/turns.ts";
 
 const Watched = Schema.Struct({
   id: SessionRowId,
@@ -358,6 +361,8 @@ export const layer = Layer.effect(
     const workImages = yield* WorkImages;
     const suggestedReplies = yield* SuggestedReplies;
     const routing = yield* RoomRouting;
+    const telemetry = yield* Telemetry;
+    const turnFinished = turnFinishedEvent(sql, yield* EngineState);
     const roomOf = liveRoom(sql);
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
@@ -979,6 +984,15 @@ export const layer = Layer.effect(
       if (session.purpose === "side") yield* sql.afterCommit(signals.routines.fire);
       if (Option.isSome(turn)) {
         yield* endTurn(session, turn.value, end.outcome, end.at);
+        const owner = yield* ownerOf(session.id, end.turnId, end.cause);
+        const event = yield* turnFinished({
+          botId: session.bot_id,
+          startedAt: turn.value.started_at,
+          finishedAt: end.at,
+          outcome: end.outcome,
+          wakes: Option.isSome(owner) ? yield* ledger.wakesOf(owner.value.id) : [],
+        });
+        if (Option.isSome(event)) yield* sql.afterCommit(telemetry.record(event.value));
         // It handed off to work that goes on after it: a room's Stop finds it
         // by this turn until the engine no longer reports the work.
         if (end.backgroundWork) {

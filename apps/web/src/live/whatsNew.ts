@@ -27,6 +27,13 @@ const whatsNewOf = (j3: J3Client): WhatsNew => {
 };
 
 export function useWhatsNew(): WhatsNewIntents {
-  const whatsNew = whatsNewOf(useJ3Client());
-  return { view: useReadable(whatsNew.view), open: whatsNew.open };
+  const j3 = useJ3Client();
+  const whatsNew = whatsNewOf(j3);
+  return {
+    view: useReadable(whatsNew.view),
+    open: () => {
+      whatsNew.open();
+      j3.recordUsage({ event: "feature.used", properties: { feature: "whats-new" } });
+    },
+  };
 }

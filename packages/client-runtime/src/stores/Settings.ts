@@ -29,7 +29,13 @@ export type SettingsChange =
   | { readonly section: "notifications"; readonly changes: NotificationSettingsChange }
   | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges }
   /** Sent only to a server whose settings carry `voice`. */
-  | { readonly section: "voice"; readonly changes: VoiceSettingsChange };
+  | { readonly section: "voice"; readonly changes: VoiceSettingsChange }
+  | { readonly section: "usage-data"; readonly changes: UsageDataChanges };
+
+/** The operator's switch for usage data; only for a server whose settings carry `telemetry`. */
+export interface UsageDataChanges {
+  readonly enabled: boolean;
+}
 
 /**
  * What the harnesses do on their own: whether the server updates the copies it
@@ -60,6 +66,7 @@ export interface SettingsSaves {
   readonly notifications: SettingsSave<NotificationSettingsChange>;
   readonly harnesses: SettingsSave<HarnessSettingsChanges>;
   readonly voice: SettingsSave<VoiceSettingsChange>;
+  readonly "usage-data": SettingsSave<UsageDataChanges>;
 }
 
 /**
@@ -126,6 +133,7 @@ export const layer = Layer.effect(
       notifications: new Cell<SettingsSaves["notifications"]>({ _tag: "idle" }),
       harnesses: new Cell<SettingsSaves["harnesses"]>({ _tag: "idle" }),
       voice: new Cell<SettingsSaves["voice"]>({ _tag: "idle" }),
+      "usage-data": new Cell<SettingsSaves["usage-data"]>({ _tag: "idle" }),
     };
 
     const latest = latestRead((settings: SettingsValue) => state.set(ready(settings)));
@@ -180,6 +188,7 @@ export const layer = Layer.effect(
         HarnessSettingsChanges & {
           readonly notifications?: NotificationSettingsChange;
           readonly voice?: VoiceSettingsChange;
+          readonly telemetry?: boolean;
         },
     ) {
       const commandId = yield* actions.commandId;
@@ -209,6 +218,10 @@ export const layer = Layer.effect(
           return yield* save(saves.harnesses, change.changes, change.changes);
         case "voice":
           return yield* save(saves.voice, change.changes, { voice: change.changes });
+        case "usage-data":
+          return yield* save(saves["usage-data"], change.changes, {
+            telemetry: change.changes.enabled,
+          });
       }
     });
 

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@j3-bots/design-tokens": "workspace:*",
+    "@noble/hashes": "2.0.1",
     "effect": "catalog:"
   },
   "devDependencies": {

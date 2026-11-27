@@ -435,7 +435,7 @@ The bots add, change and remove MCP servers and skills ([decision 0049](../decis
 
 - Conversations, rooms and memory are the operator's data, stored on their disk, in the clear.
 - Server logs record wakes, dispatches and outcomes with identifiers, not message text, and, for each provider the engine cannot run, the engine's account of why, with J3 Bots' secrets taken out ([The harnesses](#the-harnesses)).
-- No telemetry leaves the machine by default.
+- Anonymous usage data leaves the machine by default, sent by the server alone, until the operator turns it off in Settings or with `DO_NOT_TRACK` or `J3_TELEMETRY_ENABLED=false`. Every event and every property is a closed set of words, a boolean, a bucketed count or a version, checked against the contract before it leaves, so no text, name, path, address, id or secret can be one; the install and each device are told apart by the hash of a random id. The newest 100 events sent are kept, as they left, for the operator to read ([Server: usage data](server.md#usage-data), [decision 0099](../decisions/0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md)). The engine's own analytics and tracing are always off ([Engine](engine.md)).
 
 ## Known gaps
 

@@ -8,6 +8,7 @@ import {
   J3Rpcs,
   NotFound,
   type ProviderId,
+  type TelemetryClient,
   USAGE_PERIOD,
 } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
@@ -15,6 +16,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
@@ -58,6 +60,8 @@ import { Voice } from "../voice/Voice.ts";
 import { Skills } from "../skills/Skills.ts";
 import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
 import { Management } from "../tools/Management.ts";
+import { TelemetryClients } from "../telemetry/Clients.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 
 const operator = { _tag: "operator" } as const;
 
@@ -107,6 +111,10 @@ export const handlers = J3Rpcs.toLayer(
     const connectorAuth = yield* ConnectorAuth;
     const connectorSources = yield* ConnectorSources;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
+    const telemetry = yield* Telemetry;
+    const telemetryClients = yield* TelemetryClients;
+    /** What this socket's client said it is, which its usage data carries. */
+    const client = yield* Ref.make<TelemetryClient | undefined>(undefined);
 
     /**
      * A code, and the origins `j3-bots pair` lists, read when asked since
@@ -192,7 +200,8 @@ export const handlers = J3Rpcs.toLayer(
       "entries.markRead": ({ target, through }) => entries.markRead(target, through),
       "entries.markUnread": (input) => entries.markUnread(input),
       "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
-      "message.send": (input) => pipeline.sendMessage(input),
+      "message.send": (input) =>
+        Ref.get(client).pipe(Effect.flatMap((each) => pipeline.sendMessage(input, each))),
       "message.retry": (input) => pipeline.retryMessage(input),
       "message.react": (input) => reactions.react(input),
       "notice.retry": (input) => pipeline.retryNotice(input),
@@ -258,6 +267,11 @@ export const handlers = J3Rpcs.toLayer(
       "settings.subscribe": () => settings.changes,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
       "settings.deviceTimeZone": ({ timeZone }) => settings.deviceTimeZone(timeZone),
+      "telemetry.hello": (hello) =>
+        Ref.set(client, hello.client).pipe(Effect.andThen(telemetryClients.hello(hello.client))),
+      "telemetry.record": ({ event }) =>
+        Ref.get(client).pipe(Effect.flatMap((each) => telemetry.record(event, each))),
+      "telemetry.sent": () => telemetry.sent,
       // Clearing again clears nothing more: no receipt.
       "browser.signOut": () =>
         engine.clearBrowserProfile.pipe(

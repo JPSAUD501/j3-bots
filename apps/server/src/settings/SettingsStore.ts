@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, json, timeText } from "../persistence/columns.ts";
+import { TelemetryConfig } from "../telemetry/Telemetry.ts";
 
 const SettingsRow = Schema.Struct({
   operator_name: Schema.NullOr(Label),
@@ -39,6 +40,7 @@ const SettingsRow = Schema.Struct({
   voice_clean_up: Flag,
   voice_model: Schema.NullOr(VoiceModelId),
   voice_openrouter_model: Schema.NullOr(CloudVoiceModelId),
+  telemetry: Flag,
 });
 
 const encodeWords = Schema.encodeSync(json(VoiceWords));
@@ -77,6 +79,7 @@ export const layer = Layer.effect(
   SettingsStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const heldOff = (yield* TelemetryConfig).environment.hold !== null;
     const read = SqlSchema.findOne({
       Request: Schema.Void,
       Result: SettingsRow,
@@ -84,7 +87,7 @@ export const layer = Layer.effect(
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
           notifications_enabled, notification_previews, update_channel, auto_update_harnesses,
           suggest_replies, voice_place, voice_language, voice_words_json, voice_remove_fillers,
-          voice_clean_up, voice_model, voice_openrouter_model
+          voice_clean_up, voice_model, voice_openrouter_model, telemetry
         FROM settings WHERE id = 1
       `,
     });
@@ -115,6 +118,7 @@ export const layer = Layer.effect(
             model: row.voice_model,
             openRouterModel: row.voice_openrouter_model,
           },
+          telemetry: { enabled: row.telemetry, heldOff },
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (
@@ -143,6 +147,7 @@ export const layer = Layer.effect(
             voice_clean_up = ${voice.cleanUp ? 1 : 0},
             voice_model = ${voice.model},
             voice_openrouter_model = ${voice.openRouterModel},
+            telemetry = ${settings.telemetry?.enabled === false ? 0 : 1},
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;

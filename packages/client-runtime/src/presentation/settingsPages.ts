@@ -19,7 +19,8 @@ import { providerGate } from "./engine.ts";
  *   every paired one, with pairing another;
  * - `where`: where the bots live and moving them, in the desktop app and on
  *   a phone;
- * - `updates`: the versions the server and the app run, and their updates.
+ * - `updates`: the versions the server and the app run, their updates, and
+ *   whether the server shares anonymous usage data.
  */
 export type SettingsPage =
   | "you"

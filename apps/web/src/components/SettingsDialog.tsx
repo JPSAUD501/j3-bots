@@ -119,6 +119,7 @@ import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
+import { UsageDataSection } from "./UsageData";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
 
@@ -143,6 +144,7 @@ type SettingsIntents = Pick<
   | "serverUpdate"
   | "updatePrompt"
   | "whatsNew"
+  | "usageData"
   | "shortcut"
   | "lookingAt"
   | "providerSetup"
@@ -202,9 +204,9 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, updates only where one can be followed from here, and
- * voice only from a server that dictates, since this window has no
- * recognizer of its own.
+ * the desktop app, About only where an update can be followed from here or
+ * the server offers its usage data switch, and voice only from a server that
+ * dictates, since this window has no recognizer of its own.
  */
 const pagesFor = (
   intents: SettingsIntents,
@@ -219,7 +221,11 @@ const pagesFor = (
           case "where":
             return intents.server !== undefined || intents.local !== undefined;
           case "updates":
-            return intents.serverUpdate !== undefined || intents.update !== undefined;
+            return (
+              intents.serverUpdate !== undefined ||
+              intents.update !== undefined ||
+              data.settings?.telemetry !== undefined
+            );
           default:
             return true;
         }
@@ -594,12 +600,20 @@ function PageBody({
       return <WhereSection server={intents.server} local={intents.local} />;
     case "updates":
       return (
-        <UpdatesSection
-          server={intents.serverUpdate}
-          app={intents.update}
-          local={intents.local}
-          onUpdate={intents.updatePrompt?.reopen}
-        />
+        <>
+          <UpdatesSection
+            server={intents.serverUpdate}
+            app={intents.update}
+            local={intents.local}
+            onUpdate={intents.updatePrompt?.reopen}
+          />
+          <UsageDataSection
+            settings={data.settings}
+            save={data.settingsSaves["usage-data"]}
+            connected={data.connected}
+            intents={intents}
+          />
+        </>
       );
   }
 }

@@ -14,13 +14,14 @@ describe("the environment the server runs with", () => {
     webClient: "/opt/J3 Bots/resources/web/dist",
   };
 
-  it("keeps the operator's own variables and trusted certificates, and sets its PATH, home, address and web client", () => {
+  it("keeps the operator's own variables, trusted certificates and say on usage data, and sets its PATH, home, address and web client", () => {
     const env = serverEnvironment(
       {
         HOME: "/home/ana",
         LANG: "pt_BR.UTF-8",
         ANTHROPIC_LOG: "debug",
         NODE_EXTRA_CA_CERTS: "/etc/ssl/company-proxy.pem",
+        J3_TELEMETRY_ENABLED: "false",
       },
       options,
     );
@@ -29,6 +30,7 @@ describe("the environment the server runs with", () => {
       LANG: "pt_BR.UTF-8",
       ANTHROPIC_LOG: "debug",
       NODE_EXTRA_CA_CERTS: "/etc/ssl/company-proxy.pem",
+      J3_TELEMETRY_ENABLED: "false",
       PATH: "/home/ana/.local/bin:/usr/bin",
       J3_HOME: "/data/server/home",
       J3_HOST: "127.0.0.1",

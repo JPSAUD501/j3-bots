@@ -71,6 +71,7 @@ import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry, withOwnReaction } from "./entries";
 import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
+import { sampleSentEvents } from "./usageData";
 import { sampleBrowser } from "./sampleBrowser";
 import { copySample, sampleSecrets } from "./sampleSecrets";
 import { sampleVoice } from "./sampleVoice";
@@ -804,6 +805,21 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 voice: { _tag: "saved", changes: change.changes },
               },
             };
+          case "usage-data":
+            return {
+              ...s,
+              settings: {
+                ...s.settings,
+                telemetry: {
+                  enabled: change.changes.enabled,
+                  heldOff: s.settings.telemetry?.heldOff ?? false,
+                },
+              },
+              settingsSaves: {
+                ...s.settingsSaves,
+                "usage-data": { _tag: "saved", changes: change.changes },
+              },
+            };
         }
       }),
     setSettingsOpen: (open) => update((s) => ({ ...s, settingsOpen: open })),
@@ -942,6 +958,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     freshStart: nothing,
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
+    usageData: { sent: () => Promise.resolve(sampleSentEvents), record: () => {} },
     providerActions: sampleProviderActions,
     whatsNew: { view: whatsNewViews.opened, open: () => {} },
     secrets: { ...secrets, copy: copySample },
@@ -1032,6 +1049,7 @@ export function useSampleSource({
         notifications: { _tag: "idle" },
         harnesses: { _tag: "idle" },
         voice: { _tag: "idle" },
+        "usage-data": { _tag: "idle" },
       },
       settingsOpen: false,
       settingsPage: null,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { DeviceId, DeviceToken } from "@j3-bots/contracts";
+import type { DeviceId, DeviceToken, TelemetryOs, TelemetrySurface } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -114,6 +114,24 @@ export class DeviceTimeZone extends Context.Service<
   DeviceTimeZone,
   { readonly current: Effect.Effect<string | null> }
 >()("@j3-bots/client-runtime/ports/DeviceTimeZone") {}
+
+/**
+ * What this client is, for usage data (decision 0099): where it runs, its
+ * operating system's family, its own release, and a random id the platform
+ * made once and keeps on the device. Only that id's hash leaves the device.
+ * Never anything the device or its owner is called.
+ */
+export class ClientIdentity extends Context.Service<
+  ClientIdentity,
+  {
+    readonly surface: TelemetrySurface;
+    readonly os: TelemetryOs;
+    /** The client's own release, the desktop app's or the phone app's; null for the web client the server serves. */
+    readonly version: Effect.Effect<string | null>;
+    /** Made at random the first time it is asked for, and the same afterwards on this device. */
+    readonly randomId: Effect.Effect<string>;
+  }
+>()("@j3-bots/client-runtime/ports/ClientIdentity") {}
 
 /** Whether the app is in the foreground, or the system has put it in the background. */
 export type LifecycleState = "foreground" | "background";

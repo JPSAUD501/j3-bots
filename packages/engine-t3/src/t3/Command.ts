@@ -126,6 +126,17 @@ const passes = (name: string, platform: string) =>
  * their own T3 Code (**Read** at `bc0f04d`, `os-jank.ts`
  * `applyLoginShellEnvironment`, `FeatureFlags.ts` `parseList`). Empty, it is
  * present, so nothing is copied, and it names no flag.
+ *
+ * T3 Code's own telemetry is off. Its product analytics go to T3's ingest by
+ * default, unless `T3CODE_TELEMETRY_ENABLED` is false, `DO_NOT_TRACK` is set
+ * or it runs in CI (**Read** at `bc0f04d`, `AnalyticsService.ts`); its relay
+ * tracing follows the same opt-outs (`otelEnvironment.ts`
+ * `isRelayTracingEnabled`), and `T3CODE_OTEL_SDK_DISABLED` true turns off every
+ * OpenTelemetry export, a saved one included (`otelEnvironment.ts` `load`,
+ * `resolveSignalEndpoint`). Both are set here, after the allowed part of the
+ * server's environment, so nothing in that environment turns them back on.
+ * `DO_NOT_TRACK` is not used: the engine passes it to every harness, where it
+ * would mean something else.
  */
 export const engineEnvironment = (
   parent: Readonly<Record<string, string | undefined>>,
@@ -137,4 +148,6 @@ export const engineEnvironment = (
     ),
   ),
   T3CODE_FEATURE_FLAGS: "",
+  T3CODE_TELEMETRY_ENABLED: "false",
+  T3CODE_OTEL_SDK_DISABLED: "true",
 });

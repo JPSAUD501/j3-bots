@@ -1045,7 +1045,7 @@ const sentences = {
   "settings.devices.paired": "Dispositivos pareados",
   "settings.thisPhone": "Este celular",
   "settings.where.description": "Onde seus bots rodam, e como mudá-los de lugar.",
-  "settings.about.description": "As versões que você usa, e como atualizá-las.",
+  "settings.about.description": "As versões que você usa, como atualizá-las, e os dados de uso.",
   "settings.needsYou": "Precisa de você",
   "settings.appearance": "Aparência",
   "settings.language": "Idioma",
@@ -2181,6 +2181,21 @@ const sentences = {
   "desktop.tray.local.failed": "Os bots não iniciaram",
   "desktop.tray.phoneOn": "Uso pelo celular ligado",
   "settings.about": "Sobre e atualizações",
+
+  "usageData.title": "Dados de uso",
+  "usageData.switch": "Compartilhar dados de uso anônimos",
+  "usageData.body":
+    "Conta para quem faz o J3 Bots quais recursos são usados e o que dá errado. Nunca o que você ou seus bots escrevem, nomes, arquivos ou endereços.",
+  "usageData.heldOff": "Desligado no computador do servidor, o que vale mais que este botão.",
+  "usageData.learnMore": "O que é compartilhado, e o que nunca é",
+  "usageData.seeSent": "Ver o que é enviado",
+  "usageData.sent.title": "O que foi enviado",
+  "usageData.sent.description":
+    "Os últimos eventos que este servidor enviou, exatamente como saíram dele.",
+  "usageData.sent.empty": "Nada foi enviado ainda.",
+  "usageData.sent.failed": "Não deu para ler o que foi enviado. Tente de novo.",
+  "usageData.sent.retry": "Tentar de novo",
+  "usageData.sent.close": "Fechar",
 
   "serverUpdate.title": "O servidor",
   "serverUpdate.runs": "J3 Bots {version}",

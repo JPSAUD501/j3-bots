@@ -109,6 +109,13 @@ export const ProviderModel = Schema.Struct({
   id: ModelId,
   name: Label,
   efforts: Schema.optionalKey(Schema.Array(EffortChoice)),
+  /**
+   * True for a model someone added to the harness by its id, which is not in
+   * the harness's own catalog. Its id can name a person, a deployment or a
+   * file, so usage data reports it as `custom` (decision 0099). Absent for a
+   * catalog model, and from an older server.
+   */
+  custom: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ProviderModel = typeof ProviderModel.Type;
 

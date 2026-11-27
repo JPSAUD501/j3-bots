@@ -114,6 +114,12 @@ import {
 } from "./secrets.ts";
 import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
+import {
+  ClientTelemetryEvent,
+  MAX_SENT_TELEMETRY_EVENTS,
+  SentTelemetryEvent,
+  TelemetryClient,
+} from "./telemetry.ts";
 import { BotTemplate, TemplateTooLarge } from "./template.ts";
 
 // ---------------------------------------------------------------------------
@@ -944,6 +950,24 @@ export const SettingsRpcs = RpcGroup.make(
 );
 
 /**
+ * Usage data (decision 0099). A client calls these only on a server whose
+ * settings carry `telemetry`, which is how a server says it has them.
+ */
+export const TelemetryRpcs = RpcGroup.make(
+  /**
+   * What this socket's client is, which every client gives when its socket
+   * opens: the server adds it to the events this socket's requests cause.
+   */
+  Rpc.make("telemetry.hello", { payload: { client: TelemetryClient } }),
+  /** Something a client saw the operator do that the server cannot see. Passed over while it is off. */
+  Rpc.make("telemetry.record", { payload: { event: ClientTelemetryEvent } }),
+  /** The newest events sent, exactly as they left, newest first. */
+  Rpc.make("telemetry.sent", {
+    success: Schema.Array(SentTelemetryEvent).check(Schema.isMaxLength(MAX_SENT_TELEMETRY_EVENTS)),
+  }),
+);
+
+/**
  * The entries a bot adds that notify: what it says to the operator and the
  * cards that wait on the operator. A push of each kind shows on Android in a
  * notification channel of its own, whose id is the kind, so the operator can
@@ -1495,6 +1519,7 @@ export const J3Rpcs = RosterRpcs.merge(
   MemoryRpcs,
   EngineRpcs,
   SettingsRpcs,
+  TelemetryRpcs,
   ClientRpcs,
   ProviderRpcs,
   BrowserRpcs,
