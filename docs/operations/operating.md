@@ -185,6 +185,14 @@ It says what it does and asks first (`--yes` answers for a script). The data dir
 
 A release refuses a database a newer release migrated, naming the migration it does not know, so starting an older release by hand on newer data fails: roll back instead.
 
+**The engine's own data goes forward and back with the update.** An update that moves to a release pinned to a newer engine, as 0.12.0 moves T3 Code from 0.1.11 to 0.1.13, lets that engine migrate its own database the first time it starts; on a large one this adds some time to the first start. An older engine would start on that database all the same and then fail on what it cannot read, so it never gets the chance:
+
+- The snapshot holds the engine's database and settings with J3 Bots' database, and `--rollback`, or a failed update, puts them back together. The release you go back to runs its engine on the data as it was before the update.
+- J3 Bots' database records the newest engine that ran on the data directory, and a release pinned to an older engine refuses to start on it, by hand or otherwise: `The engine's data on this home was last run by engine 0.1.13, …`, with the rollback as the fix. A release from before this record refuses the database anyway, for the migration it does not know.
+- The desktop app's server works the same way: its update takes the same snapshot, and an app older than the release that last ran keeps running that release.
+
+The engine also downloads a newer browser for the bots the first time one uses it after the update, about 130 MB, and keeps the one before beside it for a rollback.
+
 An update records in `~/.j3-bots/state/runtime.json` the release that runs: before the new release starts, the update itself, pending, with its snapshot; then the new release once it is ready, or after a rollback the release rolled back to, and the one it rolled back from. The service does not read it: the unit names the release it runs. An update cut off before the new release was recorded, by a power cut or a failure to write the file, stays pending: `j3-bots update --version <new>` carries it on from the release before, with the same snapshot, and records it. An update to any other release first rolls the cut-off one back to the release before, with that snapshot, and says so, then updates from there. A rollback whose record cannot be written stops with its mark kept: `j3-bots update --rollback` starts the earlier release again and records it, without copying the snapshot again.
 
 ### From a client

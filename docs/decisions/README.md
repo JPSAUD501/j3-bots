@@ -72,6 +72,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0073](0073-a-suggested-reply-follows-what-the-operator-saw.md) | A suggested reply follows what the operator saw, in the bot's own conversation only | Accepted |
 | [0075](0075-a-bot-sends-a-picture-as-a-photo-and-shows-what-it-looked-at-in-its-work.md) | A bot sends a picture as a photo, and shows an image it looked at in that step of its work | Accepted |
 | [0076](0076-the-brand-mark-is-j3-with-a-bots-light.md) | The brand mark is "j3", with a bot's light on | Accepted |
+| [0077](0077-the-engine-moves-to-t3-code-0-1-13-and-no-older-engine-starts-on-its-data.md) | The engine moves to T3 Code 0.1.13, and no older engine starts on its data | Accepted |
 | [0078](0078-documents-open-in-a-viewer-of-the-apps-own.md) | Documents open in a viewer of the app's own, read on the client | Accepted |
 | [0079](0079-quick-access-brings-the-window-the-operator-was-in.md) | Quick access brings the window the operator was in | Accepted |
 
