@@ -444,6 +444,9 @@ importers:
       '@effect/sql-sqlite-node':
         specifier: 'catalog:'
         version: 4.1.5(effect@4.1.5)
+      '@j3-bots/browser':
+        specifier: workspace:*
+        version: link:../../packages/browser
       '@j3-bots/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
