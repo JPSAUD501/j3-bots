@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Dictation for the sample team and the gallery: the server's speech models,
- * a dictation that stands still in one state, and a microphone that hears a
- * voice rise and fall. Development only.
+ * Dictation for the sample team and the gallery: the dictation services'
+ * keys, a dictation that stands still in one state, and a microphone that
+ * hears a voice rise and fall. Development only.
  */
 import {
   Cell,
@@ -10,14 +10,7 @@ import {
   type DictationState,
   type Loaded,
 } from "@j3-bots/client-runtime";
-import {
-  type CloudVoiceKeys,
-  type CloudVoiceModel,
-  CloudVoiceModelId,
-  type VoiceModel,
-  VoiceModelId,
-  type VoiceStatus,
-} from "@j3-bots/contracts";
+import { type CloudVoiceKeys, type CloudVoiceModel, CloudVoiceModelId } from "@j3-bots/contracts";
 import type {
   DictationReach,
   DictationSource,
@@ -26,76 +19,13 @@ import type {
 } from "../components/Dictation";
 import type { VoiceSettingsIntents } from "../shell/data";
 
-const sampleVoiceModels: ReadonlyArray<VoiceModel> = [
-  {
-    id: VoiceModelId.make("nemotron-streaming-0.6b"),
-    name: "Nemotron streaming 0.6B",
-    size: 751_000_000,
-    languages: ["en", "pt", "es", "de", "fr"],
-    live: true,
-    errorPercent: { en: 7.9, pt: 8.5 },
-    secondsPer30s: 2.8,
-    recommended: true,
-    installed: true,
-  },
-  {
-    id: VoiceModelId.make("parakeet-tdt-0.6b-v3"),
-    name: "Parakeet TDT 0.6B v3",
-    size: 670_000_000,
-    languages: ["en", "pt", "es", "de", "fr", "it", "nl", "pl"],
-    live: false,
-    errorPercent: { en: 6.1, pt: 4.96 },
-    secondsPer30s: 1.9,
-    recommended: false,
-    installed: false,
-  },
-  {
-    id: VoiceModelId.make("whisper-large-v3"),
-    name: "Whisper large v3",
-    size: 4_700_000_000,
-    languages: ["en", "pt", "es", "de", "fr", "it", "ja", "zh"],
-    live: false,
-    errorPercent: { en: 5.4, pt: 5.2 },
-    secondsPer30s: null,
-    recommended: false,
-    installed: false,
-  },
-];
-
-const ready = <A>(value: A): Cell<Loaded<A>> =>
-  new Cell<Loaded<A>>({ _tag: "ready", value, stale: false });
-const recommended = sampleVoiceModels[0];
-
-const status: VoiceStatus =
-  recommended === undefined
-    ? { _tag: "unavailable", reason: "platform" }
-    : { _tag: "available", model: recommended, installing: null };
-
 const cloudModels: ReadonlyArray<CloudVoiceModel> = [
   { id: CloudVoiceModelId.make("openai/gpt-4o-transcribe"), name: "OpenAI: GPT-4o Transcribe" },
   { id: CloudVoiceModelId.make("mistralai/voxtral-small"), name: "Mistral: Voxtral Small" },
 ];
 
-const keys = new Cell<Loaded<CloudVoiceKeys>>({
-  _tag: "ready",
-  value: { openai: false, xai: false, openrouter: true },
-  stale: false,
-});
-
-/** Settings → Voice on the sample server: its model ready, a key saved for OpenRouter. */
-export const sampleVoice: VoiceSettingsIntents = {
-  openStatus: () => ({ state: ready(status), release: () => {} }),
-  openCloudKeys: () => ({ state: keys, release: () => {} }),
-  models: () => Promise.resolve({ _tag: "done", value: sampleVoiceModels }),
-  cloudModels: () => Promise.resolve({ _tag: "done", value: cloudModels }),
-  setCloudKey: (provider, key) => {
-    const now = keys.get();
-    if (now._tag === "ready") {
-      keys.set({ ...now, value: { ...now.value, [provider]: key !== null } });
-    }
-    return Promise.resolve({ _tag: "done", value: undefined });
-  },
-};
+/** What every sample dictation hears once stopped. */
+const HEARD = "Book the venue for Friday";
 
 /** A dictation that stays in `state` until stopped, when it ends with what it heard. */
 const standing = (state: DictationState): DictationHandle => {
@@ -104,11 +34,7 @@ const standing = (state: DictationState): DictationHandle => {
     state: cell,
     audio: () => {},
     finish: () => {
-      const now = cell.get();
-      cell.set({
-        _tag: "done",
-        text: "committed" in now ? `${now.committed} ${now.tentative}` : "",
-      });
+      if (cell.get()._tag === "listening") cell.set({ _tag: "done", text: HEARD });
     },
     cancel: () => {},
   };
@@ -127,6 +53,35 @@ const speaking: OpenMicrophone = (listener) => {
   return Promise.resolve({ _tag: "open", stop: () => clearInterval(timer) });
 };
 
+/**
+ * Settings → Voice on a sample server, with a key saved for each service in
+ * `saved`: its test hears "Book the venue for Friday".
+ */
+export const sampleVoiceWith = (saved: CloudVoiceKeys): VoiceSettingsIntents => {
+  const keys = new Cell<Loaded<CloudVoiceKeys>>({ _tag: "ready", value: saved, stale: false });
+  return {
+    openCloudKeys: () => ({ state: keys, release: () => {} }),
+    cloudModels: () => Promise.resolve({ _tag: "done", value: cloudModels }),
+    setCloudKey: (provider, key) => {
+      const now = keys.get();
+      if (now._tag === "ready") {
+        keys.set({ ...now, value: { ...now.value, [provider]: key !== null } });
+      }
+      return Promise.resolve({ _tag: "done", value: undefined });
+    },
+    dictate: () => standing({ _tag: "listening" }),
+    microphone: speaking,
+    app: "browser",
+  };
+};
+
+/** Settings → Voice on the sample server: a key saved for OpenAI and for OpenRouter. */
+export const sampleVoice: VoiceSettingsIntents = sampleVoiceWith({
+  openai: true,
+  xai: false,
+  openrouter: true,
+});
+
 /** A microphone the operator or the system did not allow, or that is not there. */
 const refused =
   (reason: MicrophoneFailure): OpenMicrophone =>
@@ -136,19 +91,23 @@ const refused =
 /**
  * Dictation as a gallery frame shows it: through the server, each dictation
  * standing in `state`, with a microphone that hears speech, or one that
- * fails for `refusedFor`; or, with `reach`, nowhere, and why.
+ * fails for `refusedFor`; or, with `reach`, nowhere, and why. `setUp` is
+ * whether Settings is at hand to set it up.
  */
 export const sampleDictation = ({
-  state = { _tag: "listening", live: true, committed: "", tentative: "" },
+  state = { _tag: "listening" },
   reach = { _tag: "server" },
   refusedFor,
+  setUp = true,
 }: {
   state?: DictationState;
   reach?: DictationReach;
   refusedFor?: MicrophoneFailure;
+  setUp?: boolean;
 } = {}): DictationSource => ({
   reach,
   dictate: () => standing(state),
   microphone: refusedFor === undefined ? speaking : refused(refusedFor),
   app: "browser",
+  setUp: setUp ? () => {} : undefined,
 });

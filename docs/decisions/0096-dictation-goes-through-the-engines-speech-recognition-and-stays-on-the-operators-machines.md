@@ -1,6 +1,6 @@
-# 0096: Dictation goes through the engine's speech recognition, and stays on the operator's machines
+# 0096: Dictation lands in the composer, through the J3 Bots server
 
-**Status:** Accepted.
+**Status:** Accepted. Amended by [0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md): the server runs no speech model and no longer uses the engine's speech recognition; the web and desktop dictate through the operator's cloud provider, with its key sent from J3 Bots, and the AI's tidy-up and the model picker are gone. Below, what holds now.
 
 ## Context
 
@@ -12,29 +12,18 @@ What was open: where speech is turned into words, how a client's audio reaches t
 
 ## Decision
 
-**A client records; the J3 Bots server relays the recording to the engine's speech recognition, on the operator's own machines unless the operator chooses a cloud provider; the words land in the composer and nothing is sent by itself.**
+**A client records; the J3 Bots server sends the recording to the cloud provider the operator chose, with their key; the words land in the composer and nothing is sent by itself.** Until 0.15.0 the server relayed it to the engine's local model; [decision 0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md) records why that was dropped.
 
-- **Where speech becomes words** is one setting for the server and every device (`Settings.voice.place`):
-  - **Automatic**, the default. A phone uses its own recognizer when the language is installed on it, recognizing on the phone and nowhere else; otherwise, and on the web and desktop, the server does.
-  - **This device**: only the device's own recognizer. A device without one says it cannot dictate here.
-  - **This server**: always the server's local model.
-  - **A cloud provider** (OpenAI, xAI, OpenRouter): the server sends the recording, once the operator stops, with the operator's key.
-  - Android never falls back to an online recognizer of its own: audio leaves the operator's machines only for a provider they chose.
-- **Only `packages/engine-t3` knows the engine's speech recognition** ([decision 0001](0001-t3-code-as-unmodified-engine.md), [decision 0002](0002-single-server-between-clients-and-engine.md)): the engine runs as released. `EngineSpeech` is its catalog, install, live recognition, cloud recognition and AI tidy-up in J3 Bots' terms. Clients reach only the J3 Bots server, on its own voice socket (`HTTP_PATHS.voice`), authenticated as the RPC socket is; the server opens the engine's socket with its own credential. One socket is one dictation, and one runs at a time, since the engine runs one: a second device is told the server is busy.
-- **The model the server picks** is the one of the pinned catalog that streams and hears Portuguese and English: NVIDIA's Nemotron streaming 0.6B, a 751 MB download. The catalog measures 8.5 % of Portuguese words and 7.9 % of English words wrong, and 2.8 s of a desktop processor per 30 s of speech. **Verified** on a desktop processor alone: words arrived while the recording played, and its text 0.3 s after its end, with about 0.65 GB of working memory beside the 0.73 GB model it maps. It has not run on a 4 GB board; that it fits one beside the bots is **Assumed** from those numbers. The models that hear Portuguese better do not stream (words only once the operator stops) or are 4.7 GB.
-- **The model installs itself on first use.** The first dictation downloads it, and every client shows how far it got, in words. A download a cancelled dictation started runs on, so the next one finds it ready. On a host with 8 GiB of memory or less, the engine unloads the model two minutes after its last use; on a bigger one, fifteen. A bigger model is the operator's choice, under More in Settings → Voice, described by size, speed on this server and the languages it hears.
-- **A cloud provider's key is a J3 Bots secret**, a single value named `voice-<provider>` that no bot may use, which the operator sees and can remove in Secrets like any other. The server gives it to the engine for one recognition and removes it from the engine as soon as that ends; the engine writes it to its own secret store meanwhile (a file of mode 0600 inside the private home, as the provider connection's key), and the server removes one left there, as by a stop mid-recognition, when the engine next starts.
-- **The AI's tidy-up is offered, off by default.** It runs on the server once the operator stops, with the draft around the words, and spends the operator's AI allowance, as Settings says. When it fails, the words as heard land instead.
-- **Audio is never stored.** It passes through the server's memory to the engine, or, for a cloud provider, is held in memory until the operator stops. Nothing logs it, nor the words.
-- **Protocol 11 holds.** `Settings.voice` is new and nullable: a server that carries it serves the voice socket and the `voice.*` RPCs, and a client offers dictation through the server only then. Facing an older server, the Android app still dictates with the phone's own recognizer, and the web and desktop show no microphone.
+- **Where speech becomes words** is one setting for the server and every device (`Settings.voice.place`): automatic, this device, or a cloud provider (OpenAI, xAI, OpenRouter), as [decision 0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md) has them. Android never falls back to an online recognizer of its own: audio leaves the operator's machines only for a provider they chose.
+- **Clients reach only the J3 Bots server**, on its own voice socket (`HTTP_PATHS.voice`), authenticated as the RPC socket is ([decision 0002](0002-single-server-between-clients-and-engine.md)).
+- **A cloud provider's key is a J3 Bots secret**, a single value named `voice-<provider>` that no bot may use, which the operator sees and can remove in Secrets like any other. The server sends it to the provider with each recording, and to nothing else.
+- **Audio is never stored.** It is held in the server's memory until the operator stops, then sent to the provider. Nothing logs it, nor the words.
+- **Protocol 11 holds.** `Settings.voice` is new and nullable, and `Settings.voice.provider` marks a server that dictates through a provider: a client offers dictation through the server only then. Facing an older server, the Android app still dictates with the phone's own recognizer, and the web and desktop show no microphone.
 
 ## Costs
 
-- **One dictation at a time on the server.** Two devices dictating at once is rare for one operator; the second is told, in words, to wait.
-- **A first dictation waits for a 751 MB download.** It happens once, with its progress shown in the composer and in Settings → Voice.
-- **The model sits in memory while it is in use, and a little after.** On a small host that is two minutes.
-- **A cloud provider hears nothing until the operator stops.** The engine's cloud recognition takes a whole recording, so its words come at the end.
-- **A key the operator gives J3 Bots is also handed to the engine for each cloud recognition.** Both run on the operator's machine, and the engine drops it after.
+- **A cloud provider hears nothing until the operator stops.** It takes a whole recording, so its words come at the end.
+- The rest are in [decision 0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md).
 
 ## Rejected
 
@@ -42,5 +31,4 @@ What was open: where speech is turned into words, how a client's audio reaches t
 - **Android's online fallback.** The same: audio to a service the operator did not choose.
 - **Keeping cloud keys in the engine's own store.** The operator would have keys J3 Bots cannot show or remove; Secrets is where J3 Bots keeps what the operator gives it.
 - **The clients reaching the engine's speech directly.** Clients speak only to J3 Bots, and the engine's port is not theirs to reach.
-- **A model that hears Portuguese better but only at the end** (Parakeet TDT v3, 4.96 % of Portuguese words wrong). Words appearing while the operator speaks was the ask; it is one choice away under More.
 - **Voice messages, replies read aloud, wake words.** Not asked for here.

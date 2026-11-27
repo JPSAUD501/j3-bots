@@ -161,8 +161,9 @@ export const layer = Layer.effect(
       ),
     );
 
-    const cloudModels: Effect.Effect<ReadonlyArray<CloudVoiceModel>, Conflict> =
-      cloud.models.pipe(Effect.mapError(() => new Conflict({ reason: "connector-unavailable" })));
+    const cloudModels: Effect.Effect<ReadonlyArray<CloudVoiceModel>, Conflict> = cloud.models.pipe(
+      Effect.mapError(() => new Conflict({ reason: "connector-unavailable" })),
+    );
 
     const setCloudKey = Effect.fn("Voice.setCloudKey")(function* (
       provider: CloudVoiceProvider,

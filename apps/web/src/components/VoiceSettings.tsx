@@ -2,57 +2,71 @@
 import { Collapsible } from "@base-ui/react/collapsible";
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import type { SettingsSaves } from "@j3-bots/client-runtime";
+import type { DictationHandle, SettingsSaves } from "@j3-bots/client-runtime";
 import { useAnswer } from "@j3-bots/client-runtime/react";
 import {
+  CLOUD_PROVIDER_KEY_PAGES,
   CLOUD_PROVIDER_NAMES,
+  dictationBlockWords,
+  dictationFailureWords,
   languageName,
-  sizeWords,
-  voiceModelWords,
-  voicePlaceWords,
 } from "@j3-bots/client-runtime/wording";
 import {
-  type CloudVoiceProvider,
-  cloudProviderOf,
+  type CloudVoiceKeys,
+  CloudVoiceProvider,
+  DICTATION_LANGUAGES,
   type Settings,
-  type VoiceInstall,
-  type VoiceModel,
-  VoicePlace,
   type VoiceSettings,
   type VoiceSettingsChange,
   VoiceWords,
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { ChevronRightIcon, XIcon } from "lucide-react";
-import { useId, useState } from "react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  InfoIcon,
+  LoaderCircleIcon,
+  MicIcon,
+  XIcon,
+} from "lucide-react";
+import { type RefObject, useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useLoadedHandle } from "../lib/useLoadedHandle";
 import type { ShellIntents, VoiceSettingsIntents } from "../shell/data";
+import { littleEndian, microphoneFailureWords } from "./Dictation";
 import { Section, SwitchRow } from "./SettingsSection";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { lineField } from "./ui/field";
 import { SkeletonRows } from "./ui/skeleton";
 
-const places = VoicePlace.literals;
-const isPlace = Schema.is(VoicePlace);
+const providers = CloudVoiceProvider.literals;
+const isProvider = Schema.is(CloudVoiceProvider);
 const isWords = Schema.is(VoiceWords);
+
+/** Where a phone dictates, as the page offers it: a provider place is `service`. */
+type PhoneChoice = "automatic" | "device" | "service";
+const phoneChoices: ReadonlyArray<PhoneChoice> = ["automatic", "device", "service"];
 
 const choice = cn(
   choiceRow,
-  "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-readonly:hover:bg-transparent",
+  "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-disabled:opacity-50 data-readonly:hover:bg-transparent",
 );
 
+/** How long the test listens, in ms. */
+const TEST_LENGTH = 2000;
+
 /**
- * Settings → Voice: where dictation turns speech into words, its language,
- * the words it always spells right and whether it takes filler words out;
- * under More, the server's speech model and the AI's tidy-up. Each change
- * saves at once, as the notification switches do: offline, or while a save
- * is under way, the page shows what it holds and takes no change. With a
- * cloud provider chosen, its key, which is saved in Secrets and never shown
- * back, and for OpenRouter the model it transcribes with.
+ * Settings → Voice, one page: the dictation service and its key, a test that
+ * listens for two seconds and shows the words, the language, and where a
+ * phone dictates; under More, the words to always spell right and the filler
+ * words. While dictation is not set up, the page says what it needs first.
+ * Each change saves at once, as the notification switches do: offline, or
+ * while a save is under way, the page shows what it holds and takes no
+ * change. A key is saved in Secrets and never shown back.
  */
 export function VoiceSection({
   settings,
@@ -96,6 +110,14 @@ export function VoiceSection({
   );
 }
 
+/** Whether dictation through the service is ready: one chosen, its key saved, its model chosen. */
+const setUp = (voice: VoiceSettings, keys: CloudVoiceKeys | null): boolean | null => {
+  const provider = voice.provider ?? null;
+  if (provider === null) return false;
+  if (keys === null) return null;
+  return keys[provider] && (provider !== "openrouter" || voice.openRouterModel !== null);
+};
+
 function VoiceForm({
   shown,
   readOnly,
@@ -114,44 +136,52 @@ function VoiceForm({
   const i18n = useI18n();
   const { t } = i18n;
   const languageId = useId();
-  const status = useLoadedHandle(voice.openStatus);
   const keys = useLoadedHandle(voice.openCloudKeys);
-  const provider = cloudProviderOf(shown.place);
-  // The languages the server's model hears, and the one chosen, by name.
-  const languages = [
-    ...new Set([
-      ...(status?._tag === "available" ? status.model.languages : []),
-      ...(shown.language === "auto" ? [] : [shown.language]),
-    ]),
-  ]
-    .map((code) => ({ code, name: languageName(code, i18n) }))
-    .toSorted((a, b) => a.name.localeCompare(b.name, i18n.locale));
+  const provider = shown.provider ?? null;
+  const ready = setUp(shown, keys);
+  const languages = DICTATION_LANGUAGES.map((code) => ({
+    code,
+    name: languageName(code, i18n),
+  })).toSorted((a, b) => a.name.localeCompare(b.name, i18n.locale));
+  const phone: PhoneChoice =
+    shown.place === "device" ? "device" : shown.place === "automatic" ? "automatic" : "service";
   return (
     <>
-      <Section title={t("voice.place")}>
+      {ready === false && (
+        <p className="flex items-start gap-2 rounded-md bg-muted px-3 py-2 text-sm">
+          <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          {dictationBlockWords("setup", i18n)}
+        </p>
+      )}
+      <Section title={t("voice.service")}>
+        <p className="-mt-1 text-2xs text-muted-foreground">{t("voice.service.description")}</p>
         <RadioGroup
-          aria-label={t("voice.place")}
-          value={shown.place}
+          aria-label={t("voice.service")}
+          value={provider ?? "none"}
           onValueChange={(picked: unknown) => {
-            if (isPlace(picked)) onChange({ place: picked });
+            if (picked === "none") onChange({ provider: null });
+            else if (isProvider(picked)) onChange({ provider: picked });
           }}
           readOnly={readOnly}
           className="flex flex-col gap-1.5"
         >
-          {places.map((place) => {
-            const words = voicePlaceWords(place, i18n);
-            return (
-              <Radio.Root key={place} value={place} className={choice}>
-                <ChoiceIndicator shape="round">
-                  <Radio.Indicator className="size-2 rounded-pill bg-background" />
-                </ChoiceIndicator>
+          {[...providers, "none" as const].map((option) => (
+            <Radio.Root key={option} value={option} className={choice}>
+              <ChoiceIndicator shape="round">
+                <Radio.Indicator className="size-2 rounded-pill bg-background" />
+              </ChoiceIndicator>
+              {option === "none" ? (
                 <span className="flex flex-col">
-                  <span>{words.label}</span>
-                  <span className="text-xs text-muted-foreground">{words.description}</span>
+                  <span>{t("voice.service.none")}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("voice.service.none.description")}
+                  </span>
                 </span>
-              </Radio.Root>
-            );
-          })}
+              ) : (
+                <span>{CLOUD_PROVIDER_NAMES[option]}</span>
+              )}
+            </Radio.Root>
+          ))}
         </RadioGroup>
         {provider !== null && (
           <CloudKey
@@ -162,7 +192,7 @@ function VoiceForm({
             onSet={voice.setCloudKey}
           />
         )}
-        {provider === "openrouter" && (
+        {provider === "openrouter" && keys?.openrouter === true && (
           <OpenRouterModel
             value={shown.openRouterModel}
             readOnly={readOnly}
@@ -170,6 +200,7 @@ function VoiceForm({
             onChange={(openRouterModel) => onChange({ openRouterModel })}
           />
         )}
+        {ready === true && <VoiceTest key={provider} voice={voice} connected={connected} />}
       </Section>
       <Section>
         <div className="flex flex-col gap-1">
@@ -182,10 +213,7 @@ function VoiceForm({
             aria-readonly={readOnly}
             onChange={(event) => {
               const picked = event.currentTarget.value;
-              if (
-                !readOnly &&
-                (picked === "auto" || languages.some((one) => one.code === picked))
-              ) {
+              if (!readOnly && (picked === "auto" || DICTATION_LANGUAGES.includes(picked))) {
                 onChange({ language: picked });
               }
             }}
@@ -200,17 +228,36 @@ function VoiceForm({
           </select>
         </div>
       </Section>
-      <Section title={t("voice.words")}>
-        <Words words={shown.words} readOnly={readOnly} onChange={(words) => onChange({ words })} />
-      </Section>
-      <Section>
-        <SwitchRow
-          label={t("voice.removeFillers")}
-          hint={t("voice.removeFillers.description")}
-          checked={shown.removeFillers}
+      <Section title={t("voice.phone")}>
+        <RadioGroup
+          aria-label={t("voice.phone")}
+          value={phone}
+          onValueChange={(picked: unknown) => {
+            if (picked === "automatic" || picked === "device") onChange({ place: picked });
+            else if (picked === "service" && provider !== null) onChange({ place: provider });
+          }}
           readOnly={readOnly}
-          onChange={(removeFillers) => onChange({ removeFillers })}
-        />
+          className="flex flex-col gap-1.5"
+        >
+          {phoneChoices.map((option) => (
+            <Radio.Root
+              key={option}
+              value={option}
+              disabled={option === "service" && provider === null}
+              className={choice}
+            >
+              <ChoiceIndicator shape="round">
+                <Radio.Indicator className="size-2 rounded-pill bg-background" />
+              </ChoiceIndicator>
+              <span className="flex flex-col">
+                <span>{t(`voice.place.${option}`)}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t(`voice.place.${option}.description`)}
+                </span>
+              </span>
+            </Radio.Root>
+          ))}
+        </RadioGroup>
       </Section>
       <Collapsible.Root className="flex flex-col gap-3">
         <Collapsible.Trigger className="pressable group -ms-2 flex min-h-8 items-center gap-1.5 self-start rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
@@ -221,22 +268,20 @@ function VoiceForm({
           {t("voice.more")}
         </Collapsible.Trigger>
         <Collapsible.Panel className="flex h-(--collapsible-panel-height) flex-col gap-6 overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
-          <Section title={t("voice.model")}>
-            <Models
-              chosen={shown.model}
-              installing={status?._tag === "available" ? status.installing : null}
+          <Section title={t("voice.words")}>
+            <Words
+              words={shown.words}
               readOnly={readOnly}
-              load={voice.models}
-              onChange={(model) => onChange({ model })}
+              onChange={(words) => onChange({ words })}
             />
           </Section>
           <Section>
             <SwitchRow
-              label={t("voice.cleanUp")}
-              hint={t("voice.cleanUp.description")}
-              checked={shown.cleanUp}
+              label={t("voice.removeFillers")}
+              hint={t("voice.removeFillers.description")}
+              checked={shown.removeFillers}
               readOnly={readOnly}
-              onChange={(cleanUp) => onChange({ cleanUp })}
+              onChange={(removeFillers) => onChange({ removeFillers })}
             />
           </Section>
         </Collapsible.Panel>
@@ -324,9 +369,9 @@ function Words({
 }
 
 /**
- * The cloud provider's key: whether one is saved, a field to save one, and a
- * way to remove it. The key typed leaves the field once saved, and a saved key
- * is never shown back.
+ * The service's key: once saved, that it is, with Remove; until then, a
+ * field to paste it and a link to where the service gives one. The key
+ * typed leaves the field once saved, and a saved key is never shown back.
  */
 function CloudKey({
   provider,
@@ -356,41 +401,13 @@ function CloudKey({
       else if (value !== null) setKey("");
     });
   };
+  if (saved === null) return <SkeletonRows count={1} />;
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={fieldId} className="text-xs">
-        {t("voice.cloud.key", { provider: name })}
-      </label>
-      <form
-        className="flex gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (key.trim() !== "") set(Redacted.make(key.trim()));
-        }}
-      >
-        <input
-          id={fieldId}
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={key}
-          maxLength={10_000}
-          placeholder={t("voice.cloud.key.placeholder")}
-          onChange={(event) => setKey(event.currentTarget.value)}
-          className={lineField}
-        />
-        <Button
-          type="submit"
-          size="sm"
-          className="h-9"
-          aria-disabled={busy || !connected || key.trim() === ""}
-        >
-          {t("voice.cloud.key.save")}
-        </Button>
-      </form>
-      {saved === true && (
+      {saved ? (
         <div className="flex items-center gap-2">
-          <p className="text-xs text-muted-foreground">{t("voice.cloud.key.saved")}</p>
+          <CheckIcon aria-hidden className="size-4 shrink-0 text-success" />
+          <p className="me-auto text-sm">{t("voice.cloud.key.saved")}</p>
           <Button
             variant="ghost"
             size="sm"
@@ -400,6 +417,50 @@ function CloudKey({
             {t("voice.cloud.key.remove")}
           </Button>
         </div>
+      ) : (
+        <>
+          <div className="flex items-baseline justify-between gap-2">
+            <label htmlFor={fieldId} className="text-xs">
+              {t("voice.cloud.key", { provider: name })}
+            </label>
+            <a
+              href={CLOUD_PROVIDER_KEY_PAGES[provider]}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-0.5 text-xs underline underline-offset-2"
+            >
+              {t("voice.cloud.key.get")}
+              <ExternalLinkIcon aria-hidden className="size-3" />
+            </a>
+          </div>
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (key.trim() !== "") set(Redacted.make(key.trim()));
+            }}
+          >
+            <input
+              id={fieldId}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={key}
+              maxLength={10_000}
+              placeholder={t("voice.cloud.key.placeholder")}
+              onChange={(event) => setKey(event.currentTarget.value)}
+              className={lineField}
+            />
+            <Button
+              type="submit"
+              size="sm"
+              className="h-9"
+              aria-disabled={busy || !connected || key.trim() === ""}
+            >
+              {t("voice.cloud.key.save")}
+            </Button>
+          </form>
+        </>
       )}
       <p role="status" className="text-xs text-blocked empty:sr-only">
         {failure === "save" && t("voice.cloud.key.failed")}
@@ -461,83 +522,141 @@ function OpenRouterModel({
   );
 }
 
+/** How the test went: listening, being written down, and what it heard or why not. */
+export type VoiceTestRun =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "listening" }
+  | { readonly _tag: "writing" }
+  | { readonly _tag: "heard"; readonly text: string }
+  | { readonly _tag: "nothing" }
+  | { readonly _tag: "failed"; readonly text: string };
+
+/** A test under way: its dictation, the microphone once open, and the timer that stops it. */
+interface TestUnderWay {
+  readonly handle: DictationHandle;
+  stop: (() => void) | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/** Ends `mine` if it is still the test under way: its timer, its microphone and its dictation. */
+const releaseTest = (live: RefObject<TestUnderWay | null>, mine: TestUnderWay) => {
+  if (live.current !== mine) return;
+  live.current = null;
+  if (mine.timer !== null) clearTimeout(mine.timer);
+  mine.stop?.();
+  mine.handle.cancel();
+};
+
 /**
- * The server's speech models, each in the terms one is chosen by, the one J3
- * Bots picks marked. Choosing it saves no choice (`model: null`), so the
- * server's pick follows J3 Bots'. A download under way shows how far it got.
+ * Test: the microphone listens for two seconds, the service writes it down,
+ * and the words show here. Nothing is kept or sent anywhere else.
  */
-function Models({
-  chosen,
-  installing,
-  readOnly,
-  load,
-  onChange,
+export function VoiceTest({
+  voice,
+  connected,
+  initial = { _tag: "idle" },
 }: {
-  chosen: VoiceSettings["model"];
-  installing: VoiceInstall | null;
-  readOnly: boolean;
-  load: VoiceSettingsIntents["models"];
-  onChange: (model: VoiceSettings["model"]) => void;
+  voice: Pick<VoiceSettingsIntents, "dictate" | "microphone" | "app">;
+  connected: boolean;
+  /** How it shows first, as the gallery shows each step. */
+  initial?: VoiceTestRun;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const { answer } = useAnswer("models", load);
-  if (answer._tag === "loading") return <SkeletonRows count={2} />;
-  if (answer._tag === "failed") {
-    return <p className="text-xs text-muted-foreground">{t("voice.models.failed")}</p>;
-  }
-  const models: ReadonlyArray<VoiceModel> = answer.value;
-  const current = chosen ?? models.find((model) => model.recommended)?.id ?? null;
+  const [run, setRun] = useState<VoiceTestRun>(initial);
+  const live = useRef<TestUnderWay | null>(null);
+  const release = (mine: TestUnderWay) => releaseTest(live, mine);
+  useEffect(
+    () => () => {
+      if (live.current !== null) releaseTest(live, live.current);
+    },
+    [],
+  );
+  const start = () => {
+    if (live.current !== null || !connected) return;
+    const handle = voice.dictate();
+    const mine: TestUnderWay = { handle, stop: null, timer: null };
+    live.current = mine;
+    setRun({ _tag: "listening" });
+    const finish = () => {
+      if (live.current !== mine) return;
+      mine.stop?.();
+      mine.stop = null;
+      handle.finish();
+      setRun({ _tag: "writing" });
+    };
+    const unsubscribe = handle.state.subscribe(() => {
+      const now = handle.state.get();
+      if (now._tag !== "done" && now._tag !== "failed") return;
+      unsubscribe();
+      if (live.current !== mine) return;
+      release(mine);
+      setRun(
+        now._tag === "failed"
+          ? { _tag: "failed", text: dictationFailureWords(now.reason, i18n) }
+          : now.text.trim() === ""
+            ? { _tag: "nothing" }
+            : { _tag: "heard", text: now.text.trim() },
+      );
+    });
+    void voice
+      .microphone({
+        samples: (samples) => {
+          if (live.current === mine) handle.audio(littleEndian(samples));
+        },
+        lost: finish,
+      })
+      .then((opening) => {
+        if (live.current !== mine) {
+          if (opening._tag === "open") opening.stop();
+          return;
+        }
+        if (opening._tag === "failed") {
+          release(mine);
+          setRun({
+            _tag: "failed",
+            text: microphoneFailureWords(opening.reason, voice.app, i18n),
+          });
+          return;
+        }
+        mine.stop = opening.stop;
+        mine.timer = setTimeout(finish, TEST_LENGTH);
+      });
+  };
+  const busy = run._tag === "listening" || run._tag === "writing";
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-2xs text-muted-foreground">{t("voice.model.description")}</p>
-      <RadioGroup
-        aria-label={t("voice.model")}
-        value={current}
-        onValueChange={(picked: unknown) => {
-          const model = models.find((one) => one.id === picked);
-          if (model !== undefined) onChange(model.recommended ? null : model.id);
-        }}
-        readOnly={readOnly}
-        className="flex flex-col gap-1.5"
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-3">
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-disabled={busy || !connected}
+          onClick={() => {
+            if (!busy) start();
+          }}
+        >
+          {busy ? (
+            <LoaderCircleIcon aria-hidden className="motion-safe:animate-spin" />
+          ) : (
+            <MicIcon aria-hidden />
+          )}
+          {t("voice.test")}
+        </Button>
+        <p className="text-2xs text-muted-foreground">{t("voice.test.hint")}</p>
+      </div>
+      <p
+        role="status"
+        className={cn(
+          "text-sm empty:sr-only",
+          run._tag === "failed" || run._tag === "nothing" ? "text-blocked" : "text-foreground",
+        )}
       >
-        {models.map((model) => {
-          const download = installing?.modelId === model.id ? installing : null;
-          return (
-            <Radio.Root key={model.id} value={model.id} className={choice}>
-              <ChoiceIndicator shape="round">
-                <Radio.Indicator className="size-2 rounded-pill bg-background" />
-              </ChoiceIndicator>
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="flex flex-wrap items-center gap-x-2">
-                  <span>{model.name}</span>
-                  {model.recommended && (
-                    <span className="text-2xs font-medium text-accent">
-                      {t("voice.model.recommended")}
-                    </span>
-                  )}
-                  {model.installed && download === null && (
-                    <span className="text-2xs text-muted-foreground">
-                      {t("voice.model.installed")}
-                    </span>
-                  )}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {voiceModelWords(model, i18n).join(" · ")}
-                </span>
-                {download !== null && (
-                  <span className="text-xs text-foreground tabular-nums">
-                    {t("voice.model.installing", {
-                      received: sizeWords(download.received, i18n),
-                      total: sizeWords(download.total, i18n),
-                    })}
-                  </span>
-                )}
-              </span>
-            </Radio.Root>
-          );
-        })}
-      </RadioGroup>
+        {run._tag === "listening" && t("voice.test.listening")}
+        {run._tag === "writing" && t("voice.test.writing")}
+        {run._tag === "heard" && t("voice.test.heard", { text: run.text })}
+        {run._tag === "nothing" && t("voice.test.nothing")}
+        {run._tag === "failed" && run.text}
+      </p>
     </div>
   );
 }

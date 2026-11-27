@@ -54,7 +54,16 @@ export const cloudProviderOf = (place: VoicePlace): CloudVoiceProvider | null =>
   place === "openai" || place === "xai" || place === "openrouter" ? place : null;
 
 /**
- * The language the operator speaks: `auto` to have the model tell, or an
+ * The languages the cloud providers take by name, as ISO 639-1 codes. Any
+ * other the operator speaks, they tell by themselves (`auto`).
+ */
+export const DICTATION_LANGUAGES: ReadonlyArray<string> =
+  "ar bg ca cs da de el en es fa fi fr hi hr hu id it ja ko mk ms nl pl pt ro ru sk sv th tr uk ur vi zh".split(
+    " ",
+  );
+
+/**
+ * The language the operator speaks: `auto` to have the provider tell, or an
  * ISO 639-1 code such as `pt` or `en`.
  */
 export const VoiceLanguage = Schema.String.check(Schema.isPattern(/^(auto|[a-z]{2})$/));

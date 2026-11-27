@@ -35,7 +35,7 @@ export type SettingsChanges = SettingsChange;
  * choosing another provider, or none, while the place is one moves the place
  * along, to automatic when none is left.
  */
-export const voiceAfter = (saved: VoiceSettings, change: VoiceSettingsChange): VoiceSettings => {
+const voiceAfter = (saved: VoiceSettings, change: VoiceSettingsChange): VoiceSettings => {
   const next = { ...saved, ...change };
   const placed = cloudProviderOf(next.place);
   if (change.place !== undefined && placed !== null) return { ...next, provider: placed };

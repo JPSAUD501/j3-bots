@@ -9,8 +9,8 @@ import { providerGate } from "./engine.ts";
  * - `notifications`: whether J3 Bots notifies, this device's permission, and
  *   how much a notification says;
  * - `appearance`: this device's theme and language;
- * - `voice`: where dictation turns speech into words, its language, the
- *   words to always spell right, and the model;
+ * - `voice`: the dictation service and its key, a test, the language, the
+ *   words to always spell right, and where a phone dictates;
  * - `providers`: the engine, each provider, its version and its sign-in;
  * - `usage`: each provider's limits, and the bots that used its turns;
  * - `connectors`: the services bots can use;
@@ -39,7 +39,7 @@ export type SettingsPage =
  * Settings' pages in the order they are listed, in groups set apart by space:
  * the operator's own, then what the bots run on and use, then this setup. A
  * client leaves out a page it has nothing for, as a browser does `where`, and
- * `voice` when neither the server nor the device dictates.
+ * `voice` facing a server older than dictation.
  */
 export const settingsGroups: ReadonlyArray<ReadonlyArray<SettingsPage>> = [
   ["you", "notifications", "appearance", "voice"],

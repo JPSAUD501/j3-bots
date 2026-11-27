@@ -7,8 +7,8 @@ import {
   type DraftMention,
   type LoadedHandle,
 } from "@j3-bots/client-runtime";
-import type { VoiceSettings, VoiceStatus } from "@j3-bots/contracts";
-import { act, useState } from "react";
+import type { CloudVoiceKeys, VoiceSettings } from "@j3-bots/contracts";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { useDictationSource } from "../live/dictation";
@@ -27,12 +27,15 @@ interface Told {
   readonly dictations: Array<FakeDictation>;
   microphones: number;
   microphonesStopped: number;
+  setUps: number;
+  /** Changes the draft as another tab or the operator's typing would. */
+  edit: (text: string) => void;
 }
 
 /** A dictation on a server the test plays: its state is the test's to set. */
 interface FakeDictation {
   readonly state: Cell<DictationState>;
-  readonly finished: Array<{ text: string; start: number; end: number } | undefined>;
+  finished: number;
   cancelled: boolean;
 }
 
@@ -41,16 +44,16 @@ let told: Told;
 const dictate = (): DictationHandle => {
   const dictation: FakeDictation = {
     state: new Cell<DictationState>({ _tag: "connecting" }),
-    finished: [],
+    finished: 0,
     cancelled: false,
   };
   told.dictations.push(dictation);
   return {
     state: dictation.state,
     audio: () => {},
-    finish: (draft) => {
-      dictation.finished.push(draft);
-      dictation.state.set({ _tag: "finishing", committed: "", tentative: "" });
+    finish: () => {
+      dictation.finished += 1;
+      dictation.state.set({ _tag: "finishing" });
     },
     cancel: () => {
       dictation.cancelled = true;
@@ -68,11 +71,19 @@ const microphone: OpenMicrophone = () => {
   });
 };
 
-const source = (reach: DictationReach = { _tag: "server" }): DictationSource => ({
+const source = (
+  reach: DictationReach = { _tag: "server" },
+  settingsAtHand = true,
+): DictationSource => ({
   reach,
   dictate,
   microphone,
   app: "browser",
+  setUp: settingsAtHand
+    ? () => {
+        told.setUps += 1;
+      }
+    : undefined,
 });
 
 /** A composer on a draft the test reads back, dictating with `dictation`. */
@@ -85,6 +96,9 @@ function Harness({
 }) {
   const [value, setValue] = useState(initial);
   const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>([]);
+  useEffect(() => {
+    told.edit = setValue;
+  }, []);
   return (
     <Composer
       draftKey="draft"
@@ -110,7 +124,15 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  told = { values: [], sent: [], dictations: [], microphones: 0, microphonesStopped: 0 };
+  told = {
+    values: [],
+    sent: [],
+    dictations: [],
+    microphones: 0,
+    microphonesStopped: 0,
+    setUps: 0,
+    edit: () => {},
+  };
 });
 
 afterEach(() => {
@@ -124,7 +146,8 @@ const field = () => {
   if (found === null) throw new Error("No composer field");
   return found;
 };
-const microphoneButton = () => container.querySelector<HTMLElement>("[data-dictation]");
+const microphoneButton = () => container.querySelector<HTMLElement>("[data-dictation=idle]");
+const stopButton = () => container.querySelector<HTMLElement>("[data-dictation-stop]");
 const alert = () => container.querySelector("[role=alert]")?.textContent ?? "";
 const playing = () => {
   const dictation = told.dictations.at(-1);
@@ -147,45 +170,60 @@ const press = async () => {
     microphoneButton()?.click();
   });
 };
+const stop = () => act(() => stopButton()?.click());
+const button = (name: string) =>
+  [...container.querySelectorAll<HTMLElement>("button")].find((one) => one.textContent === name);
 const hear = (state: DictationState) => act(() => playing().state.set(state));
 
 describe("dictation in the composer", () => {
-  it("shows the settled words in the text's color and the open ones lighter, at the caret, and sends nothing", async () => {
+  it("records inside the composer, leaves the field open to typing, and sends nothing", async () => {
     render("Dear Ana, thanks.", 9);
     await press();
-    hear({ _tag: "listening", live: true, committed: "book the venue", tentative: "for Friday" });
+    hear({ _tag: "listening" });
 
-    expect(field().textContent).toBe("Dear Ana, book the venue for Friday thanks.");
-    const open = field().querySelector("[data-run]");
-    expect(open?.getAttribute("data-run")).toBe("for Friday");
-    expect(open?.querySelector(".text-muted-foreground")?.textContent).toBe("for Friday");
-    // The draft takes the words only once dictation ends, and nothing goes.
+    expect(container.querySelector("[data-dictation=recording]")).not.toBeNull();
+    expect(stopButton()).not.toBeNull();
+    expect(field().hasAttribute("aria-readonly")).toBe(false);
     expect(told.values).toEqual([]);
     expect(told.sent).toEqual([]);
   });
 
-  it("on Stop, sends the draft and where the words go, then puts the final words in with the caret after them", async () => {
+  it("on Stop, has it written down in place, then puts the words where the caret was, the caret after them", async () => {
     render("Dear Ana, thanks.", 9);
     await press();
-    hear({ _tag: "listening", live: true, committed: "book the venue", tentative: "for Friday" });
-    await press();
+    hear({ _tag: "listening" });
+    stop();
 
-    expect(playing().finished).toEqual([{ text: "Dear Ana, thanks.", start: 9, end: 9 }]);
+    expect(playing().finished).toBe(1);
     expect(told.microphonesStopped).toBe(1);
+    expect(container.querySelector("[data-dictation=finishing]")?.textContent).toContain(
+      "Writing it down…",
+    );
 
     hear({ _tag: "done", text: "Book the venue for Friday," });
 
     expect(told.values).toEqual(["Dear Ana, Book the venue for Friday, thanks."]);
-    expect(field().textContent).toBe("Dear Ana, Book the venue for Friday, thanks.");
     expect(fieldSelection(field())).toEqual([36, 36]);
     expect(playing().cancelled).toBe(true);
     expect(told.sent).toEqual([]);
   });
 
-  it("on Escape, cancels the dictation and leaves the draft exactly as it was", async () => {
+  it("puts the words where the caret was, moved along with what was typed meanwhile", async () => {
     render("Dear Ana, thanks.", 9);
     await press();
-    hear({ _tag: "listening", live: true, committed: "book the venue", tentative: "for" });
+    hear({ _tag: "listening" });
+    act(() => told.edit("Hi! Dear Ana, thanks."));
+    act(() => told.edit("Hi! Dear Ana, thanks. Bye"));
+    stop();
+    hear({ _tag: "done", text: "book the venue" });
+
+    expect(told.values).toEqual(["Hi! Dear Ana, book the venue thanks. Bye"]);
+  });
+
+  it("on Escape, cancels the dictation and leaves the draft as it was", async () => {
+    render("Dear Ana, thanks.", 9);
+    await press();
+    hear({ _tag: "listening" });
     act(() => {
       field().dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
@@ -194,15 +232,14 @@ describe("dictation in the composer", () => {
 
     expect(playing().cancelled).toBe(true);
     expect(told.microphonesStopped).toBe(1);
-    expect(field().textContent).toBe("Dear Ana, thanks.");
-    expect(fieldSelection(field())).toEqual([9, 9]);
+    expect(microphoneButton()).not.toBeNull();
     expect(told.values).toEqual([]);
   });
 
   it("cancels a dictation and lets the microphone go once dictation is no longer offered, as in a window put away", async () => {
     render("Dear Ana, thanks.", 9);
     await press();
-    hear({ _tag: "listening", live: true, committed: "book the venue", tentative: "for" });
+    hear({ _tag: "listening" });
     act(() => root.render(<Harness initial="Dear Ana, thanks." dictation={undefined} />));
 
     expect(playing().cancelled).toBe(true);
@@ -210,15 +247,31 @@ describe("dictation in the composer", () => {
     expect(told.values).toEqual([]);
   });
 
-  it("keeps the words already settled when dictation fails, and says why", async () => {
+  it("says inside the composer why the service gave no words, with Set up when Settings fixes it", async () => {
     render("", 0);
     await press();
-    hear({ _tag: "listening", live: true, committed: "Call the bank", tentative: "tomor" });
-    hear({ _tag: "failed", reason: "busy" });
+    hear({ _tag: "listening" });
+    hear({ _tag: "failed", reason: "cloud-refused" });
 
-    expect(told.values).toEqual(["Call the bank"]);
-    expect(alert()).toBe("Someone is dictating on another device. Try again once they’re done.");
+    expect(alert()).toContain("The dictation service didn’t accept your key.");
     expect(told.microphonesStopped).toBe(1);
+    expect(told.values).toEqual([]);
+    act(() => button("Set up")?.click());
+    expect(told.setUps).toBe(1);
+    expect(alert()).toBe("");
+  });
+
+  it("opens Settings → Voice on a press before set-up, and says what it needs where Settings is not at hand", async () => {
+    render("", 0, source({ _tag: "blocked", block: "setup" }));
+    await press();
+    expect(told.setUps).toBe(1);
+    expect(alert()).toBe("");
+
+    render("", 0, source({ _tag: "blocked", block: "setup" }, false));
+    await press();
+    expect(alert()).toContain("To dictate, choose a dictation service and add its key.");
+    expect(told.dictations).toEqual([]);
+    expect(told.microphones).toBe(0);
   });
 
   it("on a page served over plain http, explains how to dictate and records nothing", async () => {
@@ -226,7 +279,7 @@ describe("dictation in the composer", () => {
     await press();
 
     expect(alert()).toContain(
-      "Use the desktop app or the Android app, or open J3 Bots at an https address.",
+      "Use the desktop or Android app, or open J3 Bots at an https address.",
     );
     expect(told.dictations).toEqual([]);
     expect(told.microphones).toBe(0);
@@ -236,6 +289,7 @@ describe("dictation in the composer", () => {
 describe("dictation's source", () => {
   const voiceSettings: VoiceSettings = {
     place: "automatic",
+    provider: "openai",
     language: "auto",
     words: [],
     removeFillers: true,
@@ -244,10 +298,10 @@ describe("dictation's source", () => {
     openRouterModel: null,
   };
 
-  /** The composer with dictation as a server's `settings` offer it, telling each status held. */
+  /** The composer with dictation as a server's `settings` offer it, telling each key list held. */
   function FromServer({ settings, held }: { settings: VoiceSettings | null; held: Array<true> }) {
     const [voice] = useState(() => ({
-      openStatus: (): LoadedHandle<VoiceStatus> => {
+      openCloudKeys: (): LoadedHandle<CloudVoiceKeys> => {
         held.push(true);
         return { state: new Cell({ _tag: "loading" }), release: () => {} };
       },
@@ -257,15 +311,17 @@ describe("dictation's source", () => {
     return <Harness initial="" dictation={dictation} />;
   }
 
-  it("offers no microphone from a server older than dictation, and asks it nothing", () => {
+  it("offers no microphone from a server older than dictation through a service, and asks it nothing", () => {
     const held: Array<true> = [];
+    const { provider: _, ...older } = voiceSettings;
     act(() => root.render(<FromServer settings={null} held={held} />));
-
+    expect(microphoneButton()).toBeNull();
+    act(() => root.render(<FromServer settings={older} held={held} />));
     expect(microphoneButton()).toBeNull();
     expect(held).toEqual([]);
   });
 
-  it("offers the microphone from a server that dictates", () => {
+  it("offers the microphone from a server that dictates through a service, and follows its keys", () => {
     const held: Array<true> = [];
     act(() => root.render(<FromServer settings={voiceSettings} held={held} />));
 

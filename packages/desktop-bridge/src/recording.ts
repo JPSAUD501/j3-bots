@@ -239,27 +239,16 @@ export type RecordingRead = typeof RecordingRead.Type;
 const Ms = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const Said = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100_000));
 
-/**
- * A word, and when the recognizer had heard it, in ms into the recording. As
- * long as its segment's text may be: a language written without spaces, or a
- * recognizer repeating itself over noise, gives long ones.
- */
-export const TranscriptWord = Schema.Struct({ t: Ms, text: Said });
-
-/**
- * What was said from `t` to `until`, in ms; `words` null where the
- * recognizer gave the text only at the end.
- */
+/** What was said from `t` to `until`, in ms into the recording. */
 export const TranscriptSegment = Schema.Struct({
   t: Ms,
   until: Ms,
   text: Said,
-  words: Schema.NullOr(Schema.Array(TranscriptWord).check(Schema.isMaxLength(20_000))),
 }).check(
   Schema.makeFilter(({ t, until }) => until >= t, { title: "a stretch that ends after it starts" }),
 );
 
-/** A recording's transcript, written down through the server's speech recognition. */
+/** A recording's transcript, written down by the operator's dictation service. */
 export const RecordingTranscript = Schema.Struct({
   segments: Schema.Array(TranscriptSegment).check(Schema.isMaxLength(100_000)),
 });

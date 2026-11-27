@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { HeardWords } from "@j3-bots/client-runtime";
+import type { HeardWords } from "@j3-bots/client-runtime/presentation";
 import type { VoiceLanguage } from "@j3-bots/contracts";
 
 // The phone's own recognizer, run on the phone only (decision 0096): which of

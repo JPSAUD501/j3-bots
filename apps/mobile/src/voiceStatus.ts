@@ -58,13 +58,9 @@ function useHeldValue<A>(enabled: boolean, open: (client: J3Client) => LoadedHan
 }
 
 /**
- * Whether the server can recognize speech now, and with which model, while
- * mounted. Hold it only from a server whose settings carry `voice`
- * (`enabled`): an older one has no such subscription.
+ * Whether a key is saved for each dictation service, while mounted. Hold it
+ * only from a server that dictates through one (`enabled`): an older one has
+ * no such subscription.
  */
-export const useVoiceStatus = (enabled: boolean) =>
-  useHeldValue(enabled, (client) => client.voice.openStatus());
-
-/** Whether a key is saved for each cloud provider, while mounted; as `useVoiceStatus`. */
 export const useCloudKeys = (enabled: boolean) =>
   useHeldValue(enabled, (client) => client.voice.openCloudKeys());

@@ -2,7 +2,6 @@
 import {
   type DictationFailure,
   type DictationState,
-  type HeardWords,
   targetKey,
   type VoiceClient,
 } from "@j3-bots/client-runtime";
@@ -11,21 +10,34 @@ import {
   type DictationBlock,
   type DictationPath,
   dictationPath,
+  followFieldEdit,
+  followTyping,
+  type HeardWords,
   levelOf,
+  placeHeard,
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useSettings } from "@j3-bots/client-runtime/react";
 import {
   dictationBlockWords,
+  dictationFailureNeedsSetup,
   dictationFailureWords,
-  dictationStateWords,
+  elapsedWords,
 } from "@j3-bots/client-runtime/wording";
-import { type EntryTarget, MAX_VOICE_DRAFT_LENGTH } from "@j3-bots/contracts";
+import type { EntryTarget } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import type { I18n } from "@j3-bots/i18n";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
-import { Mic, Square } from "lucide-react-native";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { AccessibilityInfo, AppState, BackHandler, Linking, Pressable, View } from "react-native";
+import { Check, CircleAlert, Mic, X } from "lucide-react-native";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  AppState,
+  BackHandler,
+  Linking,
+  Pressable,
+  View,
+} from "react-native";
 import Animated, {
   type SharedValue,
   useAnimatedStyle,
@@ -34,7 +46,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
-import { useReducedMotion } from "../motion.ts";
+import { appear, useReducedMotion } from "../motion.ts";
 import {
   askMicrophone,
   microphoneAllowed,
@@ -44,16 +56,18 @@ import {
 import { type Heard, hear, heardWords, nothingHeard } from "../platform/recognition.ts";
 import { samplesOf, voiceCapture } from "../platform/voiceCapture.ts";
 import { Text } from "../text.tsx";
-import { useVoiceStatus } from "../voiceStatus.ts";
+import { useColor } from "../theme.ts";
+import { useCloudKeys } from "../voiceStatus.ts";
 import { composerButtonFrame, composerButtonSlop } from "./composerButton.ts";
-import { type DictationOrigin, dictatedDraft, originOf } from "./dictatedDraft.ts";
 
-// Dictation into the composer (decision 0096). Where speech becomes words is
-// the operator's choice in Settings → Voice: the phone's own recognizer, on
-// the phone alone, or the server, which hears the microphone through the
-// voice socket. Android's online recognizer is never used. Words land where
-// the caret was as they are heard, the ones still open to change lighter,
-// and wait there: nothing is sent by itself.
+// Dictation into the composer (decisions 0096 and 0107). Where speech
+// becomes words is the operator's choice in Settings → Voice: the phone's own
+// recognizer, on the phone alone, or their dictation service, through the
+// server, which hears the microphone through the voice socket. Android's
+// online recognizer is never used. While it records, the composer shows it
+// inside, and the field still takes typing; once it stops, the words land
+// where the caret was, moved along with what was typed. Nothing is sent by
+// itself.
 
 /** Why dictation stopped without the operator's Stop, or did not start. */
 type DictationNotice =
@@ -70,39 +84,41 @@ type DictationPhase =
   | { readonly _tag: "idle" }
   /** Finding where it runs, and asking for the microphone. */
   | { readonly _tag: "preparing" }
-  /** The phone's own recognizer listens. */
-  | { readonly _tag: "device" }
-  | { readonly _tag: "server"; readonly state: DictationState };
+  /** The microphone records, since `startedAt` (ms). */
+  | { readonly _tag: "recording"; readonly startedAt: number }
+  /** The service writes it down. */
+  | { readonly _tag: "finishing" };
 
-/** Where dictation last left the draft: its text, and the selection after it. */
+/** Where dictation last left the draft: its text, and the selection after the words. */
 interface DictationPlaced {
   readonly text: string;
   readonly selection: readonly [number, number];
-  /** The words still open to change, drawn lighter. */
-  readonly open: readonly [number, number] | null;
 }
 
 export interface Dictation {
   readonly phase: DictationPhase;
-  /** Words come as they are spoken: the composer says it listens. */
-  readonly listening: boolean;
   readonly placed: DictationPlaced | null;
   readonly notice: DictationNotice | null;
   /** The microphone's level, 0 to 1, while it records. */
   readonly level: SharedValue<number>;
   readonly start: () => void;
   readonly stop: () => void;
+  /** Ends it with no words. */
+  readonly cancel: () => void;
   /** Forgets the last notice, as the operator moves on. */
   readonly dismiss: () => void;
+  /** Opens Settings → Voice, where a notice that says so is fixed. */
+  readonly setUp: () => void;
 }
 
 type ServerDictation = ReturnType<VoiceClient["dictate"]>;
 
 /** A dictation from the press that started it to its end. */
 interface Session {
-  readonly origin: DictationOrigin;
-  /** What has been heard, as last placed. */
-  heard: HeardWords;
+  /** Where the words go: where the caret was, moved along with what was typed since. */
+  at: { readonly start: number; readonly end: number };
+  /** The draft as `at` was last moved along with it. */
+  seen: string;
   /** The server took audio: an end with no words is one where nothing was heard. */
   listened: boolean;
   /** The phone's recognizer, and whether the operator pressed Stop. */
@@ -112,16 +128,12 @@ interface Session {
     unsubscribe: () => void;
     /** The microphone's pieces go to the server. */
     capturing: boolean;
-    /** The operator stopped: the server is working out the last words. */
+    /** The operator stopped: the service is writing it down. */
     finished: boolean;
   } | null;
 }
 
 const IDLE: DictationPhase = { _tag: "idle" };
-const NOTHING_HEARD: HeardWords = { committed: "", tentative: "" };
-
-const sameWords = (a: HeardWords, b: HeardWords) =>
-  a.committed === b.committed && a.tentative === b.tentative;
 
 /** Everything heard, settled or not, as the words a stop leaves. */
 const allOf = (heard: HeardWords): string =>
@@ -130,33 +142,38 @@ const allOf = (heard: HeardWords): string =>
 /**
  * Dictation into `target`'s draft, at the field's `selection` when a press
  * starts it; null where this phone cannot dictate at all (`dictationPath`'s
- * `none`). The draft takes no other change while it runs. Stop keeps what was
- * heard; Back cancels and puts the draft back as it was; the conversation
- * leaving the operator's view stops it. Unmounting ends it, keeping the
- * settled words. The phone's recognizer is one for the app: this hook only
- * follows a recognition it started.
+ * `none`). The draft keeps taking the operator's typing. Stop has the words
+ * land; Back cancels; the conversation leaving the operator's view stops it.
+ * Unmounting cancels it. Words that come while the draft takes no change
+ * land once it does. The phone's recognizer is one for the app: this hook
+ * only follows a recognition it started.
  */
 export function useDictation({
   target,
+  text,
   selection,
   frozen,
   inView,
+  onSetUp,
 }: {
   readonly target: EntryTarget;
+  /** The draft's text now. */
+  readonly text: string;
   /** The field's selection now. */
   readonly selection: () => readonly [number, number];
-  /** The draft takes no change: a dictation under way is cancelled. */
+  /** The draft takes no change now: words wait, and a press starts nothing. */
   readonly frozen: boolean;
   /** The operator can see the conversation. */
   readonly inView: boolean;
+  /** Opens Settings → Voice. */
+  readonly onSetUp: () => void;
 }): Dictation | null {
   const client = useJ3Client();
   const { t } = useI18n();
   const settings = useSettings();
   const voice = settings._tag === "ready" ? settings.value.voice : null;
-  const place = voice?.place ?? null;
   const language = voice?.language ?? "auto";
-  const status = useVoiceStatus(voice !== null);
+  const keys = useCloudKeys(voice?.provider !== undefined);
   const phone = usePhoneRecognizer(language);
   const reduced = useReducedMotion();
   const level = useSharedValue(0);
@@ -164,38 +181,64 @@ export function useDictation({
   const [notice, setNotice] = useState<DictationNotice | null>(null);
   const [placed, setPlaced] = useState<DictationPlaced | null>(null);
   const session = useRef<Session | null>(null);
+  // Whether the draft takes no change, as the latest render saw it, for what ends a dictation later.
+  const frozenNow = useRef(frozen);
+  useLayoutEffect(() => {
+    frozenNow.current = frozen;
+  }, [frozen]);
+  // Words heard while the draft took no change, which land once it does.
+  const waiting = useRef<{ readonly session: Session; readonly words: string } | null>(null);
   /** Counts presses: a press being prepared goes on only while it is the latest. */
   const presses = useRef(0);
 
   const pathFor = (device: DeviceRecognizer): DictationPath => {
-    const path = dictationPath({ place, device, status, secureContext: true });
+    const path = dictationPath({ voice, device, keys, secureContext: true });
     // Through the server, the phone records with the app's own module.
     return path._tag === "server" && voiceCapture === null ? { _tag: "none" } : path;
   };
 
+  // The words' place follows each change of the draft, the operator's or another device's.
+  useLayoutEffect(() => {
+    const current = session.current ?? waiting.current?.session ?? null;
+    if (current === null) return;
+    current.at = followTyping(current.at, current.seen, text);
+    current.seen = text;
+  }, [text]);
+
   const showLevel = (value: number) =>
     level.set(reduced ? value : withSpring(value, reanimatedSpring(springs.soft)));
 
-  const write = (text: string, mentions: DictationOrigin["mentions"], next: DictationPlaced) => {
-    client.setDraftText(target, text, mentions);
-    setPlaced(next);
+  /** `words` where `current`'s place is now, the caret after them if it stood there. */
+  const land = (current: Session, words: string) => {
+    const draft = client.drafts.get().get(targetKey(target));
+    const now = draft?.text ?? "";
+    const followed = followTyping(current.at, current.seen, now);
+    const at = {
+      start: Math.min(followed.start, now.length),
+      end: Math.min(followed.end, now.length),
+    };
+    const place = placeHeard({ text: now, ...at }, { committed: words, tentative: "" });
+    const mentions = followFieldEdit(
+      {
+        _tag: "change",
+        before: now,
+        after: place.text,
+        over: at.start < at.end ? [at.start, at.end] : null,
+        written: null,
+        caret: place.committed,
+      },
+      draft?.mentions ?? [],
+    );
+    const [start, end] = selection();
+    const caret =
+      start === at.start && end === at.end
+        ? { start: place.committed, end: place.committed }
+        : followTyping({ start, end }, now, place.text);
+    client.setDraftText(target, place.text, mentions);
+    setPlaced({ text: place.text, selection: [caret.start, caret.end] });
   };
 
-  /** `heard` in the draft, where the selection was. */
-  const placeWords = (current: Session, heard: HeardWords) => {
-    current.heard = heard;
-    const draft = dictatedDraft(current.origin, heard);
-    write(draft.text, draft.mentions, {
-      text: draft.text,
-      selection: [draft.caret, draft.caret],
-      open: draft.open,
-    });
-  };
-
-  /**
-   * Ends `current`, leaving `words` in the draft, or the draft as it was
-   * before when there are none, and saying why when `next` does.
-   */
+  /** Ends `current`, landing `words` when there are any, and saying why when `next` does. */
   const end = (current: Session, words: string | null, next: DictationNotice | null) => {
     if (session.current !== current) return;
     session.current = null;
@@ -206,15 +249,9 @@ export function useDictation({
       server.handle.cancel();
       voiceCapture?.stop();
     }
-    if (words === null || words.trim() === "") {
-      const { origin } = current;
-      write(origin.text, origin.mentions, {
-        text: origin.text,
-        selection: [origin.start, origin.end],
-        open: null,
-      });
-    } else {
-      placeWords(current, { committed: words, tentative: "" });
+    if (words !== null && words.trim() !== "") {
+      if (frozenNow.current) waiting.current = { session: current, words: words.trim() };
+      else land(current, words.trim());
     }
     showLevel(0);
     setPhase(IDLE);
@@ -228,11 +265,8 @@ export function useDictation({
     server.capturing = false;
     voiceCapture?.stop();
     showLevel(0);
-    const { text, start, end: until } = current.origin;
-    // The draft around the words, for the AI's tidy-up, when it is not too long to send.
-    server.handle.finish(
-      text.length <= MAX_VOICE_DRAFT_LENGTH ? { text, start, end: until } : undefined,
-    );
+    server.handle.finish();
+    setPhase({ _tag: "finishing" });
   };
 
   /** Records into the server's dictation until it stops, or the microphone does. */
@@ -240,7 +274,7 @@ export function useDictation({
     const server = current.server;
     if (server === null || server.capturing || server.finished) return;
     if (voiceCapture === null || !voiceCapture.start()) {
-      end(current, current.heard.committed, { _tag: "microphoneFailed" });
+      end(current, null, { _tag: "microphoneFailed" });
       return;
     }
     const microphone = voiceCapture;
@@ -263,7 +297,7 @@ export function useDictation({
     current.server = server;
     const follow = () => {
       if (session.current !== current) return;
-      const state = handle.state.get();
+      const state: DictationState = handle.state.get();
       switch (state._tag) {
         case "done":
           end(
@@ -273,32 +307,23 @@ export function useDictation({
           );
           return;
         case "failed":
-          end(current, current.heard.committed, { _tag: "failed", reason: state.reason });
+          end(current, null, { _tag: "failed", reason: state.reason });
           return;
         case "listening":
           current.listened = true;
           capture(current);
-          break;
+          return;
         case "connecting":
-        case "installing":
         case "finishing":
-        case "tidying":
-          break;
+          return;
       }
-      // The microphone may have failed to start, which ends it.
-      if (session.current !== current) return;
-      if ("committed" in state) {
-        const heard = { committed: state.committed, tentative: state.tentative };
-        if (!sameWords(heard, current.heard)) placeWords(current, heard);
-      }
-      setPhase({ _tag: "server", state });
     };
     server.unsubscribe = handle.state.subscribe(follow);
     follow();
   };
 
   const start = () => {
-    if (session.current !== null) return;
+    if (session.current !== null || frozen) return;
     presses.current += 1;
     const press = presses.current;
     const latest = () => presses.current === press;
@@ -310,7 +335,8 @@ export function useDictation({
       if (!latest()) return;
       if (path._tag === "blocked" || path._tag === "none") {
         setPhase(IDLE);
-        if (path._tag === "blocked") setNotice({ _tag: "blocked", block: path.block });
+        if (path._tag === "blocked" && path.block === "setup") onSetUp();
+        else if (path._tag === "blocked") setNotice({ _tag: "blocked", block: path.block });
         return;
       }
       const access = await askMicrophone();
@@ -320,15 +346,20 @@ export function useDictation({
         setNotice({ _tag: "microphone", canAsk: access === "denied" });
         return;
       }
-      const draft = client.drafts.get().get(targetKey(target));
+      const [from, to] = selection();
       const current: Session = {
-        origin: originOf({ text: draft?.text ?? "", mentions: draft?.mentions ?? [] }, selection()),
-        heard: NOTHING_HEARD,
+        at: {
+          start: Math.min(from, to, text.length),
+          end: Math.min(Math.max(from, to), text.length),
+        },
+        seen: text,
         listened: path._tag === "device",
         device: null,
         server: null,
       };
       session.current = current;
+      setPhase({ _tag: "recording", startedAt: Date.now() });
+      AccessibilityInfo.announceForAccessibility(t("dictation.listening"));
       if (path._tag === "server") {
         startServer(current);
         return;
@@ -336,8 +367,6 @@ export function useDictation({
       current.device = { heard: nothingHeard, stopping: false };
       // Dictation through the server tells it as it starts (`voice.dictate`); this one does here.
       client.recordUsage({ event: "feature.used", properties: { feature: "voice-input" } });
-      setPhase({ _tag: "device" });
-      AccessibilityInfo.announceForAccessibility(t("dictation.listening"));
       try {
         ExpoSpeechRecognitionModule.start({
           ...(recognizer.locale === null ? {} : { lang: recognizer.locale }),
@@ -370,11 +399,8 @@ export function useDictation({
     }
   };
 
-  /**
-   * Ends what is under way: a press being prepared, or a dictation, leaving
-   * the draft as it was (`restore`) or with the words already settled.
-   */
-  const leave = (restore: boolean) => {
+  /** Ends what is under way, a press being prepared or a dictation, with no words. */
+  const cancel = () => {
     presses.current += 1;
     const current = session.current;
     if (current === null) {
@@ -383,7 +409,7 @@ export function useDictation({
     }
     // Ends the recognition without a last result; its `aborted` error is passed over.
     if (current.device !== null) ExpoSpeechRecognitionModule.abort();
-    end(current, restore ? null : current.heard.committed, null);
+    end(current, null, null);
   };
 
   useSpeechRecognitionEvent("result", (event) => {
@@ -391,7 +417,6 @@ export function useDictation({
     const best = event.results[0];
     if (current?.device == null || best === undefined) return;
     current.device.heard = hear(current.device.heard, best.transcript, event.isFinal);
-    placeWords(current, heardWords(current.device.heard));
   });
   useSpeechRecognitionEvent("volumechange", (event) => {
     // Android's level, from -2 to 10; under 0 is not heard.
@@ -400,8 +425,7 @@ export function useDictation({
   useSpeechRecognitionEvent("error", (event) => {
     const current = session.current;
     if (current?.device == null || event.error === "aborted") return;
-    const heard = heardWords(current.device.heard);
-    const said = allOf(heard);
+    const said = allOf(heardWords(current.device.heard));
     // Android's on-device recognizer answers Stop of a continuous recognition
     // with a client error instead of its end: the end the operator asked for.
     if (current.device.stopping) return end(current, said, null);
@@ -411,11 +435,11 @@ export function useDictation({
       case "speech-timeout":
         return end(current, said, said === "" ? { _tag: "noSpeech" } : null);
       case "not-allowed":
-        return end(current, heard.committed, { _tag: "microphone", canAsk: true });
+        return end(current, said, { _tag: "microphone", canAsk: true });
       case "audio-capture":
-        return end(current, heard.committed, { _tag: "microphoneFailed" });
+        return end(current, said, { _tag: "microphoneFailed" });
       default:
-        return end(current, heard.committed, { _tag: "failed", reason: "failed" });
+        return end(current, said, { _tag: "failed", reason: "failed" });
     }
   });
   useSpeechRecognitionEvent("end", () => {
@@ -425,12 +449,17 @@ export function useDictation({
     end(current, said, said === "" && !current.device.stopping ? { _tag: "noSpeech" } : null);
   });
 
-  const onFrozen = useEffectEvent(() => leave(true));
+  const onThawed = useEffectEvent(() => {
+    const held = waiting.current;
+    if (held === null) return;
+    waiting.current = null;
+    land(held.session, held.words);
+  });
   const onLeftView = useEffectEvent(() => stop());
-  const onUnmount = useEffectEvent(() => leave(false));
+  const onUnmount = useEffectEvent(() => cancel());
   const onBack = useEffectEvent((): boolean => {
     if (session.current === null && phase._tag !== "preparing") return false;
-    leave(true);
+    cancel();
     return true;
   });
   const onForeground = useEffectEvent(() => {
@@ -443,7 +472,7 @@ export function useDictation({
 
   useEffect(() => () => onUnmount(), []);
   useEffect(() => {
-    if (frozen) onFrozen();
+    if (!frozen) onThawed();
   }, [frozen]);
   // Not a press being prepared: Android reports the app in the background
   // while its permission dialog is open.
@@ -466,24 +495,64 @@ export function useDictation({
   if (!active && pathFor(phone?.state ?? "none")._tag === "none") return null;
   return {
     phase,
-    listening:
-      phase._tag === "device" ||
-      (phase._tag === "server" && phase.state._tag === "listening" && phase.state.live),
     placed,
     notice,
     level,
     start,
     stop,
+    cancel,
     dismiss: () => setNotice(null),
+    setUp: () => {
+      setNotice(null);
+      onSetUp();
+    },
   };
 }
 
+/** Each bar of the level, and how tall it stands against it: the middle ones most, so a voice reads as a voice. */
+const BARS = [
+  { place: "first", weight: 0.55 },
+  { place: "second", weight: 0.85 },
+  { place: "middle", weight: 1 },
+  { place: "fourth", weight: 0.75 },
+  { place: "last", weight: 0.5 },
+] as const;
+
+/** One bar of the level, drawn on the UI thread from `level`. */
+function LevelBar({
+  level,
+  weight,
+}: {
+  readonly level: SharedValue<number>;
+  readonly weight: number;
+}) {
+  const bar = useAnimatedStyle(() => ({
+    transform: [{ scaleY: 0.14 + 0.86 * level.get() * weight }],
+  }));
+  return <Animated.View style={bar} className="h-4 w-0.5 rounded-full bg-muted-foreground" />;
+}
+
+/** The time since `startedAt` as a clock shows it, once a second. */
+function Elapsed({ startedAt }: { readonly startedAt: number }) {
+  const [now, setNow] = useState(startedAt);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <Text className="min-w-7 text-xs text-muted-foreground tabular-nums">
+      {elapsedWords(now - startedAt)}
+    </Text>
+  );
+}
+
 /**
- * The microphone, beside Send: Dictate, then Stop with the microphone's level
- * around it while it records. Stop takes no press while the server works out
- * the last words.
+ * The microphone, beside Send. At rest it dictates. While it records it
+ * opens into a capsule inside the composer: Cancel, a red dot, the time, the
+ * voice's level, and Stop, which has the words written down; while they are,
+ * the capsule says so, with Cancel.
  */
-export function DictationButton({
+export function DictationControl({
   dictation,
   unavailable,
 }: {
@@ -492,25 +561,54 @@ export function DictationButton({
   readonly unavailable: boolean;
 }) {
   const { t } = useI18n();
+  const muted = useColor("accent-muted-foreground");
   const { phase } = dictation;
-  if (phase._tag === "device" || phase._tag === "server") {
-    const working =
-      phase._tag === "server" &&
-      (phase.state._tag === "finishing" || phase.state._tag === "tidying");
+  if (phase._tag === "recording" || phase._tag === "finishing") {
     return (
-      <View style={composerButtonFrame}>
-        <Level level={dictation.level} />
+      <Animated.View
+        entering={appear}
+        className="my-1.5 flex-row items-center gap-1.5 self-end rounded-full bg-muted ps-0.5 pe-0.5"
+      >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={t("dictation.stop")}
-          accessibilityState={{ disabled: working, busy: working }}
-          onPress={working ? undefined : dictation.stop}
-          hitSlop={composerButtonSlop}
-          className={`size-8 items-center justify-center rounded-full bg-foreground ${working ? "opacity-50" : ""}`}
+          accessibilityLabel={t("dictation.cancel")}
+          onPress={dictation.cancel}
+          hitSlop={6}
+          className="size-8 items-center justify-center rounded-full active:bg-muted-strong"
         >
-          <Icon icon={Square} size={12} color="accent-background" filled />
+          <Icon icon={X} size={16} color="accent-muted-foreground" />
         </Pressable>
-      </View>
+        {phase._tag === "recording" ? (
+          <>
+            <View className="size-2 rounded-full bg-blocked" />
+            <Elapsed startedAt={phase.startedAt} />
+            <View
+              accessible
+              accessibilityRole="image"
+              accessibilityLabel={t("dictation.level")}
+              className="h-4 flex-row items-center gap-0.5"
+            >
+              {BARS.map(({ place, weight }) => (
+                <LevelBar key={place} level={dictation.level} weight={weight} />
+              ))}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("dictation.stop")}
+              onPress={dictation.stop}
+              hitSlop={6}
+              className="size-8 items-center justify-center rounded-full bg-foreground"
+            >
+              <Icon icon={Check} size={16} color="accent-background" />
+            </Pressable>
+          </>
+        ) : (
+          <View accessibilityLiveRegion="polite" className="flex-row items-center gap-1.5 pe-3">
+            <ActivityIndicator size="small" color={muted} style={{ transform: [{ scale: 0.7 }] }} />
+            <Text className="text-xs text-muted-foreground">{t("dictation.finishing")}</Text>
+          </View>
+        )}
+      </Animated.View>
     );
   }
   const disabled = unavailable || phase._tag === "preparing";
@@ -530,24 +628,7 @@ export function DictationButton({
   );
 }
 
-/** A soft ring behind Stop that swells with the microphone's level. */
-function Level({ level }: { readonly level: SharedValue<number> }) {
-  const ring = useAnimatedStyle(() => ({
-    opacity: 0.12 + 0.18 * level.get(),
-    transform: [{ scale: 1 + 0.45 * level.get() }],
-  }));
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[composerButtonFrame, ring]}
-      className="absolute inset-0 items-center justify-center"
-    >
-      <View className="size-8 rounded-full bg-foreground" />
-    </Animated.View>
-  );
-}
-
-/** What the line under the composer says of a notice. */
+/** What the composer says of a notice. */
 const noticeWords = (notice: DictationNotice, i18n: I18n): string => {
   switch (notice._tag) {
     case "microphone":
@@ -563,34 +644,53 @@ const noticeWords = (notice: DictationNotice, i18n: I18n): string => {
   }
 };
 
+/** Whether Settings → Voice fixes what `notice` says. */
+const fixedInSettings = (notice: DictationNotice): boolean =>
+  (notice._tag === "blocked" && notice.block === "no-device-recognizer") ||
+  (notice._tag === "failed" && dictationFailureNeedsSetup(notice.reason));
+
 /**
- * The quiet line under the composer: what the server is doing while words
- * do not come as they are spoken (getting ready, downloading, writing the
- * last words down, tidying), and why dictation stopped by itself or cannot
- * start. A microphone Android no longer lets the app ask for opens the
- * phone's settings from here.
+ * Why dictation stopped by itself or cannot start, inside the composer over
+ * the text, with Set up where Settings → Voice fixes it, or the phone's
+ * settings where Android no longer lets the app ask for the microphone, and
+ * a way to put it away.
  */
-export function DictationLine({ dictation }: { readonly dictation: Dictation }) {
+export function DictationNotice({ dictation }: { readonly dictation: Dictation }) {
   const i18n = useI18n();
-  const { phase, notice } = dictation;
-  const working =
-    phase._tag === "server" && !dictation.listening ? dictationStateWords(phase.state, i18n) : null;
-  const line = working ?? (notice === null ? null : noticeWords(notice, i18n));
-  if (line === null) return null;
+  const { notice } = dictation;
+  if (notice === null) return null;
+  const action =
+    notice._tag === "microphone" && !notice.canAsk
+      ? { label: i18n.t("composer.dictation.settings"), onPress: () => void Linking.openSettings() }
+      : fixedInSettings(notice)
+        ? { label: i18n.t("dictation.setUp"), onPress: dictation.setUp }
+        : null;
   return (
-    <View className="flex-row items-center justify-between gap-2 ps-3">
-      <Text accessibilityLiveRegion="polite" className="flex-1 text-xs text-muted-foreground">
-        {line}
+    <Animated.View entering={appear} className="flex-row items-start gap-2 ps-3 pe-1 pt-1.5">
+      <View className="pt-0.5">
+        <Icon icon={CircleAlert} size={14} color="accent-blocked" />
+      </View>
+      <Text accessibilityLiveRegion="polite" className="flex-1 text-xs text-foreground">
+        {noticeWords(notice, i18n)}
       </Text>
-      {working === null && notice?._tag === "microphone" && !notice.canAsk && (
+      {action !== null && (
         <Pressable
           accessibilityRole="button"
-          onPress={() => void Linking.openSettings()}
-          className="min-h-11 justify-center px-3"
+          onPress={action.onPress}
+          className="min-h-8 justify-center rounded-full px-2.5 active:bg-muted"
         >
-          <Text className="text-sm text-accent">{i18n.t("composer.dictation.settings")}</Text>
+          <Text className="text-sm text-accent">{action.label}</Text>
         </Pressable>
       )}
-    </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={i18n.t("dictation.dismiss")}
+        onPress={dictation.dismiss}
+        hitSlop={8}
+        className="size-7 items-center justify-center rounded-full active:bg-muted"
+      >
+        <Icon icon={X} size={14} color="accent-muted-foreground" />
+      </Pressable>
+    </Animated.View>
   );
 }

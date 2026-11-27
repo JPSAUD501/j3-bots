@@ -1,32 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { IntentResult, SettingsSaves } from "@j3-bots/client-runtime";
+import {
+  type DictationState,
+  type IntentResult,
+  type SettingsSaves,
+} from "@j3-bots/client-runtime";
+import { dictationPath } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/react";
 import {
+  CLOUD_PROVIDER_KEY_PAGES,
   CLOUD_PROVIDER_NAMES,
+  dictationBlockWords,
+  dictationFailureWords,
   languageName,
-  sizeWords,
-  voiceModelWords,
-  voicePlaceWords,
 } from "@j3-bots/client-runtime/wording";
 import {
   type CloudVoiceModel,
-  type CloudVoiceProvider,
-  cloudProviderOf,
+  CloudVoiceProvider,
+  DICTATION_LANGUAGES,
   MAX_VOICE_WORD_LENGTH,
   MAX_VOICE_WORDS,
-  type VoiceInstall,
   type VoiceLanguage,
-  type VoiceModel,
-  type VoiceModelId,
-  type VoicePlace,
   type VoiceSettings,
   type VoiceSettingsChange,
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
 import { getLocales } from "expo-localization";
-import { X } from "lucide-react-native";
-import { useEffect, useEffectEvent, useState } from "react";
-import { View } from "react-native";
+import { ExternalLink, Info, X } from "lucide-react-native";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { Linking, View } from "react-native";
 import { Icon } from "../components/Icon.tsx";
 import {
   ChoiceRow,
@@ -38,33 +39,30 @@ import {
   TextField,
 } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
-import { usePhoneRecognizer } from "../platform/dictation.ts";
+import { askMicrophone, usePhoneRecognizer } from "../platform/dictation.ts";
+import { voiceCapture } from "../platform/voiceCapture.ts";
 import { PressScale } from "../press.tsx";
 import { SecretField } from "../secrets/SecretsForms.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
-import { useCloudKeys, useVoiceStatus } from "../voiceStatus.ts";
+import { useCloudKeys } from "../voiceStatus.ts";
 
-/** Where speech can become words, in the order Settings lists them. */
-const PLACES: ReadonlyArray<VoicePlace> = [
-  "automatic",
-  "device",
-  "server",
-  "openai",
-  "xai",
-  "openrouter",
-];
+const PROVIDERS = CloudVoiceProvider.literals;
+
+/** Where a phone dictates, as the page offers it: a provider place is `service`. */
+type PhoneChoice = "automatic" | "device" | "service";
+const PHONE_CHOICES: ReadonlyArray<PhoneChoice> = ["automatic", "device", "service"];
+
+/** How long the test listens, in ms. */
+const TEST_LENGTH = 2000;
 
 /** A word's key for telling it from the others: the same word in any case is the same. */
 const wordKey = (word: string) => word.normalize("NFC").toLocaleLowerCase();
 
-/** A language the voice settings take: an ISO 639-1 code. */
-const isLanguageCode = (code: string): boolean => /^[a-z]{2}$/.test(code);
-
 /**
  * Settings → Voice: dictation's preferences, one set for the server and every
- * device. Facing a server older than dictation through it, only what this
- * phone does by itself.
+ * device. Facing a server older than dictation through a service, only what
+ * this phone does by itself.
  */
 export function VoiceSection({ connected }: { readonly connected: boolean }) {
   const settings = useSettings();
@@ -76,25 +74,31 @@ export function VoiceSection({ connected }: { readonly connected: boolean }) {
     );
   }
   const voice = settings.value.voice;
-  return voice === null ? <ThisPhoneOnly /> : <VoiceForm voice={voice} connected={connected} />;
+  return voice === null || voice.provider === undefined ? (
+    <ThisPhoneOnly />
+  ) : (
+    <VoiceForm voice={voice} connected={connected} />
+  );
 }
 
-/** A server older than dictation keeps no voice settings: this phone dictates by itself. */
+/** A server older than dictation through a service: this phone dictates by itself. */
 function ThisPhoneOnly() {
-  const words = voicePlaceWords("device", useI18n());
+  const { t } = useI18n();
   return (
     <Section open>
-      <Text className="text-base text-foreground">{words.label}</Text>
-      <Quiet>{words.description}</Quiet>
+      <Text className="text-base text-foreground">{t("voice.place.device")}</Text>
+      <Quiet>{t("voice.place.device.description")}</Quiet>
     </Section>
   );
 }
 
 /**
- * Each choice saves at once, as the notifications do: offline, or while a
- * save is under way, the page shows what it holds and takes no change. How a
- * save ended shows only for one this page saw under way. A cloud provider's
- * key is saved in the server's Secrets and never shown back.
+ * One page, as on a computer: what dictation still needs, while it needs it;
+ * the dictation service and its key, a test, the language, and where this
+ * phone dictates; under More, the words to always spell right and the
+ * filler words. Each choice saves at once, as the notifications do: offline,
+ * or while a save is under way, the page shows what it holds and takes no
+ * change. A key is saved in the server's Secrets and never shown back.
  */
 function VoiceForm({
   voice,
@@ -110,7 +114,6 @@ function VoiceForm({
   const saving = save._tag === "saving";
   const [watching, setWatching] = useState(saving);
   const [more, setMore] = useState(false);
-  const status = useVoiceStatus(true);
   const keys = useCloudKeys(true);
   const shown: VoiceSettings = { ...voice, ...(saving ? save.changes : undefined) };
   const phone = usePhoneRecognizer(shown.language);
@@ -120,32 +123,52 @@ function VoiceForm({
     setWatching(true);
     void client.updateSettings({ section: "voice", changes });
   };
-  const provider = cloudProviderOf(shown.place);
-  const nowhere =
-    status?._tag === "unavailable" &&
-    phone !== null &&
-    phone.state !== "ready" &&
-    provider === null;
+  const provider = shown.provider ?? null;
+  const path =
+    phone === null
+      ? null
+      : dictationPath({ voice: shown, device: phone.state, keys, secureContext: true });
+  const ready =
+    provider !== null &&
+    keys !== null &&
+    keys[provider] &&
+    (provider !== "openrouter" || shown.openRouterModel !== null);
+  const choice: PhoneChoice =
+    shown.place === "device" ? "device" : shown.place === "automatic" ? "automatic" : "service";
   return (
     <>
-      <Section open title={t("voice.place")}>
+      {path?._tag === "blocked" && path.block === "setup" && (
+        <Section open>
+          <View className="flex-row items-start gap-2 rounded-md bg-muted px-3 py-2.5">
+            <Icon icon={Info} size={16} color="accent-muted-foreground" />
+            <Text className="flex-1 text-sm text-foreground">
+              {dictationBlockWords("setup", i18n)}
+            </Text>
+          </View>
+        </Section>
+      )}
+      <Section open title={t("voice.service")}>
+        <Quiet>{t("voice.service.description")}</Quiet>
         <View accessibilityRole="radiogroup" className="gap-1">
-          {PLACES.map((place) => {
-            const words = voicePlaceWords(place, i18n);
-            return (
-              <ChoiceRow
-                key={place}
-                kind="one"
-                label={words.label}
-                description={words.description}
-                selected={shown.place === place}
-                unavailable={readOnly}
-                onPress={() => change({ place })}
-              />
-            );
-          })}
+          {PROVIDERS.map((option) => (
+            <ChoiceRow
+              key={option}
+              kind="one"
+              label={CLOUD_PROVIDER_NAMES[option]}
+              selected={provider === option}
+              unavailable={readOnly}
+              onPress={() => change({ provider: option })}
+            />
+          ))}
+          <ChoiceRow
+            kind="one"
+            label={t("voice.service.none")}
+            description={t("voice.service.none.description")}
+            selected={provider === null}
+            unavailable={readOnly}
+            onPress={() => change({ provider: null })}
+          />
         </View>
-        {nowhere && <Quiet>{t("voice.unavailable")}</Quiet>}
       </Section>
       {provider !== null && (
         // One per provider: a key typed for one is never saved for another.
@@ -155,28 +178,36 @@ function VoiceForm({
           saved={keys === null ? null : keys[provider]}
         />
       )}
-      {provider === "openrouter" && (
+      {provider === "openrouter" && keys?.openrouter === true && (
         <OpenRouterModel
           chosen={shown.openRouterModel}
           readOnly={readOnly}
           onChoose={(openRouterModel) => change({ openRouterModel })}
         />
       )}
+      {ready && voiceCapture !== null && <VoiceTest key={provider} connected={connected} />}
       <Languages
         chosen={shown.language}
-        heard={status?._tag === "available" ? status.model.languages : []}
         readOnly={readOnly}
         onChoose={(language) => change({ language })}
       />
-      <Words words={shown.words} readOnly={readOnly} onChange={(words) => change({ words })} />
-      <Section open>
-        <SwitchRow
-          label={t("voice.removeFillers")}
-          hint={t("voice.removeFillers.description")}
-          value={shown.removeFillers}
-          readOnly={readOnly}
-          onChange={(removeFillers) => change({ removeFillers })}
-        />
+      <Section open title={t("voice.phone")}>
+        <View accessibilityRole="radiogroup" className="gap-1">
+          {PHONE_CHOICES.map((option) => (
+            <ChoiceRow
+              key={option}
+              kind="one"
+              label={t(`voice.place.${option}`)}
+              description={t(`voice.place.${option}.description`)}
+              selected={choice === option}
+              unavailable={readOnly || (option === "service" && provider === null)}
+              onPress={() => {
+                if (option !== "service") change({ place: option });
+                else if (provider !== null) change({ place: provider });
+              }}
+            />
+          ))}
+        </View>
       </Section>
       <Section open>
         <View className="items-start">
@@ -185,19 +216,14 @@ function VoiceForm({
       </Section>
       {more && (
         <>
-          <Models
-            chosen={shown.model}
-            installing={status?._tag === "available" ? status.installing : null}
-            readOnly={readOnly}
-            onChoose={(model) => change({ model })}
-          />
+          <Words words={shown.words} readOnly={readOnly} onChange={(words) => change({ words })} />
           <Section open>
             <SwitchRow
-              label={t("voice.cleanUp")}
-              hint={t("voice.cleanUp.description")}
-              value={shown.cleanUp}
+              label={t("voice.removeFillers")}
+              hint={t("voice.removeFillers.description")}
+              value={shown.removeFillers}
               readOnly={readOnly}
-              onChange={(cleanUp) => change({ cleanUp })}
+              onChange={(removeFillers) => change({ removeFillers })}
             />
           </Section>
         </>
@@ -211,31 +237,35 @@ function VoiceForm({
 }
 
 /**
- * The language dictation listens for: Automatic, or one the server's model
- * hears, the one chosen and the phone's own, each named in the reader's
- * language.
+ * The language dictation listens for: Automatic, the phone's own and the one
+ * chosen first, then, on request, every other the services take, each named
+ * in the reader's language.
  */
 function Languages({
   chosen,
-  heard,
   readOnly,
   onChoose,
 }: {
   readonly chosen: VoiceLanguage;
-  /** The languages the server's model hears. */
-  readonly heard: ReadonlyArray<string>;
   readonly readOnly: boolean;
   readonly onChoose: (language: VoiceLanguage) => void;
 }) {
   const i18n = useI18n();
+  const [all, setAll] = useState(false);
   const own = getLocales()[0]?.languageCode ?? null;
-  const codes = [
-    ...new Set([...heard, ...(chosen === "auto" ? [] : [chosen]), ...(own === null ? [] : [own])]),
-  ].filter(isLanguageCode);
-  const named = codes
-    .map((code) => ({ code, name: languageName(code, i18n) }))
-    .sort((a, b) => a.name.localeCompare(b.name, i18n.locale));
-  const options = [{ code: "auto", name: i18n.t("voice.language.auto") }, ...named];
+  const first = [
+    ...new Set([...(own === null ? [] : [own]), ...(chosen === "auto" ? [] : [chosen])]),
+  ].filter((code) => DICTATION_LANGUAGES.includes(code));
+  const rest = DICTATION_LANGUAGES.filter((code) => !first.includes(code));
+  const named = (codes: ReadonlyArray<string>) =>
+    codes
+      .map((code) => ({ code, name: languageName(code, i18n) }))
+      .sort((a, b) => a.name.localeCompare(b.name, i18n.locale));
+  const options = [
+    { code: "auto", name: i18n.t("voice.language.auto") },
+    ...named(first),
+    ...(all ? named(rest) : []),
+  ];
   return (
     <Section open title={i18n.t("voice.language")}>
       <View accessibilityRole="radiogroup" className="gap-1">
@@ -250,6 +280,133 @@ function Languages({
           />
         ))}
       </View>
+      {!all && (
+        <View className="items-start">
+          <Button label={i18n.t("voice.language.more")} onPress={() => setAll(true)} />
+        </View>
+      )}
+    </Section>
+  );
+}
+
+/** How the test went: listening, being written down, and what it heard or why not. */
+type TestRun =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "listening" }
+  | { readonly _tag: "writing" }
+  | { readonly _tag: "heard"; readonly text: string }
+  | { readonly _tag: "nothing" }
+  | { readonly _tag: "failed"; readonly text: string };
+
+/**
+ * Test: the microphone listens for two seconds, the service writes it down,
+ * and the words show here. Nothing is kept or sent anywhere else.
+ */
+function VoiceTest({ connected }: { readonly connected: boolean }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const client = useJ3Client();
+  const [run, setRun] = useState<TestRun>({ _tag: "idle" });
+  // The test under way: ending it lets the microphone go and drops its dictation.
+  const live = useRef<(() => void) | null>(null);
+  useEffect(() => () => live.current?.(), []);
+  const start = async () => {
+    if (live.current !== null || !connected || voiceCapture === null) return;
+    const microphone = voiceCapture;
+    const access = await askMicrophone();
+    if (access !== "granted") {
+      setRun({
+        _tag: "failed",
+        text: t(access === "denied" ? "composer.dictation.denied" : "composer.dictation.blocked"),
+      });
+      return;
+    }
+    const handle = client.voice.dictate();
+    /** Whether the microphone is still feeding the test. */
+    const test = { capturing: false };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = () => {
+      if (!test.capturing) return;
+      test.capturing = false;
+      microphone.stop();
+      handle.finish();
+      setRun({ _tag: "writing" });
+    };
+    const release = () => {
+      live.current = null;
+      if (timer !== null) clearTimeout(timer);
+      test.capturing = false;
+      microphone.stop();
+      unsubscribe();
+      handle.cancel();
+    };
+    live.current = release;
+    setRun({ _tag: "listening" });
+    const unsubscribe = handle.state.subscribe(() => {
+      const now: DictationState = handle.state.get();
+      if (now._tag === "listening" && !test.capturing && timer === null) {
+        if (!microphone.start()) {
+          release();
+          setRun({ _tag: "failed", text: t("dictation.microphoneFailed") });
+          return;
+        }
+        test.capturing = true;
+        timer = setTimeout(finish, TEST_LENGTH);
+        void (async () => {
+          while (test.capturing) {
+            const piece = await microphone.read().catch(() => null);
+            if (piece === null || !test.capturing) break;
+            handle.audio(piece);
+          }
+          finish();
+        })();
+        return;
+      }
+      if (now._tag !== "done" && now._tag !== "failed") return;
+      release();
+      setRun(
+        now._tag === "failed"
+          ? { _tag: "failed", text: dictationFailureWords(now.reason, i18n) }
+          : now.text.trim() === ""
+            ? { _tag: "nothing" }
+            : { _tag: "heard", text: now.text.trim() },
+      );
+    });
+  };
+  const busy = run._tag === "listening" || run._tag === "writing";
+  const said =
+    run._tag === "listening"
+      ? t("voice.test.listening")
+      : run._tag === "writing"
+        ? t("voice.test.writing")
+        : run._tag === "heard"
+          ? t("voice.test.heard", { text: run.text })
+          : run._tag === "nothing"
+            ? t("voice.test.nothing")
+            : run._tag === "failed"
+              ? run.text
+              : null;
+  return (
+    <Section open>
+      <View className="flex-row items-center gap-3">
+        <Button
+          label={t("voice.test")}
+          held={busy}
+          disabled={!connected}
+          onPress={() => void start()}
+        />
+        <View className="flex-1">
+          <Quiet>{t("voice.test.hint")}</Quiet>
+        </View>
+      </View>
+      {said !== null && (
+        <Text
+          accessibilityLiveRegion="polite"
+          className={`text-sm ${run._tag === "failed" || run._tag === "nothing" ? "text-blocked" : "text-foreground"}`}
+        >
+          {said}
+        </Text>
+      )}
     </Section>
   );
 }
@@ -345,67 +502,9 @@ function useListed<A>(load: () => Promise<IntentResult<ReadonlyArray<A>>>): List
 }
 
 /**
- * The server's speech models, described as an operator chooses one, the
- * recommended one marked; choosing it is choosing J3 Bots' own pick. A
- * download under way shows how far it got.
- */
-function Models({
-  chosen,
-  installing,
-  readOnly,
-  onChoose,
-}: {
-  readonly chosen: VoiceModelId | null;
-  readonly installing: VoiceInstall | null;
-  readonly readOnly: boolean;
-  readonly onChoose: (model: VoiceModelId | null) => void;
-}) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const client = useJ3Client();
-  const models = useListed<VoiceModel>(() => client.voice.models());
-  const describe = (model: VoiceModel) =>
-    [
-      ...(model.recommended ? [t("voice.model.recommended")] : []),
-      ...voiceModelWords(model, i18n),
-      ...(installing?.modelId === model.id
-        ? [
-            t("voice.model.installing", {
-              received: sizeWords(installing.received, i18n),
-              total: sizeWords(installing.total, i18n),
-            }),
-          ]
-        : model.installed
-          ? [t("voice.model.installed")]
-          : []),
-    ].join(" · ");
-  return (
-    <Section open title={t("voice.model")}>
-      <Quiet>{t("voice.model.description")}</Quiet>
-      {models._tag === "loading" && <SkeletonRows count={3} />}
-      {models._tag === "failed" && <Quiet>{t("voice.models.failed")}</Quiet>}
-      {models._tag === "ready" && (
-        <View accessibilityRole="radiogroup" className="gap-1">
-          {models.items.map((model) => (
-            <ChoiceRow
-              key={model.id}
-              kind="one"
-              label={model.name}
-              description={describe(model)}
-              selected={chosen === null ? model.recommended : chosen === model.id}
-              unavailable={readOnly}
-              onPress={() => onChoose(model.recommended ? null : model.id)}
-            />
-          ))}
-        </View>
-      )}
-    </Section>
-  );
-}
-
-/**
- * A cloud provider's key: whether one is saved, which is never shown back,
- * and saving or removing it. It is kept in the server's Secrets.
+ * The service's key: once saved, that it is, which is never shown back, with
+ * Remove; until then, where the service gives one and a field to paste it.
+ * It is kept in the server's Secrets.
  */
 function CloudKey({
   provider,
@@ -450,6 +549,14 @@ function CloudKey({
         </View>
       ) : (
         <View className="gap-2">
+          <PressScale
+            accessibilityRole="link"
+            onPress={() => void Linking.openURL(CLOUD_PROVIDER_KEY_PAGES[provider])}
+            className="min-h-11 flex-row items-center gap-1 self-start"
+          >
+            <Text className="text-sm text-accent">{t("voice.cloud.key.get")}</Text>
+            <Icon icon={ExternalLink} size={14} color="accent-accent" />
+          </PressScale>
           <SecretField
             label={label}
             value={typed}
@@ -480,7 +587,7 @@ function CloudKey({
   );
 }
 
-/** The model OpenRouter transcribes with, which that provider needs chosen. */
+/** The model OpenRouter writes speech down with, which that service needs chosen. */
 function OpenRouterModel({
   chosen,
   readOnly,

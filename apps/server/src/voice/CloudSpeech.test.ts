@@ -24,7 +24,7 @@ type Answer = { readonly status: number; readonly body: unknown };
 const providers = (answer: (url: URL) => Answer) => {
   const sent: Array<Sent> = [];
   const client = HttpClient.make((request, url) =>
-    Effect.gen(function* () {
+    Effect.sync(() => {
       const body = request.body;
       const form = body._tag === "FormData" ? body.formData : null;
       const file = form?.get("file");
@@ -38,8 +38,7 @@ const providers = (answer: (url: URL) => Answer) => {
                 typeof value === "string" ? [[name, value] as const] : [],
               ),
         file: file instanceof Blob ? { type: file.type, size: file.size } : null,
-        json:
-          body._tag === "Uint8Array" ? JSON.parse(new TextDecoder().decode(body.body)) : null,
+        json: body._tag === "Uint8Array" ? JSON.parse(new TextDecoder().decode(body.body)) : null,
       });
       const { status, body: reply } = answer(url);
       return HttpClientResponse.fromWeb(

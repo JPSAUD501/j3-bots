@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { CloudVoiceProvider, VoiceModel, VoicePlace } from "@j3-bots/contracts";
+import type { CloudVoiceProvider } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { DictationBlock } from "../presentation/dictation.ts";
 import type { DictationFailure, DictationState } from "../stores/Voice.ts";
@@ -11,30 +11,22 @@ export const CLOUD_PROVIDER_NAMES: Record<CloudVoiceProvider, string> = {
   openrouter: "OpenRouter",
 };
 
-/** A size in bytes, as a download is named: "751 MB", "1.6 GB". */
-export const sizeWords = (bytes: number, { locale }: I18n): string => {
-  const megabytes = bytes / 1_000_000;
-  const format = (value: number, unit: string) =>
-    `${new Intl.NumberFormat(locale, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)} ${unit}`;
-  return megabytes >= 1000 ? format(megabytes / 1000, "GB") : format(Math.max(megabytes, 1), "MB");
+/** Where an operator makes a key for each provider. */
+export const CLOUD_PROVIDER_KEY_PAGES: Record<CloudVoiceProvider, string> = {
+  openai: "https://platform.openai.com/api-keys",
+  xai: "https://console.x.ai",
+  openrouter: "https://openrouter.ai/settings/keys",
 };
 
-/** What the composer says while a dictation on the server runs; null while it only listens live. */
+/** What a dictation under way is doing, for a screen reader and a tooltip. */
 export const dictationStateWords = (state: DictationState, i18n: I18n): string | null => {
   switch (state._tag) {
     case "connecting":
       return i18n.t("dictation.connecting");
-    case "installing":
-      return i18n.t("dictation.installing", {
-        received: sizeWords(state.received, i18n),
-        total: sizeWords(state.total, i18n),
-      });
     case "listening":
-      return state.live ? i18n.t("dictation.listening") : i18n.t("dictation.listeningEnd");
+      return i18n.t("dictation.listening");
     case "finishing":
       return i18n.t("dictation.finishing");
-    case "tidying":
-      return i18n.t("dictation.tidying");
     case "done":
       return null;
     case "failed":
@@ -44,8 +36,6 @@ export const dictationStateWords = (state: DictationState, i18n: I18n): string |
 
 const failures: Record<DictationFailure, KeyWith> = {
   unavailable: "dictation.failed.unavailable",
-  busy: "dictation.failed.busy",
-  install: "dictation.failed.install",
   "cloud-key": "dictation.failed.cloudKey",
   "cloud-refused": "dictation.failed.cloudRefused",
   "cloud-limit": "dictation.failed.cloudLimit",
@@ -62,40 +52,18 @@ const failures: Record<DictationFailure, KeyWith> = {
 export const dictationFailureWords = (reason: DictationFailure, { t }: I18n): string =>
   t(failures[reason]);
 
+/** Whether a dictation that ended this way is fixed in Settings → Voice. */
+export const dictationFailureNeedsSetup = (reason: DictationFailure): boolean =>
+  reason === "cloud-key" || reason === "cloud-refused" || reason === "cloud-model";
+
 const blocks: Record<DictationBlock, KeyWith> = {
   "insecure-page": "dictation.blocked.insecurePage",
   "no-device-recognizer": "dictation.blocked.noDeviceRecognizer",
-  "server-unsupported": "dictation.blocked.serverUnsupported",
-  "server-unavailable": "dictation.blocked.serverUnavailable",
+  setup: "dictation.blocked.setup",
 };
 
 /** Why the microphone cannot dictate here, and what makes it work. */
 export const dictationBlockWords = (block: DictationBlock, { t }: I18n): string => t(blocks[block]);
-
-/** A place dictation runs, as Settings → Voice names it and says what it means. */
-export const voicePlaceWords = (
-  place: VoicePlace,
-  { t }: I18n,
-): { readonly label: string; readonly description: string } => {
-  switch (place) {
-    case "automatic":
-      return {
-        label: t("voice.place.automatic"),
-        description: t("voice.place.automatic.description"),
-      };
-    case "device":
-      return { label: t("voice.place.device"), description: t("voice.place.device.description") };
-    case "server":
-      return { label: t("voice.place.server"), description: t("voice.place.server.description") };
-    case "openai":
-    case "xai":
-    case "openrouter":
-      return {
-        label: CLOUD_PROVIDER_NAMES[place],
-        description: t("voice.place.cloud.description", { provider: CLOUD_PROVIDER_NAMES[place] }),
-      };
-  }
-};
 
 /** A language's name in the reader's own language, from its ISO 639-1 code. */
 export const languageName = (code: string, { locale }: I18n): string => {
@@ -103,36 +71,8 @@ export const languageName = (code: string, { locale }: I18n): string => {
   return name.charAt(0).toLocaleUpperCase(locale) + name.slice(1);
 };
 
-/**
- * What a model is, in the words an operator chooses one by: its download, when
- * its words come, how many languages it hears, how fast it is on this server,
- * and how often it gets the reader's language wrong when that was measured.
- */
-export const voiceModelWords = (model: VoiceModel, i18n: I18n): ReadonlyArray<string> => {
-  const own = i18n.locale.slice(0, 2);
-  const errors = model.errorPercent[own];
-  return [
-    i18n.t("voice.model.size", { size: sizeWords(model.size, i18n) }),
-    i18n.t(model.live ? "voice.model.live" : "voice.model.atEnd"),
-    i18n.plural("voice.model.languages", model.languages.length),
-    ...(model.secondsPer30s === null
-      ? []
-      : [
-          i18n.t("voice.model.speed", {
-            seconds: new Intl.NumberFormat(i18n.locale, { maximumFractionDigits: 1 }).format(
-              model.secondsPer30s,
-            ),
-          }),
-        ]),
-    ...(errors === undefined
-      ? []
-      : [
-          i18n.t("voice.model.errors", {
-            percent: new Intl.NumberFormat(i18n.locale, { maximumFractionDigits: 1 }).format(
-              errors,
-            ),
-            language: new Intl.DisplayNames([i18n.locale], { type: "language" }).of(own) ?? own,
-          }),
-        ]),
-  ];
+/** A recording's length as a clock shows it: "0:07", "12:30". */
+export const elapsedWords = (ms: number): string => {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 };

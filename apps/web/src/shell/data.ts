@@ -73,7 +73,7 @@ import type {
 } from "@j3-bots/desktop-bridge";
 import type * as Redacted from "effect/Redacted";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
-import type { DictationSource } from "../components/Dictation";
+import type { DictationSource, OpenMicrophone } from "../components/Dictation";
 import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { RenderedPrompt } from "../components/PromptPicker";
@@ -82,11 +82,15 @@ import type { TimelineIntents } from "../components/Timeline";
 import type { WhatsNewIntents } from "../components/WhatsNew";
 import type { SecretsIntents } from "../components/secrets/parts";
 
-/** What Settings → Voice reads and changes beyond the settings themselves. */
+/**
+ * What Settings → Voice reads and changes beyond the settings themselves:
+ * the services' keys and OpenRouter's models, and a dictation with this
+ * device's microphone for its test.
+ */
 export type VoiceSettingsIntents = Pick<
   VoiceClient,
-  "openStatus" | "openCloudKeys" | "models" | "cloudModels" | "setCloudKey"
->;
+  "openCloudKeys" | "cloudModels" | "setCloudKey" | "dictate"
+> & { readonly microphone: OpenMicrophone; readonly app: DictationSource["app"] };
 
 /** One conversation or room as the shell shows it. */
 export interface ConversationView {
@@ -289,9 +293,9 @@ export interface ShellIntents extends TimelineIntents {
   /** Dictation in the composer; absent where there is none, and no microphone shows. */
   readonly dictation?: DictationSource | undefined;
   /**
-   * Settings → Voice: whether the server can recognize speech and with which
-   * model, the cloud providers' keys, and the models to choose from. Absent
-   * from a server older than dictation through it.
+   * Settings → Voice: the dictation services' keys, OpenRouter's models,
+   * and a test dictation. Absent from a server older than dictation through
+   * it.
    */
   readonly voice?: VoiceSettingsIntents | undefined;
   /**

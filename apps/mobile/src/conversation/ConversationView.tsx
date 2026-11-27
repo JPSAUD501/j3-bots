@@ -637,6 +637,7 @@ export function ConversationView({
                     recipient={item._tag === "bot" ? item.bot.profile.name : item.room.name}
                     {...(mentionable === undefined ? {} : { mentionable })}
                     onSend={send}
+                    onSetUpVoice={() => navigation.navigate("settingsPage", { page: "voice" })}
                     inView={inView}
                     tint={item._tag === "bot" ? item.bot.profile.avatar : null}
                     suggestion={

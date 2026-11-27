@@ -59,8 +59,6 @@ interface FieldProps {
   /** The picked mentions that count, drawn as chips where the field can. */
   readonly mentions: ReadonlyArray<FieldMention>;
   readonly placeholder: string;
-  /** The words dictation may still change, `[start, end)`, drawn lighter where the field can. */
-  readonly open: readonly [number, number] | null;
   readonly editable: boolean;
   readonly label: string;
   readonly onEdit: (edit: FieldEdit) => void;
@@ -111,7 +109,6 @@ interface NativeFieldProps extends ViewProps {
       readonly fill: number;
     }>;
     readonly eventCount: number;
-    readonly open: { readonly start: number; readonly end: number } | null;
   };
   readonly chips: ReadonlyArray<{
     readonly key: string;
@@ -177,7 +174,6 @@ function AndroidField({
   images,
   mentions,
   placeholder,
-  open,
   editable,
   label,
   onEdit,
@@ -239,7 +235,6 @@ function AndroidField({
               }),
         })),
         eventCount,
-        open: open === null ? null : { start: open[0], end: open[1] },
       }}
       chips={files.map((file) => ({
         key: file.key,

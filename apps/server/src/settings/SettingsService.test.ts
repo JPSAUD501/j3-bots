@@ -61,9 +61,14 @@ it.effect("saves the dictation preferences a device changed, and keeps the rest"
 it.effect("keeps a place that is a provider the provider chosen", () =>
   Effect.gen(function* () {
     const settings = yield* SettingsService;
-    const voiceAfter = (id: string, voice: { readonly place?: "openai" | "automatic" } | {
-      readonly provider: "xai" | null;
-    }) =>
+    const voiceAfter = (
+      id: string,
+      voice:
+        | { readonly place?: "openai" | "automatic" }
+        | {
+            readonly provider: "xai" | null;
+          },
+    ) =>
       settings
         .update({ commandId: CommandId.make(id), changes: { voice } })
         .pipe(Effect.map((saved) => [saved.voice?.place, saved.voice?.provider]));

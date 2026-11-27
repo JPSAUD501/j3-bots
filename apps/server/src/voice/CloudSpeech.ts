@@ -3,6 +3,7 @@ import {
   type CloudVoiceModel,
   CloudVoiceModelId,
   type CloudVoiceProvider,
+  DICTATION_LANGUAGES,
   VOICE_SAMPLE_RATE,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -33,14 +34,11 @@ const ENDPOINTS = {
 } as const;
 
 /** OpenRouter's models that transcribe and keep no data (zero data retention). */
-const OPENROUTER_CATALOG = "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
+const OPENROUTER_CATALOG =
+  "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
 
 /** The languages the providers take by name; any other is left for them to tell. */
-const LANGUAGES = new Set(
-  "ar bg ca cs da de el en es fa fi fr hi hr hu id it ja ko mk ms nl pl pt ro ru sk sv th tr uk ur vi zh".split(
-    " ",
-  ),
-);
+const LANGUAGES = new Set(DICTATION_LANGUAGES);
 
 /** How long a provider may take with one recording. */
 const TRANSCRIBE_TIMEOUT = "2 minutes";
@@ -95,7 +93,7 @@ export class CloudSpeech extends Context.Service<
 >()("@j3-bots/server/voice/CloudSpeech") {}
 
 /** The recording as a WAV file of 16-bit samples, which every provider takes. */
-export const waveOf = (pcm: Uint8Array): Uint8Array<ArrayBuffer> => {
+const waveOf = (pcm: Uint8Array): Uint8Array<ArrayBuffer> => {
   const samples = Math.floor(pcm.byteLength / 4);
   const input = new DataView(pcm.buffer, pcm.byteOffset, samples * 4);
   const wave = new Uint8Array(44 + samples * 2);
@@ -191,10 +189,12 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient;
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      http.execute(request).pipe(
-        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-        Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-      );
+      http
+        .execute(request)
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+        );
     const unavailable = () => new CloudSpeechFailed({ reason: "unavailable" });
 
     const readCatalog = Effect.gen(function* () {
@@ -208,7 +208,9 @@ export const layer = Layer.effect(
       return data.flatMap(({ id, name }) =>
         isModelId(id) ? [{ id, name: name?.trim() || id }] : [],
       );
-    }).pipe(Effect.timeoutOrElse({ duration: CATALOG_TIMEOUT, orElse: () => Effect.fail(unavailable()) }));
+    }).pipe(
+      Effect.timeoutOrElse({ duration: CATALOG_TIMEOUT, orElse: () => Effect.fail(unavailable()) }),
+    );
     const models = yield* Effect.cachedWithTTL(readCatalog, (exit) =>
       Exit.isSuccess(exit) ? CATALOG_KEPT : 0,
     );

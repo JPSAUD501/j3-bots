@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  DictationHandle,
-  DictationState,
-  DraftMention,
-  HeardWords,
-} from "@j3-bots/client-runtime";
+import type { DictationHandle, DictationState, DraftMention } from "@j3-bots/client-runtime";
 import {
   type DictationPath,
   followFieldEdit,
+  followTyping,
   levelOf,
   placeHeard,
 } from "@j3-bots/client-runtime/presentation";
 import {
   dictationBlockWords,
+  dictationFailureNeedsSetup,
   dictationFailureWords,
-  dictationStateWords,
+  elapsedWords,
 } from "@j3-bots/client-runtime/wording";
-import { MAX_VOICE_DRAFT_LENGTH } from "@j3-bots/contracts";
-import { MicIcon, SquareIcon } from "lucide-react";
+import type { I18n } from "@j3-bots/i18n";
+import { CheckIcon, CircleAlertIcon, LoaderCircleIcon, MicIcon, XIcon } from "lucide-react";
 import {
-  type CSSProperties,
   type KeyboardEvent,
   type RefObject,
   useEffect,
@@ -30,15 +26,15 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useI18n } from "../app/context";
-import { cn } from "../lib/cn";
 import { shellShortcuts } from "../shell/shortcuts";
 import { selectInField } from "./ChipField";
 import { Button } from "./ui/button";
 
-// Dictation in the composer (decision 0096): the microphone records, the
-// server turns the recording into words, and the words land where the caret
-// was. The operator reads them, fixes them and sends them: nothing is sent by
-// itself.
+// Dictation in the composer (decisions 0096 and 0107): the microphone
+// records, the server has the operator's dictation service write it down
+// once they stop, and the words land where the caret was. The operator can
+// keep typing meanwhile; the words' place moves along with what they type.
+// Nothing is sent by itself.
 
 /** Why the microphone did not open. */
 export type MicrophoneFailure = "denied" | "no-microphone" | "failed";
@@ -70,112 +66,84 @@ export interface DictationSource {
   readonly microphone: OpenMicrophone;
   /** Where the page runs, which says where the operator allows the microphone. */
   readonly app: "browser" | "desktop";
+  /**
+   * Opens Settings → Voice, where a dictation service and its key are set
+   * up. Absent where Settings is not at hand, as in quick access: the
+   * composer then says what to set up.
+   */
+  readonly setUp?: (() => void) | undefined;
 }
 
-/** The draft as dictation found it, and where its words go: `start` to `end`. */
-interface Into {
-  readonly text: string;
-  readonly mentions: ReadonlyArray<DraftMention>;
-  readonly start: number;
-  readonly end: number;
-}
-
+/** A dictation under way, and where its words go in the draft as it is now. */
 interface Session {
   readonly handle: DictationHandle;
   /** The draft it dictates into. */
   readonly draft: string;
-  readonly into: Into;
+  /** Where the words go: where the caret was, moved along with what was typed since. */
+  at: { readonly start: number; readonly end: number };
 }
 
-/** What the field shows while dictation runs. */
-interface Preview {
+/** Why the last press or dictation gave no words, and whether Settings → Voice fixes it. */
+export interface DictationProblem {
   readonly text: string;
-  readonly mentions: ReadonlyArray<DraftMention>;
-  /** The words still open to change, drawn lighter; null when there are none. */
-  readonly open: { readonly at: number; readonly text: string } | null;
-  /** Where the caret stands: after the heard words. */
-  readonly caret: number;
+  readonly setUp: boolean;
 }
-
-/**
- * Where the words go in the draft as it is now: where the caret was, when the
- * draft is still what dictation found; after it, when another tab changed it
- * meanwhile, since the caret then stood in other text.
- */
-const intoNow = (into: Into, value: string, mentions: ReadonlyArray<DraftMention>): Into =>
-  value === into.text ? into : { text: value, mentions, start: value.length, end: value.length };
-
-/** The draft with `heard` in place, and the mentions moved along with the text after it. */
-const placed = (into: Into, heard: HeardWords) => {
-  const place = placeHeard(into, heard);
-  const mentions = followFieldEdit(
-    {
-      _tag: "change",
-      before: into.text,
-      after: place.text,
-      over: into.start < into.end ? [into.start, into.end] : null,
-      written: place.text.slice(place.from, place.tentative),
-      caret: place.tentative,
-    },
-    into.mentions,
-  );
-  return { ...place, mentions };
-};
-
-/** The draft with the words heard so far in place, as the field shows it while dictation runs. */
-const previewOf = (into: Into, heard: HeardWords): Preview => {
-  const place = placed(into, heard);
-  // The open words start at the first of them, past the space that parts them from the settled.
-  let at = place.committed;
-  while (place.text[at] === " " && at < place.tentative) at += 1;
-  return {
-    text: place.text,
-    mentions: place.mentions,
-    open: at < place.tentative ? { at, text: place.text.slice(at, place.tentative) } : null,
-    caret: place.tentative,
-  };
-};
-
-/**
- * The draft the AI's tidy-up reads the words in: all of it, or, past what a
- * `finish` frame carries, as much as fits around where the words go.
- */
-const draftAround = ({ text, start, end }: Into) => {
-  if (text.length <= MAX_VOICE_DRAFT_LENGTH) return { text, start, end };
-  const room = Math.max(0, MAX_VOICE_DRAFT_LENGTH - (end - start));
-  const from = Math.min(
-    Math.max(0, start - Math.floor(room / 2)),
-    text.length - MAX_VOICE_DRAFT_LENGTH,
-  );
-  const to = from + MAX_VOICE_DRAFT_LENGTH;
-  return { text: text.slice(from, to), start: start - from, end: Math.min(end, to) - from };
-};
 
 /** A piece of the recording as the voice socket takes it: 32-bit floats, little-endian. */
-const littleEndian = (samples: Float32Array): Uint8Array => {
+export const littleEndian = (samples: Float32Array): Uint8Array => {
   const bytes = new Uint8Array(samples.length * 4);
   const view = new DataView(bytes.buffer);
   for (const [index, sample] of samples.entries()) view.setFloat32(index * 4, sample, true);
   return bytes;
 };
 
+/** Why the microphone did not open, and what the operator does about it. */
+export const microphoneFailureWords = (
+  reason: MicrophoneFailure,
+  app: DictationSource["app"],
+  { t }: I18n,
+): string =>
+  reason === "denied"
+    ? t(app === "desktop" ? "dictation.denied.desktop" : "dictation.denied.browser")
+    : t(reason === "no-microphone" ? "dictation.noMicrophone" : "dictation.microphoneFailed");
+
 const isOver = (state: DictationState) => state._tag === "done" || state._tag === "failed";
 
 const noState = () => null;
 const noChange = () => () => {};
 
+/** The microphone's level as it records, for the meter to follow outside React. */
+interface LevelFeed {
+  /** Calls `listener` with each level, 0 to 1. Returns the function that stops it. */
+  readonly subscribe: (listener: (level: number) => void) => () => void;
+}
+
+const levelFeed = () => {
+  const listeners = new Set<(level: number) => void>();
+  return {
+    feed: {
+      subscribe: (listener: (level: number) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    } satisfies LevelFeed,
+    tell: (level: number) => {
+      for (const listener of listeners) listener(level);
+    },
+  };
+};
+
 /**
  * Dictation in one composer. A press starts it where the caret is; while it
- * runs, the field shows the draft with the heard words in place, the settled
- * ones in the text's own color and those still open to change lighter, and
- * takes no edit. A second press stops it: once the server has the last words,
- * they replace the heard ones in the draft and the caret goes after them.
- * Escape cancels: the draft is as it was, its selection too. A dictation that
- * fails keeps the words already settled and says why under the composer; one
- * that hears nothing leaves the draft as it was. The microphone records from
- * the press until it stops, is cancelled, fails or the composer goes, and the
- * draft takes the words only as it ends, so another tab never sees them half
- * heard. Where dictation cannot run, a press says why and records nothing.
+ * records, the microphone gives way to Cancel, the time, the voice's level
+ * and Stop, and the field still takes the operator's typing: the words' place
+ * moves with it. Stop has the server write it down, shown in place; then the
+ * words land where the caret was, the caret after them if it stood there.
+ * Escape cancels: nothing lands. A dictation that fails, or a press where
+ * dictation cannot run, says why inside the composer, with Set up when
+ * Settings → Voice fixes it; where a press only needs set-up and Settings is
+ * at hand, it opens Settings → Voice instead. The microphone records from the
+ * press until it stops, is cancelled, fails or the composer goes.
  */
 export function useDictation({
   source,
@@ -194,7 +162,7 @@ export function useDictation({
   readonly field: RefObject<HTMLDivElement | null>;
   /** The field's selection as the operator last left it, where the words go. */
   readonly selection: () => readonly [number, number] | null;
-  /** Whether the draft takes a change now: a dictation starts only then. */
+  /** Whether the draft takes a change now: a dictation starts, and its words land, only then. */
   readonly available: boolean;
   readonly onValueChange: (value: string, mentions: ReadonlyArray<DraftMention>) => void;
 }) {
@@ -205,14 +173,16 @@ export function useDictation({
   const current = useRef<Session | null>(null);
   // The microphone of the session under way, once it opened.
   const microphone = useRef<(() => void) | null>(null);
-  // The words the session under way last settled, which a failure keeps.
-  const settled = useRef("");
+  // The draft as the session's place was last moved along with it.
+  const seen = useRef(value);
+  // Words heard while the draft took no change, which land once it does.
+  const waiting = useRef<{ readonly session: Session; readonly words: string } | null>(null);
   // Where the selection goes once the field shows `text`.
   const pending = useRef<{ readonly text: string; readonly start: number; readonly end: number }>(
     null,
   );
-  const [level, setLevel] = useState(0);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [levels] = useState(levelFeed);
+  const [problem, setProblem] = useState<DictationProblem | null>(null);
   const [problemFor, setProblemFor] = useState(draftKey);
   if (problemFor !== draftKey) {
     setProblemFor(draftKey);
@@ -224,10 +194,16 @@ export function useDictation({
     session?.handle.state.get ?? noState,
   );
 
+  // The words' place follows each change of the draft, the operator's or another tab's.
+  useLayoutEffect(() => {
+    const under = current.current;
+    if (under !== null) under.at = followTyping(under.at, seen.current, value);
+    seen.current = value;
+  }, [value]);
+
   const letMicrophoneGo = () => {
     microphone.current?.();
     microphone.current = null;
-    setLevel(0);
   };
   const end = (ended: Session) => {
     if (current.current !== ended) return;
@@ -241,7 +217,15 @@ export function useDictation({
     if (source === undefined || current.current !== null || !available) return;
     setProblem(null);
     if (source.reach._tag === "blocked") {
-      setProblem(dictationBlockWords(source.reach.block, i18n));
+      const { block } = source.reach;
+      if (block === "setup" && source.setUp !== undefined) {
+        source.setUp();
+        return;
+      }
+      setProblem({
+        text: dictationBlockWords(block, i18n),
+        setUp: block !== "insecure-page" && source.setUp !== undefined,
+      });
       return;
     }
     const [from, to] = selection() ?? [value.length, value.length];
@@ -249,17 +233,16 @@ export function useDictation({
     const started: Session = {
       handle,
       draft: draftKey,
-      into: { text: value, mentions, start: from, end: to },
+      at: { start: from, end: to },
     };
     current.current = started;
-    settled.current = "";
-    pending.current = null;
+    seen.current = value;
     setSession(started);
     void source
       .microphone({
         samples: (samples) => {
           if (current.current !== started) return;
-          setLevel(levelOf(samples));
+          levels.tell(levelOf(samples));
           handle.audio(littleEndian(samples));
         },
         lost: () => stop(started),
@@ -274,53 +257,69 @@ export function useDictation({
           return;
         }
         end(started);
-        setProblem(
-          opening.reason === "denied"
-            ? i18n.t(
-                source.app === "desktop" ? "dictation.denied.desktop" : "dictation.denied.browser",
-              )
-            : i18n.t(
-                opening.reason === "no-microphone"
-                  ? "dictation.noMicrophone"
-                  : "dictation.microphoneFailed",
-              ),
-        );
+        setProblem({
+          text: microphoneFailureWords(opening.reason, source.app, i18n),
+          setUp: false,
+        });
       });
   };
 
-  /** The operator is done speaking: the server works out the last words. */
+  /** The operator is done speaking: the server has it written down. */
   const stop = (stopped: Session) => {
     if (current.current !== stopped) return;
     const now = stopped.handle.state.get();
-    if (now._tag === "finishing" || now._tag === "tidying" || isOver(now)) return;
+    if (now._tag === "finishing" || isOver(now)) return;
     letMicrophoneGo();
-    stopped.handle.finish(draftAround(stopped.into));
+    stopped.handle.finish();
   };
 
   const cancel = () => {
     const under = current.current;
-    if (under === null) return;
-    end(under);
-    pending.current = { text: value, start: under.into.start, end: under.into.end };
+    if (under !== null) end(under);
   };
 
-  /** What the server says of `heard`: the words it settles, and its end, which puts them in the draft. */
+  /** `words` where `heard`'s place is, the caret after them if it stood there. */
+  const land = (heard: Session, words: string) => {
+    const at = followTyping(heard.at, seen.current, value);
+    const place = placeHeard({ text: value, ...at }, { committed: words, tentative: "" });
+    const moved = followFieldEdit(
+      {
+        _tag: "change",
+        before: value,
+        after: place.text,
+        over: at.start < at.end ? [at.start, at.end] : null,
+        written: place.text.slice(place.from, place.committed),
+        caret: place.committed,
+      },
+      mentions,
+    );
+    const [selStart, selEnd] = selection() ?? [value.length, value.length];
+    // A caret still at the words' place goes after them; one elsewhere stays by its own text.
+    const caret =
+      selStart === at.start && selEnd === at.end
+        ? { start: place.committed, end: place.committed }
+        : followTyping({ start: selStart, end: selEnd }, value, place.text);
+    pending.current = { text: place.text, ...caret };
+    onValueChange(place.text, moved);
+  };
+
+  /** What the server says of `heard`: its end puts the words in the draft. */
   const told = useEffectEvent((heard: Session) => {
     if (current.current !== heard) return;
     const now = heard.handle.state.get();
-    if ("committed" in now) settled.current = now.committed;
     if (!isOver(now)) return;
-    const into = intoNow(heard.into, value, mentions);
-    const words = now._tag === "done" ? now.text : settled.current;
     end(heard);
-    if (now._tag === "failed") setProblem(dictationFailureWords(now.reason, i18n));
-    if (words.trim() === "") {
-      pending.current = { text: into.text, start: into.start, end: into.end };
+    if (now._tag === "failed") {
+      setProblem({
+        text: dictationFailureWords(now.reason, i18n),
+        setUp: dictationFailureNeedsSetup(now.reason) && source?.setUp !== undefined,
+      });
       return;
     }
-    const final = placed(into, { committed: words, tentative: "" });
-    pending.current = { text: final.text, start: final.committed, end: final.committed };
-    onValueChange(final.text, final.mentions);
+    const words = now.text.trim();
+    if (words === "") return;
+    if (available) land(heard, words);
+    else waiting.current = { session: heard, words };
   });
   useEffect(() => {
     if (session === null) return;
@@ -331,10 +330,22 @@ export function useDictation({
     return unsubscribe;
   }, [session]);
 
+  // Words that came while the draft took no change land once it does, unless it was left.
+  const landWaiting = useEffectEvent(() => {
+    const held = waiting.current;
+    if (held === null) return;
+    waiting.current = null;
+    if (held.session.draft === draftKey) land(held.session, held.words);
+  });
+  useEffect(() => {
+    if (available) landWaiting();
+  }, [available]);
+
   /** The composer leaving `draft`, for another or for good: a dictation into it ends. */
   const left = useEffectEvent((draft: string) => {
     const under = current.current;
     if (under !== null && under.draft === draft) end(under);
+    if (waiting.current?.session.draft === draft) waiting.current = null;
   });
   useEffect(() => () => left(draftKey), [draftKey]);
 
@@ -345,60 +356,44 @@ export function useDictation({
     if (!offered) withdrawn();
   }, [offered]);
 
-  const heard: HeardWords | null =
-    state !== null && "committed" in state
-      ? { committed: state.committed, tentative: state.tentative }
-      : null;
-  const preview =
-    session === null
-      ? null
-      : previewOf(
-          intoNow(session.into, value, mentions),
-          heard ?? { committed: "", tentative: "" },
-        );
-
-  // The caret stays after the heard words while they come, and goes where dictation left it once over.
-  const shown = preview?.text ?? value;
-  const caret = preview?.caret ?? null;
+  // The caret goes where it was, moved along with the words, once the field shows them.
   useLayoutEffect(() => {
     const element = field.current;
-    if (element === null || element.ownerDocument.activeElement !== element) return;
-    if (caret !== null) {
-      selectInField(element, caret);
-      return;
-    }
     const after = pending.current;
-    if (after === null || after.text !== shown) return;
+    if (element === null || after === null || after.text !== value) return;
     pending.current = null;
-    selectInField(element, after.start, after.end);
-  }, [field, shown, caret]);
+    if (element.ownerDocument.activeElement === element) {
+      selectInField(element, after.start, after.end);
+    }
+  }, [field, value]);
 
   const toggle = () => {
     if (current.current === null) start();
     else stop(current.current);
   };
 
-  const recording =
-    state?._tag === "connecting" || state?._tag === "installing" || state?._tag === "listening";
+  const phase: DictationPhase =
+    state === null || isOver(state)
+      ? "idle"
+      : state._tag === "finishing"
+        ? "finishing"
+        : "recording";
   return {
     /** Whether this composer offers dictation at all. */
     offered: source !== undefined,
-    /** A dictation is under way: the draft takes no edit. */
-    running: session !== null,
-    /** Recording: a press stops it. */
-    recording,
-    preview,
-    level: state?._tag === "listening" ? level : 0,
-    /** What dictation is doing, while that is not plain from the words arriving. */
-    status:
-      state === null || isOver(state) || (state._tag === "listening" && state.live)
-        ? null
-        : dictationStateWords(state, i18n),
+    phase,
+    levels: levels.feed,
     /** Why the last press or dictation did not give words. */
     problem,
     shortcut,
     toggle,
     cancel,
+    dismiss: () => setProblem(null),
+    /** Opens Settings → Voice, where a problem marked `setUp` is fixed. */
+    setUp: () => {
+      setProblem(null);
+      source?.setUp?.();
+    },
     /** The operator edited the draft: what the last dictation said is behind them. */
     edited: () => setProblem(null),
     /** Handles a key in the composer; true when it took it. */
@@ -420,15 +415,77 @@ export function useDictation({
   };
 }
 
+/** Where a composer's dictation is: at rest, recording, or being written down. */
+type DictationPhase = "idle" | "recording" | "finishing";
+
 export type DictationView = ReturnType<typeof useDictation>;
 
+/** How many bars the meter shows: the last 1.6 seconds, a tenth each. */
+const BARS = 16;
+/** The least a bar shows, so silence still reads as a meter. */
+const REST = 0.12;
+/** Each bar's place, oldest first: the bars never reorder, only their heights change. */
+const BAR_PLACES = Array.from({ length: BARS }, (_, index) => `bar-${index}`);
+
 /**
- * The composer's microphone. At rest it dictates; while it records it stops,
- * filled in the conversation's tint, with a ring that swells with what the
- * microphone hears; while the server works out the last words it takes no
- * press.
+ * The voice's level as it records, as bars that scroll from the right: each
+ * tenth of a second's level is drawn from `levels` outside React. It is
+ * information, so it moves under reduced motion too; only its easing goes.
  */
-export function DictationButton({
+function Waveform({ levels, label }: { levels: LevelFeed; label: string }) {
+  const bars = useRef<Array<HTMLSpanElement | null>>([]);
+  useEffect(() => {
+    const shown = Array.from({ length: BARS }, () => 0);
+    return levels.subscribe((level) => {
+      shown.shift();
+      shown.push(level);
+      bars.current.forEach((bar, index) => {
+        if (bar !== null)
+          bar.style.transform = `scaleY(${REST + (1 - REST) * (shown[index] ?? 0)})`;
+      });
+    });
+  }, [levels]);
+  return (
+    <span role="img" aria-label={label} className="inline-flex h-4 items-center gap-0.5">
+      {BAR_PLACES.map((place, index) => (
+        <span
+          key={place}
+          ref={(bar) => {
+            bars.current[index] = bar;
+          }}
+          className="h-full w-0.5 origin-center scale-y-[0.12] rounded-pill bg-current motion-safe:transition-transform motion-safe:duration-(--duration-fast)"
+        />
+      ))}
+    </span>
+  );
+}
+
+/** The time since it showed, as a clock shows it, written once a second outside React. */
+function Elapsed() {
+  const shown = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const startedAt = Date.now();
+    const write = () => {
+      if (shown.current !== null) shown.current.textContent = elapsedWords(Date.now() - startedAt);
+    };
+    write();
+    const timer = setInterval(write, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <span ref={shown} className="min-w-7 text-xs text-muted-foreground tabular-nums">
+      {elapsedWords(0)}
+    </span>
+  );
+}
+
+/**
+ * The composer's microphone. At rest it dictates. While it records it opens
+ * into a capsule: Cancel, a red dot, the time, the voice's level, and Stop,
+ * in the conversation's tint, which has it written down. While it is written
+ * down, the capsule says so, with Cancel.
+ */
+export function DictationControl({
   dictation,
   unavailable,
 }: {
@@ -437,39 +494,121 @@ export function DictationButton({
   unavailable: boolean;
 }) {
   const { t } = useI18n();
-  const { running, recording, shortcut } = dictation;
-  const label = recording ? t("dictation.stop") : t("dictation.start");
-  return (
+  const { phase, shortcut } = dictation;
+  // The field keeps the focus and its caret, where the words go.
+  const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
+  if (phase === "idle") {
+    return (
+      <Button
+        variant="ghost-muted"
+        size="icon-pill"
+        data-dictation="idle"
+        onPointerDown={keepFocus}
+        onClick={() => {
+          if (!unavailable) dictation.toggle();
+        }}
+        aria-disabled={unavailable}
+        aria-label={t("dictation.start")}
+        aria-keyshortcuts={shortcut.aria}
+        title={t("dictation.start.shortcut", { shortcut: shortcut.label })}
+      >
+        <MicIcon />
+      </Button>
+    );
+  }
+  const cancel = (
     <Button
       variant="ghost-muted"
-      size="icon-pill"
-      data-dictation={recording ? "recording" : running ? "working" : "idle"}
-      // The field keeps the focus and its caret, where the words go.
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={() => {
-        if (recording || (!running && !unavailable)) dictation.toggle();
-      }}
-      aria-disabled={(running && !recording) || (!running && unavailable)}
-      aria-label={label}
-      aria-keyshortcuts={shortcut.aria}
-      title={
-        recording
-          ? t("dictation.stop.shortcut", { shortcut: shortcut.label })
-          : t("dictation.start.shortcut", { shortcut: shortcut.label })
-      }
-      className={cn(
-        "relative isolate",
-        running && "bg-(--tint) text-avatar-ink hover:bg-(--tint) hover:text-avatar-ink",
-      )}
+      size="icon-sm"
+      onPointerDown={keepFocus}
+      onClick={dictation.cancel}
+      aria-label={t("dictation.cancel")}
+      title={t("dictation.cancel")}
+      className="size-7"
     >
-      {running && (
-        <span
-          aria-hidden
-          style={{ "--level": dictation.level } as CSSProperties}
-          className="absolute -inset-1 -z-10 rounded-full bg-(--tint) opacity-[calc(0.2+var(--level)*0.4)] transition-[opacity,scale] duration-(--duration-fast) ease-out motion-safe:scale-[calc(0.8+var(--level)*0.35)]"
-        />
-      )}
-      {running ? <SquareIcon className="size-3 fill-current" /> : <MicIcon />}
+      <XIcon />
     </Button>
+  );
+  return (
+    <span
+      data-dictation={phase}
+      className="appear flex h-8 shrink-0 items-center gap-1.5 rounded-pill bg-muted ps-0.5 pe-0.5"
+    >
+      {cancel}
+      {phase === "recording" ? (
+        <>
+          <span role="status" className="sr-only">
+            {t("dictation.listening")}
+          </span>
+          <span aria-hidden className="size-2 shrink-0 rounded-full bg-blocked" />
+          <Elapsed />
+          <span className="text-muted-foreground">
+            <Waveform levels={dictation.levels} label={t("dictation.level")} />
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            data-dictation-stop=""
+            onPointerDown={keepFocus}
+            onClick={dictation.toggle}
+            aria-label={t("dictation.stop")}
+            aria-keyshortcuts={shortcut.aria}
+            title={t("dictation.stop.shortcut", { shortcut: shortcut.label })}
+            className="size-7 bg-(--tint) text-avatar-ink hover:bg-(--tint) hover:text-avatar-ink"
+          >
+            <CheckIcon />
+          </Button>
+        </>
+      ) : (
+        <span
+          role="status"
+          className="flex items-center gap-1.5 pe-2.5 text-xs text-muted-foreground"
+        >
+          <LoaderCircleIcon aria-hidden className="size-3.5 motion-safe:animate-spin" />
+          {t("dictation.finishing")}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Why the last press or dictation gave no words, inside the composer over
+ * the text: Set up when Settings → Voice fixes it, and a way to put it away.
+ */
+export function DictationNotice({ dictation }: { dictation: DictationView }) {
+  const { t } = useI18n();
+  const { problem } = dictation;
+  return (
+    <div role="alert" className="empty:hidden">
+      {problem !== null && (
+        <div className="appear flex items-start gap-2 ps-2.5 pe-1 pt-1 text-xs">
+          <CircleAlertIcon aria-hidden className="mt-1.5 size-3.5 shrink-0 text-blocked" />
+          <p className="me-auto py-1 text-foreground">{problem.text}</p>
+          {problem.setUp && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={dictation.setUp}
+              className="h-7 shrink-0"
+            >
+              {t("dictation.setUp")}
+            </Button>
+          )}
+          <Button
+            variant="ghost-muted"
+            size="icon-sm"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={dictation.dismiss}
+            aria-label={t("dictation.dismiss")}
+            title={t("dictation.dismiss")}
+            className="size-7 shrink-0"
+          >
+            <XIcon />
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
