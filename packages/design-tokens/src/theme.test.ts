@@ -176,6 +176,12 @@ describe("theme CSS", () => {
     "@keyframes glow { to { opacity: 0.5; } }",
     '[data-slot="bubble"] { animation: glow 2s infinite; }',
     '[data-slot="bubble"]{animation-name:glow}',
+    // The app's own keyframes, with a vendor's prefix, or a comment around the name.
+    '[data-slot="roster"]{-webkit-animation:spin 1s infinite}',
+    "a{/**/animation:spin 1s infinite}",
+    "a{animation/**/:spin 1s infinite}",
+    'a{content:"/*"}b{animation/**/:spin 1s infinite}',
+    "a{b{}animation:spin 1s infinite}",
   ])("refuses what would move on its own: %s", (css) => {
     expect(themeCssProblem(css)).toMatch(/cannot animate/);
   });

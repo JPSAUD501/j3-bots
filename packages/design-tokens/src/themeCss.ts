@@ -49,17 +49,25 @@ export const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
  * `animation`, and no `data:` image, which may be an animated one. The
  * background image comes through `var(--theme-background-image)`, which J3
  * Bots fills with a still image.
+ *
+ * The checks read the CSS as the browser does: with its comments taken out,
+ * since the browser reads `animation` with a comment before its colon as
+ * `animation`; and with the strings left whole, so a comment's mark inside
+ * one hides nothing.
  */
-export function themeCssProblem(css: string): string | null {
-  if (css.length > THEME_CSS_MAX_LENGTH) {
+export function themeCssProblem(given: string): string | null {
+  if (given.length > THEME_CSS_MAX_LENGTH) {
     return `\`css\` holds at most ${THEME_CSS_MAX_LENGTH} characters.`;
   }
-  if (css.includes("\\")) return "`css` cannot hold a backslash: escapes are not allowed.";
+  if (given.includes("\\")) return "`css` cannot hold a backslash: escapes are not allowed.";
+  const css = withoutComments(given);
   if (/@import/i.test(css)) return "`css` cannot use @import: theme CSS loads no file.";
   if (/\b(?:image-set|src)\s*\(/i.test(css)) {
     return "`css` cannot use image-set() or src(): theme CSS loads no file.";
   }
-  if (/@(?:-[a-z]+-)?keyframes\b|(?:^|[\s;{])animation(?:-[a-z-]+)?\s*:/i.test(css)) {
+  // A property is a word no letter, digit or hyphen comes right before, its
+  // vendor's prefix included: `-webkit-animation` animates as `animation` does.
+  if (/@(?:-[a-z]+-)?keyframes\b|(?<![\w-])(?:-[a-z]+-)?animation(?:-[a-z-]+)?\s*:/i.test(css)) {
     return "`css` cannot animate: no @keyframes or animation, since nothing in a theme moves on its own.";
   }
   for (const match of css.matchAll(/url\s*\(\s*(["']?)\s*([^"')\s]*)/gi)) {
@@ -69,4 +77,31 @@ export function themeCssProblem(css: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * `css` with each comment as one space, as the browser reads it. A string
+ * runs to its closing quote or the end of its line; with no backslash in
+ * `css`, nothing escapes either.
+ */
+function withoutComments(css: string): string {
+  let read = "";
+  let at = 0;
+  while (at < css.length) {
+    const char = css[at] ?? "";
+    if (char === "/" && css[at + 1] === "*") {
+      const end = css.indexOf("*/", at + 2);
+      read += " ";
+      at = end === -1 ? css.length : end + 2;
+    } else if (char === '"' || char === "'") {
+      let end = at + 1;
+      while (end < css.length && css[end] !== char && css[end] !== "\n") end += 1;
+      read += css.slice(at, end + 1);
+      at = end + 1;
+    } else {
+      read += char;
+      at += 1;
+    }
+  }
+  return read;
 }
