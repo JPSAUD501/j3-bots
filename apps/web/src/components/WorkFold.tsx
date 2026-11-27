@@ -32,6 +32,7 @@ import {
   type RefObject,
 } from "react";
 import { shownPlan } from "@j3-bots/client-runtime/presentation";
+import { useTurnRow } from "@j3-bots/client-runtime/react";
 import { resolveAvatar, springs } from "@j3-bots/design-tokens";
 import { useBots, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -40,6 +41,7 @@ import { touchTarget } from "../lib/touchTarget";
 import {
   fillDetail,
   fillText,
+  type StatusLine,
   stepDetail,
   stepMark,
   stepText,
@@ -93,15 +95,16 @@ interface WorkFoldProps {
 }
 
 /**
- * Plays the change of `root`'s height when its turn ends on screen: the plan's
- * card folds into its line, and what follows the row closes up on `slide`
- * instead of jumping. The height it starts from is the one last laid out,
- * which an observer keeps, since the little ones' block moves it between
- * renders.
+ * Plays the change of `root`'s height when its turn ends on screen, and again
+ * when the little ones it handed off are home: the plan's card folds into its
+ * line, the row into its own, and what follows the row closes up on `slide`
+ * instead of jumping. `stage` is what the row shows; a row never goes back to
+ * an earlier one. The height it starts from is the one last laid out, which
+ * an observer keeps, since the little ones' block moves it between renders.
  */
-function useFoldedHeight(root: RefObject<HTMLDivElement | null>, folding: boolean) {
+function useFoldedHeight(root: RefObject<HTMLDivElement | null>, stage: string) {
   const height = useRef<number | null>(null);
-  const folded = useRef(folding);
+  const shown = useRef(stage);
   useEffect(() => {
     const element = root.current;
     if (element === null || typeof ResizeObserver === "undefined") return;
@@ -114,11 +117,8 @@ function useFoldedHeight(root: RefObject<HTMLDivElement | null>, folding: boolea
   useLayoutEffect(() => {
     const element = root.current;
     const from = height.current;
-    if (element === null || !folding || folded.current) {
-      folded.current = folding;
-      return;
-    }
-    folded.current = true;
+    if (element === null || stage === shown.current) return;
+    shown.current = stage;
     const to = element.offsetHeight;
     if (from === null || Math.abs(from - to) < 2) return;
     play(
@@ -129,17 +129,18 @@ function useFoldedHeight(root: RefObject<HTMLDivElement | null>, folding: boolea
       ],
       springs.slide,
     );
-  }, [root, folding]);
+  }, [root, stage]);
 }
 
 /**
  * A turn's work in one row. While the turn runs: a small copy of the bot and
  * one line saying, in plain words, what it is doing now; under it, the bot's
  * little ones while part of the work runs in parallel, and the turn's plan as
- * a short card. When it ends, the row folds into one quiet line, "Worked · 6
- * steps", that opens to every step, as the running row does once there are
- * steps, and the plan into a line of its own, "Plan done, 4 of 4". Never opens
- * by itself.
+ * a short card. When it ends, the plan folds into a line of its own, "Plan
+ * done, 4 of 4", and the row into one quiet line, "Worked · 6 steps", that
+ * opens to every step, as the running row does once there are steps. Little
+ * ones the turn handed off keep the bot's face and the row's "Working" until
+ * the last is home (decision 0095). Never opens by itself.
  */
 export function WorkFold({
   fold,
@@ -159,15 +160,18 @@ export function WorkFold({
     report(true);
     return () => report(false);
   }, [open]);
-  // The row folds into its line once the turn it showed ends; one that was over when it mounted is just there.
+  // The plan folds into its line once the turn it showed ends; one that was over when it mounted is just there.
   const [wasLive, setWasLive] = useState(live !== null);
   if (live !== null && !wasLive) setWasLive(true);
-  const folding = live === null && wasLive;
+  const turnEnded = live === null && wasLive;
+  // The row keeps the bot's face while its turn runs and while little ones it handed off are out.
+  const row = useTurnRow(fold, live !== null);
+  const { folding } = row;
   const hasSteps = fold !== null && fold.stepCount > 0;
   // Once the turn has ended, a step still running, work it handed off, reads as part of it (`stepMark`).
   const working = fold?.status._tag === "running";
   const root = useRef<HTMLDivElement>(null);
-  useFoldedHeight(root, folding);
+  useFoldedHeight(root, row.shape);
   // The turn's plan and little ones, and the bot whose they are: the one at work, or the fold's author.
   const face = useRef<AvatarHandle>(null);
   const anchor = useRef<HTMLSpanElement>(null);
@@ -176,18 +180,24 @@ export function WorkFold({
     live?.bot ?? (fold?.author._tag === "bot" ? bots.get(fold.author.botId) : undefined);
   const work = fold?.work ?? null;
   const plan = shownPlan(work);
+  const withFace = row.shape !== "folded" && author !== undefined;
   return (
     <Collapsible.Root
       ref={root}
       open={open && hasSteps}
       onOpenChange={setOpen}
       className="mt-3 max-w-(--layout-card-width) self-start data-live:w-full"
-      {...(live === null ? {} : { "data-live": "" })}
+      {...(withFace ? { "data-live": "" } : {})}
     >
-      {live !== null ? (
-        <>
-          <LiveLine turn={live} hasSteps={hasSteps} face={face} anchor={anchor} />
-        </>
+      {row.shape !== "folded" && author !== undefined ? (
+        <FaceLine
+          bot={author}
+          lastEntry={live?.lastEntry ?? null}
+          running={live !== null}
+          hasSteps={hasSteps}
+          face={face}
+          anchor={anchor}
+        />
       ) : fold !== null && !hasSteps ? (
         // A turn stopped or failed before its first step: how it ended, with nothing to open.
         <p
@@ -220,14 +230,15 @@ export function WorkFold({
           <span className="text-muted-foreground">{plural("work.steps", fold.stepCount)}</span>
         </Collapsible.Trigger>
       ) : null}
-      {/* For a turn seen running, and through its end, so the block it took closes instead of jumping shut. */}
-      {author !== undefined && wasLive && (
+      {/* For a row seen with the bot's face, and through its fold, so the block it took closes instead of jumping shut. */}
+      {author !== undefined && (row.shape !== "folded" || folding) && (
         <LittleOnes
           littleOnes={work?.littleOnes ?? null}
-          live={live !== null}
+          live={withFace}
           avatar={author.profile.avatar}
           face={face}
           anchor={anchor}
+          onDrawn={row.drawn}
         />
       )}
       {live !== null && plan !== null && (
@@ -264,7 +275,7 @@ export function WorkFold({
           )}
         </Collapsible.Panel>
       )}
-      {live === null && plan !== null && <PlanLine plan={plan} folding={folding} />}
+      {live === null && plan !== null && <PlanLine plan={plan} folding={turnEnded} />}
     </Collapsible.Root>
   );
 }
@@ -358,19 +369,26 @@ const endTone = (fold: WorkFoldEntry) =>
     : "text-muted-foreground";
 
 /**
- * The running row: the bot at list size in its state and what it is doing
- * now, in plain words, swapping as it moves to a new step. Once there are
- * steps, a chevron opens them. Assistive technology reads the line once, not
- * the visible line a second time as it swaps; the conversation's header says
- * each new line aloud.
+ * The row with the bot's face: the bot at list size in its state, and a line
+ * beside it. While its turn runs, what it is doing now, in plain words,
+ * swapping as it moves to a new step; once the turn has ended with little ones
+ * it handed off still out, that it is working. Once there are steps, a chevron
+ * opens them. Assistive technology reads the line once, not the visible line a
+ * second time as it swaps; the conversation's header says each new line aloud.
  */
-function LiveLine({
-  turn,
+function FaceLine({
+  bot,
+  lastEntry,
+  running,
   hasSteps,
   face,
   anchor,
 }: {
-  readonly turn: TurnBot;
+  readonly bot: Bot;
+  /** The bot's latest entry, so its avatar speaks while a message of its own arrives. */
+  readonly lastEntry: EntryPreview | null;
+  /** Whether its turn runs, so the line says what the bot does now. */
+  readonly running: boolean;
   readonly hasSteps: boolean;
   /** The bot's face, for its little ones to make it answer. */
   readonly face: RefObject<AvatarHandle | null>;
@@ -380,12 +398,14 @@ function LiveLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const offline = useOffline();
-  const line = turnLine(turn.bot, offline, ctx);
+  const line: StatusLine = running
+    ? turnLine(bot, offline, ctx)
+    : { text: t("presence.working"), tone: "default" };
   return (
     <div className="flex min-h-8 items-center gap-2.5 text-xs">
       {/* Above its little ones, which come out from behind it. */}
       <span ref={anchor} className="relative z-2 flex shrink-0">
-        <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} ref={face} />
+        <LiveBotAvatar bot={bot} lastEntry={lastEntry} size={24} ref={face} />
       </span>
       <span className="min-w-0 flex-1">
         <span aria-hidden>

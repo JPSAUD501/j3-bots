@@ -105,6 +105,18 @@ describe("turnAnnouncement", () => {
     expect(ended.ending).toBe(true);
   });
 
+  it("says how the turn ended only once the little ones it handed off are home", () => {
+    const out = (working: number): WorkFoldEntry => ({
+      ...fold(finished("completed")),
+      work: { plan: null, littleOnes: { ones: [], working, total: 2 } },
+    });
+    const away = said({ _tag: "idle", littleOnes: 2 }, undefined, out(2));
+    expect(away.text).toBe("");
+    const home = said({ _tag: "idle" }, undefined, out(0));
+    expect(plain(home.text)).toBe("Worked");
+    expect(home.key).not.toBe(away.key);
+  });
+
   it("goes on saying each state after a turn's fold: a question it asked, a usage limit", () => {
     const ended = fold(finished("completed"));
     const asks = said(waiting, undefined, ended);

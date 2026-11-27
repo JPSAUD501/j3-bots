@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { needsOperator } from "@j3-bots/client-runtime";
-import { littleOneDots, MAX_SHOWN_LITTLE_ONES } from "@j3-bots/client-runtime/presentation";
+import {
+  littleOneDots,
+  littleOnesAtWork,
+  MAX_SHOWN_LITTLE_ONES,
+} from "@j3-bots/client-runtime/presentation";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import type { Avatar, RosterItem } from "@j3-bots/contracts";
 import { littleColors, littleDots, resolveAvatar } from "@j3-bots/design-tokens";
@@ -139,9 +143,8 @@ export function RosterRow({
   // The row turns muted while pressed or selected: the avatar's light keeps its ring in that color.
   const [pressed, setPressed] = useState(false);
   const ground = selected || pressed ? "muted" : "background";
-  // How many of its little ones are at work, while a bot is split.
-  const split =
-    item._tag === "bot" && item.bot.state._tag === "working" ? item.bot.state.littleOnes : 0;
+  // How many of its little ones are at work, while a bot is split: also after its reply.
+  const split = item._tag === "bot" ? littleOnesAtWork(item.bot.state) : 0;
   const primary = item._tag === "bot" && item.bot.primary;
   const row = useRef<ComponentRef<typeof View>>(null);
   const arrival = useRowArrival(entrance);

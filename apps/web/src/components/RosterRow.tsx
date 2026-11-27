@@ -5,6 +5,7 @@ import type { Avatar, BotId, RosterItem } from "@j3-bots/contracts";
 import { needsOperator } from "@j3-bots/client-runtime";
 import {
   littleOneDots,
+  littleOnesAtWork,
   MAX_SHOWN_LITTLE_ONES,
   rosterKeyOf,
   rosterKeyText,
@@ -194,7 +195,7 @@ export function RosterRow({
         </span>
         {item._tag === "bot" && (
           <LittleDots
-            count={item.bot.state._tag === "working" ? item.bot.state.littleOnes : 0}
+            count={littleOnesAtWork(item.bot.state)}
             color={resolveAvatar(item.bot.profile.avatar).color}
           />
         )}

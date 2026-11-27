@@ -348,6 +348,8 @@ export { foldOfTurn, liveTurn, type LiveTurn, withLiveTurn } from "./turn.ts";
 export {
   type LittleOneState,
   littleOneDots,
+  littleOnesAtWork,
+  littleOnesOut,
   littleOneState,
   MAX_SHOWN_LITTLE_ONES,
   memberWorkOf,

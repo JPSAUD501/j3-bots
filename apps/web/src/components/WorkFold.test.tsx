@@ -10,6 +10,7 @@ import {
 import { at, bot } from "@j3-bots/client-runtime/testing";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { RosterProvider } from "../app/context";
 import { WorkFold } from "./WorkFold";
 
 // The stored preferences follow the system's theme, which a page reads off `window` as it loads.
@@ -56,7 +57,7 @@ const work: TurnWork = {
   },
 };
 
-const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
+const fold = (turn: TurnWork, live: boolean, ended = !live): WorkFoldEntry => ({
   _tag: "work-fold",
   id: EntryId.make("fold"),
   order: EntryOrder.make(10),
@@ -66,7 +67,7 @@ const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
   stepCount: 3,
   apps: [],
   work: turn,
-  status: live
+  status: !ended
     ? { _tag: "running" }
     : {
         _tag: "finished",
@@ -75,15 +76,31 @@ const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
       },
 });
 
-const row = (turn: TurnWork, live: boolean) =>
+/** Scout after its reply: its turn is over, whatever its little ones still do. */
+const resting = { ...scout, state: { _tag: "idle" } } as const;
+
+const row = (turn: TurnWork, live: boolean, ended = !live) =>
   renderToStaticMarkup(
-    <WorkFold
-      fold={fold(turn, live)}
-      live={live ? { bot: scout, lastEntry: null } : null}
-      steps={null}
-      onOpenChange={() => {}}
-      onOpenImage={() => {}}
-    />,
+    <RosterProvider
+      roster={[
+        {
+          _tag: "bot",
+          bot: live ? scout : resting,
+          lastEntry: null,
+          lastActivityAt: null,
+          unread: false,
+        },
+      ]}
+      engine={null}
+    >
+      <WorkFold
+        fold={fold(turn, live, ended)}
+        live={live ? { bot: scout, lastEntry: null } : null}
+        steps={null}
+        onOpenChange={() => {}}
+        onOpenImage={() => {}}
+      />
+    </RosterProvider>,
   );
 
 describe("a turn's row", () => {
@@ -98,9 +115,41 @@ describe("a turn's row", () => {
     expect(html).toContain("+3 more");
   });
 
-  it("folds an ended turn's plan into one line, and draws no little one", () => {
+  it("keeps the little ones an ended turn handed off under the bot's face, still working", () => {
     const html = row(work, false);
+    // The plan folds into its line as the turn ends; the row stays with the bot.
     expect(html).toContain("Plan, 1 of 2 done");
+    expect(html).toContain("Working");
+    expect(html).not.toContain("Worked");
+    expect(html).toContain("Checking prices");
+    expect(html).toContain("Looking into support");
+    expect(html).toContain("+3 more");
+  });
+
+  it("keeps the family when the bot's state tells of the turn's end before its fold does", () => {
+    const html = row(work, false, false);
+    expect(html).toContain("Working");
+    expect(html).toContain("Checking prices");
+  });
+
+  it("folds an ended turn into its line once none of its little ones works", () => {
+    const html = row(
+      {
+        plan: work.plan,
+        littleOnes: {
+          ones: work.littleOnes.ones.map((one) => ({
+            ...one,
+            status: "done",
+            finishedAt: at("2026-11-20T10:03:00Z"),
+          })),
+          working: 0,
+          total: 6,
+        },
+      },
+      false,
+    );
+    expect(html).toContain("Worked");
+    expect(html).toContain("3 steps");
     expect(html).not.toContain("Checking prices");
   });
 

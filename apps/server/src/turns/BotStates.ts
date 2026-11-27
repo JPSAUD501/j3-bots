@@ -129,6 +129,23 @@ export const layer = Layer.effect(
 
     const shown = shownStep(sql);
 
+    /**
+     * How many little ones the bot's turns that have ended still have at
+     * work, in its conversation or a room: the work a turn handed off goes on
+     * after its reply (decision 0095). A quiet turn's are not shown, and a
+     * routine's turn keeps none.
+     */
+    const handedOff = SqlSchema.findOne({
+      Request: BotId,
+      Result: Schema.Struct({ n: Schema.Int }),
+      execute: (botId) => sql`
+        SELECT COALESCE(SUM(json_extract(t.work_json, '$.littleOnes.working')), 0) AS n
+        FROM sessions s JOIN turns t ON t.session_id = s.id
+        WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND t.finished_at IS NOT NULL
+          AND t.quiet = 0 AND json_extract(t.work_json, '$.littleOnes.working') > 0
+      `,
+    });
+
     const continuation = SqlSchema.findOneOption({
       Request: BotId,
       Result: Continuation,
@@ -217,6 +234,14 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const of = Effect.fn("BotStates.of")(function* (botId: BotId) {
+      const out = (yield* handedOff(botId)).n;
+      const state = yield* stateOf(botId, out);
+      // Whatever the bot does now, the little ones a turn handed off still work.
+      return state._tag === "working" || out === 0 ? state : { ...state, littleOnes: out };
+    }, Effect.orDie);
+
+    /** The bot's state; `out` is how many little ones its ended turns still have at work. */
+    const stateOf = Effect.fn("BotStates.stateOf")(function* (botId: BotId, out: number) {
       const card = yield* engineCard(botId);
       if (Option.isSome(card)) {
         return {
@@ -261,7 +286,7 @@ export const layer = Layer.effect(
           activityKind: running ? step.value.kind : null,
           tool: running ? step.value.tool : null,
           ...(running && step.value.skill !== undefined ? { skill: step.value.skill } : {}),
-          littleOnes: work?.littleOnes.working ?? 0,
+          littleOnes: (work?.littleOnes.working ?? 0) + out,
         } as const;
       }
 

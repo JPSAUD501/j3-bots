@@ -81,7 +81,11 @@ function oneOf(sim: LitterSim, id: string) {
 interface LittleOnesProps {
   /** The turn's little ones, as the server tells them; null for a turn that has none. */
   readonly littleOnes: TurnLittleOnes | null;
-  /** Whether the turn runs: a turn that is over shows none. */
+  /**
+   * Whether the bot's face is beside them: while the turn runs, and after it
+   * while little ones it handed off are out. Without it, the family goes
+   * with the face.
+   */
   readonly live: boolean;
   /** The bot's own look, which each little one is a small copy of. */
   readonly avatar: Avatar;
@@ -93,6 +97,8 @@ interface LittleOnesProps {
    * as this mounts are simply there, as when a conversation opens on them.
    */
   readonly born?: boolean;
+  /** Told whether any little one is drawn, one on its way home included. */
+  readonly onDrawn?: (drawn: boolean) => void;
 }
 
 /**
@@ -116,7 +122,14 @@ const FRAME_WAIT = 400;
  * motion. Where it does not move, the little ones are simply at their lines,
  * and one that ends is simply gone.
  */
-export function LittleOnes({ littleOnes, live, avatar, face, born = false }: LittleOnesProps) {
+export function LittleOnes({
+  littleOnes,
+  live,
+  avatar,
+  face,
+  born = false,
+  onDrawn,
+}: LittleOnesProps) {
   const { plural } = useI18n();
   const { shape, color } = resolveAvatar(avatar);
   const theme = useUniwind().theme === "dark" ? "dark" : "light";
@@ -173,6 +186,7 @@ export function LittleOnes({ littleOnes, live, avatar, face, born = false }: Lit
   // The block goes on closing for a moment after its last little one is home.
   const [closing, setClosing] = useState(false);
   const some = rows.length > 0;
+  useEffect(() => onDrawn?.(some), [onDrawn, some]);
   const [had, setHad] = useState(some);
   if (had !== some) {
     setHad(some);

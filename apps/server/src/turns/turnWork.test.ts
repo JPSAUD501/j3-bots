@@ -240,6 +240,123 @@ it.effect("shows a little one a member's room turn handed off beside its next tu
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "keeps a turn's little ones working after its reply, and on the bot, until each ends",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const states = yield* BotStates;
+      const bot = yield* createBot("Ana");
+      const sessionId = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Look into the three repositories.");
+      const turnId = yield* nextTurn(bot.id);
+      const at = yield* DateTime.now;
+      const tell = (littleOnes: ReadonlyArray<LittleOne>) =>
+        control.turnWork({ sessionId, turnId, work: { plan: null, littleOnes } });
+      yield* tell([littleOne("api", at, null), littleOne("web", at, null)]);
+      // The bot replies and its turn ends while both still work.
+      yield* control.startBackgroundWork({ sessionId, turnId });
+      yield* control.finishTurn({ sessionId, turnId, outcome: { _tag: "completed" } });
+      yield* turnEnded(bot.id);
+
+      const fold = yield* awaitEntry(bot.id, "work-fold");
+      assert.strictEqual(fold.status._tag, "finished");
+      assert.strictEqual(fold.work?.littleOnes.working, 2);
+      assert.deepStrictEqual(yield* states.of(bot.id), { _tag: "idle", littleOnes: 2 });
+
+      yield* TestClock.adjust("1 minute");
+      const ended = yield* DateTime.now;
+      yield* tell([
+        littleOne("api", at, { status: "done", at: ended }),
+        littleOne("web", at, null),
+      ]);
+      yield* until(foldWork(bot.id).pipe(Effect.map((work) => work?.littleOnes.working === 1)));
+      assert.deepStrictEqual(yield* states.of(bot.id), { _tag: "idle", littleOnes: 1 });
+
+      yield* tell([
+        littleOne("api", at, { status: "done", at: ended }),
+        littleOne("web", at, { status: "done", at: ended }),
+      ]);
+      yield* until(foldWork(bot.id).pipe(Effect.map((work) => work?.littleOnes.working === 0)));
+      assert.deepStrictEqual(yield* states.of(bot.id), { _tag: "idle" });
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts a little one an ended turn handed off with the next turn's own", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    const sessionId = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Audit the dependencies.");
+    const first = yield* nextTurn(bot.id);
+    const at = yield* DateTime.now;
+    yield* control.turnWork({
+      sessionId,
+      turnId: first,
+      work: { plan: null, littleOnes: [littleOne("licenses", at, null)] },
+    });
+    yield* control.startBackgroundWork({ sessionId, turnId: first });
+    yield* control.finishTurn({ sessionId, turnId: first, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+
+    yield* sendToBot(bot.id, "And check the build.");
+    const second = yield* nextTurn(bot.id, first);
+    yield* control.turnWork({
+      sessionId,
+      turnId: second,
+      work: { plan: null, littleOnes: [littleOne("build", at, null)] },
+    });
+    yield* until(
+      Effect.map(states.of(bot.id), (state) => state._tag === "working" && state.littleOnes === 2),
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends as failed a little one whose turn the engine no longer counts any work for", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    const sessionId = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Audit the dependencies.");
+    const first = yield* nextTurn(bot.id);
+    const at = yield* DateTime.now;
+    yield* control.turnWork({
+      sessionId,
+      turnId: first,
+      work: { plan: null, littleOnes: [littleOne("licenses", at, null)] },
+    });
+    yield* control.startBackgroundWork({ sessionId, turnId: first });
+    yield* control.finishTurn({ sessionId, turnId: first, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+
+    // Its work ends without a word of the little one, and the next turn's
+    // end brings a report that lists no work of the first turn's.
+    yield* control.endBackgroundWork(sessionId);
+    yield* sendToBot(bot.id, "What is left today?");
+    const second = yield* nextTurn(bot.id, first);
+    yield* TestClock.adjust("1 minute");
+    yield* control.finishTurn({ sessionId, turnId: second, outcome: { _tag: "completed" } });
+
+    const ended = yield* eventually(
+      Effect.map(conversation(bot.id), (entries) =>
+        Option.fromNullishOr(
+          entries.find(
+            (entry) => entry._tag === "work-fold" && entry.work?.littleOnes.working === 0,
+          ),
+        ),
+      ),
+    );
+    assert.strictEqual(
+      ended._tag === "work-fold" ? ended.work?.littleOnes.ones[0]?.status : null,
+      "failed",
+    );
+    // Whatever the bot does next, it no longer counts it.
+    assert.notProperty(yield* states.of(bot.id), "littleOnes");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("ends a little one still working as failed when its session is lost", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

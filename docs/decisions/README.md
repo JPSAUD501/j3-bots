@@ -67,7 +67,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
 | [0069](0069-quick-access-is-a-second-window-on-the-primary-bots-conversation.md) | Quick access is a second window on the primary bot's conversation | Accepted |
 | [0070](0070-a-turns-plan-and-its-little-ones-are-its-work.md) | A turn's plan and its little ones are its work, shown only to its audience | Accepted |
-| [0071](0071-a-bot-splits-into-little-ones-under-its-face-and-its-plan-is-a-quiet-card.md) | A bot splits into little ones under its face, and its plan is a quiet card | Accepted |
+| [0071](0071-a-bot-splits-into-little-ones-under-its-face-and-its-plan-is-a-quiet-card.md) | A bot splits into little ones under its face, and its plan is a quiet card | Accepted; what a turn that is over draws amended by [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) |
 | [0072](0072-errors-say-what-to-do-force-stop-and-whole-questions.md) | Errors say what to do, Stop can be forced, and questions arrive whole | Accepted |
 | [0073](0073-a-suggested-reply-follows-what-the-operator-saw.md) | A suggested reply follows what the operator saw, in the bot's own conversation only | Accepted |
 | [0075](0075-a-bot-sends-a-picture-as-a-photo-and-shows-what-it-looked-at-in-its-work.md) | A bot sends a picture as a photo, and shows an image it looked at in that step of its work | Accepted |
@@ -87,5 +87,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
 | [0091](0091-a-share-goes-straight-to-a-bot-and-a-widget-keeps-one-in-sight.md) | A share goes straight to a bot, and a widget keeps one in sight | Accepted |
 | [0092](0092-a-mention-in-a-bots-conversation-points-and-delivers-nothing.md) | A mention in a bot's conversation points, and delivers nothing | Accepted |
+| [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) | Little ones a turn handed off stay until they are home | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.
