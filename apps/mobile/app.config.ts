@@ -243,21 +243,6 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
             "J3 Bots turns what you dictate into text in your message, which you send yourself.",
         },
       ],
-      // Other apps' share sheets list J3 Bots on Android for text, links and
-      // files of any type, one or several. iOS would need a share extension,
-      // which reaches the app through an App Group, and signing one takes a
-      // paid Apple developer account.
-      [
-        "expo-sharing",
-        {
-          ios: { enabled: false },
-          android: {
-            enabled: true,
-            singleShareMimeTypes: ["*/*"],
-            multipleShareMimeTypes: ["*/*"],
-          },
-        },
-      ],
       [
         "expo-notifications",
         {
@@ -278,6 +263,12 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       "./plugins/accentColor.js",
       "./plugins/cleartextToPrivateHosts.js",
       "./plugins/foldInPlace.js",
+      // Other apps' share sheets list J3 Bots on Android through the share
+      // sheet's own activity (modules/share-sheet), with the bots as Direct
+      // Share targets. iOS would need a share extension, which reaches the
+      // app through an App Group, and signing one takes a paid Apple
+      // developer account.
+      "./plugins/shareTargets.js",
       "./plugins/unsignedRelease.js",
     ],
   };

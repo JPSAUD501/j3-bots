@@ -60,7 +60,25 @@ On a computer with the desktop app, the operator is working in something else an
 - "Open conversation" brings the main window to that conversation, for what needs the room: its details, its files, its routines. What a card in it leads to opens there too, where it would from the conversation: "Open browser" on the tab the bot asks help with, a connector's sign-in, a routine's runs, a room, what two bots wrote each other.
 - Before there is a primary bot, or while J3 Bots cannot be reached, the shortcut opens the main window instead, which says what is missing.
 
-Quick access shows only the primary bot, and only while it is open: nothing of J3 Bots sits on the screen otherwise. The Android app has no counterpart.
+Quick access shows only the primary bot, and only while it is open: nothing of J3 Bots sits on the screen otherwise. On an Android phone, sharing and the home-screen widget take its place (below).
+
+### From other apps and the home screen
+
+On an Android phone, the operator is reading something in another app and wants a bot to have it, or wants to see at a glance how a bot or a routine is doing.
+
+- In any app's share menu (a photo, a page, a PDF, some text, one thing or several), J3 Bots is listed, and so are the bots they share to most, each with its face. Either opens a small sheet over the app they are in; the app they were in stays where it was.
+- The sheet shows the start of what they are sharing, or how many files, then their bots as faces with names: the one they shared to last first, then the pinned ones, then the rest. A bot picked from the share menu is already picked; if it is no longer one they can send to, nothing is picked and Send asks them to pick a bot. Below, "Add a message", which they can leave empty, and "Send to Ada".
+- Send sends it as one message, as if they had attached it in the conversation and pressed Send there: their line first, then what was shared. A shared page arrives as its title and its address; J3 Bots never opens the page. Whatever they were writing to that bot in the app stays as it was. The sheet goes and a short note says "Sent to Ada".
+- Files keep the conversation's limits. A file too large or of a kind a bot cannot take is named with why, and the rest go; a file that could not be read is counted, "1 file couldn't be read, so it stays behind".
+- While files go, the sheet says how far along it is, and Stop ends it. If the bots cannot be reached, it says so and keeps going until they can be. Once the files are up, the message goes as any message they send, and Stop is gone. A share of more files than one message takes says how many stay behind.
+- If the phone is not connected to their bots yet, the sheet says so and offers "Open J3 Bots". With no bots yet, it says there is none to send to.
+- A bot template file shared on its own opens J3 Bots on the template, to make a bot from it.
+- They can put a J3 Bots widget on the home screen. As they add it, it asks what it should show: a bot, or a bot's routine. A bot widget shows its face and, when there is room, "Working", "Waiting for you" or "Quiet"; a tap opens its conversation. A routine widget shows its name, "Ran 2 hours ago" and, when there is room, the start of what it said last; a tap opens that, in the conversation or in the routine's runs.
+- The widget can be made as small as one cell or as large as they like, and follows the phone's light or dark look. Holding it and choosing to change it opens the same question.
+- The widget shows what the app last saw: it updates while the app is open and connected, and on Android's own refresh. A bot that was working shows quiet once that is half an hour old, since it may have finished unseen.
+- A bot or routine that was removed shows "This bot was removed" with "Pick another". Before the phone is connected, the widget says so and opens the app.
+
+Neither exists on iPhone.
 
 ### Being asked
 

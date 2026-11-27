@@ -7,7 +7,9 @@ import {
   useSettings,
 } from "@j3-bots/client-runtime/react";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
-import type { Bot, BotId, RoomId } from "@j3-bots/contracts";
+import type { J3Client } from "@j3-bots/client-runtime";
+import type { Bot, BotId, EngineStatus, RoomId, RosterItem } from "@j3-bots/contracts";
+import type { I18n } from "@j3-bots/i18n";
 import * as DateTime from "effect/DateTime";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
 import { useI18n } from "./i18n.ts";
@@ -28,6 +30,59 @@ function useNow(): DateTime.Utc {
 const PresentationContextValue = createContext<PresentationContext | null>(null);
 const BotsContext = createContext<ReadonlyMap<BotId, Bot>>(new Map());
 
+/** The time zone the operator saved, when the device knows it; else the device's own. */
+const timeZoneOf = (saved: string | null): string =>
+  (saved === null ? null : knownTimeZone(saved)) ?? deviceTimeZone();
+
+/** Every bot by id, hidden ones too: an old message names its speaker however the roster shows it now. */
+const botsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<BotId, Bot> =>
+  new Map(
+    roster.flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [])),
+  );
+
+/** Every room's name by id, archived ones too, so a notice names the room as it is called now. */
+const roomsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<RoomId, string> =>
+  new Map(
+    roster.flatMap((item) =>
+      item._tag === "room" ? [[item.room.id, item.room.name] as const] : [],
+    ),
+  );
+
+const contextOf = (input: {
+  readonly i18n: I18n;
+  readonly now: DateTime.Utc;
+  readonly timeZone: string;
+  readonly bots: ReadonlyMap<BotId, Bot>;
+  readonly rooms: ReadonlyMap<RoomId, string>;
+  readonly engine: EngineStatus | null;
+}): PresentationContext => ({
+  i18n: input.i18n,
+  now: input.now,
+  timeZone: input.timeZone,
+  botName: (id: BotId) => input.bots.get(id)?.profile.name ?? null,
+  roomName: (id: RoomId) => input.rooms.get(id) ?? null,
+  aiName: (bot: Bot) => aiNameOf(input.engine, bot.model.providerId),
+});
+
+/**
+ * What every sentence needs, read from `client` as it is now, for what is
+ * worded outside the screens: what a home-screen widget says.
+ */
+export const presentationNow = (client: J3Client, i18n: I18n): PresentationContext => {
+  const roster = client.roster.get();
+  const items = roster._tag === "ready" ? roster.value : [];
+  const settings = client.settings.get();
+  const engine = client.engine.get();
+  return contextOf({
+    i18n,
+    now: DateTime.makeUnsafe(Date.now()),
+    timeZone: timeZoneOf(settings._tag === "ready" ? settings.value.timeZone : null),
+    bots: botsOf(items),
+    rooms: roomsOf(items),
+    engine: engine._tag === "ready" ? engine.value : null,
+  });
+};
+
 /**
  * What every sentence and time on screen needs: the language, the time now,
  * the operator's time zone as saved in Settings (the device's until the
@@ -42,39 +97,11 @@ export function PresentationProvider({ children }: { readonly children: ReactNod
   const engineStatus = useEngineStatus();
   const engine = engineStatus._tag === "ready" ? engineStatus.value : null;
   const saved = settings._tag === "ready" ? settings.value.timeZone : null;
-  const timeZone = useMemo(
-    () => (saved === null ? null : knownTimeZone(saved)) ?? deviceTimeZone(),
-    [saved],
-  );
-  // Every bot, hidden ones too: an old message names its speaker however the roster shows it now.
-  const bots = useMemo(
-    () =>
-      new Map(
-        (roster._tag === "ready" ? roster.value : []).flatMap((item) =>
-          item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [],
-        ),
-      ),
-    [roster],
-  );
-  // Every room, archived ones too, so a notice names the room as it is called now.
-  const rooms = useMemo(
-    () =>
-      new Map(
-        (roster._tag === "ready" ? roster.value : []).flatMap((item) =>
-          item._tag === "room" ? [[item.room.id, item.room.name] as const] : [],
-        ),
-      ),
-    [roster],
-  );
+  const timeZone = useMemo(() => timeZoneOf(saved), [saved]);
+  const bots = useMemo(() => botsOf(roster._tag === "ready" ? roster.value : []), [roster]);
+  const rooms = useMemo(() => roomsOf(roster._tag === "ready" ? roster.value : []), [roster]);
   const context = useMemo(
-    (): PresentationContext => ({
-      i18n,
-      now,
-      timeZone,
-      botName: (id: BotId) => bots.get(id)?.profile.name ?? null,
-      roomName: (id: RoomId) => rooms.get(id) ?? null,
-      aiName: (bot: Bot) => aiNameOf(engine, bot.model.providerId),
-    }),
+    () => contextOf({ i18n, now, timeZone, bots, rooms, engine }),
     [i18n, now, timeZone, bots, rooms, engine],
   );
   return (

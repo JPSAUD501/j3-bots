@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<resources>
+  <string name="j3_widget_label">J3 Bots</string>
+  <string name="j3_widget_description">O rosto de um bot e o que ele está fazendo, ou o que uma rotina disse por último.</string>
+</resources>

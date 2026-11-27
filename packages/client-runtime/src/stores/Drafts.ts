@@ -174,7 +174,7 @@ const localFileOf = (file: DraftFile): LocalFile =>
  * file added to it is admitted against (`admitFiles`). A failed file holds
  * no place.
  */
-export const heldFiles = (draft: Draft | undefined): ReadonlyArray<LocalFile> =>
+const heldFiles = (draft: Draft | undefined): ReadonlyArray<LocalFile> =>
   (draft?.files ?? []).filter((file) => file._tag !== "failed").map(localFileOf);
 
 const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;

@@ -51,7 +51,6 @@ import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
 import { SettingsPageScreen } from "./settings/SettingsPage.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
-import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
 import { BrowserScreen } from "./browser/BrowserScreen.tsx";
 import { useColor } from "./theme.ts";
@@ -70,7 +69,6 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * tablet width up the roster's route shows the conversation `item` names
  * beside the roster, and the conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
- * `share` picks where something another app shared goes, over the rest.
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
  * The operator's secrets open from Settings and from a connector that cannot
@@ -88,7 +86,6 @@ export type Screens = {
    * message or, with `at`, at the message one of whose cards that entry is.
    */
   pair: { readonly botIds: PairBotIds; readonly at?: EntryId };
-  share: undefined;
   shareTemplate: { readonly botId: BotId };
   newFromTemplate: undefined;
   editBot: { readonly botId: BotId };
@@ -249,11 +246,6 @@ export function Main() {
                 <Stack.Screen name="pair" component={PairScreen} options={{ headerShown: false }} />
                 {/* Sets its own title. */}
                 <Stack.Screen name="hidden" component={HiddenScreen} />
-                <Stack.Screen
-                  name="share"
-                  component={ShareScreen}
-                  options={{ title: t("share.title"), presentation: "modal" }}
-                />
                 {/* The browser draws its own bar: the page's site and who acts on it. */}
                 <Stack.Screen
                   name="browser"
@@ -304,7 +296,6 @@ export function Main() {
             </NavigationContainer>
           </FileOpenerProvider>
           <FlightHost />
-          <ShareOpener navigation={navigation} ready={ready} />
           <TemplateOpener navigation={navigation} ready={ready} />
         </Toasts>
       </PresentationProvider>

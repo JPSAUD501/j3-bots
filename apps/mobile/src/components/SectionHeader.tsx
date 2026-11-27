@@ -119,13 +119,7 @@ export function BetweenHeader({ height }: { readonly height: number }) {
 }
 
 /** A header in a section header's place and type, over rows that are grouped but not arranged. */
-export function GroupHeader({
-  label,
-  height,
-}: {
-  readonly label: string;
-  readonly height: number;
-}) {
+function GroupHeader({ label, height }: { readonly label: string; readonly height: number }) {
   return (
     <View className="mx-2 flex-row items-end px-3 pb-2" style={{ height }}>
       <Text

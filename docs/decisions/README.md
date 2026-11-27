@@ -85,5 +85,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0088](0088-a-connectors-events-wake-a-bot-through-a-routine.md) | A connector's events wake a bot through a routine | Accepted |
 | [0089](0089-a-connectors-skills-load-through-j3-tools.md) | A connector's skills load through J3 Bots' own tools | Accepted |
 | [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
+| [0091](0091-a-share-goes-straight-to-a-bot-and-a-widget-keeps-one-in-sight.md) | A share goes straight to a bot, and a widget keeps one in sight | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

@@ -81,7 +81,7 @@ import type * as Socket from "effect/socket/Socket";
 import * as Connection from "./connection/Connection.ts";
 import { refuseRedirects } from "./connection/http.ts";
 import * as Files from "./files/Files.ts";
-import type { MessageProblem } from "./files/limits.ts";
+import { type FileProblem, type MessageProblem, normalizeMediaType } from "./files/limits.ts";
 import * as Actions from "./intents/Actions.ts";
 import * as SignOut from "./intents/SignOut.ts";
 import type {
@@ -390,6 +390,30 @@ export interface J3Client {
     Actions.IntentResult<EntryId> | { readonly _tag: "invalid"; readonly problem: MessageProblem }
   >;
   /**
+   * Uploads `files` one after another and then sends `text` with them as one
+   * message, outside any draft: what a share from another app does. Each
+   * upload waits for the server as the composer's does. `onProgress` hears
+   * the bytes sent of all the files. Aborting `signal` while files upload
+   * stops it, and what was uploaded until then is never sent; once
+   * `onSending` is heard, the message is the outbox's, which sends it, and
+   * aborting only stops waiting for the server's answer. `refused` names the first file the
+   * server would not take, with the composer's reason; nothing was sent.
+   */
+  readonly sendWithFiles: (
+    input: {
+      readonly target: EntryTarget;
+      readonly text: string;
+      readonly files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>;
+      readonly onProgress: (sent: number, total: number) => void;
+      /**
+       * Every file is uploaded and the outbox keeps the message, which it
+       * sends on its own from then on: aborting `signal` no longer stops it.
+       */
+      readonly onSending: () => void;
+    },
+    signal: AbortSignal,
+  ) => Promise<SendWithFilesResult>;
+  /**
    * `mentions`, when given, replace the message's own. `not-kept` when the
    * device could not keep the new attempt: nothing was sent.
    */
@@ -639,6 +663,13 @@ export interface J3Client {
   readonly dispose: () => Promise<void>;
 }
 
+/** How sending a message with its files went (`sendWithFiles`). */
+export type SendWithFilesResult =
+  | Actions.IntentResult<EntryId>
+  | { readonly _tag: "invalid"; readonly problem: MessageProblem }
+  | { readonly _tag: "refused"; readonly index: number; readonly problem: FileProblem }
+  | { readonly _tag: "stopped" };
+
 /** A start of the server's update, or why it did not start. */
 export type ServerUpdateStart = ServerUpdate.StartResult | { readonly _tag: "not-paired" };
 
@@ -694,6 +725,55 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     }),
   );
   const { connection, conversations } = services;
+
+  /** `sendWithFiles`: each file uploaded in turn, under the pairing followed as it began, then the message. */
+  const sendingWithFiles = Effect.fnUntraced(function* (input: {
+    readonly target: EntryTarget;
+    readonly text: string;
+    readonly files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>;
+    readonly onProgress: (sent: number, total: number) => void;
+    readonly onSending: () => void;
+  }) {
+    const pairing = connection.pairing.get();
+    if (pairing === null) {
+      return { _tag: "failed", failure: { _tag: "not-paired" } } satisfies SendWithFilesResult;
+    }
+    const total = input.files.reduce((sum, file) => sum + file.body.size, 0);
+    const attachments: Array<Attachment> = [];
+    let before = 0;
+    for (const [index, file] of input.files.entries()) {
+      const uploaded = yield* services.files
+        .upload({
+          pairing,
+          name: file.name,
+          mediaType: normalizeMediaType(file.body.type),
+          body: file.body,
+          onProgress: (sent) => input.onProgress(before + sent, total),
+        })
+        .pipe(
+          Effect.match({
+            onSuccess: (attachment) => ({ _tag: "uploaded", attachment }) as const,
+            onFailure: (error) =>
+              ({
+                _tag: "refused",
+                index,
+                problem: Files.uploadProblem(error),
+              }) satisfies SendWithFilesResult,
+          }),
+        );
+      if (uploaded._tag === "refused") return uploaded;
+      attachments.push(uploaded.attachment);
+      before += file.body.size;
+      input.onProgress(before, total);
+    }
+    return yield* conversations
+      .send({ target: input.target, text: input.text, attachments, onKept: input.onSending })
+      .pipe(
+        Effect.catchTag("InvalidMessage", ({ problem }) =>
+          Effect.succeed({ _tag: "invalid", problem } satisfies SendWithFilesResult),
+        ),
+      );
+  });
 
   const fire = <E>(effect: Effect.Effect<void, E>) => {
     run.fork(effect.pipe(Effect.ignore));
@@ -809,6 +889,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
             ),
           ),
       ),
+    sendWithFiles: (input, signal) =>
+      run.promiseExit(sendingWithFiles(input), { signal }).then((exit): SendWithFilesResult => {
+        if (Exit.isSuccess(exit)) return exit.value;
+        return signal.aborted
+          ? { _tag: "stopped" }
+          : { _tag: "failed", failure: { _tag: "unexpected" } };
+      }),
     resend: (commandId, mentions) =>
       run.promise(
         conversations

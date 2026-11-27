@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  A bot's face, drawn by the app in the light theme and in the dark one
+  (BotWidgetProvider sets both). The launcher inflates this layout or the
+  one of the other theme, so the face in its theme is the one it shows.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent">
+  <ImageView
+    android:id="@+id/j3_widget_face_day"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:importantForAccessibility="no"
+    android:scaleType="fitCenter" />
+  <ImageView
+    android:id="@+id/j3_widget_face_night"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:importantForAccessibility="no"
+    android:scaleType="fitCenter"
+    android:visibility="gone" />
+</FrameLayout>

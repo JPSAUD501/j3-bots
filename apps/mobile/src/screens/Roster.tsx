@@ -69,6 +69,7 @@ import { useBots, usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { useColor } from "../theme.ts";
 import { useNotificationTaps } from "../notificationTaps.ts";
+import { useAppLinks } from "../appLinks.ts";
 import { Body, Centered, Title } from "../ui.tsx";
 import { useTextLines } from "../lines.tsx";
 import { toggleFolded, useFolded } from "./folded.ts";
@@ -84,13 +85,16 @@ type Props = NativeStackScreenProps<Screens, "roster">;
  * the tablet width up, the conversation `item` names sits beside the roster;
  * folded to a phone's width, it moves to its own screen, and what was open
  * over it stays open. The roster is under every other screen, so a tapped
- * push opens its conversation from here.
+ * push, a widget and a Direct Share shortcut open what they name from here.
  */
 export function RosterScreen({ navigation, route }: Props) {
   const roster = useReadable(useJ3Client().roster);
   const sideBySide = useSideBySide();
   const openConversation = useOpenConversation();
   useNotificationTaps(openConversation);
+  useAppLinks(openConversation, (botId, routineId) =>
+    navigation.navigate("routineRuns", { botId, routineId }),
+  );
   const selected = route.params?.item ?? null;
   // The first bot's conversation opens straight from the first run: the first run stays from the
   // press of Create until the conversation covers the roster, or opens beside it, so the roster

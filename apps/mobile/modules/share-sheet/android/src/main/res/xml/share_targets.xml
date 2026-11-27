@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  Direct Share: the bots' shortcuts (ShareShortcuts.kt) take any share the
+  share sheet does. The app's main activity names this file
+  (plugins/shareTargets.js), which is where Android looks for it.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <share-target android:targetClass="dev.j3bots.sharesheet.ShareActivity">
+    <data android:mimeType="*/*" />
+    <category android:name="dev.j3bots.sharesheet.BOT" />
+  </share-target>
+</shortcuts>

@@ -41,8 +41,6 @@ export function Sheet({
   readonly children: ReactNode;
 }) {
   const reduced = useReducedMotion();
-  const insets = useSafeAreaInsets();
-  const window = useWindowDimensions();
   // The modal stays up while the panel leaves, then goes, on a timer rather
   // than the animation's own end, as the confirmations do, so a modal with
   // nothing left in it never stays over the app taking its touches.
@@ -61,44 +59,74 @@ export function Sheet({
       animationType="none"
       onRequestClose={onClose}
     >
-      {open && (
-        <View className="flex-1 justify-end">
-          <Animated.View
-            entering={FadeIn.duration(motion.slow)}
-            exiting={FadeOut.duration(motion.state)}
-            className="absolute inset-0 bg-scrim"
-          >
-            <Pressable
-              accessible={false}
-              importantForAccessibility="no"
-              onPress={onClose}
-              className="flex-1"
-            />
-          </Animated.View>
-          <Animated.View
-            accessibilityViewIsModal
-            entering={SlideInDown.springify()
-              .mass(slide.mass)
-              .stiffness(slide.stiffness)
-              .damping(slide.damping)}
-            exiting={SlideOutDown.duration(motion.state)}
-            className="rounded-t-xl border border-b-0 border-border bg-surface"
-            style={{
-              maxHeight: window.height * 0.75,
-              paddingBottom: insets.bottom,
-              elevation: OVERLAY_ELEVATION,
-            }}
-          >
-            <View className="items-center pt-2 pb-1">
-              <View className="h-1 w-9 rounded-pill bg-border" />
-            </View>
-            <Title lead={lead}>{title}</Title>
-            <ScrollView contentContainerClassName="px-5 pb-4">{children}</ScrollView>
-            {footer}
-          </Animated.View>
-        </View>
-      )}
+      <SheetPanel open={open} title={title} lead={lead} onClose={onClose} footer={footer}>
+        {children}
+      </SheetPanel>
     </Modal>
+  );
+}
+
+/**
+ * What a `Sheet` shows, without the window it opens: the scrim and the panel
+ * over it, for a screen that is itself a window over another app, as the
+ * share sheet is. Back is the screen's to handle.
+ */
+export function SheetPanel({
+  open,
+  title,
+  lead,
+  onClose,
+  footer,
+  children,
+}: {
+  readonly open: boolean;
+  readonly title: string;
+  readonly lead?: ReactNode;
+  readonly onClose: () => void;
+  readonly footer?: ReactNode;
+  readonly children: ReactNode;
+}) {
+  const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  if (!open) return null;
+  return (
+    <View className="flex-1 justify-end">
+      <Animated.View
+        entering={FadeIn.duration(motion.slow)}
+        exiting={FadeOut.duration(motion.state)}
+        className="absolute inset-0 bg-scrim"
+      >
+        <Pressable
+          accessible={false}
+          importantForAccessibility="no"
+          onPress={onClose}
+          className="flex-1"
+        />
+      </Animated.View>
+      <Animated.View
+        accessibilityViewIsModal
+        entering={SlideInDown.springify()
+          .mass(slide.mass)
+          .stiffness(slide.stiffness)
+          .damping(slide.damping)}
+        exiting={SlideOutDown.duration(motion.state)}
+        className="rounded-t-xl border border-b-0 border-border bg-surface"
+        style={{
+          maxHeight: window.height * 0.75,
+          paddingBottom: insets.bottom,
+          elevation: OVERLAY_ELEVATION,
+        }}
+      >
+        <View className="items-center pt-2 pb-1">
+          <View className="h-1 w-9 rounded-pill bg-border" />
+        </View>
+        <Title lead={lead}>{title}</Title>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="px-5 pb-4">
+          {children}
+        </ScrollView>
+        {footer}
+      </Animated.View>
+    </View>
   );
 }
 

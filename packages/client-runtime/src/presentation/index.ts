@@ -279,7 +279,7 @@ export {
   rowTops,
 } from "./rosterMotion.ts";
 export { shownSaveProblem } from "./saves.ts";
-export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
+export { type Shared, type SharedFile, type SharedMessage, sharedMessage } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export { providersNeedYou, type SettingsPage, settingsGroups } from "./settingsPages.ts";
 export {

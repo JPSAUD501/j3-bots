@@ -425,6 +425,8 @@ export class Conversations extends Context.Service<
      * exactly once. Succeeds with the new entry's id when the server has it.
      * Fails with `InvalidMessage`, sending nothing, when it breaks a limit of
      * `message.send`. A message the device cannot keep is sent from memory.
+     * Once it is kept, interrupting only stops waiting for the server's
+     * answer: the outbox sends it all the same.
      */
     readonly send: (input: {
       readonly target: EntryTarget;
@@ -436,6 +438,8 @@ export class Conversations extends Context.Service<
       readonly mentions?: Mentions;
       /** The names the members mentioned had when picked. */
       readonly labels?: ReadonlyArray<MentionLabel>;
+      /** Heard once the message is the outbox's, on the device or in memory. */
+      readonly onKept?: () => void;
     }) => Effect.Effect<IntentResult<EntryId>, InvalidMessage>;
     /**
      * Keeps the message on the device, with the `claim`'s `alongside` in the
@@ -1454,31 +1458,42 @@ export const layer = Layer.effect(
 
     const notPaired: IntentResult<EntryId> = { _tag: "failed", failure: { _tag: "not-paired" } };
 
-    const send = Effect.fn("Conversations.send")(function* (input: Parameters<typeof outgoing>[0]) {
+    const send = Effect.fn("Conversations.send")(function* (
+      input: Parameters<typeof outgoing>[0] & { readonly onKept?: () => void },
+    ) {
       const message = yield* outgoing(input);
-      // With nothing expected, only the pairing's end refuses it, and only a
-      // storage failure leaves it in memory, as the pairing's it was sent under.
-      const keeping = yield* withPairing(
-        Effect.suspend(() => {
-          const pairing = followed;
-          if (pairing === null) return Effect.succeed(null);
-          return keep(message, pairing, [], []).pipe(
-            Effect.map((kept) => ({ pairing, kept })),
-            Effect.catchTag("LocalStorageError", (error) =>
-              Effect.logWarning("An unsent message is kept in memory only", error).pipe(
-                Effect.as({ pairing, kept: null }),
-              ),
-            ),
+      // Kept whole or not at all: once kept, the message is the outbox's,
+      // whatever then interrupts the wait for its answer.
+      const result = yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          // With nothing expected, only the pairing's end refuses it, and only a
+          // storage failure leaves it in memory, as the pairing's it was sent under.
+          const keeping = yield* withPairing(
+            Effect.suspend(() => {
+              const pairing = followed;
+              if (pairing === null) return Effect.succeed(null);
+              return keep(message, pairing, [], []).pipe(
+                Effect.map((kept) => ({ pairing, kept })),
+                Effect.catchTag("LocalStorageError", (error) =>
+                  Effect.logWarning("An unsent message is kept in memory only", error).pipe(
+                    Effect.as({ pairing, kept: null }),
+                  ),
+                ),
+              );
+            }),
           );
+          if (keeping === null || keeping.kept === false) return null;
+          const answer = awaitResult(message.commandId, 0);
+          if (keeping.kept) yield* refresh;
+          else {
+            outbox.update((list) => [...list, { message, pairing: keeping.pairing, kept: null }]);
+          }
+          yield* wake;
+          input.onKept?.();
+          return answer;
         }),
       );
-      if (keeping === null || keeping.kept === false) return notPaired;
-      const result = awaitResult(message.commandId, 0);
-      if (keeping.kept) yield* refresh;
-      else {
-        outbox.update((list) => [...list, { message, pairing: keeping.pairing, kept: null }]);
-      }
-      yield* wake;
+      if (result === null) return notPaired;
       return yield* result;
     });
 
