@@ -190,6 +190,17 @@ export {
 } from "./mentions.ts";
 export { type Inline, type MentionName, parseMessageText } from "./messageText.ts";
 export {
+  isQuotable,
+  passageOf,
+  type QuotableMessage,
+  quoteText,
+  replyIn,
+  replyTo,
+  takesPassage,
+  takesReply,
+  withQuote,
+} from "./quotes.ts";
+export {
   acrossStage,
   defaultBotName,
   type Featured,

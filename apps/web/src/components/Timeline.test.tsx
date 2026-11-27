@@ -5,7 +5,7 @@ import { buildTimeline } from "@j3-bots/client-runtime/presentation";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { copySample, sampleSecrets } from "../gallery/sampleSecrets";
-import { Timeline, type TimelineIntents } from "./Timeline";
+import { type QuoteDrafting, Timeline, type TimelineIntents } from "./Timeline";
 
 // The stored preferences follow the system's theme, which a page reads off `window` as it loads.
 vi.mock("../preferences/preferences", () => ({
@@ -75,6 +75,7 @@ describe("a conversation", () => {
         onOpenPair={() => {}}
         onOpenRoom={() => {}}
         onOpenBot={() => {}}
+        quotes={{ reveal: () => Promise.resolve("shown"), drafting: null }}
       />,
     );
     const before = html.indexOf("Before");
@@ -83,5 +84,38 @@ describe("a conversation", () => {
     expect([before, line, after].every((index) => index >= 0)).toBe(true);
     expect(before < line && line < after).toBe(true);
     expect(html).toContain('data-seen-id="later"');
+  });
+
+  describe("Reply", () => {
+    const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
+    const drafting: QuoteDrafting = { drafted: [], quote: () => {} };
+    /** How many messages offer Reply when the timeline has `offered`. */
+    const replies = (offered: QuoteDrafting | null) =>
+      renderToStaticMarkup(
+        <Timeline
+          rows={buildTimeline([
+            message("2026-11-20T10:00:00Z", scout, "Booked", { reactions: [] }),
+            message("2026-11-20T10:00:10Z", { _tag: "operator" }, "Thanks", { reactions: [] }),
+            message("2026-11-20T10:00:20Z", { _tag: "system" }, "Back online", { reactions: [] }),
+          ])}
+          room={null}
+          workSteps={() => null}
+          submitting={() => false}
+          intents={intents}
+          secrets={{ view: secrets.view.get(), intents: { ...secrets, copy: copySample } }}
+          onOpenPair={() => {}}
+          onOpenRoom={() => {}}
+          onOpenBot={() => {}}
+          quotes={{ reveal: () => Promise.resolve("shown"), drafting: offered }}
+        />,
+      ).split('aria-label="Reply"').length - 1;
+
+    it("is offered on the operator's and bots' messages, not on J3 Bots' own", () => {
+      expect(replies(drafting)).toBe(2);
+    });
+
+    it("is not offered where the server takes no quotes or the operator cannot write", () => {
+      expect(replies(null)).toBe(0);
+    });
   });
 });

@@ -7,6 +7,7 @@ import {
   type EntryTarget,
   type LookingAt,
   type Mentions,
+  MessageQuote,
   NonNegativeInt,
   RoomId,
 } from "@j3-bots/contracts";
@@ -37,6 +38,7 @@ import {
 import { fittedMarks, insertMarks, placedMessage, withoutMarks } from "../files/placed.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable, waitFor } from "../Store.ts";
+import { sameQuotes, withQuote } from "../presentation/quotes.ts";
 import { Conversations, keyTarget, type MentionLabel, targetKey } from "./Conversations.ts";
 
 /** A file in the composer, from the moment the operator picks it. */
@@ -70,6 +72,11 @@ export interface Draft {
   readonly text: string;
   /** The mentions picked in `text`, in no particular order. */
   readonly mentions: ReadonlyArray<DraftMention>;
+  /**
+   * The messages it quotes, as the sent message will (decision 0094): a
+   * reply first, when there is one, then passages in the order added.
+   */
+  readonly quotes: ReadonlyArray<MessageQuote>;
   readonly files: ReadonlyArray<DraftFile>;
   /**
    * The operator pressed Send and `send` is moving it to the outbox, which
@@ -79,7 +86,7 @@ export interface Draft {
   readonly sending: boolean;
 }
 
-const empty: Draft = { text: "", mentions: [], files: [], sending: false };
+const empty: Draft = { text: "", mentions: [], quotes: [], files: [], sending: false };
 
 /**
  * Whom a message is for, as the client judged it from the mentions standing
@@ -159,6 +166,8 @@ const StoredDraft = Schema.fromJsonString(
       pairing: DeviceId,
       text: Schema.String,
       mentions: Schema.Array(DraftMention),
+      /** Left out by a version that predates quotes, which kept none. */
+      quotes: Schema.optionalKey(Schema.Array(MessageQuote)),
       files: Schema.Array(Attachment),
     }),
   ),
@@ -183,18 +192,24 @@ const localFileOf = (file: DraftFile): LocalFile =>
 const heldFiles = (draft: Draft | undefined): ReadonlyArray<LocalFile> =>
   (draft?.files ?? []).filter((file) => file._tag !== "failed").map(localFileOf);
 
-const isEmpty = (draft: Draft) => draft.text === "" && draft.files.length === 0;
+const isEmpty = (draft: Draft) =>
+  draft.text === "" && draft.files.length === 0 && draft.quotes.length === 0;
 
-/** What the device keeps of a draft: its text, its mentions and the files already on the server. */
+/**
+ * What the device keeps of a draft: its text, its mentions, its quotes and
+ * the files already on the server.
+ */
 interface Kept {
   readonly text: string;
   readonly mentions: ReadonlyArray<DraftMention>;
+  readonly quotes: ReadonlyArray<MessageQuote>;
   readonly files: ReadonlyArray<Attachment>;
 }
 
 /** What the device keeps of a draft: only the uploaded files, and the marks that place them. */
 const keptOf = (draft: Draft): Kept => ({
   ...withoutMarks(draft, (index) => draft.files[index]?._tag !== "ready"),
+  quotes: draft.quotes,
   files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
 });
 
@@ -228,6 +243,7 @@ const writingOf = (draft: Pick<Kept, "text" | "mentions">) => withoutMarks(draft
 
 const sameKept = (one: Kept, other: Kept) =>
   sameWriting(one, other) &&
+  sameQuotes(one.quotes, other.quotes) &&
   one.files.length === other.files.length &&
   one.files.every((file, index) => file.id === other.files[index]?.id);
 
@@ -241,12 +257,18 @@ const keptIn = (record: string | undefined, pairing: DeviceId): Kept | undefined
   const decoded = Option.getOrUndefined(decodeStored(record));
   if (decoded === undefined) return undefined;
   if (decoded.pairing !== pairing) return keptOf(empty);
-  return { text: decoded.text, mentions: decoded.mentions, files: decoded.files };
+  return {
+    text: decoded.text,
+    mentions: decoded.mentions,
+    quotes: decoded.quotes ?? [],
+    files: decoded.files,
+  };
 };
 
 /** A draft as the device keeps it, as this window shows it, its text placing each of its files. */
 const shown = (kept: Kept): Draft => ({
   ...fittedMarks(kept, kept.files.length),
+  quotes: kept.quotes,
   files: kept.files.map((attachment) => ({ _tag: "ready", key: attachment.id, attachment })),
   sending: false,
 });
@@ -335,6 +357,18 @@ export class Drafts extends Context.Service<
     ) => Effect.Effect<void>;
     /** Takes a file out of the draft, stopping its upload. */
     readonly detach: (target: EntryTarget, key: string) => Effect.Effect<void>;
+    /**
+     * Adds a quote to the draft (decision 0094): a reply takes the place of
+     * the draft's reply, first; a passage goes last, once. Succeeds with
+     * `full` and changes nothing when the draft quotes all a message can,
+     * and with `not-now` while it is `sending`.
+     */
+    readonly quote: (
+      target: EntryTarget,
+      quote: MessageQuote,
+    ) => Effect.Effect<"added" | "full" | "not-now">;
+    /** Takes the quote at `index` out of the draft. */
+    readonly unquote: (target: EntryTarget, index: number) => Effect.Effect<void>;
     /**
      * Moves the draft to the outbox in one storage transaction, so a crash
      * leaves it in exactly one of them, and sending twice sends once: the
@@ -1012,6 +1046,23 @@ export const layer = Layer.effect(
         }).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
 
+    const quote = (target: EntryTarget, added: MessageQuote) =>
+      Effect.sync((): "added" | "full" | "not-now" => {
+        const draft = state.get().get(targetKey(target)) ?? empty;
+        if (draft.sending || closed()) return "not-now";
+        const quotes = withQuote(draft.quotes, added);
+        if (quotes === "full") return "full";
+        changeNow(target, (held) => (sameQuotes(held.quotes, quotes) ? held : { ...held, quotes }));
+        return "added";
+      });
+
+    const unquote = (target: EntryTarget, index: number) =>
+      change(target, (draft) =>
+        index >= 0 && index < draft.quotes.length
+          ? { ...draft, quotes: draft.quotes.toSpliced(index, 1) }
+          : draft,
+      );
+
     const send = Effect.fn("Drafts.send")(function* (
       target: EntryTarget,
       addressing?: Addressing,
@@ -1109,6 +1160,7 @@ export const layer = Layer.effect(
                 attachments,
                 ...(drafted.length === 0 ? {} : { attachmentOffsets: placedAt }),
                 ...(beside?.lookingAt === undefined ? {} : { lookingAt: beside.lookingAt }),
+                ...(draft.quotes.length === 0 ? {} : { quotes: draft.quotes }),
                 ...addressing,
               },
               {
@@ -1231,6 +1283,8 @@ export const layer = Layer.effect(
       setText,
       attach,
       detach,
+      quote,
+      unquote,
       send,
       changedElsewhere: Stream.fromPubSub(changes),
       offers: visible(offers, noOffers),

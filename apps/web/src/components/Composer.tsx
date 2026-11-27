@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Attachment, Avatar, SuggestedReply } from "@j3-bots/contracts";
+import type { Attachment, Avatar, MessageQuote, SuggestedReply } from "@j3-bots/contracts";
 import { ArrowUpIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -53,6 +53,7 @@ import {
 import { FileKindIcon } from "./FileCard";
 import { MentionChip, RoomMentionChip } from "./MentionChip";
 import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./PromptPicker";
+import { DraftQuotes } from "./Quotes";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 
@@ -107,6 +108,10 @@ interface ComposerProps {
   ) => void;
   /** The files in the draft, as they upload, in the order of their marks. */
   readonly files?: ReadonlyArray<DraftFile>;
+  /** The messages the draft quotes: its reply first, when it has one, then passages. */
+  readonly quotes?: ReadonlyArray<MessageQuote>;
+  /** Takes the quote at `index` out of the draft. */
+  readonly onUnquote?: (index: number) => void;
   /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
   readonly sending?: boolean;
   /**
@@ -163,6 +168,16 @@ interface ComposerProps {
 }
 
 /**
+ * Puts the focus in a composer's field, `field`, with the caret after its
+ * text, as after Reply or Quote, which add to the draft from elsewhere.
+ */
+export function focusAtEnd(field: HTMLElement | null) {
+  if (field === null) return;
+  field.focus();
+  selectInField(field, fieldText(field).length);
+}
+
+/**
  * The composer at the bottom of a conversation: a rounded rectangle that
  * grows with its text. Enter sends, Shift+Enter starts a new line. Files
  * picked, pasted or dropped upload at once and stand in the text as chips:
@@ -195,7 +210,9 @@ interface ComposerProps {
  * is empty and no list is open, with Use beside it: Use, or Tab, puts it in
  * the draft with the caret after it, to send or change; Escape sets it aside
  * until a later answer brings another.
- * It leaves as soon as the operator types.
+ * It leaves as soon as the operator types. What the draft quotes shows above
+ * the field: its reply as a strip, each passage as a chip, each with a way
+ * out, after which the focus returns to the field.
  */
 export function Composer({
   draftKey,
@@ -204,6 +221,8 @@ export function Composer({
   mentions = [],
   onValueChange,
   files = [],
+  quotes = [],
+  onUnquote,
   sending = false,
   loading = false,
   unread,
@@ -468,6 +487,16 @@ export function Composer({
           onFill={prompt.fill}
           onUse={prompt.use}
           onCancel={prompt.cancel}
+        />
+      )}
+      {onUnquote !== undefined && (
+        <DraftQuotes
+          quotes={quotes}
+          unavailable={frozen}
+          onRemove={(index) => {
+            onUnquote(index);
+            focusField();
+          }}
         />
       )}
       <div

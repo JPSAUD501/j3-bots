@@ -10,7 +10,7 @@ import {
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { EntryId, Reaction, ReactionEmoji, Reactor } from "@j3-bots/contracts";
 import { lift, motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { SmilePlus } from "lucide-react-native";
+import { type LucideIcon, SmilePlus } from "lucide-react-native";
 import {
   createContext,
   type ReactNode,
@@ -45,6 +45,13 @@ import { OVERLAY_ELEVATION } from "../theme.ts";
 import { useSay } from "../toast.tsx";
 import { AnimatedView } from "./animated.ts";
 
+/** Something else a long-pressed message's menu does, under its quick bar, such as Reply. */
+export interface MessageAction {
+  readonly label: string;
+  readonly icon: LucideIcon;
+  readonly onPress: () => void;
+}
+
 /** A message the operator long-pressed, to react to. */
 export interface ReactionTarget {
   readonly entryId: EntryId;
@@ -58,6 +65,8 @@ export interface ReactionTarget {
    * stay in view and can be selected; null for a message without words.
    */
   readonly preview: { readonly at: MenuAnchor; readonly content: ReactNode } | null;
+  /** What else the menu does with the message, in a card by the bar; none when empty. */
+  readonly actions: ReadonlyArray<MessageAction>;
 }
 
 interface Reacting {
@@ -148,15 +157,66 @@ const INSET = 5;
 const GAP = 6;
 /** The least room the bar keeps from the window's edge. */
 const EDGE = 8;
+/** An action's row in the card under the bar, a full touch. */
+const ACTION = 44;
+/** The action card's padding and border, on each side. */
+const ACTION_INSET = 5;
+/** The action card's width when there is room for it. */
+const ACTION_WIDTH = 200;
 
 const pop = reanimatedSpring(springs.pop);
 
+/** How the bar and the card pop in: on `pop`, from a little smaller. */
+const popFrom = () =>
+  ZoomIn.springify()
+    .mass(pop.mass)
+    .stiffness(pop.stiffness)
+    .damping(pop.damping)
+    .withInitialValues({ transform: [{ scale: 0.9 }] });
+
+/** Where the bar and the action card go, and how big the bar's buttons are. */
+interface Placement {
+  readonly size: number;
+  readonly barY: number;
+  readonly barHeight: number;
+  readonly barWidth: number;
+  readonly actionsY: number;
+}
+
+/**
+ * The bar above the message when there is room, under it when not, and at
+ * the top over a message taller than the window. The action card goes under
+ * the message when the bar is above it, else above the bar; under the bar
+ * when the bar is under the message or at the top; with no room there, at
+ * the window's foot.
+ */
+function usePlacement(anchor: MenuAnchor, actions: number): Placement {
+  const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const count = QUICK_REACTIONS.length + 1;
+  const size = Math.min(BUTTON, Math.floor((window.width - 2 * EDGE - 2 * INSET) / count));
+  const barWidth = count * size + 2 * INSET;
+  const barHeight = size + 2 * INSET;
+  const top = insets.top + EDGE;
+  const foot = window.height - insets.bottom - EDGE;
+  const above = anchor.y - GAP - barHeight;
+  const below = anchor.y + anchor.height + GAP;
+  const barAbove = above >= top;
+  const barY = barAbove ? above : below + barHeight <= foot ? below : top;
+  const actionsHeight = actions * ACTION + 2 * ACTION_INSET;
+  const fits = (y: number) => y >= top && y + actionsHeight <= foot;
+  // Never between the bar and the message, over the message's words.
+  const candidates = barAbove ? [below, barY - GAP - actionsHeight] : [barY + barHeight + GAP];
+  const actionsY = candidates.find(fits) ?? foot - actionsHeight;
+  return { size, barY, barHeight, barWidth, actionsY };
+}
+
 /**
  * The quick bar, over the scrim by the long-pressed message, whose words are
- * drawn again where they were, lifted a little, as a long-pressed row is: above the
- * message when there is room, under it when not, and at the top over a
- * message taller than the window. It pops in on `pop` from its corner by the
- * message and fades as it closes. A tap outside or Back closes it.
+ * drawn again where they were, lifted a little, as a long-pressed row is
+ * (`usePlacement`), with what else the menu does in a card by it. Both pop in
+ * on `pop` from their corner by the message and fade as they close. A tap
+ * outside or Back closes it.
  */
 function QuickBar({
   target,
@@ -208,12 +268,11 @@ function QuickBar({
               {target.preview.content}
             </Lifted>
           )}
-          <Bar
-            anchor={target.anchor}
-            side={target.side}
-            own={ownReaction(target.reactions)}
+          <MessageMenu
+            target={target}
             onPick={(emoji) => onPick(target, emoji)}
             onMore={() => onMore(target)}
+            onClose={onClose}
           />
         </>
       )}
@@ -221,54 +280,112 @@ function QuickBar({
   );
 }
 
+/** The bar and the action card, placed by the long-pressed message. */
+function MessageMenu({
+  target,
+  onPick,
+  onMore,
+  onClose,
+}: {
+  readonly target: ReactionTarget;
+  readonly onPick: (emoji: ReactionEmoji) => void;
+  readonly onMore: () => void;
+  readonly onClose: () => void;
+}) {
+  const { anchor, side, actions } = target;
+  const window = useWindowDimensions();
+  const placement = usePlacement(anchor, actions.length);
+  // The bar's edge on the message's side lines up with the message's, inside the window, and so
+  // does the card's.
+  const fromLeft = (side === "start") !== I18nManager.isRTL;
+  const edgeFor = (width: number) => {
+    const inside = (edge: number) => Math.min(Math.max(EDGE, edge), window.width - EDGE - width);
+    return fromLeft
+      ? { left: inside(anchor.x) }
+      : { right: inside(window.width - anchor.x - anchor.width) };
+  };
+  const actionsWidth = Math.min(ACTION_WIDTH, window.width - 2 * EDGE);
+  return (
+    <>
+      <Bar
+        placement={placement}
+        edge={edgeFor(placement.barWidth)}
+        origin={`${placement.barY < anchor.y ? "bottom" : "top"} ${fromLeft ? "left" : "right"}`}
+        own={ownReaction(target.reactions)}
+        onPick={onPick}
+        onMore={onMore}
+      />
+      {actions.length > 0 && (
+        <Animated.View
+          accessibilityRole="menu"
+          entering={popFrom()}
+          exiting={ZoomOut.duration(motion.fast)}
+          className="absolute rounded-lg border border-border bg-surface"
+          style={{
+            top: placement.actionsY,
+            width: actionsWidth,
+            ...edgeFor(actionsWidth),
+            padding: ACTION_INSET - 1,
+            transformOrigin: `${placement.actionsY < anchor.y ? "bottom" : "top"} ${fromLeft ? "left" : "right"}`,
+            elevation: OVERLAY_ELEVATION,
+          }}
+        >
+          {actions.map((action) => (
+            <PressScale
+              key={action.label}
+              depth="row"
+              accessibilityRole="menuitem"
+              accessibilityLabel={action.label}
+              onPress={() => {
+                onClose();
+                action.onPress();
+              }}
+              className="flex-row items-center gap-3 rounded-md px-3 active:bg-muted"
+              style={{ height: ACTION }}
+            >
+              <Icon icon={action.icon} size={18} color="accent-muted-foreground" />
+              <Text numberOfLines={1} className="shrink text-base text-foreground">
+                {action.label}
+              </Text>
+            </PressScale>
+          ))}
+        </Animated.View>
+      )}
+    </>
+  );
+}
+
 /** The bar itself, placed by the message on its side, each emoji a button, then "more". */
 function Bar({
-  anchor,
-  side,
+  placement,
+  edge,
+  origin,
   own,
   onPick,
   onMore,
 }: {
-  readonly anchor: MenuAnchor;
-  readonly side: "start" | "end";
+  readonly placement: Placement;
+  readonly edge: { readonly left: number } | { readonly right: number };
+  readonly origin: string;
   readonly own: ReactionEmoji | null;
   readonly onPick: (emoji: ReactionEmoji) => void;
   readonly onMore: () => void;
 }) {
   const { t } = usePresentation().i18n;
-  const window = useWindowDimensions();
-  const insets = useSafeAreaInsets();
-  const count = QUICK_REACTIONS.length + 1;
-  const size = Math.min(BUTTON, Math.floor((window.width - 2 * EDGE - 2 * INSET) / count));
-  const width = count * size + 2 * INSET;
-  const height = size + 2 * INSET;
-  const top = insets.top + EDGE;
-  const above = anchor.y - GAP - height;
-  const below = anchor.y + anchor.height + GAP;
-  const y =
-    above >= top ? above : below + height <= window.height - insets.bottom - EDGE ? below : top;
-  // The bar's edge on the message's side lines up with the message's, inside the window.
-  const fromLeft = (side === "start") !== I18nManager.isRTL;
-  const inside = (edge: number) => Math.min(Math.max(EDGE, edge), window.width - EDGE - width);
+  const { size } = placement;
   return (
     <Animated.View
       accessibilityRole="toolbar"
       accessibilityLabel={t("reaction.add")}
       accessibilityViewIsModal
-      entering={ZoomIn.springify()
-        .mass(pop.mass)
-        .stiffness(pop.stiffness)
-        .damping(pop.damping)
-        .withInitialValues({ transform: [{ scale: 0.9 }] })}
+      entering={popFrom()}
       exiting={ZoomOut.duration(motion.fast)}
       className="absolute flex-row rounded-pill border border-border bg-surface"
       style={{
-        top: y,
-        ...(fromLeft
-          ? { left: inside(anchor.x) }
-          : { right: inside(window.width - anchor.x - anchor.width) }),
+        top: placement.barY,
+        ...edge,
         padding: INSET - 1,
-        transformOrigin: `${y < anchor.y ? "bottom" : "top"} ${fromLeft ? "left" : "right"}`,
+        transformOrigin: origin,
         elevation: OVERLAY_ELEVATION,
       }}
     >

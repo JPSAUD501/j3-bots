@@ -70,6 +70,7 @@ const shown = (page: string) =>
       onOpenPair={() => {}}
       onOpenRoom={() => {}}
       onOpenBot={() => {}}
+      quotes={{ reveal: () => Promise.resolve("shown"), drafting: null }}
     />,
   );
 

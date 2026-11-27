@@ -10,17 +10,34 @@ export interface MentionName {
   readonly of: ConversationMention | null;
 }
 
+/**
+ * A part of a paragraph. `at` is where what it shows starts in the message's
+ * text, in UTF-16 code units: the text, code and link show that much of the
+ * text as written from there; a mention stands for `@` and its name from
+ * there. A selection of what a message shows maps back to its text by it.
+ */
 export type Inline =
-  | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "code"; readonly text: string }
-  | { readonly kind: "link"; readonly href: string; readonly text: string }
-  | { readonly kind: "mention"; readonly name: string; readonly of: ConversationMention | null }
+  | { readonly kind: "text"; readonly text: string; readonly at: number }
+  | { readonly kind: "code"; readonly text: string; readonly at: number }
+  | { readonly kind: "link"; readonly href: string; readonly text: string; readonly at: number }
+  | {
+      readonly kind: "mention";
+      readonly name: string;
+      readonly of: ConversationMention | null;
+      readonly at: number;
+    }
   /** The message's file of this index, where the operator placed it. */
   | { readonly kind: "file"; readonly index: number };
 
 export type Block =
   | { readonly kind: "paragraph"; readonly inlines: ReadonlyArray<Inline> }
-  | { readonly kind: "code"; readonly language: string | null; readonly text: string };
+  | {
+      readonly kind: "code";
+      readonly language: string | null;
+      readonly text: string;
+      /** Where `text` starts in the message's text, as an inline's `at`. */
+      readonly at: number;
+    };
 
 const FENCE = /^```([\w+-]*)\n([\s\S]*?)\n?```$/gm;
 // Inline code, or a web link. A link stops at a backtick, which opens code.
@@ -35,6 +52,8 @@ type Literal =
       readonly end: number;
       readonly language: string | null;
       readonly text: string;
+      /** Where `text` starts. */
+      readonly at: number;
     }
   | {
       readonly kind: "inline";
@@ -59,7 +78,7 @@ function literals(text: string): ReadonlyArray<Literal> {
           kind: "inline",
           start,
           end: start + whole.length,
-          inline: { kind: "code", text: code },
+          inline: { kind: "code", text: code, at: start + 1 },
         });
       } else if (url !== undefined) {
         let href = url.replace(TRAILING, "");
@@ -69,7 +88,7 @@ function literals(text: string): ReadonlyArray<Literal> {
           kind: "inline",
           start,
           end: start + href.length,
-          inline: { kind: "link", href, text: href },
+          inline: { kind: "link", href, text: href, at: start },
         });
       }
     }
@@ -83,6 +102,8 @@ function literals(text: string): ReadonlyArray<Literal> {
       end: fence.index + fence[0].length,
       language: fence[1] || null,
       text: fence[2] ?? "",
+      // After the backticks, the language and the line break.
+      at: fence.index + 3 + (fence[1]?.length ?? 0) + 1,
     });
     cursor = fence.index + fence[0].length;
   }
@@ -190,7 +211,7 @@ export function parseMessageText(
   for (const part of parts) {
     if (part.kind !== "fence") continue;
     paragraphs(cursor, part.start);
-    blocks.push({ kind: "code", language: part.language, text: part.text });
+    blocks.push({ kind: "code", language: part.language, text: part.text, at: part.at });
     cursor = part.end;
   }
   paragraphs(cursor, text.length);
@@ -212,11 +233,12 @@ function inlines(
 ): Inline[] {
   const out: Inline[] = [];
   const waiting = [...files];
-  const pushText = (s: string) => {
+  // Text pushed in a row is a run of the message's text: it starts where the first did.
+  const pushText = (s: string, at: number) => {
     if (s === "") return;
     const last = out.at(-1);
-    if (last?.kind === "text") out[out.length - 1] = { kind: "text", text: last.text + s };
-    else out.push({ kind: "text", text: s });
+    if (last?.kind === "text") out[out.length - 1] = { ...last, text: last.text + s };
+    else out.push({ kind: "text", text: s, at });
   };
   /** Plain text of `[start, end)`, with the files that stand up to `end`. */
   const plain = (start: number, end: number) => {
@@ -224,11 +246,11 @@ function inlines(
     for (let next = waiting[0]; next !== undefined && next.at <= end; next = waiting[0]) {
       waiting.shift();
       const at = Math.max(next.at, cursor);
-      pushText(text.slice(cursor, at));
+      pushText(text.slice(cursor, at), cursor);
       out.push({ kind: "file", index: next.index });
       cursor = at;
     }
-    pushText(text.slice(cursor, end));
+    pushText(text.slice(cursor, end), cursor);
   };
   const prose = (start: number, end: number) => {
     let cursor = start;
@@ -242,7 +264,7 @@ function inlines(
       );
       if (found === undefined) continue;
       plain(cursor, at);
-      out.push({ kind: "mention", name: found.name, of: found.of });
+      out.push({ kind: "mention", name: found.name, of: found.of, at });
       cursor = at + 1 + found.name.length;
     }
     plain(cursor, end);

@@ -3,6 +3,7 @@ import { messageStatus } from "@j3-bots/client-runtime";
 import {
   canReact,
   type GroupPosition,
+  isQuotable,
   lookingAtLine,
   type MentionName,
   type OpeningHold,
@@ -11,6 +12,7 @@ import {
 import { deliveryLine, type RefusedMentions } from "@j3-bots/client-runtime/wording";
 import type { Avatar, BotId } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { Reply, TextQuote } from "lucide-react-native";
 import {
   type ComponentProps,
   type ComponentRef,
@@ -36,8 +38,16 @@ import { usePresentation } from "../presentation.tsx";
 
 import { FileLongPress, MessageFile } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
-import { ReactionPills, type ReactionTarget, useReacting } from "./Reactions.tsx";
+import { QuoteCards } from "./QuoteCards.tsx";
+import { useHighlight, useQuoting } from "./Quotes.tsx";
+import {
+  type MessageAction,
+  ReactionPills,
+  type ReactionTarget,
+  useReacting,
+} from "./Reactions.tsx";
 import { Speaker, speakerGutter } from "./Speaker.tsx";
+import { SwipeToReply } from "./SwipeToReply.tsx";
 import { VisualCard } from "./VisualCard.tsx";
 import { AnimatedView } from "./animated.ts";
 import { useTint } from "./tint.ts";
@@ -144,7 +154,10 @@ function LineAction(props: {
  * that failed offers Send again, and one this device could not send offers
  * Delete too. A long press on a message the server keeps with its reactions
  * opens the quick bar to react to it, over its words drawn again, where they
- * can be selected.
+ * can be selected. Where quotes are offered, the same menu replies to the
+ * message or quotes part of it, and a swipe toward the reading direction
+ * replies too. Above its words, the messages it quotes. The message a quote
+ * leads to is highlighted for a moment.
  */
 export function MessageBubble({
   message,
@@ -212,6 +225,27 @@ export function MessageBubble({
       ? { entryId: message.id, reactions: message.reactions }
       : null;
   const side = fromOperator ? "end" : "start";
+  const quoting = useQuoting();
+  const quotable =
+    message._tag === "message" && quoting.offered && isQuotable(message) ? message : null;
+  const reply = quotable === null ? null : () => quoting.reply(quotable);
+  const actions: ReadonlyArray<MessageAction> =
+    quotable === null
+      ? []
+      : [
+          { label: t("quote.reply"), icon: Reply, onPress: () => quoting.reply(quotable) },
+          // A message of files alone has no words to quote part of.
+          ...(quotable.text.trim() === ""
+            ? []
+            : [
+                {
+                  label: t("quote.quotePart"),
+                  icon: TextQuote,
+                  onPress: () => quoting.quotePart(quotable),
+                },
+              ]),
+        ];
+  const highlight = useHighlight(message._tag === "message" ? message.id : null);
   const messageView = useRef<ComponentRef<typeof Pressable>>(null);
   const wordsView = useRef<ComponentRef<typeof View>>(null);
   // The bubble with the message's words, which a long press draws again over the quick bar's scrim.
@@ -259,6 +293,7 @@ export function MessageBubble({
   // scrim, so selecting and reacting never answer the same press.
   const said = (
     <>
+      <QuoteCards quotes={message.quotes ?? []} side={side} maxWidth={bubbleWidth} />
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard id={message.id} visual={message.visual} />
       )}
@@ -275,7 +310,7 @@ export function MessageBubble({
     feelLongPress();
     messageView.current?.measureInWindow((x, y, width, height) => {
       const open = (preview: ReactionTarget["preview"]) =>
-        reacting.open({ ...reactable, anchor: { x, y, width, height }, side, preview });
+        reacting.open({ ...reactable, anchor: { x, y, width, height }, side, preview, actions });
       const shown = wordsView.current;
       if (shown === null) {
         open(null);
@@ -295,9 +330,13 @@ export function MessageBubble({
     ) : (
       <Pressable
         ref={messageView}
-        accessibilityActions={[{ name: "longpress", label: t("reaction.add") }]}
+        accessibilityActions={[
+          { name: "longpress", label: t("reaction.add") },
+          ...(reply === null ? [] : [{ name: "reply", label: t("quote.reply") }]),
+        ]}
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === "longpress") openBar();
+          if (event.nativeEvent.actionName === "reply") reply?.();
         }}
         onLongPress={openBar}
         className={`gap-1 self-stretch ${fromOperator ? "items-end" : "items-start"}`}
@@ -318,21 +357,32 @@ export function MessageBubble({
       style={[motion.row, { transformOrigin: fromOperator ? "right bottom" : "left bottom" }]}
       className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-2" : "mt-0.5"}`}
     >
-      {speaker === null ? (
-        <>
-          {body}
-          {pills}
-        </>
-      ) : (
-        // One child of the row, so its gap stays out of the speaker's name and face, and as wide
-        // as the row, so a visual stretches across it as in a bot's own conversation.
-        <View className="self-stretch">
-          <Speaker botId={speaker} position={position}>
+      {/* The highlight of a message a quote led to, across the row, behind it. */}
+      <AnimatedView
+        pointerEvents="none"
+        style={highlight}
+        className="absolute inset-0 bg-accent/12"
+      />
+      <SwipeToReply
+        onReply={reply}
+        className={`gap-1 ${fromOperator ? "items-end" : "items-start"}`}
+      >
+        {speaker === null ? (
+          <>
             {body}
             {pills}
-          </Speaker>
-        </View>
-      )}
+          </>
+        ) : (
+          // One child, so the gap stays out of the speaker's name and face, and as wide as the row,
+          // so a visual stretches across it as in a bot's own conversation.
+          <View className="self-stretch">
+            <Speaker botId={speaker} position={position}>
+              {body}
+              {pills}
+            </Speaker>
+          </View>
+        )}
+      </SwipeToReply>
       {fromOperator && message.lookingAt !== undefined && (
         // The window the operator wrote it over, from the desktop app's quick access.
         <Text

@@ -219,6 +219,10 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
     },
+    revealEntry: (asked, entryId) =>
+      viewKey !== null && targetKey(asked) === viewKey
+        ? conversation.reveal(entryId)
+        : Promise.resolve("unreachable"),
     markRead: (asked, through) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },

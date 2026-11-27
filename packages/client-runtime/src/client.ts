@@ -47,6 +47,7 @@ import type {
   ReactionEmoji,
   Room,
   RoomId,
+  MessageQuote,
   RosterItem,
   Routine,
   RoutineId,
@@ -181,10 +182,18 @@ export interface SecretsHandle {
   readonly totpPreview: (id: SecretId) => Promise<Secrets.SecretsResult<TotpPreview>>;
 }
 
+/** What reading back to an entry ends with once its conversation is let go. */
+const unreachable: Conversations.Revealed = "unreachable";
+
 export interface ConversationHandle {
   readonly target: EntryTarget;
   readonly state: Readable<Conversations.ConversationState>;
   readonly loadOlder: () => void;
+  /**
+   * Reads back until the entry `entryId` is held, as for the source of a
+   * quote: `unreachable` too when the handle was released first.
+   */
+  readonly reveal: (entryId: EntryId) => Promise<Conversations.Revealed>;
   /** Moves the read mark forward to `through`, the newest entry the operator has seen. */
   readonly markRead: (through: EntryOrder) => void;
   /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
@@ -359,6 +368,8 @@ export interface J3Client {
   readonly sections: Readable<ReadonlyArray<RosterSection> | null>;
   /** See `Roster.conversationMentions`: whether `@` is offered in a bot's conversation. */
   readonly conversationMentions: Readable<boolean>;
+  /** See `Roster.quotes`: whether Reply and Quote are offered. */
+  readonly quotes: Readable<boolean>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
   /** Each section of Settings' latest save, under way or how it ended. */
@@ -446,6 +457,13 @@ export interface J3Client {
     at?: number,
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
+  /**
+   * Adds a reply or a passage to the draft's quotes (`Drafts.quote`): `full`
+   * when it quotes all a message can, and nothing changed.
+   */
+  readonly quoteInDraft: (target: EntryTarget, quote: MessageQuote) => "added" | "full" | "not-now";
+  /** Takes the draft's quote at `index` out. */
+  readonly unquoteInDraft: (target: EntryTarget, index: number) => void;
   /**
    * Sends the draft once and clears it. `addressing` is whom a room message
    * wakes, or what a message in a bot's conversation mentions; leaving it out
@@ -835,6 +853,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     roster: services.roster.state,
     sections: services.roster.sections,
     conversationMentions: services.roster.conversationMentions,
+    quotes: services.roster.quotes,
     pairs: services.pairs.state,
     engine: services.engine.state,
     settings: services.settings.state,
@@ -853,12 +872,22 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     openConversation: (target) => {
       const { value, release } = hold(conversations.open(target));
+      const released = run.sync(Deferred.make<void>());
       return {
         target,
         state: value.state,
         loadOlder: () => fire(value.loadOlder),
+        reveal: (entryId) =>
+          run.promise(
+            value
+              .reveal(entryId)
+              .pipe(Effect.raceFirst(Effect.as(Deferred.await(released), unreachable))),
+          ),
         markRead: (through) => fire(value.markRead(through)),
-        release,
+        release: () => {
+          run.sync(Deferred.succeed(released, undefined));
+          release();
+        },
       };
     },
     openPair: (botIds) => {
@@ -923,6 +952,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       run.sync(services.drafts.setText(target, text, mentions, order)),
     attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
+    quoteInDraft: (target, quote) => run.sync(services.drafts.quote(target, quote)),
+    unquoteInDraft: (target, index) => run.sync(services.drafts.unquote(target, index)),
     sendDraft: (target, addressing, context) =>
       run.promise(
         services.drafts.send(

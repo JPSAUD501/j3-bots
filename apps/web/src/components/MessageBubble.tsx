@@ -22,6 +22,7 @@ import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { FaceOf } from "./avatar/TeamAvatars";
 import { MessageFile } from "./FileCard";
 import { MessageText } from "./MessageText";
+import { ReplyButton, SentQuotes } from "./Quotes";
 import { type OnReact, ReactButton, ReactionPills, type ReactionView } from "./Reactions";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
@@ -97,6 +98,14 @@ interface MessageBubbleProps {
   readonly onReact?: OnReact;
   /** The reaction bar shown open from the start, as the gallery does. */
   readonly reactionView?: ReactionView;
+  /**
+   * Reply: quotes the message whole in the draft. Without it, as on a server
+   * that takes no quotes or where the operator cannot write, it offers none.
+   * `full` when the draft quotes all a message can.
+   */
+  readonly reply?: { readonly onReply: () => void; readonly full: boolean };
+  /** The message lit as the source of a quote, still, as the gallery shows it. */
+  readonly sourceLit?: boolean;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left in a tint of its color. */
@@ -117,6 +126,8 @@ export function MessageBubble({
   openingHold = null,
   onReact,
   reactionView,
+  reply,
+  sourceLit = false,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -137,6 +148,7 @@ export function MessageBubble({
     message._tag === "message" && canReact(message) && onReact !== undefined
       ? { reactions: message.reactions ?? [], onReact }
       : null;
+  const quotes = message.quotes ?? [];
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
@@ -211,14 +223,17 @@ export function MessageBubble({
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard visual={message.visual} />
       )}
-      {/* The bubble's width is set here, so the button that opens the reaction bar can stand
-          just outside it. */}
+      {/* The bubble's width is set here, so Reply and React can stand just outside it. A quote's
+          card lights it as the message it went to. */}
       <div
+        data-quote-target=""
+        {...(sourceLit ? { "data-quote-source": "still" } : {})}
         className={cn(
           "relative flex max-w-(--layout-bubble-width) flex-col gap-1 empty:hidden",
           fromOperator ? "items-end" : "items-start",
         )}
       >
+        {quotes.length > 0 && <SentQuotes quotes={quotes} fromOperator={fromOperator} />}
         {message.text !== "" && (
           <div
             ref={bubbleRef}
@@ -240,6 +255,7 @@ export function MessageBubble({
             <MessageText
               text={message.text}
               mentionable={mentionable ?? []}
+              {...(message._tag === "message" ? { quoteId: message.id } : {})}
               {...(placed === null
                 ? {}
                 : {
@@ -261,12 +277,23 @@ export function MessageBubble({
               onOpen={() => onOpenAttachment(attachment)}
             />
           ))}
-        {reacting !== null && (
-          <ReactButton
-            {...reacting}
-            fromOperator={fromOperator}
-            {...(reactionView === undefined ? {} : { defaultView: reactionView })}
-          />
+        {(reacting !== null || reply !== undefined) && (
+          // Beside the bubble's last line: before the operator's, after a bot's, React nearest.
+          <div
+            className={cn(
+              "absolute bottom-0.5 flex items-center gap-0.5",
+              fromOperator ? "end-full me-1.5 flex-row-reverse" : "start-full ms-1.5",
+            )}
+          >
+            {reacting !== null && (
+              <ReactButton
+                {...reacting}
+                fromOperator={fromOperator}
+                {...(reactionView === undefined ? {} : { defaultView: reactionView })}
+              />
+            )}
+            {reply !== undefined && <ReplyButton {...reply} />}
+          </div>
         )}
       </div>
       {reacting !== null && <ReactionPills {...reacting} fromOperator={fromOperator} />}

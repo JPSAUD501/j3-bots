@@ -18,6 +18,7 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import { RosterProvider, useI18n, usePresentation } from "../app/context";
 import { AvatarConnection, LiveBotAvatar } from "../components/avatar/mood";
+import { focusAtEnd } from "../components/Composer";
 import { DraftComposer } from "../components/DraftComposer";
 import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
 import { toneClass } from "../components/RosterRow";
@@ -46,6 +47,7 @@ export type QuickAccessData = Pick<
   | "draftsFailed"
   | "draftNotSaved"
   | "conversationMentions"
+  | "quotes"
   | "connectors"
   | "submitting"
   | "workSteps"
@@ -61,6 +63,8 @@ export type QuickAccessIntents = TimelineIntents &
     | "setDraftText"
     | "attachFiles"
     | "detachFile"
+    | "quoteInDraft"
+    | "unquoteInDraft"
     | "sendDraft"
     | "retryDrafts"
     | "restoreDraft"
@@ -68,6 +72,7 @@ export type QuickAccessIntents = TimelineIntents &
     | "connectorPrompts"
     | "renderPrompt"
     | "loadOlder"
+    | "revealEntry"
     | "markRead"
     | "setShown"
     | "stopBot"
@@ -423,6 +428,19 @@ export function QuickAccess({
                         onOpenPair={onOpenPair}
                         onOpenRoom={onOpenRoom}
                         onOpenBot={onOpenBot}
+                        quotes={{
+                          reveal: (entryId) => intents.revealEntry(target, entryId),
+                          drafting: data.quotes
+                            ? {
+                                drafted: data.draft(target).quotes,
+                                quote: (quote) => {
+                                  if (intents.quoteInDraft(target, quote) === "added") {
+                                    focusAtEnd(composerRef.current);
+                                  }
+                                },
+                              }
+                            : null,
+                        }}
                       />
                     </div>
                   </div>

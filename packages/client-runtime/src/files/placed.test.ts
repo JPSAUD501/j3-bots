@@ -14,7 +14,19 @@ describe("a draft's placed files", () => {
     const sent = placedMessage(draft);
     expect(sent.text).toBe("Compare  with , then\n\n\nread `the notes`");
     expect(sent.offsets).toEqual([8, 8, 14, 22, 33]);
-    expect(parseMessageText(sent.text, [], sent.offsets)).toEqual([
+    const shown = parseMessageText(sent.text, [], sent.offsets).map((block) =>
+      block.kind === "code"
+        ? block
+        : {
+            kind: block.kind,
+            inlines: block.inlines.map((inline) => {
+              if (inline.kind === "file") return inline;
+              const { at: _at, ...rest } = inline;
+              return rest;
+            }),
+          },
+    );
+    expect(shown).toEqual([
       {
         kind: "paragraph",
         inlines: [

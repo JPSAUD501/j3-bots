@@ -87,6 +87,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
 | [0091](0091-a-share-goes-straight-to-a-bot-and-a-widget-keeps-one-in-sight.md) | A share goes straight to a bot, and a widget keeps one in sight | Accepted |
 | [0092](0092-a-mention-in-a-bots-conversation-points-and-delivers-nothing.md) | A mention in a bot's conversation points, and delivers nothing | Accepted |
+| [0094](0094-a-message-quotes-messages-a-reply-whole-a-quote-a-passage.md) | A message quotes messages: a reply whole, a quote a passage | Accepted |
 | [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) | Little ones a turn handed off stay until they are home | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

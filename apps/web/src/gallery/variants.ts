@@ -35,6 +35,7 @@ import {
   CuratedKey,
   type HandoffEntry,
   type MessageEntry,
+  type MessageQuote,
   type NoticeEntry,
   type QuestionEntry,
   type QuestionOption,
@@ -71,7 +72,10 @@ export function galleryVariants(now: DateTime.Utc) {
     author: Author,
     text: string,
     extra: Partial<
-      Pick<MessageEntry, "attachments" | "delivery" | "visual" | "lookingAt" | "reactions">
+      Pick<
+        MessageEntry,
+        "attachments" | "delivery" | "visual" | "lookingAt" | "reactions" | "quotes"
+      >
     > = {},
   ): MessageEntry => ({
     _tag: "message",
@@ -84,6 +88,7 @@ export function galleryVariants(now: DateTime.Utc) {
     ...(extra.visual === undefined ? {} : { visual: extra.visual }),
     ...(extra.lookingAt === undefined ? {} : { lookingAt: extra.lookingAt }),
     ...(extra.reactions === undefined ? {} : { reactions: extra.reactions }),
+    ...(extra.quotes === undefined ? {} : { quotes: extra.quotes }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -233,6 +238,83 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
     // The same message once the operator took their 🎉 off.
     removed: message("reacted-removed", scout, scoutNews, { reactions: othersOnScout }),
+  };
+
+  /**
+   * Replies and quotes (decision 0094): a reply quotes Scout's news whole; two
+   * passages quote it and Wren's note; in the room Wren replies to Juniper;
+   * and a reply to a message deleted since.
+   */
+  const quoteOf = (source: MessageEntry, quoted: MessageQuote["quoted"]): MessageQuote => ({
+    entryId: source.id,
+    author: source.author._tag === "bot" ? bot(source.author.botId) : operator,
+    saidAt: source.createdAt,
+    quoted,
+  });
+  const scoutSource = message("quoted-scout", scout, scoutNews);
+  const wrenNote = message(
+    "quoted-wren",
+    bot(ids.wren),
+    "Saturday works for me too. I can bring the helmet and the lock if you need them.",
+  );
+  const juniperDraft = message(
+    "quoted-juniper",
+    bot(ids.juniper),
+    "Here is the first draft of the intro: three short paragraphs, the photo after the second.",
+  );
+  const replyToScout = quoteOf(scoutSource, {
+    _tag: "message",
+    opening: "The Torra is in stock. The shop holds one for your test ride on Saturday",
+    more: true,
+  });
+  const quotes = {
+    source: scoutSource,
+    wrenNote,
+    replyToScout,
+    passages: [
+      quoteOf(scoutSource, { _tag: "passage", text: "test ride on Saturday at 10" }),
+      quoteOf(wrenNote, { _tag: "passage", text: "I can bring the helmet and the lock" }),
+    ],
+    reply: message("quoting-reply", operator, "Great, book it. Can it be at 11 instead?", {
+      quotes: [replyToScout],
+    }),
+    twoPassages: message(
+      "quoting-passages",
+      operator,
+      "Let’s go with this, and Wren brings the gear.",
+      {
+        quotes: [
+          quoteOf(scoutSource, { _tag: "passage", text: "test ride on Saturday at 10" }),
+          quoteOf(wrenNote, { _tag: "passage", text: "I can bring the helmet and the lock" }),
+        ],
+      },
+    ),
+    roomReply: message(
+      "quoting-room",
+      bot(ids.wren),
+      "Reads well. I’d move the photo up, so it opens the second paragraph.",
+      {
+        quotes: [
+          quoteOf(juniperDraft, {
+            _tag: "message",
+            opening: "Here is the first draft of the intro: three short paragraphs, the photo",
+            more: true,
+          }),
+        ],
+      },
+    ),
+    juniperDraft,
+    // Its source was deleted since: going to it says so in place.
+    missing: message("quoting-missing", operator, "Is this still the plan?", {
+      quotes: [
+        {
+          entryId: id("quoted-deleted"),
+          author: bot(ids.atlas),
+          saidAt: ago(60),
+          quoted: { _tag: "message", opening: "Moving the meetup to the café", more: false },
+        },
+      ],
+    }),
   };
 
   const embeddingVisual = message(
@@ -1294,6 +1376,7 @@ export function galleryVariants(now: DateTime.Utc) {
     escapingVisual,
     embeddingVisual,
     reactions,
+    quotes,
     questions,
     approvals,
     approvalBecomingExact,

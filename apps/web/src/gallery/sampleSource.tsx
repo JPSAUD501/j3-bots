@@ -25,6 +25,7 @@ import {
   type SettingsPage,
   showsImage,
   withoutMarks,
+  withQuote,
 } from "@j3-bots/client-runtime/presentation";
 import {
   type Attachment,
@@ -105,7 +106,7 @@ export const sampleProviderActions: ProviderActions = {
   cancelInstall: () => Promise.resolve(true),
 };
 
-const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
+const blankDraft: Draft = { text: "", mentions: [], quotes: [], files: [], sending: false };
 
 /** How long a new bot takes to say hello, from its creation. */
 const OPENING_DELAY = 3200;
@@ -512,6 +513,14 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           files: draft.files.filter((file) => file.key !== key),
         };
       }),
+    quoteInDraft: (target, quote) => {
+      const quotes = withQuote((get().drafts[keyOf(target)] ?? blankDraft).quotes, quote);
+      if (quotes === "full") return "full";
+      changeDraft(target, (draft) => ({ ...draft, quotes }));
+      return "added";
+    },
+    unquoteInDraft: (target, index) =>
+      changeDraft(target, (draft) => ({ ...draft, quotes: draft.quotes.toSpliced(index, 1) })),
     restoreDraft: nothing,
     retryDrafts: () => Promise.resolve(true),
     dismissDraftOffer: nothing,
@@ -540,6 +549,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
               attachments.length === 0 ? undefined : offsets,
             ),
             ...(named.length === 0 ? {} : { conversationMentions: named }),
+            ...(draft.quotes.length === 0 ? {} : { quotes: draft.quotes }),
           }),
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
@@ -808,6 +818,13 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     openConversation: nothing,
     openMemoryFile: nothing,
     loadOlder: nothing,
+    // Every sample entry is held: a quoted one shows at once, or was deleted.
+    revealEntry: (target, entryId) =>
+      Promise.resolve(
+        (get().entries[keyOf(target)] ?? []).some((entry) => entry.id === entryId)
+          ? "shown"
+          : "missing",
+      ),
     loadOlderPair: nothing,
     // Every sample message is held: the one a card names is found at once.
     revealInPair: (botIds, entryId) =>
@@ -934,6 +951,7 @@ function toData(state: State, secrets: SecretsView): ShellData {
     roster: state.roster,
     sections: state.sections,
     conversationMentions: true,
+    quotes: true,
     conversation: (target) => ({
       phase: "ready",
       items: state.entries[keyOf(target)] ?? [],

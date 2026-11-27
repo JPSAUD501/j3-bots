@@ -19,6 +19,7 @@ const idle: Parameters<typeof savesUnderWay>[0] = {
 const draft = (change: Partial<Draft>): Draft => ({
   text: "Hello",
   mentions: [],
+  quotes: [],
   files: [],
   sending: false,
   ...change,

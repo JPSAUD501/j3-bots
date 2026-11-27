@@ -209,6 +209,13 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
      * sends one.
      */
     "reaction",
+    /**
+     * A message's quotes: one of anything but a message of its conversation
+     * or room, a passage not in its message's text, one twice, or more than
+     * one reply. Only `message.send`'s `quotes`, new in 0.14.0, names it: an
+     * older client never sends one.
+     */
+    "quotes",
   ]),
 }) {
   override get message(): string {

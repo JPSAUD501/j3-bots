@@ -35,9 +35,10 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
       return "message.sending";
     case "not-sent":
       // Too long for the bot's engine is the one refusal the client cannot foresee and the operator can act on.
-      return refusedWith(status.failure, "message-length")
-        ? "message.notSent.tooLong"
-        : notSentKeys[status.failure._tag];
+      if (refusedWith(status.failure, "message-length")) return "message.notSent.tooLong";
+      // A message it quotes moved, as a room's message after the room was deleted.
+      if (refusedWith(status.failure, "quotes")) return "message.notSent.quotes";
+      return notSentKeys[status.failure._tag];
     case "unrecorded":
       return "message.unrecorded";
     case "queued":

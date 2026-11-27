@@ -435,6 +435,58 @@
       animation: none;
     }
   }
+
+  /*
+   * The message a quote's card went to (Quotes.tsx, `lightSource`): a ring in
+   * the accent shows, holds while the eye finds it, and fades. It moves
+   * nothing, so reduced motion keeps it. The gallery shows it `still`.
+   */
+  [data-quote-source]::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: calc(var(--radius-bubble) + 4px);
+    box-shadow:
+      0 0 0 2px color-mix(in oklab, var(--accent) 75%, transparent),
+      0 0 0 6px color-mix(in oklab, var(--accent) 16%, transparent);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  [data-quote-source="lit"]::after {
+    --quote-source-hold: 1.2s;
+    animation:
+      quote-source-in var(--duration-state) var(--ease-out) both,
+      quote-source-out var(--duration-slow) var(--ease-out) var(--quote-source-hold) forwards;
+  }
+
+  [data-quote-source="still"]::after {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-quote-source="lit"]::after {
+      animation-duration: var(--duration-state), var(--duration-slow) !important;
+    }
+  }
+}
+
+@keyframes quote-source-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes quote-source-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 /*

@@ -76,6 +76,11 @@ export class Roster extends Context.Service<
      * client offer `@` there.
      */
     readonly conversationMentions: Readable<boolean>;
+    /**
+     * Whether the server takes quotes on a message, as its latest roster
+     * snapshot says. Only then does a client offer Reply and Quote.
+     */
+    readonly quotes: Readable<boolean>;
     /** Pins, hides, makes primary or moves the bot between sections. */
     readonly placeBot: (botId: BotId, placement: BotPlacement) => Effect.Effect<IntentResult<Bot>>;
     /**
@@ -128,6 +133,7 @@ export const layer = Layer.effect(
     const state = new Cell<Synced<ReadonlyArray<RosterItem>>>(loading);
     const sections = new Cell<ReadonlyArray<Section> | null>(null);
     const conversationMentions = new Cell(false);
+    const quotes = new Cell(false);
 
     yield* connection
       .eachSession((client) =>
@@ -149,6 +155,7 @@ export const layer = Layer.effect(
                   if (frame._tag === "snapshot") {
                     sections.set(frame.sections ?? null);
                     conversationMentions.set(frame.conversationMentions === true);
+                    quotes.set(frame.quotes === true);
                     return state.set(ready(frame.items));
                   }
                   if (frame.sections !== undefined) sections.set(frame.sections);
@@ -257,6 +264,7 @@ export const layer = Layer.effect(
       state,
       sections,
       conversationMentions,
+      quotes,
       stop,
       stopRoom,
       forceStop,

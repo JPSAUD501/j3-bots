@@ -11,6 +11,7 @@ import type {
   Mentions,
   EntryId,
   ListingRef,
+  MessageQuote,
   QuestionAnswers,
   ReactionEmoji,
   Room,
@@ -19,16 +20,21 @@ import type {
   WorkImageId,
   WorkStep,
 } from "@j3-bots/contracts";
-import type { ReactNode, RefObject } from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type {
   IntentResult,
   MentionLabel,
   Readdressing,
+  Revealed,
   RoutineCardCommand,
 } from "@j3-bots/client-runtime";
 import {
   type CardEntry,
   conversationMentionables,
+  isQuotable,
+  type QuotableMessage,
+  takesReply,
+  replyTo,
   conversationMentionNames,
   mentionLabel,
   latestOfLine,
@@ -45,6 +51,7 @@ import {
 import { useBots, useI18n, useRooms } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
+import { reducedMotion } from "../lib/motion";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConnectorAuthCard } from "./connectors/ConnectorCards";
 import { ConnectorAskCard } from "./connectors/ConnectorAskCard";
@@ -56,6 +63,8 @@ import { OpenMention } from "./MentionChip";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
+import { QuoteOnSelection } from "./QuoteOnSelection";
+import { type GoToQuote, lightSource, OpenQuote } from "./Quotes";
 import { RoutineTrack } from "./RoutineTrack";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretAskCard } from "./SecretAskCard";
@@ -117,6 +126,25 @@ export interface TimelineIntents {
   readonly connectorApp: ConnectorAppAccess;
 }
 
+/**
+ * Reply and Quote (decision 0094), which add to the draft of the conversation
+ * shown, where the server takes quotes and the operator can write there.
+ */
+export interface QuoteDrafting {
+  /** What the draft quotes now. */
+  readonly drafted: ReadonlyArray<MessageQuote>;
+  /** Adds a reply or a passage to the draft, and takes the operator to the composer. */
+  readonly quote: (quote: MessageQuote) => void;
+}
+
+/** What a timeline does with quotes. */
+interface TimelineQuotes {
+  /** Reads back until the quoted message `entryId` is held, which a card then goes to. */
+  readonly reveal: (entryId: EntryId) => Promise<Revealed>;
+  /** Null where Reply and Quote are not offered. */
+  readonly drafting: QuoteDrafting | null;
+}
+
 interface TimelineProps {
   /**
    * The conversation's rows (`buildTimeline`): entries oldest first, then the
@@ -155,6 +183,7 @@ interface TimelineProps {
   readonly onOpenRoom: (roomId: RoomId) => void;
   /** Opens the conversation of the bot a mention names. */
   readonly onOpenBot: (botId: BotId) => void;
+  readonly quotes: TimelineQuotes;
 }
 
 /**
@@ -176,6 +205,7 @@ export function Timeline({
   onOpenPair,
   onOpenRoom,
   onOpenBot,
+  quotes,
 }: TimelineProps) {
   const bots = useBots();
   const rooms = useRooms();
@@ -198,163 +228,224 @@ export function Timeline({
       : mentionedNames(message.mentions, labels, nameOf);
   const openMention = (named: ConversationMention) =>
     named._tag === "bot" ? onOpenBot(named.botId) : onOpenRoom(named.roomId);
+
+  // The messages that can be quoted, by id, for a selection of their text.
+  const quotable = new Map<string, QuotableMessage>();
+  for (const item of rows) {
+    if (item.kind === "message" && item.message._tag === "message" && isQuotable(item.message)) {
+      quotable.set(item.message.id, item.message);
+    }
+  }
+  const { drafting } = quotes;
+  // A reply replaces the draft's own, and takes no room when every quote is a passage.
+  const replyFull = drafting !== null && !takesReply(drafting.drafted);
+
+  // A quote's card reads back to its message, then brings it into view, once its row is drawn,
+  // and lights it.
+  const own = useRef<HTMLDivElement>(null);
+  const [goingTo, setGoingTo] = useState<EntryId | null>(null);
+  const goToQuote: GoToQuote = (entryId) =>
+    quotes.reveal(entryId).then((revealed) => {
+      if (revealed === "shown") setGoingTo(entryId);
+      return revealed;
+    });
+  const goingToRow =
+    goingTo !== null &&
+    rows.some(
+      (item) =>
+        item.kind === "message" && item.message._tag === "message" && item.message.id === goingTo,
+    )
+      ? goingTo
+      : null;
+  useLayoutEffect(() => {
+    if (goingToRow === null) return;
+    const row = own.current?.querySelector(`[data-seen-id="${CSS.escape(goingToRow)}"]`);
+    if (row === null || row === undefined) return;
+    row.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    const bubble = row.firstElementChild;
+    if (bubble instanceof HTMLElement) bubble.focus({ preventScroll: true });
+    lightSource(row);
+    setGoingTo(null);
+  }, [goingToRow]);
+
   return (
     <OpenMention value={openMention}>
-      <div className="flex flex-col">
-        {rows.map((item) => {
-          const arriving = arrived?.has(item.key) === true;
-          // What is not a message settles in as it mounts; a message moves itself.
-          const settles = cn(arriving && "arrive origin-bottom-left");
-          if (item.kind === "divider") {
-            return (
-              <div key={item.key} className={settles}>
-                <TimeDivider at={item.at} />
-              </div>
-            );
-          }
-          if (item.kind === "work") {
-            const { fold } = item;
-            return (
-              <div
-                key={item.key}
-                {...(fold === null ? {} : { "data-seen-id": fold.id })}
-                className={cn(arriving && "arrive-pop origin-left")}
-              >
-                <WorkFold
-                  fold={fold}
-                  live={item.live ? turnBot : null}
-                  {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
-                  steps={fold === null ? null : workSteps(fold.id)}
-                  onOpenImage={intents.openWorkImage}
-                  onOpenChange={(open) => {
-                    if (fold === null) return;
-                    if (open) intents.openWorkFold(fold.id);
-                    else intents.closeWorkFold(fold.id);
-                  }}
-                />
-                {fold !== null && <ConnectorApps apps={fold.apps} access={intents.connectorApp} />}
-              </div>
-            );
-          }
-          if (item.kind === "event") {
-            return (
-              <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
-                <EventLine
-                  line={item.line}
-                  room={room?.id ?? null}
-                  onOpenRoutine={intents.openRoutine}
-                  onOpenPair={onOpenPair}
-                  onOpenRoom={onOpenRoom}
-                />
-              </div>
-            );
-          }
-          if (item.kind === "unknown") {
-            return (
-              <div key={item.key} data-seen-id={item.id} className={settles}>
-                <NeedsUpdateLine />
-              </div>
-            );
-          }
-          if (item.kind === "message") {
-            const { message } = item;
-            // One element, under one key, from Send to the server's entry, so
-            // nothing in the bubble loses focus when the entry arrives; the entry
-            // id it gains then makes it count toward the read mark.
-            if (message._tag === "outgoing") {
-              const { status, target } = message;
-              const left =
-                room === null || status._tag !== "not-sent"
-                  ? null
-                  : mentionedWhoLeft(status.failure, message.mentions, room.members);
-              // Refused in a bot's conversation for what it mentions: Retry leaves out what `@`
-              // no longer offers there, as a room archived since the pick.
-              const noLonger =
-                target._tag !== "conversation" || status._tag !== "not-sent"
-                  ? null
-                  : namedNoLonger(
-                      status.failure,
-                      message.conversationMentions,
-                      conversationMentionables(
-                        target.botId,
-                        [...bots.values()],
-                        [...rooms.values()],
-                      ),
-                    );
-              // A member who left is named as the operator picked it, which the message keeps.
-              const labelOf = (botId: BotId) =>
-                message.labels.find((label) => "botId" in label && label.botId === botId)?.label ??
-                nameOf(botId) ??
-                t("bot.unknown");
+      <OpenQuote value={goToQuote}>
+        <div ref={own} className="flex flex-col">
+          {rows.map((item) => {
+            const arriving = arrived?.has(item.key) === true;
+            // What is not a message settles in as it mounts; a message moves itself.
+            const settles = cn(arriving && "arrive origin-bottom-left");
+            if (item.kind === "divider") {
               return (
-                <div key={item.key}>
-                  <MessageBubble
-                    message={message}
-                    position={item.position}
-                    arriving={arriving}
-                    {...(flyFrom === undefined ? {} : { flyFrom })}
-                    mentionable={highlighted(message, message.labels)}
-                    onOpenAttachment={intents.openAttachment}
-                    onRetry={() =>
-                      left !== null
-                        ? intents.resendMessage(message.commandId, { mentions: left.without })
-                        : noLonger !== null
-                          ? intents.resendMessage(message.commandId, noLonger.without)
-                          : intents.resendMessage(message.commandId)
-                    }
-                    onDiscard={() => intents.discardMessage(message.commandId)}
-                    {...(left !== null && room !== null
-                      ? {
-                          refusedMentions: { _tag: "left-room", names: left.left.map(labelOf) },
-                          retryLabel: resendLabel(left.without, nameOf, i18n),
-                        }
-                      : noLonger !== null
-                        ? {
-                            refusedMentions: {
-                              _tag: "not-mentionable",
-                              names: noLonger.gone.map(
-                                (of) =>
-                                  mentionLabel(of, message.labels, nameOfNamed) ??
-                                  t(of._tag === "bot" ? "bot.unknown" : "room.unknown"),
-                              ),
-                            },
-                          }
-                        : {})}
+                <div key={item.key} className={settles}>
+                  <TimeDivider at={item.at} />
+                </div>
+              );
+            }
+            if (item.kind === "work") {
+              const { fold } = item;
+              return (
+                <div
+                  key={item.key}
+                  {...(fold === null ? {} : { "data-seen-id": fold.id })}
+                  className={cn(arriving && "arrive-pop origin-left")}
+                >
+                  <WorkFold
+                    fold={fold}
+                    live={item.live ? turnBot : null}
+                    {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
+                    steps={fold === null ? null : workSteps(fold.id)}
+                    onOpenImage={intents.openWorkImage}
+                    onOpenChange={(open) => {
+                      if (fold === null) return;
+                      if (open) intents.openWorkFold(fold.id);
+                      else intents.closeWorkFold(fold.id);
+                    }}
+                  />
+                  {fold !== null && (
+                    <ConnectorApps apps={fold.apps} access={intents.connectorApp} />
+                  )}
+                </div>
+              );
+            }
+            if (item.kind === "event") {
+              return (
+                <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
+                  <EventLine
+                    line={item.line}
+                    room={room?.id ?? null}
+                    onOpenRoutine={intents.openRoutine}
+                    onOpenPair={onOpenPair}
+                    onOpenRoom={onOpenRoom}
                   />
                 </div>
               );
             }
-            const { author } = message;
-            const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
+            if (item.kind === "unknown") {
+              return (
+                <div key={item.key} data-seen-id={item.id} className={settles}>
+                  <NeedsUpdateLine />
+                </div>
+              );
+            }
+            if (item.kind === "message") {
+              const { message } = item;
+              // One element, under one key, from Send to the server's entry, so
+              // nothing in the bubble loses focus when the entry arrives; the entry
+              // id it gains then makes it count toward the read mark.
+              if (message._tag === "outgoing") {
+                const { status, target } = message;
+                const left =
+                  room === null || status._tag !== "not-sent"
+                    ? null
+                    : mentionedWhoLeft(status.failure, message.mentions, room.members);
+                // Refused in a bot's conversation for what it mentions: Retry leaves out what `@`
+                // no longer offers there, as a room archived since the pick.
+                const noLonger =
+                  target._tag !== "conversation" || status._tag !== "not-sent"
+                    ? null
+                    : namedNoLonger(
+                        status.failure,
+                        message.conversationMentions,
+                        conversationMentionables(
+                          target.botId,
+                          [...bots.values()],
+                          [...rooms.values()],
+                        ),
+                      );
+                // A member who left is named as the operator picked it, which the message keeps.
+                const labelOf = (botId: BotId) =>
+                  message.labels.find((label) => "botId" in label && label.botId === botId)
+                    ?.label ??
+                  nameOf(botId) ??
+                  t("bot.unknown");
+                return (
+                  <div key={item.key}>
+                    <MessageBubble
+                      message={message}
+                      position={item.position}
+                      arriving={arriving}
+                      {...(flyFrom === undefined ? {} : { flyFrom })}
+                      mentionable={highlighted(message, message.labels)}
+                      onOpenAttachment={intents.openAttachment}
+                      onRetry={() =>
+                        left !== null
+                          ? intents.resendMessage(message.commandId, { mentions: left.without })
+                          : noLonger !== null
+                            ? intents.resendMessage(message.commandId, noLonger.without)
+                            : intents.resendMessage(message.commandId)
+                      }
+                      onDiscard={() => intents.discardMessage(message.commandId)}
+                      {...(left !== null && room !== null
+                        ? {
+                            refusedMentions: { _tag: "left-room", names: left.left.map(labelOf) },
+                            retryLabel: resendLabel(left.without, nameOf, i18n),
+                          }
+                        : noLonger !== null
+                          ? {
+                              refusedMentions: {
+                                _tag: "not-mentionable",
+                                names: noLonger.gone.map(
+                                  (of) =>
+                                    mentionLabel(of, message.labels, nameOfNamed) ??
+                                    t(of._tag === "bot" ? "bot.unknown" : "room.unknown"),
+                                ),
+                              },
+                            }
+                          : {})}
+                    />
+                  </div>
+                );
+              }
+              const { author } = message;
+              const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
+              return (
+                <div key={item.key} data-seen-id={message.id}>
+                  <MessageBubble
+                    message={message}
+                    position={item.position}
+                    arriving={arriving}
+                    tint={speaker?.profile.avatar ?? null}
+                    speaker={room === null || author._tag !== "bot" ? null : author.botId}
+                    // The server's entry keeps no names picked: what it mentions goes by its name now.
+                    mentionable={highlighted(message, [])}
+                    onOpenAttachment={intents.openAttachment}
+                    onRetry={() => intents.retryMessage(message.id)}
+                    onReact={(emoji) => intents.react(message.id, emoji)}
+                    {...(drafting !== null && isQuotable(message)
+                      ? {
+                          reply: {
+                            onReply: () => drafting.quote(replyTo(message)),
+                            full: replyFull,
+                          },
+                        }
+                      : {})}
+                    submitting={submitting(message.id)}
+                    openingHold={openingHold}
+                  />
+                </div>
+              );
+            }
+            const { entry } = item;
             return (
-              <div key={item.key} data-seen-id={message.id}>
-                <MessageBubble
-                  message={message}
-                  position={item.position}
-                  arriving={arriving}
-                  tint={speaker?.profile.avatar ?? null}
-                  speaker={room === null || author._tag !== "bot" ? null : author.botId}
-                  // The server's entry keeps no names picked: what it mentions goes by its name now.
-                  mentionable={highlighted(message, [])}
-                  onOpenAttachment={intents.openAttachment}
-                  onRetry={() => intents.retryMessage(message.id)}
-                  onReact={(emoji) => intents.react(message.id, emoji)}
-                  submitting={submitting(message.id)}
-                  openingHold={openingHold}
-                />
+              <div key={item.key} data-seen-id={entry.id} className={settles}>
+                <Card entry={entry} submitting={submitting} intents={intents} secrets={secrets} />
               </div>
             );
-          }
-          const { entry } = item;
-          return (
-            <div key={item.key} data-seen-id={entry.id} className={settles}>
-              <Card entry={entry} submitting={submitting} intents={intents} secrets={secrets} />
-            </div>
-          );
-        })}
-        {room !== null && <RoomWork room={room} />}
-        {room !== null && <AnsweringLine room={room} />}
-      </div>
+          })}
+          {room !== null && <RoomWork room={room} />}
+          {room !== null && <AnsweringLine room={room} />}
+          {drafting !== null && (
+            <QuoteOnSelection
+              scope={own}
+              messageOf={(id) => quotable.get(id)}
+              drafted={drafting.drafted}
+              onQuote={drafting.quote}
+            />
+          )}
+        </div>
+      </OpenQuote>
     </OpenMention>
   );
 }

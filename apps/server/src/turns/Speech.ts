@@ -4,6 +4,7 @@ import {
   type Attachment,
   BotId,
   Conflict,
+  EntryId,
   type EntryTarget,
   MAX_ATTACHMENT_SIZE,
   MAX_VISUAL_BYTES,
@@ -54,6 +55,7 @@ import type { BotSession } from "../bots/EngineSessions.ts";
 import { BROWSER_HELP_WAIT, siteOf } from "../browser/browserHelpRules.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Entries } from "../entries/Entries.ts";
+import { messageIn, quoteOf } from "../entries/quotes.ts";
 import { Reactions } from "../reactions/Reactions.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
@@ -1054,6 +1056,29 @@ export const layer = Layer.effect(
       return true;
     });
 
+    /**
+     * The message a bot's message replies to (`reply_to`, decision 0094):
+     * one of the conversation or room it goes to, quoted whole. Anything
+     * else refuses the call, with nothing sent.
+     */
+    const replyOf = Effect.fn("Speech.replyOf")(function* (
+      target: EntryTarget,
+      replyTo: string | undefined,
+    ) {
+      if (replyTo === undefined) return [];
+      const id = Schema.decodeOption(EntryId)(replyTo);
+      const message = Option.isSome(id)
+        ? yield* messageIn(entries, target, id.value)
+        : Option.none<MessageEntry>();
+      const quote = Option.isSome(message) ? quoteOf(message.value, null) : null;
+      if (quote === null) {
+        return yield* new TurnToolRefused({
+          reason: `Nothing was sent: \`reply_to\` names no message of the ${target._tag === "room" ? "room" : "conversation"} this message goes to. Use an id your envelope gave, or leave it out.`,
+        });
+      }
+      return [quote];
+    });
+
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
       // `to: "dm"` speaks to the operator in private, also from a room turn.
       const audience = input.to === "dm" ? conversation : found.audience;
@@ -1087,6 +1112,7 @@ export const layer = Layer.effect(
                   });
                 }
                 const target = yield* requireTarget(found.botId, audience);
+                const quotes = yield* replyOf(target, input.reply_to);
                 yield* quiet.spoke(found.sessionId, found.turnId);
                 const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
                 const mention = Option.isSome(room)
@@ -1110,6 +1136,7 @@ export const layer = Layer.effect(
                     text: input.text,
                     attachments: files,
                     mentions: { _tag: "bots", ids: mention },
+                    ...(quotes.length === 0 ? {} : { quotes }),
                     delivery: { _tag: "delivered" },
                     commandId: null,
                     ...(shown === null ? {} : { visual: shown }),
@@ -1479,10 +1506,11 @@ export const layer = Layer.effect(
       const live = yield* roomOf(roomId);
       if (Option.isNone(live)) return yield* new Conflict({ reason: "room-archived" });
       const mention = yield* mentionedIn(found, live.value, input.mention ?? []);
+      const there = { _tag: "room", roomId } as const;
+      const quotes = yield* replyOf(there, input.reply_to);
       // A Stop of the room covers this turn's post there, whatever audience
       // the turn speaks for: it is recorded for every member, and covers the
       // work begun before it, by a dispatch or by the engine on its own.
-      const there = { _tag: "room", roomId } as const;
       if (
         (yield* workStopped(found)).stopped ||
         (yield* workStopped(found, there)).stopped ||
@@ -1513,6 +1541,7 @@ export const layer = Layer.effect(
           text: input.text,
           attachments: [],
           mentions: { _tag: "bots", ids: mention },
+          ...(quotes.length === 0 ? {} : { quotes }),
           delivery: { _tag: "delivered" },
           commandId: null,
         },
@@ -1603,6 +1632,11 @@ export const layer = Layer.effect(
           if (input.mention !== undefined) {
             return yield* refuse(
               "Nothing was sent: `mention` goes with a message to a room. A teammate reads your message whole.",
+            );
+          }
+          if (input.reply_to !== undefined) {
+            return yield* refuse(
+              "Nothing was sent: `reply_to` goes with a post in a room. To a teammate, say what you answer in your words.",
             );
           }
           const urgent = input.urgent === true;
