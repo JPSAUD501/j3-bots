@@ -67,26 +67,39 @@ export function teammateChoice(
 /**
  * A notice a bot leaves when it builds a team: it started a room
  * (`room-started`, in the room and in its own conversation), or it made this
- * bot for one (`made-for-room`, in the made bot's conversation).
+ * bot for one (`made-for-room`, in the made bot's conversation); or a room of
+ * bots only it started paused (`room-paused`, in the room and in its own
+ * conversation).
  */
-export type TeamNotice = Extract<Notice, { readonly _tag: "room-started" | "made-for-room" }>;
+export type TeamNotice = Extract<
+  Notice,
+  { readonly _tag: "room-started" | "made-for-room" | "room-paused" }
+>;
+
+const TEAM_LINES = {
+  "room-started": { here: "teamLine.roomStarted", gone: "teamLine.roomStartedGone" },
+  "made-for-room": { here: "teamLine.madeForRoom", gone: "teamLine.madeForRoomGone" },
+  "room-paused": { here: "teamLine.roomPaused", gone: "teamLine.roomPausedGone" },
+} as const;
 
 /**
  * A team notice as its line says it: "Scout started Support", "Made by Scout
- * for Support", with the bot's and the room's names drawn apart. The room is
- * named as it is now, so a rename shows; a room deleted since is "a room".
+ * for Support", "Support paused: …, and Scout was told", with the bot's and
+ * the room's names drawn apart. The room is named as it is now, so a rename
+ * shows; a room deleted since is "a room".
  */
 export function teamNoticeLine(notice: TeamNotice, ctx: PresentationContext): NamedLine {
   const { i18n } = ctx;
-  const bot = botPart(notice.botId, ctx);
   const roomName = ctx.roomName(notice.roomId);
-  const started = notice._tag === "room-started";
-  if (roomName === null)
-    return named(
-      i18n.parts(started ? "teamLine.roomStartedGone" : "teamLine.madeForRoomGone", { bot }),
-    );
+  // A room of bots only whose starter was deleted paused with nobody told.
+  if (notice.botId === null) {
+    if (roomName === null) return named(i18n.parts("teamLine.roomPausedUntoldGone", {}));
+    const room: LineName = { _tag: "room", roomId: notice.roomId, name: roomName };
+    return named(i18n.parts("teamLine.roomPausedUntold", { room }));
+  }
+  const bot = botPart(notice.botId, ctx);
+  const keys = TEAM_LINES[notice._tag];
+  if (roomName === null) return named(i18n.parts(keys.gone, { bot }));
   const room: LineName = { _tag: "room", roomId: notice.roomId, name: roomName };
-  return named(
-    i18n.parts(started ? "teamLine.roomStarted" : "teamLine.madeForRoom", { bot, room }),
-  );
+  return named(i18n.parts(keys.here, { bot, room }));
 }

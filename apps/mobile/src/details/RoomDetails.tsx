@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { roomStop } from "@j3-bots/client-runtime/presentation";
+import { roomStop, unarchivable } from "@j3-bots/client-runtime/presentation";
 import type { Bot, Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { Pressable, ScrollView, View } from "react-native";
@@ -59,11 +59,16 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         badge={archived ? t("room.archivedBadge") : null}
         lines={
           <ProfileLine>
-            {archived ? t("room.archivedLine") : plural("room.memberCount", members.length)}
+            {archived
+              ? t("room.archivedLine")
+              : room.botsOnly === true
+                ? t("room.botsOnlyLine", { count: plural("room.memberCount", members.length) })
+                : plural("room.memberCount", members.length)}
           </ProfileLine>
         }
       >
-        {!archived && (
+        {/* Its bots chose who talks in a room of bots only: the operator reads it. */}
+        {!archived && room.botsOnly !== true && (
           <Button
             variant="secondary"
             label={t("room.edit", { name })}
@@ -112,7 +117,9 @@ export function RoomDetails({ room }: { readonly room: Room }) {
 
       <Section open title={t("room.archiveSection")}>
         <View className="items-start gap-3">
-          {archived ? (
+          {archived && !unarchivable(room) ? (
+            <Quiet>{t("room.staysArchived")}</Quiet>
+          ) : archived ? (
             <PendingButton
               label={t("room.unarchive", { name })}
               onPress={() => actions.unarchive(room)}

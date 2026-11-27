@@ -223,14 +223,16 @@ const botWake = (
 
 /**
  * The event a system wake reports, `askName` saying whether an opening asks
- * the operator's name and `newsOf` how the reactions on a message stand;
- * `null` when there is nothing left to report, as for a reaction taken off
- * meanwhile. Any other payload on one is a bug.
+ * the operator's name, `newsOf` how the reactions on a message stand and
+ * `roomOf` a room that is still active; `null` when there is nothing left to
+ * report, as for a reaction taken off meanwhile or a paused room archived
+ * since. Any other payload on one is a bug.
  */
 const systemEventOf = (
   payload: WakePayload,
   askName: boolean,
   newsOf: (entryId: EntryId) => Effect.Effect<ReactionNews | null>,
+  roomOf: (roomId: RoomId) => Effect.Effect<Option.Option<LiveRoom>>,
 ): Effect.Effect<SystemEvent | null> => {
   switch (payload._tag) {
     case "first-run":
@@ -264,6 +266,12 @@ const systemEventOf = (
     case "reaction":
       return Effect.map(newsOf(payload.entryId), (news) =>
         news === null ? null : { name: "reaction", news },
+      );
+    case "room-paused":
+      return Effect.map(roomOf(payload.roomId), (room) =>
+        Option.isNone(room)
+          ? null
+          : { name: "room-paused", room: { id: room.value.id, name: room.value.name } },
       );
     case "message":
     case "answer":
@@ -440,6 +448,9 @@ export const layer = Layer.effect(
       const room = yield* rooms.find(target.roomId);
       if (Option.isNone(room)) return yield* new NotFound({ resource: "room" });
       if (room.value.status === "archived") return yield* new Conflict({ reason: "room-archived" });
+      // The operator reads a room of bots only and never writes there
+      // (decision 0103): a message, a reply, a quote or `@everyone` alike.
+      if (room.value.botsOnly === true) return yield* new Conflict({ reason: "room-bots-only" });
       if (mentions?._tag === "bots") {
         const members = new Set(room.value.members);
         if (
@@ -1541,9 +1552,15 @@ export const layer = Layer.effect(
       readonly id: RoomId;
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
+      readonly botsOnly: boolean;
     }) {
       const members = yield* Effect.forEach(room.members, teammateRef);
-      return { id: room.id, name: room.name, members } satisfies RoomWake["room"];
+      return {
+        id: room.id,
+        name: room.name,
+        members,
+        botsOnly: room.botsOnly,
+      } satisfies RoomWake["room"];
     });
 
     /** A room message as an envelope shows it, with the members it mentioned by name. */
@@ -1810,6 +1827,7 @@ export const layer = Layer.effect(
               head.payload_json,
               head.payload_json._tag === "first-run" && (yield* opensAsking(plan.botId)),
               (entryId) => newsOf({ botId: plan.botId, entryId, forWake: true }),
+              roomOf,
             )
           : null;
       const parts = head.kind === "system" ? [] : yield* Effect.forEach(plan.wakes, partOf);

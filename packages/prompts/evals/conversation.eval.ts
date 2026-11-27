@@ -1144,6 +1144,7 @@ const roomWake: Wake = {
     id: Schema.decodeSync(RoomId)("room-launch"),
     name: "Launch",
     members: [{ id: JUNIPER_ID, name: "Juniper", title: "Docs" }, ANA, BO],
+    botsOnly: false,
   },
   reason: "addressed",
   closing: false,
@@ -1172,6 +1173,7 @@ const newcomerWake: Wake = {
     id: Schema.decodeSync(RoomId)("room-release"),
     name: "Release",
     members: [ANA, { id: JUNIPER_ID, name: "Juniper", title: "Docs" }],
+    botsOnly: false,
   },
   reason: "kickoff",
   closing: false,
@@ -1237,6 +1239,7 @@ const ROOM_STARTED: EarlierTurn = {
         members: [ANA.id, BO.id],
         kickoff:
           "This room tests the docs release before Friday. Ana: the search on the staging site. Bo: the changelog against the merged pull requests. Rui will say when the test starts; until then, just say you are ready.",
+        with_user: true,
         listed: true,
       },
       output: JSON.stringify({
@@ -1344,6 +1347,7 @@ const ANALYSIS_IN_PROGRESS: EarlierTurn = {
       id: ANALYSIS_ROOM.id,
       name: ANALYSIS_ROOM.name,
       members: [{ id: JUNIPER_ID, name: "Juniper", title: "Docs" }, ANA, BO],
+      botsOnly: false,
     },
     reason: "addressed",
     closing: false,

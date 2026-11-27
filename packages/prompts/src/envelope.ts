@@ -301,6 +301,11 @@ export interface RoomWake extends WakeBase {
     readonly name: string;
     /** In member order, this bot included. */
     readonly members: ReadonlyArray<TeammateRef>;
+    /**
+     * A room of bots only: the operator reads it and never writes there, and
+     * its rounds count from its kickoff (decision 0103).
+     */
+    readonly botsOnly: boolean;
   };
   /**
    * Why this bot is woken: the kickoff of a room a member started, a message
@@ -515,6 +520,14 @@ export type SystemEvent =
        * only when the reaction answers something it offered.
        */
       readonly news: ReactionNews;
+    }
+  | {
+      readonly name: "room-paused";
+      /**
+       * A room of bots only the bot started paused at its round limit: its
+       * bots' messages there wake nobody from then on.
+       */
+      readonly room: { readonly id: RoomId; readonly name: string };
     };
 
 export interface SystemWake extends WakeBase {
@@ -565,6 +578,22 @@ export const ROOM_CLOSING_NOTE =
   "The bots here have answered each other for several rounds since your user last wrote, so the conversation is closing: speak only if it is essential.";
 
 /**
+ * What a room envelope's closing line says in a room of bots only, before
+ * the rest: the operator reads it and answers nothing there, so the members
+ * neither address nor wait for them, and a question for them goes to the
+ * bot's own conversation (`ask` is refused there).
+ */
+export const ROOM_BOTS_ONLY_LINE =
+  'Only bots write in this room: your user reads it but never writes, reacts or answers here, so address the members, not your user, and never wait for them. If you need your user, tell them with `say` and `to: "dm"`, which reaches them in your own conversation.';
+
+/**
+ * `ROOM_CLOSING_NOTE` in a room of bots only, whose rounds count from its
+ * kickoff: it pauses at its limit, so a member closes with what is settled.
+ */
+export const ROOM_BOTS_ONLY_CLOSING_NOTE =
+  "The bots here have answered each other for several rounds since the room started, and a room of bots only pauses soon: speak only if it is essential, and then say what is settled and what is left.";
+
+/**
  * What a room envelope adds for a member that has never spoken: a bot made
  * for the room, whose hello in its own conversation was cancelled. The
  * operator meets it here, so its first message opens with who it is, and the
@@ -578,8 +607,11 @@ const closingLine = (wake: Wake): string =>
   wake.kind === "room"
     ? [
         ...(wake.newcomer ? [ROOM_NEWCOMER_LINE] : []),
+        ...(wake.room.botsOnly ? [ROOM_BOTS_ONLY_LINE] : []),
         ROOM_CLOSING_LINES[wake.reason],
-        ...(wake.closing ? [ROOM_CLOSING_NOTE] : []),
+        ...(wake.closing
+          ? [wake.room.botsOnly ? ROOM_BOTS_ONLY_CLOSING_NOTE : ROOM_CLOSING_NOTE]
+          : []),
       ].join(" ")
     : wake.kind === "routine" && wake.step !== undefined
       ? ROUTINE_STEP_CLOSING_LINE
@@ -667,6 +699,14 @@ const CONNECTOR_ASK_LINES: {
 export const REACTION_LINE =
   "Your user reacted to a message of yours; the reactions on it as they stand now follow. A reaction is a light signal, not a message: by default, end your turn without a word and without a reaction. Act only if it answers something you offered there and your instructions or memory say that emoji means yes to it (they may have told you, say, that a 👍 on an offer of yours means go ahead): then say in a few words that you are on it, do it, and deliver the result with `say` as usual. Never treat it as approval for anything else.";
 
+/**
+ * What a `room-paused` event says: the room of bots only the bot started
+ * reached its round limit, and the bot tells its user where it got to. Their
+ * word does not reach that room again, so going on takes a new one.
+ */
+export const ROOM_PAUSED_LINE =
+  "A room of bots only that you started, below, paused: its bots answered each other as many rounds as such a room takes since your kickoff, and their messages there wake nobody now. Read it with `read_room` if you need to, then tell your user in a few words where it got to and what is left. If they want it to go on, start a new room on their word, whose kickoff picks up where this one stopped.";
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -690,6 +730,8 @@ const eventLine = (event: SystemEvent): string => {
       return CONNECTOR_ASK_LINES[event.outcome];
     case "reaction":
       return REACTION_LINE;
+    case "room-paused":
+      return ROOM_PAUSED_LINE;
   }
 };
 
@@ -1204,6 +1246,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ["id", wake.room.id],
         ["name", wake.room.name],
         ["reason", wake.reason],
+        ["bots-only", wake.room.botsOnly ? "true" : null],
       ]);
       for (const member of wake.room.members) {
         w.empty("member", [
@@ -1336,6 +1379,12 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       }
       if (event.name === "delegated-result") w.data([["source", "delegated-task"]], event.text);
       if (event.name === "reaction") writeReactionNews(w, event.news);
+      if (event.name === "room-paused") {
+        w.empty("room", [
+          ["id", event.room.id],
+          ["name", event.room.name],
+        ]);
+      }
       return;
     }
   }

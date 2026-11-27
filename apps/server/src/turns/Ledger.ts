@@ -813,7 +813,8 @@ export const layer = Layer.effect(
       `;
 
     /**
-     * Room wakes of the dispatch that a bot's work for a room caused, whose
+     * Wakes of the dispatch that a bot's work for a room caused outside it
+     * (`cause_room_id`: a post in another room, a room of bots only's pause), whose
      * room's Stop was recorded once the dispatch was written, so once the
      * wake was: they are cancelled instead of waiting again or failing, as
      * that Stop cancelled the ones still waiting (`Stops.record`). The order
@@ -824,7 +825,7 @@ export const layer = Layer.effect(
       sql`
         UPDATE wakes SET status = 'cancelled', failure_reason = NULL, updated_at = ${at}
         WHERE dispatch_id = ${dispatchId} AND status IN ('dispatched', 'failed')
-          AND kind = 'room' AND cause_room_id IS NOT NULL AND EXISTS (
+          AND cause_room_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM stops sr_stop JOIN dispatches sr_dispatch ON sr_dispatch.id = ${dispatchId}
             WHERE sr_stop.bot_id = wakes.cause_bot_id AND sr_stop.scope = 'room'
               AND sr_stop.room_id = wakes.cause_room_id AND sr_stop.engine_turn_id IS NULL

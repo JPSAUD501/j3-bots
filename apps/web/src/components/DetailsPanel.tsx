@@ -54,6 +54,7 @@ import {
   type Teammate,
   trackCast,
   trackTrigger,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -859,11 +860,16 @@ export function RoomDetails({
           archived ? (
             <span>{t("room.archivedLine")}</span>
           ) : (
-            <span>{plural("room.memberCount", members.length)}</span>
+            <span>
+              {room.botsOnly === true
+                ? t("room.botsOnlyLine", { count: plural("room.memberCount", members.length) })
+                : plural("room.memberCount", members.length)}
+            </span>
           )
         }
+        // Its bots chose who talks in a room of bots only: the operator reads it.
         actions={
-          archived ? undefined : (
+          archived || room.botsOnly === true ? undefined : (
             <Button size="sm" onClick={intents.editRoom}>
               <PencilIcon aria-hidden />
               {t("room.edit", { name })}
@@ -915,7 +921,9 @@ export function RoomDetails({
         )}
       </DetailsSection>
       <DetailsSection title={t("room.archiveSection")}>
-        {archived ? (
+        {archived && !unarchivable(room) ? (
+          <p className="text-xs text-muted-foreground">{t("room.staysArchived")}</p>
+        ) : archived ? (
           <PendingButton onPress={intents.unarchiveRoom}>
             <ArchiveRestoreIcon aria-hidden />
             {t("room.unarchive", { name })}

@@ -42,6 +42,7 @@ const RoomRow = Schema.Struct({
   status: Schema.Literals(["active", "archived"]),
   pinned: Flag,
   hidden: Flag,
+  bots_only: Flag,
   archived_at: Schema.NullOr(Time),
   created_at: Time,
 });
@@ -63,7 +64,8 @@ export interface RoomChanges {
 /**
  * Rooms: their members and status. An active room has two to six members,
  * all equal; an archived room takes no changes but `pinned`, `hidden` and
- * unarchiving (`docs/architecture/server.md`, Rooms).
+ * unarchiving, and a room of bots only no change of its name or members by
+ * the operator (`docs/architecture/server.md`, Rooms).
  */
 export class Rooms extends Context.Service<
   Rooms,
@@ -83,12 +85,14 @@ export class Rooms extends Context.Service<
     /**
      * Creates a room as `create` does, in the caller's transaction and under no receipt: for a bot's
      * `start_room`, which its turn tool's pin applies once. Its visibility is
-     * the choice of `madeBy`, the bot that starts it.
+     * the choice of `madeBy`, the bot that starts it, and so is whether the
+     * operator takes part (`botsOnly`, decision 0103).
      */
     readonly open: (input: {
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
       readonly hidden: boolean;
+      readonly botsOnly: boolean;
       readonly madeBy: BotId;
     }) => Effect.Effect<Room, Invalid>;
     readonly update: (input: {
@@ -151,7 +155,7 @@ export const layer = Layer.effect(
     const refusals = roomRefusals(sql, yield* Entries);
 
     const SELECT = sql.literal(`
-      SELECT id, name, status, pinned, hidden, archived_at, created_at
+      SELECT id, name, status, pinned, hidden, bots_only, archived_at, created_at
       FROM rooms
     `);
     const roomRows = SqlSchema.findAll({
@@ -186,6 +190,7 @@ export const layer = Layer.effect(
           name: row.name,
           pinned: row.pinned,
           hidden: row.hidden,
+          botsOnly: row.bots_only,
           createdAt: row.created_at,
           status: row.status,
           members: members.filter((member) => member.room_id === row.id).map((m) => m.bot_id),
@@ -268,11 +273,15 @@ export const layer = Layer.effect(
       yield* work.end(roomId);
     });
 
-    /** A new room, made by the operator when `madeBy` is null, whose choice its visibility then is. */
+    /**
+     * A new room, made by the operator when `madeBy` is null, whose choice its
+     * visibility then is. Only a bot's may be of bots only.
+     */
     const insert = Effect.fn("Rooms.insert")(function* (input: {
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
       readonly hidden: boolean;
+      readonly botsOnly: boolean;
       readonly madeBy: BotId | null;
     }) {
       yield* checkMembers(input.members);
@@ -280,9 +289,10 @@ export const layer = Layer.effect(
       const at = timeText(yield* DateTime.now);
       yield* sql`
         INSERT INTO rooms (
-          id, name, hidden, made_by_bot_id, visibility_by_operator, created_at, updated_at
+          id, name, hidden, bots_only, made_by_bot_id, visibility_by_operator, created_at,
+          updated_at
         ) VALUES (
-          ${id}, ${input.name}, ${input.hidden ? 1 : 0}, ${input.madeBy},
+          ${id}, ${input.name}, ${input.hidden ? 1 : 0}, ${input.botsOnly ? 1 : 0}, ${input.madeBy},
           ${input.madeBy === null ? 1 : 0}, ${at}, ${at}
         )
       `.pipe(Effect.orDie);
@@ -316,6 +326,7 @@ export const layer = Layer.effect(
           name: input.name,
           members: input.members,
           hidden: input.hidden === true,
+          botsOnly: false,
           madeBy: null,
         }),
       });
@@ -337,6 +348,11 @@ export const layer = Layer.effect(
           const changesMore = change.name !== undefined || change.members !== undefined;
           if (room.status === "archived" && change.archived !== false && changesMore) {
             return yield* new Conflict({ reason: "room-archived" });
+          }
+          // Its bots chose who talks there; the operator reads it, and keeps
+          // its place in their list, its work and whether it lasts.
+          if (room.botsOnly === true && changesMore) {
+            return yield* new Conflict({ reason: "room-bots-only" });
           }
           const now = yield* DateTime.now;
           const at = timeText(now);

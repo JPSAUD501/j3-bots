@@ -63,7 +63,7 @@ describe("j3 tools", () => {
     expect(accepts("create_bot", { name: "Lia", listed: true })).toBe(false);
     expect(accepts("create_bot", { ...bot, title: "  " })).toBe(false);
     expect(accepts("create_bot", { name: "Lia", title: "Bakery competitors" })).toBe(false);
-    const room = { name: "Launch", members: ["bot_1"], kickoff: "Let's start." };
+    const room = { name: "Launch", members: ["bot_1"], kickoff: "Let's start.", with_user: true };
     expect(accepts("start_room", { ...room, listed: false })).toBe(true);
     expect(accepts("start_room", room)).toBe(false);
   });
