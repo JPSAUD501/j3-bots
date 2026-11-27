@@ -34,6 +34,7 @@ const REFUSALS: ReadonlySet<string> = new Set([
   "HomeNotWritable",
   "HomeBlocked",
   "RollbackUnfinished",
+  "EngineDataNewer",
 ]);
 
 /**
