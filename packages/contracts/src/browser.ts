@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { BotId, MAX_ID_LENGTH, NonNegativeInt } from "./base.ts";
+import { BotId, DeviceId, MAX_ID_LENGTH, NonNegativeInt } from "./base.ts";
 
-// The bot's browser: the tabs a bot opened in the engine's headless browser,
-// which a client lists on the RPC socket (`browser.subscribe`) and watches and
-// controls on the media socket (`HTTP_PATHS.browser`). A client never sees an
-// engine id: a tab is named by a `BrowserTabRef` the server mints.
+// J3 Bots' browser (decision 0110): tabs J3 Bots runs itself, on a desktop
+// app's own browser or on the server's, shared by the person and every bot
+// that may browse. A client lists them on the RPC socket (`browser.tabs`, and
+// one bot's view with `browser.subscribe`) and watches and drives one on the
+// media socket (`HTTP_PATHS.browser`). A page host speaks `browserHost.ts`;
+// a bot reaches the tabs through the `browser_*` tools (`browserTools.ts`).
 
 /**
- * One tab, as the server names it to clients. Opaque: minted by the server
- * for as long as it runs, so a ref from before a restart names nothing.
+ * One tab, as J3 Bots names it everywhere: to clients, to page hosts and to
+ * bots. Minted by the server when the tab opens, and kept with the tab in
+ * the server's registry, so it names the same tab after a restart of the
+ * server and when the tab moves to another host. Opaque.
  */
 export const BrowserTabRef = Schema.String.check(
   Schema.isMinLength(1),
@@ -20,19 +24,124 @@ export type BrowserTabRef = typeof BrowserTabRef.Type;
 /**
  * Who acts on a tab, as the reader of the value sees it.
  *
- * - `bot`: the bot that opened it; nobody holds it.
+ * - `bot`: a bot may act on it; no person holds it.
  * - `you`: on the tab list, this device; on the media socket, this socket.
  * - `another-device`: a person on another device, or on another socket of
- *   this one, holds it. The bot cannot act on the tab meanwhile.
+ *   this one, holds it. Bots cannot act on the tab meanwhile.
  * - `nobody`: no bot and no person.
  */
 export const BrowserController = Schema.Literals(["bot", "you", "another-device", "nobody"]);
 export type BrowserController = typeof BrowserController.Type;
 
+export const BrowserDialogKind = Schema.Literals(["alert", "confirm", "prompt", "beforeunload"]);
+export type BrowserDialogKind = typeof BrowserDialogKind.Type;
+
+/** A dialog the page waits on: it blocks the page until someone answers it. */
+export const BrowserDialog = Schema.Struct({
+  kind: BrowserDialogKind,
+  message: Schema.String,
+  defaultValue: Schema.String,
+});
+export type BrowserDialog = typeof BrowserDialog.Type;
+
+/**
+ * Where a tab runs now.
+ *
+ * - `desktop`: in the J3 Bots app on that computer, in its own browser.
+ * - `server`: in the server's own browser.
+ * - `parked`: its host went away (the app closed, or the server's browser
+ *   let an idle tab go). It keeps its address, title and last picture, and
+ *   the next bot that uses it opens it again on the server.
+ */
+export const BrowserTabWhere = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("desktop"), device: DeviceId }),
+  Schema.Struct({ kind: Schema.Literal("server") }),
+  Schema.Struct({ kind: Schema.Literal("parked") }),
+]);
+export type BrowserTabWhere = typeof BrowserTabWhere.Type;
+
+/**
+ * Who opened a tab: the person on a device, a bot, or a page, as a sign-in
+ * opens a pop-up. A pop-up stays on the host of the tab that opened it,
+ * since the page needs its opener.
+ */
+export const BrowserTabOpener = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("person"), device: DeviceId }),
+  Schema.Struct({ kind: Schema.Literal("bot"), botId: BotId }),
+  Schema.Struct({ kind: Schema.Literal("page"), tab: BrowserTabRef }),
+]);
+export type BrowserTabOpener = typeof BrowserTabOpener.Type;
+
+/**
+ * Who holds a tab, so that nobody else acts on it.
+ *
+ * - `person`: the person used the page from `device`: a click, a key or a
+ *   scroll on it, in the app or through a viewer. Moving the pointer,
+ *   scrolling the view, finding in the page and zooming do not count. The
+ *   hold ends by itself at `until`, 10 seconds after their last input; it
+ *   is null while they asked the bots to wait for them, until they say to
+ *   go on. Bots' actions fail meanwhile; reading the page still works.
+ * - `bot`: a bot's lease. It acts in turn, and others' actions wait behind
+ *   it. It lapses at `until`, 5 seconds after its last action ends, or
+ *   when its turn ends.
+ * - `fill`: the server is typing a saved login.
+ */
+export const BrowserTabHolder = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("person"),
+    device: DeviceId,
+    until: Schema.NullOr(Schema.DateTimeUtc),
+  }),
+  Schema.Struct({ kind: Schema.Literal("bot"), botId: BotId, until: Schema.DateTimeUtc }),
+  Schema.Struct({ kind: Schema.Literal("fill") }),
+]);
+export type BrowserTabHolder = typeof BrowserTabHolder.Type;
+
+/** The fields every view of a tab shares. */
+const sharedTabFields = {
+  ref: BrowserTabRef,
+  /** Empty for a tab that has not loaded a page yet. */
+  url: Schema.String,
+  title: Schema.String,
+  loading: Schema.Boolean,
+  where: BrowserTabWhere,
+  openedBy: BrowserTabOpener,
+  /** The bots that used the tab recently, the most recent first: the faces on it. */
+  onIt: Schema.Array(BotId),
+  /** The bot whose action runs on the tab right now, if any. */
+  acting: Schema.NullOr(BotId),
+  heldBy: Schema.NullOr(BrowserTabHolder),
+  dialog: Schema.NullOr(BrowserDialog),
+};
+
+/**
+ * A tab, as the person's clients see it. Tabs belong to nobody: every bot
+ * that may browse sees and may use each one, the person's own included, and
+ * several bots may work on one.
+ */
+export const SharedBrowserTab = Schema.Struct({
+  ...sharedTabFields,
+  /**
+   * A private tab, which only the person sees: no bot lists or uses it, the
+   * shared sign-ins never take its cookies, and it is forgotten when closed.
+   */
+  private: Schema.Boolean,
+});
+export type SharedBrowserTab = typeof SharedBrowserTab.Type;
+
+/** One frame of `browser.tabs`: every tab, as they are now. */
+export const SharedBrowserTabs = Schema.Struct({ tabs: Schema.Array(SharedBrowserTab) });
+export type SharedBrowserTabs = typeof SharedBrowserTabs.Type;
+
+/**
+ * A tab in one bot's view (`browser.subscribe`): a tab that bot is on. The
+ * fields after `front` come from a server that shares its tabs (decision
+ * 0110), and are absent from one before it.
+ */
 export const BrowserTab = Schema.Struct({
   ref: BrowserTabRef,
+  /** The bot whose tabs were asked for. */
   botId: BotId,
-  /** Empty for a tab that has not loaded a page yet. */
   url: Schema.String,
   title: Schema.String,
   loading: Schema.Boolean,
@@ -43,10 +152,15 @@ export const BrowserTab = Schema.Struct({
    * becomes the front tab.
    */
   front: Schema.Boolean,
+  where: Schema.optionalKey(sharedTabFields.where),
+  openedBy: Schema.optionalKey(sharedTabFields.openedBy),
+  onIt: Schema.optionalKey(sharedTabFields.onIt),
+  acting: Schema.optionalKey(sharedTabFields.acting),
+  heldBy: Schema.optionalKey(sharedTabFields.heldBy),
 });
 export type BrowserTab = typeof BrowserTab.Type;
 
-/** One frame of `browser.subscribe`: every tab of the bot, as they are now. */
+/** One frame of `browser.subscribe`: every tab the bot is on, as they are now. */
 export const BrowserTabs = Schema.Struct({ tabs: Schema.Array(BrowserTab) });
 export type BrowserTabs = typeof BrowserTabs.Type;
 
@@ -118,8 +232,6 @@ const WebAddress = Schema.String.check(
   }),
 );
 
-const DialogKind = Schema.Literals(["alert", "confirm", "prompt", "beforeunload"]);
-
 /**
  * What the server sends as JSON text. Every frame of the page itself is a
  * binary message holding one JPEG, which the client answers with `ack` once
@@ -143,9 +255,7 @@ export const BrowserServerFrame = Schema.Union([
     type: Schema.Literal("control"),
     controller: BrowserController,
     generation: NonNegativeInt,
-    dialog: Schema.NullOr(
-      Schema.Struct({ kind: DialogKind, message: Schema.String, defaultValue: Schema.String }),
-    ),
+    dialog: Schema.NullOr(BrowserDialog),
   }),
   /** The answer to a `probe`: whether a tap there lands in a field that takes text. */
   Schema.Struct({
@@ -177,17 +287,10 @@ export const BrowserServerFrame = Schema.Union([
 export type BrowserServerFrame = typeof BrowserServerFrame.Type;
 
 /**
- * What a client sends, as JSON text. Input is dropped unless this socket
- * holds the tab (`take`); `ack`, `pong`, `take` and `probe` work either way.
+ * Input a person gives the page itself, through a viewer or a page host's
+ * own view: what makes them hold the tab (`BrowserTabHolder`).
  */
-export const BrowserClientFrame = Schema.Union([
-  /** The last picture is drawn: send the next. */
-  Schema.Struct({ type: Schema.Literal("ack") }),
-  Schema.Struct({ type: Schema.Literal("pong") }),
-  /** Take the tab from the bot. Fails, and changes nothing, while another device holds it. */
-  Schema.Struct({ type: Schema.Literal("take") }),
-  /** Give the tab back to the bot. */
-  Schema.Struct({ type: Schema.Literal("release") }),
+const pageInputFrames = [
   Schema.Struct({
     type: Schema.Literal("pointer"),
     action: Schema.Literals(["move", "down", "up"]),
@@ -222,6 +325,25 @@ export const BrowserClientFrame = Schema.Union([
     type: Schema.Literal("text"),
     text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BROWSER_TEXT_LENGTH)),
   }),
+] as const;
+
+/** The page input of `BrowserClientFrame`, which a page host applies (`tab.input`). */
+export const BrowserPageInput = Schema.Union(pageInputFrames);
+export type BrowserPageInput = typeof BrowserPageInput.Type;
+
+/**
+ * What a client sends, as JSON text. Input is dropped unless this socket
+ * holds the tab (`take`); `ack`, `pong`, `take` and `probe` work either way.
+ */
+export const BrowserClientFrame = Schema.Union([
+  /** The last picture is drawn: send the next. */
+  Schema.Struct({ type: Schema.Literal("ack") }),
+  Schema.Struct({ type: Schema.Literal("pong") }),
+  /** Take the tab from the bot. Fails, and changes nothing, while another device holds it. */
+  Schema.Struct({ type: Schema.Literal("take") }),
+  /** Give the tab back to the bot. */
+  Schema.Struct({ type: Schema.Literal("release") }),
+  ...pageInputFrames,
   Schema.Struct({ type: Schema.Literal("navigate"), url: WebAddress }),
   Schema.Struct({ type: Schema.Literal("back") }),
   Schema.Struct({ type: Schema.Literal("forward") }),

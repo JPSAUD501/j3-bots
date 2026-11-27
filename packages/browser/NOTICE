@@ -1,0 +1,38 @@
+J3 Bots' browser driver and CDP relay (packages/browser) contain code adapted
+from T3 Code, which J3 Bots runs as its engine and does not modify (decisions
+0001 and 0110 in the J3 Bots repository). Each file that holds such code says
+so at its top, with the file it comes from.
+
+T3 Code, at v0.1.13 (commit bc0f04da94f64b5e487c598761a43b4cf06b2ac9)
+  Source: https://github.com/pingdotgg/t3code
+  Adapted here:
+    apps/server/src/preview/ServerBrowserPage.ts
+      the accessibility snapshot, its refs per page generation, the masking
+      of password values and of `data:` payloads, and the page actions,
+      in src/driver/*.ts
+    apps/desktop/src/preview/CdpRelay.ts
+      the relay that makes one page's debugger look like a browser to
+      Playwright, in src/cdpRelay.ts
+  License: MIT, as follows.
+
+MIT License
+
+Copyright (c) 2026 T3 Tools Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
