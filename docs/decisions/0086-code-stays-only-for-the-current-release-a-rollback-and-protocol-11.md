@@ -26,13 +26,26 @@ Deciding what is legacy needs a line that holds release after release, not a jud
 - **Decision records and release notes**, which are history by design ([Decision records](README.md)).
 - **The contract's shape within a protocol.** A field made required needs a protocol bump ([Clients: protocol compatibility](../architecture/clients.md#protocol-compatibility)), even when every server of the protocol already sends it, so a field's optionality and its decoding default stay until the protocol changes. What the client does without the field stays with it.
 
-**Removing never changes what someone sees or does.** When dropping a path would change a screen, a flow or what happens to someone's data, even for a state only an old home can reach, the path stays and the owner decides. The first of these is a vault from before secrets that a 0.11 home may still hold unopened, which only its password form reaches.
+**What changes what someone sees or does is the owner's to decide.** When dropping a path would change a screen, a flow or what happens to someone's data, even for a state only an old home can reach, it is not removed on this rule alone: the owner decides, and the decision is written here.
+
+**Data a release no longer reads is refused, never destroyed.** Where removing a reader leaves data a home may still hold, the release detects it, changes nothing, and says in one plain line what to do. A vault from before secrets that still holds logins is the case: the secrets store does not start over one, and its line says to open it with 0.12 first. An update from 0.12 to such a home does not become ready, so it rolls back to 0.12, where the vault opens.
 
 The first pass, for 0.13.0, removed the Android version code's formula for 0.3.0 and before, a settings receipt's and a shipped skill's fallbacks for builds before 0.1.0, a release feed file's default for 0.8, an engine credential's reading of a file without its scopes, two wording functions, eight strings and a design token nothing read, and the comments and docs that recounted protocols 1 to 10, the vault's name and releases from 0.1 to 0.8.
+
+The owner then decided the paths that pass kept because removing them changes what someone sees or does:
+
+- **The old vault's password path goes.** The owner's only home holds no unopened vault. The password form, the `old-vault` state, `secrets.openOldVault`, its strings and the export's reason for it go; the detection above stays.
+- **The server-update view for servers without update routes goes.** Every server since 0.3.1 has them; a 404 now reads as any answer outside the contract, not reached.
+- **A desktop settings file without `mode` reads as no choice**, the first-run path, instead of as remote. Every desktop release since 0.3.0, where `mode` came in, writes the whole file, `mode` included, each time its window closes, quitting included, so every install that ran one since holds it.
+- **`install.sh` no longer gives advice for releases before 0.3.1**, which it does not install.
+- **Drafts and the outbox read only what released clients write.** A stored draft's mentions and an outbox message's labels, which every release writes, are required. Fitting a draft's file marks to its files stays: the current release needs it for files another window added.
+- **The `handoff` notification kind goes**, with its strings: no server sends it since 0.5.0, as a teammate's message notifies no one. The Android app deletes the channel it made for it at start, so the system's settings stop listing it.
+- **The AI sign-in state for a server that cannot sign in from the apps stays for now**: the rewrite of the AI sign-in screens replaces the files it lives in, and takes it out there.
 
 ## Costs
 
 - **A home that skips releases may meet something its new release no longer reads.** Only files outside the database are exposed; the database has its migrations. A release feed file 0.8 wrote and nothing rewrote since is fetched again instead of read, losing the verdicts and the rate limit it kept: the release is checked again, and a refused check records the limit again.
+- **A home with a vault no release opened stops at 0.12.** It runs this release only after 0.12 opens the vault; a home coming from 0.8 passes through 0.12 first. The release notes say so.
 - **Optional fields every server sends stay optional.** A client keeps code for the field's absence that no server of its protocol triggers, until the next protocol bump takes it out.
 - **The line moves with each minor release.** What (b) and (c) keep today becomes removable when the next minor ships or the protocol changes, so the inventory is a task of every minor release, not done once.
 
@@ -40,4 +53,5 @@ The first pass, for 0.13.0, removed the Android version code's formula for 0.3.0
 
 - **Keeping everything a skipped-release upgrade might need.** Every shim would stay forever, which is what the owner asked to end. The database is covered by migrations; the rest is small, and fetched or rebuilt again.
 - **Making optional fields required within protocol 11.** Every protocol-11 server sends some of them, so no client would break today, but the contract's rule is that a narrower field needs a bump, and a rule kept only when convenient stops being one.
-- **Removing the old vault's password form now.** It is the only way such a home gets its logins back, so it waits for the owner's word.
+- **Keeping the old vault's password form.** It is the only way a home with an unopened vault gets its logins back, but no home the owner runs holds one, and 0.12 still opens it: the release that cannot is the one that refuses to start over it.
+- **Reading a settings file without `mode` as remote while any old file might exist.** No release since 0.3.0 leaves one behind after its window closes once.

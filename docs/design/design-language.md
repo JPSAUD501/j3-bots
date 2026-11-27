@@ -189,7 +189,7 @@ An avatar is a **Pip**: a small character whose body is the bot's silhouette in 
 | Speaking | A message of the bot's is arriving | Open, lifted, the mouth moving | Upright | Sound arcs |
 | Offline | This client has not seen the server for 3 s | Shut | Drooping, short | None; the body is washed out and drawn at half opacity |
 
-- A bot that waits on the operator or is blocked shows it even while it speaks. A notification's still avatar shows what the notification means: waiting for a card, unread for a message or a handoff (`notificationState`).
+- A bot that waits on the operator or is blocked shows it even while it speaks. A notification's still avatar shows what the notification means: waiting for a card, unread for a message (`notificationState`).
 - Speaking lasts from 0.9 to 2.8 s after the message's own time, longer for a longer message, so it plays while the conversation brings the words in and never again on a reload.
 - A turn the server reports as possibly stalled holds its state's still form without its signal: a stuck bot stops moving and nothing at its light says the work goes on, so working and stuck never look the same, under reduced motion too.
 - The light's three colors match the roster line's wording and color, and each state also changes the eye and the antenna, so state is never carried by color alone.

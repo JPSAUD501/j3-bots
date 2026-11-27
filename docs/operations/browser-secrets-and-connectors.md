@@ -26,10 +26,6 @@ By default, only the bot that asked may use what you save. **Let every bot use i
 
 On Android it is the same, on a screen for the list and one for each secret, and a copied value shows no preview. A one-time code key can be pasted, or read with the camera from the QR code the site shows.
 
-### Coming from a vault with a master password
-
-If you saved logins before 0.9.0, **Settings → Secrets** asks for your vault password one last time. After that the server keeps the key itself and never asks again; each login gets a name from its old label, which you can change. Until you type it, no login can be used and no connector that needs a secret can reach its service. If the password is lost, [Operating: secrets](operating.md#secrets) says how to start over.
-
 ### A bot signs in with a login
 
 - **A bot uses a login only if the login allows that bot**, and its browser is on.
@@ -133,7 +129,7 @@ A connector's page shows its status and what fixes it:
 | Needs sign-in | Its sign-in ended or was refused: some services end one after a fixed time. | Sign in again, or give its key again. |
 | Can't reach | It doesn't answer, or answers with errors, and the page says which. | Check the service; it is tried again on its own. |
 | Needs a secret | Its settings name a secret, as `${secret:<name>}`, that doesn't exist, lacks the value it takes, or isn't shared with every bot that uses the connector. Nothing is sent until it is. | **Open Secrets** to save or share it, or choose fewer bots. |
-| Secrets unavailable | The server's secrets can't be read: an old vault waits for its password, or the key file is missing. | **Open Secrets**. |
+| Secrets unavailable | The server's secrets can't be read: the key file is missing or is another one. | **Open Secrets**. |
 
 When a bot finds its connector signed out, it shows a card in its conversation that reconnects it. You are notified then, not when nobody is using the connector.
 

@@ -1,6 +1,6 @@
 # Working in this repository
 
-J3 Bots is in its design phase. The deliverable right now is documentation that is correct enough to build from.
+J3 Bots is released software: the server, and the web, desktop and Android clients. A change ships with the documentation it affects, in the same pull request, so the docs always say what the code does.
 
 ## What this project is
 
@@ -24,9 +24,9 @@ Use the terms in [docs/product/concepts.md](docs/product/concepts.md) exactly. T
 - A decision that would be expensive to reverse gets a short record in [docs/decisions](docs/decisions/README.md).
 - Do not commit plans, scratch notes or research dumps. A merged change is the record.
 
-## Rules that will apply to code
+## Rules for code
 
-These are settled before the first line is written. Details are in [docs/engineering/standards.md](docs/engineering/standards.md).
+Details are in [docs/engineering/standards.md](docs/engineering/standards.md).
 
 - TypeScript, strict. `any` is not allowed; neither are unchecked casts at a boundary. Decode external data with a schema.
 - Only `packages/engine-t3` may know anything about T3 Code: its protocol, its types, its file layout.
