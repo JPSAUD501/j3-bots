@@ -33,7 +33,7 @@ import {
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
-import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
+import type { BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
@@ -43,7 +43,6 @@ import { focusAtEnd } from "../components/Composer";
 import { DraftComposer } from "../components/DraftComposer";
 import { AppStageProvider } from "../components/AppStage";
 import { ConversationHeader } from "../components/ConversationHeader";
-import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { connectPlaceOf } from "../components/AiConnect";
 import {
   Connecting,
@@ -58,15 +57,17 @@ import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
 import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
-import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
+import { SettingsButton, settingsPanel } from "../components/SettingsButton";
+import { SignOutDevice } from "../components/SignOutDevice";
 import { Button } from "../components/ui/button";
 import { recordScreenIn } from "../components/RecordOffer";
 import { Timeline } from "../components/Timeline";
 import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { tintOf } from "../lib/botTint";
-import { Onboarding } from "../onboarding/Onboarding";
+import { onboarding } from "../onboarding/deferred";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
+import { deferred, preloadWhenIdle } from "../lib/deferred";
 import { isCovered, useCovered } from "../lib/covered";
 import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useConversationView } from "./conversationView";
@@ -74,6 +75,18 @@ import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
+
+// Not part of the app's first load: what shows only once the operator opens it.
+const Onboarding = onboarding.Component;
+const browserViewer = deferred(() =>
+  import("../browser/BrowserViewer").then((viewer) => viewer.BrowserViewer),
+);
+const BrowserViewer = browserViewer.Component;
+const botDetails = deferred(() => import("../components/DetailsPanel").then((d) => d.BotDetails));
+const BotDetails = botDetails.Component;
+const RoomDetails = deferred(() =>
+  import("../components/DetailsPanel").then((d) => d.RoomDetails),
+).Component;
 
 interface ShellNavigation {
   readonly selected: RosterItemKey | null;
@@ -128,6 +141,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const [appArea, setAppArea] = useState<HTMLDivElement | null>(null);
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
+  // What the operator opens most once the app is up, fetched when the page is idle.
+  useEffect(() => preloadWhenIdle(settingsPanel.preload, botDetails.preload), []);
 
   const rosterItems = data.roster ?? [];
   const pairs = data.pairs ?? [];

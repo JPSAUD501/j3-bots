@@ -7,9 +7,14 @@ import { type ReactNode, useState } from "react";
 import { useI18n } from "../app/context";
 import { AttachmentImagesProvider, type ImageSource } from "../components/attachmentImages";
 import { DocumentsProvider } from "../components/documents/documents";
-import { DocumentViewer } from "../components/documents/DocumentViewer";
 import { ImageViewer } from "../components/ImageViewer";
+import { deferred } from "../lib/deferred";
 import { deliverFile, reserveWindow } from "./openFile";
+
+/** Opens only when the operator reads a document: not part of the app's first load. */
+const DocumentViewer = deferred(() =>
+  import("../components/documents/DocumentViewer").then((viewer) => viewer.DocumentViewer),
+).Component;
 
 /** The files and images of a conversation, as the page opens them. */
 export interface Attachments {

@@ -95,22 +95,13 @@ import {
   WhereBotsLive,
 } from "../components/LocalMode";
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
-import { Onboarding } from "../onboarding/Onboarding";
+import { onboarding } from "../onboarding/deferred";
 import { writeClipboard } from "../lib/clipboard";
 import { cn } from "../lib/cn";
-import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
+import { deferred } from "../lib/deferred";
 import type { ConnectorsIntents } from "../components/connectors/screen";
-import { EditBotDialog } from "../components/EditBotDialog";
-import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
-import { NewBotDialog } from "../components/NewBotDialog";
-import { RoomDialog } from "../components/RoomDialog";
-import { RoutineRunsDialog } from "../components/RoutineRuns";
-import {
-  NewFromTemplateDialog,
-  ShareTemplateDialog,
-  type TemplateShare,
-} from "../components/TemplateDialogs";
+import type { TemplateShare } from "../components/TemplateDialogs";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
@@ -166,6 +157,34 @@ import { askLocalDevice, localMode, useLocalServer } from "./localServer";
 import { LinkedPairingCode } from "./pairingLink";
 import { signInUnencrypted } from "./platform";
 import { useSavesUnderWay } from "./savesUnderWay";
+
+// Not part of the app's first load: the first run, and dialogs that open only
+// when the operator asks; their code follows once the app is up.
+const Onboarding = onboarding.Component;
+const ConnectorsDialog = deferred(() =>
+  import("../components/connectors/ConnectorsDialog").then((m) => m.ConnectorsDialog),
+).Component;
+const EditBotDialog = deferred(() =>
+  import("../components/EditBotDialog").then((m) => m.EditBotDialog),
+).Component;
+const MemoryViewer = deferred(() =>
+  import("../components/MemoryViewer").then((m) => m.MemoryViewer),
+).Component;
+const NewBotDialog = deferred(() =>
+  import("../components/NewBotDialog").then((m) => m.NewBotDialog),
+).Component;
+const RoomDialog = deferred(() =>
+  import("../components/RoomDialog").then((m) => m.RoomDialog),
+).Component;
+const RoutineRunsDialog = deferred(() =>
+  import("../components/RoutineRuns").then((m) => m.RoutineRunsDialog),
+).Component;
+const NewFromTemplateDialog = deferred(() =>
+  import("../components/TemplateDialogs").then((m) => m.NewFromTemplateDialog),
+).Component;
+const ShareTemplateDialog = deferred(() =>
+  import("../components/TemplateDialogs").then((m) => m.ShareTemplateDialog),
+).Component;
 
 /**
  * What the room form is open for. A room is named by id and read from the
