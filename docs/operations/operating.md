@@ -119,7 +119,7 @@ Only the X11 read was checked on a running system, under Xvfb without a composit
 
 ## Recording the screen in the desktop app
 
-The desktop app records every screen, the voice, keys, clicks and the window in front into one zip for a bot ([Experience](../product/experience.md#showing-a-bot-your-screen), [decision 0098](../decisions/0098-the-desktop-app-records-the-screen-for-a-bot.md)). It offers this only while it follows a server that takes recordings, from 0.15.0. What it records depends on the system:
+The desktop app records every screen, the voice, keys, clicks and the window in front into one zip for a bot ([Experience](../product/experience.md#showing-a-bot-your-screen), [decision 0098](../decisions/0098-the-desktop-app-records-the-screen-for-a-bot.md)). It offers this only while it follows a server that takes recordings, from 0.14.0. What it records depends on the system:
 
 | Where | What to expect |
 | --- | --- |
