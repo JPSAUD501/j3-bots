@@ -34,6 +34,21 @@ export interface TelemetryMarks {
 const SentRow = Schema.Struct({ body: Schema.String });
 
 /**
+ * The kept events' JSON text, newest first, each exactly as it was sent: what
+ * "See what is sent" lists, and the diagnostics zip holds.
+ */
+export const sentBodies = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: SentRow,
+    execute: () =>
+      sql`SELECT body FROM telemetry_sent ORDER BY sent_at DESC, rowid DESC LIMIT ${KEPT_SENT_EVENTS}`,
+  })(undefined);
+  return rows.map((row) => row.body);
+});
+
+/**
  * What the server keeps of its usage data, in its database: the install's
  * random id, the day it last said it was in use, and the newest events as
  * they left, each the JSON text that was sent.
@@ -68,12 +83,6 @@ export const layer = Layer.effect(
         SELECT install_id, active_day, last_version, told_update_run FROM telemetry_install
         WHERE id = 1
       `,
-    });
-    const readSent = SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: SentRow,
-      execute: () =>
-        sql`SELECT body FROM telemetry_sent ORDER BY sent_at DESC, rowid DESC LIMIT ${KEPT_SENT_EVENTS}`,
     });
 
     const install = Effect.gen(function* () {
@@ -140,10 +149,7 @@ export const layer = Layer.effect(
           }),
         );
       }, Effect.orDie),
-      sent: readSent(undefined).pipe(
-        Effect.map((rows) => rows.map((row) => row.body)),
-        Effect.orDie,
-      ),
+      sent: sentBodies.pipe(Effect.provideService(SqlClient.SqlClient, sql), Effect.orDie),
     });
   }),
 ).pipe(Layer.provide(SecureRandom.layerWebCrypto));

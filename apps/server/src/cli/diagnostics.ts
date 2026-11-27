@@ -109,6 +109,7 @@ export const diagnosticsCommand = Command.make("diagnostics", { out: outFlag }).
           startedAt: Option.map(running, (status) => status.startedAt),
           install: yield* installKind(Option.isSome(unitText)),
           engine: Option.map(running, (status) => status.engine),
+          usageDataHold: Option.none(),
           secrets: [],
         }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
         yield* zip.pipe(

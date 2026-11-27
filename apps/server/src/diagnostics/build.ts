@@ -19,6 +19,8 @@ import { HOME_ENTRIES } from "../home/entries.ts";
 import { PRIVATE_ANNOTATIONS } from "../logs/annotations.ts";
 import { logFiles } from "../logs/ServerLogFile.ts";
 import { everyValue } from "../secrets/transfer.ts";
+import type { TelemetryHold } from "../telemetry/environment.ts";
+import { sentBodies } from "../telemetry/TelemetryStore.ts";
 import { readRun } from "../update/run.ts";
 import { makeScrubber, scrubJson } from "./scrub.ts";
 import { type ZipEntry, zipStream } from "./zip.ts";
@@ -65,6 +67,12 @@ export interface DiagnosticsSources {
   readonly install: InstallKind;
   /** The engine and its providers as the server sees them; none when it is not running. */
   readonly engine: Option.Option<EngineStatus>;
+  /**
+   * What in the running server's environment keeps usage data off whatever
+   * its switch says, null when nothing does; none for `j3-bots diagnostics`,
+   * whose shell is not the server's environment.
+   */
+  readonly usageDataHold: Option.Option<TelemetryHold | null>;
   /** Secret values the running server holds only in memory, to take out as well. */
   readonly secrets: ReadonlyArray<Redacted.Redacted<string>>;
   readonly budgets?: LogBudgets;
@@ -81,7 +89,7 @@ export const DIAGNOSTICS_FILES = [
   "migrations.json",
   "counts.json",
   "settings.json",
-  "telemetry.json",
+  "usage-data.json",
   "manifest.json",
 ] as const;
 type DiagnosticsFile = (typeof DIAGNOSTICS_FILES)[number];
@@ -100,8 +108,8 @@ rest appear by their ids alone (\`bot_…\`, \`room_…\`).
 - \`manifest.json\`: what made the zip and when: J3 Bots' release, the engine
   it is pinned to, the protocol, the client the zip was asked from, the
   system, how the server is installed, how long it has run, its time zone,
-  and how many lines of each log the zip holds and whether older ones were
-  left out.
+  how many lines of each log the zip holds and whether older ones were left
+  out, and whether usage data is on and how many of its events the zip holds.
 - \`server-log.jsonl\`: the server's log for the last ${LOG_DAYS} days, oldest
   first, one JSON line each: \`timestamp\`, \`level\`, \`message\`,
   \`annotations\`, \`spans\` and, for an error, \`cause\`. When the days hold
@@ -123,7 +131,14 @@ rest appear by their ids alone (\`bot_…\`, \`room_…\`).
 - \`settings.json\`: the server's settings. A setting that could hold a secret
   or a path reads \`set\` or \`not set\`, and the words taught to dictation
   only how many there are.
-- \`telemetry.json\`: what the server sends to J3 Bots' developers on its own.
+- \`usage-data.json\`: the anonymous usage data the server sends to J3 Bots'
+  developers. \`switch\` is the operator's switch in Settings, \`heldOffBy\`
+  what in the server's environment keeps it off whatever the switch says
+  (\`do-not-track\`, \`turned-off\`, \`invalid-destination\`, \`ci\`,
+  \`development\`, \`nothing\`, or \`unknown\` when \`j3-bots diagnostics\` made
+  the zip), and \`on\` whether it is sent. \`sent\` is the last events sent,
+  newest first, each exactly as it left, then scrubbed like every other file:
+  the hashed ids in them read \`[token]\`.
 
 A file the server could not read holds \`{ "unreadable": … }\` and says why.
 `;
@@ -294,6 +309,11 @@ const Migration = Schema.Struct({
 
 const Release = Schema.Struct({ version: Schema.String, recorded_at: Schema.String });
 
+const UsageDataSwitch = Schema.Struct({ telemetry: Flag });
+
+/** An event as the server sent it: its JSON, or the text itself should it not parse. */
+const decodeSentEvent = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
+
 const SecretValue = Schema.Struct({ value: Schema.String });
 
 /** The notices that say something failed: the rest say what happened. */
@@ -398,6 +418,8 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
 
   /** What the zip holds of each log, by name, as it is made. */
   const logs: Record<string, KeptLog> = {};
+  /** What the zip holds of usage data, once its file is made. */
+  let usageData: { readonly on: UsageDataOn; readonly events: number } | undefined;
 
   const query = <Row extends Schema.Constraint, E>(
     result: Row,
@@ -591,7 +613,27 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
         }),
       ),
     ),
-    "telemetry.json": Effect.succeed(json(telemetry())),
+    "usage-data.json": Effect.gen(function* () {
+      const [saved] = yield* query(
+        UsageDataSwitch,
+        () => sql`SELECT telemetry FROM settings WHERE id = 1`,
+      );
+      const switchOn = saved === undefined || flag(saved.telemetry);
+      const sent = (yield* sentBodies.pipe(Effect.provide(context))).map((body) =>
+        Option.getOrElse(decodeSentEvent(body), (): Schema.Json => body),
+      );
+      const on = usageDataOn(switchOn, sources.usageDataHold);
+      usageData = { on, events: sent.length };
+      return json({
+        on,
+        switch: switchOn ? "on" : "off",
+        heldOffBy: Option.match(sources.usageDataHold, {
+          onNone: () => "unknown",
+          onSome: (hold) => hold ?? "nothing",
+        }),
+        sent,
+      });
+    }),
     "manifest.json": query(
       Schema.Struct({ time_zone: Schema.String }),
       () => sql`SELECT time_zone FROM settings WHERE id = 1`,
@@ -639,6 +681,7 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
           }),
           timeZone,
           logs: { since: sinceIso, ...logs },
+          ...(usageData === undefined ? {} : { usageData }),
         }),
       ),
     ),
@@ -659,9 +702,10 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
   return zipStream(entries, sources.at);
 });
 
-/**
- * What the server sends to J3 Bots' developers on its own: nothing, in this
- * release. Where the zip would say whether telemetry is on and list what was
- * last sent, once the server has a telemetry switch.
- */
-const telemetry = () => ({ sends: "nothing" });
+/** Whether usage data is sent: `unknown` when the switch is on and the server's environment is not known. */
+type UsageDataOn = boolean | "unknown";
+
+const usageDataOn = (switchOn: boolean, hold: Option.Option<TelemetryHold | null>): UsageDataOn =>
+  !switchOn
+    ? false
+    : Option.match(hold, { onNone: () => "unknown" as const, onSome: (held) => held === null });

@@ -21,6 +21,7 @@ const NOW = DateTime.makeUnsafe("2026-11-27T12:00:00.000Z");
 const BOT_NAME = "Marina Travel Planner";
 const WEBHOOK_SECRET = "whsec-made-up-for-the-test-31415";
 const MEMORY_SECRET = "in-memory-made-up-key";
+const INSTALL_HASH = "a".repeat(64);
 
 const sources: DiagnosticsSources = {
   at: NOW,
@@ -29,6 +30,7 @@ const sources: DiagnosticsSources = {
   startedAt: Option.some(DateTime.makeUnsafe("2026-11-27T11:00:00.000Z")),
   install: "service",
   engine: Option.none(),
+  usageDataHold: Option.some(null),
   secrets: [Redacted.make(MEMORY_SECRET)],
 };
 
@@ -89,6 +91,10 @@ const Manifest = Schema.Struct({
   install: Schema.String,
   uptimeSeconds: Schema.Number,
   timeZone: Schema.String,
+  usageData: Schema.Struct({
+    on: Schema.Union([Schema.Boolean, Schema.Literal("unknown")]),
+    events: Schema.Number,
+  }),
   logs: Schema.Struct({
     since: Schema.String,
     server: Schema.Struct({ lines: Schema.Number, cut: Schema.Boolean }),
@@ -115,6 +121,24 @@ const Counts = Schema.Struct({
   routines: Schema.Struct({ all: Schema.Number, enabled: Schema.Number }),
 });
 const decodeCounts = Schema.decodeSync(Schema.fromJsonString(Counts));
+
+const UsageData = Schema.Struct({
+  on: Schema.Union([Schema.Boolean, Schema.Literal("unknown")]),
+  switch: Schema.String,
+  heldOffBy: Schema.String,
+  sent: Schema.Array(Schema.Json),
+});
+const decodeUsageData = Schema.decodeSync(Schema.fromJsonString(UsageData));
+
+/** An event as the server keeps what it sent: its JSON text. */
+const keepSent = (uuid: string, sentAt: string, body: Schema.Json) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO telemetry_sent (uuid, sent_at, body)
+      VALUES (${uuid}, ${sentAt}, ${JSON.stringify(body)})
+    `;
+  });
 
 const Settings = Schema.Struct({ voice: Schema.Struct({ words: Schema.Number }) });
 const decodeSettings = Schema.decodeSync(Schema.fromJsonString(Settings));
@@ -167,6 +191,17 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       });
       yield* entry("entry_00000000000000000003", 2, "notice", {
         notice: { _tag: "operator-named", botId: "bot_00000000000000000001", name: "Marina" },
+      });
+      // What usage data sent, an id hashed as it leaves.
+      yield* keepSent("019a7c3e-0000-7000-8000-000000000001", "2026-11-27T10:00:00.000Z", {
+        event: "server.started",
+        distinct_id: INSTALL_HASH,
+        properties: { j3Version: "0.14.0" },
+      });
+      yield* keepSent("019a7c3e-0000-7000-8000-000000000002", "2026-11-27T11:00:00.000Z", {
+        event: "bot.created",
+        distinct_id: INSTALL_HASH,
+        properties: { harness: "codex", fromTemplate: true },
       });
       // A word taught to dictation, which may be someone's name.
       yield* sql`UPDATE settings SET voice_words_json = '["Quillon"]' WHERE id = 1`;
@@ -221,6 +256,7 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
           uptimeSeconds: manifest.uptimeSeconds,
           timeZone: manifest.timeZone,
           server: manifest.logs.server,
+          usageData: manifest.usageData,
         },
         {
           madeAt: "2026-11-27T12:00:00.000Z",
@@ -230,6 +266,7 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
           uptimeSeconds: 3600,
           timeZone: "UTC",
           server: { lines: 3, cut: false },
+          usageData: { on: true, events: 2 },
         },
       );
 
@@ -249,6 +286,24 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       assert.strictEqual(decodeSettings(zip.text("settings.json")).voice.words, 1);
       // The name a request was refused at is left out, the rest of the line kept.
       assert.deepStrictEqual(decodeAnnotations(serverLog[1] ?? ""), { route: "/" });
+      // Usage data as it left, newest first, scrubbed like every other file.
+      assert.deepStrictEqual(decodeUsageData(zip.text("usage-data.json")), {
+        on: true,
+        switch: "on",
+        heldOffBy: "nothing",
+        sent: [
+          {
+            event: "bot.created",
+            distinct_id: "[token]",
+            properties: { harness: "codex", fromTemplate: true },
+          },
+          {
+            event: "server.started",
+            distinct_id: "[token]",
+            properties: { j3Version: "0.14.0" },
+          },
+        ],
+      });
     }),
   );
 
@@ -273,6 +328,37 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       assert.deepStrictEqual(decodeManifest(zip.text("manifest.json")).logs.server, {
         lines: 10,
         cut: true,
+      });
+    }),
+  );
+
+  it.effect("says usage data is off when the switch or the server's environment keeps it off", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const usageData = (overrides: Partial<DiagnosticsSources>) =>
+        unzipped(overrides).pipe(
+          Effect.map((zip) => {
+            const read = decodeUsageData(zip.text("usage-data.json"));
+            return { on: read.on, switch: read.switch, heldOffBy: read.heldOffBy };
+          }),
+        );
+
+      assert.deepStrictEqual(yield* usageData({ usageDataHold: Option.some("do-not-track") }), {
+        on: false,
+        switch: "on",
+        heldOffBy: "do-not-track",
+      });
+      // `j3-bots diagnostics` does not know the environment the server runs in.
+      assert.deepStrictEqual(yield* usageData({ usageDataHold: Option.none() }), {
+        on: "unknown",
+        switch: "on",
+        heldOffBy: "unknown",
+      });
+      yield* sql`UPDATE settings SET telemetry = 0 WHERE id = 1`;
+      assert.deepStrictEqual(yield* usageData({ usageDataHold: Option.none() }), {
+        on: false,
+        switch: "off",
+        heldOffBy: "unknown",
       });
     }),
   );

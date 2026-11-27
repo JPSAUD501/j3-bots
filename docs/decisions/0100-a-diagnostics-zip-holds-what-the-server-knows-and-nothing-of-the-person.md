@@ -29,10 +29,10 @@ What was open:
 
 ### Where
 
-**Settings → About and updates**, as its last row: **Download diagnostics** ("Baixar diagnóstico").
+**Settings → About and updates**, under **Privacy** ("Privacidade"), right after the switch for anonymous usage data ([decision 0099](0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md)): **Download diagnostics** ("Baixar diagnóstico"). The two are what leaves the server about how it runs, one sent by the server on its own, the other by the operator where they choose, so they sit together as one small privacy area. Each shows where the server offers it; the area shows where it offers either.
 
 - Any paired device may download it. A paired device holds the operator's authority ([Security](../architecture/security.md#trust-model)), and the zip is server-wide.
-- The row opens one small sheet. The sheet lists what is inside (the logs of the last 7 days, failures and updates, versions, settings and counts) and what never is (the operator's messages, names of bots, rooms or people, and passwords, keys or other secrets). It offers Cancel and Save. There are no per-item choices: what is safe to pass on is settled here, not by the operator.
+- The row opens one small sheet. The sheet lists what is inside (the logs of the last 7 days, failures and updates, versions, settings and counts, and whether usage data is on with what it last sent) and what never is (the operator's messages, names of bots, rooms or people, and passwords, keys or other secrets). It offers Cancel and Save. There are no per-item choices: what is safe to pass on is settled here, not by the operator.
 - The web client and the desktop app save the file through the browser's download. The Android app hands it to the system's share sheet, for the operator to send where they choose.
 - **`j3-bots diagnostics [--out <file>]`** writes the same zip on the server's machine, for when no client opens.
   - It reads the data directory and changes nothing, whether the server is running or stopped.
@@ -45,7 +45,7 @@ A `README.md` inside explains each file for a person or an AI:
 
 | File | What it holds |
 | --- | --- |
-| `manifest.json` | J3 Bots' release, the engine it is pinned to and the protocol; the client that asked, with its version and system; the server's OS and architecture; the install kind; uptime and time zone; when the zip was made; and, per log, how many lines it holds and whether older ones were left out. |
+| `manifest.json` | J3 Bots' release, the engine it is pinned to and the protocol; the client that asked, with its version and system; the server's OS and architecture; the install kind; uptime and time zone; when the zip was made; per log, how many lines it holds and whether older ones were left out; and whether usage data is on, with how many of its events the zip holds. |
 | `server-log.jsonl` | The server's log for the last 7 days, oldest first, each line re-encoded from the server's own shape. A line that does not decode as that shape is dropped rather than trusted. An error's cause is cut at 8 KiB once scrubbed. A line that names something of the operator's network, as the name a refused request asked for or the `publicOrigin` name it was set to then, names it in an annotation the zip leaves out. |
 | `engine-log.jsonl` | The engine's work that went wrong over the same days, from T3 Code's trace file. Only spans that failed, were interrupted or logged a warning or an error are kept, in J3 Bots' own shape: the span's name, how long it took, the name of its error (never the error's message), and the level and message of what it logged, each scrubbed, then cut at 300 characters. |
 | `engine.json` | The engine's state and each provider's: whether it is ready, whether it is signed in, why it cannot run, the harness's version and J3 Bots' own copy of it. |
@@ -54,9 +54,9 @@ A `README.md` inside explains each file for a person or an AI:
 | `migrations.json` | The database changes applied, in order. |
 | `counts.json` | How many bots, rooms, routines, connectors (catalog and custom), conversations and paired devices there are. Numbers only. |
 | `settings.json` | The server's settings. Any setting that could hold a secret or a path reads `set` or `not set`. The words taught to dictation, which may be names, appear only as a count. |
-| `telemetry.json` | What the server sends to J3 Bots' developers on its own. |
+| `usage-data.json` | The anonymous usage data the server sends: the operator's switch (`switch`), what in the server's environment keeps it off whatever the switch says (`heldOffBy`), whether it is sent (`on`), and the last events sent, newest first (`sent`). |
 
-- **Telemetry.** Today the server sends nothing, so the file says `{ "sends": "nothing" }`. One function makes it (`telemetry()` in `apps/server/src/diagnostics/build.ts`). Once the server can send telemetry, that function says whether it is on and what it sent lately, from the same list Settings shows.
+- **Usage data.** The events are the ones "See what is sent" lists, read from the same kept list (`sentBodies` in `apps/server/src/telemetry/TelemetryStore.ts`), each exactly as it left, then scrubbed like every other file. They are typed so no text or name can be one; the scrubber still takes out their hashed ids, as it does any long run of hex, so the zip ties no event to an install. Only the running server knows its environment: a zip from `j3-bots diagnostics`, whose shell is not that environment, says `heldOffBy: "unknown"`, and `on` is `"unknown"` unless the switch is off.
 - **The client's own log.** No client keeps one today: the desktop app's file is the log of the server it runs, which the zip holds already. A client that keeps a log later adds it through the same route.
 - **The server keeps its own copy of its log**, `<J3_HOME>/logs/server.log`: the same JSON lines it writes to the console. The file is moved aside at 4 MiB, and at most 5 files (20 MiB) are kept. A service install wrote its log only to the journal before, and the zip should not depend on reading it. The log is private state like the rest of the home: its folder is checked before each write, and a link at the file's name is refused rather than followed, so the log never lands where the web client serves it.
 

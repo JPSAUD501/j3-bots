@@ -13,6 +13,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { ServerConfig } from "../config.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Harnesses, withCopies } from "../harnesses/Harnesses.ts";
+import { TelemetryConfig } from "../telemetry/Telemetry.ts";
 import { BridgeKey } from "../tools/BridgeKey.ts";
 import type { UpdateHost } from "../update/host.ts";
 import { UpdateLauncher } from "../update/UpdateLauncher.ts";
@@ -53,6 +54,7 @@ export const layer = Layer.effect(
     const harnesses = yield* Harnesses;
     const launcher = yield* UpdateLauncher;
     const bridgeKey = yield* BridgeKey;
+    const telemetry = yield* TelemetryConfig;
     const startedAt = yield* DateTime.now;
     const context = yield* Effect.context<
       FileSystem.FileSystem | Path.Path | SqlClient.SqlClient
@@ -73,6 +75,7 @@ export const layer = Layer.effect(
               onSome: (each) => withCopies(status, each),
             }),
           ),
+          usageDataHold: Option.some(telemetry.environment.hold),
           secrets: [bridgeKey.variable.value],
         }).pipe(Effect.provide(context));
       }),
