@@ -106,6 +106,8 @@ import {
   withLiveTurn,
   mentionOptions,
   type OnboardingStep,
+  readThrough,
+  rowOrder,
   type SettingsPage,
   withQuote,
 } from "@j3-bots/client-runtime/presentation";
@@ -2038,7 +2040,7 @@ const appReplies = () => {
     fullscreen: {
       viewId: sampleConnectorAppRef.viewId,
       mode: "fullscreen",
-      since: buildTimeline(shown).at(-1)?.key ?? null,
+      since: readThrough(buildTimeline(shown).map(rowOrder)),
     } satisfies StagedFrom,
     scrolled: buildTimeline([...earlier, ...shown]),
     pinned: { viewId: sampleConnectorAppRef.viewId, mode: "pip", since: null } satisfies StagedFrom,

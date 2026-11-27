@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ConnectorAppViewId, MessageEntry } from "@j3-bots/contracts";
+import type { ConnectorAppViewId, EntryOrder, MessageEntry } from "@j3-bots/contracts";
 import {
   botRepliesAfter,
   type ConnectorAppDisplayMode,
+  readThrough,
+  rowOrder,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import {
@@ -28,9 +30,9 @@ interface StagedApp {
   readonly mode: Exclude<ConnectorAppDisplayMode, "inline">;
 }
 
-/** An app shown other than in the reply, and the last row there was as it went. */
+/** An app shown other than in the reply, and the highest order the conversation had as it went. */
 export interface StagedFrom extends StagedApp {
-  readonly since: string | null;
+  readonly since: EntryOrder | null;
 }
 
 export interface AppStageState {
@@ -107,9 +109,9 @@ export function AppStageProvider({
   }, [fullscreen]);
 
   // What is in the conversation as an app goes full screen: only what comes after shows over it.
-  const latest = useRef<string | null>(null);
+  const latest = useRef<EntryOrder | null>(null);
   useLayoutEffect(() => {
-    latest.current = rows.at(-1)?.key ?? null;
+    latest.current = readThrough(rows.map(rowOrder));
   }, [rows]);
 
   // The same for as long as the conversation's area is, so an app's place in the reply keeps it.

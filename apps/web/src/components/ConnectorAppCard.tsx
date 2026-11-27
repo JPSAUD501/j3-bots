@@ -158,6 +158,8 @@ export function ConnectorAppBlock({
   const [height, setHeight] = useState(() => connectorAppStartHeight(app.viewId));
   // The modes the app can be shown in here, once it said: the header offers full screen from them.
   const [modes, setModes] = useState<ReadonlyArray<ConnectorAppDisplayMode>>([]);
+  // The height it reported pinned, laid out at the pinned width; its height in the reply stays.
+  const [pinnedHeight, setPinnedHeight] = useState<number | null>(null);
   // The frame, while there is one: one going away stays until the app answered its teardown,
   // and one wanted again after is a new frame.
   const [live, setLive] = useState<{
@@ -236,9 +238,15 @@ export function ConnectorAppBlock({
             access={access}
             stage={stage}
             mode={mode}
+            modes={modes}
             height={height}
+            pinnedHeight={pinnedHeight}
             leaving={live.leaving}
-            onHeight={setHeight}
+            onHeight={(reported, shownIn) => {
+              // Full screen, it fills the room it has: what it reports there says nothing of the reply.
+              if (shownIn === "inline") setHeight(reported);
+              else if (shownIn === "pip") setPinnedHeight(reported);
+            }}
             onModes={setModes}
             onLeft={() => setLive(null)}
           />
@@ -401,7 +409,9 @@ function AppStageFrame({
   access,
   stage,
   mode,
+  modes,
   height,
+  pinnedHeight,
   leaving,
   onHeight,
   onModes,
@@ -413,9 +423,14 @@ function AppStageFrame({
   readonly access: ConnectorAppAccess;
   readonly stage: AppStageState;
   readonly mode: ConnectorAppDisplayMode;
+  /** The modes both the conversation and the app have: the pinned header offers full screen from them. */
+  readonly modes: ReadonlyArray<ConnectorAppDisplayMode>;
+  /** Its height in the reply. */
   readonly height: number;
+  /** The height it reported pinned; null until it did. */
+  readonly pinnedHeight: number | null;
   readonly leaving: boolean;
-  readonly onHeight: (height: number) => void;
+  readonly onHeight: (height: number, mode: ConnectorAppDisplayMode) => void;
   readonly onModes: (modes: ReadonlyArray<ConnectorAppDisplayMode>) => void;
   readonly onLeft: () => void;
 }) {
@@ -488,7 +503,8 @@ function AppStageFrame({
         asked<boolean>((id, done) => ({
           _tag: "download",
           id,
-          names: files.map((file) => file.name),
+          // A file by the name it is saved under; an address as itself, which is where it goes.
+          names: files.map((file) => (file._tag === "file" ? file.name : file.url.href)),
           done,
         })).then((save) => {
           if (!save) return false;
@@ -498,7 +514,7 @@ function AppStageFrame({
         }),
       setDisplayMode: (next) => setMode(next),
       onModes: (modes) => modesChanged(modes),
-      onHeight: (reported) => heightChanged(reported),
+      onHeight: (reported, shownIn) => heightChanged(reported, shownIn),
     });
     host.current = made;
     const onMessage = (event: MessageEvent) => {
@@ -563,7 +579,7 @@ function AppStageFrame({
     mode === "inline"
       ? height
       : mode === "pip"
-        ? Math.min(height, MAX_CONNECTOR_APP_PIP_HEIGHT)
+        ? Math.min(pinnedHeight ?? height, MAX_CONNECTOR_APP_PIP_HEIGHT)
         : null;
 
   return (
@@ -595,7 +611,7 @@ function AppStageFrame({
         {mode !== "inline" && (
           <AppHeader
             app={app}
-            {...(mode === "pip" && place.modes.includes("fullscreen")
+            {...(mode === "pip" && modes.includes("fullscreen")
               ? { onExpand: () => void stage.show(view.viewId, "fullscreen") }
               : {})}
             onClose={() => void stage.show(view.viewId, "inline")}
