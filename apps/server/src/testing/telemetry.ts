@@ -33,7 +33,7 @@ export interface Recorded {
 }
 
 /** Every event the test's domain recorded, in order, whether the switch is on or off. */
-export class RecordedTelemetry extends Context.Service<
+class RecordedTelemetry extends Context.Service<
   RecordedTelemetry,
   Ref.Ref<ReadonlyArray<Recorded>>
 >()("@j3-bots/server/testing/telemetry/RecordedTelemetry") {}

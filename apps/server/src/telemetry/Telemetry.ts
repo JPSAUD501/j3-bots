@@ -66,7 +66,7 @@ export interface DeliveryTiming {
   readonly retryMax: number;
 }
 
-export const DEFAULT_TIMING: DeliveryTiming = {
+const DEFAULT_TIMING: DeliveryTiming = {
   interval: 10_000,
   sendTimeout: 10_000,
   shutdownFlush: 1_000,
@@ -75,9 +75,9 @@ export const DEFAULT_TIMING: DeliveryTiming = {
 };
 
 /** The most events one request carries. */
-export const BATCH_SIZE = 50;
+const BATCH_SIZE = 50;
 /** The most events waiting to be sent; past it the oldest go. */
-export const MAX_BUFFERED_EVENTS = 1_000;
+const MAX_BUFFERED_EVENTS = 1_000;
 /** How many times a batch is tried before it is dropped. */
 export const MAX_BATCH_ATTEMPTS = 6;
 /** Answers that refuse the batch itself, where trying it again cannot help. */
@@ -102,7 +102,7 @@ interface Delivery {
 const IDLE: Delivery = { failed: [], attempts: 0, failures: 0, retryAt: 0 };
 
 /** The wait before the next try, after `failures` in a row; `random` is in [0, 1). */
-export const retryDelay = (timing: DeliveryTiming, failures: number, random: number): number => {
+const retryDelay = (timing: DeliveryTiming, failures: number, random: number): number => {
   const ceiling = Math.min(timing.retryMax, timing.retryBase * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 };
@@ -137,7 +137,7 @@ export class Telemetry extends Context.Service<
   }
 >()("@j3-bots/server/telemetry/Telemetry") {}
 
-export const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
+const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
   const config = yield* TelemetryConfig;
   const store = yield* TelemetryStore;
   const onOff = yield* TelemetrySwitch;

@@ -12,7 +12,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { timeText } from "../persistence/columns.ts";
 
 /** How many sent events "See what is sent" keeps: the newest. */
-export const KEPT_SENT_EVENTS = 100;
+const KEPT_SENT_EVENTS = 100;
 
 const InstallRow = Schema.Struct({
   install_id: Schema.String,

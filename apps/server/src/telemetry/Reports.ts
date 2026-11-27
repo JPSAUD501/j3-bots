@@ -20,7 +20,7 @@ import { type TelemetryMarks, TelemetryStore } from "./TelemetryStore.ts";
 // Each is told once: the marks in `TelemetryStore` say what already was.
 
 /** How often the server looks for a new day, and for an update that ended since it started. */
-export const REPORT_INTERVAL = "10 minutes";
+const REPORT_INTERVAL = "10 minutes";
 
 const Count = Schema.Struct({ n: Schema.Number });
 

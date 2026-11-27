@@ -13,10 +13,10 @@ import * as Installation from "../installation.ts";
 import * as Host from "../system/Host.ts";
 import * as Systemd from "../system/Systemd.ts";
 import { updateHost } from "../update/host.ts";
-import { telemetryEnvironment } from "./environment.ts";
+import { telemetryEnvironment, unreadableOptOut } from "./environment.ts";
 import { type ServerDimensions, TelemetryConfig } from "./Telemetry.ts";
 
-export const osFamily = (platform: string): TelemetryOs => {
+const osFamily = (platform: string): TelemetryOs => {
   switch (platform) {
     case "linux":
       return "linux";
@@ -31,7 +31,7 @@ export const osFamily = (platform: string): TelemetryOs => {
   }
 };
 
-export const archFamily = (arch: string): TelemetryArch =>
+const archFamily = (arch: string): TelemetryArch =>
   arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : "other";
 
 /**
@@ -70,7 +70,13 @@ export const layer = (started: "desktop" | "cli") =>
       const installation = yield* Effect.result(Installation.installation);
       const development =
         installation._tag === "Success" && installation.success.layout._tag === "checkout";
-      const environment = telemetryEnvironment(yield* Effect.sync(() => process.env), development);
+      const variables = yield* Effect.sync(() => process.env);
+      const environment = telemetryEnvironment(variables, development);
+      if (unreadableOptOut(variables)) {
+        yield* Effect.logWarning(
+          "J3_TELEMETRY_ENABLED is neither a yes nor a no, so usage data stays off",
+        );
+      }
       if (environment.hold !== null) {
         yield* Effect.logInfo("Usage data is off for this server", { reason: environment.hold });
       }

@@ -372,7 +372,7 @@ export interface ShellIntents extends TimelineIntents {
 }
 
 /** The server's anonymous usage data (decision 0099), as a window takes part in it. */
-export interface UsageDataIntents {
+interface UsageDataIntents {
   /** The newest events the server sent, as they left, newest first; null when they could not be read. */
   readonly sent: () => Promise<ReadonlyArray<SentTelemetryEvent> | null>;
   /** Something only this window sees, told while usage data is on. */

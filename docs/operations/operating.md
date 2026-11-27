@@ -35,7 +35,7 @@ systemctl --user restart j3-bots
 
 An unknown key or an invalid value stops the start with a message that names it; `j3-bots doctor` shows the same before you restart. The full reference, with the environment variables that override each setting for `j3-bots serve`, is in [Server: configuration](../architecture/server.md#configuration).
 
-The service does not see `J3_*` variables from your shell, nor from the user manager's environment (the unit unsets them): it runs with `config.json` alone. `doctor` warns about each one set in your shell while the service is installed. Put lasting settings in `config.json`.
+The service does not see the variables of your shell, and the unit unsets the ones that override a setting (`J3_HOST`, `J3_PORT` and the others in that reference) from the user manager's environment: it runs with `config.json` alone. `doctor` warns about each of those set in your shell while the service is installed. Put lasting settings in `config.json`. Usage data has its own variables ([Usage data](#usage-data)).
 
 ## The service
 
@@ -66,6 +66,27 @@ journalctl --user -u j3-bots -n 200      # the last 200 lines
 ```
 
 The server writes one JSON object per line: wakes, dispatches and outcomes with identifiers, not message text. If `journalctl --user` shows nothing, the journal is not stored on disk; run `sudo mkdir -p /var/log/journal` and `sudo systemctl restart systemd-journald`.
+
+## Usage data
+
+The server sends anonymous usage data until you turn it off: what it sends and what it never does is in [Usage data](../product/usage-data.md). The switch is in Settings → About and updates, and takes effect at once for the whole server. To keep it off from the server's environment instead, whatever the switch says:
+
+| Variable | What it does |
+| --- | --- |
+| `DO_NOT_TRACK=1` | Keeps usage data off. Wins over everything else. |
+| `J3_TELEMETRY_ENABLED=false` | Keeps usage data off. A value that is neither a yes nor a no also does, with a warning in the log. `true` turns it on for a source checkout or a CI runner, which otherwise send nothing. |
+| `J3_TELEMETRY_HOST`, `J3_TELEMETRY_KEY` | Send it to another PostHog project, for a fork. An address that is not `http` or `https`, or an empty key, keeps it off. |
+
+For the service, put them in a drop-in, which `j3-bots service install` leaves alone:
+
+```sh
+mkdir -p ~/.config/systemd/user/j3-bots.service.d
+printf '[Service]\nEnvironment=DO_NOT_TRACK=1\n' > ~/.config/systemd/user/j3-bots.service.d/usage-data.conf
+systemctl --user daemon-reload
+systemctl --user restart j3-bots
+```
+
+The server the desktop app runs does not get `J3_*` variables from the app's environment, so use the switch there, or `DO_NOT_TRACK`, which it does get. A server that keeps usage data off says why once in its log as it starts.
 
 ## Quick access in the desktop app
 
