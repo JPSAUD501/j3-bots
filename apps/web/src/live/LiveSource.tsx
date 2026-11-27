@@ -98,13 +98,16 @@ import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialo
 import { onboarding } from "../onboarding/deferred";
 import { writeClipboard } from "../lib/clipboard";
 import { cn } from "../lib/cn";
-import { deferred } from "../lib/deferred";
+import { deferred, preloadWhenIdle } from "../lib/deferred";
 import type { ConnectorsIntents } from "../components/connectors/screen";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TemplateShare } from "../components/TemplateDialogs";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
+// Part of the first load: its parent lets go of the runs it reads once it has
+// finished closing, which a dialog still on its way would never say.
+import { RoutineRunsDialog } from "../components/RoutineRuns";
 import { notificationAccess } from "../preferences/notifications";
 import type { PairView } from "../components/PairConversation";
 import type {
@@ -159,46 +162,37 @@ import { signInUnencrypted } from "./platform";
 import { useSavesUnderWay } from "./savesUnderWay";
 
 // Not part of the app's first load: the first run, and dialogs that open only
-// when the operator asks, whose code is fetched the first time one opens.
+// when the operator asks, whose code is fetched the first time one opens; the
+// two opened most are fetched once the page is idle.
 const Onboarding = onboarding.Component;
 const ConnectorsDialog = deferred(
-  () =>
-  import("../components/connectors/ConnectorsDialog").then((m) => m.ConnectorsDialog),
+  () => import("../components/connectors/ConnectorsDialog").then((m) => m.ConnectorsDialog),
   (props) => props.opening !== null,
 ).Component;
-const EditBotDialog = deferred(
-  () =>
-  import("../components/EditBotDialog").then((m) => m.EditBotDialog),
+const editBotDialog = deferred(
+  () => import("../components/EditBotDialog").then((m) => m.EditBotDialog),
   (props) => props.bot !== null,
-).Component;
+);
+const EditBotDialog = editBotDialog.Component;
 const MemoryViewer = deferred(
-  () =>
-  import("../components/MemoryViewer").then((m) => m.MemoryViewer),
+  () => import("../components/MemoryViewer").then((m) => m.MemoryViewer),
   (props) => props.file !== null,
 ).Component;
-const NewBotDialog = deferred(
-  () =>
-  import("../components/NewBotDialog").then((m) => m.NewBotDialog),
+const newBotDialog = deferred(
+  () => import("../components/NewBotDialog").then((m) => m.NewBotDialog),
   (props) => props.open,
-).Component;
+);
+const NewBotDialog = newBotDialog.Component;
 const RoomDialog = deferred(
-  () =>
-  import("../components/RoomDialog").then((m) => m.RoomDialog),
+  () => import("../components/RoomDialog").then((m) => m.RoomDialog),
   (props) => props.mode !== null,
 ).Component;
-const RoutineRunsDialog = deferred(
-  () =>
-  import("../components/RoutineRuns").then((m) => m.RoutineRunsDialog),
-  (props) => props.open,
-).Component;
 const NewFromTemplateDialog = deferred(
-  () =>
-  import("../components/TemplateDialogs").then((m) => m.NewFromTemplateDialog),
+  () => import("../components/TemplateDialogs").then((m) => m.NewFromTemplateDialog),
   (props) => props.opened !== null,
 ).Component;
 const ShareTemplateDialog = deferred(
-  () =>
-  import("../components/TemplateDialogs").then((m) => m.ShareTemplateDialog),
+  () => import("../components/TemplateDialogs").then((m) => m.ShareTemplateDialog),
   (props) => props.share !== null,
 ).Component;
 
@@ -1188,6 +1182,7 @@ function LiveShell({
     if (opening._tag === "open") openTarget(opening.target);
   });
   useEffect(() => onNotificationClick(openClicked), []);
+  useEffect(() => preloadWhenIdle(newBotDialog.preload, editBotDialog.preload), []);
   useEffect(() => {
     const waiting = waitingClick.current;
     if (waiting !== null && listedRoster._tag === "ready") openClicked(waiting);

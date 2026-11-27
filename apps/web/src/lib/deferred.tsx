@@ -47,9 +47,7 @@ export function deferred<P extends object>(
     // How it renders, chosen the first time it is wanted and kept: a
     // component that showed while its code was on the way is not mounted
     // again when the code arrives.
-    const [shown, setShown] = useState<{ readonly Loaded: ComponentType<P> | null } | null>(
-      null,
-    );
+    const [shown, setShown] = useState<{ readonly Loaded: ComponentType<P> | null } | null>(null);
     const current = shown ?? (wanted(props) ? { Loaded: loaded } : null);
     if (current === null) return null;
     if (shown === null) setShown(current);

@@ -27,12 +27,13 @@ What was open:
 
 - **The first load** is the window's route chunk, the shell, the timeline, the details and the browser beside a conversation, and the catalog of the operator's language. The shell moves focus into the details and the browser, and hands them Escape, in the same render that opens them, so they cannot arrive later. Only that language's catalog is fetched (`loadI18n`). A change of language keeps the old words on screen until the new catalog arrives.
 - **Deferred components.** What most sessions never open is a `deferred` component (`apps/web/src/lib/deferred.tsx`). Its code is fetched the first time it is wanted, and it renders nothing until then. Once fetched, it renders at once.
-  - This covers Settings' pages, the first run, the document viewer, the screen recording sheet, and the dialogs for bots, memory, connectors, rooms, routine runs and templates.
+  - This covers Settings' pages, the first run, the document viewer, the screen recording sheet, and the dialogs for bots, memory, connectors, rooms and templates.
   - A dialog the app keeps mounted while closed fetches nothing until it first opens, then stays mounted, so it closes as it opens.
-  - Settings' pages are fetched in the background once the page is idle, because they are what the operator opens most.
+  - Settings' pages and the dialogs for a new bot and editing one are fetched in the background once the page is idle, because they are what the operator opens most.
 - **What stays in the first load**:
   - what a window shows as it opens: the onboarding check, pairing, the local desktop's first screen, the update prompt;
   - dictation, a hook of the composer;
+  - the routine runs dialog, whose parent lets go of the runs it reads only once the dialog has finished closing, which a dialog still on its way would never tell it;
   - a connector's app block, a few kilobytes whose late arrival would shift the timeline as it draws.
 - **Results:**
   - The app's first load went from 782.7 KiB to 680.5 KiB gzipped, quick access from 614.2 KiB to 586.9 KiB, and the screen recorder from 368.0 KiB to 332.2 KiB.
