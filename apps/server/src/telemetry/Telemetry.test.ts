@@ -34,6 +34,7 @@ import {
   type DeliveryTiming,
   layer as telemetryLayer,
   MAX_BATCH_ATTEMPTS,
+  type ServerDimensions,
   Telemetry,
   TelemetryConfig,
 } from "./Telemetry.ts";
@@ -115,6 +116,8 @@ const start = (options: {
   readonly timing: DeliveryTiming;
   readonly hold?: TelemetryHold;
   readonly key?: string;
+  /** How the server reads what it says of itself; at once unless given. */
+  readonly server?: Effect.Effect<ServerDimensions>;
 }) =>
   Effect.gen(function* () {
     const capture = yield* Capture;
@@ -127,7 +130,7 @@ const start = (options: {
           host: capture.origin,
           key: options.key ?? DEFAULT_TELEMETRY_KEY,
         },
-        server: Effect.succeed(SERVER),
+        server: options.server ?? Effect.succeed(SERVER),
       }),
     );
     const onOff = Layer.succeed(
@@ -385,6 +388,22 @@ it.layer(layer, { excludeTestServices: true })("usage data", (it) => {
       yield* telemetry.record(used("voice-input"));
       const after = yield* next;
       assert.deepStrictEqual(after.batch.map(featureOf), ["voice-input"]);
+      yield* stop;
+    }),
+  );
+
+  it.effect("sends nothing turned off while it read what the server says of itself", () =>
+    Effect.gen(function* () {
+      const { telemetry, turn, stop } = yield* start({
+        timing: TIMING,
+        server: Effect.sleep("200 millis").pipe(Effect.as(SERVER)),
+      });
+      yield* telemetry.record(used("whats-new"));
+      // The first flush is reading it now.
+      yield* Effect.sleep("60 millis");
+      yield* turn(false);
+      yield* Effect.sleep("400 millis");
+      yield* nothingSent;
       yield* stop;
     }),
   );

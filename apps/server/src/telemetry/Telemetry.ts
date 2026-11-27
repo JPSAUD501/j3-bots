@@ -191,8 +191,10 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
       },
     });
 
-  const send = Effect.fn("Telemetry.send")(function* (batch: ReadonlyArray<Waiting>) {
-    const server = yield* config.server;
+  const send = Effect.fn("Telemetry.send")(function* (
+    batch: ReadonlyArray<Waiting>,
+    server: ServerDimensions,
+  ) {
     const encoded = yield* Effect.forEach(batch, (waiting) =>
       asSent(waiting, server).pipe(
         Effect.map((json) => ({ uuid: waiting.uuid, json })),
@@ -229,10 +231,14 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
   /** Sends what waits, a batch at a time, until a batch fails or nothing waits. */
   const flush = Effect.gen(function* () {
     while (yield* sending) {
+      // Read before a batch is taken, as it can take a while: the switch turned off meanwhile
+      // drops what waits, and nothing taken waits through it.
+      const server = yield* config.server;
+      if (!(yield* sending)) return;
       const state = yield* Ref.get(delivery);
       const batch = state.failed.length > 0 ? state.failed : yield* take;
       if (batch.length === 0) return;
-      const result = yield* Effect.result(send(batch));
+      const result = yield* Effect.result(send(batch, server));
       /** Sets what comes next, unless the switch went off meanwhile, which dropped the batch. */
       const settle = (next: Omit<Delivery, "epoch">) =>
         Ref.modify(delivery, (current) =>
