@@ -274,12 +274,10 @@ const MessageBotInput = toolInput({
   ),
 });
 
-/** Whether what a bot makes starts hidden, for `create_bot` and `start_room`. */
-const StartsHidden = Schema.optionalKey(
-  described(
-    Schema.Boolean,
-    "true keeps it out of your user's list, among their hidden conversations, where it still works and still notifies them. Leave it out to show it.",
-  ),
+/** Whether what a bot makes goes in its user's conversation list, for `create_bot` and `start_room`. */
+const Listed = described(
+  Schema.Boolean,
+  "true puts it in your user's conversation list. false puts it behind the scenes: out of their list, where it still works, still notifies them and stays one tap away. true when your user asked for it, by name or role, or will talk to it; false for a helper you coordinate yourself.",
 );
 
 const StartRoomInput = toolInput({
@@ -298,7 +296,7 @@ const StartRoomInput = toolInput({
       "The members the kickoff wakes; the others read it in their next turn. Leave it out to wake every member.",
     ),
   ),
-  hidden: StartsHidden,
+  listed: Listed,
 });
 
 /** How many messages `read_room` shows when the bot names no `count`, and the most it may. */
@@ -611,36 +609,45 @@ const BotName = described(
   "A person's name, as a colleague on your user's team would have: a real first name, or its usual short form, common where your user lives and in the language they write (a Brazilian name for a Brazilian user). Fit it to the bot's character more than its work and, where you can, set it apart from the names of their other bots, those you create with it included: another first letter, and no rhyme with any of them. Never a role or task word, a pun on the job, a made-up product-style word, or Bot, AI or Assistant in any form: the role goes in `title`. A name your user gave is used exactly as given.",
 );
 
+/**
+ * A bot's title, shown under its name wherever the operator sees it: what it
+ * is for, which a person's name alone never says.
+ */
+const BotTitle = described(
+  Profile.fields.title.check(Schema.isPattern(/\S/)),
+  'What the bot is for, in two to four words in the language your user writes, shown under its name everywhere your user sees it, as a job title is on a team: "Bakery competitors", "Instagram posts". Say what it does for your user, not how it works: no tool, model or AI words. A title your user gave is used exactly as given.',
+);
+
 const CreateBotInput = toolInput({
   name: BotName,
-  title: Schema.optionalKey(described(Profile.fields.title, "A short role, such as Research.")),
+  title: BotTitle,
   job: Schema.optionalKey(
     described(Profile.fields.job, "What the bot is for and where its limits are."),
   ),
-  hidden: StartsHidden,
+  listed: Listed,
 });
 
-const SetVisibilityInput = toolInput({
+const SetListedInput = toolInput({
   id: described(
     Id,
     "The id of a bot or a room, from `list_teammates` or as `create_bot` or `start_room` returned it.",
   ),
-  hidden: described(
+  listed: described(
     Schema.Boolean,
-    "true hides it from your user's list; false shows it there again.",
+    "true puts it in your user's conversation list; false moves it behind the scenes.",
   ),
 });
 
 const UpdateBotInput = toolInput({
   id: described(Id, "The teammate's bot id."),
   name: Schema.optionalKey(BotName),
-  title: Schema.optionalKey(Profile.fields.title),
+  title: Schema.optionalKey(BotTitle),
   job: Schema.optionalKey(Profile.fields.job),
 });
 
 const UpdateProfileInput = toolInput({
   name: Schema.optionalKey(BotName),
-  title: Schema.optionalKey(Profile.fields.title),
+  title: Schema.optionalKey(BotTitle),
   avatar: Schema.optionalKey(
     described(
       AvatarChoice,
@@ -1207,7 +1214,7 @@ export const tools = {
   list_teammates: define(
     "list_teammates",
     [
-      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is hidden from your user's list. As the primary bot, also the rooms you are not in, as `otherRooms`, which you can show or hide but not read or post in.",
+      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is `listed` in your user's conversation list or behind the scenes. As the primary bot, also the rooms you are not in, as `otherRooms`, which you can list or move behind the scenes but not read or post in.",
       "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there and `read_room` to read it, from any turn.",
     ],
     NoInput,
@@ -1229,7 +1236,7 @@ export const tools = {
       "You join as its first member. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member should answer first.",
       "The kickoff wakes the members in `mention`, every other member by default, and each answers in the room what it asks of them; none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
       "A room holds two to six bots, you included. Your user's limit on how many rounds bots may answer each other in a room since they last wrote holds here too, and starts with your kickoff.",
-      "Start it `hidden` only when it is for you and the teammates to coordinate and your user did not ask to see it; a room your user asked for stays visible.",
+      "`listed` is false only when the room is for you and the teammates to coordinate and your user did not ask to see it; a room your user asked for is listed.",
       "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
       BOT_ONLY,
     ],
@@ -1241,23 +1248,24 @@ export const tools = {
       `Create a new teammate for your user. Only the primary bot can, only in a turn whose message from your user asked for one or agreed to it, and at most ${MAX_BOTS_PER_REQUEST} for one request of theirs, counting those made before a retry of it.`,
       "The job says what the bot is for and where its limits end, in a few sentences; how every bot behaves comes from J3 Bots, not the job.",
       "Name it as `name` says, and any bot whose name you suggest to your user. Names you choose for bots you create together must be as distinct as two colleagues' are: never two that rhyme or differ by one letter. Names your user gave stay exactly as given, whatever they are.",
+      "Give it a `title` as that field says, always: the name makes it a person, the title says why it exists. Titles of bots you create together say how their work differs.",
       "No tool deletes a bot; your user can delete one in the app.",
-      "A bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there.",
-      "Create it `hidden` only when it is a helper your user did not ask to see, such as a worker you will direct yourself; a bot they asked for by name or role, or will talk to themselves, stays visible.",
+      "A listed bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there. One you put behind the scenes says no hello: it waits for you or a room to give it work.",
+      "`listed` is false only for a helper your user did not ask to see, such as a worker you will direct yourself; a bot they asked for by name or role, or will talk to themselves, is listed.",
       "Returns the new bot's id.",
     ],
     CreateBotInput,
   ),
-  set_visibility: define(
-    "set_visibility",
+  set_listed: define(
+    "set_listed",
     [
-      "Show or hide a bot or a room in your user's list. Hidden, it moves to their hidden conversations, where they can still open it: it keeps working, and still notifies them.",
-      "You can change the bots and rooms you made, and, as the primary bot, any but yourself. Never one your user made, showed or hid: their choice stands, so tell them if you think it should change.",
-      "Hide only a helper or a room your user did not ask to see and does not talk to, such as a worker you direct or a room where only bots coordinate. Anything they asked for, by name or role, or talk to themselves stays visible, also when you tidy up later.",
-      "When you hide or show something your user has seen, tell them in your `say`.",
-      "Returns whether it is hidden now.",
+      "Put a bot or a room in your user's conversation list, or move it behind the scenes: out of the list, where your user can still open it, and where it keeps working and still notifies them.",
+      "You can change the bots and rooms you made, and, as the primary bot, any but yourself. Never one your user created or moved themselves: their choice stands, so tell them if you think it should change.",
+      "Move behind the scenes only a helper or a room your user did not ask to see and does not talk to, such as a worker you direct or a room where only bots coordinate. Anything they asked for, by name or role, or talk to themselves stays listed, also when you tidy up later.",
+      "When you move something your user has seen, tell them in your `say`.",
+      "Returns whether it is listed now.",
     ],
-    SetVisibilityInput,
+    SetListedInput,
   ),
   update_bot: define(
     "update_bot",

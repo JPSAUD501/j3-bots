@@ -97,7 +97,7 @@ export class Rooms extends Context.Service<
       readonly changes: RoomChanges;
     }) => Effect.Effect<Room, CommandError>;
     /**
-     * A bot's `set_visibility` for a room, as `Bots.showOrHide` is for a bot:
+     * A bot's `set_listed` for a room, as `Bots.showOrHide` is for a bot:
      * decided by `visibilityRefusal` in the transaction that saves it.
      * Archived rooms included.
      */
