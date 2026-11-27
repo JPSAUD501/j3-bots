@@ -2,7 +2,7 @@
 import { BotId, EntryId, EntryOrder } from "@j3-bots/contracts";
 import { at, message } from "@j3-bots/client-runtime/testing";
 import { buildTimeline } from "@j3-bots/client-runtime/presentation";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderTestMarkup } from "../app/testRoot";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { copySample, sampleSecrets } from "../gallery/sampleSecrets";
 import { type QuoteDrafting, Timeline, type TimelineIntents } from "./Timeline";
@@ -57,7 +57,7 @@ const intents: TimelineIntents = {
 describe("a conversation", () => {
   it("shows an entry of a kind added after this version as a line, between the others", () => {
     const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
-    const html = renderToStaticMarkup(
+    const html = renderTestMarkup(
       <Timeline
         rows={buildTimeline([
           message("2026-11-20T10:00:00Z", scout, "Before"),
@@ -95,7 +95,7 @@ describe("a conversation", () => {
     const drafting: QuoteDrafting = { drafted: [], quote: () => {}, comments: true };
     /** How many messages offer Reply when the timeline has `offered`. */
     const replies = (offered: QuoteDrafting | null) =>
-      renderToStaticMarkup(
+      renderTestMarkup(
         <Timeline
           rows={buildTimeline([
             message("2026-11-20T10:00:00Z", scout, "Booked", { reactions: [] }),

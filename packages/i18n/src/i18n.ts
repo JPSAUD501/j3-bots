@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { LANGUAGES, type Language } from "@j3-bots/contracts";
-import { en } from "./en.ts";
-import { ptBR } from "./pt-BR.ts";
+import type { en } from "./en.ts";
 
 /**
  * The translation layer. English is the source: `en.ts` holds every interface
@@ -71,8 +70,6 @@ export const LANGUAGE_NAMES: Record<Language, string> = {
   "pt-BR": "Português (Brasil)",
 };
 
-const catalogs: Record<Language, Catalog> = { en, "pt-BR": ptBR };
-
 export interface I18n {
   readonly locale: Language;
   /** A sentence from the catalog, with its placeholders filled in. */
@@ -100,8 +97,8 @@ export interface I18n {
 
 const PLACEHOLDER = /\{(\w+)\}/g;
 
-export function createI18n(locale: Language): I18n {
-  const catalog = catalogs[locale];
+/** The translation layer over `catalog`, the language `locale`'s sentences. */
+export function i18nOf(locale: Language, catalog: Catalog): I18n {
   const numbers = new Intl.NumberFormat(locale);
   const pluralRules = new Intl.PluralRules(locale);
   const fill = (text: string, params: Readonly<Record<string, string | number>> = {}) =>

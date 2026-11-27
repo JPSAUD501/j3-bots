@@ -27,7 +27,6 @@ import {
   PlugIcon,
   RefreshCwIcon,
   ServerIcon,
-  SettingsIcon,
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -50,7 +49,7 @@ import {
   type SettingsPage,
   settingsGroups,
 } from "@j3-bots/client-runtime/presentation";
-import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
+import { type ProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
 import { type KeyWith, LANGUAGE_NAMES } from "@j3-bots/i18n";
 import {
@@ -77,7 +76,6 @@ import type {
 } from "../shell/data";
 import { cn } from "../lib/cn";
 import { systemTimeZone } from "../lib/timeZone";
-import { useTabletUp } from "../lib/useTabletUp";
 import {
   activityTime,
   deviceZoneOffer,
@@ -88,8 +86,7 @@ import {
 import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
-import { UpdatePromptEntryButton } from "./UpdatePrompt";
-import { WhatsNewButton, WhatsNewSection } from "./WhatsNew";
+import { WhatsNewSection } from "./WhatsNew";
 import { ShortcutSetting } from "./ShortcutSetting";
 import {
   AdvancedEndpoint,
@@ -112,6 +109,7 @@ import {
 import { PairingQr } from "./PairingQr";
 import { PhoneAccessSetting } from "./PhoneAccess";
 import { Section, SwitchRow } from "./SettingsSection";
+import { SignOutDevice } from "./SignOutDevice";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
 import { VoiceSection } from "./VoiceSettings";
@@ -120,10 +118,9 @@ import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
 import { PrivacySection } from "./Privacy";
-import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
 
-type SettingsIntents = Pick<
+export type SettingsIntents = Pick<
   ShellIntents,
   | "updateSettings"
   | "setSettingsOpen"
@@ -153,7 +150,7 @@ type SettingsIntents = Pick<
   | "voice"
 >;
 
-type SettingsData = Pick<
+export type SettingsData = Pick<
   ShellData,
   | "engine"
   | "engineStale"
@@ -171,14 +168,10 @@ type SettingsData = Pick<
   | "connectors"
 >;
 
-interface SettingsButtonProps {
+export interface SettingsButtonProps {
   readonly data: SettingsData;
   readonly intents: SettingsIntents;
 }
-
-// The profile form's unsaved edits are held outside the dialog: Settings
-// closed for the operator, as when a notification opens a conversation,
-// keeps them; closing it themselves discards them.
 
 /**
  * Whether an update waits for the operator: the server's, on offer to a
@@ -236,66 +229,6 @@ const pagesFor = (
       }),
     )
     .filter((group) => group.length > 0);
-
-/**
- * The roster's footer: the way back to the update prompt, What's new while it
- * has something unseen, and Settings, which opens everything that is not
- * about one bot at the list of its pages. Opening Settings reads the settings and devices again, for what
- * another device changed.
- */
-export function SettingsButton({ data, intents }: SettingsButtonProps) {
-  const { t } = useI18n();
-  const titleId = useId();
-  const profile = useProfileEdits(data.settingsSaves.profile);
-  const updateEntry = intents.updatePrompt?.entry ?? null;
-  const wide = useTabletUp();
-  return (
-    <div className="flex flex-col border-t border-border p-2">
-      {updateEntry !== null && intents.updatePrompt !== undefined && (
-        <UpdatePromptEntryButton entry={updateEntry} onOpen={intents.updatePrompt.reopen} />
-      )}
-      <WhatsNewButton whatsNew={intents.whatsNew} place="footer" />
-      <Dialog.Root
-        open={data.settingsOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            intents.showSettingsPage(null);
-            intents.refreshSettings();
-            intents.refreshDevices();
-            intents.serverUpdate?.refresh();
-          } else {
-            profile.discard();
-            // The operator has seen how the update this device followed ended.
-            intents.serverUpdate?.dismissEnded();
-          }
-          intents.setSettingsOpen(open);
-        }}
-      >
-        <Dialog.Trigger
-          render={<Button variant="ghost-muted" className="w-full justify-start px-2" />}
-        >
-          <SettingsIcon aria-hidden />
-          {t("settings.title")}
-        </Dialog.Trigger>
-        <Dialog.Portal>
-          <Dialog.Backdrop className={dialogBackdrop} />
-          <Dialog.Popup
-            aria-labelledby={titleId}
-            className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-3xl`}
-          >
-            <SettingsPanel
-              data={data}
-              intents={intents}
-              profile={profile}
-              titleId={titleId}
-              wide={wide}
-            />
-          </Dialog.Popup>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </div>
-  );
-}
 
 /**
  * Settings' pages, listed by name. At the tablet layout and up (`wide`) the
@@ -1258,51 +1191,6 @@ function PairingCodeShown({
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * Signs this device out once the operator confirms, after a question that
- * says what goes and what stays. `quiet`: a plain text button, for the
- * screens before the roster, where it is not what the operator came for.
- */
-export function SignOutDevice({
-  onSignOut,
-  quiet = false,
-}: {
-  onSignOut: SettingsIntents["signOut"];
-  quiet?: boolean;
-}) {
-  const { t } = useI18n();
-  // Success leaves the app for pairing, or tells of another tab's new pairing
-  // in a notice, so only a failure is ever shown here.
-  const [signOut, setSignOut] = useState<"idle" | "pending" | "failed">("idle");
-  return (
-    <div className={cn("flex flex-col gap-1.5", quiet ? "items-center" : "items-start")}>
-      <Confirm
-        trigger={
-          <Button
-            size="sm"
-            variant={quiet ? "ghost-muted" : "destructive-outline"}
-            aria-disabled={signOut === "pending"}
-          />
-        }
-        busy={signOut === "pending"}
-        title={t("settings.signOut.title")}
-        body={t("settings.signOut.body")}
-        cancel={t("settings.signOut.cancel")}
-        confirm={t("settings.signOut")}
-        onConfirm={() => {
-          setSignOut("pending");
-          onSignOut().then((done) => setSignOut(done ? "idle" : "failed"));
-        }}
-      >
-        {signOut === "pending" ? t("settings.signOut.pending") : t("settings.signOut")}
-      </Confirm>
-      <p role="alert" className="text-xs text-blocked empty:hidden">
-        {signOut === "failed" && t("settings.signOut.failed")}
-      </p>
     </div>
   );
 }

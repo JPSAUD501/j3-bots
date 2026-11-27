@@ -8,7 +8,7 @@ import {
   type WorkFoldEntry,
 } from "@j3-bots/contracts";
 import { at, bot } from "@j3-bots/client-runtime/testing";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderTestMarkup } from "../app/testRoot";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { RosterProvider } from "../app/context";
 import { WorkFold } from "./WorkFold";
@@ -80,7 +80,7 @@ const fold = (turn: TurnWork, live: boolean, ended = !live): WorkFoldEntry => ({
 const resting = { ...scout, state: { _tag: "idle" } } as const;
 
 const row = (turn: TurnWork, live: boolean, ended = !live) =>
-  renderToStaticMarkup(
+  renderTestMarkup(
     <RosterProvider
       roster={[
         {

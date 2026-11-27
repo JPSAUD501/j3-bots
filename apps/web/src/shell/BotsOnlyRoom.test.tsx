@@ -3,8 +3,9 @@
 import { AiSessionProvider } from "@j3-bots/client-runtime/react";
 import type { RosterItemKey } from "@j3-bots/contracts";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createTestRoot } from "../app/testRoot";
 import { ids } from "../gallery/sample";
 import { useSampleSource } from "../gallery/sampleSource";
 import { Shell } from "./Shell";
@@ -55,7 +56,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
 });
 
 afterEach(() => {

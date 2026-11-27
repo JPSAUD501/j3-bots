@@ -62,15 +62,17 @@ import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
 import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
-import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
+import { SettingsButton, settingsPanel } from "../components/SettingsButton";
+import { SignOutDevice } from "../components/SignOutDevice";
 import { Button } from "../components/ui/button";
 import { recordScreenIn } from "../components/RecordOffer";
 import { Timeline } from "../components/Timeline";
 import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { tintOf } from "../lib/botTint";
-import { Onboarding } from "../onboarding/Onboarding";
+import { onboarding } from "../onboarding/deferred";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
+import { preloadWhenIdle } from "../lib/deferred";
 import { isCovered, useCovered } from "../lib/covered";
 import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useConversationView } from "./conversationView";
@@ -78,6 +80,11 @@ import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
+
+// Not part of the app's first load: the first run. The details and the
+// browser beside a conversation are: the shell moves focus into them, and hands
+// them Escape, as they open.
+const Onboarding = onboarding.Component;
 
 interface ShellNavigation {
   readonly selected: RosterItemKey | null;
@@ -132,6 +139,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const [appArea, setAppArea] = useState<HTMLDivElement | null>(null);
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
+  // What the operator opens most once the app is up, fetched when the page is idle.
+  useEffect(() => preloadWhenIdle(settingsPanel.preload), []);
 
   const rosterItems = data.roster ?? [];
   const pairs = data.pairs ?? [];

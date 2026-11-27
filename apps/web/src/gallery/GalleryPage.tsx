@@ -162,9 +162,9 @@ import {
 } from "../components/LocalMode";
 import { ServerAddress } from "../components/ServerAddress";
 import type { DesktopPhone, DesktopSystem } from "../shell/data";
+import { SettingsButton } from "../components/SettingsButton";
 import {
   LookingAtSetting,
-  SettingsButton,
   SettingsPanel,
   UpdatesSection,
   WhereSection,

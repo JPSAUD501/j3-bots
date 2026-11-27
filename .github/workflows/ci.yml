@@ -50,6 +50,12 @@ jobs:
         env:
           J3_TEST_OTHER_USER: j3-other
 
+      # Builds the web client and fails when a window's first load grows past
+      # apps/web/bundle-budget.json (docs/operations/performance.md).
+      - name: Web budget
+        if: ${{ !cancelled() }}
+        run: vp run web-budget
+
       # A development server of this checkout on the pinned engine, whose
       # scripted agent calls J3 Bots' own tools through the real `j3` bridge:
       # a primary bot builds a team in one turn. Downloads the engine.
