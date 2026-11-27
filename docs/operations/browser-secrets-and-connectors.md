@@ -53,19 +53,21 @@ While the J3 Bots app is open on a computer, its own browser runs a bot's tabs, 
 
 ### Watch it
 
-On the web and the desktop:
+On the web and the desktop, in a wide window:
 
 - While the bot has a page open, a globe sits in its conversation's header, breathing while the bot acts.
 - Under the turn under way, a picture of the page, its site and the faces of the bots on it, taken again when the page changes and every few seconds while the bot works. It is a picture, not a live view.
-- Either one opens the **browser**: beside the conversation on a wide window, over it on a narrower one. The page is live, with its address. At the bottom, the faces of the bots on the tab and one line say who is there and who is acting, and each bot's pointer on the page carries its face and name.
+- Either one opens the **browser** beside the conversation. The page is live, with its address. At the bottom, the faces of the bots on the tab and one line say who is there and who is acting, and each bot's pointer on the page carries its face and name.
 
-On Android, the end of the bot's conversation shows the page live, in small, while it browses; a press opens the **live view**, the page on the whole screen with a bar at the bottom. A wide page opens near the bot, at a size you can read, and follows its pointer; pinch to see all of it.
+On Android, and on the web and the desktop in a narrower window, the end of the bot's conversation shows the page live, in small, while it browses; a press opens the **live view**, the page with a bar at the bottom: over the whole screen on a phone, over the conversation on a tablet. A wide page opens near the bot, at a size you can read, and follows its pointer; pinch to see all of it. The tabs button lists every tab, and a swipe on the bar goes to the next one.
+
+While a bot waits for you, the web page's title starts with "(needs you)", so the browser's tab says it.
 
 ### Using the page
 
 **Touching the page is using it.** There is nothing to press first: a click, a tap, a key, typing, scrolling the page or going to an address reaches the page at once. The bots on that tab wait, and carry on by themselves 10 seconds after you stop; the line counts the last three seconds, and **Now** skips them. Pointing, reading, zooming and moving your view of the page don't make them wait. While your phone's keyboard is up on a field of the page, they keep waiting. **Wait for me**, by the line (on Android, in the sheet the faces open), holds them until you press **Continue**. Leaving the browser gives the tab back at once.
 
-On a touch screen, a tap clicks, a drag scrolls and a tap on a field raises the keyboard. In the Android app, a long press right-clicks, and the bar over the keyboard goes to the previous or next field. A sign-in window the page opens shows as the bot's page.
+On a touch screen, a tap clicks, a drag scrolls and a tap on a field raises the keyboard. In the live view, a long press right-clicks, and the bar over the keyboard goes to the previous or next field. A sign-in window the page opens shows as the bot's page.
 
 What you can't do in this version: paste or drop into the page, download, upload or pick a file. Your clipboard and your files never reach the page.
 
