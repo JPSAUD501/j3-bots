@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a shipped skill's copies are recognized by their SHA-256, from node:crypto.
 import * as NodeCrypto from "node:crypto";
-import { type SharedSkill, sharedSkills } from "@j3-bots/prompts";
+import { sharedSkills } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

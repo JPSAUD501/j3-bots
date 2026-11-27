@@ -111,6 +111,6 @@ export {
   type RoomReadEntry,
   roomReadFits,
 } from "./roomRead.ts";
-export { type SharedSkill, sharedSkills } from "./skills.ts";
+export { sharedSkills } from "./skills.ts";
 export { defuseTags } from "./text.ts";
 export { PROMPT_VERSION } from "./version.ts";
