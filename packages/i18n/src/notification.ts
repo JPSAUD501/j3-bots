@@ -63,10 +63,6 @@ export function notificationText(
         return preview === null
           ? t("notification.connectorSignIn")
           : t("summary.connectorSignIn", { name: preview });
-      case "handoff":
-        return preview === null
-          ? t("notification.handoff")
-          : t("summary.handoffSent", { text: preview });
     }
   })();
   const { target } = notification;

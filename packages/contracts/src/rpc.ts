@@ -831,14 +831,12 @@ export const SettingsRpcs = RpcGroup.make(
 
 /**
  * The entries a bot adds that notify: what it says to the operator and the
- * cards that wait on the operator. `handoff` is a server's before 0.5.0, whose
- * urgent teammate messages notified: none does now. A push of
- * each kind shows on Android in a notification channel of its own, whose id
- * is the kind, so the operator can mute or silence one kind alone.
+ * cards that wait on the operator. A push of each kind shows on Android in a
+ * notification channel of its own, whose id is the kind, so the operator can
+ * mute or silence one kind alone.
  */
 export const NotificationKind = Schema.Literals([
   "message",
-  "handoff",
   "question",
   "approval",
   "secret-request",

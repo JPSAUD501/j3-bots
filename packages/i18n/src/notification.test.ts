@@ -76,13 +76,6 @@ const wording: Record<Exclude<NotificationKind, "connector" | "browser-help">, S
       },
     },
   },
-  handoff: {
-    en: { bare: "Sent a teammate an urgent message", preview: "To a teammate: Ship it?" },
-    "pt-BR": {
-      bare: "Mandou uma mensagem urgente a um colega",
-      preview: "Para um colega: Ship it?",
-    },
-  },
 };
 
 const cases = NotificationKind.literals.flatMap((kind) =>

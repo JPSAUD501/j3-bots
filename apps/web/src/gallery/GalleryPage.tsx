@@ -1013,7 +1013,6 @@ const sampleNotification = (
  */
 const sampleNotifications: ReadonlyArray<Notification> = [
   sampleNotification("message", ids.scout),
-  sampleNotification("handoff", ids.wren),
   sampleNotification("question", ids.otto),
   sampleNotification("approval", ids.atlas),
   sampleNotification("secret-request", ids.iris),

@@ -112,13 +112,10 @@ describe("notificationState", () => {
     },
   );
 
-  it.each(["message", "handoff"] as const)(
-    "shows a %s as unread, even while the turn goes on",
-    (kind: NotificationKind) => {
-      expect(notificationState({ kind }, working)).toBe("unread");
-      expect(notificationState({ kind }, { _tag: "idle" })).toBe("unread");
-    },
-  );
+  it("shows a message as unread, even while the turn goes on", () => {
+    expect(notificationState({ kind: "message" }, working)).toBe("unread");
+    expect(notificationState({ kind: "message" }, { _tag: "idle" })).toBe("unread");
+  });
 
   it("shows a blocked bot as blocked, and one waiting on another card as waiting", () => {
     const blocked: BotState = { _tag: "blocked", failure: "usage-limit", retryAt: null };

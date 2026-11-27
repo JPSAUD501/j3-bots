@@ -46,7 +46,7 @@ const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
 const kindOf = (
   entry: Entry,
 ): { readonly kind: NotificationKind; readonly botId: BotId } | null => {
-  if (entry.author._tag !== "bot" || entry._tag === "handoff") return null;
+  if (entry.author._tag !== "bot") return null;
   const kind = notificationKindOf(entry._tag);
   return kind === null ? null : { kind, botId: entry.author.botId };
 };
@@ -55,8 +55,7 @@ const kindOf = (
  * The notification an entry of this kind makes when it notifies, which names
  * the Android channel a push shows in: its own kind, or `connector` for either
  * connector card. Null for a kind that never notifies. A push read back from
- * its delivery takes its channel from here too, from the entry it is about:
- * so `handoff` keeps its channel for a push an earlier release recorded.
+ * its delivery takes its channel from here too, from the entry it is about.
  */
 export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null => {
   switch (kind) {
@@ -65,7 +64,6 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "approval":
     case "secret-request":
     case "browser-help":
-    case "handoff":
       return kind;
     // A bot's ask for a secret shows where the engine's secret requests do,
     // Android's channel for them included.
@@ -77,6 +75,8 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "connector-auth":
     case "connector-input":
       return "connector";
+    // A bot's message to a teammate shows in both conversations and notifies no one.
+    case "handoff":
     case "work-fold":
     case "notice":
     case "routine-change":
