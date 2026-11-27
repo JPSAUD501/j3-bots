@@ -54,6 +54,7 @@ import { ConnectorApps } from "../connectors/ConnectorApps.ts";
 import { Connectors } from "../connectors/Connectors.ts";
 import { SecretAsks } from "../secrets/SecretAsks.ts";
 import { Secrets } from "../secrets/Secrets.ts";
+import { Voice } from "../voice/Voice.ts";
 import { Skills } from "../skills/Skills.ts";
 import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
 import { Management } from "../tools/Management.ts";
@@ -97,6 +98,7 @@ export const handlers = J3Rpcs.toLayer(
     const served = Stream.zipLatestWith(engine.status, harnesses.copies, withCopies);
     const browserTabs = yield* BrowserTabs;
     const secrets = yield* Secrets;
+    const voice = yield* Voice;
     const secretAsks = yield* SecretAsks;
     const connectors = yield* Connectors;
     const connectorInputs = yield* ConnectorInputs;
@@ -292,6 +294,12 @@ export const handlers = J3Rpcs.toLayer(
       "secrets.delete": ({ id }) => secrets.remove(id),
       "secrets.setAccess": ({ id, access }) => secrets.setAccess(id, access),
       "secrets.totpPreview": ({ id }) => secrets.totpPreview(id),
+      "voice.subscribe": () => voice.status,
+      "voice.models": () => voice.models,
+      "voice.cloudKeys": () => voice.cloudKeys,
+      "voice.cloudModels": () => voice.cloudModels,
+      // It carries a key, redacted: not logged, and with no receipt, since saving it again changes nothing.
+      "voice.setCloudKey": ({ provider, key }) => voice.setCloudKey(provider, key),
       // A connector's add and update carry its secrets, redacted: none is logged, and neither has a receipt.
       "connectors.subscribe": () => connectors.subscribe,
       // Each change is recorded as the operator's (decision 0049).

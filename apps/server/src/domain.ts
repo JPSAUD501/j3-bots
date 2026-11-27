@@ -52,6 +52,7 @@ import * as CredentialFills from "./secrets/Fill.ts";
 import * as SecretAsks from "./secrets/SecretAsks.ts";
 import * as Secrets from "./secrets/Secrets.ts";
 import * as Host from "./system/Host.ts";
+import * as Voice from "./voice/Voice.ts";
 import * as BotTools from "./tools/BotTools.ts";
 import * as Management from "./tools/Management.ts";
 import * as ToolLists from "./tools/ToolLists.ts";
@@ -80,8 +81,9 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 
 /**
  * Every service of the server's domain, over a migrated database, the server's
- * configuration, the filesystem, an `Engine` with its `BrowserBridge`, a
- * `PushSender`, the HTTP client connectors' sign-ins use (`OAuthHttp`), an
+ * configuration, the filesystem, an `Engine` with its `BrowserBridge` and
+ * `EngineSpeech`, a `PushSender`, the HTTP client connectors' sign-ins use
+ * (`OAuthHttp`), an
  * `McpRegistry`, the `HarnessSources` J3 Bots installs harnesses from and
  * finds the operator's own with, and the `SkillRepositories` skills are
  * installed from. Which engine, sender, client, registry, sources and
@@ -116,6 +118,8 @@ export const layer = Layer.mergeAll(
       RoutineEvents.layer,
       // The machine as the sign-ins see it: the `PATH` the server runs harnesses with.
       SignIns.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
+      // The machine's memory: how soon the engine unloads a speech model.
+      Voice.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
     ),
   ),
   Layer.provideMerge(

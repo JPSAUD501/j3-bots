@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Label, PositiveInt, type Settings, TimeZone, UpdateChannel } from "@j3-bots/contracts";
+import {
+  CloudVoiceModelId,
+  Label,
+  PositiveInt,
+  type Settings,
+  TimeZone,
+  UpdateChannel,
+  VoiceLanguage,
+  VoiceModelId,
+  VoicePlace,
+  type VoiceSettings,
+  VoiceWords,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -7,7 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { Flag, timeText } from "../persistence/columns.ts";
+import { Flag, json, timeText } from "../persistence/columns.ts";
 
 const SettingsRow = Schema.Struct({
   operator_name: Schema.NullOr(Label),
@@ -20,7 +32,27 @@ const SettingsRow = Schema.Struct({
   update_channel: UpdateChannel,
   auto_update_harnesses: Flag,
   suggest_replies: Flag,
+  voice_place: VoicePlace,
+  voice_language: VoiceLanguage,
+  voice_words_json: json(VoiceWords),
+  voice_remove_fillers: Flag,
+  voice_clean_up: Flag,
+  voice_model: Schema.NullOr(VoiceModelId),
+  voice_openrouter_model: Schema.NullOr(CloudVoiceModelId),
 });
+
+const encodeWords = Schema.encodeSync(json(VoiceWords));
+
+/** Dictation's preferences until the operator changes them, as the migration sets them. */
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
+  place: "automatic",
+  language: "auto",
+  words: [],
+  removeFillers: true,
+  cleanUp: false,
+  model: null,
+  openRouterModel: null,
+};
 
 /** The `settings` table's one row. */
 export class SettingsStore extends Context.Service<
@@ -51,7 +83,8 @@ export const layer = Layer.effect(
       execute: () => sql`
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
           notifications_enabled, notification_previews, update_channel, auto_update_harnesses,
-          suggest_replies
+          suggest_replies, voice_place, voice_language, voice_words_json, voice_remove_fillers,
+          voice_clean_up, voice_model, voice_openrouter_model
         FROM settings WHERE id = 1
       `,
     });
@@ -73,6 +106,15 @@ export const layer = Layer.effect(
           updateChannel: row.update_channel,
           autoUpdateHarnesses: row.auto_update_harnesses,
           suggestReplies: row.suggest_replies,
+          voice: {
+            place: row.voice_place,
+            language: row.voice_language,
+            words: row.voice_words_json,
+            removeFillers: row.voice_remove_fillers,
+            cleanUp: row.voice_clean_up,
+            model: row.voice_model,
+            openRouterModel: row.voice_openrouter_model,
+          },
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (
@@ -80,6 +122,7 @@ export const layer = Layer.effect(
         at: DateTime.Utc,
         { zoneChosen }: { readonly zoneChosen: boolean },
       ) {
+        const voice = settings.voice ?? DEFAULT_VOICE_SETTINGS;
         yield* sql`
           UPDATE settings SET
             operator_name = ${settings.operatorName},
@@ -93,6 +136,13 @@ export const layer = Layer.effect(
             update_channel = ${settings.updateChannel},
             auto_update_harnesses = ${settings.autoUpdateHarnesses ? 1 : 0},
             suggest_replies = ${settings.suggestReplies === false ? 0 : 1},
+            voice_place = ${voice.place},
+            voice_language = ${voice.language},
+            voice_words_json = ${encodeWords(voice.words)},
+            voice_remove_fillers = ${voice.removeFillers ? 1 : 0},
+            voice_clean_up = ${voice.cleanUp ? 1 : 0},
+            voice_model = ${voice.model},
+            voice_openrouter_model = ${voice.openRouterModel},
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;

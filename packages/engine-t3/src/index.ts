@@ -6,4 +6,5 @@ export * from "./errors.ts";
 export * from "./events.ts";
 export * from "./ids.ts";
 export * from "./input.ts";
+export * from "./Speech.ts";
 export * from "./toolCaller.ts";
