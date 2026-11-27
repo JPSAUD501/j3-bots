@@ -685,7 +685,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           effort: null,
           permissionMode: "supervised",
           primary,
-          browser: false,
+          browser: true,
           pinned: false,
           hidden: hidden ?? false,
           sectionId: null,

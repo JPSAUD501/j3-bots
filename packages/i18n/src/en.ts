@@ -216,7 +216,7 @@ export const en = {
   "recordSheet.what.screenAndVoice":
     "J3 Bots records the screen you share when the system asks, and your voice, until you stop. This system doesn’t let apps read your keys and clicks.",
   "recordSheet.where":
-    "Nothing leaves this computer while you record. Then it goes into your message to {name} as a file, which uploads to your J3 Bots server, and {name}’s AI looks at it once you send it.",
+    "Nothing leaves this computer while you record. When you send it, it goes to {name} with your message, and {name}’s AI sees it.",
   "recordSheet.passwords.hidden":
     "When you type a password, only the fact that you typed one is kept. Pause to hide anything else: nothing is recorded while paused.",
   "recordSheet.passwords.pause":
@@ -425,19 +425,16 @@ export const en = {
   "ask.username": "User name or email",
   "ask.password": "Password",
   "ask.totp": "One-time code key (optional)",
-  "ask.totpHint":
-    "The setup key or otpauth:// address the site shows when you turn on two-step sign-in.",
+  "ask.totpHint": "The setup key the site shows when you turn on two-step sign-in.",
   "ask.value": "Value",
-  "ask.valueHint": "The token or key, exactly as the service gives it.",
+  "ask.valueHint": "Paste it exactly as the service gives it.",
   "ask.savedAsEach": "Saved as {secret}.",
   "ask.setup": "Where the service gives it",
   "ask.setup.values": "Where the service gives them",
   "ask.everyBot": "Let every bot use it",
   "ask.everyBot.values": "Let every bot use them",
-  "ask.unseen":
-    "It stays on your J3 Bots server. {name} uses it without ever seeing what you type here.",
-  "ask.unseen.values":
-    "They stay on your J3 Bots server. {name} uses them without ever seeing what you type here.",
+  "ask.unseen": "Kept safe in J3 Bots. {name} uses it without ever seeing it.",
+  "ask.unseen.values": "Kept safe in J3 Bots. {name} uses them without ever seeing them.",
   "ask.save": "Save",
   "ask.decline": "Decline",
   "ask.saved": "Saved as {secret}. {name} was told.",
@@ -456,12 +453,11 @@ export const en = {
   "ask.valuesRequired": "Type every value.",
   "ask.totpInvalid": "That is not a one-time code key.",
   "secrets.title": "Secrets",
-  "secrets.intro":
-    "Logins and keys your bots use without ever seeing them. They stay on your J3 Bots server: a bot is only told a secret’s name.",
+  "secrets.intro": "Logins and keys your bots use without ever seeing them.",
   "secrets.oldVault":
-    "Your secrets are in an old vault that waits for its password. Open Settings → Secrets in the web app this server serves, and type it there.",
+    "Your secrets wait for the password of an old vault. Type it in Settings → Secrets, in J3 Bots in a browser.",
   "secrets.unreadable":
-    "Your secrets can’t be read: the key file in the server’s vault folder is missing or isn’t theirs. Put it back from a backup, or start over as the operating guide says.",
+    "Your secrets can’t be opened: their key is missing. Restore it from a backup, or start over as the operating guide says.",
   "secrets.newer":
     "A newer version of J3 Bots changed your secrets. Update the server to use them.",
   "secrets.damaged":
@@ -475,7 +471,7 @@ export const en = {
   "secrets.kind.login": "Login",
   "secrets.kind.loginHint": "A user name and password for a site",
   "secrets.kind.value": "Value",
-  "secrets.kind.valueHint": "One token or key, such as an API key",
+  "secrets.kind.valueHint": "One key or code, such as an API key",
   "secrets.name": "Name",
   "secrets.nameHint": "Bots use it by this name: lower-case letters, digits, - and _.",
   "secrets.nameInvalid":
@@ -554,18 +550,16 @@ export const en = {
   "approval.summaryOnly.tool": "The exact tool call wasn’t shared, only a summary",
   "approval.summaryOnly.other": "The exact request wasn’t shared, only a summary",
   "approval.allowOnce": "Allow once",
-  "approval.allowSession": "Allow for session",
+  "approval.allowSession": "Don’t ask again",
   "approval.deny": "Deny",
   "approval.grant.everyCommand":
-    "Choosing Allow for session will allow all future command requests in this session automatically",
+    "Don’t ask again lets it run commands without asking until it starts fresh",
   "approval.grant.everyFileChange":
-    "Choosing Allow for session will allow all future file change requests in this session automatically",
-  "approval.granted.everyCommand":
-    "Future command requests in this session will be allowed automatically",
-  "approval.granted.everyFileChange":
-    "Future file change requests in this session will be allowed automatically",
+    "Don’t ask again lets it change files without asking until it starts fresh",
+  "approval.granted.everyCommand": "It runs commands without asking until it starts fresh",
+  "approval.granted.everyFileChange": "It changes files without asking until it starts fresh",
   "approval.allowedOnce": "Allowed once",
-  "approval.allowedSession": "Allowed for this session",
+  "approval.allowedSession": "Allowed until it starts fresh",
   "approval.denied": "Denied",
   "approval.expired": "This request expired before it was answered.",
   "approval.refused":
@@ -627,15 +621,15 @@ export const en = {
   "fill.refused.noTab": "The bot had no page open.",
   "fill.refused.held": "Someone had taken control of the page.",
   "fill.refused.loading": "The page was still loading.",
-  "fill.refused.insecure": "The page isn’t secure: plain http on another computer.",
-  "fill.refused.insecureAt": "The page, {origin}, isn’t secure: plain http on another computer.",
+  "fill.refused.insecure": "The page isn’t secure.",
+  "fill.refused.insecureAt": "{origin} isn’t secure.",
   "fill.refused.origin": "The page isn’t one of the login’s sites.",
   "fill.refused.originAt": "The page, {origin}, isn’t one of the login’s sites.",
   "fill.refused.navigated": "The page changed while it was being filled.",
-  "fill.refused.before": "A fill was already refused on this page in this turn.",
+  "fill.refused.before": "A login was already refused on this page just now.",
   "fill.refused.unavailable":
     "The browser or your secrets couldn’t be reached, or the browser didn’t confirm what it typed.",
-  "fill.refused.stopped": "The bot’s turn ended before anything was typed.",
+  "fill.refused.stopped": "The bot stopped before anything was typed.",
   "fill.refused.other": "J3 Bots refused it.",
   "tool.connector.did": "Used a connector",
   "tool.connector.doing": "Using a connector",
@@ -685,19 +679,19 @@ export const en = {
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
   "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
   "notice.sessionNotReady":
-    "Couldn’t get its working context ready, and keeps trying; new messages wait. If this doesn’t clear, edit it and check its model.",
+    "Couldn’t get its working context ready, and keeps trying; new messages wait. If this doesn’t clear, check its model in its details.",
   "notice.permissionModeRefused":
-    "Can’t work in {mode}: a policy on the computer running J3 Bots allows less. New messages wait until you edit it and choose a lower permission mode, or raise the policy’s limit and restart J3 Bots.",
+    "Can’t work in {mode}: it isn’t allowed where J3 Bots runs. Messages wait until you choose a lower permission mode in its details.",
   "notice.permissionModeAllowed":
-    "Can’t work in {mode}: a policy on the computer running J3 Bots allows up to {allowed}. New messages wait until you edit it and choose {allowed} or lower, or raise the policy’s limit and restart J3 Bots.",
+    "Can’t work in {mode}: only up to {allowed} is allowed where J3 Bots runs. Messages wait until you choose {allowed} or lower in its details.",
   "notice.memberModeRefused":
-    "{name} couldn’t take part: a policy on the computer running J3 Bots refused its permission mode. Messages for {name} wait until you edit {name} and choose a lower mode, or raise the policy’s limit and restart J3 Bots.",
+    "{name} couldn’t take part: its permission mode isn’t allowed where J3 Bots runs. Messages for {name} wait until you choose a lower mode in its details.",
   "notice.settingsHeld":
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.asksBeforeActingAuto":
-    "Asks before each action, though it works in {mode}: its AI can’t use {mode} here, with this account or this model. Answer the questions as they come, or edit it and choose another model or permission mode.",
+    "Asks before each action: its AI can’t use {mode} with this account or model. Answer the questions as they come, or choose another model or permission mode in its details.",
   "notice.asksBeforeActingFullAccess":
-    "Asks before acting, though it has {mode}: its AI isn’t allowed to skip asking on the computer running J3 Bots. Answer the questions as they come, or ask whoever manages its AI’s settings there to allow it.",
+    "Asks before acting, even with {mode}: its AI isn’t allowed to skip asking where J3 Bots runs. Answer the questions as they come.",
   "notice.observationFailed":
     "Couldn’t keep up with this bot’s work. What shows here may be behind.",
   "notice.handoffFailed": "{name}’s message didn’t arrive",
@@ -920,7 +914,7 @@ export const en = {
   "details.noMemory": "{name} hasn’t saved anything to memory yet.",
   "details.model": "Model",
   "details.runsOn": "Runs on",
-  "details.modelUnavailable": "Not available on the engine right now",
+  "details.modelUnavailable": "Not available right now",
   "details.permissionMode": "Permission mode",
   "details.stop": "Stop what it’s doing",
   "details.forceStop": "Force stop",
@@ -937,11 +931,12 @@ export const en = {
   "details.freshStart.done": "{name} started fresh.",
   "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
   "details.browser": "Browser",
-  "details.browser.use": "Use this computer’s browser",
+  "details.browser.use": "Can browse the web",
   "details.browser.hint":
-    "{name} acts on sites with the sessions you’re signed in to in that browser. Turning it on applies from {name}’s next turn; turning it off takes effect now (a running turn is stopped).",
-  "details.browser.setup":
-    "This computer needs setting up before the browser can run. Run `j3-bots doctor` on it to see how.",
+    "Uses the bots’ shared browser. When a site asks to sign in, {name} calls you.",
+  "details.browser.offStops": "Turning it off now stops what {name} is doing.",
+  "details.browser.setup": "The browser needs setting up first.",
+  "details.browser.howToFix": "How to fix it",
   "details.browser.failed": "{name}’s browser setting wasn’t saved. Try again.",
   "details.delete": "Delete {name}",
   "details.delete.title": "Delete {name}?",
@@ -1046,9 +1041,9 @@ export const en = {
   "settings.appearance.description": "How J3 Bots looks on this device, and its language.",
   "settings.theme": "Theme",
   "settings.providers": "Providers",
-  "settings.providers.description":
-    "The subscriptions your bots think with, and the engine that runs them.",
-  "settings.usage.description": "How close each provider is to its limit, and which bots used it.",
+  "settings.providers.description": "The AI accounts your bots think with.",
+  "settings.usage.description":
+    "How close each AI account is to its limit, and which bots used it.",
   "settings.connectors.description":
     "Services your bots can use, such as Notion or GitHub, and the skills they know.",
   "settings.secrets.description":
@@ -1067,17 +1062,16 @@ export const en = {
   "settings.dark": "Dark",
 
   "firstRun.connecting.title": "Connecting to J3 Bots",
-  "firstRun.connecting.body":
-    "Waiting for the J3 Bots server. This page updates as soon as it answers.",
-  "firstRun.incompatible.title": "The engine is the wrong version",
+  "firstRun.connecting.body": "Waiting for J3 Bots. This page updates as soon as it answers.",
+  "firstRun.incompatible.title": "A part of J3 Bots is the wrong version",
   "firstRun.incompatible.body":
-    "The engine is version {running}, and this release of J3 Bots needs {pinned}.",
-  "firstRun.connect.copy": "Copy the command that connects your providers",
+    "It’s version {running}, and this release of J3 Bots needs {pinned}.",
+  "firstRun.connect.copy": "Copy the command that connects your AI accounts",
   "firstRun.connect.copied": "Copied",
   "firstRun.connect.selected": "Command selected. Copy it manually.",
   "provider.ready": "Ready",
   "provider.notConnected": "Not connected",
-  "provider.noModels": "Connected, but the engine lists no model for it yet",
+  "provider.noModels": "Connected, but no model is available yet",
   "provider.unavailable": "Not available right now",
   "provider.checking": "Checking…",
   "provider.installing": "Installing…",
@@ -1091,7 +1085,7 @@ export const en = {
   "provider.disabled": "Turned off on the server",
   "provider.failed.log":
     "The server’s log says why: server/server.log, in J3 Bots’ app data folder.",
-  "provider.detail": "The engine says: {detail}",
+  "provider.detail": "Details: {detail}",
   "provider.version": "Version {installed}",
   "provider.version.newer": "Version {installed}. {latest} is out.",
   "provider.version.newerOnly": "{latest} is out.",
@@ -1101,7 +1095,7 @@ export const en = {
   "provider.updateFinished": "The update finished: version {installed}",
   "provider.updateFinished.noVersion": "The update finished",
   "provider.updateFailed": "The update didn’t finish",
-  "provider.updateUnverified": "The update ran, but the engine couldn’t confirm a newer version",
+  "provider.updateUnverified": "The update ran, but the new version couldn’t be confirmed",
   "provider.updateRefused": "Couldn’t start the update. Try again in a moment.",
   "provider.install.downloading": "Downloading… {received} of {total} MB",
   "provider.install.downloadingNoTotal": "Downloading… {received} MB",
@@ -1124,8 +1118,7 @@ export const en = {
   "provider.install.failed.outsideHome":
     "A shortcut in J3 Bots’ folder points somewhere else, so J3 Bots didn’t save there. Try again; if it keeps happening, ask for help.",
   "provider.install.failed.files": "J3 Bots couldn’t save its files. Try again.",
-  "provider.install.failed.engine":
-    "The engine couldn’t switch to it, so the copy before keeps running.",
+  "provider.install.failed.engine": "Couldn’t switch to it, so the version before keeps running.",
   "provider.install.failed.unknown": "It couldn’t be installed.",
   "provider.installed": "Version {version} installed {when}.",
   "provider.updateCancelled": "The last update was cancelled.",
@@ -1134,7 +1127,7 @@ export const en = {
     "J3 Bots keeps the copies it installed up to date. An update waits until the bots using it finish what they’re doing.",
   "settings.engine.suggestReplies": "Suggest what to say next",
   "settings.engine.suggestReplies.body":
-    "After a bot answers you, a reply you might send shows faintly in the message box, ready to use. Each suggestion is one more small request to your AI account, so it uses a little of your plan.",
+    "After a bot answers, a reply you might send shows faintly in the message box. Each suggestion uses a little of your AI plan.",
   "firstRun.create.name": "Bot name",
   "firstRun.create.placeholder": "A name, such as Maya",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",
@@ -1272,16 +1265,16 @@ export const en = {
   "providers.endpoint.connecting": "Connecting…",
   "providers.endpoint.applied": "Connected: bots reach their models through {baseUrl}.",
   "providers.endpoint.stored":
-    "The connection to {baseUrl} is saved. The engine is starting with it.",
+    "The connection to {baseUrl} is saved. J3 Bots is restarting with it.",
   "providers.endpoint.workRunning.one":
-    "{count} bot has work running, and connecting restarts the engine, which stops it.",
+    "{count} bot has work running, and connecting restarts J3 Bots, which stops it.",
   "providers.endpoint.workRunning.other":
-    "{count} bots have work running, and connecting restarts the engine, which stops it.",
+    "{count} bots have work running, and connecting restarts J3 Bots, which stops it.",
   "providers.endpoint.restartAnyway": "Restart anyway",
   "providers.endpoint.refused":
-    "The engine’s data refused the connection, so it wasn’t saved. The server’s log says why.",
+    "The connection was refused, so it wasn’t saved. The server’s log says why.",
   "providers.endpoint.refusedActive":
-    "The engine’s data refused the connection, so it wasn’t saved, and bots still use {active}. The server’s log says why.",
+    "The connection was refused, so it wasn’t saved, and bots still use {active}. The server’s log says why.",
   "providers.endpoint.failed": "Couldn’t reach the server, so nothing changed. Try again.",
   "onboarding.arrival.title": "{name} is here",
   "onboarding.arrival.hello": "Saying hello…",
@@ -1335,8 +1328,7 @@ export const en = {
   "composer.file.tooMany": "A message can carry {count} files at most",
   "composer.file.nameTooLong": "The file name is too long",
   "composer.file.refused": "The server refused this file",
-  "composer.file.serverSetup":
-    "The server can’t store files until its setup is fixed; its log says how",
+  "composer.file.serverSetup": "The server can’t store files until its setup is fixed",
   "composer.file.notPaired": "This device is signed out",
   "composer.file.recordingTooLarge": "Larger than {size}, the most a recording can be",
   "composer.file.noSpace": "The server’s disk is out of space",
@@ -1389,8 +1381,7 @@ export const en = {
     "This device has no speech recognizer for your language. Choose Automatic or This server in Settings → Voice.",
   "dictation.blocked.serverUnsupported":
     "Your server can’t run a speech model on its system. A cloud provider can do it, in Settings → Voice.",
-  "dictation.blocked.serverUnavailable":
-    "Your server can’t recognize speech until its engine is running again.",
+  "dictation.blocked.serverUnavailable": "Dictation comes back once J3 Bots is running again.",
   "dictation.denied.browser":
     "Dictation needs the microphone. Allow it for this site in the browser’s site settings, then try again.",
   "dictation.denied.desktop":
@@ -1543,8 +1534,7 @@ export const en = {
   "pairing.rateLimited": "Too many wrong codes. Pairing opens again at {time}.",
   "pairing.unreachable":
     "Can’t reach J3 Bots. Check that it’s running and that this device can reach it.",
-  "pairing.incompatible":
-    "This page and the J3 Bots server are different versions. Reload the page.",
+  "pairing.incompatible": "This page is out of date. Reload it.",
   "pairing.storageFailed":
     "Paired, but this browser wouldn’t keep the sign-in. Allow site data for this page and pair again.",
   "pairing.storageFailed.desktop":
@@ -1700,11 +1690,10 @@ export const en = {
   "links.noRoom": "That link is for a room this server doesn’t have.",
 
   "gate.incompatible.title": "This page is out of date",
-  "gate.incompatible.body":
-    "The J3 Bots server was updated and speaks a newer version. Reload to get the matching page.",
+  "gate.incompatible.body": "J3 Bots was updated. Reload to get the new page.",
   "gate.incompatible.appTitle": "This app doesn’t match the server",
   "gate.incompatible.appBody":
-    "The J3 Bots server at {address} speaks a different version than this app. Update the app or the server so they match, or change to another server.",
+    "The server at {address} runs a different version of J3 Bots than this app. Update the app or the server so they match, or change to another server.",
   "gate.incompatible.serverBehindTitle": "The server needs an update",
   "gate.incompatible.serverBehindBody":
     "The server at {address} runs J3 Bots {version}, which is older than this app.",
@@ -1735,35 +1724,33 @@ export const en = {
   "gate.retry": "Try again",
   "gate.restart": "Restart J3 Bots",
 
-  "engine.starting.title": "The engine is starting",
-  "engine.starting.body": "J3 Bots is starting its engine. This page updates when it’s ready.",
+  "engine.starting.title": "J3 Bots is starting",
+  "engine.starting.body": "This page updates when it’s ready.",
   "engine.downloading.body":
-    "J3 Bots downloads its engine on its first start, and again after an update that needs a new one. This page updates when it’s ready.",
-  "engine.downloading.progress": "Downloading the engine… {received} of {total} MB",
-  "engine.downloading.progressNoTotal": "Downloading the engine… {received} MB",
-  "engine.down.title": "The engine stopped",
+    "J3 Bots downloads what it needs the first time it starts, and after some updates. This page updates when it’s ready.",
+  "engine.downloading.progress": "Downloading… {received} of {total} MB",
+  "engine.downloading.progressNoTotal": "Downloading… {received} MB",
+  "engine.down.title": "Your bots stopped",
   "engine.down.body":
-    "J3 Bots is restarting it. If this lasts more than a minute, check the J3 Bots log on the machine it runs on.",
-  "engine.portInUse.title": "The engine’s port is taken",
+    "J3 Bots is starting them again. If this lasts more than a minute, check J3 Bots’ log on the machine it runs on.",
+  "engine.portInUse.title": "A port J3 Bots needs is taken",
   "engine.portInUse.body":
-    "Another program is using the port the engine needs. Stop that program, or set J3_ENGINE_PORT to a free port, and restart J3 Bots.",
-  "engine.installFailed.title": "The engine couldn’t be installed",
-  "engine.installFailed.body": "J3 Bots couldn’t install its engine, and keeps trying on its own.",
+    "Another program is using it. Stop that program, or set J3_ENGINE_PORT to a free port, then restart J3 Bots.",
+  "engine.installFailed.title": "J3 Bots couldn’t finish installing",
+  "engine.installFailed.body": "It keeps trying on its own.",
   "engine.installFailed.body.download":
-    "J3 Bots couldn’t download its engine, and keeps trying on its own. Check that the machine is online.",
+    "J3 Bots couldn’t download what it needs, and keeps trying. Check that the machine is online.",
   "engine.installFailed.body.storage":
     "The disk where J3 Bots keeps its files is full. Free up some space; J3 Bots keeps trying on its own.",
   "engine.installFailed.body.inUse":
     "Another program, such as an antivirus, was using its files. J3 Bots keeps trying on its own.",
   "engine.installFailed.body.permission":
-    "J3 Bots wasn’t allowed to save its engine’s files. It keeps trying; if it keeps failing, restart the computer.",
+    "J3 Bots wasn’t allowed to save its files. It keeps trying; if it keeps failing, restart the computer.",
   "engine.installFailed.body.outsideHome":
-    "A shortcut in J3 Bots’ folder points somewhere else, so J3 Bots won’t save its engine there. It keeps trying; if it keeps happening, ask for help.",
-  "engine.installFailed.body.unsupported":
-    "Its engine has no version for this kind of computer, so J3 Bots can’t run here.",
-  "engine.credentialRefused.title": "The engine refused J3 Bots",
-  "engine.credentialRefused.body":
-    "The engine won’t accept J3 Bots’ credential, even a new one. Restart J3 Bots; if it keeps happening, check its log.",
+    "A shortcut in J3 Bots’ folder points somewhere else, so J3 Bots won’t save its files there. It keeps trying; if it keeps happening, ask for help.",
+  "engine.installFailed.body.unsupported": "J3 Bots can’t run on this kind of computer.",
+  "engine.credentialRefused.title": "J3 Bots couldn’t start your bots",
+  "engine.credentialRefused.body": "Restart J3 Bots. If it keeps happening, check its log.",
 
   "empty.gone.title": "This conversation is gone",
   "empty.gone.body": "The bot or room it belonged to was deleted.",
@@ -1807,14 +1794,14 @@ export const en = {
   "template.create.body":
     "This is everything {name} will be and do. Nothing is created until you choose Create.",
   "template.create.untrusted":
-    "This file came from outside J3 Bots. What it says goes only into the new bot, never into your other bots, your memory or your files. Your other bots see the new one as any teammate, by its name, title and job.",
+    "This file came from outside J3 Bots. What it says goes only into the new bot, never into your memory or files. Your other bots see the new one as a teammate, by its name, title and job.",
   "template.create.submit": "Create {name}",
   "template.create.creating": "Creating…",
   "template.create.cancel": "Cancel",
   "template.create.failed": "The bot wasn’t created. Try again.",
   "template.create.schedule":
     "A routine in this template has a schedule J3 Bots can’t run, so nothing was created.",
-  "template.create.noModel": "Connect a provider before creating a bot.",
+  "template.create.noModel": "Connect an AI before creating a bot.",
   "template.create.offline": "Creating a bot takes a connection to the server.",
   "template.read.tooLarge": "This file is too large to be a template.",
   "template.read.newer":
@@ -1829,7 +1816,7 @@ export const en = {
   "template.routines.none": "No routines.",
   "template.routines.paused": "Each one starts paused. You turn it on in {name}’s details.",
   "template.model": "Runs on",
-  "template.model.replaced": "{model} isn’t on this server, so {name} runs on {replacement}.",
+  "template.model.replaced": "{model} isn’t available here, so {name} runs on {replacement}.",
   "template.permission": "Permission mode",
   "template.permission.capped":
     "The template asks for {mode}. A bot from a template starts with no more than the usual mode unless you choose it.",
@@ -1856,10 +1843,10 @@ export const en = {
   "editBot.job": "Job",
   "editBot.job.hint": "What {name} is for and where its limits are, in plain words.",
   "editBot.model": "Model",
-  "editBot.model.notOffered": "{model} (not offered by the engine now)",
+  "editBot.model.notOffered": "{model} (not available now)",
   "editBot.model.someNotReady":
     "Providers that can’t run a bot right now aren’t listed. Settings shows why.",
-  "editBot.model.unavailable": "The engine no longer offers this model. Choose another to save.",
+  "editBot.model.unavailable": "This model is no longer available. Choose another to save.",
   "editBot.effort": "Effort",
   "editBot.effort.hint":
     "More effort takes longer and uses more of your plan, for more careful work. Default lets the AI decide.",
@@ -1873,9 +1860,9 @@ export const en = {
   "editBot.effort.level.xhigh": "Extra high",
   "editBot.effort.level.max": "Max",
   "editBot.permissionMode": "Permission mode",
-  "editBot.nextTurn": "{name} uses the new settings from its next turn.",
+  "editBot.nextTurn": "{name} uses the new settings from its next task.",
   "editBot.providerChangeStops":
-    "Moving to another provider stops any work {name} has running. It then starts a new working context, with a summary of your conversation.",
+    "Moving to another AI stops any work {name} has running. It then starts fresh, with a summary of your conversation.",
   "editBot.cancel": "Cancel",
   "editBot.save": "Save changes",
   "editBot.saving": "Saving…",
@@ -1894,17 +1881,17 @@ export const en = {
   "memory.loadNewer.loading": "Loading…",
   "memory.reloadFailed": "The newer version couldn’t be read, so your edit is still here.",
   "memory.privateLocation":
-    "Nothing was saved: this memory folder is linked outside J3 Bots’ private data on the server. Remove the link to save again.",
+    "Nothing was saved: this memory folder points outside J3 Bots’ data. Remove that link to save again.",
   "memory.gone": "This file no longer exists, so your edit wasn’t saved.",
   "memory.saveFailed": "Your edit wasn’t saved. Try again.",
   "memory.tooLong":
-    "This edit is too long to save: a memory file holds {max} characters at most, and some characters, like emoji, count as two. Shorten it to save.",
+    "Too long to save: a memory file holds at most {max} characters, and an emoji counts as two. Shorten it to save.",
   "memory.failedClosed": "Your edit to {file} wasn’t saved. Open it to see why.",
 
   "settings.close": "Close settings",
   "settings.botBrowser": "Bots’ browser",
   "settings.botBrowser.hint":
-    "The browser bots use keeps the sessions you signed in to. Signing out ends all of them, for every bot.",
+    "The bots’ browser stays signed in to the sites you signed in to. Signing out signs every bot out.",
   "settings.botBrowser.signOut": "Sign out of all sites",
   "settings.botBrowser.signOut.title": "Sign out of all sites?",
   "settings.botBrowser.signOut.body":
@@ -1916,10 +1903,10 @@ export const en = {
   "settings.engine.ready": "Running, version {version}",
   "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
   "settings.usage": "Usage",
-  "usage.engineNotRunning": "Usage shows while the engine is running.",
-  "usage.noProviders": "No provider can run bots yet.",
+  "usage.engineNotRunning": "Usage shows once J3 Bots is ready.",
+  "usage.noProviders": "No AI can run bots yet.",
   "usage.noWindows": "No usage limits reported.",
-  "usage.noWindowsAtAll": "No provider reports usage limits.",
+  "usage.noWindowsAtAll": "No AI account reports usage limits.",
   "usage.window.session": "5-hour window",
   "usage.window.weekly": "Weekly",
   "usage.window.monthly": "Monthly",
@@ -1931,18 +1918,18 @@ export const en = {
   "usage.reset": "Reset {when}; new figures at the next check",
   "usage.noTurns.one": "No bot used it in the last hour.",
   "usage.noTurns.other": "No bot used it in the last {count} hours.",
-  "usage.noTurnsShown": "No turns shown.",
-  "usage.turns.one": "{count} turn",
-  "usage.turns.other": "{count} turns",
+  "usage.noTurnsShown": "No tasks shown.",
+  "usage.turns.one": "{count} task",
+  "usage.turns.other": "{count} tasks",
   "usage.deletedBot": "A deleted bot",
   "usage.deletedRoutines": "Deleted routines",
-  "usage.loadMore": "Load earlier turns",
+  "usage.loadMore": "Load earlier tasks",
   "usage.loadingMore": "Loading…",
-  "usage.read.period.one": "Turns in the last hour, read {when}.",
-  "usage.read.period.other": "Turns in the last {count} hours, read {when}.",
-  "usage.read.latest": "Latest {count} turns, read {when}; the oldest {oldest}.",
-  "usage.read.capped": "Latest {count} turns, the most shown, read {when}; the oldest {oldest}.",
-  "usage.readFailed": "The turns couldn’t be read.",
+  "usage.read.period.one": "Tasks in the last hour, read {when}.",
+  "usage.read.period.other": "Tasks in the last {count} hours, read {when}.",
+  "usage.read.latest": "Latest {count} tasks, read {when}; the oldest {oldest}.",
+  "usage.read.capped": "Latest {count} tasks, the most shown, read {when}; the oldest {oldest}.",
+  "usage.readFailed": "The tasks couldn’t be read.",
   "usage.retry": "Try again",
   "settings.you": "You",
   "settings.name": "What bots call you",
@@ -2065,15 +2052,15 @@ export const en = {
   "settings.browser": "This browser",
   "settings.thisDevice": "This device",
   "settings.thisDevice.unencrypted":
-    "This computer had no keyring J3 Bots could use when it paired, so this device’s sign-in is stored without encryption. Anyone who can read your files here can use it. Pair this device again after unlocking your keychain or keyring to store it encrypted.",
+    "This device’s sign-in is stored without encryption, since this computer had no keyring J3 Bots could use. Anyone who can read your files here can use it. Unlock your keyring, then pair again to fix it.",
   "settings.shortcut": "Shortcut for quick access",
   "settings.shortcut.change": "Change shortcut",
   "settings.shortcut.reset": "Use {shortcut}",
   "settings.shortcut.recording": "Press the new shortcut, or Escape to keep {shortcut}.",
   "settings.shortcut.needsModifier":
-    "A shortcut needs Shift, Alt or Super beside another modifier (⇧ or ⌥ beside another on a Mac), with a letter, a digit or a function key: one like Ctrl+C belongs to every other app.",
+    "Use two modifier keys, one of them Shift, Alt or Super (⇧ or ⌥ on a Mac), and a letter, a digit or a function key. One like Ctrl+C belongs to other apps.",
   "settings.shortcut.registered":
-    "Press {shortcut} anywhere to open quick access: a small window to talk to your primary bot, ready for you to type. Press it again to close it.",
+    "Press {shortcut} anywhere to open quick access, a small window to talk to your primary bot. Press it again to close it.",
   "settings.shortcut.taken":
     "{shortcut} doesn’t work here: another app or the system uses it. Choose another.",
   "settings.shortcut.refused":
@@ -2082,7 +2069,7 @@ export const en = {
   "settings.shortcut.unavailable":
     "This desktop doesn’t let apps use a shortcut outside their own window, so {shortcut} opens quick access only while J3 Bots is in front.",
   "settings.shortcut.requested":
-    "On Wayland your desktop decides whether J3 Bots may use {shortcut}, and may refuse it without telling J3 Bots. If pressing it does nothing outside J3 Bots, your desktop didn’t allow it; it still works while J3 Bots is in front.",
+    "Your desktop decides whether {shortcut} works outside J3 Bots, and may not say. If nothing happens there, it wasn’t allowed; inside J3 Bots it still works.",
   "settings.lookingAt": "When you open quick access over another app",
   "settings.lookingAt.title": "Include the window’s title",
   "settings.lookingAt.title.hint":
@@ -2172,7 +2159,7 @@ export const en = {
   "diagnostics.sheet.lead":
     "Send this file to whoever helps you. It holds only what helps them see what went wrong.",
   "diagnostics.sheet.inside": "What’s in it",
-  "diagnostics.sheet.inside.logs": "The server’s and the engine’s logs from the last 7 days",
+  "diagnostics.sheet.inside.logs": "J3 Bots’ logs from the last 7 days",
   "diagnostics.sheet.inside.failures": "What failed, and when",
   "diagnostics.sheet.inside.setup":
     "Versions, settings, and how many bots, rooms and routines there are",
@@ -2244,7 +2231,7 @@ export const en = {
   "serverUpdate.failure.download": "The release couldn’t be downloaded.",
   "serverUpdate.failure.verification":
     "The download didn’t check out against the project’s signature.",
-  "serverUpdate.failure.engine": "The new version’s engine couldn’t be fetched.",
+  "serverUpdate.failure.engine": "Part of the new version couldn’t be downloaded.",
   "serverUpdate.failure.disk": "There wasn’t room for it on the server.",
   "serverUpdate.failure.interrupted": "A restart of the server’s machine cut it off.",
   "serverUpdate.failure.unknown": "Something went wrong.",
@@ -2283,7 +2270,7 @@ export const en = {
     "Updating this app to {version}. It closes to finish; then open it again.",
   "phoneUpdate.automatic": "Update automatically",
   "phoneUpdate.automatic.hint":
-    "Installs each new release as soon as the app opens, once it checks out against the project’s signature. Off, the app asks before it updates.",
+    "Installs each signed new release as soon as the app opens. Off, the app asks before it updates.",
   "phoneUpdate.cancelled":
     "The install was cancelled. {version} is downloaded and checked, ready to install.",
   "phoneUpdate.waitingForStable":
@@ -2293,7 +2280,7 @@ export const en = {
     "If the server runs a nightly build, choose Nightly for this app below.",
   "phoneUpdate.permission.title": "Let J3 Bots install its update",
   "phoneUpdate.permission.body":
-    "Android asks once. On the next screen, Install unknown apps, turn on “Allow from this source”, then come back: the install goes on. J3 Bots installs only its own updates, once they check out against the project’s signature.",
+    "Android asks once. On the next screen, turn on “Allow from this source”, then come back: the install goes on. J3 Bots installs only its own signed updates.",
   "phoneUpdate.permission.open": "Open Android settings",
   "phoneUpdate.play": "Google Play installed this app, and keeps it up to date.",
   "phoneUpdate.openPlay": "Open Google Play",
@@ -2439,10 +2426,7 @@ export const en = {
   "browser.showHere": "Show it here",
   "browser.failed": "Couldn’t open this page.",
   "browser.retry": "Try again",
-  "browser.setupNeeded.sandbox":
-    "The browser can’t start until the server’s computer lets it use its sandbox. Run j3-bots doctor there to see how.",
-  "browser.setupNeeded.libraries":
-    "The browser can’t start until the server’s computer has the libraries it needs. Run j3-bots doctor there to see how.",
+  "browser.setupNeeded": "The browser can’t open until it’s set up.",
   "browser.handBack.title": "Give control back?",
   "browser.handBack.body": "The bot can’t use the browser while you have control.",
   "browser.handBack.confirm": "Give it back",
@@ -2523,11 +2507,11 @@ export const en = {
   "connector.status.commandNotFound.next":
     "Install it there, or change the command to name it by its full path.",
   "connector.status.commandExited":
-    "Its program stopped on its own, or couldn't start. J3 Bots starts it again the next time a bot uses it, waiting longer each time it stops.",
+    "Its program stopped on its own, or couldn't start. J3 Bots starts it again the next time a bot uses it.",
   "connector.status.commandExited.next":
     "Check the command and its variables. Running it yourself on that computer shows why it stops.",
   "connector.status.commandRefused":
-    "J3 Bots won't start its command as it's saved: a check it makes before each start refuses it.",
+    "J3 Bots won’t start it: its command didn’t pass a safety check.",
   "connector.status.commandRefused.next":
     "Change the command and confirm it again. A variable that decides which code runs needs its value typed in, not a secret.",
   "connector.status.issuerChanged":
@@ -2717,7 +2701,7 @@ export const en = {
   "connectorAsk.clientIdRequired": "Type the app’s client ID.",
   "connectorAsk.clientSecretInvalid":
     "Check the client secret: it’s one line, as the service shows it.",
-  "connectorAsk.unseen": "It stays on your J3 Bots server. {bot} never sees it.",
+  "connectorAsk.unseen": "Kept safe in J3 Bots. {bot} never sees it.",
   "connectorAsk.allow": "Allow",
   "connectorAsk.decline": "Decline",
   "connectorAsk.refused": "That didn’t go through. Check it and try again.",
