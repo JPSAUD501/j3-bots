@@ -42,7 +42,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0034](0034-the-desktop-app-installs-only-a-signed-download.md) | The desktop app installs only a download its release signed | Accepted |
 | [0035](0035-the-android-app-installs-its-update-through-a-session.md) | The Android app installs its own update through an installer session, after checking it | Accepted |
 | [0036](0036-phone-access-restarts-the-local-server-on-the-network.md) | Phone access restarts the local server on the network, under the server's own `lan` rules | Accepted |
-| [0037](0037-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Accepted |
+| [0037](0037-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Accepted; its fill moves into J3 Bots' own browser with [0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md) |
 | [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Accepted |
 | [0039](0039-a-room-has-no-host.md) | A room has no host, and a message for nobody wakes everyone | Accepted; its loop guard superseded by [0042](0042-a-room-counts-rounds.md) |
 | [0040](0040-the-members-of-a-room-run-in-parallel.md) | The members of a room run in parallel | Accepted |
@@ -103,6 +103,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md) | Quotes sit in the field, a passage takes a comment, and nothing sits under the field | Accepted |
 | [0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md) | Dictation goes to the operator's cloud provider, and the server runs no speech model | Accepted |
 | [0108](0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md) | The operator sets up each AI account, and picks a bot's model as in T3 Code | Accepted |
-| [0109](0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md) | A new bot can browse the web, and the operator turns it off | Accepted |
+| [0109](0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md) | A new bot can browse the web, and the operator turns it off | Accepted; its browser is J3 Bots' own from [0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md) |
+| [0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md) | J3 Bots runs its own browsers, and the engine's is off | Accepted for 0.16 |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

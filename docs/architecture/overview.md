@@ -76,6 +76,7 @@ A routine, a message from another bot and a room turn follow the same path from 
 | --- | --- |
 | Client ↔ J3 Bots server | Only the J3 Bots contract. Clients never see an engine identifier. |
 | J3 Bots server ↔ engine | Only through `packages/engine-t3`. No other package imports T3 Code types, knows its paths or parses its files. |
+| J3 Bots server ↔ a browser host | Only `BrowserHostRpcs`, one call per piece of page work ([The browser](browser.md)). `packages/browser` knows nothing of T3 Code. |
 | Bot ↔ J3 Bots server | Only through J3 Bots' bot tools. A bot cannot read another bot's conversation or memory through them. |
 | Bot ↔ host machine | Whatever the engine's permission mode allows. J3 Bots adds no sandbox of its own. |
 | J3 Bots ↔ network | Loopback for the engine. The J3 Bots server listens where the operator configures it. Nothing leaves the machine except model traffic the harness makes, optional push notifications, and the server's anonymous usage data until the operator turns it off ([Server: usage data](server.md#usage-data)). |

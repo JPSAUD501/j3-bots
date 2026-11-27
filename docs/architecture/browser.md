@@ -1,0 +1,65 @@
+# The browser
+
+J3 Bots runs the browsers its bots use, on the person's desktop first and on the server when no desktop is there. The engine's browser is off ([decision 0110](../decisions/0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md)). This page names the pieces, what each owns, and which part of the 0.16 work builds it. It is rewritten as each part lands.
+
+## The pieces
+
+```
+  bot's session ──browser_* tools──┐        viewers (web, desktop, phone)
+                                   v                    │ media socket
+                 +-----------------+--------------------v---+
+                 | J3 Bots server: Browser service           |
+                 |  tab registry, placement, leases, the     |
+                 |  person's hold, the sealed jar, fill, help|
+                 +------+-------------------------+----------+
+                        | BrowserHostRpcs          | BrowserHostRpcs
+                        | (in process)             | (over the desktop's connection)
+                 +------v---------+         +------v---------------------+
+                 | server host    |         | desktop host                |
+                 | Chrome for     |         | Electron views, one CDP     |
+                 | Testing, new   |         | relay per tab, Playwright   |
+                 | headless       |         |                             |
+                 |  DriverPage    |         |  DriverPage                 |
+                 +----------------+         +-----------------------------+
+```
+
+A tool call crosses the network once. The server decides which tab and whether the bot may act, then asks the tab's host for one piece of page work. The host runs it beside the page with the shared driver.
+
+| Piece | What it owns | Code | Work |
+| --- | --- | --- | --- |
+| Shared tab | A tab's durable ref, where it runs, who opened it, the bots on it, who acts and who holds it. A private tab is never listed to a bot. | `SharedBrowserTab`, `BrowserTabWhere`, `BrowserTabOpener`, `BrowserTabHolder` in `packages/contracts/src/browser.ts` | Core (here) |
+| Page host protocol | What the server asks of a host, and what a host reports: tabs, page work, screencast and input, cookies and storage. | `BrowserHostRpcs`, `BrowserHostHello`, `BrowserHostEvent`, `BrowserHostError` in `packages/contracts/src/browserHost.ts` | Core (here) |
+| Tool schemas | What a bot's `browser_*` tools take and return. | `packages/contracts/src/browserTools.ts` | Core (here) |
+| Driver | One tab's page, driven through Playwright: snapshot, act, evaluate, wait, navigate, dialogs, screenshots, screencast, input. | `makeDriverPage` in `packages/browser` | Core (here) |
+| Host interface | One method per protocol call, so a host in the server's process and one across a connection are driven alike. | `PageHost`, `driverTabCalls`, `pageHostHandlers`, `remotePageHost` in `packages/browser` | Core (here) |
+| CDP relay | Makes one desktop tab's debugger look like a browser to Playwright. | `createCdpRelayConnection` in `packages/browser` | Core (here); the desktop host uses it |
+| Fake host | A host in memory, for tests of what drives one. | `makeFakePageHost` in `@j3-bots/browser/testing` | Core (here) |
+| Browser service | The tab registry, placement on hosts, leases, the person's hold, the `browser_*` tools, and the removal of the engine adapter's browser code. | `apps/server` | Server host |
+| Server host | Chrome for Testing in new headless mode, pinned per platform, seeded from the jar, with no profile on disk. | `apps/server` | Server host |
+| Sign-ins | The sealed jar, its sync with every host, moving today's sign-ins out of the engine's profile, Settings → Browser, and the login fill and browser help on J3 Bots' tabs. | `apps/server`, clients | Sign-ins |
+| Desktop host | The in-app browser: views, the side panel, the pop-out window, private tabs, hidden tabs that keep painting. | `apps/desktop` | Desktop host |
+| Viewers | Watching and using a tab from the web and the phone. | `apps/web`, `apps/mobile` | Viewers |
+
+## Boundaries
+
+- **`packages/browser` knows nothing of T3 Code:** not its protocol, its types or its files. Some of its code is adapted from T3 Code under the MIT license; each such file says so, and `packages/browser/NOTICE` carries the license.
+- **Clients never reach a host.** They watch and use tabs through the server, by the tab's ref.
+- **A host never speaks raw CDP to the server.** One call is one piece of page work.
+- **The server owns every ref.** A host mints one only for a tab it opens by itself, such as a pop-up or the person's new tab, with at least 128 bits of randomness.
+
+## The driver
+
+`makeDriverPage` drives one Playwright `Page` for as long as its scope lives. The host gives it the page and a CDP session of that page, since only the host knows how to open one.
+
+- **Snapshot.** Playwright's accessibility tree in its `ai` mode, with boxes. Each ref is rewritten as `j3-<driver>-<snapshot>-<native>`. A ref is good only until the next snapshot or until the main frame navigates or a frame detaches. Anything older is refused as `stale-ref`, which tells the bot to take a new snapshot. **Verified** with Playwright 1.64.1's Chromium, in `DriverPage.test.ts`.
+- **Masking.** Before the tree is read, and again after, each frame's password values, and values a page hides behind dots, are read in an isolated world of their own. Every form of them is masked wherever the tree or the title shows them. A value that changed between the two reads restarts the snapshot once. `data:` payloads are cut before masking. **Verified** for a password repeated in the page and the title.
+- **Actions.** Click (which returns when the click opens a dialog), type (focusing a text field first; pickers and sliders take their value whole), hover, select, drag, upload, press, scroll. A timeout says whether the target still matches, since the action may have happened.
+- **Evaluate.** Over CDP `Runtime.evaluate`, retried in the console's REPL mode only when the parser refused a top-level `await`. A script over its time is stopped without waiting for the renderer to acknowledge it. Results over 64 KB are refused. **Verified.**
+- **Navigate.** Waits for the commit, then for the readiness asked. A page whose resources stall past the time is reported loading, not failed. A page that fails to load reports the browser's net error as `loadError`, and the tab keeps the address that failed. Only `http:` and `https:` open. The load error and the refusal are **Verified**.
+- **Screencast.** One frame is out at a time. While it is, only the newest waits, and every frame dropped is acknowledged to Chromium at once.
+
+The snapshot, the masking, the refs, the actions and `evaluate` follow T3 Code's `ServerBrowserPage.ts` (**Read** at `bc0f04d`).
+
+## Testing
+
+`packages/browser`'s driver tests run on a real Chromium, over fake pages the test serves itself; nothing leaves the machine. They run when `J3_TEST_CHROMIUM` names a Chrome or Chromium binary, which CI sets to the runner's Chrome, and are skipped otherwise. Everything else uses `makeFakePageHost`.

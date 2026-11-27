@@ -1,6 +1,6 @@
 # 0109: A new bot can browse the web, and the operator turns it off
 
-**Status:** Accepted. Replaces the browser being off for every bot until the operator turned it on, which came with 0.4.0 (migration `0025_bot_browser`, [Engine: the bot's browser](../architecture/engine.md#the-bots-browser)) without a record of its own.
+**Status:** Accepted. Amended by [0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md): from 0.16 the switch gives a bot J3 Bots' own browser, and the engine's is off. Replaces the browser being off for every bot until the operator turned it on, which came with 0.4.0 (migration `0025_bot_browser`, [Engine: the bot's browser](../architecture/engine.md#the-bots-browser)) without a record of its own.
 
 ## Context
 
