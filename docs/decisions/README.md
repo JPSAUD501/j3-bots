@@ -53,7 +53,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0045](0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md) | J3 Bots keeps its own copies of the harnesses, checked against the makers' checksums | Accepted |
 | [0046](0046-secrets-the-operator-types-a-bot-uses-a-reference.md) | Secrets: the operator types, a bot uses a reference | Accepted |
 | [0047](0047-j3-bots-is-a-complete-mcp-host-at-the-current-specification.md) | J3 Bots is a complete MCP host at the current specification | Accepted |
-| [0048](0048-a-servers-interface-runs-isolated-in-j3-bots-clients.md) | A server's interface runs isolated in J3 Bots' clients | Accepted |
+| [0048](0048-a-servers-interface-runs-isolated-in-j3-bots-clients.md) | A server's interface runs isolated in J3 Bots' clients | Accepted; where an app shows and what it may tell its bot amended by [0093](0093-a-connectors-app-is-part-of-the-bots-reply.md) |
 | [0049](0049-the-bots-manage-mcp-servers-and-skills.md) | The bots manage MCP servers and skills | Accepted |
 | [0050](0050-bots-and-rooms-are-visible-or-hidden-and-the-operators-choice-wins.md) | Bots and rooms are visible or hidden, and the operator's choice wins | Accepted |
 | [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |
@@ -87,6 +87,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
 | [0091](0091-a-share-goes-straight-to-a-bot-and-a-widget-keeps-one-in-sight.md) | A share goes straight to a bot, and a widget keeps one in sight | Accepted |
 | [0092](0092-a-mention-in-a-bots-conversation-points-and-delivers-nothing.md) | A mention in a bot's conversation points, and delivers nothing | Accepted |
+| [0093](0093-a-connectors-app-is-part-of-the-bots-reply.md) | A connector's app is part of the bot's reply, in every display mode, and tells its bot what it shows | Accepted |
 | [0094](0094-a-message-quotes-messages-a-reply-whole-a-quote-a-passage.md) | A message quotes messages: a reply whole, a quote a passage | Accepted |
 | [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) | Little ones a turn handed off stay until they are home | Accepted |
 | [0097](0097-whats-new-ships-with-the-apps-and-follows-the-servers-version.md) | What's new ships with the apps, and follows the server's version | Accepted |

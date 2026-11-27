@@ -1,6 +1,6 @@
 # 0048: A server's interface runs isolated in J3 Bots' clients
 
-**Status:** Accepted
+**Status:** Accepted. Amended by [0093](0093-a-connectors-app-is-part-of-the-bots-reply.md): an app is part of the bot's reply, shown inline, full screen or pinned, and what it sets as context reaches its bot.
 
 ## Context
 
@@ -12,12 +12,12 @@ The owner also decided that J3 Bots adds no approval of its own: a bot's harness
 
 ## Decision
 
-**A connector's app is drawn by J3 Bots' clients, under the work of the turn whose call opened it, in a frame with an opaque origin and the network its server declared; what it asks J3 Bots to do goes as the bot's request, under the bot's grant and permission mode, and what it would do as the operator waits on the operator.**
+**A connector's app is drawn by J3 Bots' clients, in the bot's reply where the call that opened it happened ([0093](0093-a-connectors-app-is-part-of-the-bots-reply.md)), in a frame with an opaque origin and the network its server declared; what it asks J3 Bots to do goes as the bot's request, under the bot's grant and permission mode, and what it would do as the operator waits on the operator.**
 
-- **The server reads the app beside the call** that opened it, through the bot's own session, and keeps it, its document once per content, with the call's input and answer, under the turn's work fold. Reading it never fails the call ([Server: connectors](../architecture/server.md#connectors)).
+- **The server reads the app beside the call** that opened it, through the bot's own session, and keeps it, its document once per content, with the call's input and answer, as an entry of the bot's reply. Reading it never fails the call ([Server: connectors](../architecture/server.md#connectors)).
 - **The frame has no origin.** `sandbox="allow-scripts allow-forms"`, never `allow-same-origin`, in the client's own app page, which writes the app's document over itself; the app page's policy is the widest an app may have (`https:` and `wss:`), the document's narrows it to what its server declared, and nothing but declared `https:` and `wss:` hosts on the internet, never the J3 Bots server's, is ever allowed. Nested frames, device permissions and an origin of the app's own (`frameDomains`, `permissions`, `domain`) are never granted ([Security: connector apps](../architecture/security.md#connector-apps)).
 - **An app's calls are its bot's.** Its `tools/call` and `resources/read` go through J3 Bots to its own connector only, through the bot's session, with the grant checked as for the bot's own calls, and only to a tool its server lists and opened to apps. Since the client, not the harness, makes them, J3 Bots asks what the harness would ask: outside full access, each tool waits on the operator's Allow before its first call while the app is drawn; in full access, where the harness would ask nothing either, it runs. The server checks the bot's mode at each call, as it is then, and refuses one the operator did not allow (`needs-allow`), which is when the client asks. This is the bot's permission mode applied where the harness cannot see the call, not an approval of J3 Bots' own.
-- **What is the operator's stays theirs.** A message an app proposes is sent only when the operator presses Send, as their own message; a link opens in their browser only when they press Open, and only an `http:` or `https:` address. An app cannot add to the bot's context (`ui/update-model-context` is refused), and is drawn inline only.
+- **What is the operator's stays theirs.** A message an app proposes is sent only when the operator presses Send, as their own message; a link opens in their browser only when they press Open, and only an `http:` or `https:` address. What an app sets as context for its bot, and the modes it is shown in, are [0093](0093-a-connectors-app-is-part-of-the-bots-reply.md)'s.
 
 ## What it costs
 
