@@ -61,9 +61,10 @@ export type DraftFile =
 export interface DraftRecording extends RecordingSource {
   /**
    * Called once the runtime no longer needs the file: when the server holds
-   * it, or when it leaves the draft, removed, dropped, or never taken in by
-   * a draft that was being sent. Called once; not when the upload fails,
-   * since a failed file stays in the draft until the operator removes it.
+   * it, or when it leaves the draft, removed or dropped. Called at most once;
+   * not when the upload fails, since a failed file stays in the draft until
+   * the operator removes it, nor when a draft did not take it or the client
+   * closed with it uploading, since the device can offer it again.
    */
   readonly release: () => void;
 }
@@ -382,13 +383,15 @@ export class Drafts extends Context.Service<
      * after it, and uploads it in resumable pieces (`Files.uploadRecording`),
      * admitted against `MAX_RECORDING_SIZE`. Only a server that carries
      * `screenRecordings` takes one. It shows as `failed` when it breaks a
-     * limit or its upload fails for good.
+     * limit or its upload fails for good. It waits for a send under way to
+     * end. `false` when the draft did not take it, as when the client is
+     * closing: the recording is left as it was.
      */
     readonly attachRecording: (
       target: EntryTarget,
       recording: DraftRecording,
       at?: number,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<boolean>;
     /** Takes a file out of the draft, stopping its upload. */
     readonly detach: (target: EntryTarget, key: string) => Effect.Effect<void>;
     /**
@@ -613,10 +616,12 @@ export const layer = Layer.effect(
       for (const fileKey of releases.keys()) if (!held.has(fileKey)) release(fileKey);
     };
     const unsubscribeReleases = state.subscribe(releaseDropped);
+    // Closing lets go of nothing: a recording still uploading is the
+    // device's to offer again.
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         unsubscribeReleases();
-        for (const fileKey of releases.keys()) release(fileKey);
+        releases.clear();
       }),
     );
     // Text on offer for `restore`, by key: text this window held, never kept,
@@ -1130,8 +1135,9 @@ export const layer = Layer.effect(
         size: recording.size,
         recording: true,
       };
+      // A draft being sent takes no file; the send ends soon, and then it does.
+      yield* waitFor(state, (drafts) => drafts.get(key)?.sending !== true);
       const [problem = null] = admitFiles(heldFiles(state.get().get(key)), [local]);
-      releases.set(fileKey, recording.release);
       yield* change(
         target,
         withFiles(at, [
@@ -1140,9 +1146,11 @@ export const layer = Layer.effect(
             : { _tag: "failed", key: fileKey, problem, ...local },
         ]),
       );
-      // A draft being sent, or not read yet, takes no file: it is let go at once.
-      releaseDropped();
-      if (problem !== null || !releases.has(fileKey)) return;
+      // Closing, the client takes nothing: the recording is left as it was.
+      const taken = (state.get().get(key)?.files ?? []).some((file) => file.key === fileKey);
+      if (!taken) return false;
+      releases.set(fileKey, recording.release);
+      if (problem !== null) return true;
       yield* startUpload(target, fileKey, local, (pairing, onProgress) =>
         files.uploadRecording({
           pairing,
@@ -1152,6 +1160,7 @@ export const layer = Layer.effect(
           onProgress,
         }),
       );
+      return true;
     });
 
     const detach = (target: EntryTarget, fileKey: string) =>

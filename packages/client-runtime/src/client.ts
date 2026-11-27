@@ -469,13 +469,14 @@ export interface J3Client {
   ) => void;
   /**
    * Adds a screen recording to the draft, placed at `at` in its text or
-   * after it, and uploads it in resumable pieces (`Drafts.attachRecording`).
+   * after it, and uploads it in resumable pieces (`Drafts.attachRecording`):
+   * `false` when the draft did not take it, which leaves it as it was.
    */
   readonly attachRecording: (
     target: EntryTarget,
     recording: Drafts.DraftRecording,
     at?: number,
-  ) => void;
+  ) => Promise<boolean>;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
    * Adds a reply or a passage to the draft's quotes (`Drafts.quote`): `full`
@@ -973,7 +974,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       run.sync(services.drafts.setText(target, text, mentions, order)),
     attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
     attachRecording: (target, recording, at) =>
-      fire(services.drafts.attachRecording(target, recording, at)),
+      run.promise(services.drafts.attachRecording(target, recording, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     quoteInDraft: (target, quote) => run.sync(services.drafts.quote(target, quote)),
     unquoteInDraft: (target, index) => run.sync(services.drafts.unquote(target, index)),

@@ -105,9 +105,12 @@ export function RecordSheetBody({
               {countdown}
             </p>
           )}
-          <div className="flex justify-end">
-            <Button onClick={onClose}>{t("recordSheet.cancel")}</Button>
-          </div>
+          {/* Once it is starting, the app answers in a moment: there is nothing to cancel. */}
+          {countdown > 0 && (
+            <div className="flex justify-end">
+              <Button onClick={onClose}>{t("recordSheet.cancel")}</Button>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -373,6 +376,10 @@ export function RecordSheet({
       else setProblem(result);
     });
   });
+  // The app is starting the recording: closing now would not stop it.
+  const dismiss = () => {
+    if (countdown !== 0) close();
+  };
 
   // 3, 2, 1, then it records.
   useEffect(() => {
@@ -409,7 +416,7 @@ export function RecordSheet({
         setProblem(null);
         setCountdown(COUNT_FROM);
       }}
-      onClose={close}
+      onClose={dismiss}
     />
   );
 }

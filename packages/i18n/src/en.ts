@@ -208,9 +208,9 @@ export const en = {
   "recordSheet.what.everything":
     "J3 Bots records all your screens, your voice, and the keys you press and where you click, until you stop.",
   "recordSheet.what.screenAndVoice":
-    "J3 Bots records all your screens and your voice until you stop. This system doesn’t let apps read your keys and clicks.",
+    "J3 Bots records the screen you share when the system asks, and your voice, until you stop. This system doesn’t let apps read your keys and clicks.",
   "recordSheet.where":
-    "Then it goes into your message to {name} as a file, and {name}’s AI looks at it. Nothing leaves this computer until you send it.",
+    "Nothing leaves this computer while you record. Then it goes into your message to {name} as a file, which uploads to your J3 Bots server, and {name}’s AI looks at it once you send it.",
   "recordSheet.passwords.hidden":
     "When you type a password, only the fact that you typed one is kept. Pause to hide anything else: nothing is recorded while paused.",
   "recordSheet.passwords.pause":

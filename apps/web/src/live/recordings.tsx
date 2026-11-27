@@ -24,7 +24,8 @@ const fileDate = (startedAt: DateTime.Utc): string => {
 };
 
 // Recordings this page put in a draft: the app hands each ready one over
-// every time a page listens, until the page releases it once uploaded.
+// every time a page listens, until the draft releases it, once the server
+// holds it or the operator takes it out.
 const attached = new Set<RecordingId>();
 
 /**
@@ -69,16 +70,28 @@ export function useScreenRecordings({
         if (delivery.pairing !== pairing || attached.has(delivery.id) || app === null) return;
         attached.add(delivery.id);
         const { id, target } = delivery;
-        j3.attachRecording(target, {
-          name: t("recording.fileName", { date: fileDate(delivery.startedAt) }),
-          size: delivery.size,
-          read: (start, end) => app.recording.read(id, start, end),
-          release: () => app.recording.release(id),
-        });
-        openTarget(target);
-        if (delivery.interrupted) {
-          say(t("recording.interrupted", { name: recipientOf(target)?.name ?? "" }));
-        }
+        void j3
+          .attachRecording(target, {
+            name: t("recording.fileName", { date: fileDate(delivery.startedAt) }),
+            size: delivery.size,
+            read: (start, end) => app.recording.read(id, start, end),
+            release: () => app.recording.release(id),
+          })
+          .then(
+            (taken) => taken,
+            () => false,
+          )
+          .then((taken) => {
+            // Not taken, it stays in the app, which offers it again.
+            if (!taken) {
+              attached.delete(id);
+              return;
+            }
+            openTarget(target);
+            if (delivery.interrupted) {
+              say(t("recording.interrupted", { name: recipientOf(target)?.name ?? "" }));
+            }
+          });
         return;
       }
       case "failed":

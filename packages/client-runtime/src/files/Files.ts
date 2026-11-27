@@ -321,10 +321,14 @@ export const layer = Layer.effect(
       const { upload } = input;
       const end = Math.min(upload.received + RECORDING_CHUNK_SIZE, upload.size);
       const unreadable = new UploadRefused({ problem: "unreadable" });
-      const bytes = yield* Effect.tryPromise({
-        try: () => input.source.read(upload.received, end),
-        catch: () => unreadable,
-      });
+      // Every byte is there, its answer lost: an empty piece asks for the file again.
+      const bytes =
+        end === upload.received
+          ? new Uint8Array(0)
+          : yield* Effect.tryPromise({
+              try: () => input.source.read(upload.received, end),
+              catch: () => unreadable,
+            });
       if (bytes === null || bytes.length !== end - upload.received) return yield* unreadable;
       // Copied into a buffer of its own, which a `Blob` takes.
       const body = new Blob([new Uint8Array(bytes)]);

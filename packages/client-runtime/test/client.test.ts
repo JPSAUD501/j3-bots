@@ -564,7 +564,9 @@ const recordingOf = (size: number, released: { count: number }) => {
     recording: {
       name: "screen.zip",
       size,
-      read: (start: number, end: number) => Promise.resolve(bytes.slice(start, end)),
+      // As the desktop app reads it: an empty range is no range.
+      read: (start: number, end: number) =>
+        Promise.resolve(start < end ? bytes.slice(start, end) : null),
       release: () => {
         released.count += 1;
       },
@@ -1380,6 +1382,38 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     },
   );
 
+  it.effect(
+    "takes a recording as the server holds it after the answer to its last piece was lost",
+    () => {
+      const offsets: Array<string> = [];
+      const released = { count: 0 };
+      return Effect.gen(function* () {
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Learner") };
+        const { recording } = recordingOf(1000, released);
+
+        yield* drafts.attachRecording(target, recording);
+        const file = yield* settledFile(target);
+
+        assert.strictEqual(file._tag, "ready");
+        // The only piece, again; the server holds every byte, so an empty piece
+        // at the end asks for the file, with nothing read past it.
+        assert.deepStrictEqual(offsets, ["0", "0", "1000"]);
+        assert.strictEqual(released.count, 1);
+      }).pipe(
+        Effect.provide(
+          client(
+            Option.none(),
+            TestPlatform.makeDevice(),
+            recordingAnswerLostOnce(offsets),
+            SHORT_TIMEOUT,
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("begins a recording again once the server no longer knows it", () => {
     const begun = { count: 0 };
     return Effect.gen(function* () {
@@ -1464,6 +1498,31 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       Effect.andThen(Effect.sync(() => assert.strictEqual(released.count, 1))),
     );
   });
+
+  it.effect(
+    "keeps a recording still uploading as the client closes, for the device to offer again",
+    () => {
+      const released = { count: 0 };
+      return Effect.gen(function* () {
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Closing") };
+
+        assert.isTrue(yield* drafts.attachRecording(target, recordingOf(2000, released).recording));
+        const [file] = drafts.state.get().get(targetKey(target))?.files ?? [];
+        assert.strictEqual(file?._tag, "uploading");
+      }).pipe(
+        Effect.provide(
+          Layer.unwrap(
+            Effect.map(Latch.make(false), (open) =>
+              client(Option.none(), TestPlatform.makeDevice(), recordingPiecesHeld(open)),
+            ),
+          ),
+        ),
+        Effect.andThen(Effect.sync(() => assert.strictEqual(released.count, 0))),
+      );
+    },
+  );
 
   it.effect("updates the roster live", () =>
     Effect.gen(function* () {

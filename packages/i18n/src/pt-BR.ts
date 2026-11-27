@@ -205,9 +205,9 @@ const sentences = {
   "recordSheet.what.everything":
     "O J3 Bots grava todas as suas telas, a sua voz, as teclas que você aperta e onde você clica, até você parar.",
   "recordSheet.what.screenAndVoice":
-    "O J3 Bots grava todas as suas telas e a sua voz até você parar. Este sistema não deixa apps lerem as suas teclas e cliques.",
+    "O J3 Bots grava a tela que você compartilhar quando o sistema perguntar, e a sua voz, até você parar. Este sistema não deixa apps lerem as suas teclas e cliques.",
   "recordSheet.where":
-    "Depois, ela vai na sua mensagem para {name} como um arquivo, e a IA de {name} olha para ela. Nada sai deste computador até você enviar.",
+    "Nada sai deste computador enquanto você grava. Depois, ela vai na sua mensagem para {name} como um arquivo, que sobe para o seu servidor do J3 Bots, e a IA de {name} olha para ela quando você enviar.",
   "recordSheet.passwords.hidden":
     "Quando você digita uma senha, fica só que você digitou uma. Pause para esconder qualquer outra coisa: nada é gravado enquanto está pausado.",
   "recordSheet.passwords.pause":

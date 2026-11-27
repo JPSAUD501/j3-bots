@@ -105,7 +105,7 @@ The desktop app records every screen, the voice, keys, clicks and the window in 
 | Windows | Everything. The control floats above other windows and is left out of the video. A password typed where Windows says the field is one is kept only as "typed a password", read through Windows PowerShell 5.1 from `System32`; a policy that stops Windows PowerShell or `Add-Type` stops that reading, and from then on no typed text is kept. |
 | macOS | Everything, once System Settings → Privacy & Security allows J3 Bots under Screen Recording and under Accessibility; the sheet asks for each while it is missing. Without Accessibility, the screens and the voice only. A password is kept only as "typed a password" while macOS's secure input is on. |
 | Linux on X11 | Everything. The control shows in the video, and no password is detected, so the sheet says to pause before typing one. With no compositing manager the control is not see-through. |
-| Linux on Wayland | The screens and the voice, through the desktop's screen-sharing portal, which asks which screens to share. Keys, clicks and windows are not readable there. |
+| Linux on Wayland | The screen the desktop's screen-sharing portal is told to share, and the voice: Electron gets one source from the portal, so a second screen is recorded only if it is the one picked. Keys, clicks and windows are not readable there. |
 
 Only Chromium's encoders were checked on a running system, on Linux under Xvfb; the rest follows each system's documentation ([Clients: Desktop](../architecture/clients.md#desktop) marks each).
 
