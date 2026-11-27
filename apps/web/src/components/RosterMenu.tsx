@@ -66,7 +66,7 @@ export interface RosterIntents {
   /** Opens the conversation or room with its details beside it. */
   readonly openDetails: (key: RosterItemKey) => void;
   /** Opens the bot's form, at its title for `"title"`. Absent where there is no form to edit a bot. */
-  readonly editProfile?: (botId: BotId, at?: "title") => void;
+  readonly editProfile?: (botId: BotId, at?: "title" | "model") => void;
   /** Shows the bot as a template, to save or share. */
   readonly shareTemplate: (botId: BotId) => void;
   readonly deleteBot: (botId: BotId) => void;

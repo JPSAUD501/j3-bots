@@ -253,6 +253,14 @@ export const Bot = Schema.Struct({
    * operator chooses it. Null from a server that predates it.
    */
   effort: Schema.NullOr(EffortLevel).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * The bot's AI runs in its harness's fast mode, for a model that has one
+   * (`ProviderModel.fast`): it answers sooner and spends more of the plan.
+   * A move to a model without it turns it off in the same save; a model that
+   * stops offering it later runs at its usual speed meanwhile. False from a
+   * server that predates it.
+   */
+  fast: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   permissionMode: PermissionMode,
   /** The operator's default contact. At most one bot is primary. */
   primary: Schema.Boolean,

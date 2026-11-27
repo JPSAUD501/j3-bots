@@ -59,6 +59,10 @@ export interface BotDraft {
   readonly avatar?: AvatarChoice;
   readonly job?: Profile["job"];
   readonly model?: ModelChoice;
+  /** A level of `model`; the harness's default when left out (`Bot.effort`). */
+  readonly effort?: EffortLevel | null;
+  /** Fast mode, for a `model` the engine reports one for (`Bot.fast`). */
+  readonly fast?: boolean;
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
   /** Creates it among the hidden conversations; visible when left out. */
@@ -81,6 +85,10 @@ export type BotTemplateResult =
 export interface TemplateDraft {
   readonly template: BotTemplate;
   readonly model?: ModelChoice;
+  /** As `BotDraft`'s, for `model`. */
+  readonly effort?: EffortLevel | null;
+  /** As `BotDraft`'s, for `model`. */
+  readonly fast?: boolean;
   readonly permissionMode?: PermissionMode;
   /** Creates it among the hidden conversations; visible when left out. */
   readonly hidden?: boolean;
@@ -92,6 +100,8 @@ export interface BotChanges {
   readonly model?: ModelChoice;
   /** A level of the bot's model, or null for the default (`Bot.effort`). */
   readonly effort?: EffortLevel | null;
+  /** Fast mode, for a model the engine reports one for (`Bot.fast`). */
+  readonly fast?: boolean;
   readonly permissionMode?: PermissionMode;
   /** Whether the bot may use the engine's browser, from its next turn. */
   readonly browser?: boolean;

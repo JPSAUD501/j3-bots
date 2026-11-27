@@ -473,6 +473,28 @@ it.effect("moves a bot once a ready provider lists its first model", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "leaves a bot on the server's model where it is once the operator turns that account off",
+  () =>
+    Effect.gen(function* () {
+      yield* bothChecking;
+      const bot = yield* createNewBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* flushed(bot.id);
+
+      yield* providerIs(DEFAULT_MODEL.providerId, {
+        _tag: "unavailable",
+        checking: false,
+        reason: "disabled",
+      });
+      yield* providerIs(OTHER_PROVIDER_MODEL.providerId, { _tag: "ready" });
+      yield* (yield* Bots).adoptDefaults();
+      yield* flushed(bot.id);
+      assert.deepStrictEqual(yield* modelOf(bot.id), DEFAULT_MODEL);
+      assert.strictEqual(yield* engineSession(bot.id), session);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("leaves a model the operator chose where it is, its hello waiting", () =>
   Effect.gen(function* () {
     yield* bothChecking;

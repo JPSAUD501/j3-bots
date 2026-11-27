@@ -16,6 +16,7 @@ import {
   EffortLevel,
   EntryId,
   EntryOrder,
+  Label,
   Language,
   NonNegativeInt,
   ProviderId,
@@ -54,7 +55,13 @@ import {
 } from "./connectorApp.ts";
 import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { ElicitationAnswer } from "./elicitation.ts";
-import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
+import {
+  EngineStatus,
+  LaunchArguments,
+  MAX_USAGE_TURNS,
+  ProviderPath,
+  UsageTurn,
+} from "./engineStatus.ts";
 import {
   ApprovalDecision,
   BrowserHelpEntry,
@@ -496,6 +503,17 @@ export const BotRpcs = RpcGroup.make(
       avatar: Schema.optionalKey(AvatarChoice),
       job: Schema.optionalKey(Profile.fields.job),
       model: Schema.optionalKey(ModelChoice),
+      /**
+       * A level the engine reports for `model` (`Bot.effort`); the default
+       * when left out, and for a bot created without a model. A server that
+       * predates it creates the bot at the default.
+       */
+      effort: Schema.optionalKey(Schema.NullOr(EffortLevel)),
+      /**
+       * Fast mode (`Bot.fast`), for a `model` that has it; off when left out.
+       * A server that predates it creates the bot without it.
+       */
+      fast: Schema.optionalKey(Schema.Boolean),
       permissionMode: Schema.optionalKey(PermissionMode),
       primary: Schema.optionalKey(Schema.Boolean),
       /** Creates it hidden (`Bot.hidden`); visible when left out. */
@@ -516,7 +534,8 @@ export const BotRpcs = RpcGroup.make(
    *
    * A new model the bot's effort is not a level of, with no effort given,
    * takes the bot back to the default effort (null). `Invalid("model")`: the
-   * model, or the effort asked of it, is not one the engine offers now.
+   * model, or the effort or fast mode asked of it, is not one the engine
+   * offers now.
    */
   Rpc.make("bot.update", {
     payload: {
@@ -529,6 +548,12 @@ export const BotRpcs = RpcGroup.make(
        * `model` changes it, or null for the harness's own default (`Bot.effort`).
        */
       effort: Schema.optionalKey(Schema.NullOr(EffortLevel)),
+      /**
+       * Fast mode (`Bot.fast`), for the bot's model, the new one when `model`
+       * changes it. A new model without fast mode, with `fast` left out,
+       * turns it off. A server that predates it ignores it.
+       */
+      fast: Schema.optionalKey(Schema.Boolean),
       permissionMode: Schema.optionalKey(PermissionMode),
       /**
        * Making a bot primary makes the one that was primary before not, in the
@@ -608,6 +633,10 @@ export const BotRpcs = RpcGroup.make(
       ...command,
       template: BotTemplate,
       model: Schema.optionalKey(ModelChoice),
+      /** As `bot.create`'s, for `model`; ignored without one. */
+      effort: Schema.optionalKey(Schema.NullOr(EffortLevel)),
+      /** As `bot.create`'s, for `model`; ignored without one. */
+      fast: Schema.optionalKey(Schema.Boolean),
       permissionMode: Schema.optionalKey(PermissionMode),
       /** Creates it hidden (`Bot.hidden`); visible when left out. */
       hidden: Schema.optionalKey(Schema.Boolean),
@@ -923,6 +952,49 @@ export const EngineRpcs = RpcGroup.make(
     error: Schema.Union([NotFound, Conflict]),
   }),
   /**
+   * Adds another account of a harness, as a second Claude Code for a second
+   * Claude plan: a provider of its own, with a home of its own and no
+   * sign-in, which the operator then signs in (`provider.signIn` with its
+   * id). It answers with its id once saved; the engine takes it while it
+   * runs, or at its next start. Only from a server that reports providers'
+   * `setup`, and only from the operator: no bot tool reaches it.
+   */
+  Rpc.make("engine.addProvider", {
+    payload: { ...command, harness: SignInHarness, name: Label },
+    success: ProviderId,
+    error: CommandError,
+  }),
+  /**
+   * Changes what the operator can change of a provider (`ProviderSetup`) and
+   * its name; fields left out keep their value. The engine rebuilds the
+   * provider for a change of anything but its name, which ends what its bots
+   * run there, so a client asks only once the operator saved. Bots on a
+   * provider turned off wait for it, and say so. `NotFound("provider")` for
+   * a provider the server does not have, or that cannot be set up.
+   */
+  Rpc.make("engine.setUpProvider", {
+    payload: {
+      ...command,
+      providerId: ProviderId,
+      name: Schema.optionalKey(Label),
+      enabled: Schema.optionalKey(Schema.Boolean),
+      binaryPath: Schema.optionalKey(Schema.NullOr(ProviderPath)),
+      launchArguments: Schema.optionalKey(LaunchArguments),
+    },
+    error: CommandError,
+  }),
+  /**
+   * Removes a provider the operator added, and its home, with the account
+   * signed in there. Its bots keep their model, which names a provider that
+   * is gone: each says so, and waits for the operator to choose another.
+   * `Conflict("provider-not-removable")` for the first of a harness,
+   * which can only be turned off.
+   */
+  Rpc.make("engine.removeProvider", {
+    payload: { ...command, providerId: ProviderId },
+    error: CommandError,
+  }),
+  /**
    * Turns that started in the `USAGE_PERIOD` before `readAt`, the moment the
    * server read them, newest first, at most `limit`.
    */
@@ -1127,12 +1199,23 @@ export const ProviderRpcs = RpcGroup.make(
    * follows it, until it ends, is cancelled or times out.
    */
   Rpc.make("provider.signIn", {
-    payload: { harness: SignInHarness, start: Schema.Boolean },
+    payload: {
+      harness: SignInHarness,
+      start: Schema.Boolean,
+      /**
+       * The provider to sign in, one of `harness`'s, from a server that
+       * reports providers' `setup`; the first of `harness` when left out. A
+       * client sends it to an older server for no other provider.
+       */
+      providerId: Schema.optionalKey(ProviderId),
+    },
     success: ProviderSignInStatus,
     stream: true,
   }),
   /** Stops the harness's sign-in under way, if any. Its home is as it was. */
-  Rpc.make("provider.cancelSignIn", { payload: { harness: SignInHarness } }),
+  Rpc.make("provider.cancelSignIn", {
+    payload: { harness: SignInHarness, providerId: Schema.optionalKey(ProviderId) },
+  }),
   /**
    * Connects Claude Code and Codex to an endpoint, as `j3-bots provider
    * connect` does, restarting the engine. It has no command id: a receipt

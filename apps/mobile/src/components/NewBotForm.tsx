@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useJ3Client } from "@j3-bots/client-runtime/react";
-import { type AvatarChoice, type BotId, PROFILE_LIMITS } from "@j3-bots/contracts";
+import { canSetUpAccounts, type ModelSetting } from "@j3-bots/client-runtime/presentation";
+import { useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
+import { type AvatarChoice, type BotId, defaultModel, PROFILE_LIMITS } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
@@ -9,6 +10,7 @@ import { useBots } from "../presentation.tsx";
 import { AvatarPicker } from "./avatar/AvatarPicker.tsx";
 import { Button } from "../ui.tsx";
 import { Problem, SwitchRow, TextField } from "./form.tsx";
+import { ModelPicker } from "./ModelPicker.tsx";
 
 /** Creating holds the look the bot is created with. */
 type FormState =
@@ -22,7 +24,9 @@ type FormState =
  * makes it a person and the title says what it is for, so Create needs both;
  * pressed with a name and no title, it says the title is missing. The look
  * starts as the one the server would give it, which sits apart from the bots
- * there are. `onCreated` gets the new bot once it exists.
+ * there are. It runs on the model a new bot gets unless the operator picks
+ * another, with its effort and speed. `onCreated` gets the new bot once it
+ * exists.
  */
 export function NewBotForm(props: {
   readonly onCreated: (botId: BotId) => void;
@@ -42,6 +46,14 @@ export function NewBotForm(props: {
   const bots = useBots();
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
+  const engineStatus = useEngineStatus();
+  const engine = engineStatus._tag === "ready" ? engineStatus.value : null;
+  // Left alone, the server picks the model, as it would show here; picked, it is sent.
+  const [model, setModel] = useState<ModelSetting | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const serverModel = engine === null ? null : defaultModel(engine);
+  const shownModel: ModelSetting | null =
+    model ?? (serverModel === null ? null : { model: serverModel, effort: null, fast: false });
   // While the bot is created it joins the list, so the look it was created with stays on show.
   // Otherwise, until the operator picks one, the look follows the bots there are, which may
   // arrive after the form.
@@ -86,6 +98,19 @@ export function NewBotForm(props: {
         seed="new-bot"
         readOnly={state._tag === "creating"}
       />
+      {shownModel !== null && (
+        <ModelPicker
+          engine={engine}
+          value={shownModel}
+          onChange={setModel}
+          label={t("newBot.model")}
+          title={trimmed === "" ? t("newBot.model") : t("picker.open", { name: trimmed })}
+          offerEffort={canSetUpAccounts(engine)}
+          readOnly={state._tag === "creating"}
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+        />
+      )}
       <SwitchRow
         label={t("firstRun.create.primary")}
         value={primary}
@@ -116,6 +141,13 @@ export function NewBotForm(props: {
               primary,
               avatar,
               ...(hidden ? { hidden } : {}),
+              ...(model === null
+                ? {}
+                : {
+                    model: model.model,
+                    ...(model.effort === null ? {} : { effort: model.effort }),
+                    ...(model.fast ? { fast: true } : {}),
+                  }),
             };
             void client.createBot(draft).then((result) => {
               // A created bot opens, which takes the form off the screen: until then it stays

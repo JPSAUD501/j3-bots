@@ -6,20 +6,24 @@ import {
   aiAccounts,
   type AiPlace,
 } from "@j3-bots/client-runtime/presentation";
+import type { SignInAccount } from "@j3-bots/client-runtime";
 import {
   type AiAccountModel,
+  type AiConnectInput,
   type AiConnectModel,
+  useAiAccountModel,
   useAiConnect,
   useJ3Client,
   useServerUpdate,
 } from "@j3-bots/client-runtime/react";
 import {
+  aiAccountName,
   type AiAccountText,
   aiAccountText,
   aiActionLabel,
   type AiTone,
 } from "@j3-bots/client-runtime/wording";
-import type { EngineStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderId } from "@j3-bots/contracts";
 import { Check, ChevronDown, ChevronRight, ExternalLink } from "lucide-react-native";
 import { type ReactNode, useEffect, useState } from "react";
 import { Linking, View } from "react-native";
@@ -50,15 +54,15 @@ export interface MobileAiConnect extends AiConnectModel {
   readonly engine: EngineStatus | null;
 }
 
-const noSignIns = new Map<AiAccount, never>();
+const noSignIns = new Map<ProviderId, never>();
 
-/** The accounts as this screen connects them. */
-export function useMobileAiConnect(engine: EngineStatus | null): MobileAiConnect {
+/** What this app knows of the accounts, and what it can do for them. */
+function useMobileAiInput(engine: EngineStatus | null): AiConnectInput {
   const client = useJ3Client();
   const place: AiPlace = runByDesktopApp(useServerUpdate()) ? "desktop-app" : "server";
   const took = (request: ReturnType<typeof client.recheckProvider>) =>
     request.then((result) => result._tag === "done");
-  const model = useAiConnect({
+  return {
     facts: { engine, locations: null, signIns: noSignIns },
     place,
     intents: {
@@ -68,7 +72,12 @@ export function useMobileAiConnect(engine: EngineStatus | null): MobileAiConnect
       cancelDownload: (account) => took(client.cancelHarnessInstall(account)),
       recheck: (providerId) => took(client.recheckProvider(providerId)),
     },
-  });
+  };
+}
+
+/** The first account of each AI, as this screen connects them. */
+export function useMobileAiConnect(engine: EngineStatus | null): MobileAiConnect {
+  const model = useAiConnect(useMobileAiInput(engine));
   return { ...model, engine };
 }
 
@@ -79,8 +88,14 @@ const toneClass = {
   muted: "text-muted-foreground",
 } as const satisfies Record<AiTone, string>;
 
+/** Where an account's row is drawn: the engine's status, and where its accounts sign in. */
+interface RowPlace {
+  readonly engine: EngineStatus | null;
+  readonly place: AiPlace;
+}
+
 /** An account's words, for the state it is in on this screen. */
-function useAiText(ai: MobileAiConnect, account: AiAccountModel): AiAccountText {
+function useAiText(ai: RowPlace, account: AiAccountModel): AiAccountText {
   return aiAccountText(
     account.account,
     account.state,
@@ -198,22 +213,25 @@ function PageLink({ href, label }: { readonly href: string; readonly label: stri
  */
 function AiAccountRow({
   ai,
-  account,
+  model,
   stale = false,
+  settings,
   children,
 }: {
-  readonly ai: MobileAiConnect;
-  readonly account: AiAccount;
+  readonly ai: RowPlace;
+  readonly model: AiAccountModel;
   readonly stale?: boolean;
+  /** What the operator sets up of the account, under its row whatever its state. */
+  readonly settings?: ReactNode;
   readonly children?: ReactNode;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const model = ai.accounts[account];
   const text = useAiText(ai, model);
   const [howOpen, setHowOpen] = useState(false);
   const { state, action } = model;
-  const { name, maker, product } = aiAccountNames[account];
+  const { maker, product } = aiAccountNames[model.account.harness];
+  const name = aiAccountName(ai.engine, model.account);
   // A signed-out account says where it signs in only when asked.
   const elsewhere = ai.place !== "here" && state._tag === "sign-in" && state.failed === null;
   const progress = progressOf(model);
@@ -223,7 +241,7 @@ function AiAccountRow({
   ) : action !== null ? (
     <Button
       variant={state._tag === "missing" && !state.canGet ? "secondary" : "primary"}
-      label={aiActionLabel(action, account, i18n)}
+      label={aiActionLabel(action, name, i18n)}
       held={model.asking === "asking"}
       onPress={model.act}
     />
@@ -298,7 +316,40 @@ function AiAccountRow({
           {state._tag === "ready" && children}
         </>
       )}
+      {settings}
     </View>
+  );
+}
+
+/**
+ * One AI account the operator set up (decision 0108), as one row: where it
+ * stands, as every account's row says it, then `settings`, what the operator
+ * sets up of it, and once connected `children`, as its version.
+ */
+export function SetUpAccountRow({
+  engine,
+  account,
+  stale,
+  settings,
+  children,
+}: {
+  readonly engine: EngineStatus | null;
+  readonly account: SignInAccount;
+  readonly stale: boolean;
+  readonly settings: ReactNode;
+  readonly children?: ReactNode;
+}) {
+  const input = useMobileAiInput(engine);
+  const model = useAiAccountModel(account, input);
+  return (
+    <AiAccountRow
+      ai={{ engine, place: input.place }}
+      model={model}
+      stale={stale}
+      settings={settings}
+    >
+      {children}
+    </AiAccountRow>
   );
 }
 
@@ -319,7 +370,7 @@ export function AiAccountList({
   return (
     <View accessibilityLabel={t("ai.choice.label")} className="w-full gap-2">
       {aiAccounts.map((account) => (
-        <AiAccountRow key={account} ai={ai} account={account} stale={stale}>
+        <AiAccountRow key={account} ai={ai} model={ai.accounts[account]} stale={stale}>
           {extra?.(account)}
         </AiAccountRow>
       ))}

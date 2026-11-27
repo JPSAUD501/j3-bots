@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus, Room } from "@j3-bots/contracts";
-import { openingHeld, providerDetail, providerFix } from "@j3-bots/client-runtime/presentation";
+import {
+  botAccountState,
+  openingHeld,
+  providerDetail,
+  providerFix,
+} from "@j3-bots/client-runtime/presentation";
 import { avatarEnsemble } from "@j3-bots/design-tokens";
 import { type LucideIcon, SearchXIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -223,7 +228,8 @@ export function QuietConversation({
         title={name}
         body={held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
       />
-      {held !== null && held._tag !== "limit" && (
+      {/* A bot on an account removed or turned off says so above the composer instead. */}
+      {held !== null && held._tag !== "limit" && botAccountState(engine, bot.model) === "ok" && (
         <WaitingForAi engine={engine} connect={connect} actions={actions} />
       )}
     </Centered>

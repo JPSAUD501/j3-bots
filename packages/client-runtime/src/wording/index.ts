@@ -87,6 +87,7 @@ export {
 export {
   type AiAccountContext,
   type AiAccountText,
+  aiAccountName,
   aiAccountText,
   aiActionLabel,
   type AiTone,

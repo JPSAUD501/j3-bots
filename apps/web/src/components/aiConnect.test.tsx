@@ -65,8 +65,8 @@ let asked: Array<string>;
 /** Whether the server refuses the next downloads. */
 let refuseDownload: boolean;
 const intents: AiIntents = {
-  signIn: (account) => void asked.push(`sign-in ${account}`),
-  cancelSignIn: (account) => void asked.push(`cancel ${account}`),
+  signIn: (account) => void asked.push(`sign-in ${account.harness}`),
+  cancelSignIn: (account) => void asked.push(`cancel ${account.harness}`),
   download: (account) => {
     asked.push(`download ${account}`);
     return Promise.resolve(!refuseDownload);

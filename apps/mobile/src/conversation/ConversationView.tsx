@@ -5,6 +5,7 @@ import {
   arrivalCounts,
   buildTimeline,
   type CardPlace,
+  botAccountState,
   cardPlace,
   conversationMentionables,
   conversationMentionNames,
@@ -86,6 +87,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { AiConnect, useMobileAiConnect } from "../components/AiConnect.tsx";
+import { BotAccountNotice } from "../components/BotAccountNotice.tsx";
 import { PendingButton } from "../components/form.tsx";
 import { StateMark } from "../components/States.tsx";
 import type { Navigation } from "../navigation.tsx";
@@ -492,6 +494,17 @@ export function ConversationView({
           folds={folds}
         />
       </View>
+      {/* A bot whose AI account was removed or turned off says so above what it said. */}
+      {bot !== null && botAccountState(engineNow, bot.model) !== "ok" && (
+        <View className="w-full self-center px-4 pt-2" style={{ maxWidth: layout.textColumn }}>
+          <BotAccountNotice
+            engine={engineNow}
+            model={bot.model}
+            name={bot.profile.name}
+            onChoose={() => navigation.navigate("editBot", { botId: bot.id, at: "model" })}
+          />
+        </View>
+      )}
       {state?.phase === "not-found" ? (
         <Gone onBack={onGone} />
       ) : (

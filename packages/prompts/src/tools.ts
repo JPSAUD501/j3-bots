@@ -2,6 +2,7 @@
 import {
   AvatarChoice,
   BrowserHelpReason,
+  EffortLevel,
   type FillRefusal,
   MAX_BROWSER_HELP_NOTE_LENGTH,
   MAX_REACTION_LENGTH,
@@ -12,8 +13,10 @@ import {
   MAX_VISUAL_HEIGHT,
   MAX_VISUAL_TITLE_LENGTH,
   MIN_VISUAL_HEIGHT,
+  ModelId,
   OperatorName,
   Profile,
+  ProviderId,
   RoomName,
   RoutineInstruction,
   SavedThemeId,
@@ -627,6 +630,31 @@ const BotName = described(
   "A person's name, as a colleague on your user's team would have: a real first name, or its usual short form, common where your user lives and in the language they write (a Brazilian name for a Brazilian user). Fit it to the bot's character more than its work and, where you can, set it apart from the names of their other bots, those you create with it included: another first letter, and no rhyme with any of them. Never a role or task word, a pun on the job, a made-up product-style word, or Bot, AI or Assistant in any form: the role goes in `title`. A name your user gave is used exactly as given.",
 );
 
+/** The AI a teammate runs on, as `list_models` lists it. */
+const TeammateModel = Schema.Struct({
+  account: described(ProviderId, "The AI account's id, from `list_models`."),
+  model: described(ModelId, "The id of one of that account's models, from `list_models`."),
+  effort: Schema.optionalKey(
+    described(
+      EffortLevel,
+      "One of the model's effort levels, from `list_models`. Leave it out for the account's default.",
+    ),
+  ),
+  fast: Schema.optionalKey(
+    described(
+      Schema.Boolean,
+      "true for the model's fast mode, only where `list_models` says it has one. Off when left out.",
+    ),
+  ),
+});
+
+const TeammateModelField = Schema.optionalKey(
+  described(
+    TeammateModel,
+    "The AI the teammate runs on. Only when your user asked for a particular account, model, effort or fast mode in this turn's message; otherwise leave it out and keep the default.",
+  ),
+);
+
 /**
  * A bot's title, shown under its name wherever the operator sees it: what it
  * is for, which a person's name alone never says.
@@ -643,6 +671,7 @@ const CreateBotInput = toolInput({
     described(Profile.fields.job, "What the bot is for and where its limits are."),
   ),
   listed: Listed,
+  model: TeammateModelField,
 });
 
 const SetListedInput = toolInput({
@@ -661,6 +690,7 @@ const UpdateBotInput = toolInput({
   name: Schema.optionalKey(BotName),
   title: Schema.optionalKey(BotTitle),
   job: Schema.optionalKey(Profile.fields.job),
+  model: TeammateModelField,
 });
 
 const UpdateProfileInput = toolInput({
@@ -1321,9 +1351,18 @@ export const tools = {
       "No tool deletes a bot; your user can delete one in the app.",
       "A listed bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there. One you put behind the scenes says no hello: it waits for you or a room to give it work.",
       "`listed` is false only for a helper your user did not ask to see, such as a worker you will direct yourself; a bot they asked for by name or role, or will talk to themselves, is listed.",
+      "Leave `model` out: the new bot runs on the AI you run on, as your user set it up. Set it only when your user asked for a particular AI for this bot, from `list_models`.",
       "Returns the new bot's id.",
     ],
     CreateBotInput,
+  ),
+  list_models: define(
+    "list_models",
+    [
+      "List the AI accounts your user set up, each with its models, their effort levels and whether each has a fast mode, and say which you run on (`yours`).",
+      "Use it only when your user asks which AI a teammate could run on, or asks for a particular one, before `create_bot` or `update_bot` with `model`. An account that is off or signed out runs nothing until your user fixes it in Settings: say so rather than choosing it.",
+    ],
+    NoInput,
   ),
   set_listed: define(
     "set_listed",
@@ -1339,8 +1378,9 @@ export const tools = {
   update_bot: define(
     "update_bot",
     [
-      "Change a teammate's name, title or job, by its id. Only the primary bot can, and only when your user asked for the change.",
-      "Returns the teammate's profile as saved.",
+      "Change a teammate's name, title, job or AI, by its id. Only the primary bot can, and only when your user asked for the change.",
+      "Change `model` only when your user asked for another AI for this teammate, from `list_models`; an effort or fast mode left out goes back to the account's default.",
+      "Returns the teammate's profile and AI as saved.",
     ],
     UpdateBotInput,
   ),

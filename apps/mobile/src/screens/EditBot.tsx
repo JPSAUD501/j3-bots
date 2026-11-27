@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
-import { type ProfileField, sameModel } from "@j3-bots/client-runtime/presentation";
+import type { ProfileField } from "@j3-bots/client-runtime/presentation";
 import {
   useBotEdit,
   useConnection,
@@ -11,10 +11,11 @@ import {
 import { effortText, permissionModeText } from "@j3-bots/client-runtime/wording";
 import { type Bot, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { AvatarPicker } from "../components/avatar/AvatarPicker.tsx";
+import { BotAccountNotice } from "../components/BotAccountNotice.tsx";
 import { Connecting } from "../components/ConnectionLine.tsx";
 import {
   ChoiceRow,
@@ -23,6 +24,7 @@ import {
   TextField,
   useDiscardGuard,
 } from "../components/form.tsx";
+import { ModelPicker } from "../components/ModelPicker.tsx";
 import { Gone } from "../conversation/ConversationView.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
@@ -37,7 +39,9 @@ type Props = NativeStackScreenProps<Screens, "editBot">;
  * Once the server has the changes the screen closes; one that closes before
  * the answer says in a toast when the changes did not save. Leaving lets go
  * of a failed save, as the operator gave up on it; a save under way goes on.
- * Opened `at` the title, as Give a title does, its title field has the focus.
+ * Opened `at` the title, as Give a title does, its title field has the focus;
+ * opened at the model, as a bot whose AI account went away offers, the model
+ * picker is open.
  */
 export function EditBotScreen({ navigation, route }: Props) {
   const { t } = useI18n();
@@ -69,6 +73,7 @@ export function EditBotScreen({ navigation, route }: Props) {
     <EditBotForm
       bot={bot}
       atTitle={at === "title"}
+      atModel={at === "model"}
       onClose={navigation.goBack}
       onSave={(changes, leave) =>
         void client.updateBot(bot.id, changes).then((result) => {
@@ -84,7 +89,7 @@ export function EditBotScreen({ navigation, route }: Props) {
 }
 
 /**
- * The form: name, title, look and job, the model and its effort, the permission mode, and
+ * The form: name, title, look and job, the model with its effort and speed, the permission mode, and
  * whether it stays behind the scenes, out of the roster's list. Save sends only what changed. While a save is under way the form shows what it
  * sends and takes no edit; a save that fails leaves the edits in place and
  * says why, beside the field when one field is the reason.
@@ -92,6 +97,7 @@ export function EditBotScreen({ navigation, route }: Props) {
 function EditBotForm({
   bot,
   atTitle,
+  atModel,
   onClose,
   onSave,
 }: {
@@ -99,6 +105,8 @@ function EditBotForm({
   readonly bot: Bot;
   /** The title field takes the focus as the form opens. */
   readonly atTitle: boolean;
+  /** The model picker is open as the form opens. */
+  readonly atModel: boolean;
   readonly onClose: () => void;
   /** `leave` closes the screen without asking about the edits it saved. */
   readonly onSave: (changes: BotChanges, leave: () => void) => void;
@@ -111,7 +119,8 @@ function EditBotForm({
   const connected = useConnection()._tag === "connected";
   const save: Save<BotChanges> | undefined = useReadable(client.botSaves).get(bot.id);
   const form = useBotEdit({ bot, engine, save, connected });
-  const { saving, problem, choices, model, effort } = form;
+  const { saving, problem, setting, effort } = form;
+  const [pickerOpen, setPickerOpen] = useState(atModel);
   const leave = useDiscardGuard(form.unsaved && !saving, () => client.dismissBotSave(bot.id));
 
   const fieldError = (field: ProfileField) => {
@@ -184,86 +193,41 @@ function EditBotForm({
         error={fieldError("job")}
       />
 
-      <View accessibilityRole="radiogroup" className="gap-2">
-        <Text className="text-sm text-foreground">{t("editBot.model")}</Text>
-        {choices.unoffered.map((choice) => (
-          <ChoiceRow
-            key={`${choice.providerId}/${choice.modelId}`}
-            kind="one"
-            label={
-              engine === null
-                ? choice.modelId
-                : t("editBot.model.notOffered", { model: choice.modelId })
-            }
-            selected={sameModel(choice, model)}
-            unavailable={saving}
-            onPress={() => form.edit({ model: choice })}
+      <View className="gap-2">
+        <ModelPicker
+          engine={engine}
+          value={setting}
+          onChange={form.editModel}
+          label={t("editBot.model")}
+          title={t("picker.open", { name: bot.profile.name })}
+          offerEffort
+          readOnly={saving}
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+        />
+        {!saving && (
+          <BotAccountNotice
+            engine={engine}
+            model={setting.model}
+            name={bot.profile.name}
+            onChoose={() => setPickerOpen(true)}
           />
-        ))}
-        {choices.groups.map((group) => (
-          <View key={group.providerName} className="gap-2">
-            <Text className="text-xs text-muted-foreground">{group.providerName}</Text>
-            {group.models.map((option) => (
-              <ChoiceRow
-                key={`${option.choice.providerId}/${option.choice.modelId}`}
-                kind="one"
-                label={option.name}
-                selected={sameModel(option.choice, model)}
-                unavailable={saving}
-                onPress={() => form.edit({ model: option.choice })}
-              />
-            ))}
-          </View>
-        ))}
+        )}
         {form.modelUnavailable && (
           <Text accessibilityLiveRegion="polite" role="alert" className="text-sm text-blocked">
             {t("editBot.model.unavailable")}
           </Text>
         )}
-        {choices.someNotReady && (
-          <Text className="text-xs text-muted-foreground">{t("editBot.model.someNotReady")}</Text>
+        {effort.fallback !== null && (
+          <Text accessibilityLiveRegion="polite" className="text-sm text-muted-foreground">
+            {t("editBot.effort.fallback", {
+              model: effort.fallback.modelName,
+              level: effortText(effort.fallback.level, i18n),
+              name: bot.profile.name,
+            })}
+          </Text>
         )}
       </View>
-
-      {(effort.levels.length > 0 || effort.fallback !== null) && (
-        <View
-          accessibilityRole={effort.levels.length > 0 ? "radiogroup" : undefined}
-          className="gap-2"
-        >
-          {effort.levels.length > 0 && (
-            <>
-              <Text className="text-sm text-foreground">{t("editBot.effort")}</Text>
-              <Text className="text-xs text-muted-foreground">{t("editBot.effort.hint")}</Text>
-              <ChoiceRow
-                kind="one"
-                label={effortText(null, i18n)}
-                selected={effort.shown === null}
-                unavailable={saving}
-                onPress={() => form.edit({ effort: { level: null } })}
-              />
-              {effort.levels.map((level) => (
-                <ChoiceRow
-                  key={level.id}
-                  kind="one"
-                  label={effortText(level, i18n)}
-                  selected={effort.shown === level.id}
-                  unavailable={saving}
-                  onPress={() => form.edit({ effort: { level: level.id } })}
-                />
-              ))}
-            </>
-          )}
-          {effort.fallback !== null && (
-            <Text accessibilityLiveRegion="polite" className="text-sm text-muted-foreground">
-              {t("editBot.effort.fallback", {
-                model: effort.fallback.modelName,
-                level: effortText(effort.fallback.level, i18n),
-                name: bot.profile.name,
-              })}
-            </Text>
-          )}
-        </View>
-      )}
 
       <View accessibilityRole="radiogroup" className="gap-2">
         <Text className="text-sm text-foreground">{t("editBot.permissionMode")}</Text>

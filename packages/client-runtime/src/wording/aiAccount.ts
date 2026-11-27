@@ -9,14 +9,14 @@ import type { I18n } from "@j3-bots/i18n";
 import {
   type AiAccount,
   aiAccountNames,
-  aiAccountProvider,
   type AiAccountState,
   type AiAction,
   aiOutage,
   type AiPlace,
+  providerOfAccount,
 } from "../presentation/aiAccount.ts";
 import { hasDefaultModel, providerDetail } from "../presentation/engine.ts";
-import type { SignInView } from "../stores/ProviderSetup.ts";
+import { firstAccountOf, type SignInAccount, type SignInView } from "../stores/ProviderSetup.ts";
 import { engineProblem, harnessFailureText } from "./engine.ts";
 import { usageLimitText } from "./status.ts";
 import type { TimeContext } from "./time.ts";
@@ -60,17 +60,29 @@ export interface AiAccountContext {
 /** A whole percentage of a part from 0 to 1. */
 const percent = (part: number): number => Math.round(part * 100);
 
+/**
+ * What the operator calls `account`: the account's own name, such as
+ * Claude, for the first of a harness, and the name they gave one they added.
+ */
+export const aiAccountName = (engine: EngineStatus | null, account: SignInAccount): string =>
+  account.providerId === firstAccountOf(account.harness).providerId
+    ? aiAccountNames[account.harness].name
+    : (providerOfAccount(engine, account)?.name ?? aiAccountNames[account.harness].name);
+
 export function aiAccountText(
-  account: AiAccount,
+  account: SignInAccount,
   state: AiAccountState,
   context: AiAccountContext,
   ctx: TimeContext,
 ): AiAccountText {
   const { i18n } = ctx;
   const { t } = i18n;
-  const { name, product } = aiAccountNames[account];
+  const { product } = aiAccountNames[account.harness];
+  const name = aiAccountName(context.engine, account);
+  // Only the first of a harness has a command of its own; one the operator added signs in from the app.
+  const first = account.providerId === firstAccountOf(account.harness).providerId;
   const { place, signIn } = context;
-  const provider = aiAccountProvider(context.engine, account);
+  const provider = providerOfAccount(context.engine, account);
   // The engine's own words, which it does not give of a harness J3 Bots installs itself.
   const engineSaid = provider === undefined ? null : providerDetail(provider);
   const said = engineSaid === null ? [] : [engineSaid];
@@ -125,8 +137,14 @@ export function aiAccountText(
         hint:
           place === "here"
             ? null
-            : t(place === "desktop-app" ? "ai.signedOut.desktopApp" : "ai.signedOut.server"),
-        command: place === "server" ? signInCommands[account] : null,
+            : t(
+                place === "desktop-app"
+                  ? "ai.signedOut.desktopApp"
+                  : first
+                    ? "ai.signedOut.server"
+                    : "ai.signedOut.serverAdded",
+              ),
+        command: place === "server" && first ? signInCommands[account.harness] : null,
       };
     case "missing":
       if (!state.canGet) {
@@ -316,9 +334,8 @@ function signInFailureDetail(
   }
 }
 
-/** What an account's one button says. */
-export function aiActionLabel(action: AiAction, account: AiAccount, { t }: I18n): string {
-  const { name } = aiAccountNames[account];
+/** What the button of the account the operator calls `name` says (`aiAccountName`). */
+export function aiActionLabel(action: AiAction, name: string, { t }: I18n): string {
   switch (action._tag) {
     case "sign-in":
       return action.again ? t("ai.tryAgain") : t("ai.signIn", { account: name });

@@ -18,6 +18,7 @@ import {
   linkHomeSkills,
   linkProjectSkills,
   provision,
+  provisionInstance,
   storeConnection,
   writeBasePrompt,
 } from "./Provision.ts";
@@ -82,6 +83,9 @@ const setUp = Effect.gen(function* () {
       name: "Claude Code",
       home: path.join(home, "claude-code"),
       executable: undefined,
+      ownCopy: false,
+      launchArguments: "",
+      enabled: true,
       environment: [],
     },
     {
@@ -90,6 +94,9 @@ const setUp = Effect.gen(function* () {
       name: "Codex",
       home: path.join(home, "codex"),
       executable: undefined,
+      ownCopy: false,
+      launchArguments: "",
+      enabled: true,
       environment: [],
     },
   ];
@@ -460,7 +467,9 @@ describe("the harness an instance runs", () => {
         yield* provision({
           ...input,
           instances: input.instances.map((spec) =>
-            spec.kind === "claude-code" ? { ...spec, executable: "/j3/harnesses/claude" } : spec,
+            spec.kind === "claude-code"
+              ? { ...spec, executable: "/j3/harnesses/claude", ownCopy: true }
+              : spec,
           ),
         });
         const instances = (yield* settings).providerInstances;
@@ -471,6 +480,74 @@ describe("the harness an instance runs", () => {
           sensitive: false,
         });
         assert.isUndefined(instances["j3-codex"]?.config?.binaryPath);
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("an instance the operator set up", () => {
+  it.effect(
+    "runs the executable they chose, starts with their arguments after J3 Bots' own, and stays off when turned off",
+    () =>
+      Effect.gen(function* () {
+        const { input, settings } = yield* setUp;
+        yield* provision({
+          ...input,
+          instances: input.instances.map((spec) =>
+            spec.kind === "claude-code"
+              ? { ...spec, executable: "/opt/claude", launchArguments: " --chrome " }
+              : { ...spec, launchArguments: "--search", enabled: false },
+          ),
+        });
+        const instances = (yield* settings).providerInstances;
+        const claude = instances["j3-claude"];
+        assert.strictEqual(claude?.config?.binaryPath, "/opt/claude");
+        assert.match(claude?.config?.launchArgs ?? "", /^--append-system-prompt-file .* --chrome$/);
+        assert.notDeepInclude(claude?.environment ?? [], {
+          name: "DISABLE_AUTOUPDATER",
+          value: "1",
+          sensitive: false,
+        });
+        assert.isTrue(claude?.enabled);
+        assert.strictEqual(instances["j3-codex"]?.config?.launchArgs, "--search");
+        assert.isFalse(instances["j3-codex"]?.enabled);
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("an instance added while the engine runs", () => {
+  it.effect(
+    "gets J3 Bots' tools, the connection and its key in its own home, as one provisioned at a start",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, home, files, input, secrets } = yield* setUp;
+        yield* storeConnection({
+          home,
+          files,
+          connection: { baseUrl: "http://127.0.0.1:8317", key: Redacted.make("the-key") },
+        });
+        yield* provision(input);
+        const added: ReadonlyArray<InstanceSpec> = input.instances.flatMap((spec) =>
+          spec.kind === "acp-local"
+            ? []
+            : [{ ...spec, instanceId: `${spec.instanceId}-work`, home: `${spec.home}-work` }],
+        );
+        for (const spec of added) {
+          assert.isTrue(yield* provisionInstance({ ...input, instances: added }, spec));
+        }
+
+        const state = yield* Schema.decodeEffect(ClaudeState)(
+          yield* fs.readFileString(path.join(home, "claude-code-work", ".claude.json")),
+        );
+        assert.property(state.mcpServers, "j3");
+        const claude = yield* Schema.decodeEffect(ClaudeSettings)(
+          yield* fs.readFileString(path.join(home, "claude-code-work", "settings.json")),
+        );
+        assert.strictEqual(claude.env?.["ANTHROPIC_BASE_URL"], "http://127.0.0.1:8317");
+        const config = yield* fs.readFileString(path.join(home, "codex-work", "config.toml"));
+        assert.include(config, 'developer_instructions = "Say \\"done\\" when done."');
+        assert.include(config, "[mcp_servers.j3]");
+        // One key slot more per new instance, beside the two and the connection.
+        assert.strictEqual((yield* fs.readDirectory(secrets)).length, 5);
       }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });

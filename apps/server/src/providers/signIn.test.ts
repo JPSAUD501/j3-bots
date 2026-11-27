@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderId, type ProviderSignInStatus } from "@j3-bots/contracts";
+import { CommandId, ProviderId, type ProviderSignInStatus } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
@@ -17,15 +17,18 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as Digest from "effect/crypto/Digest";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { ServerConfig } from "../config.ts";
+import * as CommandReceipts from "../commands/CommandReceipts.ts";
 import { HARNESSES } from "../engine/harnesses.ts";
 import { openToOthers } from "../home/testPrivacy.ts";
 import * as Host from "../system/Host.ts";
-import { configFor } from "../testing/database.ts";
+import * as Ids from "../Ids.ts";
+import * as TestDatabase from "../testing/database.ts";
 import { invocation, pageIn, prepareHome, signIn, signInCommand } from "./signIn.ts";
+import * as Accounts from "./Accounts.ts";
 import * as SignIns from "./SignIns.ts";
 
 /** What a stand-in harness prints and writes as its sign-in's secret, which must go nowhere else. */
@@ -131,10 +134,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a harness's home", 
       const fs = yield* FileSystem.FileSystem;
       const dataHome = yield* fs.makeTempDirectoryScoped();
       yield* fs.chmod(dataHome, 0o700);
-      const home = yield* prepareHome("codex", dataHome);
+      const home = yield* prepareHome("codex", dataHome, "codex");
 
       yield* openToOthers(home);
-      const refused = yield* prepareHome("codex", dataHome).pipe(Effect.flip);
+      const refused = yield* prepareHome("codex", dataHome, "codex").pipe(Effect.flip);
       assert.strictEqual(refused.reason, "home-refused");
       assert.include(refused.message, home);
     }).pipe(Effect.scoped),
@@ -628,20 +631,20 @@ const searchPathWith = (bin: string): Record<string, string> =>
     : { PATH: `${bin}:/usr/bin:/bin` };
 
 /**
- * The sign-ins service over the in-memory engine, in a private test home,
- * with the stand-in harnesses `bin` holds as the server's `PATH`.
+ * The sign-ins service over the in-memory engine, in a private test home
+ * with its database and AI accounts, with the stand-in harnesses `bin` holds
+ * as the server's `PATH`.
  */
 const signInsIn = (home: string, bin: string) =>
-  Layer.unwrap(
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      return SignIns.layer.pipe(
-        Layer.provideMerge(TestEngine.layer),
-        Layer.provide(Layer.succeed(ServerConfig, configFor(path, home))),
-        Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer))),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(searchPathWith(bin)))),
-      );
-    }),
+  SignIns.layer.pipe(
+    Layer.provideMerge(Accounts.layer),
+    Layer.provide(
+      Layer.mergeAll(CommandReceipts.layer.pipe(Layer.provide(Digest.layerWebCrypto)), Ids.layer),
+    ),
+    Layer.provideMerge(TestEngine.layer),
+    Layer.provide(TestDatabase.layerAt(home)),
+    Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(searchPathWith(bin)))),
   );
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins clients follow", (it) => {
@@ -675,7 +678,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
             { harness: "claude-code", path: claude },
             { harness: "codex", path: null },
           ]);
-          const followed = yield* signIns.follow("claude-code", true).pipe(
+          const followed = yield* signIns.follow({ harness: "claude-code" }, true).pipe(
             Stream.tap((status) =>
               status._tag === "waiting-for-browser"
                 ? fs.writeFileString(go, "").pipe(Effect.orDie)
@@ -691,7 +694,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
             ProviderId.make("claude-code"),
           ]);
           // A harness not on the PATH says so.
-          const missing = yield* signIns.follow("codex", true).pipe(Stream.runCollect);
+          const missing = yield* signIns.follow({ harness: "codex" }, true).pipe(Stream.runCollect);
           return { followed, missing };
         }).pipe(Effect.provide(signInsIn(home, bin)));
         assert.deepStrictEqual(statuses.followed.at(-1), {
@@ -726,16 +729,16 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
         );
         yield* Effect.gen(function* () {
           const signIns = yield* SignIns.SignIns;
-          const untilPage = signIns.follow("claude-code", true).pipe(
+          const untilPage = signIns.follow({ harness: "claude-code" }, true).pipe(
             Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
             Stream.runCollect,
           );
           assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
           // SIGTERM, then SIGKILL three seconds later.
-          const [stopping] = yield* Effect.timed(signIns.cancel("claude-code"));
+          const [stopping] = yield* Effect.timed(signIns.cancel({ harness: "claude-code" }));
           assert.isBelow(Duration.toMillis(stopping), 6_000);
           assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
-          yield* signIns.cancel("claude-code");
+          yield* signIns.cancel({ harness: "claude-code" });
         }).pipe(Effect.provide(signInsIn(home, bin)));
       }).pipe(Effect.scoped),
     20_000,
@@ -752,22 +755,83 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
       yield* Effect.gen(function* () {
         const signIns = yield* SignIns.SignIns;
         const first = yield* signIns
-          .follow("claude-code", true)
+          .follow({ harness: "claude-code" }, true)
           .pipe(Stream.runCollect, Effect.forkChild);
-        const second = yield* signIns.follow("claude-code", true).pipe(
+        const second = yield* signIns.follow({ harness: "claude-code" }, true).pipe(
           Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
           Stream.runCollect,
         );
         assert.deepStrictEqual(second.at(-1)?._tag, "waiting-for-browser");
-        yield* signIns.cancel("claude-code");
+        yield* signIns.cancel({ harness: "claude-code" });
         assert.deepStrictEqual((yield* Fiber.join(first)).at(-1), { _tag: "cancelled" });
         // A client back on a new socket learns how it ended, and starts nothing.
         assert.deepStrictEqual(
-          yield* signIns.follow("claude-code", false).pipe(Stream.runCollect),
+          yield* signIns.follow({ harness: "claude-code" }, false).pipe(Stream.runCollect),
           [{ _tag: "cancelled" }],
         );
-        assert.deepStrictEqual(yield* signIns.follow("codex", false).pipe(Stream.runCollect), []);
+        assert.deepStrictEqual(
+          yield* signIns.follow({ harness: "codex" }, false).pipe(Stream.runCollect),
+          [],
+        );
       }).pipe(Effect.provide(signInsIn(home, bin)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("signs an added account in in its own home, with the executable chosen for it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const bin = path.join(home, "bin");
+      const own = path.join(home, "own");
+      yield* fs.makeDirectory(bin);
+      yield* fs.makeDirectory(own);
+      const go = path.join(home, "go");
+      // Only the chosen executable signs in: the one on the PATH would fail.
+      yield* harness(bin, "claude", `process.exit(1);`);
+      const chosen = yield* harness(
+        own,
+        "claude",
+        [
+          `page("https://claude.com/cai/oauth/authorize");`,
+          `await waitFor(${literal(go)});`,
+          `fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, "signed-in"), "");`,
+        ].join("\n"),
+      );
+      const added = yield* Effect.gen(function* () {
+        const accounts = yield* Accounts.ProviderAccounts;
+        const providerId = yield* accounts.add({
+          commandId: CommandId.make("add-work"),
+          harness: "claude-code",
+          name: "Claude (work)",
+        });
+        yield* accounts.setUp({
+          commandId: CommandId.make("set-up-work"),
+          providerId,
+          changes: { binaryPath: chosen },
+        });
+        const signIns = yield* SignIns.SignIns;
+        const followed = yield* signIns.follow({ harness: "claude-code", providerId }, true).pipe(
+          Stream.tap((status) =>
+            status._tag === "waiting-for-browser"
+              ? fs.writeFileString(go, "").pipe(Effect.orDie)
+              : Effect.void,
+          ),
+          Stream.runCollect,
+        );
+        assert.deepStrictEqual(followed.at(-1), { _tag: "succeeded", endpoint: null });
+        assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).recheckedProviders, [
+          providerId,
+        ]);
+        // The first account's sign-in is its own, apart from this one.
+        assert.deepStrictEqual(
+          yield* signIns.follow({ harness: "claude-code" }, false).pipe(Stream.runCollect),
+          [],
+        );
+        return providerId;
+      }).pipe(Effect.provide(signInsIn(home, bin)));
+      assert.isTrue(yield* fs.exists(path.join(home, "providers", added, "signed-in")));
+      assert.isFalse(yield* fs.exists(path.join(home, "providers", "claude-code", "signed-in")));
     }).pipe(Effect.scoped),
   );
 });

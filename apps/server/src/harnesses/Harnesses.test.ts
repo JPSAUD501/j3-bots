@@ -318,7 +318,7 @@ describe("J3 Bots' own copies of the harnesses", () => {
       const layout = copyLayout(path, home, "claude-code");
       const executable = path.join(layout.version("2.1.326"), "claude");
       assert.deepStrictEqual(yield* switchedTo, [
-        { providerId: ProviderId.make("claude-code"), executable, version: "2.1.326" },
+        { harness: "claude-code", executable, version: "2.1.326" },
       ]);
       assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(layout.current)), {
         version: "2.1.326",
@@ -339,7 +339,7 @@ describe("J3 Bots' own copies of the harnesses", () => {
       assert.strictEqual(copy.last?._tag, "installed");
       assert.deepStrictEqual(yield* switchedTo, [
         {
-          providerId: ProviderId.make("codex"),
+          harness: "codex",
           executable: path.join(copyLayout(path, home, "codex").version("0.172.0"), "bin", "codex"),
           version: "0.172.0",
         },
@@ -787,6 +787,38 @@ describe("J3 Bots' own copies of the harnesses", () => {
     // The engine would run Claude Code's own updater on J3 Bots' copy.
     assert.isUndefined(served("j3")?.version);
     assert.deepStrictEqual(served("operator")?.version, provider.version);
+  });
+
+  it("leaves an account that runs an executable the operator chose to what the engine says of it", () => {
+    const account = {
+      id: ProviderId.make("claude-code_second"),
+      name: "Claude (work)",
+      harness: "claude-code",
+      status: { _tag: "ready" },
+      models: [],
+      usage: [],
+      version: { installed: "2.1.300", latest: "2.1.330", canUpdate: true },
+      setup: {
+        enabled: true,
+        added: true,
+        binaryPath: "/opt/claude/bin/claude",
+        launchArguments: "",
+        home: "/srv/j3/providers/claude-code_second",
+      },
+    } as const;
+    const j3Copy: HarnessCopy = {
+      source: "j3",
+      version: "2.1.300",
+      latest: "2.1.330",
+      installable: true,
+      task: null,
+      last: null,
+    };
+    const [served] = withCopies(
+      { state: { _tag: "ready" }, pinnedVersion: "0.7.1", providers: [account] },
+      { "claude-code": j3Copy, codex: { ...j3Copy, source: "none", version: null } },
+    ).providers;
+    assert.deepStrictEqual(served, account);
   });
 });
 

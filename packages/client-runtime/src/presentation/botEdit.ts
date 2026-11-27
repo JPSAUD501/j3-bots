@@ -9,6 +9,7 @@ import {
   type EngineStatus,
   type ModelChoice,
   modelEfforts,
+  modelOffersFast,
   type PermissionMode,
   Profile,
   type ProfileChanges,
@@ -26,6 +27,8 @@ export interface BotEdits {
   readonly model: ModelChoice | null;
   /** The effort the operator picked: a level, or null for the default. */
   readonly effort: { readonly level: EffortLevel | null } | null;
+  /** Fast mode as the operator set it. */
+  readonly fast: boolean | null;
   readonly permissionMode: PermissionMode | null;
   readonly hidden: boolean | null;
 }
@@ -37,6 +40,7 @@ export const noBotEdits: BotEdits = {
   avatar: null,
   model: null,
   effort: null,
+  fast: null,
   permissionMode: null,
   hidden: null,
 };
@@ -78,13 +82,21 @@ const effortRun = (
 };
 
 /**
+ * Fast mode as `model` runs it: off for a model the engine lists without
+ * one. While it does not list the model, `fast` stands.
+ */
+export const fastRun = (engine: EngineStatus | null, model: ModelChoice, fast: boolean): boolean =>
+  fast && (engine === null || modelOffersFast(engine, model) !== false);
+
+/**
  * The fields the operator changed from `bot`, and only those, so a save never
  * writes back a value another device changed meanwhile. Text is trimmed; an
  * edit back to the saved value sends nothing. Whether the bot is hidden is
  * sent whenever the operator moved the switch, also when a bot set the same
  * meanwhile: the server records it as their choice, which no bot changes
- * (decision 0050). The effort is sent as the model the form holds runs it
- * (`effortRun`), when the operator picked one or another model.
+ * (decision 0050). The effort and fast mode are sent as the model the form
+ * holds runs them (`effortRun`, `fastRun`), when the operator picked one or
+ * another model.
  */
 export function botPatch(bot: Bot, edits: BotEdits, engine: EngineStatus | null): BotPatch {
   const profile: Types.Mutable<ProfileChanges> = {};
@@ -116,6 +128,10 @@ export function botPatch(bot: Bot, edits: BotEdits, engine: EngineStatus | null)
       edits.effort === null ? bot.effort : edits.effort.level,
     );
     if (level !== bot.effort) changes.effort = level;
+  }
+  if (edits.fast !== null || otherModel !== null) {
+    const fast = fastRun(engine, otherModel ?? bot.model, edits.fast ?? bot.fast);
+    if (fast !== bot.fast) changes.fast = fast;
   }
   if (edits.permissionMode !== null && edits.permissionMode !== bot.permissionMode) {
     changes.permissionMode = edits.permissionMode;
@@ -160,72 +176,28 @@ export function editsAfterFailedBotSave(edits: BotEdits, changes: BotChanges): B
     avatar: edits.avatar ?? changes.profile?.avatar ?? null,
     model: edits.model ?? changes.model ?? null,
     effort: edits.effort ?? (changes.effort === undefined ? null : { level: changes.effort }),
+    fast: edits.fast ?? changes.fast ?? null,
     permissionMode: edits.permissionMode ?? changes.permissionMode ?? null,
     hidden: edits.hidden ?? changes.hidden ?? null,
   };
 }
 
-interface ModelOption {
-  readonly choice: ModelChoice;
-  readonly name: string;
-}
-
-interface ModelGroup {
-  readonly providerName: string;
-  readonly models: ReadonlyArray<ModelOption>;
-}
-
-export interface ModelChoices {
-  /** By provider, in the engine's order. */
-  readonly groups: ReadonlyArray<ModelGroup>;
-  /**
-   * The models the form holds that the engine does not offer now: the bot's
-   * own, then the one the operator picked. The picker still lists them, so it
-   * never shows a model other than the one Save would send.
-   */
-  readonly unoffered: ReadonlyArray<ModelChoice>;
-  /** The operator picked a model the engine has stopped offering. Save waits for another pick. */
-  readonly pickUnavailable: boolean;
-  /** A provider is left out because it cannot run a bot now. */
-  readonly someNotReady: boolean;
-}
-
 /**
- * The models a bot can move to: those of every provider that is ready, and
- * those of the provider it runs on now, whatever its state, so the form
- * always shows where the bot is. `picked` is the operator's unsaved pick.
- * Until the engine reports its models, no pick counts as unavailable.
+ * Whether the operator picked a model the engine has stopped offering, other
+ * than the bot's own: Save then waits for another pick. Until the engine
+ * reports its models, no pick counts as unavailable.
  */
-export function modelChoices(
+export function pickUnavailable(
   engine: EngineStatus | null,
   current: ModelChoice,
   picked: ModelChoice | null,
-): ModelChoices {
-  const providers = engine?.providers ?? [];
-  const listed = providers.filter(
-    (provider) => provider.status._tag === "ready" || provider.id === current.providerId,
+): boolean {
+  if (engine === null || picked === null || sameModel(picked, current)) return false;
+  return !engine.providers.some(
+    (provider) =>
+      provider.id === picked.providerId &&
+      provider.models.some((model) => model.id === picked.modelId),
   );
-  const groups = listed
-    .filter((provider) => provider.models.length > 0)
-    .map((provider) => ({
-      providerName: provider.name,
-      models: provider.models.map((model) => ({
-        choice: { providerId: provider.id, modelId: model.id },
-        name: model.name,
-      })),
-    }));
-  const offered = (choice: ModelChoice) =>
-    groups.some((group) => group.models.some((model) => sameModel(model.choice, choice)));
-  const otherPick = picked !== null && !sameModel(picked, current) ? picked : null;
-  const unoffered = [current, ...(otherPick === null ? [] : [otherPick])].filter(
-    (choice) => !offered(choice),
-  );
-  return {
-    groups,
-    unoffered,
-    pickUnavailable: engine !== null && otherPick !== null && !offered(otherPick),
-    someNotReady: listed.length < providers.length,
-  };
 }
 
 /** The effort the form shows, and what the operator can pick for the model it holds. */
@@ -292,6 +264,7 @@ export const withChanges = (bot: Bot, changes: BotChanges): Bot => ({
   profile: { ...bot.profile, ...changes.profile },
   model: changes.model ?? bot.model,
   effort: changes.effort === undefined ? bot.effort : changes.effort,
+  fast: changes.fast ?? bot.fast,
   permissionMode: changes.permissionMode ?? bot.permissionMode,
   hidden: changes.hidden ?? bot.hidden,
 });

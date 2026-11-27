@@ -24,6 +24,8 @@ import { attachmentLimitViolation } from "../attachments.ts";
 import { ENGINE_INPUT_LIMIT, engineInputLength } from "../input.ts";
 import {
   Engine,
+  type CopiedHarness,
+  type ProviderInstance,
   type DispatchAttachment,
   type DispatchDisposition,
   type DispatchInput,
@@ -173,11 +175,13 @@ export class TestEngineControl extends Context.Service<
     /** Each executable `setHarnessExecutable` was given, in order. */
     readonly harnessExecutables: Effect.Effect<
       ReadonlyArray<{
-        readonly providerId: ProviderId;
+        readonly harness: CopiedHarness;
         readonly executable: string | null;
         readonly version: string | null;
       }>
     >;
+    /** Each list of providers `setProviders` was given, in order. */
+    readonly providerLists: Effect.Effect<ReadonlyArray<ReadonlyArray<ProviderInstance>>>;
     /**
      * The harness guesses the operator's next message after `turnId` of the
      * session, replacing the guess it had there; `null` takes it away. An
@@ -311,6 +315,8 @@ export class TestEngineControl extends Context.Service<
     readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
     /** The effort asked of a session's model, as it was opened or last configured. */
     readonly sessionEffort: (sessionId: SessionId) => Effect.Effect<EffortLevel | null>;
+    /** Whether a session's model runs in fast mode, as it was opened or last configured. */
+    readonly sessionFast: (sessionId: SessionId) => Effect.Effect<boolean>;
     /** The permission mode a session runs, as it was opened or last configured. */
     readonly sessionPermissionMode: (sessionId: SessionId) => Effect.Effect<PermissionMode>;
     /**
@@ -685,6 +691,7 @@ interface SessionRecord {
   retired: boolean;
   model: ModelChoice;
   effort: EffortLevel | null;
+  fast: boolean;
   permissionMode: PermissionMode;
   /**
    * Whether the session's provider session has the browser tools: what its
@@ -773,10 +780,11 @@ const make = Effect.gen(function* () {
   const rechecked: Array<ProviderId> = [];
   const updated: Array<ProviderId> = [];
   const executables: Array<{
-    readonly providerId: ProviderId;
+    readonly harness: CopiedHarness;
     readonly executable: string | null;
     readonly version: string | null;
   }> = [];
+  const providerLists: Array<ReadonlyArray<ProviderInstance>> = [];
   let sharedSkillLinks = 0;
   const botSkillLinks: Array<string> = [];
   let loseReply = false;
@@ -1574,6 +1582,11 @@ const make = Effect.gen(function* () {
     updateProvider: (providerId) => command(Effect.sync(() => void updated.push(providerId))),
     setHarnessExecutable: (input) =>
       door("setHarnessExecutable", command(Effect.sync(() => void executables.push(input)))),
+    setProviders: (providers) =>
+      Effect.sync(() => {
+        providerLists.push(providers);
+        return true;
+      }),
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
@@ -1629,7 +1642,7 @@ const make = Effect.gen(function* () {
 
     clearBrowserProfile: command(Effect.sync(() => void browserProfileClears++)),
 
-    openSession: ({ key, projectId, model, effort, permissionMode }) =>
+    openSession: ({ key, projectId, model, effort, fast, permissionMode }) =>
       command(
         Effect.gen(function* () {
           const previous = yield* priorUse(key, "openSession");
@@ -1665,6 +1678,7 @@ const make = Effect.gen(function* () {
             retired: false,
             model,
             effort,
+            fast,
             permissionMode,
             browserTools: null,
             log: [],
@@ -1700,7 +1714,7 @@ const make = Effect.gen(function* () {
         }),
       ),
 
-    configureSession: ({ sessionId, model, effort, permissionMode, reloadTools }) =>
+    configureSession: ({ sessionId, model, effort, fast, permissionMode, reloadTools }) =>
       door(
         "configureSession",
         command(
@@ -1712,7 +1726,8 @@ const make = Effect.gen(function* () {
               model !== undefined &&
               (model.providerId !== session.model.providerId ||
                 model.modelId !== session.model.modelId ||
-                effort !== session.effort);
+                effort !== session.effort ||
+                fast !== session.fast);
             // Only a provider session that started has tools to reload.
             const reloads = reloadTools === true && session.browserTools !== null;
             if (!changesMode && !changesModel && !reloads) return;
@@ -1734,6 +1749,7 @@ const make = Effect.gen(function* () {
             if (model !== undefined) {
               session.model = model;
               session.effort = effort;
+              session.fast = fast;
             }
             if (permissionMode !== undefined && changesMode) {
               const refusal = modeRefusal(permissionMode);
@@ -2087,6 +2103,7 @@ const make = Effect.gen(function* () {
     botSkillLinks: Effect.sync(() => [...botSkillLinks]),
     updatedProviders: Effect.sync(() => [...updated]),
     harnessExecutables: Effect.sync(() => [...executables]),
+    providerLists: Effect.sync(() => [...providerLists]),
 
     setReachable,
 
@@ -2252,6 +2269,14 @@ const make = Effect.gen(function* () {
         return session === undefined
           ? misuse(`no session ${sessionId}`)
           : Effect.succeed(session.effort);
+      }),
+
+    sessionFast: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.fast);
       }),
 
     sessionPermissionMode: (sessionId) =>

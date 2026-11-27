@@ -51,6 +51,7 @@ const providers: EngineStatus["providers"] = [
       {
         id: DEFAULT_MODEL.modelId,
         name: "Claude Opus",
+        fast: true,
         efforts: [
           { id: EffortLevel.make("low"), name: "Low" },
           { id: EffortLevel.make("high"), name: "High" },

@@ -15,6 +15,7 @@ import { Engine } from "@j3-bots/engine-t3";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -41,7 +42,9 @@ import { Sections } from "../sections/Sections.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { Presence } from "../presence/Presence.ts";
 import { connectProviders } from "../providers/connect.ts";
+import { ProviderAccounts, withAccounts } from "../providers/Accounts.ts";
 import { SignIns } from "../providers/SignIns.ts";
+import { homeLayout } from "../home/entries.ts";
 import { Harnesses, withCopies } from "../harnesses/Harnesses.ts";
 import { Network, reachableOrigins } from "../system/Network.ts";
 import { Cards } from "../turns/Cards.ts";
@@ -100,8 +103,17 @@ export const handlers = J3Rpcs.toLayer(
     const { publicOrigin } = yield* ServerConfig;
     const signIns = yield* SignIns;
     const harnesses = yield* Harnesses;
-    /** The engine's status as clients get it: each provider with its harness's copy. */
-    const served = Stream.zipLatestWith(engine.status, harnesses.copies, withCopies);
+    const accounts = yield* ProviderAccounts;
+    const { providerHome } = homeLayout(yield* Path.Path, (yield* ServerConfig).home);
+    /**
+     * The engine's status as clients get it: each AI account with what the
+     * operator can set up of it, and each with its harness's copy.
+     */
+    const served = Stream.zipLatestAll(engine.status, accounts.changes, harnesses.copies).pipe(
+      Stream.map(([status, each, copies]) =>
+        withCopies(withAccounts(status, each, providerHome), copies),
+      ),
+    );
     const browserTabs = yield* BrowserTabs;
     const secrets = yield* Secrets;
     const voice = yield* Voice;
@@ -264,6 +276,21 @@ export const handlers = J3Rpcs.toLayer(
       // Checking again checks nothing more: no receipt.
       "engine.recheckProvider": ({ providerId }) => recheckProvider(providerId),
       "engine.updateProvider": ({ providerId }) => updateProvider(providerId),
+      "engine.addProvider": (input) => accounts.add(input),
+      "engine.setUpProvider": ({ commandId, providerId, ...changes }) =>
+        accounts.setUp({ commandId, providerId, changes }),
+      // A sign-in of an account removed stops, its home going with it: one
+      // under way, and one started before the removal was seen, which
+      // starts no more after it.
+      "engine.removeProvider": (input) =>
+        Effect.flatMap(accounts.find(input.providerId), (account) => {
+          if (Option.isNone(account) || !account.value.added) return accounts.remove(input);
+          const stop = signIns.cancel({
+            harness: account.value.harness,
+            providerId: input.providerId,
+          });
+          return stop.pipe(Effect.andThen(accounts.remove(input)), Effect.andThen(stop));
+        }),
       "usage.turns": ({ limit }) => usage.turns({ period: USAGE_PERIOD, limit }),
       "settings.get": () => settings.get,
       "settings.subscribe": () => settings.changes,
@@ -291,8 +318,8 @@ export const handlers = J3Rpcs.toLayer(
       "push.unregister": ({ commandId }) =>
         devices.unregisterPush({ commandId, deviceId: device.id }),
       "provider.harnesses": () => signIns.locations,
-      "provider.signIn": ({ harness, start }) => signIns.follow(harness, start),
-      "provider.cancelSignIn": ({ harness }) => signIns.cancel(harness),
+      "provider.signIn": ({ start, ...account }) => signIns.follow(account, start),
+      "provider.cancelSignIn": (account) => signIns.cancel(account),
       // Installing again while one runs starts nothing more: no receipt.
       "provider.installHarness": ({ harness }) => harnesses.install(harness),
       "provider.cancelHarnessInstall": ({ harness }) => harnesses.cancel(harness),

@@ -111,6 +111,9 @@ export const sampleProviderActions: ProviderActions = {
   update: () => Promise.resolve(true),
   install: () => Promise.resolve(true),
   cancelInstall: () => Promise.resolve(true),
+  addAccount: () => Promise.resolve(true),
+  setUpAccount: () => Promise.resolve(true),
+  removeAccount: () => Promise.resolve(true),
 };
 
 const blankDraft: Draft = { text: "", mentions: [], quotes: [], files: [], sending: false };
@@ -657,9 +660,9 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           ]),
         ),
       })),
-    createBot: ({ name, title, primary, hidden, avatar }) => {
-      // As on a server: with no model to give the bot, it is refused.
-      if (!hasDefaultModel(get().engine)) {
+    createBot: ({ name, title, primary, hidden, avatar, model, effort, fast }) => {
+      // As on a server: with no model picked or to give the bot, it is refused.
+      if (model === undefined && !hasDefaultModel(get().engine)) {
         return Promise.resolve({
           _tag: "failed",
           failure: { _tag: "refused", error: new Invalid({ reason: "model" }) },
@@ -681,11 +684,12 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
             avatar: avatar ?? freeAvatar(taken),
             job: "",
           },
-          model: {
+          model: model ?? {
             providerId: ProviderId.make("claude-code"),
             modelId: ModelId.make("claude-sonnet-5-5"),
           },
-          effort: null,
+          effort: effort ?? null,
+          fast: fast ?? false,
           permissionMode: "supervised",
           primary,
           browser: true,
@@ -822,6 +826,15 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
               settingsSaves: {
                 ...s.settingsSaves,
                 "usage-data": { _tag: "saved", changes: change.changes },
+              },
+            };
+          case "favorites":
+            return {
+              ...s,
+              settings: { ...s.settings, ...change.changes },
+              settingsSaves: {
+                ...s.settingsSaves,
+                favorites: { _tag: "saved", changes: change.changes },
               },
             };
         }
@@ -1086,6 +1099,7 @@ export function useSampleSource({
         harnesses: { _tag: "idle" },
         voice: { _tag: "idle" },
         "usage-data": { _tag: "idle" },
+        favorites: { _tag: "idle" },
       },
       settingsOpen: false,
       settingsPage: null,

@@ -110,8 +110,10 @@ const options = Effect.map(paths, ({ home, agent, sharedSkills }): EngineOptions
       command: NodeProcess.execPath,
       args: [agent],
       environment: [],
+      enabled: true,
     },
   ],
+  harnessExecutables: {},
   // A bridge that answers nothing: the scripted agent lists no bot tools, so
   // it speaks through the engine's own `send_to_user`, which the suite checks.
   toolBridge: {
@@ -323,6 +325,7 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
     title: name,
     model: bench.model,
     effort: null,
+    fast: false,
     permissionMode: "supervised",
   });
   const queue = yield* engine
@@ -715,6 +718,7 @@ describe("Engine conformance, real engine only", () => {
             title: "refused-opening",
             model: bench.model,
             effort: null,
+            fast: false,
             permissionMode: "supervised",
           })
           .pipe(Effect.flip);
@@ -748,6 +752,7 @@ describe("Engine conformance, real engine only", () => {
             title: "mode-ceiling",
             model: bench.model,
             effort: null,
+            fast: false,
             permissionMode,
           });
 
@@ -796,6 +801,7 @@ describe("Engine conformance, real engine only", () => {
               title: "turn-ceiling",
               model: bench.model,
               effort: null,
+              fast: false,
               permissionMode: "full-access",
             }),
           );

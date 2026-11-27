@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Collapsible } from "@base-ui/react/collapsible";
-import { runByDesktopApp, type ServerUpdateView } from "@j3-bots/client-runtime";
+import { firstAccountOf, runByDesktopApp, type ServerUpdateView } from "@j3-bots/client-runtime";
 import {
   type AiAccount,
   aiAccountNames,
@@ -13,6 +13,7 @@ import {
   useAiConnect,
 } from "@j3-bots/client-runtime/react";
 import {
+  aiAccountName,
   type AiAccountText,
   aiAccountText,
   aiActionLabel,
@@ -61,8 +62,13 @@ export const connectPlaceOf = (
 
 const noLocations = () => Promise.resolve<ReadonlyArray<HarnessLocation> | null>(null);
 
+/** What the hooks that connect an account take, on this screen. */
+type AiConnectInput = Parameters<typeof useAiConnect>[0];
+
 /** The accounts, and what this client knows of each, as one screen connects them. */
 export interface WebAiConnect extends AiConnectModel {
+  /** What connecting any account the operator set up takes, as `useAiAccountModel` reads it. */
+  readonly input: AiConnectInput;
   readonly engine: EngineStatus | null;
   /** The sign-ins and the endpoint, where this app runs them; undefined elsewhere. */
   readonly setup: LocalProviderSetup | undefined;
@@ -83,7 +89,7 @@ export function useWebAiConnect({
   const place: AiPlace = connect._tag;
   const { found } = useHarnesses(setup?.harnesses ?? noLocations, engineFindings(engine));
   const locations = found === "looking" ? null : found;
-  const model = useAiConnect({
+  const input: AiConnectInput = {
     facts: { engine, locations, signIns: setup?.signIns ?? new Map() },
     place,
     intents: {
@@ -93,8 +99,9 @@ export function useWebAiConnect({
       cancelDownload: actions.cancelInstall,
       recheck: actions.recheck,
     },
-  });
-  return { ...model, engine, setup, locations };
+  };
+  const model = useAiConnect(input);
+  return { ...model, input, engine, setup, locations };
 }
 
 const toneClass = {
@@ -112,7 +119,7 @@ function useAiText(ai: WebAiConnect, account: AiAccountModel): AiAccountText {
     {
       engine: ai.engine,
       place: ai.place,
-      signIn: ai.setup?.signIns.get(account.account),
+      signIn: ai.setup?.signIns.get(account.account.providerId),
       queued: account.queued,
     },
     usePresentation(),
@@ -213,34 +220,41 @@ function PageLink({ href, children }: { href: string; children: ReactNode }) {
  * and the details, folded. `children`, as the version it runs, shows only
  * once it is connected. `paths` adds where the server finds what it runs to
  * its details, for Settings. `stale` is a state reported before a
- * disconnection: said, muted, with nothing to press.
+ * disconnection: said, muted, with nothing to press. `setup`, in Settings,
+ * is what the operator sets up of the account, under the rest whatever its
+ * state.
  */
-function AiAccountRow({
+export function AiAccountRow({
   ai,
-  account,
+  model,
   paths = false,
   stale = false,
   children,
+  setup,
 }: {
   ai: WebAiConnect;
-  account: AiAccount;
+  model: AiAccountModel;
   paths?: boolean;
   stale?: boolean;
   children?: ReactNode;
+  setup?: ReactNode;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
-  const model = ai.accounts[account];
   const text = useAiText(ai, model);
   const [howOpen, setHowOpen] = useState(false);
   const { state, action } = model;
-  const { name, maker, product } = aiAccountNames[account];
+  const { harness } = model.account;
+  const { maker, product } = aiAccountNames[harness];
+  const name = aiAccountName(ai.engine, model.account);
   // From another device, a signed-out account says where it signs in only when asked.
   const elsewhere = ai.place !== "here" && state._tag === "sign-in" && state.failed === null;
   const progress = progressOf(model);
-  const path = paths
-    ? (ai.locations?.find((location) => location.harness === account)?.path ?? null)
-    : null;
+  // Where the server finds the harness: what the first account of it runs.
+  const path =
+    paths && model.account.providerId === firstAccountOf(harness).providerId
+      ? (ai.locations?.find((location) => location.harness === harness)?.path ?? null)
+      : null;
   const stoppable = state._tag === "getting";
   const trailing = stale ? null : state._tag === "ready" ? (
     <CheckIcon aria-hidden className="size-5 text-success" />
@@ -250,7 +264,7 @@ function AiAccountRow({
       disabled={model.asking === "asking"}
       onClick={model.act}
     >
-      {aiActionLabel(action, account, i18n)}
+      {aiActionLabel(action, name, i18n)}
     </Button>
   ) : state._tag === "signing-in" || model.queued ? (
     <Button variant="ghost-muted" size="sm" onClick={model.cancel}>
@@ -332,6 +346,7 @@ function AiAccountRow({
           {state._tag === "ready" && children}
         </>
       )}
+      {setup}
     </li>
   );
 }
@@ -356,7 +371,13 @@ export function AiAccountList({
   return (
     <ul aria-label={t("ai.choice.label")} className="flex w-full flex-col gap-2">
       {aiAccounts.map((account) => (
-        <AiAccountRow key={account} ai={ai} account={account} paths={paths} stale={stale}>
+        <AiAccountRow
+          key={account}
+          ai={ai}
+          model={ai.accounts[account]}
+          paths={paths}
+          stale={stale}
+        >
           {extra?.(account)}
         </AiAccountRow>
       ))}

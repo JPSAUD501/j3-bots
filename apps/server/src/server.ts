@@ -17,6 +17,7 @@ import * as Domain from "./domain.ts";
 import * as Diagnostics from "./diagnostics/Diagnostics.ts";
 import { claimEngineRelease } from "./engine/EngineRelease.ts";
 import { engineProviders } from "./engine/providers.ts";
+import { readAccounts } from "./providers/Accounts.ts";
 import { ownExecutables } from "./harnesses/layout.ts";
 import * as HarnessSources from "./harnesses/sources.ts";
 import * as Home from "./home/Home.ts";
@@ -62,8 +63,8 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
 
 /**
  * The engine, run under `<J3_HOME>/engine`, writing only where the home's
- * containment check allows, with the Claude Code and Codex instances of
- * `engineProviders`, once the database shows no newer engine ran on its data
+ * containment check allows, with the Claude Code and Codex instance of each
+ * AI account (`engineProviders`), once the database shows no newer engine ran on its data
  * (`claimEngineRelease`). Each harness starts this package's `j3` bridge as
  * the bot tools' MCP server, pointed at the tool endpoint on loopback with the
  * key it signs its requests with, Codex takes the base prompt as it changes,
@@ -90,7 +91,9 @@ const engine = Layer.unwrap(
       home: config.engineHome,
       port: config.enginePort,
       binaryOverride: config.engineBinary,
-      providers: engineProviders(path, config, executables),
+      // The AI accounts the operator set up, which `ProviderAccounts` changes while it runs.
+      providers: engineProviders(path, config, yield* readAccounts),
+      harnessExecutables: executables,
       toolBridge: {
         command: process.execPath,
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],

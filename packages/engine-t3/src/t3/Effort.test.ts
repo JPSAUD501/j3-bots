@@ -3,7 +3,7 @@ import { EffortLevel } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { ServerProviderModel } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { effortOptions, effortsOf, levelBeforeTurn, sameOptions } from "./Effort.ts";
+import { effortsOf, hasFastMode, levelBeforeTurn, modelOptions, sameOptions } from "./Effort.ts";
 
 const model = (optionDescriptors: ReadonlyArray<unknown>) =>
   Schema.decodeUnknownSync(ServerProviderModel)({
@@ -27,6 +27,7 @@ const claudeModel = model([
     ],
   },
   { id: "ultracode", label: "Ultracode", type: "boolean" },
+  { id: "fastMode", label: "Fast Mode", type: "boolean" },
 ]);
 
 // As Codex reports one (`mapCodexModelCapabilities`, at `bc0f04d`).
@@ -47,6 +48,20 @@ const codexModel = model([
     label: "Service Tier",
     type: "select",
     options: [{ id: "default", label: "Standard", isDefault: true }],
+  },
+]);
+
+// A Codex model with a fast tier, and one past it (`CodexProvider.ts`, at `bc0f04d`).
+const codexFastModel = model([
+  {
+    id: "serviceTier",
+    label: "Service Tier",
+    type: "select",
+    options: [
+      { id: "default", label: "Standard", isDefault: true },
+      { id: "fast", label: "Fast" },
+      { id: "ultrafast", label: "Ultrafast" },
+    ],
   },
 ]);
 
@@ -92,20 +107,33 @@ describe("effortsOf", () => {
   });
 });
 
-describe("effortOptions", () => {
+describe("modelOptions", () => {
   it("asks for a level under the model's own control", () => {
-    assert.deepStrictEqual(effortOptions(claudeModel, level("max")), [
+    assert.deepStrictEqual(modelOptions(claudeModel, level("max"), false), [
       { id: "effort", value: "max" },
     ]);
-    assert.deepStrictEqual(effortOptions(codexModel, level("xhigh")), [
+    assert.deepStrictEqual(modelOptions(codexModel, level("xhigh"), false), [
       { id: "reasoningEffort", value: "xhigh" },
     ]);
   });
 
   it("asks for nothing for the default, a level the model lacks, or a model not reported", () => {
-    assert.strictEqual(effortOptions(codexModel, null), undefined);
-    assert.strictEqual(effortOptions(codexModel, level("max")), undefined);
-    assert.strictEqual(effortOptions(undefined, level("high")), undefined);
+    assert.strictEqual(modelOptions(codexModel, null, false), undefined);
+    assert.strictEqual(modelOptions(codexModel, level("max"), false), undefined);
+    assert.strictEqual(modelOptions(undefined, level("high"), true), undefined);
+  });
+
+  it("asks for fast mode the way each harness reports it, and only where it does", () => {
+    assert.deepStrictEqual(modelOptions(claudeModel, level("high"), true), [
+      { id: "effort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    assert.deepStrictEqual(modelOptions(codexFastModel, null, true), [
+      { id: "serviceTier", value: "fast" },
+    ]);
+    assert.strictEqual(modelOptions(codexModel, null, true), undefined);
+    assert.isTrue(hasFastMode(codexFastModel));
+    assert.isFalse(hasFastMode(codexModel));
   });
 });
 
@@ -116,6 +144,12 @@ describe("levelBeforeTurn", () => {
   it("drops a level the model stopped taking, and keeps one it takes", () => {
     assert.deepStrictEqual(levelBeforeTurn(codexModel, max, undefined), []);
     assert.strictEqual(levelBeforeTurn(codexModel, xhigh, undefined), undefined);
+  });
+
+  it("drops fast mode from a model that stopped offering it", () => {
+    const fast = [{ id: "serviceTier", value: "fast" }];
+    assert.deepStrictEqual(levelBeforeTurn(codexModel, fast, undefined), []);
+    assert.strictEqual(levelBeforeTurn(codexFastModel, fast, undefined), undefined);
   });
 
   it("asks for a dropped level again once the model takes it, and not before", () => {

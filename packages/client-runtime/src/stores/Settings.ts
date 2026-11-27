@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type ModelChoice,
   type NotificationSettingsChange,
   type Settings as SettingsValue,
   TimeZone,
@@ -30,7 +31,14 @@ export type SettingsChange =
   | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges }
   /** Sent only to a server whose settings carry `voice`. */
   | { readonly section: "voice"; readonly changes: VoiceSettingsChange }
-  | { readonly section: "usage-data"; readonly changes: UsageDataChanges };
+  | { readonly section: "usage-data"; readonly changes: UsageDataChanges }
+  /** Sent only to a server whose settings carry `favoriteModels`. */
+  | { readonly section: "favorites"; readonly changes: FavoriteChanges };
+
+/** The starred models, whole, in the order the operator starred them. */
+export interface FavoriteChanges {
+  readonly favoriteModels: ReadonlyArray<ModelChoice>;
+}
 
 /** The operator's switch for usage data; only for a server whose settings carry `telemetry`. */
 export interface UsageDataChanges {
@@ -67,6 +75,7 @@ export interface SettingsSaves {
   readonly harnesses: SettingsSave<HarnessSettingsChanges>;
   readonly voice: SettingsSave<VoiceSettingsChange>;
   readonly "usage-data": SettingsSave<UsageDataChanges>;
+  readonly favorites: SettingsSave<FavoriteChanges>;
 }
 
 /**
@@ -134,6 +143,7 @@ export const layer = Layer.effect(
       harnesses: new Cell<SettingsSaves["harnesses"]>({ _tag: "idle" }),
       voice: new Cell<SettingsSaves["voice"]>({ _tag: "idle" }),
       "usage-data": new Cell<SettingsSaves["usage-data"]>({ _tag: "idle" }),
+      favorites: new Cell<SettingsSaves["favorites"]>({ _tag: "idle" }),
     };
 
     const latest = latestRead((settings: SettingsValue) => state.set(ready(settings)));
@@ -189,6 +199,7 @@ export const layer = Layer.effect(
           readonly notifications?: NotificationSettingsChange;
           readonly voice?: VoiceSettingsChange;
           readonly telemetry?: boolean;
+          readonly favoriteModels?: ReadonlyArray<ModelChoice>;
         },
     ) {
       const commandId = yield* actions.commandId;
@@ -222,6 +233,8 @@ export const layer = Layer.effect(
           return yield* save(saves["usage-data"], change.changes, {
             telemetry: change.changes.enabled,
           });
+        case "favorites":
+          return yield* save(saves.favorites, change.changes, change.changes);
       }
     });
 

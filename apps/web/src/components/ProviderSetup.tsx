@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ConnectEndpointResult, SignInView } from "@j3-bots/client-runtime";
+import type { ConnectEndpointResult, SignInAccount, SignInView } from "@j3-bots/client-runtime";
 import {
   type EngineStatus,
   type HarnessLocation,
   MAX_PROVIDER_KEY_LENGTH,
   normalizeBaseUrl,
   type ProviderConnectionRequest,
-  type SignInHarness,
+  type ProviderId,
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
 import type { I18n } from "@j3-bots/i18n";
@@ -22,9 +22,9 @@ import { lineField } from "./ui/field";
  * where the page returns to the harness.
  */
 export interface ProviderSetupIntents {
-  /** Starts the harness's sign-in on the server, or follows the one under way. */
-  readonly signIn: (harness: SignInHarness) => void;
-  readonly cancelSignIn: (harness: SignInHarness) => void;
+  /** Starts the account's sign-in on the server, or follows the one under way. */
+  readonly signIn: (account: SignInAccount) => void;
+  readonly cancelSignIn: (account: SignInAccount) => void;
   /** Where the server finds each harness; null when it cannot say. */
   readonly harnesses: () => Promise<ReadonlyArray<HarnessLocation> | null>;
   readonly connectEndpoint: (request: ProviderConnectionRequest) => Promise<ConnectEndpointResult>;
@@ -32,7 +32,7 @@ export interface ProviderSetupIntents {
 
 /** The intents, with each harness's sign-in as this app follows it. */
 export interface LocalProviderSetup extends ProviderSetupIntents {
-  readonly signIns: ReadonlyMap<SignInHarness, SignInView>;
+  readonly signIns: ReadonlyMap<ProviderId, SignInView>;
 }
 
 /** Where the server finds each harness: `looking` until it said, null when it could not. */

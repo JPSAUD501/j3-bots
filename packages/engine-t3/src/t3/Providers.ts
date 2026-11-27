@@ -32,7 +32,7 @@ import * as Stream from "effect/Stream";
 import * as Struct from "effect/Struct";
 import * as RpcSchema from "effect/rpc/RpcSchema";
 import type { ProviderInstance } from "../Engine.ts";
-import { effortsOf } from "./Effort.ts";
+import { effortsOf, hasFastMode } from "./Effort.ts";
 import { instanceIdFor } from "./Provision.ts";
 
 /**
@@ -181,7 +181,7 @@ const decodeModelId = Schema.decodeUnknownOption(ModelId);
 
 /**
  * The models the engine offers on an instance, each with the levels of effort
- * it takes (`effortsOf`). A model whose id J3 Bots cannot hold (over 128
+ * it takes (`effortsOf`) and whether it has a fast mode (`hasFastMode`). A model whose id J3 Bots cannot hold (over 128
  * characters) is left out rather than cut, since a cut id would name another
  * model or none.
  */
@@ -195,6 +195,7 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
           name: model.name.slice(0, MAX_LABEL_LENGTH),
           efforts: effortsOf(model),
           ...(model.isCustom ? { custom: true as const } : {}),
+          ...(hasFastMode(model) ? { fast: true as const } : {}),
         },
       ],
     }),

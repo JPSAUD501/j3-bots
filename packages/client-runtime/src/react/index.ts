@@ -281,9 +281,11 @@ export const useRecentTurns = (
 export { type ConversationEnd, useArrivals, useConversationEnd, useRestored } from "./arrivals.ts";
 export {
   type AiAccountModel,
+  type AiConnectInput,
   type AiConnectModel,
   type AiIntents,
   AiSessionProvider,
+  useAiAccountModel,
   useAiConnect,
 } from "./aiConnect.ts";
 export { type BotEdit, type ProfileFieldProblem, useBotEdit } from "./botEdit.ts";

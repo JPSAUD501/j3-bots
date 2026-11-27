@@ -31,12 +31,15 @@ const claude: ProviderInstance = {
   environment: [],
   harness: "claude-code",
   home: "/j3/providers/claude-code",
-  executable: undefined,
+  enabled: true,
+  binaryPath: undefined,
+  launchArguments: "",
 };
 const scripted: ProviderInstance = {
   id: ProviderId.make("scripted"),
   name: "Scripted agent",
   environment: [],
+  enabled: true,
   harness: "acp-command",
   command: "node",
   args: ["agent.js"],
@@ -537,7 +540,9 @@ const codex: ProviderInstance = {
   environment: [],
   harness: "codex",
   home: "/j3/providers/codex",
-  executable: undefined,
+  enabled: true,
+  binaryPath: undefined,
+  launchArguments: "",
 };
 const codexTimedOut = {
   status: "error",

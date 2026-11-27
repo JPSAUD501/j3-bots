@@ -131,6 +131,7 @@ export function bot(
     profile: { name, title: "", avatar: { shape: "dome", color: "cobalt" }, job: "" },
     model: { providerId: ProviderId.make("p"), modelId: ModelId.make("m") },
     effort: null,
+    fast: false,
     permissionMode: "supervised",
     primary: false,
     browser: false,

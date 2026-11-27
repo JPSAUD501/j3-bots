@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  HarnessLocation,
-  ProviderConnectionOutcome,
-  ProviderConnectionRequest,
-  ProviderSignInStatus,
-  SignInHarness,
+import {
+  type HarnessLocation,
+  type ProviderConnectionOutcome,
+  type ProviderConnectionRequest,
+  ProviderId,
+  type ProviderSignInStatus,
+  type SignInHarness,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,33 @@ import { Connection } from "../connection/Connection.ts";
 import { Cell, type Readable } from "../Store.ts";
 
 /**
- * Where a harness's sign-in stands, as this client follows it: as the server
+ * An AI account to sign in: one of `harness`'s, by its provider id. The
+ * first of each harness has the harness's id, which every server has
+ * (decision 0108).
+ */
+export interface SignInAccount {
+  readonly harness: SignInHarness;
+  readonly providerId: ProviderId;
+}
+
+/** The first account of `harness`: the one every server has, and the first run signs in. */
+export const firstAccountOf = (harness: SignInHarness): SignInAccount => ({
+  harness,
+  providerId: ProviderId.make(harness),
+});
+
+/**
+ * The account as `provider.signIn` names it: the first of a harness by the
+ * harness alone, which every server takes; another by its id too, which only
+ * a server that reports `ProviderStatus.setup`, and so has such accounts, does.
+ */
+const signInPayload = (account: SignInAccount) =>
+  account.providerId === account.harness
+    ? { harness: account.harness }
+    : { harness: account.harness, providerId: account.providerId };
+
+/**
+ * Where an account's sign-in stands, as this client follows it: as the server
  * reports it, or `idle` before any.
  */
 export type SignInView = { readonly _tag: "idle" } | ProviderSignInStatus;
@@ -36,20 +63,20 @@ const idle: SignInView = { _tag: "idle" };
 export class ProviderSetup extends Context.Service<
   ProviderSetup,
   {
-    /** Each harness's sign-in, as this client follows it. */
-    readonly signIns: Readable<ReadonlyMap<SignInHarness, SignInView>>;
+    /** Each account's sign-in, as this client follows it, by provider id. */
+    readonly signIns: Readable<ReadonlyMap<ProviderId, SignInView>>;
     /**
-     * Starts the harness's sign-in, or follows the one under way. On a new
+     * Starts the account's sign-in, or follows the one under way. On a new
      * socket it follows the same one again, and never starts another.
      * `openPage` opens the page it waits on, once, as soon as the server
      * has it: the operator never presses anything to see it.
      */
     readonly signIn: (
-      harness: SignInHarness,
+      account: SignInAccount,
       openPage: (url: string) => void,
     ) => Effect.Effect<void>;
-    /** Stops the harness's sign-in under way. */
-    readonly cancelSignIn: (harness: SignInHarness) => Effect.Effect<void>;
+    /** Stops the account's sign-in under way. */
+    readonly cancelSignIn: (account: SignInAccount) => Effect.Effect<void>;
     /** Where the server finds each harness; null when it cannot say. */
     readonly harnesses: Effect.Effect<ReadonlyArray<HarnessLocation> | null>;
     readonly connect: (request: ProviderConnectionRequest) => Effect.Effect<ConnectEndpointResult>;
@@ -59,11 +86,12 @@ export class ProviderSetup extends Context.Service<
 /** A client's `provider.signIn`, as a sign-in is followed through it. */
 type SignInCall = (payload: {
   readonly harness: SignInHarness;
+  readonly providerId?: ProviderId;
   readonly start: boolean;
 }) => Stream.Stream<ProviderSignInStatus, RpcClientError>;
 
 /**
- * Follows `harness`'s sign-in through `call`, which runs `use` again on each
+ * Follows `account`'s sign-in through `call`, which runs `use` again on each
  * new socket until it finishes (`Connection.call`), passing on each status.
  * Each attempt asks the server to start one until a first status has
  * arrived: a request lost on a socket that dropped started nothing, and the
@@ -75,12 +103,12 @@ export const followSignIn = <E>(
   call: (
     use: (signIn: SignInCall) => Effect.Effect<void, RpcClientError>,
   ) => Effect.Effect<void, E>,
-  harness: SignInHarness,
+  account: SignInAccount,
   onStatus: (status: ProviderSignInStatus) => Effect.Effect<void>,
 ): Effect.Effect<boolean, E> => {
   let seen = false;
   return call((signIn) =>
-    signIn({ harness, start: !seen }).pipe(
+    signIn({ ...signInPayload(account), start: !seen }).pipe(
       Stream.runForEach((status) =>
         Effect.andThen(
           Effect.sync(() => {
@@ -98,16 +126,18 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const connection = yield* Connection;
     const scope = yield* Scope.Scope;
-    const signIns = new Cell<ReadonlyMap<SignInHarness, SignInView>>(new Map());
-    const following = new Map<SignInHarness, Fiber.Fiber<void>>();
-    const show = (harness: SignInHarness, view: SignInView) =>
-      Effect.sync(() => signIns.update((current) => new Map(current).set(harness, view)));
+    const signIns = new Cell<ReadonlyMap<ProviderId, SignInView>>(new Map());
+    const following = new Map<ProviderId, Fiber.Fiber<void>>();
+    const show = (account: SignInAccount, view: SignInView) =>
+      Effect.sync(() =>
+        signIns.update((current) => new Map(current).set(account.providerId, view)),
+      );
 
-    const follow = (harness: SignInHarness, openPage: (url: string) => void) => {
+    const follow = (account: SignInAccount, openPage: (url: string) => void) => {
       let pageOpened = false;
       const onStatus = (status: ProviderSignInStatus) =>
         Effect.andThen(
-          show(harness, status),
+          show(account, status),
           Effect.sync(() => {
             if (status._tag !== "waiting-for-browser" || pageOpened) return;
             pageOpened = true;
@@ -116,35 +146,35 @@ export const layer = Layer.effect(
         );
       return followSignIn(
         (use) => connection.call((client) => use(client["provider.signIn"])),
-        harness,
+        account,
         onStatus,
       ).pipe(
         Effect.exit,
         Effect.flatMap((exit) => {
           // Not paired any more, or the call failed: no sign-in is under way.
-          if (Exit.isFailure(exit)) return show(harness, idle);
+          if (Exit.isFailure(exit)) return show(account, idle);
           // A server that reported nothing has no sign-in under way.
-          return exit.value ? Effect.void : show(harness, idle);
+          return exit.value ? Effect.void : show(account, idle);
         }),
       );
     };
 
     const signIn = Effect.fn("ProviderSetup.signIn")(function* (
-      harness: SignInHarness,
+      account: SignInAccount,
       openPage: (url: string) => void,
     ) {
-      const current = following.get(harness);
+      const current = following.get(account.providerId);
       if (current !== undefined) yield* Fiber.interrupt(current);
-      yield* show(harness, { _tag: "starting" });
-      const fiber = yield* follow(harness, openPage).pipe(Effect.forkIn(scope));
-      following.set(harness, fiber);
+      yield* show(account, { _tag: "starting" });
+      const fiber = yield* follow(account, openPage).pipe(Effect.forkIn(scope));
+      following.set(account.providerId, fiber);
     });
 
     const cancelSignIn = Effect.fn("ProviderSetup.cancelSignIn")(function* (
-      harness: SignInHarness,
+      account: SignInAccount,
     ) {
       yield* connection
-        .call((client) => client["provider.cancelSignIn"]({ harness }))
+        .call((client) => client["provider.cancelSignIn"](signInPayload(account)))
         .pipe(Effect.ignore);
     });
 

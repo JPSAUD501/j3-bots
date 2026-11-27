@@ -72,6 +72,7 @@ export interface Opening {
   readonly title: string;
   readonly model: ModelChoice;
   readonly effort: EffortLevel | null;
+  readonly fast: boolean;
   readonly permissionMode: PermissionMode;
 }
 
@@ -94,7 +95,7 @@ const Alignment = Schema.Struct({
 });
 
 /**
- * How many times the bot's model, effort or permission mode changed, and the count at
+ * How many times the bot's model, effort, fast mode or permission mode changed, and the count at
  * which the engine refused its permission mode, if it did.
  */
 const Revision = Schema.Struct({
@@ -116,6 +117,7 @@ interface Pending {
   readonly sessionId: SessionId;
   readonly model: ModelChoice;
   readonly effort: EffortLevel | null;
+  readonly fast: boolean;
   readonly permissionMode: PermissionMode;
   readonly browser: boolean;
   /** The session's tools were brought to the other browser setting: they are reloaded. */
@@ -492,6 +494,7 @@ export const layer = Layer.effect(
           sessionId: session.engine_session_id,
           model: bot.model,
           effort: bot.effort,
+          fast: bot.fast,
           permissionMode: bot.permissionMode,
           browser: bot.browser,
           reloadTools: session.browser !== bot.browser,
@@ -645,6 +648,7 @@ export const layer = Layer.effect(
                 sessionId: due.sessionId,
                 model: due.model,
                 effort: due.effort,
+                fast: due.fast,
                 permissionMode: due.permissionMode,
                 reloadTools: due.reloadTools,
               })
@@ -779,6 +783,7 @@ export const layer = Layer.effect(
           title: session.purpose === "main" ? "Main" : "Routine",
           model: bot.model,
           effort: bot.effort,
+          fast: bot.fast,
           permissionMode: "supervised",
         })
         .pipe(
@@ -827,6 +832,7 @@ export const layer = Layer.effect(
           title: "Main",
           model: settings.model,
           effort: settings.effort,
+          fast: settings.fast,
           permissionMode: settings.permissionMode,
         }).pipe(
           Effect.map((sessionId) => ({ _tag: "opened" as const, sessionId })),

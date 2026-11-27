@@ -179,6 +179,9 @@ export type RequestResponse =
  */
 export type SecretAnswer = SecretRequestAnswer;
 
+/** A harness J3 Bots can keep a copy of, and sign in to an account of. */
+export type CopiedHarness = "claude-code" | "codex";
+
 /** One harness the engine runs bots on. */
 export type ProviderInstance = {
   /** J3 Bots' id for it, which `ModelChoice.providerId` names. */
@@ -190,9 +193,11 @@ export type ProviderInstance = {
     readonly name: string;
     readonly value: Redacted.Redacted<string>;
   }>;
+  /** Off, the engine keeps it and runs nothing on it: it reports it `disabled`. */
+  readonly enabled: boolean;
 } & (
   | {
-      readonly harness: "claude-code" | "codex";
+      readonly harness: CopiedHarness;
       /**
        * The harness's own configuration folder, owned by J3 Bots, so bots do
        * not inherit the operator's personal setup. The adapter writes the `j3`
@@ -203,11 +208,14 @@ export type ProviderInstance = {
        */
       readonly home: string;
       /**
-       * The harness's executable when J3 Bots runs a copy of its own, by its
-       * absolute path; undefined runs the one the engine finds on its `PATH`.
-       * `Engine.setHarnessExecutable` changes it while the engine runs.
+       * The harness's executable the operator chose for this provider, by its
+       * path, which it runs in place of J3 Bots' own copy of the harness
+       * (`EngineOptions.harnessExecutables`) and of the one on the engine's
+       * `PATH`; undefined for those.
        */
-      readonly executable: string | undefined;
+      readonly binaryPath: string | undefined;
+      /** What the harness starts with after J3 Bots' own arguments; empty for none. */
+      readonly launchArguments: string;
     }
   | {
       /**
@@ -291,8 +299,15 @@ export interface EngineOptions {
   readonly port: number;
   /** An engine executable to run instead of the pinned release, for development. */
   readonly binaryOverride: Option.Option<string>;
-  /** The harness instances to create. Changing the list applies to sessions started after. */
+  /** The harness instances to create; `Engine.setProviders` changes them while it runs. */
   readonly providers: ReadonlyArray<ProviderInstance>;
+  /**
+   * The copy of each harness J3 Bots installed, by its absolute path, which
+   * every provider of that harness runs unless it names a `binaryPath`; a
+   * harness without one runs what the engine finds on its `PATH`.
+   * `Engine.setHarnessExecutable` changes it while the engine runs.
+   */
+  readonly harnessExecutables: Readonly<Partial<Record<CopiedHarness, string>>>;
   /**
    * The process each harness starts as the `j3` MCP server in every session, for
    * the bot tools: the server's stdio bridge.
@@ -361,12 +376,12 @@ export interface SessionSuggestedReply {
 }
 
 /**
- * A session's model and the effort asked of it, which `configureSession`
- * takes together, or neither.
+ * A session's model, the effort and the fast mode asked of it, which
+ * `configureSession` takes together, or none of them.
  */
 export type ModelSetting =
-  | { readonly model?: undefined; readonly effort?: undefined }
-  | { readonly model: ModelChoice; readonly effort: EffortLevel | null };
+  | { readonly model?: undefined; readonly effort?: undefined; readonly fast?: undefined }
+  | { readonly model: ModelChoice; readonly effort: EffortLevel | null; readonly fast: boolean };
 
 /**
  * The engine, in J3 Bots terms: projects for bot workspaces, sessions for
@@ -454,14 +469,15 @@ export class Engine extends Context.Service<
     readonly updateProvider: (providerId: ProviderId) => Effect.Effect<void, EngineDown>;
 
     /**
-     * Runs the Claude Code or Codex provider on `executable`, a harness J3
-     * Bots installed, by its absolute path, from now on; null runs the one
-     * the engine finds on its `PATH`. An engine that runs applies it at once,
-     * by rebuilding the provider's instance: a session it opens from then on
-     * runs the new executable, while a session it already has open keeps
-     * the one it started on until the engine releases it. It answers once a
-     * check the engine made after the request shows the rebuilt instance:
-     * with `version`, installed, that version, not failed and not flagged
+     * Runs every Claude Code or Codex provider of `harness` that names no
+     * `binaryPath` of its own on `executable`, a harness J3 Bots installed,
+     * by its absolute path, from now on; null runs the one the engine finds
+     * on its `PATH`. An engine that runs applies it at once, by rebuilding
+     * each provider's instance: a session it opens from then on runs the new
+     * executable, while a session it already has open keeps the one it
+     * started on until the engine releases it. It answers once a check the
+     * engine made after the request shows each rebuilt instance: with
+     * `version`, installed, that version, not failed and not flagged
      * incompatible; with null, any check that ended. Its status reads as
      * `checking` until then. Every later start of the engine is given it
      * only once it succeeded. `EngineUnavailable` when the engine is not
@@ -471,10 +487,24 @@ export class Engine extends Context.Service<
      * runs `executable`.
      */
     readonly setHarnessExecutable: (input: {
-      readonly providerId: ProviderId;
+      readonly harness: CopiedHarness;
       readonly executable: string | null;
       readonly version: string | null;
     }) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Runs the engine with `providers` from now on, in place of the ones it
+     * had: each that is new, or changed, is written to the engine's own
+     * settings as its instance (an `upsert`), and each that is gone is
+     * removed, while the engine runs; one it does not run yet is given them
+     * at its next start. A change of anything but a provider's name rebuilds
+     * its instance, which ends what ran on it. Never fails. Whether the
+     * engine took every change now: one it did not take is sent again while
+     * it runs, until it does, and every provider at its next start, and the
+     * log says which it did not take. A provider removed may still run until
+     * then, so its home stays until the engine took its removal.
+     */
+    readonly setProviders: (providers: ReadonlyArray<ProviderInstance>) => Effect.Effect<boolean>;
 
     /**
      * A link that opens the engine's own web interface, signed in, for setting
@@ -558,7 +588,8 @@ export class Engine extends Context.Service<
      * session's id is derived from the key, so another key opens another
      * session. The effort is asked of the model only while the engine
      * reports it as one of the model's levels: otherwise, as for null, the
-     * harness picks its own, and the turn runs.
+     * harness picks its own, and the turn runs. Fast mode likewise, only
+     * while the engine reports one for the model.
      *
      * `OpenRejected`: the engine refused it and keeps that refusal for the
      * key, which is spent. The caller opens the session later under a fresh
@@ -573,6 +604,7 @@ export class Engine extends Context.Service<
       readonly title: string;
       readonly model: ModelChoice;
       readonly effort: EffortLevel | null;
+      readonly fast: boolean;
       readonly permissionMode: PermissionMode;
     }) => Effect.Effect<
       SessionId,

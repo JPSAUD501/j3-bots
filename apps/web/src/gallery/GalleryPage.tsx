@@ -21,6 +21,7 @@ import {
   LANGUAGES,
   type MessageQuote,
   type Language,
+  type ModelChoice,
   MemoryPath,
   MemoryRevision,
   ModelId,
@@ -94,6 +95,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  firstAccountOf,
   isHidden,
   turnsNotRead,
   type DraftFile,
@@ -121,7 +123,10 @@ import {
   type OnboardingStep,
   readThrough,
   rowOrder,
+  sameModel,
+  type ModelSetting,
   type SettingsPage,
+  setUpAccounts,
   type ThemeChoice,
   themeChoices,
   themePalettes,
@@ -191,6 +196,11 @@ import {
 } from "../components/PhoneAccess";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { NewBotForm } from "../components/NewBotForm";
+import { ModelPickerPanel } from "../components/ModelPicker";
+import type { ModelStars } from "../components/modelStars";
+import { BotAccountNotice } from "../components/BotAccountNotice";
+import { SetUpAccountRow } from "../components/AiAccountSetup";
+import { useWebAiConnect } from "../components/AiConnect";
 import { dialogTitle } from "../components/ui/dialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
@@ -408,6 +418,7 @@ export default function GalleryPage() {
                 <DetailsSection />
                 <ConnectorsGallerySection />
                 <EditingSection />
+                <ChoosingAiSection />
                 <TemplatesSection />
                 <RoomsSection />
                 <SettingsPagesSection />
@@ -3663,6 +3674,56 @@ const twoProviders: EngineStatus = {
 };
 const toCodex = { providerId: ProviderId.make("codex"), modelId: ModelId.make("gpt-5.5-codex") };
 
+const claudeWork = ProviderId.make("claude-work");
+const opus = ModelId.make("claude-opus-5-5");
+const onOpus: ModelChoice = { providerId: ProviderId.make("claude-code"), modelId: opus };
+
+/**
+ * The sample engine on a server that lets the operator set accounts up
+ * (decision 0108): Claude Code; a second Claude account they added, named
+ * Work and turned off; and Codex, signed out. Claude Opus also runs fast.
+ */
+const withAccounts: EngineStatus = {
+  ...team.engine,
+  providers: team.engine.providers.flatMap((provider): ReadonlyArray<ProviderStatus> => {
+    const setup = {
+      enabled: true,
+      added: false,
+      binaryPath: null,
+      launchArguments: "",
+      home: `/srv/j3/providers/${provider.id}`,
+    };
+    if (provider.harness !== "claude-code") return [{ ...provider, setup }];
+    const models = provider.models.map((model) =>
+      model.id === opus ? { ...model, fast: true as const } : model,
+    );
+    return [
+      { ...provider, models, setup },
+      {
+        ...provider,
+        id: claudeWork,
+        name: "Work",
+        status: { _tag: "unavailable", checking: false, reason: "disabled" },
+        models,
+        usage: [],
+        setup: { ...setup, enabled: false, added: true, home: `/srv/j3/providers/${claudeWork}` },
+      },
+    ];
+  }),
+};
+
+/** Stars kept in the frame, as a server that keeps them would. */
+function useSampleStars(initial: ReadonlyArray<ModelChoice>): ModelStars {
+  const [favorites, setFavorites] = useState(initial);
+  return {
+    favorites,
+    onStar: (choice, starred) =>
+      setFavorites((current) =>
+        starred ? [...current, choice] : current.filter((each) => !sameModel(each, choice)),
+      ),
+  };
+}
+
 /** An edit form as the dialog holds it, in a frame the size of a sheet. */
 function EditBotVariant({
   label,
@@ -3680,6 +3741,7 @@ function EditBotVariant({
           onSave={nothing}
           onClose={nothing}
           titleId={titleId}
+          stars={null}
           {...props}
         />
       </div>
@@ -3786,6 +3848,7 @@ function TemplatesSection() {
   const elsewhere = { ...scoutTemplate, model: { ...toCodex, modelId: ModelId.make("gpt-6") } };
   const untitled = { ...scoutTemplate, profile: { ...scoutTemplate.profile, title: "" } };
   const { t } = useI18n();
+  const stars = useSampleStars([onOpus]);
   return (
     <Section title="Templates: sharing a bot and creating one from a file">
       <div className="flex flex-wrap gap-4">
@@ -3828,6 +3891,7 @@ function TemplatesSection() {
             <TemplateForm
               template={scoutTemplate}
               engine={twoProviders}
+              stars={stars}
               connected
               onCreate={() => new Promise(() => {})}
               onClose={nothing}
@@ -3840,6 +3904,7 @@ function TemplatesSection() {
             <TemplateForm
               template={elsewhere}
               engine={twoProviders}
+              stars={stars}
               connected
               onCreate={() => new Promise(() => {})}
               onClose={nothing}
@@ -3852,6 +3917,21 @@ function TemplatesSection() {
             <TemplateForm
               template={untitled}
               engine={twoProviders}
+              stars={stars}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Create: another model picked in place of the template's, its effort and Fast">
+          {(titleId) => (
+            <TemplateForm
+              template={scoutTemplate}
+              engine={withAccounts}
+              stars={stars}
+              defaultPick={{ model: onOpus, effort: EffortLevel.make("high"), fast: true }}
               connected
               onCreate={() => new Promise(() => {})}
               onClose={nothing}
@@ -3860,14 +3940,16 @@ function TemplatesSection() {
           )}
         </TemplateFrame>
         <Frame
-          label="New bot: a name and a title, both required; type a name and press Create to see the title asked for"
+          label="New bot: a name and a title, both required, and what it runs on, the server's choice until one is picked; type a name and press Create to see the title asked for"
           width={448}
-          height={640}
+          height={700}
         >
           <div className="flex h-full flex-col gap-3 bg-popover p-5">
             <h2 className={dialogTitle}>{t("newBot.title")}</h2>
             <p className="text-sm text-muted-foreground">{t("newBot.body")}</p>
             <NewBotForm
+              engine={withAccounts}
+              stars={stars}
               bots={Object.values(team.bots)}
               onCreate={() => new Promise(() => {})}
               onCancel={nothing}
@@ -3910,6 +3992,19 @@ function EditingSection() {
           bot={{ ...team.bots.scout, effort: EffortLevel.make("max") }}
         />
         <EditBotVariant
+          label="Edit: the bot's account was removed; Choose another AI opens the picker"
+          engine={withAccounts}
+          bot={{
+            ...team.bots.scout,
+            model: { providerId: ProviderId.make("claude-old"), modelId: opus },
+          }}
+        />
+        <EditBotVariant
+          label="Edit: the bot's account is turned off"
+          engine={withAccounts}
+          bot={{ ...team.bots.scout, model: { providerId: claudeWork, modelId: opus } }}
+        />
+        <EditBotVariant
           label="Edit: failed, offline"
           connected={false}
           engine={team.engine}
@@ -3941,6 +4036,124 @@ function EditingSection() {
             failure: { _tag: "refused", error: new Conflict({ reason: "private-location" }) },
           }}
         />
+      </div>
+    </Section>
+  );
+}
+
+/** The picker as it opens, in a frame its size, keeping what is picked and starred. */
+function PickerFrame({
+  label,
+  start,
+  query,
+  engine = withAccounts,
+  keepsStars = true,
+  offerEffort = true,
+}: {
+  label: string;
+  start: ModelSetting;
+  query?: string;
+  engine?: EngineStatus;
+  keepsStars?: boolean;
+  offerEffort?: boolean;
+}) {
+  const [value, setValue] = useState(start);
+  const stars = useSampleStars([onOpus]);
+  return (
+    <Frame label={label} width={576} height={480}>
+      <ModelPickerPanel
+        engine={engine}
+        value={value}
+        onChange={setValue}
+        offerEffort={offerEffort}
+        stars={keepsStars ? stars : null}
+        {...(query === undefined ? {} : { defaultQuery: query })}
+      />
+    </Frame>
+  );
+}
+
+/** The Work account in Settings → Providers, its Advanced open with `edits` typed. */
+function AccountFrame({ label, edits }: { label: string; edits: { readonly binaryPath: string } }) {
+  const ai = useWebAiConnect({
+    engine: withAccounts,
+    connect: { _tag: "server" },
+    actions: providerActions,
+  });
+  const entry = setUpAccounts(withAccounts).find(({ provider }) => provider.id === claudeWork);
+  if (entry === undefined) return null;
+  return (
+    <Frame padded label={label} width={420} height={620}>
+      <ul className="flex flex-col gap-2">
+        <SetUpAccountRow
+          ai={ai}
+          entry={entry}
+          actions={providerActions}
+          stale={false}
+          defaultEdits={{ name: null, launchArguments: null, ...edits }}
+        />
+      </ul>
+    </Frame>
+  );
+}
+
+function ChoosingAiSection() {
+  const onSonnet = { ...onOpus, modelId: ModelId.make("claude-sonnet-5-5") };
+  const offBot = { ...team.bots.scout, model: { providerId: claudeWork, modelId: opus } };
+  const goneBot = {
+    ...team.bots.atlas,
+    model: { providerId: ProviderId.make("claude-old"), modelId: opus },
+  };
+  return (
+    <Section title="Choosing the AI: the picker and the accounts">
+      <div className="flex flex-wrap gap-4">
+        <PickerFrame
+          label="Picker: the bot's model, starred, with its effort and Fast; on the rail Starred and each account, one turned off and one signed out"
+          start={{ model: onOpus, effort: EffortLevel.make("high"), fast: true }}
+        />
+        <PickerFrame
+          label="Picker: a search runs across every account"
+          start={{ model: onSonnet, effort: null, fast: false }}
+          query="opus"
+        />
+        <PickerFrame
+          label="Picker: a search with no match"
+          start={{ model: onSonnet, effort: null, fast: false }}
+          query="gemini"
+        />
+        <PickerFrame
+          label="Picker: a bot on an account turned off, whose models wait until it is on"
+          start={{ model: { providerId: claudeWork, modelId: opus }, effort: null, fast: false }}
+        />
+        <PickerFrame
+          label="Picker: a server that keeps no stars and takes no effort when creating"
+          start={{ model: onSonnet, effort: null, fast: false }}
+          engine={twoProviders}
+          keepsStars={false}
+          offerEffort={false}
+        />
+        <Frame
+          padded
+          label="Settings, Providers: each account set up, Work turned off, and Add account; open Advanced to see an account's program and sign-in folder"
+          width={420}
+          height={760}
+        >
+          <EngineSection engine={withAccounts} stale={false} actions={providerActions} />
+        </Frame>
+        <AccountFrame
+          label="Settings, Providers: Advanced, a program path that is not a full path"
+          edits={{ binaryPath: "claude" }}
+        />
+        <AccountFrame
+          label="Settings, Providers: Advanced, another program, which restarts the account; press Remove account to see it asked first"
+          edits={{ binaryPath: "/opt/claude-work/bin/claude" }}
+        />
+        <Labeled label="Conversation: a bot whose account is turned off, and one whose account was removed">
+          <div className="flex max-w-(--layout-text-column) flex-col">
+            <BotAccountNotice bot={offBot} engine={withAccounts} onChoose={nothing} />
+            <BotAccountNotice bot={goneBot} engine={withAccounts} onChoose={nothing} />
+          </div>
+        </Labeled>
       </div>
     </Section>
   );
@@ -5500,12 +5713,17 @@ const harnessesFound = {
   ],
 } as const satisfies Record<string, ReadonlyArray<HarnessLocation>>;
 
-/** The providers set up from the app on this computer, with the harnesses `found` and each sign-in as `signIns`. */
+/**
+ * The providers set up from the app on this computer, with the harnesses
+ * `found` and the sign-in of each harness's first account as `signIns`.
+ */
 const localSetup = (
   found: ReadonlyArray<HarnessLocation>,
   signIns: ReadonlyArray<readonly [SignInHarness, SignInView]> = [],
 ): LocalProviderSetup => ({
-  signIns: new Map(signIns),
+  signIns: new Map(
+    signIns.map(([harness, view]) => [firstAccountOf(harness).providerId, view] as const),
+  ),
   signIn: () => {},
   cancelSignIn: () => {},
   harnesses: () => Promise.resolve(found),

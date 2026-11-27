@@ -2,6 +2,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Label, MAX_LABEL_LENGTH, PositiveInt } from "./base.ts";
+import { ModelChoice } from "./bot.ts";
 import { TelemetrySetting } from "./telemetry.ts";
 import { UpdateChannel } from "./update.ts";
 import { VoiceSettings, VoiceSettingsChange } from "./voice.ts";
@@ -150,8 +151,18 @@ export const Settings = Schema.Struct({
    * switch and sends it no event.
    */
   telemetry: Schema.optionalKey(TelemetrySetting),
+  /**
+   * The models the operator starred, in the order they starred them, which
+   * the model picker lists first on every device. A model the engine no
+   * longer offers stays starred until they unstar it. Absent from a server
+   * that predates it, which keeps none: a client then offers no star.
+   */
+  favoriteModels: Schema.optionalKey(Schema.Array(ModelChoice)),
 });
 export type Settings = typeof Settings.Type;
+
+/** The most models the operator can star. */
+export const MAX_FAVORITE_MODELS = 50;
 
 /**
  * What `settings.update` changes. A field left out keeps its value; a null
@@ -184,5 +195,9 @@ export const SettingsChange = Schema.Struct({
    * `telemetry`: an older one would take the rest of the change and drop it.
    */
   telemetry: Schema.optionalKey(Schema.Boolean),
+  /** The starred models, whole (`Settings.favoriteModels`). */
+  favoriteModels: Schema.optionalKey(
+    Schema.Array(ModelChoice).check(Schema.isMaxLength(MAX_FAVORITE_MODELS)),
+  ),
 });
 export type SettingsChange = typeof SettingsChange.Type;

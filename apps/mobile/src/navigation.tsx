@@ -95,8 +95,11 @@ export type Screens = {
   pair: { readonly botIds: PairBotIds; readonly at?: EntryId };
   shareTemplate: { readonly botId: BotId };
   newFromTemplate: undefined;
-  /** The bot's form, opened at its title with `at`, as Give a title does. */
-  editBot: { readonly botId: BotId; readonly at?: "title" };
+  /**
+   * The bot's form, opened with `at` at its title, as Give a title does, or
+   * at its model, as a bot whose AI account went away offers.
+   */
+  editBot: { readonly botId: BotId; readonly at?: "title" | "model" };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
   /**

@@ -13,7 +13,7 @@ export const HOME_ENTRIES = {
   databaseLog: "j3.sqlite-wal",
   databaseLogIndex: "j3.sqlite-shm",
   engine: "engine",
-  /** One home per Claude Code or Codex instance of the engine, `providers/<provider>`. */
+  /** One home per AI account, a Claude Code or Codex instance of the engine, `providers/<provider>`. */
   providers: "providers",
   /** J3 Bots' own copy of Claude Code and of Codex, `harnesses/<provider>`, when it installed one. */
   harnesses: "harnesses",
@@ -40,7 +40,10 @@ export const HOME_ENTRIES = {
   web: "web",
 } as const;
 
-/** The engine provider instances that keep a home in `providers`, by J3 Bots provider id. */
+/**
+ * The harnesses whose accounts keep a home in `providers`, and the first
+ * account of each, whose provider id is the harness's.
+ */
 export const PROVIDER_HOMES = ["claude-code", "codex"] as const;
 
 /**
@@ -109,8 +112,8 @@ export const homeLayout = (path: Path.Path, home: string) => {
     shippedSkills: path.join(home, HOME_ENTRIES.state, "shipped-skills.json"),
     releaseFeed: path.join(home, HOME_ENTRIES.state, "release-feed.json"),
     launcherFolder: path.join(home, HOME_ENTRIES.state, "npm-project"),
-    providerHome: (provider: (typeof PROVIDER_HOMES)[number]) =>
-      path.join(home, HOME_ENTRIES.providers, provider),
+    /** The home of the AI account `provider`, by its provider id (`providers/Accounts.ts`). */
+    providerHome: (provider: string) => path.join(home, HOME_ENTRIES.providers, provider),
     harnessCopy: (provider: (typeof PROVIDER_HOMES)[number]) =>
       path.join(home, HOME_ENTRIES.harnesses, provider),
     /**

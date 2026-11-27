@@ -38,12 +38,26 @@ export const GetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 });
 
 /**
+ * One provider instance replaced whole by the entry provisioning writes for
+ * it (`instanceEntry`), or removed (**Read** at `bc0f04d`,
+ * `ProviderInstanceMutation` in `providerInstance.ts`).
+ */
+export const InstanceMutation = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("upsert"),
+    instanceId: Schema.String,
+    instance: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+  Schema.Struct({ operation: Schema.Literal("remove"), instanceId: Schema.String }),
+]);
+export type InstanceMutation = typeof InstanceMutation.Type;
+
+/**
  * The engine's `server.updateSettings`, sending only what the adapter
  * changes while the engine runs: projects' overrides, where a project's set
  * replaces the one it had and `null` removes it, or the switch for suggested
  * replies (`promptSuggestionsEnabled`), each of which needs `settings:write`;
- * or one provider instance, replaced whole by the entry
- * provisioning writes for it (`instanceEntry`), with an empty patch, which
+ * or one provider instance (`InstanceMutation`), with an empty patch, which
  * needs `providers:manage` (**Read** at `bc0f04d`, `RpcAuthorization.ts`,
  * `requiredScopesForSettingsUpdate`). Its answer, the whole settings, is
  * left unread.
@@ -56,13 +70,7 @@ export const UpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
       ),
       promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
     }),
-    providerInstanceMutation: Schema.optionalKey(
-      Schema.Struct({
-        operation: Schema.Literal("upsert"),
-        instanceId: Schema.String,
-        instance: Schema.Record(Schema.String, Schema.Unknown),
-      }),
-    ),
+    providerInstanceMutation: Schema.optionalKey(InstanceMutation),
   }),
   success: Schema.Struct({}),
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),

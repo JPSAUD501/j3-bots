@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { AccountChanges } from "@j3-bots/client-runtime";
 import type { OwnHarness } from "@j3-bots/client-runtime/presentation";
 import { harnessOutcomeText, harnessTaskText } from "@j3-bots/client-runtime/wording";
 import type { ProviderId, SignInHarness } from "@j3-bots/contracts";
@@ -16,13 +17,19 @@ import { Button } from "./ui/button";
  * - `install`: the server installs its own copy of the harness, or updates
  *   that copy to the newest version, and says how it goes on the provider's
  *   `copy`;
- * - `cancelInstall`: it stops the install or update of its copy under way.
+ * - `cancelInstall`: it stops the install or update of its copy under way;
+ * - `addAccount`, `setUpAccount`, `removeAccount`: the AI accounts the
+ *   operator sets up (decision 0108), only for a server whose providers
+ *   carry `setup`.
  */
 export interface ProviderActions {
   readonly recheck: (providerId: ProviderId) => Promise<boolean>;
   readonly update: (providerId: ProviderId) => Promise<boolean>;
   readonly install: (harness: SignInHarness) => Promise<boolean>;
   readonly cancelInstall: (harness: SignInHarness) => Promise<boolean>;
+  readonly addAccount: (harness: SignInHarness, name: string) => Promise<boolean>;
+  readonly setUpAccount: (providerId: ProviderId, changes: AccountChanges) => Promise<boolean>;
+  readonly removeAccount: (providerId: ProviderId) => Promise<boolean>;
 }
 
 type Asking = "idle" | "asking" | "failed";

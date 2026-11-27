@@ -164,8 +164,8 @@ const isLink = Effect.fn("signIn.isLink")(function* (target: string) {
 });
 
 /**
- * J3 Bots' home for `harness` in the data directory `dataHome`, made ready
- * for its sign-in: only in a data directory the server would accept, which
+ * The home of the AI account `provider`, of `harness`, in the data directory
+ * `dataHome`, made ready for its sign-in: only in a data directory the server would accept, which
  * stays private, and never through a symbolic link, which could make the
  * sign-in act on what it points to, such as the operator's own. A sign-in in
  * a new folder (`signIn`) does not open the credential file in the home, so
@@ -177,6 +177,7 @@ const isLink = Effect.fn("signIn.isLink")(function* (target: string) {
 export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
   harness: Harness,
   dataHome: string,
+  provider: string,
 ) {
   const facts = HARNESSES[harness];
   yield* Home.checkPrivate(dataHome).pipe(
@@ -186,7 +187,7 @@ export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
     Effect.mapError((error) => failed("home-refused", error.message)),
   );
   const path = yield* Path.Path;
-  const home = homeLayout(path, dataHome).providerHome(harness);
+  const home = homeLayout(path, dataHome).providerHome(provider);
   for (const target of [
     path.dirname(home),
     home,

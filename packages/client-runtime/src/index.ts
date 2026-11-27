@@ -128,11 +128,13 @@ export {
   type DraftSendResult,
   type WindowContext,
 } from "./stores/Drafts.ts";
-export { EngineStatus } from "./stores/EngineStatus.ts";
+export { type AccountChanges, EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";
 export {
   type ConnectEndpointResult,
+  firstAccountOf,
   ProviderSetup,
+  type SignInAccount,
   type SignInView,
 } from "./stores/ProviderSetup.ts";
 export { type Loaded, loadedList } from "./stores/reads.ts";
@@ -145,6 +147,7 @@ export {
 } from "./stores/Roster.ts";
 export {
   Settings,
+  type FavoriteChanges,
   type HarnessSettingsChanges,
   type ProfileChanges,
   type SettingsChange,

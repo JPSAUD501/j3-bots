@@ -12,15 +12,16 @@ import {
 } from "react";
 import {
   type AiAccount,
-  aiAccountProvider,
   type AiAccountState,
-  aiAccountStates,
+  aiAccountState,
   type AiAction,
   aiAction,
   type AiFacts,
   type AiPlace,
+  providerOfAccount,
   queuedSignIn,
 } from "../presentation/aiAccount.ts";
+import { firstAccountOf, type SignInAccount } from "../stores/ProviderSetup.ts";
 import { Cell, type Readable } from "../Store.ts";
 
 // Connecting an AI, as the screens hold it: each account's one button,
@@ -32,26 +33,27 @@ import { Cell, type Readable } from "../Store.ts";
  * with whether the server took it.
  * - `signIn` and `cancelSignIn`: null where this client cannot run a sign-in,
  *   as anywhere but the app on the server's own computer;
- * - `download`: the server downloads what the account needs;
+ * - `download`: the server downloads what the account's harness needs,
+ *   which every account of it shares;
  * - `cancelDownload`: it stops that download;
  * - `recheck`: the engine checks a provider again.
  */
 export interface AiIntents {
-  readonly signIn: ((account: AiAccount) => void) | null;
-  readonly cancelSignIn: ((account: AiAccount) => void) | null;
-  readonly download: (account: AiAccount) => Promise<boolean>;
-  readonly cancelDownload: (account: AiAccount) => Promise<boolean>;
+  readonly signIn: ((account: SignInAccount) => void) | null;
+  readonly cancelSignIn: ((account: SignInAccount) => void) | null;
+  readonly download: (harness: AiAccount) => Promise<boolean>;
+  readonly cancelDownload: (harness: AiAccount) => Promise<boolean>;
   readonly recheck: (providerId: ProviderId) => Promise<boolean>;
 }
 
-/** What the screens of one app share about connecting an AI. */
+/** What the screens of one app share about connecting an AI, each set by provider id. */
 interface AiSessionState {
   /** The accounts they asked to sign in to before it could start. */
-  readonly wanted: ReadonlySet<AiAccount>;
+  readonly wanted: ReadonlySet<ProviderId>;
   /** The accounts whose last sign-in already led to a connection (`AiFacts.spent`). */
-  readonly spent: ReadonlySet<AiAccount>;
+  readonly spent: ReadonlySet<ProviderId>;
   /** The accounts whose download, asked for on the way to a sign-in, the server did not take. */
-  readonly refused: ReadonlySet<AiAccount>;
+  readonly refused: ReadonlySet<ProviderId>;
 }
 
 const withMember = <A>(set: ReadonlySet<A>, member: A, present: boolean): ReadonlySet<A> => {
@@ -70,14 +72,14 @@ const withMember = <A>(set: ReadonlySet<A>, member: A, present: boolean): Readon
  */
 interface AiSession extends Readable<AiSessionState> {
   /** Asks to sign in to `account` as soon as it can. */
-  readonly want: (account: AiAccount) => void;
+  readonly want: (account: SignInAccount) => void;
   /** Forgets a sign-in asked for early. */
-  readonly forget: (account: AiAccount) => void;
+  readonly forget: (account: SignInAccount) => void;
   /**
    * Sees to what `account` in `state` asks of a sign-in that waits
    * (`queuedSignIn`): the download it still needs, its start, or dropping it.
    */
-  readonly settle: (account: AiAccount, state: AiAccountState, intents: AiIntents) => void;
+  readonly settle: (account: SignInAccount, state: AiAccountState, intents: AiIntents) => void;
 }
 
 const createAiSession = (): AiSession => {
@@ -87,14 +89,14 @@ const createAiSession = (): AiSession => {
     refused: new Set(),
   });
   // The accounts a download was asked for and has not been seen to start.
-  const asked = new Set<AiAccount>();
-  const mark = (key: "wanted" | "spent" | "refused", account: AiAccount, present: boolean) =>
+  const asked = new Set<ProviderId>();
+  const mark = (key: "wanted" | "spent" | "refused", account: SignInAccount, present: boolean) =>
     cell.update((now) => {
-      const next = withMember(now[key], account, present);
+      const next = withMember(now[key], account.providerId, present);
       return next === now[key] ? now : { ...now, [key]: next };
     });
-  const forget = (account: AiAccount) => {
-    asked.delete(account);
+  const forget = (account: SignInAccount) => {
+    asked.delete(account.providerId);
     mark("wanted", account, false);
   };
   return {
@@ -109,8 +111,8 @@ const createAiSession = (): AiSession => {
       // A sign-in that led to a connection is spent, until another one starts.
       if (state._tag === "ready") mark("spent", account, true);
       if (state._tag === "signing-in") mark("spent", account, false);
-      if (state._tag !== "missing") asked.delete(account);
-      if (!cell.get().wanted.has(account)) return;
+      if (state._tag !== "missing") asked.delete(account.providerId);
+      if (!cell.get().wanted.has(account.providerId)) return;
       switch (queuedSignIn(state)) {
         case "keep":
           return;
@@ -122,9 +124,9 @@ const createAiSession = (): AiSession => {
           intents.signIn?.(account);
           return;
         case "download":
-          if (asked.has(account)) return;
-          asked.add(account);
-          void intents.download(account).then((took) => {
+          if (asked.has(account.providerId)) return;
+          asked.add(account.providerId);
+          void intents.download(account.harness).then((took) => {
             if (took) return;
             // Nothing is coming: the wait ends, and the account says the request did not go.
             forget(account);
@@ -159,7 +161,7 @@ type AiAsking = "idle" | "asking" | "failed";
 
 /** One account, as a screen draws and drives it. */
 export interface AiAccountModel {
-  readonly account: AiAccount;
+  readonly account: SignInAccount;
   readonly state: AiAccountState;
   /** Its one button now, or null when there is nothing for one to do. */
   readonly action: AiAction | null;
@@ -175,15 +177,15 @@ export interface AiAccountModel {
 }
 
 function useAiAccount(
-  account: AiAccount,
+  account: SignInAccount,
   input: AiConnectInput,
   session: AiSession,
 ): AiAccountModel {
   const { place, intents } = input;
   const shared = useSyncExternalStore(session.subscribe, session.get, session.get);
   const facts: AiFacts = { ...input.facts, spent: shared.spent };
-  const state = aiAccountStates(facts)[account];
-  const queued = shared.wanted.has(account);
+  const state = aiAccountState(account, facts);
+  const queued = shared.wanted.has(account.providerId);
   const [asking, setAsking] = useState<AiAsking>("idle");
   const ask = (request: Promise<boolean>) => {
     setAsking("asking");
@@ -211,11 +213,11 @@ function useAiAccount(
         else intents.signIn?.(account);
         return;
       case "download":
-        ask(intents.download(account));
+        ask(intents.download(account.harness));
         return;
       case "retry":
       case "look": {
-        const provider = aiAccountProvider(facts.engine, account);
+        const provider = providerOfAccount(facts.engine, account);
         if (provider !== undefined) ask(intents.recheck(provider.id));
         return;
       }
@@ -227,7 +229,7 @@ function useAiAccount(
   };
   const stopDownload = () => {
     session.forget(account);
-    ask(intents.cancelDownload(account));
+    ask(intents.cancelDownload(account.harness));
   };
   return {
     account,
@@ -237,11 +239,26 @@ function useAiAccount(
     queued,
     cancel,
     stopDownload,
-    asking: asking === "idle" && shared.refused.has(account) ? "failed" : asking,
+    asking: asking === "idle" && shared.refused.has(account.providerId) ? "failed" : asking,
   };
 }
 
-/** The accounts, as one screen connects them. */
+/** The app's `AiSession` when one is shared above, else one of the caller's own. */
+function useAiSession(): AiSession {
+  const above = useContext(SessionContext);
+  const [own] = useState(createAiSession);
+  return above ?? own;
+}
+
+/**
+ * One AI account as a screen connects it, for the list of every account the
+ * operator set up (decision 0108), one row each.
+ */
+export function useAiAccountModel(account: SignInAccount, input: AiConnectInput): AiAccountModel {
+  return useAiAccount(account, input, useAiSession());
+}
+
+/** The first account of each harness, as one screen connects them. */
 export interface AiConnectModel {
   readonly place: AiPlace;
   readonly accounts: Readonly<Record<AiAccount, AiAccountModel>>;
@@ -252,10 +269,8 @@ export interface AiConnectModel {
  * app's `AiSession` when one is shared above it, else from one of its own.
  */
 export function useAiConnect(input: AiConnectInput): AiConnectModel {
-  const above = useContext(SessionContext);
-  const [own] = useState(createAiSession);
-  const session = above ?? own;
-  const claude = useAiAccount("claude-code", input, session);
-  const chatgpt = useAiAccount("codex", input, session);
+  const session = useAiSession();
+  const claude = useAiAccount(firstAccountOf("claude-code"), input, session);
+  const chatgpt = useAiAccount(firstAccountOf("codex"), input, session);
   return { place: input.place, accounts: { "claude-code": claude, codex: chatgpt } };
 }

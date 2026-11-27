@@ -35,6 +35,7 @@ const bot = (name: string): BotItem => ({
     profile: { name, title: "", avatar: { shape: "dome", color: "cobalt" }, job: "" },
     model: { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") },
     effort: null,
+    fast: false,
     permissionMode: "auto",
     primary: false,
     pinned: false,

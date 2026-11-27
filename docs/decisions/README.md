@@ -102,6 +102,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0105](0105-the-web-client-loads-what-a-window-shows-and-ci-holds-it-to-a-budget.md) | The web client loads what a window shows, and CI holds it and a turn's traffic to a budget | Accepted |
 | [0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md) | Quotes sit in the field, a passage takes a comment, and nothing sits under the field | Accepted |
 | [0107](0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md) | Dictation goes to the operator's cloud provider, and the server runs no speech model | Accepted |
+| [0108](0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md) | The operator sets up each AI account, and picks a bot's model as in T3 Code | Accepted |
 | [0109](0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md) | A new bot can browse the web, and the operator turns it off | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

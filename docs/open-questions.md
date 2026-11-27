@@ -48,7 +48,7 @@ The server rotates a main session after 200 turns and carries a digest of the la
 
 ## 7. How does an operator configure providers without T3 Code's interface?
 
-On the host, `j3-bots provider connect` sets the endpoint and its key, `j3-bots provider login` signs a harness in, and `j3-bots doctor` shows what the engine reports for each provider. The desktop app, when it runs the bots on its own computer, does the first two itself: a harness's sign-in through the operator's browser, and an endpoint whose key goes only to the server ([Engine: sign-in from the app](architecture/engine.md#sign-in-from-the-app)). Still open: setting the providers up from a client on another machine, where a harness's sign-in page cannot return to the server, which models each bot may use, and removing a stored connection.
+On the host, `j3-bots provider connect` sets the endpoint and its key, `j3-bots provider login` signs the first account of a harness in, and `j3-bots doctor` shows what the engine reports for each provider. The desktop app, when it runs the bots on its own computer, does the first two itself: an account's sign-in through the operator's browser, and an endpoint whose key goes only to the server ([Engine: sign-in from the app](architecture/engine.md#sign-in-from-the-app)). Settings → Providers, on every client, adds another Claude Code or Codex account, turns one off, sets its executable and launch arguments, and removes one the operator added ([decision 0108](decisions/0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md)). Still open: signing an account in from a client on another machine, where a harness's sign-in page cannot return to the server, and removing a stored connection.
 
 ## 8. Is non-streamed speech good enough?
 
@@ -57,6 +57,8 @@ A message sent through `say` arrives whole. The operator sees the avatar working
 **Settled by** using M1.
 
 ## 9. Which harnesses beyond Claude Code and Codex are worth supporting?
+
+The engine also runs Cursor, Grok, OpenCode, Antigravity, Kiro, Pi, Muse and fx (**Read** at `bc0f04d`), and J3 Bots offers none of them ([decision 0108](decisions/0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md)). A bot speaks only through J3 Bots' tools, which J3 Bots gives Claude Code and Codex by writing its tool server into their homes; the engine gives an ACP agent only its own MCP server, and the other drivers take their tools from their own configuration, so on any of them a bot could think and not say a word. Each needs J3 Bots' tools written into its own configuration, and the base prompt delivered its own way, **Verified** against the real harness, before it is offered.
 
 Agents connected through ACP have no system-prompt field. T3 Code sends each turn to them as its own text followed by the dispatched message, so J3 Bots' base prompt would have to ride in instruction files or in every envelope, which behaves differently after compaction.
 

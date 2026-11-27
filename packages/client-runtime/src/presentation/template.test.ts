@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type BotTemplate,
+  EffortLevel,
   type EngineStatus,
   fileBytes,
   MAX_TEMPLATE_FILE_SIZE,
@@ -21,6 +22,7 @@ import {
   templateAsksTitle,
   templateStart,
   templateSubmission,
+  noTemplatePicks,
 } from "./template.ts";
 
 const template: BotTemplate = {
@@ -281,36 +283,74 @@ describe("templateStart", () => {
 
   it("leaves the permission mode to the server until the operator picks one", () => {
     const start = templateStart(template, engine(provider("claude", "claude-code", ready, "opus")));
-    expect(templateSubmission(template, start, null, "")).toEqual({
+    expect(templateSubmission(template, start, noTemplatePicks, "")).toEqual({
       template,
       model: template.model,
     });
-    expect(templateSubmission(template, start, "full-access", "")).toEqual({
-      template,
-      model: template.model,
-      permissionMode: "full-access",
-    });
+    expect(
+      templateSubmission(
+        template,
+        start,
+        { ...noTemplatePicks, permissionMode: "full-access" },
+        "",
+      ),
+    ).toEqual({ template, model: template.model, permissionMode: "full-access" });
+  });
+
+  it("puts the bot on the model the operator picked, with its effort and fast mode", () => {
+    const status = engine(
+      provider("claude", "claude-code", ready, "opus"),
+      provider("codex", "codex", ready, "gpt"),
+    );
+    const gpt = { providerId: ProviderId.make("codex"), modelId: ModelId.make("gpt") };
+    const start = templateStart(template, status, gpt);
+    expect(start.model).toEqual({ _tag: "picked", choice: gpt, name: "codex · gpt" });
+    expect(
+      templateSubmission(
+        template,
+        start,
+        {
+          permissionMode: null,
+          effort: EffortLevel.make("high"),
+          fast: true,
+        },
+        "",
+      ),
+    ).toEqual({ template, model: gpt, effort: "high", fast: true });
+    // A pick the engine stopped offering gives way to the template's own, at
+    // its own effort and speed: the ones picked were for the other model.
+    const gone = { providerId: ProviderId.make("codex"), modelId: ModelId.make("old") };
+    const fallen = templateStart(template, status, gone);
+    expect(fallen.model._tag).toBe("template");
+    expect(
+      templateSubmission(
+        template,
+        fallen,
+        { permissionMode: null, effort: EffortLevel.make("high"), fast: true },
+        "",
+      ),
+    ).toEqual({ template, model: template.model });
   });
 
   it("creates a bot from a template with no title only once the operator gives one", () => {
     const untitled = { ...template, profile: { ...template.profile, title: "" } };
     const start = templateStart(untitled, engine(provider("claude", "claude-code", ready, "opus")));
-    expect(templateSubmission(untitled, start, null, "  ")).toBeNull();
-    expect(templateSubmission(untitled, start, null, " Market research ")).toEqual({
+    expect(templateSubmission(untitled, start, noTemplatePicks, "  ")).toBeNull();
+    expect(templateSubmission(untitled, start, noTemplatePicks, " Market research ")).toEqual({
       template: { ...untitled, profile: { ...untitled.profile, title: "Market research" } },
       model: template.model,
     });
     // A template's own title is the one the bot takes.
-    expect(templateSubmission(template, start, null, "Other")?.template.profile.title).toBe(
-      "Research",
-    );
+    expect(
+      templateSubmission(template, start, noTemplatePicks, "Other")?.template.profile.title,
+    ).toBe("Research");
     // A title of spaces alone is none: the operator is asked, and their title is the one used.
     const blank = { ...template, profile: { ...template.profile, title: "   " } };
     expect(templateAsksTitle(blank)).toBe(true);
-    expect(templateSubmission(blank, start, null, "")).toBeNull();
-    expect(templateSubmission(blank, start, null, "Market research")?.template.profile.title).toBe(
-      "Market research",
-    );
+    expect(templateSubmission(blank, start, noTemplatePicks, "")).toBeNull();
+    expect(
+      templateSubmission(blank, start, noTemplatePicks, "Market research")?.template.profile.title,
+    ).toBe("Market research");
   });
 
   it("offers no model, and supervised, before the engine lists one", () => {
