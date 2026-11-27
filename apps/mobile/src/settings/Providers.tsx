@@ -4,6 +4,7 @@ import type { EngineStatus } from "@j3-bots/contracts";
 import {
   type AiAccount,
   aiAccountProvider,
+  canSetUpAccounts,
   installsHarnesses,
   ownHarness,
 } from "@j3-bots/client-runtime/presentation";
@@ -22,10 +23,12 @@ import { OwnHarnessLine, ProviderRow, ProviderUpdate } from "../components/Engin
 import { Problem, Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { Text } from "../text.tsx";
+import { SetUpAccounts } from "./Accounts.tsx";
 
 /**
  * Whether J3 Bots can run bots, and if not, why and what to do; then each AI
- * account, with the same way to connect it as the first run, any other
+ * account, with the same way to connect it as the first run, and on a server
+ * that lets the operator set them up, what they set up of each, any other
  * provider, and, on a server that installs its own copies of the harnesses,
  * whether it keeps them up to date by itself; then whether the harnesses
  * suggest the operator's next message. Disconnected, it is what the
@@ -69,7 +72,11 @@ export function ProvidersSection() {
           <Quiet>{problem.body}</Quiet>
         </View>
       )}
-      <AiAccounts engine={engine} stale={stale} />
+      {canSetUpAccounts(engine) ? (
+        <SetUpAccounts engine={engine} stale={stale} />
+      ) : (
+        <AiAccounts engine={engine} stale={stale} />
+      )}
       {engine.providers
         .filter((provider) => provider.harness === "other")
         .map((provider) => (

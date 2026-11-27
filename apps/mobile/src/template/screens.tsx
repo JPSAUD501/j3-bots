@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type BotTemplateResult, refusedWith, type TemplateDraft } from "@j3-bots/client-runtime";
 import {
+  canSetUpAccounts,
+  type ModelSetting,
   templateAsksTitle,
   templateStart,
   templateSubmission,
@@ -19,12 +21,13 @@ import {
 } from "@j3-bots/contracts";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Cpu, ShieldAlert } from "lucide-react-native";
+import { ShieldAlert } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChoiceRow, Problem, Quiet, Section, SwitchRow, TextField } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { ModelPicker } from "../components/ModelPicker.tsx";
 import { useI18n } from "../i18n.ts";
 import { type Screens, useReplaceWithConversation } from "../navigation.tsx";
 import { useRosterItem } from "../screens/rosterItem.ts";
@@ -219,7 +222,11 @@ function TemplateForm({
   const engineStatus = useEngineStatus();
   const connected = useConnection()._tag === "connected";
   const openConversation = useReplaceWithConversation();
-  const start = templateStart(template, engineStatus._tag === "ready" ? engineStatus.value : null);
+  const engine = engineStatus._tag === "ready" ? engineStatus.value : null;
+  // The model the operator picked in place of the template's, with its effort and speed.
+  const [pickedModel, setPickedModel] = useState<ModelSetting | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const start = templateStart(template, engine, pickedModel?.model ?? null);
   const [picked, setPicked] = useState<PermissionMode | null>(null);
   const [hidden, setHidden] = useState(false);
   // Asked only of a template shared from a bot with no title.
@@ -230,7 +237,19 @@ function TemplateForm({
   const { name } = template.profile;
   const creating = state === "creating";
   const model = start.model._tag === "none" ? null : start.model;
-  const submission = templateSubmission(template, start, picked, title);
+  // A pick the engine stopped offering gives way to what the preview shows instead.
+  const setting: ModelSetting | null =
+    model === null
+      ? null
+      : model._tag === "picked" && pickedModel !== null
+        ? pickedModel
+        : { model: model.choice, effort: null, fast: false };
+  const submission = templateSubmission(
+    template,
+    start,
+    { permissionMode: picked, effort: setting?.effort ?? null, fast: setting?.fast ?? false },
+    title,
+  );
   const create = (draft: TemplateDraft) => {
     setState("creating");
     void client.createBotFromTemplate(draft).then((result) => {
@@ -292,27 +311,34 @@ function TemplateForm({
             />
           </Section>
         )}
-        <Section open title={t("template.model")}>
-          {model === null ? (
+        {setting === null || model === null ? (
+          <Section open title={t("template.model")}>
             <Problem>{t("template.create.noModel")}</Problem>
-          ) : (
-            <View className="flex-row items-start gap-3">
-              <Icon icon={Cpu} color="accent-muted-foreground" />
-              <View className="min-w-0 flex-1">
-                <Text className="text-base text-foreground">{model.name}</Text>
-                {model._tag === "replaced" && (
-                  <Text className="text-sm text-muted-foreground">
-                    {t("template.model.replaced", {
-                      model: model.asked,
-                      name,
-                      replacement: model.name,
-                    })}
-                  </Text>
-                )}
-              </View>
-            </View>
-          )}
-        </Section>
+          </Section>
+        ) : (
+          <Section open>
+            <ModelPicker
+              engine={engine}
+              value={setting}
+              onChange={setPickedModel}
+              label={t("template.model")}
+              title={t("picker.open", { name })}
+              offerEffort={canSetUpAccounts(engine)}
+              readOnly={creating}
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+            />
+            {model._tag === "replaced" && (
+              <Text className="text-sm text-muted-foreground">
+                {t("template.model.replaced", {
+                  model: model.asked,
+                  name,
+                  replacement: model.name,
+                })}
+              </Text>
+            )}
+          </Section>
+        )}
         <Section open title={t("template.permission")}>
           {start.asked !== null && (
             <Text className="text-sm text-muted-foreground">
