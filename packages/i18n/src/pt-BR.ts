@@ -991,6 +991,8 @@ const sentences = {
     "Um bot aqui não está respondendo ao Parar. Forçar parada encerra o que ele está rodando para {name} agora.",
   "room.stopFailed": "O trabalho em {name} não foi parado. Tente de novo.",
   "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",
+  "room.readOnly": "Somente leitura · Só os bots conversam aqui",
+  "room.botsOnlyLine": "{count} · Só os bots conversam aqui",
 
   "roomForm.newTitle": "Nova sala",
   "roomForm.editTitle": "Editar {name}",

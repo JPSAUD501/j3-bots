@@ -439,6 +439,8 @@ export const layer = Layer.effect(
             members: [...room.members],
             archived: room.status === "archived",
             hidden: room.hidden,
+            // A room of bots only, which the operator reads and never writes in.
+            withUser: room.botsOnly !== true,
           });
           const primary = all.some(({ bot }) => bot.id === caller.botId && bot.primary);
           // The primary bot may show or hide any room, so it is told of those

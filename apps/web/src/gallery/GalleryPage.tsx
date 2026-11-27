@@ -6534,6 +6534,13 @@ function ShellSection() {
           <ShellFrame initial={scout} details />
         </Frame>
         <Frame
+          label="Desktop, 1280 px: a room of bots only with its details: no Edit, and it says only bots talk there"
+          width={1280}
+          height={760}
+        >
+          <ShellFrame initial={{ _tag: "room", roomId: ids.fairStands }} details />
+        </Frame>
+        <Frame
           label="Desktop, 1440 px: Scout's browser beside the conversation; Take control hands the page to the operator, Done gives it back"
           width={1440}
           height={800}
@@ -6575,6 +6582,13 @@ function ShellSection() {
             height={760}
           >
             <ShellFrame initial={null} initialPair={pairBotIds(ids.scout, ids.wren)} />
+          </Frame>
+          <Frame
+            label="Phone: a room of bots only, read-only: the bots' reactions show, none to add, and it paused at its round limit"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={{ _tag: "room", roomId: ids.fairStands }} />
           </Frame>
         </div>
       </div>

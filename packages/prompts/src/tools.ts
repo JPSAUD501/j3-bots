@@ -1211,7 +1211,7 @@ export const tools = {
   list_teammates: define(
     "list_teammates",
     [
-      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is hidden from your user's list. As the primary bot, also the rooms you are not in, as `otherRooms`, which you can show or hide but not read or post in.",
+      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is hidden from your user's list, and each room whether your user takes part in it (`withUser`). As the primary bot, also the rooms you are not in, as `otherRooms`, which you can show or hide but not read or post in.",
       "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there and `read_room` to read it, from any turn.",
     ],
     NoInput,

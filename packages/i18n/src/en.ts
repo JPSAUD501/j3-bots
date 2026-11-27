@@ -991,6 +991,8 @@ export const en = {
     "A bot here isn’t responding to Stop. Force stop ends what it’s running for {name} now.",
   "room.stopFailed": "The work in {name} wasn’t stopped. Try again.",
   "room.composerArchived": "{name} is archived, so it takes no messages.",
+  "room.readOnly": "Read-only · Only bots talk here",
+  "room.botsOnlyLine": "{count} · Only bots talk here",
 
   "roomForm.newTitle": "New room",
   "roomForm.editTitle": "Edit {name}",

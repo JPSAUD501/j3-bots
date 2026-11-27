@@ -790,11 +790,16 @@ export function RoomDetails({
           archived ? (
             <span>{t("room.archivedLine")}</span>
           ) : (
-            <span>{plural("room.memberCount", members.length)}</span>
+            <span>
+              {room.botsOnly === true
+                ? t("room.botsOnlyLine", { count: plural("room.memberCount", members.length) })
+                : plural("room.memberCount", members.length)}
+            </span>
           )
         }
+        // Its bots chose who talks in a room of bots only: the operator reads it.
         actions={
-          archived ? undefined : (
+          archived || room.botsOnly === true ? undefined : (
             <Button size="sm" onClick={intents.editRoom}>
               <PencilIcon aria-hidden />
               {t("room.edit", { name })}

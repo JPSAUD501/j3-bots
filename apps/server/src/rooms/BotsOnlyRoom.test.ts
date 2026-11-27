@@ -6,6 +6,7 @@ import {
   type EntryId,
   type Notice,
   ROOM_CLOSING_ROUND,
+  ReactionEmoji,
   ROOM_QUIET_ROUND,
   RoomId,
 } from "@j3-bots/contracts";
@@ -74,6 +75,7 @@ const refusalOf = (response: ToolCallResponse) =>
     ? response.message
     : assert.fail(`expected a refusal, got ${JSON.stringify(response)}`);
 
+const thumbsUp = Schema.decodeSync(ReactionEmoji)("👍");
 const decodeStarted = Schema.decodeUnknownSync(Schema.Struct({ id: RoomId }));
 const decodeRecorded = Schema.decodeUnknownSync(
   Schema.Struct({ status: Schema.Literal("recorded"), note: Schema.String }),
@@ -255,7 +257,7 @@ it.effect("takes nothing of the operator's in a room of bots only, and keeps the
     assert.deepStrictEqual(yield* send({ quotes: [{ entryId: kickoff.id }] }), refused);
     assert.deepStrictEqual(yield* send({ mentions: { _tag: "everyone" } }), refused);
     assert.deepStrictEqual(
-      yield* Effect.flip((yield* Reactions).react({ entryId: kickoff.id, emoji: "👍" })),
+      yield* Effect.flip((yield* Reactions).react({ entryId: kickoff.id, emoji: thumbsUp })),
       refused,
     );
     const update = (changes: Parameters<typeof rooms.update>[0]["changes"]) =>
