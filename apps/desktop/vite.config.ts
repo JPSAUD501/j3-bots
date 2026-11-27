@@ -9,8 +9,19 @@ import { defineConfig } from "vite-plus";
 // `dist/native/uiohook/uiohook-napi/prebuilds/<platform>-<arch>/`, and loaded
 // from there (src/recording/input.ts), with its licenses and notice
 // (notices/uiohook); electron-builder.yml keeps them out of the asar.
+// Playwright (`playwright-core`), which drives the app's own browser
+// (decision 0110), reads its own files by path as it runs: it stays out of
+// the bundle, and the parts of its package it runs, with its license and
+// notices, are copied to `dist/node_modules/playwright-core`, where the
+// bundle's import finds it.
+// The notices of the T3 Code the bundle carries, adapted under MIT: the
+// desktop's own browser's (NOTICE) and the driver's (packages/browser), in
+// `dist/notices`.
 // The preload script is CommonJS, the only form a sandboxed preload can be.
 // Tests use the root configuration.
+
+/** What the main process loads from outside the bundle, beside Electron. */
+const OUTSIDE = new Set(["electron", "playwright-core"]);
 
 const shared = () => ({
   platform: "node" as const,
@@ -18,8 +29,8 @@ const shared = () => ({
   // An application, not a library: nothing imports its types.
   dts: false,
   deps: {
-    alwaysBundle: (id: string) => id !== "electron" && !id.startsWith("node:"),
-    neverBundle: ["electron"],
+    alwaysBundle: (id: string) => !OUTSIDE.has(id) && !id.startsWith("node:"),
+    neverBundle: [...OUTSIDE],
     onlyBundle: false as const,
   },
 });
@@ -40,6 +51,22 @@ export default defineConfig({
         },
         { from: "node_modules/uiohook-napi/LICENSE", to: "dist/native/uiohook", flatten: false },
         { from: "notices/uiohook/*", to: "dist/native/uiohook" },
+        { from: "NOTICE", to: "dist/notices/desktop-browser" },
+        { from: "../../packages/browser/NOTICE", to: "dist/notices/browser" },
+        ...[
+          "package.json",
+          "index.js",
+          "index.mjs",
+          "browsers.json",
+          "LICENSE",
+          "NOTICE",
+          "ThirdPartyNotices.txt",
+          "lib/**",
+        ].map((file) => ({
+          from: `node_modules/playwright-core/${file}`,
+          to: "dist/node_modules",
+          flatten: false,
+        })),
       ],
     },
     {

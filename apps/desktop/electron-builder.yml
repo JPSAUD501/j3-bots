@@ -24,10 +24,13 @@ extraMetadata:
 directories:
   output: release
 
-# Everything the app runs is bundled into dist (`vp pack`), so it carries no
-# node_modules.
+# Everything the app runs is in dist (`vp pack`): the bundle, and beside it
+# the one package that stays out of it, Playwright (vite.config.ts). The app
+# carries no node_modules of its own. The builder leaves out every
+# node_modules folder that no pattern names, so its folder is named.
 files:
   - dist/**
+  - dist/node_modules/**
   - package.json
 # The input hook's binaries (vite.config.ts): a native module loads only
 # from a real file.
@@ -41,6 +44,13 @@ extraResources:
   - from: ../web/dist
     to: web/dist
 npmRebuild: false
+# Electron's switches built into the binary. Cookies are written encrypted
+# with the system's key store (the keychain on macOS, DPAPI on Windows, the
+# secret service on Linux), so the sign-ins of the app's own browser are not
+# plain text on disk (decision 0110). Cookies written before stay readable and
+# are encrypted as they are written again (docs/architecture/security.md).
+electronFuses:
+  enableCookieEncryption: true
 # Fails a package that lacks the server runtime its platform needs, or carries
 # one where local mode does not run.
 afterPack: ./scripts/afterPack.ts
