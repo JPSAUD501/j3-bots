@@ -647,6 +647,9 @@ importers:
       '@j3-bots/design-tokens':
         specifier: workspace:*
         version: link:../design-tokens
+      '@noble/hashes':
+        specifier: 2.0.1
+        version: 2.0.1
       effect:
         specifier: 4.1.5
         version: 4.1.5

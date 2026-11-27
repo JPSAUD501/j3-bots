@@ -50,6 +50,7 @@ import { RoomFormScreen } from "./screens/RoomForm.tsx";
 import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
 import { SettingsPageScreen } from "./settings/SettingsPage.tsx";
+import { UsageDataSentScreen } from "./settings/UsageData.tsx";
 import { WhatsNewScreen } from "./update/WhatsNew.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
@@ -102,6 +103,7 @@ export type Screens = {
   settings: undefined;
   settingsPage: { readonly page: SettingsPage };
   whatsNew: undefined;
+  usageDataSent: undefined;
   hidden: undefined;
   secrets: undefined;
   secret: { readonly id: SecretId };
@@ -290,6 +292,11 @@ export function Main() {
                   name="whatsNew"
                   component={WhatsNewScreen}
                   options={{ title: t("whatsNew.title") }}
+                />
+                <Stack.Screen
+                  name="usageDataSent"
+                  component={UsageDataSentScreen}
+                  options={{ title: t("usageData.sent.title") }}
                 />
                 {/* The secrets' screens set their own titles. */}
                 <Stack.Screen name="secrets" component={SecretsScreen} />

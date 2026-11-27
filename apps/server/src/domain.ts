@@ -53,6 +53,7 @@ import * as SecretAsks from "./secrets/SecretAsks.ts";
 import * as Secrets from "./secrets/Secrets.ts";
 import * as Host from "./system/Host.ts";
 import * as Voice from "./voice/Voice.ts";
+import * as TelemetryClients from "./telemetry/Clients.ts";
 import * as BotTools from "./tools/BotTools.ts";
 import * as Management from "./tools/Management.ts";
 import * as ToolLists from "./tools/ToolLists.ts";
@@ -179,6 +180,7 @@ export const layer = Layer.mergeAll(
     Layer.mergeAll(
       Ids.layer,
       Layout.layer,
+      TelemetryClients.layer,
       ChangeLog.layer,
       CommandReceipts.layer,
       ConnectorStore.layer,

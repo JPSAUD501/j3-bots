@@ -21,6 +21,7 @@ import {
   ClientStorage,
   CredentialStore,
   type DeviceCredential,
+  ClientIdentity,
   DeviceTimeZone,
   FileTransfer,
   LocalStorageError,
@@ -411,7 +412,11 @@ export interface TestDevice {
   readonly credentials: (heard?: Latch.Latch) => CredentialStore["Service"];
   /** The device's time zone, as the platform reports it. */
   readonly timeZone: string | null;
+  /** The random id the device keeps for usage data. */
+  readonly randomId: string;
 }
+
+let devices = 0;
 
 export const makeDevice = (options: DeviceOptions = {}): TestDevice => {
   const credentials = makeCredentials();
@@ -424,6 +429,7 @@ export const makeDevice = (options: DeviceOptions = {}): TestDevice => {
     seed: credentials.seed,
     credentials: (heard) => credentials.view({}, heard),
     timeZone: options.timeZone ?? null,
+    randomId: `device-${++devices}`,
   };
 };
 
@@ -457,6 +463,12 @@ export const layer = (
     Layer.sync(ClientStorage, device.window),
     Layer.succeed(WindowLocks, device.locks),
     Layer.succeed(DeviceTimeZone, { current: Effect.succeed(device.timeZone) }),
+    Layer.succeed(ClientIdentity, {
+      surface: "web",
+      os: "linux",
+      version: Effect.succeed(null),
+      randomId: Effect.succeed(device.randomId),
+    }),
     transfer.pipe(Layer.provide(http)),
     network,
     lifecycle,

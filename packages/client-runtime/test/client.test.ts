@@ -76,6 +76,7 @@ import { Drafts, type WindowContext } from "../src/stores/Drafts.ts";
 import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import { Settings } from "../src/stores/Settings.ts";
+import { UsageData } from "../src/stores/UsageData.ts";
 import { USAGE_PAGE, Usage } from "../src/stores/Usage.ts";
 import { SignOut } from "../src/intents/SignOut.ts";
 import * as TestPlatform from "./platform.ts";
@@ -1446,6 +1447,61 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const listed = yield* (yield* Server.Devices).list(deviceId);
       assert.isTrue(listed.some((device) => device.id === deviceId));
     }).pipe(Effect.provide(client())),
+  );
+
+  it.effect(
+    "tells its server what it is, and what only it sees while usage data is on, and nothing once it is off",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const usageData = yield* UsageData;
+        const settings = yield* Settings;
+        const me = yield* usageData.client;
+        assert.deepStrictEqual(me, {
+          surface: "web",
+          os: "linux",
+          version: null,
+          device: me.device,
+        });
+        /** What the server recorded that this client's socket caused, by name. */
+        const fromMe = Server.recordedTelemetry.pipe(
+          Effect.map((all) =>
+            all.flatMap(({ event, client }) =>
+              client?.device === me.device
+                ? [event.event === "feature.used" ? event.properties.feature : event.event]
+                : [],
+            ),
+          ),
+        );
+        const until = (check: (seen: ReadonlyArray<string>) => boolean) =>
+          fromMe.pipe(
+            Effect.repeat({ until: check, schedule: Schedule.spaced("10 millis") }),
+            Effect.timeout("5 seconds"),
+          );
+
+        yield* until((seen) => seen.includes("client.connected"));
+        yield* usageData.record({ event: "feature.used", properties: { feature: "whats-new" } });
+        yield* until((seen) => seen.includes("whats-new"));
+
+        const off = yield* settings.update({ section: "usage-data", changes: { enabled: false } });
+        assert.deepStrictEqual(off._tag === "done" && off.value.telemetry, {
+          enabled: false,
+          heldOff: false,
+        });
+        yield* waitFor(
+          settings.state,
+          (state) => state._tag === "ready" && state.value.telemetry?.enabled === false,
+        );
+        yield* usageData.record({ event: "feature.used", properties: { feature: "voice-input" } });
+        yield* settings.update({ section: "usage-data", changes: { enabled: true } });
+        yield* waitFor(
+          settings.state,
+          (state) => state._tag === "ready" && state.value.telemetry?.enabled === true,
+        );
+        yield* usageData.record({ event: "feature.used", properties: { feature: "whats-new" } });
+        const seen = yield* until((all) => all.filter((each) => each === "whats-new").length === 2);
+        assert.notInclude(seen, "voice-input");
+      }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
   it.effect("keeps each section's save under way through a disconnection until it is saved", () =>

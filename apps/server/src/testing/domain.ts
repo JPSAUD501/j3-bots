@@ -2,6 +2,7 @@
 import type { EngineStatus, ProviderStatus, ProviderVersion } from "@j3-bots/contracts";
 import { EffortLevel, ModelId, ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
+import * as TestTelemetry from "./telemetry.ts";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -177,11 +178,13 @@ const storesOver = (
 ) =>
   Layer.mergeAll(
     engineWith(starting),
-    Layer.merge(BasePrompt.layer, SuggestReplies.layer).pipe(Layer.provide(SettingsStore.layer)),
+    Layer.mergeAll(BasePrompt.layer, SuggestReplies.layer, TestTelemetry.layer).pipe(
+      Layer.provide(SettingsStore.layer),
+    ),
     TestOAuth.layer,
     TestHarnesses.layer,
     repositories,
-  ).pipe(Layer.provideMerge(database));
+  ).pipe(Layer.provideMerge(TestTelemetry.configLayer), Layer.provideMerge(database));
 
 const stores = storesOver(TestDatabase.layer, new Map());
 

@@ -9,6 +9,7 @@ const idle: Parameters<typeof savesUnderWay>[0] = {
     notifications: { _tag: "idle" },
     harnesses: { _tag: "idle" },
     voice: { _tag: "idle" },
+    "usage-data": { _tag: "idle" },
   },
   bots: new Map(),
   memory: new Map(),

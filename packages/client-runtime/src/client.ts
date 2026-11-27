@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  ClientTelemetryEvent,
+  SentTelemetryEvent,
   Attachment,
   WorkImageId,
   Bot,
@@ -93,6 +95,7 @@ import { type FileProblem, type MessageProblem, normalizeMediaType } from "./fil
 import * as Actions from "./intents/Actions.ts";
 import * as SignOut from "./intents/SignOut.ts";
 import type {
+  ClientIdentity,
   ClientStorage,
   CredentialStore,
   DeviceTimeZone,
@@ -116,6 +119,7 @@ import * as ProviderSetup from "./stores/ProviderSetup.ts";
 import type { Loaded } from "./stores/reads.ts";
 import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
+import * as UsageData from "./stores/UsageData.ts";
 import type { Synced } from "./stores/synced.ts";
 import * as TeammatePairs from "./stores/TeammatePairs.ts";
 import * as Usage from "./stores/Usage.ts";
@@ -130,6 +134,7 @@ export type Platform =
   | CredentialStore
   | ClientStorage
   | DeviceTimeZone
+  | ClientIdentity
   | FileTransfer
   | Network
   | Lifecycle
@@ -139,7 +144,7 @@ export type Platform =
   | SecureRandom.SecureRandom;
 
 /** Every service of the client runtime, for applications that use Effect directly. */
-export const layer = SignOut.layer.pipe(
+export const layer = Layer.merge(SignOut.layer, UsageData.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Roster.layer,
@@ -654,6 +659,10 @@ export interface J3Client {
   readonly refreshSettings: () => void;
   /** Signs the bots' browser out of every site, for every bot. */
   readonly signOutBrowser: () => Promise<Actions.IntentResult>;
+  /** See `UsageData.record`: something only this client sees, told while usage data is on. */
+  readonly recordUsage: (event: ClientTelemetryEvent) => void;
+  /** See `UsageData.sent`: the newest events the server sent, as they left. */
+  readonly usageDataSent: () => Promise<Actions.IntentResult<ReadonlyArray<SentTelemetryEvent>>>;
   /** Has the engine check the provider again now, as after its harness was installed or fixed. */
   readonly recheckProvider: (providerId: ProviderId) => Promise<Actions.IntentResult>;
   /** Has the engine update the provider's harness to the newer version it reports. */
@@ -786,6 +795,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         details: yield* Details.Details,
         signOut: yield* SignOut.SignOut,
         serverUpdate: yield* ServerUpdate.ServerUpdate,
+        usageData: yield* UsageData.UsageData,
       };
     }),
   );
@@ -1073,6 +1083,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),
     signOutBrowser: () => run.promise(services.settings.signOutBrowser),
+    recordUsage: (event) => fire(services.usageData.record(event)),
+    usageDataSent: () => run.promise(services.usageData.sent),
     recheckProvider: (providerId) => run.promise(services.engine.recheck(providerId)),
     updateProvider: (providerId) => run.promise(services.engine.update(providerId)),
     installHarness: (harness) => run.promise(services.engine.installHarness(harness)),
@@ -1189,6 +1201,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       setCloudKey: (provider, key) => run.promise(services.voice.setCloudKey(provider, key)),
       dictate: () => {
         const { value, release } = hold(services.voice.dictate);
+        // Every client dictates through this, but a phone that recognizes on its own.
+        fire(
+          services.usageData.record({
+            event: "feature.used",
+            properties: { feature: "voice-input" },
+          }),
+        );
         return {
           state: value.state,
           audio: (pcm) => fire(value.audio(pcm)),

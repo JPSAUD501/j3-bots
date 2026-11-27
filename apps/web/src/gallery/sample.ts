@@ -985,6 +985,7 @@ export function sampleTeam(now: DateTime.Utc) {
       model: null,
       openRouterModel: null,
     },
+    telemetry: { enabled: true, heldOff: false },
   };
 
   const devices: ReadonlyArray<Device> = [

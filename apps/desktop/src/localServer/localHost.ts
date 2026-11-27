@@ -69,9 +69,12 @@ export interface LocalHostOptions {
  */
 const NODE_KEPT = new Set(["NODE_EXTRA_CA_CERTS"]);
 
+/** The operator's say on usage data, which no `config.json` setting holds. */
+const isUsageData = (name: string) => name.startsWith("J3_TELEMETRY_");
+
 /** Variables of the app's environment the server must not inherit. */
 const isAppOnly = (name: string) =>
-  (/^(ELECTRON_|J3_|NODE_|npm_)/.test(name) && !NODE_KEPT.has(name)) ||
+  (/^(ELECTRON_|J3_|NODE_|npm_)/.test(name) && !NODE_KEPT.has(name) && !isUsageData(name)) ||
   ["APPIMAGE", "APPDIR", "ARGV0", "OWD"].includes(name) ||
   name.toUpperCase() === "PATH";
 
@@ -79,8 +82,8 @@ const isAppOnly = (name: string) =>
  * The environment of a command of the server the app carries: the app's,
  * without what belongs to Electron, an AppImage, Node (but the certificates
  * it trusts) or a J3 Bots setting in the operator's shell (the server's
- * settings come from its home's `config.json`), with the operator's PATH and
- * the server's home.
+ * settings come from its home's `config.json`; usage data's variables, which
+ * it has no setting for, pass), with the operator's PATH and the server's home.
  */
 const commandEnvironment = (
   env: Readonly<Record<string, string | undefined>>,

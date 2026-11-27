@@ -27,7 +27,7 @@ A self-hosted product that turns the subscriptions you already pay for into a sm
 
 **Quiet by default.** A bot that wakes on its own speaks only when the result is worth the interruption. Silence is a valid outcome of a routine, a room turn and a message from another bot.
 
-**Your subscriptions, your machine, your files.** No J3 Bots account, no hosted relay in the core path, no telemetry by default. Memory and instructions are files in a folder the user owns.
+**Your subscriptions, your machine, your files.** No J3 Bots account, and no hosted relay in the core path. Memory and instructions are files in a folder the user owns. The server sends anonymous usage data, typed so that nothing the user wrote, named or owns can be in it, and one switch in Settings turns it off ([Usage data](product/usage-data.md)).
 
 **Every wake costs the user's allowance.** A subscription has weekly limits. Routing, routines and group chats are designed so that the smallest number of bots wake for each event, and the user can see what is spending their allowance.
 
