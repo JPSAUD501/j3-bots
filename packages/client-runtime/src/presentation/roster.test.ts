@@ -178,7 +178,14 @@ describe("botStop", () => {
     expect(botStop(bot("Scout", { _tag: "thinking", ...since }))).toBe("offered");
     expect(
       botStop(
-        bot("Scout", { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 }),
+        bot("Scout", {
+          _tag: "working",
+          ...since,
+          activity: null,
+          activityKind: null,
+          tool: null,
+          littleOnes: 0,
+        }),
       ),
     ).toBe("offered");
   });
@@ -192,7 +199,14 @@ describe("botStop", () => {
       botStop(
         bot(
           "Scout",
-          { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 },
+          {
+            _tag: "working",
+            ...since,
+            activity: null,
+            activityKind: null,
+            tool: null,
+            littleOnes: 0,
+          },
           { forceStop: true },
         ),
       ),

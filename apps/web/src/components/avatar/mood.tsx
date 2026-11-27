@@ -2,7 +2,7 @@
 import type { Bot, EntryPreview } from "@j3-bots/contracts";
 import { useAsleep, useAvatarMood } from "@j3-bots/client-runtime/react";
 import { type ReactNode, type Ref, use } from "react";
-import { type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar";
+import { type AvatarEntrance, type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar";
 
 /** Whether this client has lost sight of the server long enough that what it shows may be out of date. */
 export const useOffline = (): boolean => use(AvatarsAsleep);
@@ -34,7 +34,7 @@ export function LiveBotAvatar({
   readonly size: number;
   readonly label?: string;
   /** Comes in from above as it first shows (`BotAvatar`). */
-  readonly entrance?: boolean;
+  readonly entrance?: boolean | AvatarEntrance;
   readonly ref?: Ref<AvatarHandle>;
 }) {
   const offline = use(AvatarsAsleep);

@@ -150,80 +150,190 @@
 }
 
 /*
- * A bot or a room new to the roster (components/RosterRow.tsx) comes down into a light of its own
- * color: a cone from above and a pool at its feet, which come up, hold and go; its name and line
- * follow it in. The fall, the landing and the antenna lighting are the avatar's own (the shared
- * frame loop); these are opacities and one transform. Under reduced motion none of it plays.
+ * A bot or a room new to the roster (components/RosterRow.tsx) arrives the way the first run's cast
+ * does: a light of its own color comes up from a lamp above its row, it comes down into it and
+ * lands, its name and line come in, and the light goes down. The row says where the arrival is
+ * (`data-arrival`): `lit` until its bot lands, then `landed`. The light is drawn like the stage's
+ * (`.stage-light`, below): a cone from the lamp, soft at its edge and thinning toward the floor,
+ * a pool at the bot's feet, the floor dark under it once it stands there, and a rim of light along
+ * its top. Everything stays within the row's own height, so nothing crosses the row above or below.
+ * The fall and the landing are the avatar's own (the shared frame loop), and `landed` comes from
+ * that landing; these are opacities and one transform. Under reduced motion the row fades in
+ * (`calm`) and none of the rest is drawn.
  */
 @layer components {
-  .row-spot {
+  .row-stage {
+    /* How far the row reaches above and below its 40 px avatar: negative, as `inset()` takes it. */
+    --row-ceiling: calc((2.5rem - var(--layout-row-pointer)) / 2);
+  }
+
+  @media (pointer: coarse) {
+    .row-stage {
+      --row-ceiling: calc((2.5rem - var(--layout-row-touch)) / 2);
+    }
+  }
+
+  :is([data-arrival="lit"], [data-arrival="landed"]) .row-stage {
+    clip-path: inset(var(--row-ceiling) -1rem);
+  }
+
+  .row-light {
+    /* On a light sidebar the lamp is the bot's own color; on a dark one, warm white taking some of it. */
+    --row-lamp: var(--row-spot);
+    --row-beam: color-mix(in oklab, var(--row-spot) 30%, var(--row-lamp));
+    /* The angle from the cone's middle to where its light ends. */
+    --row-cone: 21deg;
     position: absolute;
     z-index: -1;
-    bottom: -6%;
-    left: 50%;
-    width: 230%;
-    height: 330%;
-    translate: -50% 0;
+    inset-inline: -1rem;
+    inset-block: var(--row-ceiling);
     pointer-events: none;
-    animation: row-spot var(--row-light) var(--ease-out) both;
+    animation: row-light-in var(--row-spot-in) var(--ease-out) both;
   }
 
-  .row-spot::before,
-  .row-spot::after {
-    content: "";
+  .dark .row-light {
+    --row-lamp: oklch(0.97 0.04 85);
+  }
+
+  [data-arrival="landed"] .row-light {
+    animation: row-light-out var(--row-dim) var(--ease-out) var(--row-hold) both;
+  }
+
+  .row-beam {
+    --lit: color-mix(in oklab, var(--row-beam) 34%, transparent);
     position: absolute;
-    inset-inline: 0;
-  }
-
-  .row-spot::before {
-    inset-block: 0 8%;
-    background: linear-gradient(
-      to bottom,
-      transparent,
-      color-mix(in oklab, var(--row-spot) 30%, transparent)
+    inset: 0;
+    background: conic-gradient(
+      from 180deg at 50% -45%,
+      var(--lit) 0deg,
+      var(--lit) calc(var(--row-cone) * 0.42),
+      color-mix(in oklab, var(--lit) 72%, transparent) calc(var(--row-cone) * 0.58),
+      color-mix(in oklab, var(--lit) 36%, transparent) calc(var(--row-cone) * 0.74),
+      color-mix(in oklab, var(--lit) 10%, transparent) calc(var(--row-cone) * 0.9),
+      transparent var(--row-cone),
+      transparent calc(360deg - var(--row-cone)),
+      color-mix(in oklab, var(--lit) 10%, transparent) calc(360deg - var(--row-cone) * 0.9),
+      color-mix(in oklab, var(--lit) 36%, transparent) calc(360deg - var(--row-cone) * 0.74),
+      color-mix(in oklab, var(--lit) 72%, transparent) calc(360deg - var(--row-cone) * 0.58),
+      var(--lit) calc(360deg - var(--row-cone) * 0.42),
+      var(--lit) 360deg
     );
-    clip-path: polygon(40% 0, 60% 0, 100% 100%, 0 100%);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      #000,
+      rgb(0 0 0 / 0.6) 55%,
+      rgb(0 0 0 / 0.3) 90%
+    );
+    mask-image: linear-gradient(to bottom, #000, rgb(0 0 0 / 0.6) 55%, rgb(0 0 0 / 0.3) 90%);
   }
 
-  .row-spot::after {
-    bottom: 0;
-    height: 16%;
+  /* The pool at the bot's feet, hot at its middle, which takes the landing. */
+  .row-pool,
+  .row-shadow {
+    position: absolute;
+    left: 50%;
+    translate: -50% 50%;
     border-radius: 50%;
+  }
+
+  .row-pool {
+    bottom: calc(-1 * var(--row-ceiling));
+    width: 4rem;
+    height: 0.875rem;
     background: radial-gradient(
       closest-side,
-      color-mix(in oklab, var(--row-spot) 42%, transparent),
+      color-mix(in oklab, var(--row-lamp) 58%, transparent),
+      color-mix(in oklab, var(--row-beam) 36%, transparent) 36%,
+      color-mix(in oklab, var(--row-spot) 12%, transparent) 70%,
       transparent
     );
   }
 
-  .row-words {
-    animation: row-words var(--duration-soft) var(--ease-soft) var(--row-words) backwards;
+  [data-arrival="landed"] .row-pool {
+    animation: row-pool-land var(--duration-soft) var(--ease-soft);
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .row-spot {
-      display: none;
-    }
+  /* Where the bot stands, the floor is dark under it once it has landed. */
+  .row-shadow {
+    bottom: calc(-1 * var(--row-ceiling) + 0.0625rem);
+    width: 2.25rem;
+    height: 0.4rem;
+    opacity: 0;
+    background: radial-gradient(
+      closest-side,
+      oklch(0 0 0 / 0.42),
+      oklch(0 0 0 / 0.18) 55%,
+      transparent
+    );
+  }
+
+  [data-arrival="landed"] .row-shadow {
+    animation: row-shadow-in var(--duration-slow) var(--ease-out) both;
+  }
+
+  /* The bot in its light: a thin bright rim along its top, and a little of its color around it. */
+  [data-arrival="lit"] .row-body {
+    filter: drop-shadow(0 -1px 0.4px color-mix(in oklab, var(--row-lamp) 55%, transparent))
+      drop-shadow(0 -3px 10px color-mix(in oklab, var(--row-beam) 24%, transparent));
+  }
+
+  [data-arrival="landed"] .row-body {
+    filter: drop-shadow(0 -1px 0.4px transparent) drop-shadow(0 -3px 10px transparent);
+    transition: filter var(--row-dim) var(--ease-out) var(--row-hold);
+  }
+
+  /* Its words wait for it, then its name and its line come in as it lands, one after the other. */
+  [data-arrival="lit"] :is(.row-name, .row-line) {
+    opacity: 0;
+  }
+
+  [data-arrival="landed"] .row-name {
+    animation: row-words var(--duration-soft) var(--ease-soft) both;
+  }
+
+  [data-arrival="landed"] .row-line {
+    animation: row-words var(--duration-soft) var(--ease-soft) var(--row-gap) both;
+  }
+
+  [data-arrival="calm"] {
+    animation: row-calm var(--duration-state) var(--ease-out) both;
   }
 }
 
-@keyframes row-spot {
-  0% {
+@keyframes row-light-in {
+  from {
     opacity: 0;
   }
-  16%,
-  62% {
+}
+
+@keyframes row-light-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes row-pool-land {
+  40% {
+    scale: 1.22 1.1;
+  }
+}
+
+@keyframes row-shadow-in {
+  to {
     opacity: 1;
-  }
-  100% {
-    opacity: 0;
   }
 }
 
 @keyframes row-words {
   from {
     opacity: 0;
-    transform: translateX(-8px);
+    translate: 0 0.25rem;
+  }
+}
+
+@keyframes row-calm {
+  from {
+    opacity: 0;
   }
 }
 

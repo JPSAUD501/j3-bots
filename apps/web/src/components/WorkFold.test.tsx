@@ -26,6 +26,7 @@ const scout = bot("Scout", {
   typing: false,
   retrying: false,
   activity: null,
+  activityKind: null,
   tool: null,
   littleOnes: 2,
 });

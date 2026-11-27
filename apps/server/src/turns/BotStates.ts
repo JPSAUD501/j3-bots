@@ -250,6 +250,7 @@ export const layer = Layer.effect(
           typing,
           retrying,
           activity: running ? step.value.label : null,
+          activityKind: running ? step.value.kind : null,
           tool: running ? step.value.tool : null,
           littleOnes: work?.littleOnes.working ?? 0,
         } as const;

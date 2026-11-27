@@ -555,13 +555,18 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
     // The turn thinks for two minutes before its steps.
     yield* TestClock.adjust(Duration.minutes(2));
     const at = yield* DateTime.now;
-    const step = (id: string, label: string, status: "running" | "completed") =>
+    const step = (
+      id: string,
+      label: string,
+      status: "running" | "completed",
+      kind: "command" | "search" = "command",
+    ) =>
       control.step({
         sessionId: session,
         turnId,
         step: {
           id: WorkStepId.make(id),
-          kind: "command",
+          kind,
           tool: null,
           label,
           status,
@@ -569,15 +574,20 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
           finishedAt: status === "completed" ? at : null,
         },
       });
+    // The step it is on, by kind and label.
     const activity = states
       .of(bot.id)
-      .pipe(Effect.map((state) => (state._tag === "working" ? state.activity : undefined)));
+      .pipe(
+        Effect.map((state) =>
+          state._tag === "working" ? `${state.activityKind}: ${state.activity}` : undefined,
+        ),
+      );
 
     yield* step("tests", "npm test", "running");
-    yield* step("lint", "npm run lint", "running");
-    yield* until(activity.pipe(Effect.map((label) => label === "npm run lint")));
-    yield* step("lint", "npm run lint", "completed");
-    yield* until(activity.pipe(Effect.map((label) => label === "npm test")));
+    yield* step("todos", "TODO", "running", "search");
+    yield* until(activity.pipe(Effect.map((now) => now === "search: TODO")));
+    yield* step("todos", "TODO", "completed", "search");
+    yield* until(activity.pipe(Effect.map((now) => now === "command: npm test")));
 
     // Quiet for longer than a stall takes, then a tool call: not stalled.
     yield* TestClock.adjust(Duration.sum(STALL_AFTER, Duration.minutes(1)));

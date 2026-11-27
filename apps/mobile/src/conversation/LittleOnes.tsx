@@ -13,7 +13,6 @@ import {
   littleSpot,
   perkLittle,
   settleLitter,
-  shortDuration,
   stepLitter,
   stillLittle,
   syncLitter,
@@ -32,7 +31,6 @@ import {
   resolveAvatar,
   springs,
 } from "@j3-bots/design-tokens";
-import * as DateTime from "effect/DateTime";
 import { type ComponentRef, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { Modal, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
@@ -53,7 +51,6 @@ import { type AvatarHandle, LittleBody, useMoves } from "../components/avatar/Bo
 import { join } from "../components/avatar/scheduler.ts";
 import { useI18n } from "../i18n.ts";
 import { appear, useReducedMotion } from "../motion.ts";
-import { useSeconds } from "../seconds.ts";
 import { Text } from "../text.tsx";
 import { OVERLAY_ELEVATION } from "../theme.ts";
 import { AnimatedView } from "./animated.ts";
@@ -435,8 +432,8 @@ function LittleRow({
 }
 
 /**
- * A little one's line in full, and how long it has worked, in a small card
- * over its line. Nothing else: it has no name, no conversation and no result
+ * A little one's line in full, and that it failed for one that did, in a
+ * small card over its line. Nothing else: it has no name, no conversation and no result
  * of its own. A press anywhere, or Back, closes it.
  */
 function LittleDetails({
@@ -452,8 +449,6 @@ function LittleDetails({
 }) {
   const i18n = useI18n();
   const window = useWindowDimensions();
-  const now = useSeconds(!failed);
-  const worked = Math.max(0, now - DateTime.toEpochMillis(one.startedAt));
   return (
     <Modal transparent statusBarTranslucent animationType="none" onRequestClose={onClose}>
       <Pressable accessibilityRole="button" onPress={onClose} style={{ flex: 1 }}>
@@ -473,11 +468,9 @@ function LittleDetails({
             className="gap-0.5 rounded-lg border border-border bg-surface px-3 py-2"
           >
             <Text className="text-xs text-foreground">{littleOneText(one, i18n)}</Text>
-            <Text className="text-xs text-muted-foreground">
-              {failed
-                ? i18n.t("littleOnes.failed")
-                : i18n.t("littleOnes.workingFor", { duration: shortDuration(worked, i18n) })}
-            </Text>
+            {failed && (
+              <Text className="text-xs text-muted-foreground">{i18n.t("littleOnes.failed")}</Text>
+            )}
           </View>
         </AnimatedView>
       </Pressable>

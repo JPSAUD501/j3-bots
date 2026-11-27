@@ -3,7 +3,7 @@ import { EntryId, EntryOrder, type WorkFoldEntry } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, message } from "../../test/fixtures.ts";
 import { buildTimeline, type TimelineItem } from "./timeline.ts";
-import { liveTurn, turnClock, turnElapsed, withLiveTurn } from "./turn.ts";
+import { liveTurn, withLiveTurn } from "./turn.ts";
 
 const started = "2026-11-20T14:00:00Z";
 const scout = bot("Scout", {
@@ -63,6 +63,7 @@ describe("liveTurn", () => {
       typing: false,
       retrying: false,
       activity: null,
+      activityKind: null,
       tool: null,
       littleOnes: 0,
     });
@@ -163,20 +164,5 @@ describe("withLiveTurn", () => {
       expect.objectContaining({ fold: before, live: false }),
       expect.objectContaining({ fold: null, live: true }),
     ]);
-  });
-});
-
-describe("the turn's clock", () => {
-  it("counts from the turn's start on the server, never below none", () => {
-    const turn = { botId: scout.id, startedAt: at(started) };
-    expect(turnElapsed(turn, Date.parse("2026-11-20T14:01:12Z"))).toBe(72_000);
-    expect(turnElapsed(turn, Date.parse("2026-11-20T13:59:58Z"))).toBe(0);
-  });
-
-  it("reads m:ss, then h:mm:ss past an hour", () => {
-    expect(turnClock(7_400)).toBe("0:07");
-    expect(turnClock(72_000)).toBe("1:12");
-    expect(turnClock(12 * 60_000 + 40_000)).toBe("12:40");
-    expect(turnClock(3_723_000)).toBe("1:02:03");
   });
 });

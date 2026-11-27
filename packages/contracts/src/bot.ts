@@ -12,7 +12,7 @@ import {
   ProviderId,
   SectionId,
 } from "./base.ts";
-import { StepTool } from "./work.ts";
+import { ActivityKind, StepTool } from "./work.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
 
@@ -156,8 +156,16 @@ export const BotState = Schema.Union([
     ...stalled,
     ...typing,
     ...retrying,
-    /** One line saying what it is doing right now. */
+    /**
+     * The label of the step it is on (`WorkStep.label`): a command, a path,
+     * a tool's name. A client says what the bot is doing in plain words from
+     * `activityKind` and `tool`, never the raw command or path; it reads
+     * this only for a tool J3 Bots cannot name, whose label is the tool's
+     * readable name. A client that predates `activityKind` shows it as is.
+     */
     activity: Schema.NullOr(Label),
+    /** The kind of the step it is on (`WorkStep.kind`), while one runs. */
+    activityKind: ActivityKind,
     /**
      * The tool it is using, when J3 Bots names it: clients say that in place
      * of `activity`, which then carries an English phrase for older clients.

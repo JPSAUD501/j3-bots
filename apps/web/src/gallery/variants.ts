@@ -873,11 +873,16 @@ export function galleryVariants(now: DateTime.Utc) {
           waitedBeforeMs: 0,
           background: false,
         },
-        4,
+        6,
       ),
       steps: [
         step("read", "invoices/2026-03.json"),
+        step(
+          "command",
+          "Get-ChildItem -Path .\\invoices -Filter *.json |\n  Measure-Object -Property Length -Sum",
+        ),
         step("tool", "Bank statement lookup"),
+        step("delegation", "Check the March totals against the bank statement"),
         step("edit", "memory/log/2026-11.md"),
         step("other", "Wrote the summary"),
       ],

@@ -28,6 +28,7 @@ import {
 } from "react";
 import {
   arrangeRoster,
+  ARRIVAL_LENGTH,
   arrivalsSettled,
   betweenBots,
   type BotItem,
@@ -112,7 +113,7 @@ function useArrivals(items: ReadonlyArray<RosterItem>): ReadonlySet<string> {
   const { entering } = now;
   useEffect(() => {
     if (entering.size === 0) return;
-    const settled = window.setTimeout(() => setArrivals(arrivalsSettled), stage.rowLight + 600);
+    const settled = window.setTimeout(() => setArrivals(arrivalsSettled), ARRIVAL_LENGTH);
     return () => window.clearTimeout(settled);
   }, [entering]);
   return entering;

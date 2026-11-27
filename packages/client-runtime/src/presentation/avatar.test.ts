@@ -33,6 +33,7 @@ const working: BotState = {
   typing: false,
   retrying: false,
   activity: null,
+  activityKind: null,
   tool: null,
   littleOnes: 0,
 };

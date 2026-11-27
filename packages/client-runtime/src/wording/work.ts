@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  ActivityKind,
   CredentialFill,
   FillField,
   StepSummary,
@@ -7,6 +8,7 @@ import type {
   TurnEnding,
   WorkFoldEntry,
   WorkStep,
+  WorkStepKind,
   WorkTool,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
@@ -68,10 +70,54 @@ const notFilled: Record<FillField, KeyWith<"name">> = {
 };
 
 /**
- * A step as its row in the work fold says it: the tool in J3 Bots' words,
- * what it is doing while it runs and what it did once it ran; else the
- * step's own label, a command or a path. A login's fill names the login and
- * the field, and whether it was filled.
+ * Each kind of step in plain words: what a step of it did, and what a bot on
+ * it is doing. A tool step has words of its own (`toolWords`, or the tool's
+ * name), and a step of a kind this build does not know says only that the
+ * bot worked.
+ */
+const kindWords: Record<
+  Exclude<WorkStepKind, "tool">,
+  { readonly did: Phrase; readonly doing: Phrase }
+> = {
+  command: { did: "step.command.did", doing: "step.command.doing" },
+  edit: { did: "step.edit.did", doing: "step.edit.doing" },
+  read: { did: "step.read.did", doing: "step.read.doing" },
+  search: { did: "step.search.did", doing: "step.search.doing" },
+  web: { did: "step.web.did", doing: "step.web.doing" },
+  delegation: { did: "step.delegation.did", doing: "step.delegation.doing" },
+  other: { did: "summary.workFold", doing: "presence.working" },
+};
+
+/**
+ * A step in plain words, as the operator reads it wherever it is shown: what
+ * it is doing while it runs, what it did once it ran. A tool J3 Bots names
+ * in its words; a tool it cannot name by its own readable name; every other
+ * step by its kind, never by its command, path or search, which only the
+ * step's detail shows (`stepDetail`).
+ */
+function stepWords(
+  kind: ActivityKind,
+  tool: StepTool,
+  label: string | null,
+  running: boolean,
+  i18n: I18n,
+): string {
+  const { t } = i18n;
+  const words = wordsOf(tool);
+  if (words !== null) return t(running ? words.doing : words.did);
+  if (kind === "tool") {
+    const name = label === null ? "" : firstLine(label);
+    if (name === "") return t(running ? "tool.builtIn.doing" : "tool.builtIn.did");
+    return t(running ? "step.tool.doing" : "step.tool.did", { label: name });
+  }
+  const plain = kind === null || kind === "unknown" ? kindWords.other : kindWords[kind];
+  return t(running ? plain.doing : plain.did);
+}
+
+/**
+ * A step as its row in the work fold says it, in plain words
+ * (`stepWords`). A login's fill names the login and the field, and whether
+ * it was filled.
  */
 export function stepText(step: WorkStep, i18n: I18n): string {
   if (step.fill !== undefined) {
@@ -80,9 +126,17 @@ export function stepText(step: WorkStep, i18n: I18n): string {
       name: fill.name,
     });
   }
-  const words = wordsOf(step.tool);
-  if (words === null) return step.label;
-  return i18n.t(step.status === "running" ? words.doing : words.did);
+  return stepWords(step.kind, step.tool, step.label, step.status === "running", i18n);
+}
+
+/**
+ * What a step worked on, as it was given: the command, the path, the search
+ * or the address, for whoever opens the step to see it. None for a tool,
+ * whose words already say it, and for a login's fill, which says its own.
+ */
+export function stepDetail(step: WorkStep): string | null {
+  if (step.fill !== undefined || step.kind === "tool") return null;
+  return step.label;
 }
 
 /**
@@ -136,14 +190,14 @@ export function fillDetail(fill: CredentialFill, i18n: I18n): string {
   }
 }
 
-/**
- * What a working bot is doing, in a few words: its running step's tool,
- * else that step's label, else that it is working.
- */
-export function activityText(activity: string | null, tool: StepTool, i18n: I18n): string {
-  const words = wordsOf(tool);
-  if (words !== null) return i18n.t(words.doing);
-  return activity ?? i18n.t("presence.working");
+/** What a working bot is doing, in a few words: the step it is on, in plain words (`stepWords`). */
+export function activityText(
+  activity: string | null,
+  kind: ActivityKind,
+  tool: StepTool,
+  i18n: I18n,
+): string {
+  return stepWords(kind, tool, activity, true, i18n);
 }
 
 /**
@@ -161,27 +215,7 @@ export function workDoneText(
     if (ending === "failed") return t("summary.workFailed");
     return t("summary.workFold");
   }
-  const words = wordsOf(step.tool);
-  if (words !== null) return t(words.did);
-  const label = firstLine(step.label);
-  switch (step.kind) {
-    case "command":
-      return t("summary.ran", { label });
-    case "edit":
-      return t("summary.edited", { label });
-    case "read":
-      return t("summary.read", { label });
-    case "search":
-      return t("summary.searched", { label });
-    case "web":
-      return t("summary.searchedWeb", { label });
-    case "delegation":
-      return t("summary.handedOff", { label });
-    case "tool":
-      return t("summary.usedTool", { label });
-    case "other":
-      return label;
-  }
+  return stepWords(step.kind, step.tool, step.label, false, i18n);
 }
 
 /**

@@ -26,7 +26,7 @@ import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts"
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepTool, TurnWork } from "./work.ts";
+import { StepTool, TurnWork, WorkStepKind } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -747,20 +747,7 @@ export type WorkFoldEntry = typeof WorkFoldEntry.Type;
 /** A step replaces an earlier one with the same id: a running command, then its result. */
 export const WorkStep = Schema.Struct({
   id: WorkStepId,
-  /**
-   * `delegation` is no longer written: the work a turn hands off is its
-   * little ones (`TurnWork`, decision 0070). Steps stored before keep it.
-   */
-  kind: Schema.Literals([
-    "command",
-    "edit",
-    "read",
-    "search",
-    "web",
-    "tool",
-    "delegation",
-    "other",
-  ]),
+  kind: WorkStepKind,
   /**
    * For a `tool` step, the tool in J3 Bots' words, which a client shows in
    * place of the label; `null` for a tool it cannot name, and for every other
@@ -768,8 +755,11 @@ export const WorkStep = Schema.Struct({
    */
   tool: StepTool,
   /**
-   * The step in one line: a command, a path, a search. For a tool J3 Bots
-   * names, a short English phrase, for a client that predates `tool`.
+   * The step in one line: a command, a path, a search. A client says the
+   * step in plain words from its kind and tool, and shows this only as the
+   * step's detail, one step in. For a tool J3 Bots names, a short English
+   * phrase, for a client that predates `tool`; for a tool it cannot name,
+   * the tool's own name made readable, which a client says.
    */
   label: Label,
   status: Schema.Literals(["running", "completed", "failed"]),

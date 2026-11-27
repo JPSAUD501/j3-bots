@@ -2,13 +2,18 @@
 import { EntryId, EntryOrder, type BotState, type WorkFoldEntry } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, context, plain } from "../../test/fixtures.ts";
-import { nextSpoken, turnAnnouncement, turnLabel, turnLine, type Spoken } from "./turn.ts";
+import { nextSpoken, turnAnnouncement, turnLine, type Spoken } from "./turn.ts";
 
 const started = "2026-11-20T14:00:00Z";
 const ctxAt = (now: string) => context(now, "en", {});
 const ctx = ctxAt("2026-11-20T14:01:00Z");
 
-const working = (activity: string | null, stalled = false): BotState => ({
+/** A bot on a step: a command by default, as the label the engine gave it. */
+const working = (
+  activity: string | null,
+  stalled = false,
+  activityKind: "command" | "read" = "command",
+): BotState => ({
   _tag: "working",
   since: at(started),
   stalled,
@@ -16,6 +21,7 @@ const working = (activity: string | null, stalled = false): BotState => ({
   typing: false,
   retrying: false,
   activity,
+  activityKind: activity === null ? null : activityKind,
   tool: null,
   littleOnes: 0,
 });
@@ -34,11 +40,15 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
 });
 
 describe("turnLine", () => {
-  it("says what the bot is doing, and only as last known once out of touch", () => {
-    expect(turnLine(bot("Scout", working("git status")), false, ctx).text).toBe("git status");
+  it("says what the bot is doing in plain words, and only as last known once out of touch", () => {
+    const powershell = String.raw`"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe" -Command Get-ChildItem`;
+    expect(turnLine(bot("Scout", working(powershell)), false, ctx).text).toBe("Running a command");
+    expect(turnLine(bot("Scout", working("src/app.ts", false, "read")), false, ctx).text).toBe(
+      "Reading a file",
+    );
     expect(turnLine(bot("Scout", working(null)), false, ctx).text).toBe("Working");
     expect(turnLine(bot("Scout", working("git status")), true, ctx)).toEqual({
-      text: "Last known: git status",
+      text: "Last known: Running a command",
       tone: "secondary",
     });
   });
@@ -48,20 +58,6 @@ describe("turnLine", () => {
     for (const now of ["2026-11-20T14:10:00Z", "2026-11-20T15:40:00Z"]) {
       expect(turnLine(stalled, true, ctxAt(now)).text).toBe("Last known: No recent activity");
     }
-  });
-});
-
-describe("turnLabel", () => {
-  const line = { text: "Thinking", tone: "default" } as const;
-
-  it("reads the line with how long the turn has run, in whole minutes", () => {
-    expect(plain(turnLabel(line, 72_000, ctx))).toBe("Thinking, 1m so far");
-    expect(turnLabel(line, 119_000, ctx)).toBe(turnLabel(line, 60_000, ctx));
-  });
-
-  it("reads only the line under a minute, and with no time to give", () => {
-    expect(turnLabel(line, 59_000, ctx)).toBe("Thinking");
-    expect(turnLabel(line, null, ctx)).toBe("Thinking");
   });
 });
 
@@ -84,12 +80,14 @@ describe("turnAnnouncement", () => {
   const waiting: BotState = { _tag: "waiting", entryId: EntryId.make("card"), since: null };
   const blocked: BotState = { _tag: "blocked", failure: "usage-limit", retryAt: null };
 
-  it("says each new line while the bot works, and nothing more as its clock runs", () => {
+  it("says each new line while the bot works, and nothing more as time passes", () => {
     const first = said(working("git status"));
     expect(said(working("git status"), "2026-11-20T14:03:00Z")).toEqual(first);
-    const next = said(working("git diff"));
+    // Another command reads the same: nothing new to say.
+    expect(said(working("git diff")).key).toBe(first.key);
+    const next = said(working("src/app.ts", false, "read"));
     expect(next.key).not.toBe(first.key);
-    expect(next.text).toBe("git diff");
+    expect(next.text).toBe("Reading a file");
   });
 
   it("says once that a turn has gone quiet, not again each minute of quiet", () => {
@@ -123,12 +121,12 @@ describe("turnAnnouncement", () => {
 
   it("says once that what it shows is the last it knew, and the state again once back", () => {
     const dropped = said(working("git status"), undefined, null, true);
-    expect(dropped.text).toBe("Last known: git status");
-    // Nothing more is said while out of touch, however the clock runs.
+    expect(dropped.text).toBe("Last known: Running a command");
+    // Nothing more is said while out of touch, however long it lasts.
     expect(said(working("git status"), "2026-11-20T14:05:00Z", null, true)).toEqual(dropped);
     const back = said(working("git status"));
     expect(back.key).not.toBe(dropped.key);
-    expect(back.text).toBe("git status");
+    expect(back.text).toBe("Running a command");
     // A bot with no turn under way has nothing to say out of touch.
     expect(said({ _tag: "idle" }, undefined, null, true).key).toBe("idle");
   });

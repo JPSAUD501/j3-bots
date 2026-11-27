@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, WorkFoldEntry } from "@j3-bots/contracts";
-import { shortDuration } from "../presentation/time.ts";
 import { liveTurn } from "../presentation/turn.ts";
 import { presenceLine, type PresentationContext, type StatusLine } from "./status.ts";
 import { workFoldTitle } from "./work.ts";
@@ -22,27 +21,8 @@ export function turnLine(bot: Bot, offline: boolean, ctx: PresentationContext): 
   return { text: t("work.offline", { status }), tone: "secondary" };
 }
 
-/**
- * A turn under way, as assistive technology reads its row: the line, and how
- * long so far in whole minutes, so the label changes no more than once a
- * minute. Under a minute, or with no time to give (`null`: out of touch with
- * the server, the clock is not shown), only the line.
- */
-export function turnLabel(
-  line: StatusLine,
-  elapsedMs: number | null,
-  ctx: PresentationContext,
-): string {
-  const minutes = elapsedMs === null ? 0 : Math.floor(elapsedMs / 60_000);
-  if (minutes === 0) return line.text;
-  return ctx.i18n.t("work.live", {
-    status: line.text,
-    duration: shortDuration(minutes * 60_000, ctx.i18n),
-  });
-}
-
 export interface Announcement {
-  /** Changes once per thing worth saying: a clock tick or a minute more of quiet never changes it. */
+  /** Changes once per thing worth saying: a minute more of quiet never changes it. */
   readonly key: string;
   readonly text: string;
   /** How a turn ended: said once, however often the bot comes back to it. */

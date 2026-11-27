@@ -177,6 +177,7 @@ describe("rosterLine", () => {
               typing: true,
               retrying: false,
               activity: "Reading",
+              activityKind: "read",
               tool: null,
               littleOnes: 0,
             },
@@ -197,6 +198,7 @@ describe("rosterLine", () => {
         typing: false,
         retrying: false,
         activity: "Reading",
+        activityKind: "read",
         tool: null,
         littleOnes: 0,
       });
@@ -231,6 +233,7 @@ describe("a turn's trouble", () => {
     typing: false,
     retrying: true,
     activity: "Reading",
+    activityKind: "read",
     tool: null,
     littleOnes: 0,
   });

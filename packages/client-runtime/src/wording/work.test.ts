@@ -10,7 +10,7 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { fillDetail, stepText, workDoneText, workFoldTitle } from "./work.ts";
+import { fillDetail, stepDetail, stepText, workDoneText, workFoldTitle } from "./work.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", {});
 
@@ -66,10 +66,10 @@ describe("workFoldTitle", () => {
     );
   });
 
-  it("counts from the turn's start, as the turn's clock did, when the server says it", () => {
+  it("counts from the turn's start when the server says it", () => {
     const fromTurn: WorkFoldEntry = {
       ...finished("2026-11-20T14:01:12Z", 0),
-      // The first step came 20 s into the turn; the clock had counted from its start.
+      // The first step came 20 s into the turn, which started before it.
       createdAt: at("2026-11-20T14:00:20Z"),
       turnStartedAt: at("2026-11-20T14:00:00Z"),
     };
@@ -117,7 +117,58 @@ describe("workDoneText", () => {
     expect(workDoneText(null, "failed", ctx.i18n)).toBe("Failed");
     expect(workDoneText(null, null, ctx.i18n)).toBe("Did some work");
     const ran = { kind: "command", tool: null, label: "git status" } as const;
-    expect(plain(workDoneText(ran, "interrupted", ctx.i18n))).toBe("Ran git status");
+    expect(workDoneText(ran, "interrupted", ctx.i18n)).toBe("Ran a command");
+  });
+});
+
+describe("a step in plain words", () => {
+  const step = (
+    kind: WorkStep["kind"],
+    label: string,
+    status: WorkStep["status"] = "completed",
+    tool: WorkStep["tool"] = null,
+  ): WorkStep => ({
+    id: WorkStepId.make(`${kind}-${status}`),
+    kind,
+    tool,
+    label,
+    status,
+    startedAt: at("2026-11-20T14:00:00Z"),
+    finishedAt: status === "running" ? null : at("2026-11-20T14:00:05Z"),
+  });
+  const powershell = String.raw`"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe" -Command Get-ChildItem`;
+
+  it("says what each kind of step does and did, never its command, path or search", () => {
+    const said = (kind: WorkStep["kind"], label: string) => [
+      stepText(step(kind, label, "running"), ctx.i18n),
+      stepText(step(kind, label), ctx.i18n),
+    ];
+    expect(said("command", powershell)).toEqual(["Running a command", "Ran a command"]);
+    expect(said("edit", "/home/someone/notes.md")).toEqual(["Editing a file", "Edited a file"]);
+    expect(said("read", "src/app.ts")).toEqual(["Reading a file", "Read a file"]);
+    expect(said("search", "TODO in src")).toEqual(["Searching its files", "Searched its files"]);
+    expect(said("web", "plumbers near me")).toEqual(["Searching the web", "Searched the web"]);
+    expect(said("other", "something")).toEqual(["Working", "Did some work"]);
+    const ptBR = context("2026-11-20T15:00:00Z", "pt-BR", {});
+    expect(stepText(step("command", powershell, "running"), ptBR.i18n)).toBe("Rodando um comando");
+  });
+
+  it("names a tool in J3 Bots' words, or one it cannot name by the tool's own name", () => {
+    expect(stepText(step("tool", "Read a web page", "running", "web-page"), ctx.i18n)).toBe(
+      "Reading a web page",
+    );
+    expect(plain(stepText(step("tool", "Create issue"), ctx.i18n))).toBe("Used “Create issue”");
+  });
+
+  it("keeps what the step worked on as its detail, one step in", () => {
+    expect(stepDetail(step("command", powershell))).toBe(powershell);
+    expect(stepDetail(step("read", "src/app.ts"))).toBe("src/app.ts");
+    expect(stepDetail(step("tool", "Create issue"))).toBeNull();
+  });
+
+  it("says the roster's summary of a turn the same way", () => {
+    const edited = { kind: "edit", tool: null, label: "/home/someone/notes.md" } as const;
+    expect(workDoneText(edited, null, ctx.i18n)).toBe("Edited a file");
   });
 });
 
