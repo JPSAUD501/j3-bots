@@ -1297,6 +1297,25 @@ export const layer = Layer.effect(
           return yield* new SecretRefused({ secret: inAddress.value.name, problem: "in-address" });
         }
       }
+      return yield* checkReferences({
+        references: referencesOf(input.secret),
+        grant: input.grant,
+        by: input.by,
+        written: input.written,
+      });
+    });
+
+    /**
+     * Checks `references`, which a connector's secret names, may be used by
+     * every bot `grant` gives it to, and `written`, those a bot just gave,
+     * by that bot.
+     */
+    const checkReferences = Effect.fn("Connectors.checkReferences")(function* (input: {
+      readonly references: ReadonlyArray<SecretReference>;
+      readonly grant: ConnectorGrant;
+      readonly by: ChangeAuthor;
+      readonly written: ReadonlyArray<SecretReference>;
+    }) {
       const refusal =
         (problem: "not-shared" | "not-yours") =>
         (error: SecretUnavailable): SecretRefused | Conflict =>
@@ -1315,7 +1334,7 @@ export const layer = Layer.effect(
           Effect.mapError(refusal("not-yours")),
         );
       }
-      return yield* lookUpFor(referencesOf(input.secret), usersOf(input.grant)).pipe(
+      return yield* lookUpFor(input.references, usersOf(input.grant)).pipe(
         Effect.mapError(refusal("not-shared")),
       );
     });
@@ -2531,12 +2550,9 @@ export const layer = Layer.effect(
         service,
         Option.fromNullishOr(secret.value.service?.issuer),
       );
-      yield* checkSecrets({
-        secret: { ...secret.value, service: credentials },
-        grant: connector.grant,
-        by,
-        written: referencesInValues([credentials.clientId, credentials.credential.value]),
-      });
+      // Only what they name: values the same update gives are checked as they are written.
+      const named = referencesInValues([credentials.clientId, credentials.credential.value]);
+      yield* checkReferences({ references: named, grant: connector.grant, by, written: named });
       return credentials;
     });
 

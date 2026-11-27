@@ -1187,26 +1187,36 @@ it.effect("gets a service a new token a minute before the one it has expires", (
   );
 });
 
-it.effect("keeps a service's credentials and token when a request needs a scope they lack", () => {
+it.effect("keeps a service's credentials when a request needs a scope its token lacks", () => {
   const fake = new FakeAuthorizationServer();
   fake.addSecretClient(SERVICE_CLIENT, "s3cret-value");
   const service = withSecret(fake, "s3cret-value");
+  const lacking = Option.some('Bearer error="insufficient_scope", scope="builds:write"');
   return run(
     fake,
     Effect.gen(function* () {
       const signIns = yield* auth;
       const token = yield* serviceToken(service);
       const rejected = yield* Effect.exit(
-        signIns.serviceRejected(
-          NOTION,
-          Option.some('Bearer error="insufficient_scope", scope="builds:write"'),
-          Option.some(token),
-        ),
+        signIns.serviceRejected(NOTION, lacking, Option.some(token)),
       );
       assert.strictEqual(refusal(rejected), "scope-refused");
-      // Other requests go on with the same token, and the service is asked nothing.
-      assert.strictEqual(Redacted.value(yield* serviceToken(service)), Redacted.value(token));
-      assert.lengthOf(tokenRequests(fake), 1);
+      // The next call gets a new token, which carries the scope once the operator grants it.
+      const next = yield* serviceToken(service);
+      assert.notStrictEqual(Redacted.value(next), Redacted.value(token));
+      assert.lengthOf(tokenRequests(fake), 2);
+      // Refused for the scope again, with a token got just now: still not the credentials.
+      const again = yield* Effect.exit(
+        signIns.serviceRefused({
+          connectorId: NOTION,
+          wwwAuthenticate: lacking,
+          sent: Option.some(next),
+          secret: SERVICE_SECRET,
+        }),
+      );
+      assert.strictEqual(refusal(again), "scope-refused");
+      yield* serviceToken(service);
+      assert.lengthOf(tokenRequests(fake), 3);
     }),
   );
 });

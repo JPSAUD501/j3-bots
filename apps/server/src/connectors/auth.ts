@@ -95,9 +95,14 @@ export class ConnectorSignIns extends Context.Service<
       wwwAuthenticate: Option.Option<string>,
       sent: Option.Option<Redacted.Redacted<string>>,
     ) => Effect.Effect<void, AuthFailing>;
-    /** The connector's server refused a new service token too: the credentials are refused. */
+    /**
+     * The connector's server refused a new service token too, with this
+     * `WWW-Authenticate`: the credentials are refused, unless the token
+     * lacked a scope (`scope-refused`).
+     */
     readonly serviceRefused: (input: {
       readonly connectorId: ConnectorId;
+      readonly wwwAuthenticate: Option.Option<string>;
       readonly sent: Option.Option<Redacted.Redacted<string>>;
       readonly secret: SecretName;
     }) => Effect.Effect<never, CredentialsUnavailable>;

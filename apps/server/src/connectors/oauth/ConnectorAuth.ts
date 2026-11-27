@@ -247,9 +247,9 @@ export class ConnectorAuth extends Context.Service<
      * The connector's server refused `sent`, a service token, with this
      * `WWW-Authenticate`: the next call gets a new one, unless another
      * replaced it meanwhile. A second refusal is `serviceRefused`'s. A token
-     * refused for a scope it lacks (`insufficient_scope`) is kept, since the
-     * credentials would get the same one: that request fails `AuthFailing`
-     * (`scope-refused`).
+     * refused for a scope it lacks (`insufficient_scope`) is dropped too, but
+     * that request fails `AuthFailing` (`scope-refused`) at once: a new token
+     * lacks it as well until the operator grants it.
      */
     readonly serviceRejected: (
       connectorId: ConnectorId,
@@ -257,12 +257,15 @@ export class ConnectorAuth extends Context.Service<
       sent: Option.Option<Redacted.Redacted<string>>,
     ) => Effect.Effect<void, AuthFailing>;
     /**
-     * The connector's server refused `sent`, a token got just now: the
-     * credentials it was got with are refused until others are given. Fails
-     * `SecretNeeded` (`refused`) for `secret`.
+     * The connector's server refused `sent`, a token got just now, with this
+     * `WWW-Authenticate`: the credentials it was got with are refused until
+     * others are given, and it fails `SecretNeeded` (`refused`) for `secret`.
+     * A token that lacked a scope refuses nothing: it fails `AuthFailing`
+     * (`scope-refused`).
      */
     readonly serviceRefused: (input: {
       readonly connectorId: ConnectorId;
+      readonly wwwAuthenticate: Option.Option<string>;
       readonly sent: Option.Option<Redacted.Redacted<string>>;
       readonly secret: SecretName;
     }) => Effect.Effect<never, CredentialsUnavailable>;
@@ -1278,19 +1281,25 @@ export const layer = Layer.effect(
       );
     });
 
-    const serviceRejected = (
-      id: ConnectorId,
-      wwwAuthenticate: Option.Option<string>,
-      sent: Option.Option<Redacted.Redacted<string>>,
-    ): Effect.Effect<void, AuthFailing> => {
-      const insufficient = Option.exists(
-        Option.flatMap(wwwAuthenticate, parseBearerChallenge),
-        ({ error }) => Option.contains(error, "insufficient_scope"),
+    /**
+     * Whether a server's refusal says the token lacks a scope
+     * (`insufficient_scope`): the credentials are not what was refused, and
+     * asking again with them gets the same answer until the operator grants
+     * the client that scope at the service.
+     */
+    const lacksScope = (wwwAuthenticate: Option.Option<string>): boolean =>
+      Option.exists(Option.flatMap(wwwAuthenticate, parseBearerChallenge), ({ error }) =>
+        Option.contains(error, "insufficient_scope"),
       );
-      if (insufficient) return Effect.fail(new AuthFailing({ reason: "scope-refused" }));
-      return Effect.sync(() => {
+
+    /**
+     * Drops the kept token when it is `sent`, which the connector's server
+     * refused: the next call gets a new one. A token another call replaced
+     * meanwhile is not the one refused.
+     */
+    const dropRefused = (id: ConnectorId, sent: Option.Option<Redacted.Redacted<string>>) =>
+      Effect.sync(() => {
         const cached = serviceTokensOf.get(id);
-        // A token another call replaced meanwhile is not the one refused.
         if (
           cached !== undefined &&
           Option.exists(sent, (token) => Redacted.value(token) === Redacted.value(cached.token))
@@ -1298,13 +1307,33 @@ export const layer = Layer.effect(
           serviceTokensOf.delete(id);
         }
       });
-    };
+
+    const serviceRejected = (
+      id: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
+      sent: Option.Option<Redacted.Redacted<string>>,
+    ): Effect.Effect<void, AuthFailing> =>
+      // A token lacking a scope is dropped too, so the next call's new one
+      // carries it once the operator grants it; this request fails at once.
+      lacksScope(wwwAuthenticate)
+        ? Effect.andThen(
+            dropRefused(id, sent),
+            Effect.fail(new AuthFailing({ reason: "scope-refused" })),
+          )
+        : dropRefused(id, sent);
 
     const serviceRefused = (input: {
       readonly connectorId: ConnectorId;
+      readonly wwwAuthenticate: Option.Option<string>;
       readonly sent: Option.Option<Redacted.Redacted<string>>;
       readonly secret: SecretName;
     }) => {
+      if (lacksScope(input.wwwAuthenticate)) {
+        return Effect.andThen(
+          dropRefused(input.connectorId, input.sent),
+          Effect.fail(new AuthFailing({ reason: "scope-refused" })),
+        );
+      }
       const cached = serviceTokensOf.get(input.connectorId);
       const refused = Option.exists(
         input.sent,

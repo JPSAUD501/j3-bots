@@ -269,7 +269,7 @@ export const credentialsOf = (
     const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
     if (sameHeaders(headers, sent.headers)) return yield* new NeedsSignIn();
   }),
-  refusedAgain: Effect.fn("ConnectorCredentials.refusedAgain")(function* (sent) {
+  refusedAgain: Effect.fn("ConnectorCredentials.refusedAgain")(function* (wwwAuthenticate, sent) {
     const now = yield* current;
     if (Option.isNone(now)) return yield* new Withdrawn();
     const stored = yield* secretOf(secrets, now.value);
@@ -279,6 +279,7 @@ export const credentialsOf = (
     if (now.value.signIn === "oauth" || Option.isNone(secret)) return;
     return yield* signIns.serviceRefused({
       connectorId: now.value.id,
+      wwwAuthenticate,
       sent: sent.bearer,
       secret: secret.value,
     });

@@ -149,12 +149,16 @@ export interface ConnectorCredentials {
     sent: CallCredentials,
   ) => Effect.Effect<void, CredentialsUnavailable>;
   /**
-   * The server refused the credentials sent again, `sent`, after `rejected`:
-   * what that means for them. It fails for a connector that signs in as a
-   * service, whose credentials were refused; when it succeeds, or is left
-   * out, the operator must sign in again (`NeedsSignIn`).
+   * The server refused the credentials sent again, `sent`, after `rejected`,
+   * with this `WWW-Authenticate`: what that means for them. It fails for a
+   * connector that signs in as a service, whose credentials were refused or
+   * lack a scope; when it succeeds, or is left out, the operator must sign
+   * in again (`NeedsSignIn`).
    */
-  readonly refusedAgain?: (sent: CallCredentials) => Effect.Effect<void, CredentialsUnavailable>;
+  readonly refusedAgain?: (
+    wwwAuthenticate: Option.Option<string>,
+    sent: CallCredentials,
+  ) => Effect.Effect<void, CredentialsUnavailable>;
 }
 
 export interface SessionLimits {
@@ -478,7 +482,14 @@ const signingFetch =
     const second = await attempt();
     if (!refusedCredentials(second.response)) return answered(second.response);
     await second.response.body?.cancel();
-    if (credentials.refusedAgain !== undefined) await run(credentials.refusedAgain(second.sent));
+    if (credentials.refusedAgain !== undefined) {
+      await run(
+        credentials.refusedAgain(
+          Option.fromNullishOr(second.response.headers.get("www-authenticate")),
+          second.sent,
+        ),
+      );
+    }
     throw new NeedsSignIn({ renewed: !sameCredentials(first.sent, second.sent) });
   };
 
