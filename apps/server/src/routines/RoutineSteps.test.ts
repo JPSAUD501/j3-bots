@@ -38,6 +38,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
+import { BotStates } from "../turns/BotStates.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Routines } from "./Routines.ts";
 
@@ -261,6 +262,14 @@ it.effect(
         ["question", { name: "Inbox", reason: "yes", stepBotId: null }, ASK.question],
       );
       assert.strictEqual(yield* wakesOf(routine.id, bia.id), 0);
+      // The owner waits on the operator, at the run's card.
+      const [card] = (yield* conversation(ana.id)).filter((entry) => entry._tag === "routine-run");
+      if (card === undefined) return assert.fail("The run has its card");
+      assert.deepStrictEqual(yield* (yield* BotStates).of(ana.id), {
+        _tag: "waiting",
+        entryId: card.id,
+        since: null,
+      });
 
       yield* answer(waiting.id, "yes", "Only the first two.");
       const second = yield* stepTurn(routine.id, bia.id);

@@ -228,7 +228,7 @@ export const layer = Layer.effect(
     const targets = stopTargets(sql);
     const entries = yield* Entries;
     const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
-    const routineRuns = runStops(sql, ledger, changes, runCards(sql, entries));
+    const routineRuns = runStops(sql, ledger, changes, runCards(sql, entries, changes));
 
     /** Whether an audience column pair is in a Stop's scope. */
     const inScope = (scope: StopScope) =>

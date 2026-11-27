@@ -78,7 +78,11 @@ const StepTurnRow = Schema.Struct({
  * date with the run. `notify` tells the operator, as a new entry would: when
  * the run waits for their yes, or failed.
  */
-export const runCards = (sql: SqlClient.SqlClient, entries: Entries["Service"]) => {
+export const runCards = (
+  sql: SqlClient.SqlClient,
+  entries: Entries["Service"],
+  changes: ChangeLog["Service"],
+) => {
   const view = runView(sql);
 
   const refresh = Effect.fn("runCards.refresh")(function* (runId: RoutineRunId, notify: boolean) {
@@ -93,6 +97,8 @@ export const runCards = (sql: SqlClient.SqlClient, entries: Entries["Service"]) 
       run: yield* view.toRun(row.value),
     };
     yield* entries.update(card, { notify });
+    // A yes that opens or closes changes whether its owner waits on the operator.
+    yield* changes.touch({ _tag: "bot", botId: row.value.owner_id });
   }, Effect.orDie);
 
   /** Posts the run's card, at its start, and records where it is. */

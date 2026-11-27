@@ -287,7 +287,7 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
     const signals = yield* Signals;
     const view = runView(sql);
-    const cards = runCards(sql, entries);
+    const cards = runCards(sql, entries, changes);
 
     const routineRow = SqlSchema.findOneOption({
       Request: RoutineId,
