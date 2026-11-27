@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Client, ProtocolError } from "@modelcontextprotocol/client";
+import { type Client, ProtocolError, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import {
   DIRECTORY_MIME_TYPE,
   SKILL_LIMITS,
@@ -139,10 +139,17 @@ export interface SkillRequests {
 const servedOf = (entry: Skill, redact: (text: string) => string): ServedSkill | null => {
   const { uri } = entry;
   if (uri.length > MAX_SKILL_URI || cleanText(uri) !== uri || /\s/u.test(uri)) return null;
-  if (redact(uri) !== uri) return null;
-  const description = cleanDescription(redact(entry.frontmatter.description));
-  if (description === "") return null;
   const { resources } = entry;
+  // Its files' paths reach the bot as a folder's listing: none may carry a secret either.
+  if (redact(uri) !== uri) return null;
+  if (resources !== "dynamic" && resources.some((file) => redact(file.uri) !== file.uri)) {
+    return null;
+  }
+  // One line, as the list of a bot's skills holds one a line.
+  const description = cleanDescription(redact(entry.frontmatter.description))
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (description === "") return null;
   return {
     uri,
     // The SDK checked it against the extension's naming rule and the last segment of the address.
@@ -169,15 +176,39 @@ export const skillPath = (path: string): string | null => {
     .replace(/\/+$/u, "");
   if (/[\\?#]|:\/\//u.test(trimmed) || cleanText(trimmed) !== trimmed) return null;
   const segments = trimmed === "" ? [] : trimmed.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    return null;
-  }
-  return segments.join("/");
+  // A server may decode a segment before it resolves it: `%2e%2e` leaves the skill as `..` does.
+  return segments.every((segment) => {
+    const decoded = decodedSegment(segment);
+    return decoded !== null && decoded !== "" && decoded !== "." && decoded !== "..";
+  })
+    ? segments.join("/")
+    : null;
 };
 
-/** The server said it serves no such skill, file or folder (`-32602`, as the extension has it). */
+/** A path segment percent-decoded; null when it does not decode, or decodes to a separator. */
+const decodedSegment = (segment: string): string | null => {
+  try {
+    const decoded = decodeURIComponent(segment);
+    return /[/\\]/u.test(decoded) ? null : decoded;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The server said it serves no such skill, file or folder: `-32602`, as the
+ * extension has it, or `-32002`, MCP's resource not found before it.
+ */
 const isUnknown = (error: unknown): boolean =>
-  ProtocolError.isInstance(error) && error.code === -32602;
+  ProtocolError.isInstance(error) && (error.code === -32602 || error.code === -32002);
+
+/**
+ * The SDK refused what the server answered of one skill (an entry the
+ * extension does not allow, another skill than the one asked for, contents
+ * it cannot read): something wrong with that skill, not with the connector.
+ */
+const isInvalid = (error: unknown): boolean =>
+  SdkError.isInstance(error) && error.code === SdkErrorCode.InvalidResult;
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
@@ -221,6 +252,16 @@ const manifestFolder = (
   return [...entries]
     .map(([path, isFolder]) => ({ path, folder: isFolder }))
     .toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+};
+
+/**
+ * What it means that a skill's server knows no file at `path`: the skill is
+ * gone when that is its `SKILL.md`; one it generates holds nothing there; a
+ * file its manifest lists is no longer as the manifest says.
+ */
+const unknownFile = (skill: ServedSkill, path: string | undefined): SkillReadRefusal => {
+  if (path === undefined || path === "SKILL.md") return "gone";
+  return skill.entry.resources === "dynamic" ? "unlisted" : "mismatch";
 };
 
 /** The extension's requests a session makes: none to a server that did not declare it. */
@@ -281,7 +322,7 @@ export const skillsOf = (client: Client, requests: SkillRequests): SessionSkills
           skills.get(uri, readOptions(signal)).then(
             ({ skill }) => skill,
             (error: unknown) => {
-              if (isUnknown(error)) return null;
+              if (isUnknown(error) || isInvalid(error)) return null;
               throw error;
             },
           ),
@@ -311,7 +352,9 @@ export const skillsOf = (client: Client, requests: SkillRequests): SessionSkills
             const reason = error.reason === "unlisted" ? "unlisted" : "mismatch";
             return { _tag: "refused", reason } as const;
           }
-          if (isUnknown(error)) return { _tag: "refused", reason: "gone" } as const;
+          if (isUnknown(error))
+            return { _tag: "refused", reason: unknownFile(skill, within) } as const;
+          if (isInvalid(error)) return { _tag: "refused", reason: "mismatch" } as const;
           throw error;
         },
       ),
@@ -362,7 +405,9 @@ export const skillsOf = (client: Client, requests: SkillRequests): SessionSkills
       skills.readDirectory(uri, readOptions(signal)).then(
         ({ resources }) => ({ _tag: "read", resources }) as const,
         (error: unknown) => {
-          if (isUnknown(error)) return { _tag: "refused", reason: "gone" } as const;
+          // No such folder of a skill its server generates: nothing it holds there.
+          if (isUnknown(error) || isInvalid(error))
+            return { _tag: "refused", reason: "unlisted" } as const;
           throw error;
         },
       ),

@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import type { UrlPolicy } from "./guard.ts";
 import { DEFAULT_SESSION_LIMITS, openSession } from "./session.ts";
 import { MAX_SKILL_FILES, type ServedSkill, skillPath } from "./skills.ts";
@@ -48,7 +49,7 @@ const REPORT: FakeSkill = {
   dynamic: true,
 };
 
-const serving = (skills: FakeOptions["skills"]) =>
+const serving = (skills: FakeOptions["skills"], bearer: string | null = null) =>
   Effect.gen(function* () {
     const fake = yield* fakeMcpServer({
       tools: [],
@@ -59,7 +60,12 @@ const serving = (skills: FakeOptions["skills"]) =>
       url: new URL(fake.url),
       policy: POLICY,
       credentials: {
-        current: Effect.succeed({ bearer: Option.none(), headers: [], hidden: [], carried: [] }),
+        current: Effect.succeed({
+          bearer: bearer === null ? Option.none() : Option.some(Redacted.make(bearer)),
+          headers: [],
+          hidden: [],
+          carried: [],
+        }),
         rejected: () => Effect.void,
       },
       limits: DEFAULT_SESSION_LIMITS,
@@ -198,6 +204,72 @@ describe("skills", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("leaves out a skill whose files' names carry what signs its requests", () =>
+    Effect.gen(function* () {
+      const token = "tok-skills-test-2041";
+      const { session } = yield* serving(
+        {
+          listed: [
+            NOTES,
+            {
+              path: "echo",
+              files: { "SKILL.md": skillMd("echo", "Echoes."), [`keys/${token}.md`]: "x" },
+            },
+          ],
+        },
+        token,
+      );
+      assert.deepStrictEqual(
+        (yield* session.skills.listSkills).skills.map((skill) => skill.name),
+        ["notes"],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "takes an answer about one skill the extension does not allow as that skill's, not the connector's",
+    () =>
+      Effect.gen(function* () {
+        // Its frontmatter, as sent, names another skill than its folder does.
+        const misnamed: FakeSkill = {
+          path: "billing",
+          files: { "SKILL.md": skillMd("billing", "Bills.") },
+          reshape: (entry) => ({
+            ...entry,
+            frontmatter: { ...entry.frontmatter, name: "invoices" },
+          }),
+        };
+        const { session } = yield* serving({ listed: [NOTES], unlisted: [misnamed] });
+        assert.isNull(yield* session.skills.getSkill("skill://billing/SKILL.md"));
+        assert.lengthOf((yield* session.skills.listSkills).skills, 1);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("tells a file its server no longer has from a skill that is gone", () =>
+    Effect.gen(function* () {
+      const { fake, session } = yield* serving({ listed: [INVOICES, REPORT] });
+      const { skills } = yield* session.skills.listSkills;
+      // A generated skill holds nothing there; a listed file is no longer as listed.
+      assert.deepStrictEqual(
+        yield* session.skills.readSkillFile(named(skills, "report"), "parts"),
+        {
+          _tag: "refused",
+          reason: "unlisted",
+        },
+      );
+      fake.setSkillFile("billing/invoices", "scripts/total.py", null);
+      assert.deepStrictEqual(
+        yield* session.skills.readSkillFile(named(skills, "invoices"), "scripts/total.py"),
+        { _tag: "refused", reason: "mismatch" },
+      );
+      fake.setSkillFile("billing/invoices", "SKILL.md", null);
+      assert.deepStrictEqual(yield* session.skills.readSkillFile(named(skills, "invoices")), {
+        _tag: "refused",
+        reason: "gone",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("gets a skill by its address, listed or not, and none at an unknown one", () =>
     Effect.gen(function* () {
       const { session } = yield* serving({ listed: [NOTES], unlisted: [INVOICES] });
@@ -269,6 +341,10 @@ describe("skillPath", () => {
       "a#b",
       "a\\b",
       "a//b",
+      "%2e%2e/notes",
+      "parts/%2E%2E/%2e%2e",
+      "a%2fb",
+      "%zz",
     ]) {
       assert.isNull(skillPath(outside), outside);
     }

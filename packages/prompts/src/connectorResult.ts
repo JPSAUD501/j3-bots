@@ -92,6 +92,7 @@ export const SKILL_REFUSALS = [
   "unlisted",
   "gone",
   "not-text",
+  "read-limit",
 ] as const;
 export type SkillRefusal = (typeof SKILL_REFUSALS)[number];
 
@@ -113,6 +114,8 @@ const SKILL_REFUSED: { readonly [K in SkillRefusal]: (connector: string) => stri
   gone: (c) =>
     `${c}'s server no longer serves that. Load the skill again to see what it holds now.`,
   "not-text": () => "That file is not text, so J3 Bots does not show it.",
+  "read-limit": (c) =>
+    `You have read as much of this skill of ${c}'s as J3 Bots reads for one load (16 MiB). Load it again with \`use_connector_skill\` to read more.`,
 };
 
 /**
@@ -363,9 +366,10 @@ export const connectorSkillsDescription = (
 ): string => {
   if (skills.length === 0) return description;
   const lines = skills.map((skill) => {
+    const characters = [...skill.description];
     const about =
-      skill.description.length > MAX_CATALOG_DESCRIPTION
-        ? `${skill.description.slice(0, MAX_CATALOG_DESCRIPTION - 1)}…`
+      characters.length > MAX_CATALOG_DESCRIPTION
+        ? `${characters.slice(0, MAX_CATALOG_DESCRIPTION - 1).join("")}…`
         : skill.description;
     const named = skill.shared ? skill.uri : skill.name;
     return `- ${skill.slug}: ${defuseTags(named)}: ${defuseTags(about)}`;

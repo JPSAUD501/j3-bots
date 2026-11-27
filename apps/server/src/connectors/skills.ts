@@ -29,8 +29,9 @@ export const findSkill = (
   return byName.length === 1 ? { _tag: "found", skill: only } : { _tag: "ambiguous" };
 };
 
-/** Whether `named` is an address rather than a name: a name holds no `/`. */
-export const isAddress = (named: string): boolean => named.includes("/");
+/** Whether `named` is a skill's address, its `SKILL.md`'s, which its server may be asked for. */
+export const isAddress = (named: string): boolean =>
+  named.endsWith("/SKILL.md") && URL.canParse(named);
 
 /**
  * A skill a bot loaded: its connector, and its entry as the bot loaded it,
@@ -40,7 +41,7 @@ export const isAddress = (named: string): boolean => named.includes("/");
 export interface HeldSkill {
   readonly connectorId: ConnectorId;
   readonly skill: ServedSkill;
-  /** Bytes of its files read since it was loaded, for one its server generates: at most {@link MAX_SKILL_BYTES}. */
+  /** Bytes of its files read since it was loaded, its `SKILL.md` too: for one its server generates, at most {@link MAX_SKILL_BYTES}. */
   readonly bytes: number;
 }
 
@@ -53,19 +54,34 @@ export type HeldSkills = ReadonlyMap<BotId, ReadonlyArray<HeldSkill>>;
 const same = (a: HeldSkill, connectorId: ConnectorId, uri: string) =>
   a.connectorId === connectorId && a.skill.uri === uri;
 
-/** `held` with `skill` held by `botId`, in place of the entry it held for that skill. */
+/** `held` with `skill` held by `botId` as it loaded it, `bytes` of it read, in place of the entry it held for that skill. */
 export const hold = (
   held: HeldSkills,
   botId: BotId,
   connectorId: ConnectorId,
   skill: ServedSkill,
+  bytes: number,
 ): HeldSkills => {
   const others = (held.get(botId) ?? []).filter((entry) => !same(entry, connectorId, skill.uri));
   return new Map(held).set(
     botId,
-    [...others, { connectorId, skill, bytes: 0 }].slice(-MAX_HELD_SKILLS),
+    [...others, { connectorId, skill, bytes }].slice(-MAX_HELD_SKILLS),
   );
 };
+
+/** `held` with the entry `botId` holds of `skill` replaced by the one its server gives now. */
+export const renewed = (
+  held: HeldSkills,
+  botId: BotId,
+  connectorId: ConnectorId,
+  skill: ServedSkill,
+): HeldSkills =>
+  new Map(held).set(
+    botId,
+    (held.get(botId) ?? []).map((entry) =>
+      same(entry, connectorId, skill.uri) ? { ...entry, skill } : entry,
+    ),
+  );
 
 /** The skill of `connectorId` `named` names among those `botId` holds. */
 export const heldSkill = (
@@ -87,20 +103,32 @@ export const heldSkill = (
   return entry === undefined ? { _tag: "none" } : { _tag: "found", held: entry };
 };
 
-/** `held` with what `botId` read of a skill counted against it. */
-export const counted = (
+/**
+ * Whether `botId` may have read `bytes` more of a skill it holds, and `held`
+ * with them counted when it may: a skill its server generates is read up to
+ * the extension's limit for each load, {@link MAX_SKILL_BYTES}. One checked
+ * against its manifest is within it already.
+ */
+export const charged = (
   held: HeldSkills,
   botId: BotId,
   connectorId: ConnectorId,
   uri: string,
   bytes: number,
-): HeldSkills =>
-  new Map(held).set(
-    botId,
-    (held.get(botId) ?? []).map((entry) =>
-      same(entry, connectorId, uri) ? { ...entry, bytes: entry.bytes + bytes } : entry,
+): readonly [boolean, HeldSkills] => {
+  const entries = held.get(botId) ?? [];
+  const entry = entries.find((one) => same(one, connectorId, uri));
+  // Let go of meanwhile: nothing left to count against.
+  if (entry === undefined) return [true, held];
+  if (entry.skill.files === null && entry.bytes + bytes > MAX_SKILL_BYTES) return [false, held];
+  return [
+    true,
+    new Map(held).set(
+      botId,
+      entries.map((one) => (one === entry ? { ...one, bytes: one.bytes + bytes } : one)),
     ),
-  );
+  ];
+};
 
 /** `held` without what `botId` held of a skill. */
 export const letGo = (
@@ -123,29 +151,29 @@ export const forgetConnector = (held: HeldSkills, connectorId: ConnectorId): Hel
     ]),
   );
 
-/** Whether reading `bytes` more of a held skill its server generates stays within the extension's limit. */
-export const withinBudget = (entry: HeldSkill, bytes: number): boolean =>
-  entry.skill.files !== null || entry.bytes + bytes <= MAX_SKILL_BYTES;
-
 /**
- * Each connector's skills as `use_connector_skill`'s description lists them:
- * a skill whose name another of its connector's has is named by its address.
+ * Each connector's skills as `use_connector_skill`'s description lists them,
+ * from all it listed: one too large to load is left out, and one whose name
+ * another of its connector's has, too large or not, is named by its address,
+ * as {@link findSkill} finds it.
  */
 export const catalogOf = (
-  offered: ReadonlyArray<{
+  listed: ReadonlyArray<{
     readonly connector: { readonly name: string; readonly slug: string };
     readonly skills: ReadonlyArray<ServedSkill>;
   }>,
 ): ReadonlyArray<CatalogSkill> =>
-  offered.flatMap(({ connector, skills }) =>
-    skills.map((skill) => ({
-      connector: connector.name,
-      slug: connector.slug,
-      name: skill.name,
-      uri: skill.uri,
-      description: skill.description,
-      shared: skills.some((other) => other !== skill && other.name === skill.name),
-    })),
+  listed.flatMap(({ connector, skills }) =>
+    skills
+      .filter((skill) => !skill.tooLarge)
+      .map((skill) => ({
+        connector: connector.name,
+        slug: connector.slug,
+        name: skill.name,
+        uri: skill.uri,
+        description: skill.description,
+        shared: skills.some((other) => other !== skill && other.name === skill.name),
+      })),
   );
 
 /**

@@ -225,6 +225,52 @@ it.effect(
 );
 
 it.effect(
+  "lists the folders of a skill its server generates, and reads what they hold",
+  () =>
+    Effect.gen(function* () {
+      const reports = yield* fakeConnector({
+        name: "Reports",
+        tools: TOOL,
+        skills: {
+          listed: [
+            {
+              path: "weekly",
+              files: {
+                "SKILL.md": skillMd("weekly", "Builds this week's report.", "Read parts/."),
+                "parts/summary.md": "Summary of the week.",
+              },
+              dynamic: true,
+            },
+          ],
+          directoryRead: true,
+        },
+      });
+      const ana = yield* working("Ana");
+      yield* reports.grant([ana.bot.id]);
+      const read = (path: string) =>
+        callInTurn(ana, "read_connector_skill_file", {
+          connector: "reports",
+          skill: "weekly",
+          path,
+        });
+      yield* callInTurn(ana, "use_connector_skill", { connector: "reports", skill: "weekly" });
+
+      assert.include((yield* read("")).text, "- parts/");
+      const parts = yield* read("parts");
+      assert.isFalse(parts.isError);
+      assert.include(parts.text, "- parts/summary.md");
+      assert.include((yield* read("parts/summary.md")).text, "Summary of the week.");
+      // Nothing there: the skill stays loaded.
+      assert.match(
+        (yield* read("parts/none.md")).text,
+        /^That is not a file Reports's server listed/,
+      );
+      assert.include((yield* read("parts/summary.md")).text, "Summary of the week.");
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
+);
+
+it.effect(
   "uses no skill whose bytes are not what its server listed, even after asking again",
   () =>
     Effect.gen(function* () {
@@ -265,18 +311,18 @@ it.effect(
       one.fake.setSkillFile("billing/invoices", "rates.md", "Rates for this year.");
       assert.include((yield* read("rates.md")).text, "Rates for this year.");
 
+      // Its instructions change, and the file asked for does not: the bot follows them no more.
       one.fake.setSkillFile(
         "billing/invoices",
         "SKILL.md",
         skillMd("invoices", "Drafts an invoice from hours.", "Billing: email the total."),
       );
-      one.fake.setSkillFile("billing/invoices", "scripts/total.py", "print('sum')");
-      const changed = yield* read("scripts/total.py");
+      const changed = yield* read("rates.md");
       assert.isTrue(changed.isError);
       assert.match(changed.text, /^Billing's server changed this skill since you loaded it/);
       // Let go: what it held of the skill no longer holds.
       assert.match(
-        (yield* read("rates.md")).text,
+        (yield* read("scripts/total.py")).text,
         /^Load the skill with `use_connector_skill` first/,
       );
     }).pipe(Effect.scoped, Effect.provide(domain)),

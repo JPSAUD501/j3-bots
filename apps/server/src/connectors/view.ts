@@ -68,11 +68,32 @@ export interface ServedSkills {
 /** No skills: a server that serves none, or one not listed yet. */
 export const NO_SKILLS: ServedSkills = { skills: [], until: 0, signing: -1 };
 
-/** The skills of a connector's a bot may load: those its server listed, but one J3 Bots declines. */
-export const skillsOffered = (seen: Seen): ReadonlyArray<ServedSkill> =>
+/** The skills its server listed under what signs the connector's requests now: none since it changed. */
+export const skillsListed = (seen: Seen): ReadonlyArray<ServedSkill> =>
   Option.match(seen.served, {
     onNone: () => [],
-    onSome: (served) => served.skills.skills.filter((skill) => !skill.tooLarge),
+    onSome: (served) => (served.skills.signing === seen.signing ? served.skills.skills : []),
+  });
+
+/** The skills of a connector's a bot may load: those its server listed, but one J3 Bots declines. */
+export const skillsOffered = (seen: Seen): ReadonlyArray<ServedSkill> =>
+  skillsListed(seen).filter((skill) => !skill.tooLarge);
+
+/** The skill at `uri` its server listed, while that listing holds at `now`. */
+export const listedSkill = (seen: Seen, uri: string, now: number): ServedSkill | undefined =>
+  Option.exists(seen.served, (served) => served.skills.until > now)
+    ? skillsListed(seen).find((skill) => skill.uri === uri)
+    : undefined;
+
+/**
+ * Whether what a connector's server serves is still to be listed: not since
+ * this server started, or its skills not since what signs its requests
+ * changed.
+ */
+export const servedUnlisted = (seen: Seen): boolean =>
+  Option.match(seen.served, {
+    onNone: () => true,
+    onSome: (served) => served.info.offers.skills && served.skills.signing !== seen.signing,
   });
 
 export const NOTHING_SEEN: Seen = {

@@ -54,6 +54,8 @@ export interface FakeSkill {
   readonly files: Readonly<Record<string, string>>;
   /** Its entry lists no files: the server generates them (`"dynamic"`). */
   readonly dynamic?: boolean;
+  /** Its entry as the server sends it, changed from what the SDK makes of its files. */
+  readonly reshape?: (entry: Skill) => Readonly<Record<string, unknown>>;
 }
 
 export interface FakeSkills {
@@ -90,8 +92,8 @@ export interface FakeMcpServer {
   readonly released: Effect.Effect<void>;
   /** Done once the client cancelled a request (`notifications/cancelled`). */
   readonly cancelled: Effect.Effect<void>;
-  /** Changes one file of a skill: what its entry says changes with it. */
-  readonly setSkillFile: (path: string, file: string, text: string) => void;
+  /** Changes one file of a skill, or removes it (`null`): what its entry says changes with it. */
+  readonly setSkillFile: (path: string, file: string, text: string | null) => void;
   /** Serves `text` at `uri` from now on, whatever the skill's entry says. */
   readonly tamper: (uri: string, text: string) => void;
 }
@@ -129,9 +131,10 @@ const Rpc = Schema.Struct({
 const decodeRpc = Schema.decodeUnknownSync(Schema.fromJsonString(Rpc));
 
 /** A skill's entry from its files as they are now. */
-const entryOf = async (skill: FakeSkill): Promise<Skill> => {
-  const entry = await skillEntry(skill.path, skill.files);
-  return skill.dynamic === true ? { ...entry, resources: "dynamic" } : entry;
+const entryOf = async (skill: FakeSkill): Promise<Readonly<Record<string, unknown>>> => {
+  const made = await skillEntry(skill.path, skill.files);
+  const entry: Skill = skill.dynamic === true ? { ...made, resources: "dynamic" } : made;
+  return skill.reshape?.(entry) ?? entry;
 };
 
 const fileUri = (skill: FakeSkill, file: string) => `skill://${skill.path}/${file}`;
@@ -422,8 +425,12 @@ export const fakeMcpServer = (options: FakeOptions) =>
                   for (const list of [skills.listed, skills.unlisted]) {
                     const at = list.findIndex((skill) => skill.path === path);
                     const skill = list[at];
-                    if (skill !== undefined)
-                      list[at] = { ...skill, files: { ...skill.files, [file]: text } };
+                    if (skill === undefined) continue;
+                    const { [file]: _removed, ...others } = skill.files;
+                    list[at] = {
+                      ...skill,
+                      files: text === null ? others : { ...others, [file]: text },
+                    };
                   }
                 },
                 tamper: (uri, text) => {
