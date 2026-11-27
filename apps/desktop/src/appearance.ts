@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AppearanceReport, IPC_CHANNELS, type Theme } from "@j3-bots/desktop-bridge";
+import {
+  AppearanceReport,
+  IPC_CHANNELS,
+  type Theme,
+  type ThemeWindowColors,
+} from "@j3-bots/desktop-bridge";
 import { colors } from "@j3-bots/design-tokens";
 import { hexColor } from "@j3-bots/design-tokens/raster";
 import * as Effect from "effect/Effect";
@@ -21,20 +26,43 @@ import { DesktopSettings } from "./settings.ts";
 // is what reaches the title bar, and it makes `nativeTheme` answer with the
 // app's theme. The page does not rely on it: it applies the appearance it
 // keeps before it paints, and on Linux `themeSource` does not reach its
-// `prefers-color-scheme` at all. What the system draws itself, its
-// notifications and its tray or menu bar, stays in the system's theme, which
-// the app then reads apart (`systemTheme`).
+// `prefers-color-scheme` at all. The page reports its theme's window colors
+// with it (decision 0104), kept the same way, so a window fills with the
+// theme's canvas, not the stock one, before the page paints. What the system
+// draws itself, its notifications and its tray or menu bar, stays in the
+// system's theme, which the app then reads apart (`systemTheme`).
 
 const decodeReport = Schema.decodeUnknownOption(AppearanceReport);
 
-/** The window's background in `theme`: the page's canvas, so nothing else shows before it paints. */
-const background = (theme: Theme) => hexColor(colors.background[theme]);
+/**
+ * What a window fills with in `theme`, so nothing else shows before its page
+ * paints: the theme's colors the page reported, or the stock ones.
+ */
+const fill = (kept: ThemeWindowColors | null, theme: Theme) =>
+  kept?.[theme] ?? {
+    background: hexColor(colors.background[theme]),
+    surface: hexColor(colors.surface[theme]),
+  };
+
+const sameColors = (a: ThemeWindowColors | null, b: ThemeWindowColors | null) =>
+  a === null || b === null
+    ? a === b
+    : (["light", "dark"] as const).every(
+        (theme) =>
+          a[theme].background === b[theme].background && a[theme].surface === b[theme].surface,
+      );
 
 const themeOf = (dark: boolean): Theme => (dark ? "dark" : "light");
 
 export interface Appearance {
   /** The window's background now: the page's canvas in the theme the window is in. */
   readonly windowBackground: () => string;
+  /** Quick access's card now, which a window that is not see-through fills with. */
+  readonly cardBackground: () => string;
+  /** Calls `listener` each time the windows' colors may have changed; answers a function that stops it. */
+  readonly onColors: (listener: () => void) => () => void;
+  /** Takes the colors of the theme the page shows, null for the stock ones. */
+  readonly setColors: (colors: ThemeWindowColors | null) => void;
   /** The theme the system draws its own notifications and its tray or menu bar in. */
   readonly systemTheme: () => Theme;
   /** Calls `listener` each time `systemTheme` may have changed; answers a function that stops it. */
@@ -49,7 +77,13 @@ export const start = Effect.fn("desktop.appearance.start")(function* () {
   const settings = yield* DesktopSettings;
   // Read before the kept choice overrides it: until then `nativeTheme` follows the system.
   let systemDark = nativeTheme.shouldUseDarkColors;
-  nativeTheme.themeSource = (yield* settings.get).appearance;
+  const kept = yield* settings.get;
+  nativeTheme.themeSource = kept.appearance;
+  let windowColors = kept.windowColors;
+  const colorListeners = new Set<() => void>();
+  const colorsChanged = () => {
+    for (const listener of colorListeners) listener();
+  };
 
   const listeners = new Set<() => void>();
   const changed = () => {
@@ -81,6 +115,7 @@ export const start = Effect.fn("desktop.appearance.start")(function* () {
       const updated = () => {
         if (nativeTheme.themeSource === "system") systemDark = nativeTheme.shouldUseDarkColors;
         changed();
+        colorsChanged();
       };
       nativeTheme.on("updated", updated);
       // macOS announces a change of its theme even while the app overrides it.
@@ -100,8 +135,21 @@ export const start = Effect.fn("desktop.appearance.start")(function* () {
       }),
   );
 
+  const now = () => fill(windowColors, themeOf(nativeTheme.shouldUseDarkColors));
+
   return {
-    windowBackground: () => background(themeOf(nativeTheme.shouldUseDarkColors)),
+    windowBackground: () => now().background,
+    cardBackground: () => now().surface,
+    onColors: (listener) => {
+      colorListeners.add(listener);
+      return () => {
+        colorListeners.delete(listener);
+      };
+    },
+    setColors: (next) => {
+      windowColors = next;
+      colorsChanged();
+    },
     systemTheme,
     onSystemTheme: (listener) => {
       listeners.add(listener);
@@ -134,9 +182,17 @@ export const serve = Effect.fn("desktop.appearance.serve")(function* ({
 
   const keep = Effect.fn("desktop.appearance.keep")(function* (report: AppearanceReport) {
     nativeTheme.themeSource = report.appearance;
-    if ((yield* settings.get).appearance === report.appearance) return;
+    const windowColors = report.colors ?? null;
+    appearance.setColors(windowColors);
+    const current = yield* settings.get;
+    if (
+      current.appearance === report.appearance &&
+      sameColors(current.windowColors, windowColors)
+    ) {
+      return;
+    }
     yield* settings
-      .update((current) => ({ ...current, appearance: report.appearance }))
+      .update((before) => ({ ...before, appearance: report.appearance, windowColors }))
       .pipe(Effect.catch((error) => Effect.logWarning("Keeping the appearance failed", error)));
   });
 
@@ -150,17 +206,15 @@ export const serve = Effect.fn("desktop.appearance.serve")(function* ({
       ipcMain.handle(IPC_CHANNELS.systemTheme, (event) =>
         fromApp(event) ? appearance.systemTheme() : null,
       );
-      const repaint = () => {
+      return appearance.onColors(() => {
         if (!window.isDestroyed()) window.setBackgroundColor(appearance.windowBackground());
-      };
-      nativeTheme.on("updated", repaint);
-      return repaint;
+      });
     }),
-    (repaint) =>
+    (stopRepainting) =>
       Effect.sync(() => {
         ipcMain.removeAllListeners(IPC_CHANNELS.appearance);
         ipcMain.removeHandler(IPC_CHANNELS.systemTheme);
-        nativeTheme.off("updated", repaint);
+        stopRepainting();
       }),
   );
 });

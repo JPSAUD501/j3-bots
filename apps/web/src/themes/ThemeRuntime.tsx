@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { shownTheme, type ThemeChoice } from "@j3-bots/client-runtime/presentation";
+import { shownTheme, type ThemeChoice, themePalettes } from "@j3-bots/client-runtime/presentation";
+import type { Palette } from "@j3-bots/design-tokens";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
 import { showLook, usePreferences } from "../preferences/preferences";
 import type { ThemesIntents, ThemesView } from "../shell/data";
@@ -78,6 +79,16 @@ export function ShownThemesProvider({
 
 /** The themes, under `ThemeRuntime`; null outside one, where nothing offers a theme. */
 export const useShownThemes = (): ShownThemes | null => use(ShownThemesContext);
+
+/**
+ * The colors of the theme this device shows, in `appearance`, for what draws
+ * its own document, as a bot's visual or a connector's app does. Undefined,
+ * the stock colors, outside a `ThemeRuntime` or while the theme is on its way.
+ */
+export function useShownPalette(appearance: "light" | "dark"): Palette | undefined {
+  const shown = use(ShownThemesContext)?.shown ?? null;
+  return shown === null ? undefined : themePalettes(shown.definition)[appearance];
+}
 
 /**
  * Shows on this page the theme this device shows (decision 0104): the one its

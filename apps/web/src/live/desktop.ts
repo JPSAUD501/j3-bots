@@ -9,6 +9,7 @@ import type {
 } from "@j3-bots/contracts";
 import {
   type Appearance,
+  type ThemeWindowColors,
   AppLink,
   BRIDGE_KEY,
   ConnectResult,
@@ -146,8 +147,12 @@ export interface Desktop {
   readonly onAppLink: (listener: (link: AppLink) => void) => () => void;
   /** Tells the app the language the page shows, which its menus follow. */
   readonly reportLanguage: (language: Language) => void;
-  /** Tells the app the appearance the operator chose, which its window takes from the next launch's first paint. */
-  readonly reportAppearance: (appearance: Appearance) => void;
+  /**
+   * Tells the app the appearance the operator chose and the window colors of
+   * the theme the page shows (null for the stock ones), which its windows
+   * fill with, from the next launch's first paint.
+   */
+  readonly reportAppearance: (appearance: Appearance, colors: ThemeWindowColors | null) => void;
   /**
    * The theme the system draws its notifications in, apart from the app's own,
    * which `prefers-color-scheme` answers with here; `null` when the app gave
@@ -450,8 +455,8 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     reportLanguage: (language) => {
       bridge.reportLanguage({ language });
     },
-    reportAppearance: (appearance) => {
-      bridge.reportAppearance({ appearance });
+    reportAppearance: (appearance, colors) => {
+      bridge.reportAppearance({ appearance, colors });
     },
     systemTheme: () => ask(() => bridge.systemTheme(), decodeTheme),
     reportTray: (report) => {

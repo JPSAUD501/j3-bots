@@ -640,12 +640,27 @@ export type Theme = typeof Theme.Type;
 export const Appearance = Schema.Literals(["system", "light", "dark"]);
 export type Appearance = typeof Appearance.Type;
 
+const WindowColor = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/));
+
+/** What a window fills with before its page paints: the page's canvas, and quick access's card. */
+export const WindowColors = Schema.Struct({ background: WindowColor, surface: WindowColor });
+export type WindowColors = typeof WindowColors.Type;
+
+/** The theme's window colors in each appearance (decision 0104). */
+export const ThemeWindowColors = Schema.Struct({ light: WindowColors, dark: WindowColors });
+export type ThemeWindowColors = typeof ThemeWindowColors.Type;
+
 /**
  * The appearance the operator chose, as the page reports it when it starts
  * and each time it changes: the app's window, its title bar and its menus
- * follow it, from the first paint of the next launch.
+ * follow it, from the first paint of the next launch. `colors` are the
+ * theme's the windows fill with, null for the stock ones; a page from before
+ * themes says nothing of them, which is the stock theme it shows.
  */
-export const AppearanceReport = Schema.Struct({ appearance: Appearance });
+export const AppearanceReport = Schema.Struct({
+  appearance: Appearance,
+  colors: Schema.optionalKey(Schema.NullOr(ThemeWindowColors)),
+});
 export type AppearanceReport = typeof AppearanceReport.Type;
 
 /** A bot or room that needs the operator, as the tray lists it. */

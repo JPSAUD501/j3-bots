@@ -8,7 +8,8 @@
  * origin, such as quick access, shows the same theme. A change is one
  * stylesheet swap: no reload, and nothing redrawn frame after frame.
  */
-import { renderThemeColorsCss, THEME_BACKGROUND_VARIABLE } from "@j3-bots/design-tokens";
+import { hexColor, renderThemeColorsCss, THEME_BACKGROUND_VARIABLE } from "@j3-bots/design-tokens";
+import { ThemeWindowColors } from "@j3-bots/desktop-bridge";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ThemeChoice } from "@j3-bots/client-runtime/presentation";
@@ -24,11 +25,16 @@ export const THEME_ROOT = ":root[data-theme]";
 export const LOOK_KEY = "j3:theme-look";
 const STYLE_ID = "j3-theme";
 
-/** A theme as the page draws it: its id, its stylesheet, and its canvas in each appearance. */
+/**
+ * A theme as the page draws it: its id, its stylesheet, its canvas in each
+ * appearance, and what the desktop app's windows fill with before a page
+ * paints, in each.
+ */
 const ThemeLook = Schema.Struct({
   id: Schema.String,
   css: Schema.String,
   canvas: Schema.Struct({ light: Schema.String, dark: Schema.String }),
+  window: ThemeWindowColors,
 });
 export type ThemeLook = typeof ThemeLook.Type;
 
@@ -47,6 +53,16 @@ export function lookOf(choice: ThemeChoice, withCss: boolean): ThemeLook | null 
     id: choice.id,
     css: `${renderThemeColorsCss(palettes, THEME_ROOT)}\n${own}`,
     canvas: { light: palettes.light.background, dark: palettes.dark.background },
+    window: {
+      light: {
+        background: hexColor(palettes.light.background),
+        surface: hexColor(palettes.light.surface),
+      },
+      dark: {
+        background: hexColor(palettes.dark.background),
+        surface: hexColor(palettes.dark.surface),
+      },
+    },
   };
 }
 

@@ -28,6 +28,8 @@ interface Preferences {
   readonly themeId: ThemeId | null;
   /** The theme in effect once "system" is resolved. */
   readonly theme: "light" | "dark";
+  /** The look of the theme this browser shows, null for the stock one. */
+  readonly look: ThemeLook | null;
 }
 
 function readRaw(key: string): string | null {
@@ -55,15 +57,15 @@ function writeStored(key: string, value: string | null) {
 const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 
+let look = storedLook();
+
 function compute(): Preferences {
   const appearance = readStored(KEYS.appearance, Appearance, "system");
   const language = readStored(KEYS.language, LanguageChoice, "system");
   const themeId = Option.getOrNull(Schema.decodeUnknownOption(ThemeId)(readRaw(KEYS.theme)));
   const theme = appearance === "system" ? (systemDark.matches ? "dark" : "light") : appearance;
-  return { appearance, language, themeId, theme };
+  return { appearance, language, themeId, theme, look };
 }
-
-let look = storedLook();
 
 /**
  * The browser's own chrome, such as an installed app's title bar or a phone's
@@ -96,7 +98,7 @@ window.addEventListener("storage", (event) => {
     // Another page of this app, such as the main window, changed the theme.
     look = lookFrom(event.newValue);
     drawLook(look);
-    applyThemeColor(snapshot);
+    refresh();
   }
   if (event.key === KEYS.appearance || event.key === KEYS.language || event.key === KEYS.theme) {
     refresh();
@@ -120,7 +122,7 @@ export function showLook(next: ThemeLook | null) {
   look = next;
   drawLook(next);
   keepLook(next);
-  applyThemeColor(snapshot);
+  refresh();
 }
 
 export function setLanguage(language: LanguageChoice) {

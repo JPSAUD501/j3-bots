@@ -11,5 +11,6 @@ export * from "./theme.ts";
 export * from "./themeCss.ts";
 export * from "./tokens.ts";
 export * from "./visual.ts";
+export { hexColor } from "./color.ts";
 export { nativeThemeVariables } from "./uniwind.ts";
 export { renderThemeColorsCss, themeColorVariables } from "./web.ts";

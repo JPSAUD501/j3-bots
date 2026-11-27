@@ -718,6 +718,7 @@ const program = Effect.gen(function* () {
   });
   const preload = path.join(app.getAppPath(), "dist", "preload.cjs");
   const quickAccess = yield* QuickAccess.serve({
+    appearance,
     main: window,
     appOrigin: APP_ORIGIN,
     preload,
