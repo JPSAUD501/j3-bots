@@ -245,7 +245,8 @@ function AddressBar({ bridge, tab, place, command, addressRef, onCover }: Toolba
           aria-label={t("desktopBrowser.address")}
           placeholder={t("desktopBrowser.address")}
           spellCheck={false}
-          value={typing ?? (focused ? (tab?.url ?? "") : "")}
+          // Away from it, the address is still its value, drawn by the shown address over it.
+          value={typing ?? tab?.url ?? ""}
           onFocus={(event) => {
             setTyping(tab?.url ?? "");
             // Clicking the address takes all of it.

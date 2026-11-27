@@ -56,6 +56,9 @@ import {
   type VoiceSettings,
 } from "@j3-bots/contracts";
 import type {
+  BrowserPlace,
+  DesktopBrowserState,
+  DesktopBrowserTab,
   LocalPairingLink,
   LocalServerState,
   LookingAtSettings,
@@ -237,6 +240,7 @@ import {
   trackTrigger,
 } from "./sampleRoutineTrack";
 import { BotCard, QuickMessageField } from "../components/BotCard";
+import { DesktopBrowser } from "../browser/desktop/DesktopBrowser";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
 import { BotCursor } from "../browser/BotCursor";
 import { Faces } from "../browser/Faces";
@@ -275,6 +279,7 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleEfforts, sampleTeam } from "./sample";
+import { sampleDesktopBrowser, sampleDesktopTab, sampleTabRef } from "./sampleDesktopBrowser";
 import {
   longPlan,
   playedHandOff,
@@ -442,6 +447,7 @@ export default function GalleryPage() {
                 <UpdatesGallerySection />
                 <QuickAccessSection />
                 <ShellSection />
+                <DesktopBrowserSection />
               </div>
             </div>
           </RosterProvider>
@@ -7287,6 +7293,160 @@ function ShellFrame({
         }}
       />
     </AiSessionProvider>
+  );
+}
+
+/** The desktop app's own browser, as `state` is, its page in front drawn. */
+function DesktopBrowserFrame({
+  state,
+  place,
+  over = false,
+}: {
+  readonly state: DesktopBrowserState;
+  readonly place: BrowserPlace;
+  readonly over?: boolean;
+}) {
+  const [bridge] = useState(() => sampleDesktopBrowser(state));
+  return (
+    <DesktopBrowser
+      bridge={bridge}
+      place={place}
+      held
+      onClose={place === "panel" && !over ? nothing : undefined}
+      onToConversation={over ? nothing : undefined}
+      onSignIns={nothing}
+    />
+  );
+}
+
+const desktopBrowserAt = (
+  tabs: ReadonlyArray<DesktopBrowserTab>,
+  change: Partial<DesktopBrowserState> = {},
+): DesktopBrowserState => ({
+  tabs,
+  front: {
+    panel: tabs.find((tab) => tab.place === "panel")?.ref ?? null,
+    window: tabs.find((tab) => tab.place === "window")?.ref ?? null,
+  },
+  windowOpen: tabs.some((tab) => tab.place === "window"),
+  canReopen: false,
+  downloads: [],
+  ...change,
+});
+
+function DesktopBrowserSection() {
+  const window = (tabs: ReadonlyArray<DesktopBrowserTab>) =>
+    tabs.map((tab) => ({ ...tab, place: "window" as const }));
+  return (
+    <Section title="Desktop browser" stacked>
+      <div className="flex flex-col gap-6">
+        <Frame
+          label="Beside the conversation: two tabs, the page in front; the window button sends it to the browser's own window"
+          width={640}
+          height={520}
+        >
+          <DesktopBrowserFrame
+            place="panel"
+            state={desktopBrowserAt(
+              [
+                sampleDesktopTab("orders"),
+                sampleDesktopTab("news", {
+                  url: "https://news.example/today",
+                  title: "Neighborhood News",
+                }),
+              ],
+              {
+                downloads: [
+                  {
+                    id: "receipt",
+                    name: "order-receipt.pdf",
+                    received: 48_200,
+                    total: 48_200,
+                    state: "completed",
+                    by: "person",
+                    tab: sampleTabRef("orders"),
+                    at: 0,
+                  },
+                  {
+                    id: "menu",
+                    name: "saturday-menu.pdf",
+                    received: 310_000,
+                    total: 820_000,
+                    state: "progressing",
+                    by: "bot",
+                    tab: sampleTabRef("orders"),
+                    at: 0,
+                  },
+                ],
+              },
+            )}
+          />
+        </Frame>
+        <Frame
+          label="Its own window: tabs at the top, a private one among them, the page zoomed to 125 %"
+          width={1100}
+          height={640}
+        >
+          <DesktopBrowserFrame
+            place="window"
+            state={desktopBrowserAt(
+              window([
+                sampleDesktopTab("orders", { zoom: 125 }),
+                sampleDesktopTab("tickets", {
+                  url: "https://tickets.example/",
+                  title: "City Tickets",
+                }),
+                sampleDesktopTab("mail", {
+                  url: "https://mail.example/inbox",
+                  title: "Inbox · Mail",
+                  private: true,
+                }),
+              ]),
+              { canReopen: true },
+            )}
+          />
+        </Frame>
+        <div className="flex flex-wrap gap-6">
+          <Frame
+            label="Over the conversation, in a narrow window: a new tab, the sites used most"
+            width={480}
+            height={520}
+          >
+            <DesktopBrowserFrame
+              place="panel"
+              over
+              state={desktopBrowserAt([
+                sampleDesktopTab("new", { url: "", title: "", canGoBack: false }),
+              ])}
+            />
+          </Frame>
+          <Frame label="A new private tab" width={480} height={520}>
+            <DesktopBrowserFrame
+              place="panel"
+              state={desktopBrowserAt([
+                sampleDesktopTab("private", {
+                  url: "",
+                  title: "",
+                  canGoBack: false,
+                  private: true,
+                }),
+              ])}
+            />
+          </Frame>
+          <Frame label="A page that did not open" width={480} height={520}>
+            <DesktopBrowserFrame
+              place="panel"
+              state={desktopBrowserAt([
+                sampleDesktopTab("failed", {
+                  url: "https://bakery.example/orders",
+                  failed: { url: "https://bakery.example/orders" },
+                }),
+              ])}
+            />
+          </Frame>
+        </div>
+      </div>
+    </Section>
   );
 }
 
