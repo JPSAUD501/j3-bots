@@ -90,8 +90,12 @@ export const BrowserCookieKey = Schema.Struct({
   domain: Schema.String.check(Schema.isMinLength(1)),
   hostOnly: Schema.Boolean,
   path: Schema.String,
-  /** The partition's `topLevelSite`, for a partitioned cookie. */
-  partition: Schema.optionalKey(Schema.String),
+  /**
+   * The partition, whole, for a partitioned cookie: Chromium keeps one cookie
+   * apart from another of the same name under the same top-level site when
+   * their `hasCrossSiteAncestor` differs.
+   */
+  partition: Schema.optionalKey(BrowserCookiePartition),
 });
 export type BrowserCookieKey = typeof BrowserCookieKey.Type;
 
@@ -252,6 +256,16 @@ export const BrowserHostHello = Schema.Struct({
    * it lacks is removed from the others.
    */
   cookieStore: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(200)),
+  ),
+  /**
+   * Names this run of the host's browser: a random id the host mints each
+   * time its browser starts. A session cookie the store held and the host
+   * lacks is taken as lost to a restart only when the run is another than
+   * the one the server last agreed with, or is not named; under the same
+   * run, a missing cookie is one the site removed.
+   */
+  browserRun: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(200)),
   ),
   /**
@@ -635,6 +649,21 @@ export const BrowserHostRpcs = RpcGroup.make(
   /** Replaces each given origin's `localStorage`, and its databases where given. */
   Rpc.make("storage.write", {
     payload: { origins: Schema.Array(BrowserOriginStorage) },
+    error: BrowserHostError,
+  }),
+  /**
+   * Deletes what the shared sign-ins' store keeps for these origins, or for
+   * every origin, besides cookies: `localStorage`, IndexedDB, cache storage,
+   * service workers and the rest of their site data. For signing out: a
+   * host with `storage` takes it. The host reports none of it back.
+   */
+  Rpc.make("storage.clear", {
+    payload: {
+      clear: Schema.Union([
+        Schema.Struct({ origins: Schema.Array(Schema.String) }),
+        Schema.Struct({ all: Schema.Literal(true) }),
+      ]),
+    },
     error: BrowserHostError,
   }),
 );

@@ -96,6 +96,9 @@ export interface PageHost {
   readonly writeStorage: (
     origins: ReadonlyArray<BrowserOriginStorage>,
   ) => Effect.Effect<void, BrowserHostError>;
+  readonly clearStorage: (
+    clear: PageHostPayload<"storage.clear">["clear"],
+  ) => Effect.Effect<void, BrowserHostError>;
 }
 
 /** The calls of a page host that are page work on a tab it holds. */
@@ -195,6 +198,7 @@ export const pageHostHandlers = (host: PageHost) =>
     "cookies.write": ({ changes }) => host.writeCookies(changes),
     "storage.read": (input) => host.readStorage(input),
     "storage.write": ({ origins }) => host.writeStorage(origins),
+    "storage.clear": ({ clear }) => host.clearStorage(clear),
   });
 
 /** A host's client, as the server holds one: a call the connection loses fails as `closed`. */
@@ -280,4 +284,6 @@ export const remotePageHost = (client: PageHostClient): PageHost => ({
     client["storage.read"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   writeStorage: (origins) =>
     client["storage.write"]({ origins }).pipe(Effect.catchTag("RpcClientError", lost)),
+  clearStorage: (clear) =>
+    client["storage.clear"]({ clear }).pipe(Effect.catchTag("RpcClientError", lost)),
 });

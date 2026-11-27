@@ -176,13 +176,17 @@ export type BrowserSite = typeof BrowserSite.Type;
 
 /**
  * The sites the person is signed in to in J3 Bots' browser, which every bot
- * that may browse uses too: the sites a tab showed whose cookies the shared
- * sign-ins hold. `unreadable` when the sign-ins cannot be opened now (the
- * secrets' key is missing or another one): the list is then empty, and
- * nothing is signed out because of it.
+ * that may browse uses too: the sites a shared tab showed as its page whose
+ * cookies or storage the shared sign-ins hold. With another status the list
+ * is empty, and nothing is signed out because of it:
+ *
+ * - `unreadable`: the sign-ins do not open under the secrets' key (another
+ *   key, or a damaged file). Signing out of all sites starts them again.
+ * - `locked`: the secrets cannot be read now, so neither can the sign-ins.
+ *   Nothing can be signed out until they can.
  */
 export const BrowserSignIns = Schema.Struct({
-  status: Schema.Literals(["ready", "unreadable"]),
+  status: Schema.Literals(["ready", "unreadable", "locked"]),
   sites: Schema.Array(Schema.Struct({ site: BrowserSite })),
 });
 export type BrowserSignIns = typeof BrowserSignIns.Type;

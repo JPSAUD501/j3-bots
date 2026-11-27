@@ -24,6 +24,8 @@ const CdpCookie = Schema.Struct({
   partitionKey: Schema.optionalKey(
     Schema.Struct({ topLevelSite: Schema.String, hasCrossSiteAncestor: Schema.Boolean }),
   ),
+  /** A partition no address names, such as an opaque origin's: it cannot be set again. */
+  partitionKeyOpaque: Schema.optionalKey(Schema.Boolean),
 });
 const decodeCdpCookie = Schema.decodeUnknownOption(CdpCookie);
 
@@ -33,9 +35,13 @@ const SAME_SITE_OF_CDP = {
   None: "no_restriction",
 } as const satisfies Record<string, BrowserCookieSameSite>;
 
-/** A cookie as `Storage.getCookies` gives it; none for one it gives in another shape. */
+/**
+ * A cookie as `Storage.getCookies` gives it; none for one it gives in
+ * another shape, or under a partition that cannot be set again.
+ */
 export const cookieOfCdp = (raw: unknown): Option.Option<BrowserCookie> =>
   Option.flatMap(decodeCdpCookie(raw), (cookie) => {
+    if (cookie.partitionKeyOpaque === true) return Option.none();
     const hostOnly = !cookie.domain.startsWith(".");
     const domain = hostOnly ? cookie.domain : cookie.domain.slice(1);
     if (domain.length === 0 || !cookie.path.startsWith("/")) return Option.none();

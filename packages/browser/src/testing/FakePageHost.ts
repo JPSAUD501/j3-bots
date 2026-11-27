@@ -15,6 +15,7 @@ import {
   type BrowserTabRef,
 } from "@j3-bots/contracts";
 import type * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -97,6 +98,13 @@ export interface FakePageHost extends PageHost {
   readonly restart: Effect.Effect<void>;
   /** The host empties its store, under the new id `cookieStore`, as a desktop does when revoked. */
   readonly emptyStore: (cookieStore: string | undefined) => Effect.Effect<void>;
+  /** The next sign-ins call named `call` (`cookies.write`, `storage.read`, …) fails, doing nothing. */
+  readonly failNext: (call: string) => Effect.Effect<void>;
+  /**
+   * The next sign-ins call named `call` waits, before it does anything,
+   * until the effect this gives runs.
+   */
+  readonly holdNext: (call: string) => Effect.Effect<Effect.Effect<void>>;
   /** Every value `tab.fill` typed, in order. */
   readonly fills: Effect.Effect<ReadonlyArray<FakeFill>>;
   /** The frames acknowledged so far, by tab. */
@@ -139,10 +147,15 @@ interface Watcher {
 
 const BLANK: FakePage = { title: "", tree: "" };
 
-const cookieKey = (
-  cookie: Pick<BrowserCookieKey, "name" | "domain" | "hostOnly" | "path">,
-  partition: string | undefined,
-) => [cookie.name, cookie.domain, cookie.hostOnly, cookie.path, partition ?? ""].join("\u0000");
+const cookieKey = (cookie: BrowserCookieKey) =>
+  [
+    cookie.name,
+    cookie.domain,
+    cookie.hostOnly,
+    cookie.path,
+    cookie.partition?.topLevelSite ?? "",
+    cookie.partition?.hasCrossSiteAncestor ?? "",
+  ].join("\u0000");
 
 const NATIVE_REF = /\[ref=((?:f\d+)?e\d+)\]/g;
 
@@ -166,6 +179,11 @@ export const makeFakePageHost = (
     const acked: Array<{ readonly tab: BrowserTabRef; readonly frame: number }> = [];
     const fills: Array<FakeFill> = [];
     let cookieStore = options.cookieStore;
+    /** This run of its browser: another after each `restart`. */
+    let runs = 1;
+    const browserRun = () => `fake-browser-run-${runs}`;
+    const failing = new Set<string>();
+    const holding = new Map<string, Deferred.Deferred<void>>();
     const capabilities = options.capabilities ?? {
       screencast: true,
       input: true,
@@ -177,15 +195,33 @@ export const makeFakePageHost = (
     let frames = 0;
 
     const applyCookies = (changes: BrowserCookieChanges) => {
-      for (const removed of changes.removed) cookies.delete(cookieKey(removed, removed.partition));
-      for (const cookie of changes.set)
-        cookies.set(cookieKey(cookie, cookie.partition?.topLevelSite), cookie);
+      for (const removed of changes.removed) cookies.delete(cookieKey(removed));
+      for (const cookie of changes.set) cookies.set(cookieKey(cookie), cookie);
     };
 
     const record = (call: string, tab?: BrowserTabRef) =>
       Effect.sync(() => {
         calls.push(tab === undefined ? { call } : { call, tab });
       });
+
+    /** A sign-ins call: recorded, then held or failed when a test asked. */
+    const signInCall = (call: string): Effect.Effect<void, BrowserHostError> =>
+      record(call).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            const held = holding.get(call);
+            holding.delete(call);
+            return held === undefined ? Effect.void : Deferred.await(held);
+          }),
+        ),
+        Effect.andThen(
+          Effect.suspend(() =>
+            failing.delete(call)
+              ? Effect.fail(new BrowserHostError({ reason: "page", detail: "A test failed it." }))
+              : Effect.void,
+          ),
+        ),
+      );
 
     const find = (tab: BrowserTabRef) =>
       Effect.suspend(() => {
@@ -278,6 +314,7 @@ export const makeFakePageHost = (
           browser: { version: "1.0.0.0", userAgent: "Mozilla/5.0 (X11; Linux x86_64) Fake" },
           capabilities,
           ...(cookieStore === undefined ? {} : { cookieStore }),
+          browserRun: browserRun(),
           tabs: [...tabs.values()].filter((tab) => !tab.private).map((tab) => tab.state),
           ...(privateTabs().length === 0 ? {} : { privateTabs: privateTabs() }),
         })),
@@ -472,13 +509,13 @@ export const makeFakePageHost = (
             return { _tag: "typed", submitted, cleared: false };
           }),
         ),
-      readCookies: record("cookies.read").pipe(
+      readCookies: signInCall("cookies.read").pipe(
         Effect.andThen(Effect.sync(() => ({ cookies: [...cookies.values()] }))),
       ),
       writeCookies: (changes) =>
-        record("cookies.write").pipe(Effect.andThen(Effect.sync(() => applyCookies(changes)))),
+        signInCall("cookies.write").pipe(Effect.andThen(Effect.sync(() => applyCookies(changes)))),
       readStorage: (input: PageHostPayload<"storage.read">) =>
-        record("storage.read").pipe(
+        signInCall("storage.read").pipe(
           Effect.andThen(
             Effect.sync(() => ({
               origins: input.origins.flatMap((origin) => {
@@ -492,7 +529,7 @@ export const makeFakePageHost = (
           ),
         ),
       writeStorage: (origins) =>
-        record("storage.write").pipe(
+        signInCall("storage.write").pipe(
           Effect.andThen(
             Effect.sync(() => {
               for (const origin of origins) {
@@ -504,6 +541,15 @@ export const makeFakePageHost = (
                     : {}),
                 });
               }
+            }),
+          ),
+        ),
+      clearStorage: (clear) =>
+        signInCall("storage.clear").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if ("all" in clear) storage.clear();
+              else for (const origin of clear.origins) storage.delete(origin);
             }),
           ),
         ),
@@ -542,12 +588,22 @@ export const makeFakePageHost = (
       storage: Effect.sync(() => [...storage.values()]),
       restart: Effect.sync(() => {
         for (const [key, cookie] of cookies) if (cookie.expires === undefined) cookies.delete(key);
+        runs += 1;
       }),
       emptyStore: (next) =>
         Effect.sync(() => {
           cookies.clear();
           storage.clear();
           cookieStore = next;
+        }),
+      failNext: (call) =>
+        Effect.sync(() => {
+          failing.add(call);
+        }),
+      holdNext: (call) =>
+        Effect.map(Deferred.make<void>(), (held) => {
+          holding.set(call, held);
+          return Deferred.succeed(held, undefined).pipe(Effect.asVoid);
         }),
       fills: Effect.sync(() => [...fills]),
       acked: Effect.sync(() => [...acked]),
