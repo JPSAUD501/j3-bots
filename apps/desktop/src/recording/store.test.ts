@@ -184,17 +184,8 @@ describe("the recordings on disk", () => {
         const kept = Option.getOrThrow(
           yield* store.keepTranscript(ID, {
             segments: [
-              {
-                t: 0,
-                until: 24_050,
-                text: "Open the invoices.",
-                words: [
-                  { t: 1000, text: "Open" },
-                  { t: 1500, text: "the" },
-                  { t: 2500, text: "invoices." },
-                ],
-              },
-              { t: 24_050, until: 50_000, text: "Then send it.", words: null },
+              { t: 0, until: 24_050, text: "Open the invoices." },
+              { t: 24_050, until: 50_000, text: "Then send it." },
             ],
           }),
         );
@@ -216,16 +207,7 @@ describe("the recordings on disk", () => {
           format: "j3-bots-screen-recording-transcript",
           version: 1,
           segments: [
-            {
-              t: 0,
-              until: 24_050,
-              text: "Open the invoices.",
-              words: [
-                { t: 1000, text: "Open" },
-                { t: 1500, text: "the" },
-                { t: 2500, text: "invoices." },
-              ],
-            },
+            { t: 0, until: 24_050, text: "Open the invoices." },
             { t: 24_050, until: 50_000, text: "Then send it." },
           ],
         });
@@ -255,14 +237,14 @@ describe("the recordings on disk", () => {
       // Settled: a transcript that comes later is not added.
       const later = Option.getOrThrow(
         yield* store.keepTranscript(ID, {
-          segments: [{ t: 0, until: 1000, text: "Hello.", words: null }],
+          segments: [{ t: 0, until: 1000, text: "Hello." }],
         }),
       );
       assert.strictEqual(later.size, ready.size);
       const files = unzipSync(yield* readWhole(store, kept.size, 1000));
       assert.notProperty(files, "transcript.json");
       assert.deepInclude(JSON.parse(decoder.decode(files["manifest.json"])), { transcript: null });
-      assert.include(decoder.decode(files["README.md"]), "There is no transcript");
+      assert.include(decoder.decode(files["README.md"]), "It has no transcript");
       assert.isTrue(Option.isNone(yield* store.readSpeech(ID, 0, 16)));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

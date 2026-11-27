@@ -131,6 +131,7 @@ import { useAttachments } from "./attachments";
 import { useCardIntents, useCardSubmitting } from "./cardIntents";
 import { client, server } from "./client";
 import { useComposerSource } from "./composer";
+import { openMicrophone } from "./microphone";
 import { isInView, useInView } from "./inView";
 import { Notices, useSay } from "./notices";
 import { saveText } from "./openFile";
@@ -1006,7 +1007,10 @@ function LiveShell({
     if (result._tag === "failed" && stillPaired()) say(t("roster.changeFailed"));
   };
   const attachments = useAttachments(j3, say);
-  const composer = useComposerSource(j3, say);
+  const composer = useComposerSource(j3, say, () => {
+    setSettingsPage("voice");
+    setSettingsOpen(true);
+  });
   const cardSubmitting = useCardSubmitting();
 
   const view: ConversationView =
@@ -1640,7 +1644,11 @@ function LiveShell({
     },
     providerActions: providerActionsOf(j3),
     secrets: { ...j3.secrets, copy: copySecret },
-    voice: j3.voice,
+    voice: {
+      ...j3.voice,
+      microphone: openMicrophone,
+      app: desktopApp === null ? "browser" : "desktop",
+    },
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

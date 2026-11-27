@@ -1059,6 +1059,7 @@ export function sampleTeam(now: DateTime.Utc) {
     suggestReplies: true,
     voice: {
       place: "automatic",
+      provider: "openai",
       language: "auto",
       words: ["J3 Bots", "Ledger"],
       removeFillers: true,

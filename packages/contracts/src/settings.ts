@@ -138,7 +138,7 @@ export const Settings = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
   /**
-   * How the operator dictates (decision 0096). Null from a server that
+   * How the operator dictates (decisions 0096 and 0107). Null from a server that
    * predates dictation through it, which serves no voice socket: a client
    * then offers only what its own device recognizes.
    */

@@ -40,6 +40,7 @@ import * as TelemetryStore from "./telemetry/TelemetryStore.ts";
 import * as TelemetrySwitch from "./telemetry/TelemetrySwitch.ts";
 import * as SkillRepositories from "./skills/SkillRepositories.ts";
 import * as DiskSpace from "./system/DiskSpace.ts";
+import * as CloudSpeech from "./voice/CloudSpeech.ts";
 import * as Host from "./system/Host.ts";
 import * as Network from "./system/Network.ts";
 import * as Systemd from "./system/Systemd.ts";
@@ -155,6 +156,7 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
         ExpoPushSender.layer,
         DiskSpace.layer,
         OAuthEndpoints.layer,
+        CloudSpeech.layer,
         HarnessSources.layer.pipe(Layer.provide(Host.layer)),
       ),
     ),

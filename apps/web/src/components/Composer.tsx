@@ -49,7 +49,7 @@ import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { useAttachmentImage } from "./attachmentImages";
 import { BotAvatar, RoomAvatar, type RoomAvatarMember } from "./avatar/BotAvatar";
-import { DictationButton, type DictationSource, useDictation } from "./Dictation";
+import { DictationControl, DictationNotice, type DictationSource, useDictation } from "./Dictation";
 import {
   ChipField,
   dropOffset,
@@ -223,9 +223,11 @@ export function focusAtEnd(field: HTMLElement | null) {
  * its kind, and its name; it is deleted as one character, and a click opens
  * its file once uploaded. A file that cannot go says why inside the composer.
  * The message goes once every file has uploaded. Where dictation exists, a
- * microphone stands beside Send (`useDictation`): while it runs, the field
- * shows the words where the caret was and takes no edit, and Escape cancels
- * it; nothing it hears is sent by itself. A message over a limit
+ * microphone stands beside Send (`useDictation`): while it records, it opens
+ * into a capsule with the time and the voice's level, the field still takes
+ * typing, and Escape cancels it; the words land where the caret was, and
+ * nothing it hears is sent by itself. Why it gave no words shows inside the
+ * composer, over the text, with Set up where that fixes it. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, or the drafts load or could not be read, the field stays
  * focused but read-only, and attaching and removing files show as
@@ -309,8 +311,8 @@ export function Composer({
     available: settled,
     onValueChange: (text, moved) => onValueChange(text, moved),
   });
-  // The draft takes no change while it is handed over, loads, could not be read, or is dictated into.
-  const frozen = !settled || dictation.running;
+  // The draft takes no change while it is handed over, loads or could not be read.
+  const frozen = !settled;
   // Files the draft already held when shown appear in place; only those attached since arrive.
   const restored = useRestored(
     draftKey,
@@ -376,7 +378,7 @@ export function Composer({
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
     setNotTaken(false);
-    dictation.edited();
+    dictation.edited(change.text, change.selection[1]);
     const edit: FieldInput = {
       before: value,
       after: change.text,
@@ -456,15 +458,14 @@ export function Composer({
   // Files just dropped and not taken come first: the operator is waiting on them now.
   const alert = notTaken
     ? t("composer.waitToAttach")
-    : (dictation.problem ?? (problem === null ? null : messageProblemText(problem, i18n)));
+    : problem === null
+      ? null
+      : messageProblemText(problem, i18n);
   // What the composer says inside itself, the most pressing first. A file that cannot go is
   // announced once, above; its chip marks it.
   const notes: ReadonlyArray<ComposerNote> = [
     ...(alert === null ? [] : [{ key: "alert", text: alert, tone: "blocked" } as const]),
     ...failures.map((failure) => ({ ...failure, tone: "blocked" }) as const),
-    ...(dictation.status === null || dictation.status === ""
-      ? []
-      : [{ key: "dictation", text: dictation.status, tone: "muted" } as const]),
     ...(prompt.cut ? [{ key: "cut", text: t("prompt.cut"), tone: "muted" } as const] : []),
     // Quiet: it clears by itself once the device keeps the draft.
     ...(notSaved
@@ -591,6 +592,7 @@ export function Composer({
             ))}
           </ul>
         )}
+        {dictation.offered && <DictationNotice dictation={dictation} />}
         {onUnquote !== undefined && (
           <DraftQuoteChips
             quotes={quotes}
@@ -663,7 +665,7 @@ export function Composer({
           )}
           <ChipField
             ref={fieldRef}
-            value={dictation.preview?.text ?? value}
+            value={value}
             chips={files.map((file) => ({
               key: file.key,
               content: (
@@ -676,22 +678,7 @@ export function Composer({
                 />
               ),
             }))}
-            runs={[
-              ...(dictation.preview === null
-                ? mentionRuns(value, mentions, mentionable)
-                : mentionRuns(dictation.preview.text, dictation.preview.mentions, mentionable)),
-              ...(dictation.preview?.open == null
-                ? []
-                : [
-                    {
-                      ...dictation.preview.open,
-                      // Words still open to change: lighter than the settled ones, which are the text's own.
-                      content: (
-                        <span className="text-muted-foreground">{dictation.preview.open.text}</span>
-                      ),
-                    },
-                  ]),
-            ]}
+            runs={mentionRuns(value, mentions, mentionable)}
             readOnly={frozen}
             onChange={follow}
             onSelect={(event) => {
@@ -764,7 +751,7 @@ export function Composer({
             {...mention.fieldProps}
             {...prompt.fieldProps}
             data-composer=""
-            data-dictating={dictation.running ? "" : undefined}
+            data-dictating={dictation.phase === "idle" ? undefined : ""}
             className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
           />
           {offered !== null && (
@@ -783,7 +770,7 @@ export function Composer({
               </Kbd>
             </Button>
           )}
-          {dictation.offered && <DictationButton dictation={dictation} unavailable={!settled} />}
+          {dictation.offered && <DictationControl dictation={dictation} unavailable={!settled} />}
           <Button
             type="submit"
             variant="ghost"

@@ -229,6 +229,12 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
      * older client never sends one.
      */
     "quotes",
+    /**
+     * Dictation on the server's own speech model (`VoicePlace` `server`),
+     * which this server does not run. Only a client of protocol 11 before
+     * 0.15.0 sends it; it reads the reason as a save that failed.
+     */
+    "voice-place",
   ]),
 }) {
   override get message(): string {

@@ -51,6 +51,8 @@ import {
   type HarnessLocation,
   type SignInHarness,
   type UsageWindow,
+  CloudVoiceModelId,
+  type VoiceSettings,
 } from "@j3-bots/contracts";
 import type {
   LocalPairingLink,
@@ -223,8 +225,8 @@ import { SecretAskCard } from "../components/SecretAskCard";
 import { SecretsSection } from "../components/secrets/SecretsSection";
 import { WorkFold } from "../components/WorkFold";
 import type { DictationSource } from "../components/Dictation";
-import { VoiceSection } from "../components/VoiceSettings";
-import { sampleDictation, sampleVoice } from "./sampleVoice";
+import { VoiceSection, VoiceTest } from "../components/VoiceSettings";
+import { sampleDictation, sampleVoice, sampleVoiceWith } from "./sampleVoice";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Confirm } from "../components/ui/confirm";
@@ -1803,8 +1805,8 @@ function SheetFrame({
 function PillFrame({ label, ...props }: { label: string } & Partial<PillProps>) {
   const { scout } = team.bots;
   return (
-    <Frame label={label} width={320} height={64}>
-      <div className="p-2">
+    <Frame label={label} width={232} height={52}>
+      <div className="p-1.5">
         <Pill
           face={{ avatar: scout.profile.avatar, seed: scout.id }}
           phase="recording"
@@ -1890,10 +1892,12 @@ function ScreenRecordingSection() {
           <SheetFrame label="Counting down" height={230} countdown={2} />
         </div>
       </Labeled>
-      <Labeled label="The floating control: the bot listening, a red dot, the voice's level, Discard, Pause and Stop; paused; a nearly full disk; in a room; saving">
+      <Labeled label="The floating control, small and round: the bot listening, a red dot, the voice's level, and Discard, Pause and Stop as icons named in their tooltips; starting; paused; Discard asking once more; a nearly full disk; in a room; saving">
         <div className="flex flex-wrap gap-4">
           <PillFrame label="Recording" />
+          <PillFrame label="Starting" phase="starting" />
           <PillFrame label="Paused" phase="paused" />
+          <PillFrame label="Discard, asking once more" discarding />
           <PillFrame label="Recording, the disk nearly full" space="low" />
           <PillFrame label="In a room, with no voice" face={null} level={null} />
           <PillFrame label="Saving" phase="finishing" />
@@ -3103,43 +3107,61 @@ function ComposerSection() {
           </div>
         </Frame>
         <Frame
-          label="Dictation: getting ready the first time, the model downloading"
+          label="Dictation: recording, in the composer: Cancel, the time, the level and Stop. The field still takes typing"
           width={440}
           height={120}
         >
           <div className="p-3">
             <ComposerDemo
-              initial="Remind me to "
-              recipient={team.bots.scout.profile.name}
-              dictation={sampleDictation({
-                state: { _tag: "installing", received: 312_000_000, total: 751_000_000 },
-              })}
+              initial="Hi Atlas, "
+              recipient={team.bots.atlas.profile.name}
+              dictation={sampleDictation()}
+              dictating
+            />
+          </div>
+        </Frame>
+        <Frame label="Dictation: being written down, in place" width={440} height={120}>
+          <div className="p-3">
+            <ComposerDemo
+              initial="Hi Atlas, "
+              recipient={team.bots.atlas.profile.name}
+              dictation={sampleDictation({ state: { _tag: "finishing" } })}
               dictating
             />
           </div>
         </Frame>
         <Frame
-          label="Dictation: listening, settled words in the text's color, open ones lighter, and the level"
+          label="Dictation: the service refused the key, said inside the composer with Set up"
           width={440}
-          height={120}
+          height={160}
         >
           <div className="p-3">
             <ComposerDemo
-              initial="Hi Atlas,"
-              recipient={team.bots.atlas.profile.name}
+              initial=""
+              recipient={team.bots.scout.profile.name}
+              dictation={sampleDictation({ state: { _tag: "failed", reason: "cloud-refused" } })}
+              dictating
+            />
+          </div>
+        </Frame>
+        <Frame
+          label="Dictation: not set up, in quick access, where Settings is not at hand (elsewhere a press opens Settings → Voice)"
+          width={440}
+          height={160}
+        >
+          <div className="p-3">
+            <ComposerDemo
+              initial=""
+              recipient={team.bots.scout.profile.name}
               dictation={sampleDictation({
-                state: {
-                  _tag: "listening",
-                  live: true,
-                  committed: "book the venue for the fourteenth",
-                  tentative: "and ask about park",
-                },
+                reach: { _tag: "blocked", block: "setup" },
+                setUp: false,
               })}
               dictating
             />
           </div>
         </Frame>
-        <Frame label="Dictation: the microphone not allowed" width={440} height={140}>
+        <Frame label="Dictation: the microphone not allowed" width={440} height={160}>
           <div className="p-3">
             <ComposerDemo
               initial=""
@@ -3152,7 +3174,7 @@ function ComposerSection() {
         <Frame
           label="Dictation: a page on plain http, where a press explains"
           width={440}
-          height={160}
+          height={180}
         >
           <div className="p-3">
             <ComposerDemo
@@ -4621,6 +4643,18 @@ function SettingsFrame({
   );
 }
 
+/** Dictation's settings as the Voice frames start from. */
+const sampleVoiceSettings: VoiceSettings = {
+  place: "automatic",
+  provider: "openai",
+  language: "auto",
+  words: ["J3 Bots"],
+  removeFillers: true,
+  cleanUp: false,
+  model: null,
+  openRouterModel: null,
+};
+
 function SettingsPagesSection() {
   return (
     <Section title="Settings: its pages">
@@ -4630,23 +4664,44 @@ function SettingsPagesSection() {
         <SettingsFrame label="Phone: the list, an update waiting" wide={false} />
         <SettingsFrame label="Phone: a page, with Back" wide={false} page="appearance" />
         <SettingsFrame label="Wide: voice, dictation's settings" wide page="voice" height={900} />
+        <Frame padded label="Voice, not set up yet: what it needs, first" width={480} height={760}>
+          <VoiceSection
+            settings={{ ...team.settings, voice: { ...sampleVoiceSettings, provider: null } }}
+            save={{ _tag: "idle" }}
+            connected
+            onSave={nothing}
+            voice={sampleVoiceWith({ openai: false, xai: false, openrouter: false })}
+          />
+        </Frame>
         <Frame
           padded
-          label="Voice with OpenRouter: its key, saved, and its model"
+          label="Voice with xAI chosen and no key yet: paste it, or get one"
           width={480}
           height={760}
+        >
+          <VoiceSection
+            settings={{ ...team.settings, voice: { ...sampleVoiceSettings, provider: "xai" } }}
+            save={{ _tag: "idle" }}
+            connected
+            onSave={nothing}
+            voice={sampleVoiceWith({ openai: false, xai: false, openrouter: false })}
+          />
+        </Frame>
+        <Frame
+          padded
+          label="Voice with OpenRouter: its key saved, a model to choose, and phones always using it"
+          width={480}
+          height={820}
         >
           <VoiceSection
             settings={{
               ...team.settings,
               voice: {
+                ...sampleVoiceSettings,
                 place: "openrouter",
+                provider: "openrouter",
                 language: "pt",
-                words: ["J3 Bots"],
-                removeFillers: true,
-                cleanUp: true,
-                model: null,
-                openRouterModel: null,
+                openRouterModel: CloudVoiceModelId.make("mistralai/voxtral-small"),
               },
             }}
             save={{ _tag: "idle" }}
@@ -4654,6 +4709,20 @@ function SettingsPagesSection() {
             onSave={nothing}
             voice={sampleVoice}
           />
+        </Frame>
+        <Frame padded label="Voice: the test, step by step" width={480} height={260}>
+          <div className="flex flex-col gap-4">
+            {(
+              [
+                { _tag: "listening" },
+                { _tag: "writing" },
+                { _tag: "heard", text: "Book the venue for Friday" },
+                { _tag: "nothing" },
+              ] as const
+            ).map((run) => (
+              <VoiceTest key={run._tag} voice={sampleVoice} connected initial={run} />
+            ))}
+          </div>
         </Frame>
       </div>
     </Section>

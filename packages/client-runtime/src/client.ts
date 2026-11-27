@@ -73,8 +73,6 @@ import type {
   CloudVoiceKeys,
   CloudVoiceModel,
   CloudVoiceProvider,
-  VoiceModel,
-  VoiceStatus,
 } from "@j3-bots/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -319,23 +317,17 @@ export interface LoadedHandle<A> {
 export interface DictationHandle {
   readonly state: Readable<Voice.DictationState>;
   readonly audio: (pcm: Uint8Array) => void;
-  readonly finish: (draft?: {
-    readonly text: string;
-    readonly start: number;
-    readonly end: number;
-  }) => void;
+  readonly finish: () => void;
   /** Ends it: before it is over, nothing is kept and no words come. Call it once it is over too. */
   readonly cancel: () => void;
 }
 
 /**
- * Dictation through the server; see `Voice`. The status and keys are only
- * for a server whose settings carry `voice`.
+ * Dictation through the server; see `Voice`. The keys are only for a server
+ * whose settings carry `voice`.
  */
 export interface VoiceClient {
-  readonly openStatus: () => LoadedHandle<VoiceStatus>;
   readonly openCloudKeys: () => LoadedHandle<CloudVoiceKeys>;
-  readonly models: () => Promise<Actions.IntentResult<ReadonlyArray<VoiceModel>>>;
   readonly cloudModels: () => Promise<Actions.IntentResult<ReadonlyArray<CloudVoiceModel>>>;
   readonly setCloudKey: (
     provider: CloudVoiceProvider,
@@ -847,7 +839,6 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     takesTranscripts: services.roster.recordingTranscripts,
     connection: connection.state,
     settings: services.settings.state,
-    voiceStatus: services.voice.status,
     transcribe: services.voice.transcribe,
   };
 
@@ -1271,15 +1262,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     },
 
     voice: {
-      openStatus: () => {
-        const { value, release } = hold(services.voice.status);
-        return { state: value, release };
-      },
       openCloudKeys: () => {
         const { value, release } = hold(services.voice.cloudKeys);
         return { state: value, release };
       },
-      models: () => run.promise(services.voice.models),
       cloudModels: () => run.promise(services.voice.cloudModels),
       setCloudKey: (provider, key) => run.promise(services.voice.setCloudKey(provider, key)),
       dictate: () => {
@@ -1294,7 +1280,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         return {
           state: value.state,
           audio: (pcm) => fire(value.audio(pcm)),
-          finish: (draft) => fire(value.finish(draft)),
+          finish: () => fire(value.finish),
           cancel: release,
         };
       },

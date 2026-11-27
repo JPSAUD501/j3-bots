@@ -91,7 +91,7 @@ const SPACE_TO_START = 1024 ** 3;
 const SPACE_TO_STOP = 300 * 1024 ** 2;
 const SPACE_EVERY = Duration.seconds(15);
 const WINDOW_EVERY = Duration.seconds(1);
-const PILL = { width: 320, height: 64 } as const;
+const PILL = { width: 232, height: 52 } as const;
 
 /** Where System Settings gives macOS's permissions. */
 const MAC_SETTINGS = {

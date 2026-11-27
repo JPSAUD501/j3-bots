@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { HeardWords } from "@j3-bots/client-runtime";
 import type { VoiceLanguage } from "@j3-bots/contracts";
 
 // The phone's own recognizer, run on the phone only (decision 0096): which of
@@ -48,8 +47,6 @@ export const hear = (heard: Heard, transcript: string, isFinal: boolean): Heard 
   return { final: said === "" ? heard.final : [...heard.final, said], interim: "" };
 };
 
-/** What has been heard as words: the finished utterances settled, the one still heard open. */
-export const heardWords = (heard: Heard): HeardWords => ({
-  committed: heard.final.join(" "),
-  tentative: heard.interim,
-});
+/** Everything heard, finished utterances and the one still heard, as the words a stop leaves. */
+export const heardText = (heard: Heard): string =>
+  [...heard.final, heard.interim].filter((part) => part !== "").join(" ");

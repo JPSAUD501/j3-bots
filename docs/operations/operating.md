@@ -320,11 +320,11 @@ The first writes the AppArmor profile that lets the browser J3 Bots' engine down
 
 ## Dictation
 
-Dictation on the server runs the engine's speech model on this machine ([decision 0096](../decisions/0096-dictation-goes-through-the-engines-speech-recognition-and-stays-on-the-operators-machines.md)). Nothing needs installing beforehand: the first dictation downloads the model J3 Bots picks, 751 MB, into the engine's own data in the J3 Bots home (`speech/models` under the engine's state folder, **Read** in T3 Code's `SpeechModelStore.ts`), and every device shows the download. Plan for that much free disk, and more for a bigger model chosen under Settings → Voice → More.
+The server runs no speech model: a dictation from the web or the desktop app, and a screen recording's transcript, go to the cloud provider chosen in Settings → Voice, OpenAI, xAI or OpenRouter, with the operator's own key ([decision 0107](../decisions/0107-dictation-goes-to-the-operators-cloud-provider-and-the-server-runs-no-speech-model.md)). The server needs nothing installed for it, only HTTPS out to that provider. The Android app may still recognize on the phone, which sends the server nothing.
 
-While a dictation runs, the model takes about 1.4 GB of memory, the file it maps included; it leaves memory two minutes after the last dictation on a machine with 8 GiB or less, fifteen on a bigger one. On a 4 GB board that sits beside the bots, dictating while several bots work can press on memory; a cloud provider in Settings → Voice uses none of it.
+The key is a secret named `voice-openai`, `voice-xai` or `voice-openrouter` in Secrets; removing it there stops dictation with that provider, even one under way: what was recorded is not sent. Audio is never written to disk, and the server logs neither the audio, the words nor the key. A dictation whose device goes quiet, as a laptop put to sleep, ends after 15 seconds.
 
-The engine runs one dictation at a time; a second device is told to wait. Audio is never written to disk, by the server or the engine (whose speech code writes only model files, **Read** at `bc0f04d`), and the server logs neither the audio nor the words. A cloud provider's key is a secret named `voice-openai`, `voice-xai` or `voice-openrouter` in Secrets; removing it there stops dictation with that provider, even one under way: what was recorded is not sent. A dictation whose device goes quiet, as a laptop put to sleep, ends after 15 seconds, so it never keeps another device waiting.
+A server that ran 0.14.0 may still hold the speech model it downloaded, about 751 MB in the engine's data (`speech/models` under the engine's state folder, **Read** in T3 Code's `SpeechModelStore.ts`). Nothing uses it any more; delete that folder to free the space.
 
 ## Secrets
 
