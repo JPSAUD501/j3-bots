@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type Entry,
+  MAX_QUOTE_COMMENT_LENGTH,
   MAX_QUOTE_PASSAGE_LENGTH,
   MAX_QUOTES,
   type MessageEntry,
@@ -53,11 +54,26 @@ export const passageOf = (
   };
 };
 
-/** What `message.send` names of a quote. */
+/** What `message.send` names of a quote, with the operator's comment on a passage. */
 export const quoteRequestOf = (quote: MessageQuote): QuoteRequest =>
   quote.quoted._tag === "passage"
-    ? { entryId: quote.entryId, passage: quote.quoted.text }
+    ? {
+        entryId: quote.entryId,
+        passage: quote.quoted.text,
+        ...(quote.comment === undefined ? {} : { comment: quote.comment }),
+      }
     : { entryId: quote.entryId };
+
+/**
+ * `quote` with the operator's comment on it (decision 0106), trimmed; none
+ * when it is only spaces, and none on a reply, whose message is its comment.
+ */
+export const withComment = (quote: MessageQuote, comment: string): MessageQuote => {
+  const { entryId, author, saidAt, quoted } = quote;
+  const bare: MessageQuote = { entryId, author, saidAt, quoted };
+  const trimmed = comment.trim().slice(0, MAX_QUOTE_COMMENT_LENGTH).trim();
+  return trimmed === "" || quote.quoted._tag !== "passage" ? bare : { ...bare, comment: trimmed };
+};
 
 const passageKey = (quote: MessageQuote) =>
   quote.quoted._tag === "passage" ? quote.quoted.text : null;
@@ -66,17 +82,20 @@ const passageKey = (quote: MessageQuote) =>
 const sameQuote = (one: MessageQuote, other: MessageQuote) =>
   one.entryId === other.entryId && passageKey(one) === passageKey(other);
 
+/** Whether two lists hold the same quotes, in the same order, with the same comments. */
 export const sameQuotes = (one: ReadonlyArray<MessageQuote>, other: ReadonlyArray<MessageQuote>) =>
   one.length === other.length &&
   one.every((quote, index) => {
     const twin = other[index];
-    return twin !== undefined && sameQuote(quote, twin);
+    return twin !== undefined && sameQuote(quote, twin) && quote.comment === twin.comment;
   });
 
 /**
  * A draft's quotes with `quote` added: a reply replaces the draft's reply,
- * first; a passage goes last. `full` when the draft has `MAX_QUOTES` and
- * `quote` replaces none of them; the same quotes when it has it already.
+ * first; a passage goes last, or, quoted already, takes the place of its
+ * twin with the comment it brings now, keeping the twin's when it brings
+ * none, so quoting it again never loses what the operator wrote. `full` when the draft has
+ * `MAX_QUOTES` and `quote` replaces none of them.
  */
 export const withQuote = (
   quotes: ReadonlyArray<MessageQuote>,
@@ -87,7 +106,15 @@ export const withQuote = (
     if (others.length >= MAX_QUOTES) return "full";
     return [quote, ...others];
   }
-  if (quotes.some((one) => sameQuote(one, quote))) return quotes;
+  const twin = quotes.findIndex((one) => sameQuote(one, quote));
+  if (twin !== -1) {
+    // Quoted again: a comment it brings replaces the one there; none keeps it.
+    const kept = quotes[twin]?.comment;
+    return quotes.with(
+      twin,
+      quote.comment === undefined && kept !== undefined ? { ...quote, comment: kept } : quote,
+    );
+  }
   if (quotes.length >= MAX_QUOTES) return "full";
   return [...quotes, quote];
 };

@@ -1,6 +1,6 @@
 # 0097: What's new ships with the apps, and follows the server's version
 
-**Status:** Accepted.
+**Status:** Accepted. Amended by [0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md): the roster's row shows only while something is unseen, and What's new is always in Settings → About.
 
 ## Context
 
@@ -10,7 +10,7 @@ The update prompt shows a release's highlights, read from the release notes, and
 
 **Every client has a "What's new" place that lists what each release lets people do, newest first. Once after an update it carries a quiet mark, "New in 0.14", until it is opened. The text ships with the apps, in every language, and the mark follows the server's version as each device last saw it.**
 
-- **Where it is.** On the web and the desktop, it is a row in the roster's footer, above Settings, where the update prompt's way back already sits. A non-technical person sees it without opening anything. On the phone, the roster's header has no room for a row, so What's new is the last row of Settings, and while it is marked, a quiet line over the roster says "New in 0.14" and opens it, as the update's own line does. Quick access is one conversation and has no footer, so it has none. Nothing opens by itself: there is no modal and no notification.
+- **Where it is.** On the web and the desktop, while it is marked, it is a row in the roster's footer, above Settings, where the update prompt's way back already sits, so a non-technical person sees it without opening anything; it is always in Settings → About and updates. On the phone, the roster's header has no room for a row: while it is marked, a quiet line over the roster says "New in 0.14" and opens it, as the update's own line does, and it is always the last row of Settings → About and updates ([decision 0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md): a row already read no longer stays in the roster). Quick access is one conversation and has no footer, so it has none. Nothing opens by itself: there is no modal and no notification.
 - **What it says.** Each release has a few entries. Each entry has a short title, one or two plain sentences on what you can now do, and optionally where to find it. They are written for someone who isn't technical, in English and Brazilian Portuguese. Entries have no pictures yet.
 - **Where the text lives.** It is a typed catalog in `packages/i18n/src/whatsNew/`, with one file per release (`v<x.y.z>.ts`). Each text has every language (`InEveryLanguage`), so a missing translation does not compile. It is not parsed from the GitHub release or from the notes. Those are written for operators, and a client would need the network and a parser to read them.
 - **Which releases show.** A device shows the releases up to the version its server runs. A release candidate or a nightly counts as the release it leads to. An app newer than its server doesn't announce what that server can't do yet. A server older than every release in the catalog shows nothing, and the place is hidden.

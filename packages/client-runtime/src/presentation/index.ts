@@ -199,6 +199,7 @@ export {
   replyTo,
   takesPassage,
   takesReply,
+  withComment,
   withQuote,
 } from "./quotes.ts";
 export {

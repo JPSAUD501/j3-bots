@@ -51,6 +51,12 @@ const revealMask = {
   maskSize: "100% 220%",
   maskRepeat: "no-repeat",
 };
+/**
+ * A bubble's widest beside React and Reply (`size-7` each, `gap-0.5`, `ms-1.5`
+ * from it): never so wide that they stand past the conversation's edge.
+ */
+const besideActions = "max-w-[min(var(--layout-bubble-width),calc(100%-4rem))]";
+
 const revealTime = (text: string) => Math.min(1100, Math.max(320, text.length * 6));
 
 interface MessageBubbleProps {
@@ -244,18 +250,21 @@ export function MessageBubble({
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard visual={message.visual} />
       )}
-      {/* The bubble's width is set here, so Reply and React can stand just outside it. A quote's
+      {/* The bubble's width is set here, so Reply and React can stand just outside it, in room it
+          leaves them: a narrow column, as quick access is, scrolls no wider for them. A quote's
           card lights it as the message it went to. */}
       <div
         data-quote-target=""
         {...(sourceLit ? { "data-quote-source": "still" } : {})}
         className={cn(
-          "relative flex max-w-(--layout-bubble-width) flex-col gap-1 empty:hidden",
+          "relative flex flex-col gap-1 empty:hidden",
+          reacting !== null || reply !== undefined
+            ? besideActions
+            : "max-w-(--layout-bubble-width)",
           fromOperator ? "items-end" : "items-start",
         )}
       >
-        {quotes.length > 0 && <SentQuotes quotes={quotes} fromOperator={fromOperator} />}
-        {message.text !== "" && (
+        {(message.text !== "" || quotes.length > 0) && (
           <div
             ref={bubbleRef}
             title={time}
@@ -273,20 +282,26 @@ export function MessageBubble({
                   ],
             )}
           >
-            <MessageText
-              text={message.text}
-              mentionable={mentionable ?? []}
-              {...(message._tag === "message" ? { quoteId: message.id } : {})}
-              {...(placed === null
-                ? {}
-                : {
-                    placed: {
-                      files: message.attachments,
-                      offsets: placed,
-                      onOpen: onOpenAttachment,
-                    },
-                  })}
-            />
+            {/* One child, so a bot's text reveals with what it quotes. */}
+            <div className="flex flex-col gap-1.5">
+              {quotes.length > 0 && <SentQuotes quotes={quotes} />}
+              {message.text !== "" && (
+                <MessageText
+                  text={message.text}
+                  mentionable={mentionable ?? []}
+                  {...(message._tag === "message" ? { quoteId: message.id } : {})}
+                  {...(placed === null
+                    ? {}
+                    : {
+                        placed: {
+                          files: message.attachments,
+                          offsets: placed,
+                          onOpen: onOpenAttachment,
+                        },
+                      })}
+                />
+              )}
+            </div>
           </div>
         )}
         {/* Files placed in the text stand there; others follow it. */}

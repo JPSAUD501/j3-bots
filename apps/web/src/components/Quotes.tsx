@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { Popover } from "@base-ui/react/popover";
 import type { Revealed } from "@j3-bots/client-runtime";
 import { quoteText } from "@j3-bots/client-runtime/presentation";
-import type { EntryId, MessageQuote } from "@j3-bots/contracts";
-import { ReplyIcon, XIcon } from "lucide-react";
+import { type EntryId, MAX_QUOTE_COMMENT_LENGTH, type MessageQuote } from "@j3-bots/contracts";
+import { PencilIcon, QuoteIcon, ReplyIcon, XIcon } from "lucide-react";
 import { createContext, type ReactNode, use, useState } from "react";
 import { useBots, useI18n } from "../app/context";
-import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { FaceOf } from "./avatar/TeamAvatars";
+import { Button } from "./ui/button";
+import { textField } from "./ui/field";
 
 /** Reads back to a quoted message, which then shows: whether it could. */
 export type GoToQuote = (entryId: EntryId) => Promise<Revealed>;
 
 /**
- * Goes to the message a quote's card names (`Timeline` provides it). Where it
- * is null, as in the gallery's still frames, a card goes nowhere.
+ * Goes to the message a quote's block names (`Timeline` provides it). Where
+ * it is null, as in the gallery's still frames, a block goes nowhere.
  */
 export const OpenQuote = createContext<GoToQuote | null>(null);
 
@@ -23,47 +25,42 @@ export const OpenQuote = createContext<GoToQuote | null>(null);
 function useAuthor(author: MessageQuote["author"]) {
   const { t } = useI18n();
   const bots = useBots();
-  if (author._tag === "operator") return { name: t("quote.you"), avatar: null, botId: null };
+  if (author._tag === "operator") return { name: t("quote.you"), botId: null };
   const bot = bots.get(author.botId);
-  return {
-    name: bot?.profile.name ?? t("bot.unknown"),
-    avatar: bot?.profile.avatar ?? null,
-    botId: author.botId,
-  };
+  return { name: bot?.profile.name ?? t("bot.unknown"), botId: author.botId };
 }
 
-/** What a quote's card reads: its passage or the start of its message, or that it has files only. */
+/** What a quote reads: its passage or the start of its message, or that it has files only. */
 function useWords(quote: MessageQuote) {
   const { t } = useI18n();
   return quoteText(quote) || t("quote.files");
 }
 
-// A quote is set apart by a bar in its author's color, on a quiet fill.
-const quoteCard = "border-s-2 border-(--tint) bg-muted/70";
+const keyOf = (quote: MessageQuote) =>
+  `${quote.entryId}:${quote.quoted._tag === "passage" ? quote.quoted.text : ""}`;
+
+// A quote sits in its bubble as a quiet block of the bubble's own ink, so it reads in the
+// operator's dark bubble and in a bot's tinted one alike, in either theme.
+const quoteBlock =
+  "flex w-full min-w-0 flex-col gap-0.5 rounded-lg bg-[color-mix(in_oklab,currentColor_9%,transparent)] px-2.5 py-1.5 text-start text-sm";
 
 /**
- * The messages a sent message quotes, above it: each a small card with its
- * author's face and name and the passage, or the start of the message, on
- * at most two lines. A card goes to its message, reading back to it when it
- * is not held yet; one no longer there says so in place.
+ * What a sent message quotes, at the top of its bubble, before its text:
+ * each a quiet block with its author's face and name and the passage, or the
+ * start of the message, on at most two lines, and under a passage the
+ * operator's comment on it. A block goes to its message, reading back to it
+ * when it is not held yet; one no longer there says so in place.
  */
-export function SentQuotes({
-  quotes,
-  fromOperator,
-}: {
-  readonly quotes: ReadonlyArray<MessageQuote>;
-  /** On the operator's side the cards line up at the end, over their bubble. */
-  readonly fromOperator: boolean;
-}) {
+export function SentQuotes({ quotes }: { readonly quotes: ReadonlyArray<MessageQuote> }) {
   return (
-    <div
-      className={cn("flex max-w-full flex-col gap-1", fromOperator ? "items-end" : "items-start")}
-    >
+    <div className="flex flex-col gap-1.5">
       {quotes.map((quote) => (
-        <SentQuote
-          key={`${quote.entryId}:${quote.quoted._tag === "passage" ? quote.quoted.text : ""}`}
-          quote={quote}
-        />
+        <div key={keyOf(quote)} className="flex flex-col gap-1">
+          <SentQuote quote={quote} />
+          {quote.comment !== undefined && (
+            <p className="break-words whitespace-pre-wrap">{quote.comment}</p>
+          )}
+        </div>
       ))}
     </div>
   );
@@ -87,29 +84,16 @@ function SentQuote({ quote }: { readonly quote: MessageQuote }) {
       : going === "unreachable"
         ? t("quote.unreachable")
         : words;
-  const card = cn(
-    tintOf(author.avatar),
-    quoteCard,
-    "flex max-w-full min-w-0 flex-col gap-0.5 rounded-md px-2.5 py-1.5 text-start text-xs",
-    author.avatar === null && "border-muted-foreground/50",
-  );
   const content: ReactNode = (
     <>
-      <span className="flex min-w-0 items-center gap-1.5 font-semibold">
+      <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
         {author.botId !== null && <FaceOf botId={author.botId} size={16} />}
         <span className="truncate">{author.name}</span>
       </span>
-      <span
-        className={cn(
-          "line-clamp-2 break-words text-foreground/80",
-          lost && "text-muted-foreground italic",
-        )}
-      >
-        {shown}
-      </span>
+      <span className={cn("line-clamp-2 break-words opacity-75", lost && "italic")}>{shown}</span>
     </>
   );
-  if (goTo === null) return <div className={card}>{content}</div>;
+  if (goTo === null) return <div className={quoteBlock}>{content}</div>;
   const settled = going === "looking" || going === "missing";
   return (
     <button
@@ -123,8 +107,8 @@ function SentQuote({ quote }: { readonly quote: MessageQuote }) {
         void goTo(quote.entryId).then(setGoing);
       }}
       className={cn(
-        card,
-        "cursor-pointer transition-colors duration-(--duration-fast) ease-out hover:bg-muted-strong focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent aria-disabled:cursor-default aria-disabled:hover:bg-muted/70",
+        quoteBlock,
+        "cursor-pointer transition-colors duration-(--duration-fast) ease-out hover:bg-[color-mix(in_oklab,currentColor_14%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent aria-disabled:cursor-default aria-disabled:hover:bg-[color-mix(in_oklab,currentColor_9%,transparent)]",
       )}
     >
       {content}
@@ -132,136 +116,223 @@ function SentQuote({ quote }: { readonly quote: MessageQuote }) {
   );
 }
 
-const removeButton = cn(
-  "pressable pressable-round inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default aria-disabled:opacity-50",
+const chipButton = cn(
+  "pressable pressable-round inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default aria-disabled:opacity-50 data-popup-open:bg-muted-strong data-popup-open:text-foreground",
   touchTarget,
 );
 
 /**
- * What the draft quotes, over the composer: its reply as a strip, "Replying
- * to" its author with the start of the message on one line; then each
- * passage as a small chip, its author and the passage on at most two lines.
- * Each has a way out.
+ * What the draft quotes, inside the composer above its text: each a compact
+ * chip, a reply's arrow or a passage's quote mark, its author's face (or
+ * "You"), and the start of what it quotes on one line, with a way out. A
+ * passage's pencil writes the operator's comment on it, where the server
+ * takes one (`onComment`).
  */
-export function DraftQuotes({
+export function DraftQuoteChips({
   quotes,
   onRemove,
+  onComment,
   unavailable,
 }: {
   readonly quotes: ReadonlyArray<MessageQuote>;
   /** Takes the quote at `index` out of the draft. */
   readonly onRemove: (index: number) => void;
-  /** The draft takes no change: no quote can be taken out meanwhile. */
+  /** Sets the operator's comment on the passage at `index`; empty takes it off. */
+  readonly onComment: ((index: number, comment: string) => void) | undefined;
+  /** The draft takes no change: no quote can be taken out or commented meanwhile. */
   readonly unavailable: boolean;
 }) {
+  const { t } = useI18n();
   if (quotes.length === 0) return null;
-  const remove = (index: number) => {
-    if (!unavailable) onRemove(index);
-  };
-  const reply = quotes.findIndex((quote) => quote.quoted._tag === "message");
-  const replyQuote = quotes[reply];
-  const passages = quotes.flatMap((quote, index) =>
-    quote.quoted._tag === "passage" ? [{ quote, index }] : [],
-  );
   return (
-    <div className="flex flex-col gap-1.5">
-      {replyQuote !== undefined && (
-        <ReplyStrip quote={replyQuote} onRemove={() => remove(reply)} unavailable={unavailable} />
-      )}
-      {passages.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5">
-          {passages.map(({ quote, index }) => (
-            <PassageChip
-              key={`${quote.entryId}:${quote.quoted._tag === "passage" ? quote.quoted.text : ""}`}
-              quote={quote}
-              onRemove={() => remove(index)}
-              unavailable={unavailable}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
+    <ul aria-label={t("quote.drafted")} className="flex min-w-0 flex-wrap gap-1 px-1 pt-1">
+      {quotes.map((quote, index) => (
+        <QuoteChip
+          key={keyOf(quote)}
+          quote={quote}
+          unavailable={unavailable}
+          onRemove={() => {
+            if (!unavailable) onRemove(index);
+          }}
+          onComment={
+            onComment === undefined || quote.quoted._tag !== "passage"
+              ? undefined
+              : (comment) => onComment(index, comment)
+          }
+        />
+      ))}
+    </ul>
   );
 }
 
-function ReplyStrip({
+function QuoteChip({
   quote,
   onRemove,
+  onComment,
   unavailable,
 }: {
   readonly quote: MessageQuote;
   readonly onRemove: () => void;
+  readonly onComment: ((comment: string) => void) | undefined;
   readonly unavailable: boolean;
 }) {
   const { t } = useI18n();
   const author = useAuthor(quote.author);
   const words = useWords(quote);
-  return (
-    <div
-      className={cn(
-        tintOf(author.avatar),
-        quoteCard,
-        "appear flex min-w-0 items-center gap-2 rounded-md ps-2.5 pe-1 py-1 text-xs",
-        author.avatar === null && "border-muted-foreground/50",
-      )}
-    >
-      <ReplyIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-      <p className="min-w-0 flex-1 truncate">
-        <span className="font-semibold">
-          {quote.author._tag === "operator"
-            ? t("quote.replyingToYou")
-            : t("quote.replyingTo", { name: author.name })}
-        </span>
-        <span className="text-muted-foreground"> · {words}</span>
-      </p>
-      <button
-        type="button"
-        aria-label={t("quote.cancelReply")}
-        aria-disabled={unavailable}
-        onClick={onRemove}
-        className={removeButton}
-      >
-        <XIcon aria-hidden className="size-3.5" />
-      </button>
-    </div>
-  );
-}
-
-function PassageChip({
-  quote,
-  onRemove,
-  unavailable,
-}: {
-  readonly quote: MessageQuote;
-  readonly onRemove: () => void;
-  readonly unavailable: boolean;
-}) {
-  const { t } = useI18n();
-  const author = useAuthor(quote.author);
-  const words = useWords(quote);
+  const reply = quote.quoted._tag === "message";
+  const what = reply
+    ? quote.author._tag === "operator"
+      ? t("quote.replyingToYou")
+      : t("quote.replyingTo", { name: author.name })
+    : t("quote.quoting", { name: author.name });
+  const Glyph = reply ? ReplyIcon : QuoteIcon;
   return (
     <li
-      className={cn(
-        tintOf(author.avatar),
-        quoteCard,
-        "appear flex max-w-[min(18rem,100%)] min-w-0 items-start gap-1 rounded-md ps-2 pe-0.5 py-1 text-xs",
-        author.avatar === null && "border-muted-foreground/50",
-      )}
+      title={quote.comment === undefined ? words : `${words}\n\n${quote.comment}`}
+      className="appear flex h-7 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted ps-1.5 pe-0.5 text-xs text-foreground"
     >
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate font-semibold">{author.name}</span>
-        <span className="line-clamp-2 break-words text-muted-foreground">{words}</span>
-      </span>
+      <Glyph aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      {author.botId === null ? (
+        <span aria-hidden className="shrink-0 font-medium">
+          {author.name}
+        </span>
+      ) : (
+        <FaceOf botId={author.botId} size={16} />
+      )}
+      <span className="sr-only">{what}:</span>
+      <span className="max-w-[16em] min-w-0 truncate">{words}</span>
+      {onComment !== undefined && (
+        <CommentButton
+          comment={quote.comment}
+          words={words}
+          unavailable={unavailable}
+          onComment={onComment}
+        />
+      )}
       <button
         type="button"
-        aria-label={t("quote.remove")}
+        aria-label={reply ? t("quote.cancelReply") : t("quote.remove")}
         aria-disabled={unavailable}
         onClick={onRemove}
-        className={removeButton}
+        className={chipButton}
       >
         <XIcon aria-hidden className="size-3.5" />
       </button>
     </li>
+  );
+}
+
+/** A passage chip's pencil: the operator's comment on it, written in a small card over the chip. */
+function CommentButton({
+  comment,
+  words,
+  unavailable,
+  onComment,
+}: {
+  readonly comment: string | undefined;
+  readonly words: string;
+  readonly unavailable: boolean;
+  readonly onComment: (comment: string) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next || !unavailable) setOpen(next);
+      }}
+    >
+      <Popover.Trigger
+        aria-label={comment === undefined ? t("quote.comment.add") : t("quote.comment.edit")}
+        aria-disabled={unavailable}
+        className={cn(chipButton, comment !== undefined && "text-foreground")}
+      >
+        <PencilIcon aria-hidden className="size-3.5" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="top" align="start" sideOffset={6} className="z-50">
+          <Popover.Popup
+            aria-label={t("quote.comment.label")}
+            className="origin-(--transform-origin) rounded-lg border border-border bg-surface text-foreground shadow-overlay outline-none transition-[opacity,scale] duration-(--duration-pop) ease-pop data-starting-style:scale-90 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0 data-ending-style:duration-(--duration-fast) data-ending-style:ease-out"
+          >
+            <QuoteCommentEditor
+              passage={words}
+              initial={comment ?? ""}
+              saveLabel={t("quote.comment.save")}
+              onCancel={() => setOpen(false)}
+              onSave={(text) => {
+                onComment(text);
+                setOpen(false);
+              }}
+            />
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+/**
+ * The operator's comment on a passage they quote, as T3 Code's citations
+ * take one: an optional few words, Enter saves them and Shift+Enter starts a
+ * new line, Escape leaves as it was. `passage`, when given, says above it
+ * what the comment is on.
+ */
+export function QuoteCommentEditor({
+  initial,
+  saveLabel,
+  onSave,
+  onCancel,
+  passage,
+}: {
+  readonly initial: string;
+  readonly saveLabel: string;
+  /** The words as written; empty takes a comment off. */
+  readonly onSave: (comment: string) => void;
+  readonly onCancel: () => void;
+  readonly passage?: string;
+}) {
+  const { t } = useI18n();
+  const [text, setText] = useState(initial);
+  return (
+    // Not a form: it shows over the composer's, which a submit here would reach and send.
+    <div className="flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 p-2">
+      {passage !== undefined && (
+        <p className="line-clamp-2 px-1 text-xs text-muted-foreground">“{passage}”</p>
+      )}
+      <textarea
+        // It shows because the operator asked to comment: it takes the focus.
+        autoFocus
+        rows={3}
+        value={text}
+        maxLength={MAX_QUOTE_COMMENT_LENGTH}
+        placeholder={t("quote.comment.placeholder")}
+        aria-label={t("quote.comment.label")}
+        onChange={(event) => setText(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          // Kept here: the composer and the timeline behind it take these keys too.
+          event.stopPropagation();
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            onSave(text);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+        className={cn(textField, "max-h-40 resize-none py-2")}
+      />
+      <div className="flex justify-end gap-1.5">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          {t("quote.comment.cancel")}
+        </Button>
+        <Button variant="primary" size="sm" onClick={() => onSave(text)}>
+          {saveLabel}
+        </Button>
+      </div>
+    </div>
   );
 }
 

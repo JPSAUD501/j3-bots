@@ -25,9 +25,9 @@ export const settingsPanel = deferred(() =>
 // keeps them; closing it themselves discards them.
 
 /**
- * The roster's footer: the way back to the update prompt, What's new, and
- * Settings, which opens everything that is not about one bot at the list of
- * its pages. Opening Settings reads the settings and devices again, for what
+ * The roster's footer: the way back to the update prompt, What's new while it
+ * has something unseen, and Settings, which opens everything that is not about
+ * one bot at the list of its pages. Opening Settings reads the settings and devices again, for what
  * another device changed.
  */
 export function SettingsButton({ data, intents }: SettingsButtonProps) {
@@ -41,7 +41,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
       {updateEntry !== null && intents.updatePrompt !== undefined && (
         <UpdatePromptEntryButton entry={updateEntry} onOpen={intents.updatePrompt.reopen} />
       )}
-      <WhatsNewButton whatsNew={intents.whatsNew} />
+      <WhatsNewButton whatsNew={intents.whatsNew} place="footer" />
       <Dialog.Root
         open={data.settingsOpen}
         onOpenChange={(open) => {

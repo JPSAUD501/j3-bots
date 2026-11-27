@@ -307,6 +307,14 @@ export const en = {
   "quote.goToYours": "Go to your message",
   "quote.missing": "This message isn’t here anymore.",
   "quote.unreachable": "Couldn’t find this message. Try again later.",
+  "quote.quoting": "Quoting {name}",
+  "quote.drafted": "What your message quotes",
+  "quote.comment.add": "Add a comment",
+  "quote.comment.edit": "Edit your comment",
+  "quote.comment.label": "Your comment on this passage",
+  "quote.comment.placeholder": "Add a comment (optional)",
+  "quote.comment.save": "Save",
+  "quote.comment.cancel": "Cancel",
   "quote.sheet.title": "Select what to quote",
   "quote.sheet.hint": "Press and hold the text, then drag to select.",
 
@@ -2307,6 +2315,7 @@ export const en = {
   "whatsNew.release": "J3 Bots {version}",
   "whatsNew.open": "Opens what’s new.",
   "whatsNew.close": "Close",
+  "whatsNew.see": "See what’s new",
   "updatePrompt.title": "J3 Bots {version} is here",
   "updatePrompt.titleApp": "J3 Bots {version} is ready for this app",
   "updatePrompt.plan.serverThenApp":

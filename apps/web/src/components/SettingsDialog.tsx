@@ -86,6 +86,7 @@ import {
 import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
+import { WhatsNewSection } from "./WhatsNew";
 import { ShortcutSetting } from "./ShortcutSetting";
 import {
   AdvancedEndpoint,
@@ -197,9 +198,10 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, About only where an update can be followed from here or
- * the server offers its usage data switch or its diagnostics, and voice only
- * from a server that dictates, since this window has no recognizer of its own.
+ * the desktop app, About only where an update can be followed from here, the
+ * server offers its usage data switch or its diagnostics, or What's new has
+ * anything to show, and voice only from a server that dictates, since this
+ * window has no recognizer of its own.
  */
 const pagesFor = (
   intents: SettingsIntents,
@@ -218,7 +220,8 @@ const pagesFor = (
               intents.serverUpdate !== undefined ||
               intents.update !== undefined ||
               intents.diagnostics !== undefined ||
-              data.settings?.telemetry !== undefined
+              data.settings?.telemetry !== undefined ||
+              intents.whatsNew.view.releases.length > 0
             );
           default:
             return true;
@@ -548,6 +551,7 @@ function PageBody({
             intents={intents}
             diagnostics={intents.diagnostics}
           />
+          <WhatsNewSection whatsNew={intents.whatsNew} />
         </>
       );
   }
