@@ -5,5 +5,7 @@
  * Free of any interface library: the web, desktop and mobile clients and the
  * server read the same catalog.
  */
-export { createI18n, type I18n, type KeyWith, LANGUAGE_NAMES, resolveLocale } from "./i18n.ts";
+export { createI18n } from "./catalogs.ts";
+export { type I18n, type KeyWith, LANGUAGE_NAMES, resolveLocale } from "./i18n.ts";
+export { loadI18n } from "./load.ts";
 export { type NotificationNames, type NotificationText, notificationText } from "./notification.ts";

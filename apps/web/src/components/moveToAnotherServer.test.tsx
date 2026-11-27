@@ -4,7 +4,8 @@ import type { LocalExportResult, MovedAway } from "@j3-bots/desktop-bridge";
 import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
 import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { MovedAwayScreen, MoveToAnotherServer } from "./LocalMode";
 
@@ -32,7 +33,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
 });
 
 afterEach(() => {

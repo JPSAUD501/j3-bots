@@ -11,7 +11,8 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 declare global {
@@ -122,7 +123,7 @@ beforeEach(() => {
   refuseDownload = false;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
 });
 
 afterEach(() => {

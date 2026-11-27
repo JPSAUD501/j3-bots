@@ -2,7 +2,8 @@
 // @vitest-environment happy-dom
 import { BotId } from "@j3-bots/contracts";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { MessageText } from "./MessageText";
 import { selectedPassage } from "./quoteSelection";
@@ -23,7 +24,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
 });
 
 afterEach(() => {

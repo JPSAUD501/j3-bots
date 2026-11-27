@@ -3,7 +3,8 @@
 import { Dialog } from "@base-ui/react/dialog";
 import type { EntryTarget } from "@j3-bots/contracts";
 import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ids } from "../gallery/sample";
 import { Toast } from "../components/Toast";
@@ -96,7 +97,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
   told = { closed: [], left: [], attached: [], onScreen: [] };
 });
 
