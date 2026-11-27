@@ -1,84 +1,203 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { iconArt, type IconArt } from "../appIconArt.ts";
-import { renderAppIcon, renderTrayIcon } from "./appIcon.ts";
+import { iconArt } from "../appIconArt.ts";
+import { parseColor, toSrgb8 } from "../color.ts";
+import { colors } from "../tokens.ts";
+import { desktopIcon, renderAppIcon, renderTrayIcon, type AppIcon } from "./appIcon.ts";
 import { readPng } from "./readPng.ts";
 
-/** Each pixel's alpha of a PNG `renderAppIcon` wrote. */
-const alphaOf = (png: Uint8Array<ArrayBuffer>) => {
-  const { rgba } = readPng(png);
-  return (x: number, y: number) => rgba(x, y)[3];
+const rgb = (value: string) => toSrgb8(parseColor(value));
+const near = (pixel: ReadonlyArray<number>, color: ReadonlyArray<number>) =>
+  Math.hypot(...[0, 1, 2].map((c) => (pixel[c] ?? 0) - (color[c] ?? 0))) < 40;
+
+/** Every pixel of a PNG, with where it is. */
+const pixelsOf = (png: Uint8Array<ArrayBuffer>) => {
+  const { width, height, rgba } = readPng(png);
+  return Array.from({ length: width * height }, (_, i) => {
+    const x = i % width;
+    const y = Math.floor(i / width);
+    return { x, y, rgba: rgba(x, y) };
+  });
+};
+
+/** The plate over the whole image, its square the image's own. */
+const onSquare = (size: number): AppIcon => ({
+  size,
+  plate: { kind: "square" },
+  framing: "plate",
+  width: 1,
+});
+
+/** The mark alone, its plate's square the image's own. */
+const alone = (size: number): AppIcon => ({ ...onSquare(size), plate: { kind: "none" } });
+
+/** Where the large drawing puts a point of the letters' units, on a plate `size` px square. */
+const onLargePlate = (size: number, x: number, y: number) => {
+  const { fit } = iconArt.drawings.at(-1) ?? iconArt.drawings[0];
+  return {
+    x: Math.floor((50 + (x - iconArt.middle.x) * fit) * (size / 100)),
+    y: Math.floor((50 + (y - iconArt.middle.y) * fit) * (size / 100)),
+  };
 };
 
 describe("renderAppIcon", () => {
-  // A dome framed so close that its body runs past every edge of the plate.
-  const close: IconArt = {
-    ...iconArt,
-    avatar: { shape: "dome", color: "teal" },
-    frame: { x: 30, y: 50, size: 40 },
-  };
-  const size = 64;
-  const inset = 1 / 8;
-
-  it("cuts what the art frames past a rounded plate off at the plate's edge", () => {
-    const alpha = alphaOf(
-      renderAppIcon(
-        { size, plate: { kind: "rounded", inset }, framing: "plate", width: 1 - 2 * inset },
-        close,
-      ),
-    );
-    // Outside the plate: its margin, and its rounded corner.
-    expect([alpha(2, 32), alpha(32, 61), alpha(9, 9)]).toEqual([0, 0, 0]);
-    // Inside it, where the body runs on to the edge.
-    expect([alpha(10, 32), alpha(32, 53)]).toEqual([255, 255]);
+  it("draws each smaller size with more of its plate in letters, down to 16 px", () => {
+    const lettered = [16, 24, 32, 48, 64].map((size) => {
+      const letters = pixelsOf(renderAppIcon(onSquare(size))).filter((p) =>
+        near(p.rgba, rgb(iconArt.ink.dark)),
+      );
+      return letters.length / (size * size);
+    });
+    expect(lettered).toEqual([...lettered].sort((a, b) => b - a));
+    // The smallest is drawn far heavier than the large drawing, not a little.
+    expect((lettered[0] ?? 0) / (lettered[4] ?? 1)).toBeGreaterThan(1.3);
   });
 
-  it("leaves the art whole past its frame where there is no plate", () => {
-    const alpha = alphaOf(
-      renderAppIcon({ size, plate: { kind: "none" }, framing: "plate", width: 0.5 }, close),
+  it("glows around the light from the large drawing up, and not below it", () => {
+    // Left of the light, halfway out of its glow, where no letter is; and the
+    // same row at the plate's far edge, which is the plate alone.
+    const blueOver = (size: number) => {
+      const { rgba } = readPng(renderAppIcon(onSquare(size)));
+      const { x, y } = onLargePlate(size, iconArt.light.x - 12, iconArt.light.y);
+      return (rgba(x, y)[2] ?? 0) - (rgba(size - 1, y)[2] ?? 0);
+    };
+    expect(blueOver(256)).toBeGreaterThan(20);
+    expect(blueOver(48)).toBe(0);
+  });
+
+  it("glows on a dark ground only, where there is no plate", () => {
+    const size = 256;
+    const { x, y } = onLargePlate(size, iconArt.light.x - 12, iconArt.light.y);
+    const alpha = (theme: "light" | "dark") =>
+      readPng(renderAppIcon({ ...alone(size), theme })).rgba(x, y)[3];
+    expect(alpha("dark")).toBeGreaterThan(30);
+    expect(alpha("light")).toBe(0);
+  });
+
+  it("as a silhouette, is white wherever it is drawn, its light too", () => {
+    const size = 256;
+    const png = renderAppIcon({ ...alone(size), mark: "silhouette" });
+    const drawn = pixelsOf(png).filter((p) => (p.rgba[3] ?? 0) > 0);
+    expect(drawn.every((p) => near(p.rgba, [255, 255, 255]))).toBe(true);
+    const light = onLargePlate(size, iconArt.light.x, iconArt.light.y);
+    expect(readPng(png).rgba(light.x, light.y)[3]).toBe(255);
+    // Its only soft pixels are its edges: no glow is left around the light.
+    const glow = onLargePlate(size, iconArt.light.x - 12, iconArt.light.y);
+    expect(readPng(png).rgba(glow.x, glow.y)[3]).toBe(0);
+  });
+
+  it("spans the share asked with the mark alone, centered, where the mark is framed", () => {
+    const size = 200;
+    const drawn = pixelsOf(
+      renderAppIcon({ ...alone(size), framing: "mark", width: 0.5, mark: "silhouette" }),
+    ).filter((p) => (p.rgba[3] ?? 0) > 127);
+    const xs = drawn.map((p) => p.x);
+    const ys = drawn.map((p) => p.y);
+    const [left, right, top, bottom] = [
+      Math.min(...xs),
+      Math.max(...xs) + 1,
+      Math.min(...ys),
+      Math.max(...ys) + 1,
+    ];
+    // The longer side spans 100 px, and the shorter is centered in them.
+    expect(Math.abs(Math.max(right - left, bottom - top) - 100)).toBeLessThanOrEqual(1);
+    expect(Math.abs((left + right) / 2 - 100)).toBeLessThanOrEqual(1);
+    expect(Math.abs((top + bottom) / 2 - 100)).toBeLessThanOrEqual(1);
+  });
+
+  it("shades the plate across its own square, and keeps its end colors past it", () => {
+    // An adaptive icon's background: a 108 px layer whose plate is the middle 86.
+    const { rgba } = readPng(
+      renderAppIcon({
+        size: 108,
+        plate: { kind: "square" },
+        framing: "plate",
+        width: 86 / 108,
+        mark: "none",
+      }),
     );
-    // The body carries on past the frame, which spans 16 to 48 px, to its own edge.
-    expect([alpha(8, 32), alpha(32, 50)]).toEqual([255, 255]);
+    const top = [...rgb(iconArt.plate.top), 255];
+    const bottom = [...rgb(iconArt.plate.bottom), 255];
+    expect([rgba(54, 0), rgba(54, 10)]).toEqual([top, top]);
+    expect([rgba(54, 97), rgba(54, 107)]).toEqual([bottom, bottom]);
+    const middle = rgba(54, 54)[0] ?? 0;
+    expect(middle).toBeLessThan(top[0] ?? 0);
+    expect(middle).toBeGreaterThan(bottom[0] ?? 0);
+    // Nothing is drawn over it: every row is one color.
+    for (const y of [20, 54, 90]) {
+      expect(Array.from({ length: 108 }, (_, x) => rgba(x, y)[0])).toEqual(
+        Array.from({ length: 108 }, () => rgba(0, y)[0]),
+      );
+    }
+  });
+
+  it("keeps the mark inside the middle 80% circle, which a maskable icon is sure of", () => {
+    const size = 200;
+    const drawn = pixelsOf(renderAppIcon({ ...alone(size), mark: "silhouette" })).filter(
+      (p) => (p.rgba[3] ?? 0) > 0,
+    );
+    const reach = Math.max(...drawn.map((p) => Math.hypot(p.x + 0.5 - 100, p.y + 0.5 - 100)));
+    expect(reach).toBeLessThan(0.4 * size);
+  });
+
+  it("fills a small desktop icon with its plate, and leaves a margin around a large one", () => {
+    const alpha = (size: number, x: number, y: number) =>
+      readPng(renderAppIcon(desktopIcon(size))).rgba(x, y)[3];
+    // 16 px: the plate reaches the edge, and only its rounded corner is clear.
+    expect([alpha(16, 8, 0), alpha(16, 0, 8), alpha(16, 0, 0)]).toEqual([255, 255, 0]);
+    // 64 px: a sixteenth, 4 px, is clear on every edge.
+    expect([alpha(64, 32, 2), alpha(64, 2, 32), alpha(64, 32, 5)]).toEqual([0, 0, 255]);
   });
 });
 
 describe("renderTrayIcon", () => {
-  // The icon's own, and a taller antenna on a narrower body, which the frame grows to fit.
-  const arts: ReadonlyArray<readonly [string, IconArt]> = [
-    ["the icon's art", iconArt],
-    [
-      "a bean with a taller antenna",
-      {
-        ...iconArt,
-        avatar: { ...iconArt.avatar, shape: "bean" },
-        face: { ...iconArt.face, antennaLength: 21 },
-      },
-    ],
-  ];
-  const size = 16;
+  describe.each([16, 24])("at %s px", (size) => {
+    describe.each(["light", "dark"] as const)("in %s", (theme) => {
+      const rest = pixelsOf(renderTrayIcon(false, theme, size));
+      const attention = pixelsOf(renderTrayIcon(true, theme, size));
 
-  describe.each(arts)("drawn from %s", (_, art) => {
-    it.each(["light", "dark"] as const)(
-      "changes far more than the tip's color when something waits, in %s",
-      (theme) => {
-        const idle = readPng(renderTrayIcon(false, theme, size, art)).rgba;
-        const attention = readPng(renderTrayIcon(true, theme, size, art)).rgba;
-        let changed = 0;
-        for (let y = 0; y < size; y++) {
-          for (let x = 0; x < size; x++) {
-            const before = idle(x, y);
-            const after = attention(x, y);
-            if (before.some((value, c) => Math.abs(value - (after[c] ?? 0)) > 24)) changed++;
-          }
-        }
-        // Recoloring the light alone changed about a twentieth of the icon.
-        expect(changed / (size * size)).toBeGreaterThan(0.1);
-      },
-    );
+      it("changes far more than the light's color when something waits", () => {
+        const light = rest.filter(
+          (p) => (p.rgba[3] ?? 0) > 127 && near(p.rgba, rgb(iconArt.light.bright[theme])),
+        );
+        const changed = rest.filter((p, i) => {
+          const after = attention[i]?.rgba ?? [];
+          return p.rgba.some((value, c) => Math.abs(value - (after[c] ?? 0)) > 24);
+        });
+        // Recoloring the light alone would change no more than the light.
+        expect(light.length).toBeGreaterThan(0);
+        expect(changed.length).toBeGreaterThan(2 * light.length);
+      });
 
-    it("keeps the attention form's light and ring inside the icon", () => {
-      const { rgba } = readPng(renderTrayIcon(true, "light", size, art));
-      for (let x = 0; x < size; x++) expect(rgba(x, 0)[3]).toBe(0);
+      it("keeps the letters where they were", () => {
+        const below = (pixels: typeof rest) => pixels.filter((p) => p.y >= size * 0.6);
+        expect(below(attention)).toEqual(below(rest));
+      });
+
+      it("holds the grown light whole", () => {
+        const waiting = rgb(colors.waiting[theme]);
+        const lit = attention.filter((p) => (p.rgba[3] ?? 0) > 127 && near(p.rgba, waiting));
+        const span = (values: ReadonlyArray<number>) => Math.max(...values) - Math.min(...values);
+        const wide = span(lit.map((p) => p.x));
+        // Cut off at the image's edge, the disc would be shorter than it is wide.
+        expect(Math.abs(wide - span(lit.map((p) => p.y)))).toBeLessThanOrEqual(1);
+        // And it is the grown one: wider than the light at rest.
+        const before = rest.filter(
+          (p) => (p.rgba[3] ?? 0) > 127 && near(p.rgba, rgb(iconArt.light.bright[theme])),
+        );
+        expect(wide).toBeGreaterThan(span(before.map((p) => p.x)));
+      });
     });
+  });
+
+  it("takes the drawing of its size on screen, on a screen of two pixels to the px", () => {
+    const lettered = (png: Uint8Array<ArrayBuffer>) => {
+      const pixels = pixelsOf(png);
+      return pixels.filter((p) => (p.rgba[3] ?? 0) > 127).length / pixels.length;
+    };
+    // 16 px at two pixels to the px is the 16 px drawing, heavier than the 32 px one.
+    expect(lettered(renderTrayIcon(false, "dark", 16, 2))).toBeGreaterThan(
+      lettered(renderTrayIcon(false, "dark", 32)) * 1.05,
+    );
   });
 });

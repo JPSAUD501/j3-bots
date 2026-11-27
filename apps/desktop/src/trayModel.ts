@@ -11,7 +11,7 @@ import type { I18n } from "@j3-bots/i18n";
 
 export interface TrayModel {
   /**
-   * How many need the operator: the icon's Pip lights while any do, and its
+   * How many need the operator: the icon's light is lit for them while any do, and its
    * title shows the count where the system shows one.
    */
   readonly count: number;

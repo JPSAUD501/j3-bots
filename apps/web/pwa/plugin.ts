@@ -8,9 +8,6 @@ import { serviceWorkerSource } from "./serviceWorker.ts";
 const NAME = "J3 Bots";
 const SERVICE_WORKER = "sw.js";
 
-/** A maskable icon keeps what matters in the middle 80% circle, which every mask shows. */
-const MASKABLE_WIDTH = 0.8;
-
 interface GeneratedFile {
   readonly type: string;
   readonly body: () => string | Uint8Array;
@@ -41,9 +38,9 @@ const files: Readonly<Record<string, GeneratedFile>> = {
   "favicon.ico": { type: "image/x-icon", body: favicon },
   "icon-192.png": { type: "image/png", body: () => plateIcon(192) },
   "icon-512.png": { type: "image/png", body: () => plateIcon(512) },
-  "icon-maskable-512.png": { type: "image/png", body: () => squareIcon(512, MASKABLE_WIDTH) },
+  "icon-maskable-512.png": { type: "image/png", body: () => squareIcon(512) },
   // iOS takes its home-screen icon from here, not the manifest, and rounds its corners itself.
-  "apple-touch-icon.png": { type: "image/png", body: () => squareIcon(180, 1) },
+  "apple-touch-icon.png": { type: "image/png", body: () => squareIcon(180) },
 };
 
 /**

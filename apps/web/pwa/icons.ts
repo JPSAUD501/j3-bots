@@ -14,12 +14,13 @@ export const darkCanvasColor = hexColor(colors.background.dark);
 export const plateIcon = (size: number) => renderAppIcon(desktopIcon(size));
 
 /**
- * An icon whose outline the system cuts, `size` px square, the plate's frame
- * spanning `width` of it: all of it where only the corners are cut (iOS), and
- * the 80% circle a maskable icon keeps where any mask may be.
+ * An icon whose outline the system cuts, `size` px square: the plate over all
+ * of it. The mark keeps inside the 80% circle a maskable icon is sure of, so
+ * the same image serves where only the corners are cut (iOS) and where any
+ * mask may be.
  */
-export const squareIcon = (size: number, width: number) =>
-  renderAppIcon({ size, plate: { kind: "square" }, framing: "plate", width });
+export const squareIcon = (size: number) =>
+  renderAppIcon({ size, plate: { kind: "square" }, framing: "plate", width: 1 });
 
 /**
  * The favicon: an icon file with each size a tab, a bookmark or a shortcut
