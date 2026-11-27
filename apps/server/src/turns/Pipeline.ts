@@ -6,6 +6,8 @@ import {
   BotId,
   type CommandId,
   Conflict,
+  ConnectorAppTool,
+  connectorAppToolLabel,
   type ConversationMention,
   EntryId,
   type EntryTarget,
@@ -145,6 +147,14 @@ const Unsent = Schema.Struct({
 const Due = Schema.Struct({ id: DispatchRowId, next_attempt_at: Schema.NullOr(Time) });
 
 const NoteRow = Schema.Struct({ id: Schema.String, note_json: Schema.NullOr(json(CatchUpNote)) });
+const AppContextRow = Schema.Struct({
+  view_id: Schema.String,
+  text: Schema.String,
+  structured_json: Schema.NullOr(Schema.String),
+  updated_at: Time,
+  connector_name: Schema.String,
+  tool_json: json(ConnectorAppTool),
+});
 const HeldRow = Schema.Struct({
   id: Schema.String,
   sender_bot_id: BotId,
@@ -173,7 +183,8 @@ type WakePart =
 /** Something the session has not seen, with the row the dispatch consumes for it. */
 interface Unseen {
   readonly item: CatchUpItem | null;
-  readonly source: { readonly _tag: "note" | "held"; readonly id: string };
+  /** A catch-up note, a held message, or what a connector's app set (by its view). */
+  readonly source: { readonly _tag: "note" | "held" | "app-context"; readonly id: string };
 }
 
 /** A user envelope from its parts; `null` when none of them is left to deliver. */
@@ -1336,8 +1347,35 @@ export const layer = Layer.effect(
         `,
       })(botId).pipe(Effect.orDie);
 
-    /** What the session has not seen, oldest first: catch-up notes, then held teammate messages. */
-    const sinceLastTurn = Effect.fn("Pipeline.sinceLastTurn")(function* (botId: BotId) {
+    /**
+     * What connectors' apps shown to `audience` set as context for the bot
+     * since its last turn there, oldest first: each app's latest
+     * (`docs/architecture/server.md`, Connector apps).
+     */
+    const appContextsOf = (botId: BotId, audience: Audience) =>
+      SqlSchema.findAll({
+        Request: Schema.String,
+        Result: AppContextRow,
+        execute: (id) => {
+          const { audience: kind, roomId } = audienceColumns(audience);
+          return sql`
+            SELECT c.view_id, c.text, c.structured_json, c.updated_at, v.connector_name, v.tool_json
+            FROM connector_app_contexts c JOIN connector_app_views v ON v.id = c.view_id
+            WHERE c.bot_id = ${id} AND c.consumed_dispatch_id IS NULL
+              AND c.audience = ${kind} AND c.audience_room_id IS ${roomId}
+            ORDER BY c.updated_at, c.rowid
+          `;
+        },
+      })(botId).pipe(Effect.orDie);
+
+    /**
+     * What the session has not seen, oldest first: catch-up notes, then held
+     * teammate messages, then what apps shown to `audience` set as context.
+     */
+    const sinceLastTurn = Effect.fn("Pipeline.sinceLastTurn")(function* (
+      botId: BotId,
+      audience: Audience,
+    ) {
       const unseen: Array<Unseen> = [];
       for (const note of yield* notesOf(botId)) {
         const value = note.note_json;
@@ -1358,6 +1396,19 @@ export const layer = Layer.effect(
         unseen.push({
           item: { type: "held-message", message: teammate },
           source: { _tag: "held", id: message.id },
+        });
+      }
+      for (const context of yield* appContextsOf(botId, audience)) {
+        unseen.push({
+          item: {
+            type: "app-context",
+            connector: context.connector_name,
+            tool: connectorAppToolLabel(context.tool_json),
+            at: context.updated_at,
+            text: context.text,
+            data: context.structured_json,
+          },
+          source: { _tag: "app-context", id: context.view_id },
         });
       }
       return unseen;
@@ -1777,6 +1828,12 @@ export const layer = Layer.effect(
       if (dropped.length === 0) return;
       const notes = dropped.flatMap((row) => (row._tag === "note" ? [row.id] : []));
       const held = dropped.flatMap((row) => (row._tag === "held" ? [row.id] : []));
+      const contexts = dropped.flatMap((row) => (row._tag === "app-context" ? [row.id] : []));
+      if (contexts.length > 0) {
+        yield* sql`DELETE FROM connector_app_contexts WHERE ${sql.in("view_id", contexts)}`;
+      }
+      // What an app set is its own: leaving it out tells the operator nothing.
+      if (notes.length === 0 && held.length === 0) return;
       if (notes.length > 0) yield* sql`DELETE FROM catch_up_notes WHERE ${sql.in("id", notes)}`;
       if (held.length > 0) {
         const removed = yield* sql<{ readonly handoff_entry_id: string | null }>`
@@ -1877,7 +1934,7 @@ export const layer = Layer.effect(
             return null;
           }
           yield* reactionsRide(plan);
-          const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId), room);
+          const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId, plan.audience), room);
           yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;
           if (wake === null) {
@@ -1926,6 +1983,15 @@ export const layer = Layer.effect(
           }
           if (held.length > 0) {
             yield* sql`UPDATE held_messages SET consumed_dispatch_id = ${id} WHERE ${sql.in("id", held)}`;
+          }
+          const contexts = fitted.consumed.flatMap((row) =>
+            row._tag === "app-context" ? [row.id] : [],
+          );
+          if (contexts.length > 0) {
+            yield* sql`
+              UPDATE connector_app_contexts SET consumed_dispatch_id = ${id}
+              WHERE ${sql.in("view_id", contexts)}
+            `;
           }
           if (fitted.oversized) {
             // The engine would refuse it: it fails as refused, never sent,

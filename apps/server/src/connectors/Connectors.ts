@@ -250,6 +250,7 @@ class ConnectorUnavailableError extends Schema.TaggedError<ConnectorUnavailableE
 export interface OpenedApp {
   readonly connectorId: ConnectorId;
   readonly connector: string;
+  readonly glyph: ConnectorGlyph | null;
   readonly tool: ConnectorAppTool;
   readonly document: AppDocument;
   readonly result: Schema.Json | null;
@@ -1905,6 +1906,7 @@ export const layer = Layer.effect(
         app: Option.map(document, (opened): OpenedApp => ({
           connectorId: connector.id,
           connector: connector.name,
+          glyph: connector.glyph,
           tool: {
             name: tool.name,
             title: tool.title,

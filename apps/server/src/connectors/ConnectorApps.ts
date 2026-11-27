@@ -3,19 +3,20 @@ import type { AppDocument } from "@j3-bots/connectors";
 import {
   BotId,
   type ConnectorAppAnswer,
+  type ConnectorAppContext,
+  type ConnectorAppContextOutcome,
   ConnectorAppCsp,
   type ConnectorAppRef,
   ConnectorAppTool,
   type ConnectorAppView,
   ConnectorAppViewId,
+  connectorAppToolLabel,
   ConnectorId,
-  EntryId,
   Label,
-  MAX_CONNECTOR_APPS_PER_FOLD,
-  MAX_LABEL_LENGTH,
+  MAX_CONNECTOR_APPS_PER_TURN,
   NotFound,
+  RoomId,
 } from "@j3-bots/contracts";
-import { TurnId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -28,34 +29,34 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { BotStore } from "../bots/BotStore.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
-import { json, Time, timeText } from "../persistence/columns.ts";
+import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import type { CallPlace } from "../turns/ConnectorSteps.ts";
-import { sessionRecords } from "../turns/sessionRecords.ts";
-import { WorkSteps } from "../turns/WorkSteps.ts";
+import { type Audience, AudienceColumn, audienceColumns, audienceOf, targetOf } from "../turns/model.ts";
 import type { OpenedApp } from "./Connectors.ts";
 import { Connectors } from "./Connectors.ts";
 
 /**
  * The apps connectors' tools open (`docs/architecture/server.md`, "Connector
- * apps", decision 0048): each one kept under the work fold of the turn whose
- * call opened it, and the requests its page makes, which go to the connector
- * as the bot's, under the bot's grant.
+ * apps", decisions 0048 and 0093): each one an entry of the bot's reply, where
+ * the call that opened it happened, and the requests its page makes, which go
+ * to the connector as the bot's, under the bot's grant.
  */
 export class ConnectorApps extends Context.Service<
   ConnectorApps,
   {
     /**
-     * Keeps the app a bot's call opened, under its turn's work fold. A turn
-     * without a fold (a routine's) shows no app, nor does one that already
-     * shows `MAX_CONNECTOR_APPS_PER_FOLD`.
+     * Keeps the app a bot's call opened, as an entry of the turn's reply, in
+     * the conversation or room the turn speaks to. A routine's turn shows no
+     * app, nor does one whose room is gone, or one that already shows
+     * `MAX_CONNECTOR_APPS_PER_TURN`.
      */
     readonly record: (input: {
       readonly place: CallPlace;
       readonly botId: BotId;
       readonly input: Schema.JsonObject;
       readonly app: OpenedApp;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<boolean>;
     /** An app, ready to draw. */
     readonly open: (viewId: ConnectorAppViewId) => Effect.Effect<ConnectorAppView, NotFound>;
     /**
@@ -73,18 +74,27 @@ export class ConnectorApps extends Context.Service<
       readonly viewId: ConnectorAppViewId;
       readonly uri: string;
     }) => Effect.Effect<ConnectorAppAnswer, NotFound>;
+    /**
+     * What an app sets as context for its bot: it replaces what the same app
+     * set before, for the bot's next turn where the app is shown, and wakes
+     * nobody. Empty, it takes back what the app set.
+     */
+    readonly setContext: (input: {
+      readonly viewId: ConnectorAppViewId;
+      readonly context: ConnectorAppContext;
+    }) => Effect.Effect<ConnectorAppContextOutcome, NotFound>;
   }
 >()("@j3-bots/server/connectors/ConnectorApps") {}
 
-const TurnFold = Schema.Struct({
-  engine_turn_id: TurnId,
-  started_at: Time,
-  finished_at: Schema.NullOr(Schema.String),
-  work_fold_entry_id: Schema.NullOr(EntryId),
-  id: Schema.String,
-  bot_id: BotId,
+/** Where a call's turn speaks: its session's purpose, and the turn's audience. */
+const TurnPlace = Schema.Struct({
   purpose: Schema.Literals(["main", "side"]),
+  audience: AudienceColumn,
+  audience_room_id: Schema.NullOr(RoomId),
 });
+
+/** Where a view is shown: its entry's room, or, for a view of a bot's conversation, none. */
+const ShownIn = Schema.Struct({ room_id: Schema.NullOr(RoomId) });
 
 const StoredView = Schema.Struct({
   id: ConnectorAppViewId,
@@ -105,31 +115,22 @@ const encodeCsp = Schema.encodeEffect(json(ConnectorAppCsp));
 
 const encoder = new TextEncoder();
 
-/** What a tool's app is named by under its fold: its title, else its name. */
-const toolLabel = (tool: ConnectorAppTool): string => {
-  const title = tool.title?.trim() ?? "";
-  return title.length > 0 && title.length <= MAX_LABEL_LENGTH ? title : tool.name;
-};
-
 export const layer = Layer.effect(
   ConnectorApps,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const transaction = transactional(sql);
     const entries = yield* Entries;
-    const workSteps = yield* WorkSteps;
     const ids = yield* Ids;
     const store = yield* BotStore;
     const connectors = yield* Connectors;
     const digest = yield* Digest.Digest;
-    const records = sessionRecords(sql, entries, workSteps);
 
     const turnOf = SqlSchema.findOneOption({
-      Request: Schema.Struct({ sessionId: Schema.String, turnId: TurnId }),
-      Result: TurnFold,
+      Request: Schema.Struct({ sessionId: Schema.String, turnId: Schema.String }),
+      Result: TurnPlace,
       execute: ({ sessionId, turnId }) => sql`
-        SELECT t.engine_turn_id, t.started_at, t.finished_at, t.work_fold_entry_id,
-               s.id, s.bot_id, s.purpose
+        SELECT s.purpose, t.audience, t.audience_room_id
         FROM turns t JOIN sessions s ON s.id = t.session_id
         WHERE t.session_id = ${sessionId} AND t.engine_turn_id = ${turnId}
       `,
@@ -147,24 +148,31 @@ export const layer = Layer.effect(
       `,
     });
 
-    /**
-     * The fold the call's turn shows its work in: its own, or one opened for
-     * it while it still runs, as the turn's first step would. A routine's
-     * turn has none.
-     */
-    const foldOf = Effect.fn("ConnectorApps.foldOf")(function* (place: CallPlace) {
-      const turn = yield* turnOf({ sessionId: place.sessionId, turnId: place.turnId });
-      if (Option.isNone(turn) || turn.value.purpose === "side") return Option.none<EntryId>();
-      if (turn.value.work_fold_entry_id !== null) return Option.some(turn.value.work_fold_entry_id);
-      if (turn.value.finished_at !== null) return Option.none<EntryId>();
-      return Option.some(
-        yield* records.foldOf(
-          { id: turn.value.id, bot_id: turn.value.bot_id, purpose: turn.value.purpose },
-          turn.value,
-          { _tag: "running" },
-        ),
-      );
+    const shownIn = SqlSchema.findOneOption({
+      Request: ConnectorAppViewId,
+      Result: ShownIn,
+      execute: (viewId) => sql`
+        SELECT e.room_id FROM connector_app_views v JOIN entries e ON e.id = v.entry_id
+        WHERE v.id = ${viewId}
+      `,
     });
+
+    /**
+     * Where the call's turn shows its reply: the bot's conversation, or the
+     * room it speaks in while that room is there. A routine's turn has none.
+     */
+    const audienceOfCall = Effect.fn("ConnectorApps.audienceOfCall")(function* (place: CallPlace) {
+      const turn = yield* turnOf({ sessionId: place.sessionId, turnId: place.turnId });
+      if (Option.isNone(turn) || turn.value.purpose === "side") return Option.none<Audience>();
+      return Option.some(audienceOf(turn.value));
+    });
+
+    /** How many apps the call's turn shows already. */
+    const shownBy = (place: CallPlace) =>
+      sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM connector_app_views
+        WHERE session_id = ${place.sessionId} AND engine_turn_id = ${place.turnId}
+      `.pipe(Effect.map(([row]) => row?.n ?? 0));
 
     const keepDocument = Effect.fn("ConnectorApps.keepDocument")(function* (document: AppDocument) {
       const key = yield* digest.digestHex(Digest.sha256, encoder.encode(document.html));
@@ -190,29 +198,33 @@ export const layer = Layer.effect(
       const at = timeText(yield* DateTime.now);
       const shown = yield* transaction(
         Effect.gen(function* () {
-          const fold = yield* foldOf(input.place);
-          if (Option.isNone(fold)) return false;
-          const found = yield* entries.find(fold.value);
-          if (Option.isNone(found) || found.value.entry._tag !== "work-fold") return false;
-          const entry = found.value.entry;
-          if (entry.apps.length >= MAX_CONNECTOR_APPS_PER_FOLD) return false;
+          const audience = yield* audienceOfCall(input.place);
+          if (Option.isNone(audience)) return false;
+          const target = targetOf(input.botId, audience.value);
+          if (target === null) return false;
+          if ((yield* shownBy(input.place)) >= MAX_CONNECTOR_APPS_PER_TURN) return false;
           const digestKey = yield* keepDocument(app.document);
-          yield* sql`
-              INSERT INTO connector_app_views (
-                id, entry_id, bot_id, connector_id, connector_name, tool_json, input_json,
-                result_json, document_digest, csp_json, created_at
-              ) VALUES (
-                ${viewId}, ${fold.value}, ${input.botId}, ${app.connectorId}, ${app.connector},
-                ${tool}, ${arguments_}, ${result}, ${digestKey}, ${csp}, ${at}
-              )
-            `;
           const ref: ConnectorAppRef = {
             viewId,
             connectorId: app.connectorId,
             connector: app.connector,
-            tool: toolLabel(app.tool),
+            glyph: app.glyph,
+            tool: connectorAppToolLabel(app.tool),
           };
-          yield* entries.update({ ...entry, apps: [...entry.apps, ref] });
+          const entry = yield* entries.append({
+            target,
+            entry: { _tag: "connector-app", author: { _tag: "bot", botId: input.botId }, app: ref },
+          });
+          yield* sql`
+            INSERT INTO connector_app_views (
+              id, entry_id, bot_id, connector_id, connector_name, tool_json, input_json,
+              result_json, document_digest, csp_json, created_at, session_id, engine_turn_id
+            ) VALUES (
+              ${viewId}, ${entry.id}, ${input.botId}, ${app.connectorId}, ${app.connector},
+              ${tool}, ${arguments_}, ${result}, ${digestKey}, ${csp}, ${at},
+              ${input.place.sessionId}, ${input.place.turnId}
+            )
+          `;
           return true;
         }),
       );
@@ -224,6 +236,7 @@ export const layer = Layer.effect(
           viewId,
         }),
       );
+      return shown;
     }, Effect.orDie);
 
     const found = Effect.fn("ConnectorApps.found")(function* (viewId: ConnectorAppViewId) {
@@ -254,6 +267,7 @@ export const layer = Layer.effect(
         csp: view.csp_json,
         input: view.input_json,
         result: view.result_json,
+        modelContext: true,
       } satisfies ConnectorAppView;
     });
 
@@ -312,6 +326,50 @@ export const layer = Layer.effect(
       return yield* logged(view, "resources/read", answer);
     });
 
-    return ConnectorApps.of({ record, open, callTool, readResource });
+    const setContext = Effect.fn("ConnectorApps.setContext")(function* (input: {
+      readonly viewId: ConnectorAppViewId;
+      readonly context: ConnectorAppContext;
+    }) {
+      const view = yield* found(input.viewId);
+      const outcome = (outcome: ConnectorAppContextOutcome) =>
+        Effect.logInfo("connector app request").pipe(
+          Effect.annotateLogs({
+            botId: view.bot_id,
+            connectorId: view.connector_id,
+            viewId: view.id,
+            request: "ui/update-model-context",
+            outcome: outcome._tag === "kept" ? "kept" : outcome.reason,
+          }),
+          Effect.as(outcome),
+        );
+      // Its trust is the connector's: none once the bot no longer has it.
+      if (!(yield* connectors.granted({ botId: view.bot_id, connectorId: view.connector_id }))) {
+        return yield* outcome({ _tag: "refused", reason: "gone" });
+      }
+      const { text, structured } = input.context;
+      if (text.trim() === "" && structured === null) {
+        yield* sql`DELETE FROM connector_app_contexts WHERE view_id = ${view.id}`.pipe(Effect.orDie);
+        return yield* outcome({ _tag: "kept" });
+      }
+      const room = Option.flatMap(yield* shownIn(view.id).pipe(Effect.orDie), (row) =>
+        Option.fromNullishOr(row.room_id),
+      );
+      const { audience, roomId } = audienceColumns(
+        Option.isSome(room) ? { _tag: "room", roomId: room.value } : { _tag: "conversation" },
+      );
+      const data = structured === null ? null : yield* encodeObject(structured).pipe(Effect.orDie);
+      const at = timeText(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO connector_app_contexts (
+          view_id, bot_id, audience, audience_room_id, text, structured_json, updated_at
+        ) VALUES (${view.id}, ${view.bot_id}, ${audience}, ${roomId}, ${text}, ${data}, ${at})
+        ON CONFLICT (view_id) DO UPDATE SET
+          text = excluded.text, structured_json = excluded.structured_json,
+          updated_at = excluded.updated_at, consumed_dispatch_id = NULL
+      `.pipe(Effect.orDie);
+      return yield* outcome({ _tag: "kept" });
+    });
+
+    return ConnectorApps.of({ record, open, callTool, readResource, setContext });
   }),
 ).pipe(Layer.provide(Digest.layerWebCrypto));
