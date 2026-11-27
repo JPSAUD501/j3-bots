@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserPicture, BrowserProbe, BrowserViewHandle } from "@j3-bots/client-runtime";
 import {
-  draggedView,
-  dragWheel,
   drawnRect,
   easedToward,
   fitted,
   keptInView,
+  LONG_PRESS_MS,
+  NO_TOUCH,
   NO_ZOOM,
-  pagePoint,
   type PageSize,
-  pinched,
+  type PageTouch,
   type Point,
   readingScale,
   seenPart,
   type Size,
+  type TouchScene,
+  type TouchStep,
+  touchHeld,
+  touchLifted,
+  touchMoved,
+  touchStarted,
   type Zoom,
   zoomOn,
 } from "@j3-bots/client-runtime/presentation";
@@ -38,10 +43,6 @@ import { BotCursors, type Cursors, withCursor } from "./BotCursors.tsx";
 import { keepPicture } from "./pictures.ts";
 import { fieldChange, keyPress, relayed } from "./typing.ts";
 
-/** How far a finger moves before a touch is a drag, not a tap, in points. */
-const TAP_SLOP = 8;
-/** How long a still finger waits before its touch is a right-click. */
-const LONG_PRESS_MS = 500;
 /** How long the mark of a tap stays where the finger touched. */
 const TAP_MARK_MS = 500;
 /** Where a field the keyboard types into stands, above the keyboard, in points from the view's bottom. */
@@ -56,23 +57,6 @@ interface Layer {
   readonly drawn: boolean;
 }
 
-/** What the fingers on the picture are doing. */
-type Touch =
-  | { readonly _tag: "none" }
-  /** One finger down, not moved past the slop yet. `sliding`: the view was still sliding after a bot. */
-  | {
-      readonly _tag: "pending";
-      readonly start: Point;
-      readonly zoom: Zoom;
-      readonly sliding: boolean;
-    }
-  /** One finger dragging: the view moves, and past its edge the page scrolls. */
-  | { readonly _tag: "dragging"; readonly last: Point }
-  /** Two fingers zooming and moving the picture. */
-  | { readonly _tag: "pinching"; readonly from: readonly [Point, Point]; readonly zoom: Zoom }
-  /** The touch did what it does already, as a long press does; the rest of it does nothing. */
-  | { readonly _tag: "spent" };
-
 const layerOf = (picture: BrowserPicture): Layer => ({
   sequence: picture.sequence,
   uri: `data:image/jpeg;base64,${Base64.encode(picture.jpeg)}`,
@@ -84,16 +68,6 @@ const pointsOf = (event: GestureResponderEvent, origin: Point): ReadonlyArray<Po
     x: touch.pageX - origin.x,
     y: touch.pageY - origin.y,
   }));
-
-const click = (at: Point, button: "left" | "right"): ReadonlyArray<BrowserInput> => {
-  const pressed = button === "left" ? 1 : 2;
-  const pointer = { x: at.x, y: at.y, clickCount: 1, modifiers: 0 } as const;
-  return [
-    { type: "pointer", action: "move", button: "none", buttons: 0, ...pointer },
-    { type: "pointer", action: "down", button, buttons: pressed, ...pointer },
-    { type: "pointer", action: "up", button, buttons: 0, ...pointer },
-  ];
-};
 
 const same = (a: Zoom, b: Zoom) =>
   Math.abs(a.x - b.x) < SLIDING &&
@@ -314,106 +288,46 @@ export function PageView({
     return () => clearTimeout(timer);
   }, [mark]);
 
-  const touch = useRef<Touch>({ _tag: "none" });
+  const touch = useRef<PageTouch>(NO_TOUCH);
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopLongPress = () => {
     if (longPress.current !== null) clearTimeout(longPress.current);
     longPress.current = null;
   };
+  const scene = (): TouchScene => ({
+    zoom: shown,
+    picture,
+    view: viewSize,
+    page,
+    usable,
+    sliding,
+  });
 
-  /** The page point under `point` on the view, while the picture is laid out. */
-  const onPage = (point: Point): Point | null =>
-    drawn === null || page === null ? null : pagePoint(point, drawn, page);
-
-  /** The person moves the view themselves: it stays where they leave it. */
-  const moveView = (next: Zoom) => {
-    onFollowing(false);
-    setZoom(next);
-  };
-
-  const begin = (event: GestureResponderEvent) => {
-    stopLongPress();
-    const [first, second] = pointsOf(event, origin.current);
-    if (first === undefined) return;
-    if (second !== undefined) {
-      touch.current = { _tag: "pinching", from: [first, second], zoom: shown };
-      return;
+  /** What a step of the touch did: the view the person moved, a tap's mark, and the page's input. */
+  const apply = (next: TouchStep) => {
+    touch.current = next.touch;
+    if (next.touch._tag !== "pending") stopLongPress();
+    if (next.zoom !== null) {
+      // The person moves the view themselves: it stays where they leave it.
+      onFollowing(false);
+      setZoom(next.zoom);
     }
-    touch.current = { _tag: "pending", start: first, zoom: shown, sliding };
-    if (!usable || sliding) return;
-    longPress.current = setTimeout(() => {
-      longPress.current = null;
-      const target = onPage(first);
-      if (touch.current._tag !== "pending" || target === null) return;
-      touch.current = { _tag: "spent" };
-      sendAll(click(target, "right"));
-    }, LONG_PRESS_MS);
-  };
-
-  const move = (event: GestureResponderEvent) => {
-    const [first, second] = pointsOf(event, origin.current);
-    if (first === undefined) return;
-    const now = touch.current;
-    if (second !== undefined) {
-      stopLongPress();
-      // A second finger joining a drag starts a pinch where both are now.
-      if (now._tag !== "pinching") {
-        touch.current = { _tag: "pinching", from: [first, second], zoom: shown };
-        return;
-      }
-      moveView(pinched(now.zoom, now.from, [first, second]));
-      return;
+    if (next.tapped !== null) {
+      marks.current += 1;
+      setMark({ at: next.tapped, id: marks.current });
     }
-    switch (now._tag) {
-      case "none":
-      case "spent":
-      case "pinching":
-        // A finger left a pinch: the rest of the touch only lets go.
-        touch.current = { _tag: "spent" };
-        return;
-      case "pending": {
-        if (Math.hypot(first.x - now.start.x, first.y - now.start.y) < TAP_SLOP) return;
-        stopLongPress();
-        touch.current = { _tag: "dragging", last: now.start };
-        return;
-      }
-      case "dragging": {
-        const moved = { x: first.x - now.last.x, y: first.y - now.last.y };
-        touch.current = { _tag: "dragging", last: first };
-        if (picture === null || viewSize === null) return;
-        const { zoom: next, scroll } = draggedView(shown, moved, picture, viewSize);
-        moveView(next);
-        // What the view could not take scrolls the page, which is using it.
-        if (!usable || (scroll.x === 0 && scroll.y === 0)) return;
-        const at = onPage(first);
-        if (at === null || drawn === null || page === null) return;
-        const wheel = dragWheel(scroll, drawn, page);
-        send({ type: "wheel", x: at.x, y: at.y, deltaX: wheel.x, deltaY: wheel.y, modifiers: 0 });
-        return;
-      }
-    }
-  };
-
-  const end = () => {
-    stopLongPress();
-    const now = touch.current;
-    touch.current = { _tag: "none" };
-    if (now._tag !== "pending") return;
-    // A tap on a view still sliding after a bot only stops it, as on any list.
-    if (now.sliding) {
-      moveView(shown);
-      return;
-    }
-    if (!usable) return;
-    const target = onPage(now.start);
-    if (target === null) return;
-    marks.current += 1;
-    setMark({ at: now.start, id: marks.current });
+    const probe = next.send.find((input) => input.type === "probe");
     // Whether the tap lands in a field is asked first, so its answer can raise the keyboard.
-    lastProbe.current = target;
-    send({ type: "probe", x: target.x, y: target.y });
-    sendAll(click(target, "left"));
+    if (probe !== undefined) lastProbe.current = { x: probe.x, y: probe.y };
+    sendAll(next.send);
+    if (next.longPress) {
+      longPress.current = setTimeout(() => {
+        longPress.current = null;
+        apply(touchHeld(touch.current, scene()));
+      }, LONG_PRESS_MS);
+    }
   };
+  const fingers = (event: GestureResponderEvent) => pointsOf(event, origin.current);
 
   const lastDrawn = layers.findLast((layer) => layer.drawn) ?? null;
   const map =
@@ -432,14 +346,21 @@ export function PageView({
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
       onResponderTerminationRequest={() => false}
-      onResponderGrant={begin}
+      onResponderGrant={(event) => {
+        stopLongPress();
+        apply(touchStarted(touch.current, fingers(event), scene()));
+      }}
       // A second finger joins the touch as it lands.
-      onResponderStart={begin}
-      onResponderMove={move}
-      onResponderRelease={end}
+      onResponderStart={(event) => {
+        stopLongPress();
+        apply(touchStarted(touch.current, fingers(event), scene()));
+      }}
+      onResponderMove={(event) => apply(touchMoved(touch.current, fingers(event), scene()))}
+      // The responder lets go once the last finger has.
+      onResponderRelease={() => apply(touchLifted(touch.current, 0, scene()))}
       onResponderTerminate={() => {
         stopLongPress();
-        touch.current = { _tag: "none" };
+        touch.current = NO_TOUCH;
       }}
     >
       {drawn !== null &&

@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { claimsSwipe, swipeDirection } from "@j3-bots/client-runtime/presentation";
 import { useRef } from "react";
 import { type GestureResponderEvent, I18nManager, type ViewProps } from "react-native";
-
-/** How far a finger goes sideways before the swipe is taken from what is under it. */
-const CLAIM = 16;
-/** How far a swipe goes to count, unless it is quick. */
-const ENOUGH = 64;
-/** How fast a short swipe goes to count, in points per millisecond. */
-const QUICK = 0.5;
 
 type Responder = Pick<
   ViewProps,
@@ -59,15 +53,13 @@ export function useSideSwipe(handlers: {
     },
     onMoveShouldSetResponderCapture: (event) => {
       const { dx, dy } = moved(event);
-      return Math.abs(dx) > CLAIM && Math.abs(dx) > 2 * Math.abs(dy);
+      return claimsSwipe(dx, dy);
     },
     onResponderTerminationRequest: () => false,
     onResponderMove: (event) => handlers.onMove?.(moved(event).dx),
     onResponderRelease: (event) => {
       const { dx, ms } = moved(event);
-      const far = Math.abs(dx) > ENOUGH || Math.abs(dx) / ms > QUICK;
-      const toStart = I18nManager.isRTL ? dx > 0 : dx < 0;
-      handlers.onSwipe(far ? (toStart ? 1 : -1) : null);
+      handlers.onSwipe(swipeDirection(dx, ms, I18nManager.isRTL));
     },
     onResponderTerminate: () => handlers.onSwipe(null),
   };

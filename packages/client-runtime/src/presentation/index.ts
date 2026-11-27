@@ -155,6 +155,7 @@ export {
   tabLine,
   usesPage,
   type ViewerTab,
+  viewerTabsOf,
 } from "./browserTabs.ts";
 export {
   dragged,
@@ -172,6 +173,20 @@ export {
   type Zoom,
   zoomOn,
 } from "./browserZoom.ts";
+export {
+  clickAt,
+  LONG_PRESS_MS,
+  NO_TOUCH,
+  type PageTouch,
+  TAP_SLOP,
+  type TouchScene,
+  type TouchStep,
+  touchHeld,
+  touchLifted,
+  touchMoved,
+  touchStarted,
+} from "./pageTouch.ts";
+export { claimsSwipe, swipeDirection } from "./sideSwipe.ts";
 export { type OwnAppClient, ownAppClient, type OwnAppSetup, ownAppSetup } from "./connectorAsk.ts";
 export {
   applyConnectorChange,

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {
-  botViewerTab,
-  sharedViewerTab,
-  type ViewerTab,
-} from "@j3-bots/client-runtime/presentation";
+import { loadedList } from "@j3-bots/client-runtime";
+import { type ViewerTab, viewerTabsOf } from "@j3-bots/client-runtime/presentation";
 import {
   useAllBrowserTabs,
   useBrowserTabs,
@@ -30,13 +27,10 @@ export function useViewerTabs(botId: BotId | null): {
   const here = useReadable(client.pairing);
   const all = useAllBrowserTabs(shared);
   const own = useBrowserTabs(shared ? null : botId);
-  const tabs = useMemo(() => {
-    if (shared) {
-      return all?._tag === "ready" ? all.value.map((tab) => sharedViewerTab(tab, here)) : null;
-    }
-    if (own === null || own._tag === "loading") return null;
-    return own._tag === "ready" ? own.value.map((tab) => botViewerTab(tab, here)) : [];
-  }, [shared, all, own, here]);
+  const tabs = useMemo(
+    () => viewerTabsOf({ shared, all: loadedList(all), own: loadedList(own), here }),
+    [shared, all, own, here],
+  );
   return { tabs, shared };
 }
 

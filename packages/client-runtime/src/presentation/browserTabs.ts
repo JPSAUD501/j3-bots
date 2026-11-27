@@ -119,6 +119,22 @@ export const botViewerTab = (tab: BrowserTab, here: DeviceId | null): ViewerTab 
 };
 
 /**
+ * The tabs a live view lists: every tab, on a server that shares them, and
+ * on one from before, the tabs of the bot the person came from. Null while
+ * the list it reads loads.
+ */
+export const viewerTabsOf = (input: {
+  readonly shared: boolean;
+  readonly all: ReadonlyArray<SharedBrowserTab> | null;
+  readonly own: ReadonlyArray<BrowserTab> | null;
+  readonly here: DeviceId | null;
+}): ReadonlyArray<ViewerTab> | null => {
+  const { shared, all, own, here } = input;
+  if (shared) return all === null ? null : all.map((tab) => sharedViewerTab(tab, here));
+  return own === null ? null : own.map((tab) => botViewerTab(tab, here));
+};
+
+/**
  * What this device did to the page, which the server learns a moment later:
  * its own input counts from the moment it is sent.
  */
