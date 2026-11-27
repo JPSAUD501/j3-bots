@@ -61,9 +61,9 @@
   --accent: #101012;
   --accent-foreground: #ffffff;
   --waiting: oklch(0.52 0.12 65);
-  --waiting-surface: oklch(0.975 0.03 85);
+  --waiting-surface: oklch(0.975 0.026 85);
   --blocked: oklch(0.53 0.2 27);
-  --blocked-surface: oklch(0.975 0.015 20);
+  --blocked-surface: oklch(0.975 0.012 20);
   --success: oklch(0.52 0.12 160);
   --control-on: oklch(0.52 0.12 160);
   --control-off: #82828a;

@@ -14,7 +14,9 @@ import {
   layout,
   motion,
   shadows,
+  type Palette,
   spacingUnit,
+  stockPalette,
 } from "./tokens.ts";
 
 const rem = (px: number) => `${px / 16}rem`;
@@ -69,7 +71,7 @@ const springEntries = (): ReadonlyArray<Entry> =>
  * one class takes either set.
  */
 export function renderWebCss(): string {
-  const colorUtilities = colorEntries("light", "").map(([name]): Entry => [
+  const colorUtilities = colorEntries(stockPalette("light"), "light", "").map(([name]): Entry => [
     `color-${name}`,
     `var(--${name})`,
   ]);
@@ -81,12 +83,12 @@ ${fontFaceRules()}
 :root,
 .light {
   color-scheme: light;
-${lines([...colorEntries("light", ""), ...shadowEntries("light")])}
+${lines([...colorEntries(stockPalette("light"), "light", ""), ...shadowEntries("light")])}
 }
 
 .dark {
   color-scheme: dark;
-${lines([...colorEntries("dark", ""), ...shadowEntries("dark")])}
+${lines([...colorEntries(stockPalette("dark"), "dark", ""), ...shadowEntries("dark")])}
 }
 
 :root {
@@ -153,6 +155,26 @@ ${lines([
   ...colorUtilities,
   ...Object.keys(shadows).map((name): Entry => [`shadow-${name}`, `var(--elevation-${name})`]),
 ])}
+}
+`;
+}
+
+/**
+ * A theme's colors as the stylesheet a page adds over the generated one: the
+ * same custom properties as `:root`/`.light` and `.dark` declare, from the
+ * theme's two palettes. Everything else (type, space, motion, shadows) stays
+ * the generated sheet's.
+ */
+export function renderThemeColorsCss(
+  palettes: Readonly<Record<"light" | "dark", Palette>>,
+): string {
+  return `:root,
+.light {
+${lines(colorEntries(palettes.light, "light", ""))}
+}
+
+.dark {
+${lines(colorEntries(palettes.dark, "dark", ""))}
 }
 `;
 }
