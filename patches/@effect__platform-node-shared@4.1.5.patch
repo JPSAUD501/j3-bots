@@ -1,8 +1,8 @@
 diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
-index 08d50b16dfe564551f1bffc7cae2d3b53805e172..257a27f74d7530e435d63d68cd526058640d1fcb 100644
+index 1e1123a7e7f4df662d656d2128cb9f70349a467f..a85e547fd9c810e4d04792ace6c09fb753ba3a6f 100644
 --- a/dist/NodeChildProcessSpawner.js
 +++ b/dist/NodeChildProcessSpawner.js
-@@ -86,7 +86,10 @@ const taskkill = (childProcess, onExit = () => {}) => {
+@@ -87,7 +87,10 @@ const taskkill = (childProcess, onExit = () => {}) => {
      onExit(null);
      return;
    }
@@ -15,7 +15,7 @@ index 08d50b16dfe564551f1bffc7cae2d3b53805e172..257a27f74d7530e435d63d68cd526058
    }, onExit);
  };
 diff --git a/src/NodeChildProcessSpawner.ts b/src/NodeChildProcessSpawner.ts
-index a3ead25b72db5b07e95cabe056c644b242be3393..c8f837d8a7691b60ab9564054423c15b52846064 100644
+index 12b2f8146785f3e613289dd9edf94d65f3a59950..7454c0bc0992f269f948cdd0bc17dab2d50793f4 100644
 --- a/src/NodeChildProcessSpawner.ts
 +++ b/src/NodeChildProcessSpawner.ts
 @@ -157,8 +157,11 @@ const taskkill = (
