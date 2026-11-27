@@ -91,5 +91,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0094](0094-a-message-quotes-messages-a-reply-whole-a-quote-a-passage.md) | A message quotes messages: a reply whole, a quote a passage | Accepted |
 | [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) | Little ones a turn handed off stay until they are home | Accepted |
 | [0097](0097-whats-new-ships-with-the-apps-and-follows-the-servers-version.md) | What's new ships with the apps, and follows the server's version | Accepted |
+| [0098](0098-the-desktop-app-records-the-screen-for-a-bot.md) | The desktop app records the screen for a bot, as one zip a bot's AI can read | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.
