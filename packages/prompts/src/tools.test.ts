@@ -39,6 +39,7 @@ describe("j3 tools", () => {
         [
           "say",
           "ask",
+          "react",
           "request_browser_help",
           "message_bot",
           "read_room",

@@ -207,6 +207,12 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
      * link or a submodule, or breaks a limit (`SKILL_LIMITS`).
      */
     "skill-repository",
+    /**
+     * A reaction that is not one emoji, or on an entry that is not a message.
+     * Only `message.react`, new in 0.13.0, names it: an older client never
+     * sends one.
+     */
+    "reaction",
   ]),
 }) {
   override get message(): string {

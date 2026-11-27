@@ -43,6 +43,7 @@ import { SignIns } from "../providers/SignIns.ts";
 import { Harnesses, withCopies } from "../harnesses/Harnesses.ts";
 import { Network, reachableOrigins } from "../system/Network.ts";
 import { Cards } from "../turns/Cards.ts";
+import { Reactions } from "../reactions/Reactions.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
@@ -80,6 +81,7 @@ export const handlers = J3Rpcs.toLayer(
     const devices = yield* Devices;
     const skills = yield* Skills;
     const pipeline = yield* Pipeline;
+    const reactions = yield* Reactions;
     const cards = yield* Cards;
     const browserHelp = yield* BrowserHelp;
     const stops = yield* Stops;
@@ -190,6 +192,7 @@ export const handlers = J3Rpcs.toLayer(
       "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
       "message.send": (input) => pipeline.sendMessage(input),
       "message.retry": (input) => pipeline.retryMessage(input),
+      "message.react": (input) => reactions.react(input),
       "notice.retry": (input) => pipeline.retryNotice(input),
       // Help in the bot's browser is J3 Bots' own card, apart from the engine's requests.
       "card.answer": ({ answer, ...card }) => {

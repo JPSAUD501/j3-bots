@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a synchronous hash of constant text at load; Effect's Digest is asynchronous and needs a service.
-import { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import { BotId, EntryId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
@@ -57,6 +57,15 @@ const botId = Schema.decodeSync(BotId)("bot");
 const teammate = { id: botId, name: "Bot", title: "Title" };
 const message = { from: teammate, at, text: "text", urgent: false };
 const base = { at, timeZone, sinceLastTurn: [] };
+const entryId = Schema.decodeSync(EntryId)("entry");
+const news = {
+  room: { id: Schema.decodeSync(RoomId)("room"), name: "Room" },
+  message: { id: entryId, from: "you", excerpt: "text" },
+  reactions: [
+    { from: "user", emoji: "👍" },
+    { from: teammate, emoji: "🎉" },
+  ],
+} as const;
 
 const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   {
@@ -66,6 +75,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { type: "routine-delivered", routine: "Routine", at, text: "text" },
       { type: "held-message", message },
       { type: "profile-changed", changes: [{ field: "job", value: "text" }] },
+      { type: "reactions", news: { ...news, room: null } },
       {
         type: "session-rotated",
         digest: [
@@ -81,6 +91,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     },
     messages: [
       {
+        id: entryId,
         at,
         text: "text",
         attachments: [{ name: "a.pdf", path: "files/a.pdf", mediaType: "x", offset: null }],
@@ -116,13 +127,14 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     entries: [
       {
         author: "user",
+        id: entryId,
         at,
         text: "text",
         mentions: "everyone",
         attachments: [],
         lookingAt: { app: "App", title: null },
       },
-      { author: teammate, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
+      { author: teammate, id: entryId, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
     ],
   },
   ...(["kickoff", "addressed", "everyone", "member"] as const).map((reason): Wake => ({
@@ -137,7 +149,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     closing: false,
     newcomer: false,
     omitted: 0,
-    entries: [{ author: teammate, at, text: "text", mentions: [], files: [] }],
+    entries: [{ author: teammate, id: entryId, at, text: "text", mentions: [], files: [] }],
   })),
   { ...base, kind: "bot", messages: [message] },
   // Every way the recent runs read: listed or none, and with runs left out to fit or not.
@@ -208,6 +220,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     event: { name: "profile-changed", changes: [{ field: "name", value: "text" }] },
   },
   { ...base, kind: "system", event: { name: "undelivered" } },
+  { ...base, kind: "system", event: { name: "reaction", news } },
   { ...base, kind: "system", event: { name: "delegated-result", text: "text" } },
   ...(["done", "declined", "tab-closed", "timed-out", "handed-back"] as const).map(
     (outcome): Wake => ({

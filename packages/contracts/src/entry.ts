@@ -105,6 +105,35 @@ export const Mentions = Schema.Union([
 ]);
 export type Mentions = typeof Mentions.Type;
 
+/** The most UTF-16 code units one reaction's emoji takes: a long ZWJ sequence fits. */
+export const MAX_REACTION_LENGTH = 32;
+
+/**
+ * One emoji a person or a bot reacts with. The contract bounds it and keeps it
+ * to one line with no space; the server takes only a single emoji, which
+ * needs Unicode's emoji sequences to tell, and the clients render what it
+ * sends.
+ */
+export const ReactionEmoji = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_REACTION_LENGTH),
+  Schema.makeFilter((emoji: string) =>
+    /[\p{Cc}\p{Z}]/u.test(emoji) ? "One emoji, with no space or control character." : true,
+  ),
+).pipe(Schema.brand("ReactionEmoji"));
+export type ReactionEmoji = typeof ReactionEmoji.Type;
+
+/** Who reacted: the operator, or a bot, whose id outlives it as an author's does. */
+export const Reactor = Schema.Union([Schema.TaggedStruct("operator", {}), BotAuthor]);
+export type Reactor = typeof Reactor.Type;
+
+/**
+ * One reaction on a message. Each person and each bot has at most one on a
+ * message: picking another emoji replaces it.
+ */
+export const Reaction = Schema.Struct({ emoji: ReactionEmoji, by: Reactor });
+export type Reaction = typeof Reaction.Type;
+
 const entry = {
   id: EntryId,
   order: EntryOrder,
@@ -169,6 +198,13 @@ export const MessageEntry = Schema.TaggedStruct("message", {
    * and from a server that predates it.
    */
   lookingAt: Schema.optionalKey(LookingAt),
+  /**
+   * The reactions on it, in the order each reactor first reacted. A server
+   * that has reactions sends it with every message, empty for none, and a
+   * client offers to react only on a message that carries it: a server that
+   * predates reactions leaves it out, and has no `message.react`.
+   */
+  reactions: Schema.optionalKey(Schema.Array(Reaction)),
 });
 export type MessageEntry = typeof MessageEntry.Type;
 

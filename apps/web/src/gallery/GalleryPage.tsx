@@ -226,6 +226,7 @@ import {
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
+import { withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
 import { galleryImage } from "./workImages";
 import { SAMPLE_DOCUMENTS, sampleDocumentBytes } from "./sampleDocuments";
@@ -325,6 +326,7 @@ export default function GalleryPage() {
                 <RosterSection />
                 <RosterOrganizeSection />
                 <BubblesSection />
+                <ReactionsSection />
                 <DocumentsSection />
                 <CardsSection />
                 <RoutineTracksSection />
@@ -1248,6 +1250,7 @@ const timelineIntents: TimelineIntents = {
   declineSecretAsk: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
+  react: nothing,
   openWorkFold: nothing,
   openAttachment: nothing,
   openWorkImage: nothing,
@@ -1441,6 +1444,80 @@ function BubblesSection() {
         </div>
       </Labeled>
     </Section>
+  );
+}
+
+function ReactionsSection() {
+  const { reactions } = variants;
+  return (
+    <Section title="Reactions">
+      <Labeled label="Under a message, a bot's and the operator's: one pill per emoji, a count past one, the operator's own marked. Hover a pill for who reacted, a deleted bot among them; hover a message for React. Clicking your pill takes it off, another sets that emoji as yours">
+        <ReactingBubbles />
+      </Labeled>
+      <Frame
+        label="React open: the quick reactions, the operator's 🎉 marked, then More"
+        width={420}
+        height={150}
+        replay
+      >
+        <div className="flex h-full flex-col justify-end p-4">
+          <MessageBubble
+            message={reactions.onBot}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onReact={nothing}
+            reactionView="quick"
+          />
+        </div>
+      </Frame>
+      <Frame label="More open: every reaction, by group" width={420} height={470} replay>
+        <div className="flex h-full flex-col justify-end p-4">
+          <MessageBubble
+            message={reactions.onBot}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onReact={nothing}
+            reactionView="picker"
+          />
+        </div>
+      </Frame>
+      <Labeled label="After taking off your 🎉: two left, and the pill no longer marked">
+        <MessageBubble
+          message={reactions.removed}
+          position="single"
+          onOpenAttachment={nothing}
+          onRetry={nothing}
+          onReact={nothing}
+        />
+      </Labeled>
+    </Section>
+  );
+}
+
+/** A bot's message and the operator's, whose reactions change as the operator picks. */
+function ReactingBubbles() {
+  const { onBot, onOperator } = variants.reactions;
+  const [botReactions, setBotReactions] = useState(onBot.reactions ?? []);
+  const [operatorReactions, setOperatorReactions] = useState(onOperator.reactions ?? []);
+  return (
+    <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+      <MessageBubble
+        message={{ ...onBot, reactions: botReactions }}
+        position="single"
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+        onReact={(emoji) => setBotReactions((current) => withOwnReaction(current, emoji))}
+      />
+      <MessageBubble
+        message={{ ...onOperator, reactions: operatorReactions }}
+        position="single"
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+        onReact={(emoji) => setOperatorReactions((current) => withOwnReaction(current, emoji))}
+      />
+    </div>
   );
 }
 

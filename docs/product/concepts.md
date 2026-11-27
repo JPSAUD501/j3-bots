@@ -20,6 +20,8 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Message.** One entry in a conversation or a room, written by the operator or by a bot. Bot messages are short by design.
 
+**Reaction.** One emoji under a message, by the operator or a bot, one each per message, as in a chat. The operator's reaction on a bot's message reaches that bot a few seconds later, and most often the bot says nothing; every other reaction waits for the bots' next turns ([0084](../decisions/0084-reactions-are-a-quiet-signal.md)). The interface says "Reaction" in English and "Reação" in Portuguese.
+
 **Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a request for help in the bot's browser, a file, a routine that was created, a handoff between bots.
 
 **Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.
@@ -48,7 +50,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 | `room` | Something was said in a room and this bot should respond |
 | `bot` | A teammate sent this bot a message |
 | `routine` | One of the bot's routines came due or its trigger fired |
-| `system` | J3 Bots itself has something to tell the bot (it was just created, a background job finished, a setting changed) |
+| `system` | J3 Bots itself has something to tell the bot (it was just created, a background job finished, a setting changed, the operator reacted to its message) |
 
 Only a `user` wake carries the operator's instructions. Every other kind is labeled so the bot never mistakes it for the operator typing.
 

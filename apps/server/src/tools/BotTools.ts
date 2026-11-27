@@ -259,6 +259,7 @@ export const layer = Layer.effect(
     } = {
       say: handler(tools.say.input, (input, call) => admit({ tool: "say", input, ...call })),
       ask: handler(tools.ask.input, (input, call) => admit({ tool: "ask", input, ...call })),
+      react: handler(tools.react.input, (input, call) => admit({ tool: "react", input, ...call })),
       request_browser_help: handler(tools.request_browser_help.input, (input, call) =>
         admit({ tool: "request_browser_help", input, ...call }),
       ),

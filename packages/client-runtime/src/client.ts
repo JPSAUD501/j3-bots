@@ -45,6 +45,7 @@ import type {
   PairSeq,
   ProviderConnectionRequest,
   ProviderId,
+  ReactionEmoji,
   Room,
   RoomId,
   RosterItem,
@@ -539,6 +540,8 @@ export interface J3Client {
   readonly deleteSection: (sectionId: SectionId) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
+  /** Sets the operator's reaction on a message, or takes it off with `null`. */
+  readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => Promise<Actions.IntentResult>;
   readonly answerCard: (
     entryId: EntryId,
     answer: Conversations.CardAnswer,
@@ -894,6 +897,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     deleteSection: (sectionId) => run.promise(services.roster.deleteSection(sectionId)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
+    react: (entryId, emoji) => run.promise(conversations.react(entryId, emoji)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
     routineCard: (entryId, command) => run.promise(conversations.routineCard(entryId, command)),
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),

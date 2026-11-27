@@ -94,6 +94,7 @@ import { AnsweringLine } from "./AnsweringLine.tsx";
 import { RoomWork } from "./RoomWork.tsx";
 import { EventLine } from "./EventLine.tsx";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
+import { Reactions } from "./Reactions.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
@@ -413,81 +414,87 @@ export function ConversationView({
         >
           <ConversationVisualsContext value={visuals}>
             <EntryWidths value={widths}>
-              {quiet ? (
-                item._tag === "bot" ? (
-                  <Quiet bot={item.bot} bottom={composerHeight} />
+              {/* One quick bar, picker and list of who reacted for the conversation's messages. */}
+              <Reactions>
+                {quiet ? (
+                  item._tag === "bot" ? (
+                    <Quiet bot={item.bot} bottom={composerHeight} />
+                  ) : (
+                    <QuietRoom room={item.room} bottom={composerHeight} />
+                  )
                 ) : (
-                  <QuietRoom room={item.room} bottom={composerHeight} />
-                )
-              ) : (
-                <KeyboardAwareLegendList
-                  ref={list}
-                  data={rows}
-                  keyExtractor={(row) => row.key}
-                  getItemType={(row) => row.kind}
-                  estimatedItemSize={64}
-                  // Rows keep state of their own, such as an open fold: a row is never reused for another.
-                  recycleItems={false}
-                  renderItem={({ item: row }) => (
-                    <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                      <Row
-                        row={row}
-                        room={room}
-                        turnBot={turnBot}
-                        arriving={arrived.has(row.key)}
-                        openingHold={openingHold}
-                        onOpen={onOpen}
-                        onOpenRoutine={openRoutine}
-                        onOpenBrowser={openBrowser}
-                        onOpenPair={openPair}
-                      />
-                    </View>
-                  )}
-                  extraData={{ room, widths, arrived, openingHold, turnBot }}
-                  onScroll={({
-                    nativeEvent: { contentOffset, contentSize, layoutMeasurement },
-                  }) => {
-                    visuals.scrolled();
-                    end.follow(
-                      contentSize.height - layoutMeasurement.height - contentOffset.y,
-                      layoutMeasurement.height,
-                    );
-                  }}
-                  scrollEventThrottle={64}
-                  alignItemsAtEnd
-                  initialScrollAtEnd
-                  maintainScrollAtEnd
-                  maintainVisibleContentPosition
-                  onStartReached={() => {
-                    if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
-                  }}
-                  // In a room, who is answering now, after everything said there.
-                  ListFooterComponent={
-                    room === null ? null : (
+                  <KeyboardAwareLegendList
+                    ref={list}
+                    data={rows}
+                    keyExtractor={(row) => row.key}
+                    getItemType={(row) => row.kind}
+                    estimatedItemSize={64}
+                    // Rows keep state of their own, such as an open fold: a row is never reused for another.
+                    recycleItems={false}
+                    renderItem={({ item: row }) => (
                       <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                        <RoomWork room={room} />
-                        <AnsweringLine room={room} />
+                        <Row
+                          row={row}
+                          room={room}
+                          turnBot={turnBot}
+                          arriving={arrived.has(row.key)}
+                          openingHold={openingHold}
+                          onOpen={onOpen}
+                          onOpenRoutine={openRoutine}
+                          onOpenBrowser={openBrowser}
+                          onOpenPair={openPair}
+                        />
                       </View>
-                    )
-                  }
-                  ListHeaderComponent={
-                    state?.loadingOlder === true ? (
-                      <Text className="py-3 text-center text-xs text-muted-foreground">
-                        {t("timeline.loadingOlder")}
-                      </Text>
-                    ) : null
-                  }
-                  viewabilityConfigCallbackPairs={pairs}
-                  contentInsetEndAdjustment={contentInsetEndAdjustment}
-                  keyboardOffset={insets.bottom}
-                  keyboardDismissMode="interactive"
-                  keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={{
-                    paddingTop: 4,
-                    paddingBottom: toCard ? 8 + PILL_ROOM : 8,
-                  }}
-                />
-              )}
+                    )}
+                    extraData={{ room, widths, arrived, openingHold, turnBot }}
+                    onScroll={({
+                      nativeEvent: { contentOffset, contentSize, layoutMeasurement },
+                    }) => {
+                      visuals.scrolled();
+                      end.follow(
+                        contentSize.height - layoutMeasurement.height - contentOffset.y,
+                        layoutMeasurement.height,
+                      );
+                    }}
+                    scrollEventThrottle={64}
+                    alignItemsAtEnd
+                    initialScrollAtEnd
+                    maintainScrollAtEnd
+                    maintainVisibleContentPosition
+                    onStartReached={() => {
+                      if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
+                    }}
+                    // In a room, who is answering now, after everything said there.
+                    ListFooterComponent={
+                      room === null ? null : (
+                        <View
+                          className="w-full self-center"
+                          style={{ maxWidth: layout.textColumn }}
+                        >
+                          <RoomWork room={room} />
+                          <AnsweringLine room={room} />
+                        </View>
+                      )
+                    }
+                    ListHeaderComponent={
+                      state?.loadingOlder === true ? (
+                        <Text className="py-3 text-center text-xs text-muted-foreground">
+                          {t("timeline.loadingOlder")}
+                        </Text>
+                      ) : null
+                    }
+                    viewabilityConfigCallbackPairs={pairs}
+                    contentInsetEndAdjustment={contentInsetEndAdjustment}
+                    keyboardOffset={insets.bottom}
+                    keyboardDismissMode="interactive"
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={{
+                      paddingTop: 4,
+                      paddingBottom: toCard ? 8 + PILL_ROOM : 8,
+                    }}
+                  />
+                )}
+              </Reactions>
             </EntryWidths>
           </ConversationVisualsContext>
           {/* Over the composer, riding on the keyboard with it. */}

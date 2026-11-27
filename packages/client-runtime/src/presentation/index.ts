@@ -415,6 +415,16 @@ export {
   secretValueTooLong,
 } from "./secretRequest.ts";
 export {
+  canReact,
+  ownReaction,
+  QUICK_REACTIONS,
+  REACTION_GROUPS,
+  reactionAfterPick,
+  type ReactionGroupId,
+  type ReactionPill,
+  reactionPills,
+} from "./reactions.ts";
+export {
   asksYou,
   type BotStationState,
   type ConditionStationState,

@@ -54,6 +54,7 @@ import type { BotSession } from "../bots/EngineSessions.ts";
 import { BROWSER_HELP_WAIT, siteOf } from "../browser/browserHelpRules.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Entries } from "../entries/Entries.ts";
+import { Reactions } from "../reactions/Reactions.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
@@ -87,6 +88,7 @@ import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
 import { type RoomReader, roomReads } from "./roomReads.ts";
 import { routineSpeech } from "./routineSpeech.ts";
+import { quietTurns } from "./quietTurns.ts";
 import { saidInConversation } from "./saidInConversation.ts";
 import { finishStepTool } from "./finishStepTool.ts";
 import { type Once, routineTool } from "./routineTool.ts";
@@ -288,6 +290,7 @@ const askFits = (
 type PinnedTool =
   | "say"
   | "ask"
+  | "react"
   | "request_browser_help"
   | "message_bot"
   | "read_room"
@@ -343,6 +346,8 @@ export const layer = Layer.effect(
     const transaction = transactional(sql);
     const observer = yield* Observer;
     const entries = yield* Entries;
+    const reactions = yield* Reactions;
+    const quiet = quietTurns(sql);
     const ledger = yield* Ledger;
     const attachments = yield* Attachments;
     const bots = yield* BotStore;
@@ -1082,6 +1087,7 @@ export const layer = Layer.effect(
                   });
                 }
                 const target = yield* requireTarget(found.botId, audience);
+                yield* quiet.spoke(found.sessionId, found.turnId);
                 const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
                 const mention = Option.isSome(room)
                   ? yield* mentionedIn(found, room.value, given)
@@ -1148,6 +1154,33 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * `react`: the bot's reaction on a message where its turn speaks
+     * (`Reactions.byBot`). It notifies nobody; `done` makes it the whole
+     * reply, as `say`'s does.
+     */
+    const react = Effect.fn("Speech.react")(function* (found: Pin, input: ToolInput<"react">) {
+      return yield* once(
+        "react",
+        found,
+      )(
+        Effect.gen(function* () {
+          const target = yield* requireTarget(found.botId, found.audience);
+          yield* reactions.byBot({
+            botId: found.botId,
+            target,
+            entryId: input.message,
+            emoji: input.emoji,
+          });
+          yield* quiet.spoke(found.sessionId, found.turnId);
+          if (input.done === true) {
+            for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "done");
+          }
+          return { status: "recorded" } satisfies Schema.Json;
+        }),
+      );
+    });
+
     const ask = Effect.fn("Speech.ask")(function* (found: Pin, input: ToolInput<"ask">) {
       // An answer wakes the bot's main session, which never saw a routine's
       // question: a routine's turn says what it needs instead.
@@ -1177,6 +1210,7 @@ export const layer = Layer.effect(
           // the room is told once a turn where to look. Its answer still
           // wakes the bot for the audience that asked.
           yield* requireTarget(found.botId, found.audience);
+          yield* quiet.spoke(found.sessionId, found.turnId);
           const card = yield* entries.append({
             target: { _tag: "conversation", botId: found.botId },
             entry: {
@@ -2177,6 +2211,8 @@ export const layer = Layer.effect(
           return yield* say(found, call.input);
         case "ask":
           return yield* ask(found, call.input);
+        case "react":
+          return yield* react(found, call.input);
         case "request_browser_help":
           return yield* requestBrowserHelp(found, call.input);
         case "message_bot":

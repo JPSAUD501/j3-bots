@@ -14,6 +14,7 @@ import type { Audience } from "../turns/model.ts";
 const TurnToolName = Schema.Literals([
   "say",
   "ask",
+  "react",
   "request_browser_help",
   "message_bot",
   "read_room",

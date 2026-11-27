@@ -4,6 +4,7 @@ import {
   BrowserHelpReason,
   type FillRefusal,
   MAX_BROWSER_HELP_NOTE_LENGTH,
+  MAX_REACTION_LENGTH,
   MAX_SECRET_ASK_NOTE_LENGTH,
   MAX_SECRET_NAME_LENGTH,
   MAX_YES_HOURS,
@@ -175,6 +176,23 @@ const SayInput = toolInput({
     described(
       Schema.Boolean,
       "True when this message delivers the result. It closes the delivery; end your turn once it returns.",
+    ),
+  ),
+});
+
+const ReactInput = toolInput({
+  message: described(
+    Id,
+    "The id of the message to react to, as your envelope gives it (`id` on a message from your user, or on a room member's): one in the conversation or room this turn is for, never one of yours.",
+  ),
+  emoji: described(
+    text(1, MAX_REACTION_LENGTH),
+    "One emoji, such as 👍, ❤️ or 😂. It replaces a reaction you had on that message.",
+  ),
+  done: Schema.optionalKey(
+    described(
+      Schema.Boolean,
+      "True when this reaction is your whole reply: it closes the delivery, as a `say` with `done: true` does; end your turn once it returns.",
     ),
   ),
 });
@@ -1020,6 +1038,18 @@ export const tools = {
       BOT_ONLY,
     ],
     SayInput,
+  ),
+  react: define(
+    "react",
+    [
+      "React to a message with one emoji, as a person does in a chat. It shows under the message; nobody is notified or woken by it.",
+      "Use it rarely, and mirror your user: if they do not use emoji, almost never. Never react to a request you have not answered yet: answer it.",
+      "A lone reaction replaces a reply only when a reply would be overkill, such as a thanks or an okay; then set `done: true`. Otherwise reply with `say` as usual.",
+      "You have one reaction per message: a new emoji replaces yours. If your user tells you what an emoji of theirs means, `remember` it.",
+      "Returns once the reaction is recorded.",
+      BOT_ONLY,
+    ],
+    ReactInput,
   ),
   ask: define(
     "ask",
