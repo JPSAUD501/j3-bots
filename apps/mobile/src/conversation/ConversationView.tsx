@@ -116,6 +116,7 @@ import { createHighlights, Quotes } from "./Quotes.tsx";
 import { Reactions } from "./Reactions.tsx";
 import { ReadOnlyMark } from "./ReadOnlyMark.tsx";
 import { ToLatest } from "./ToLatest.tsx";
+import { BrowserPill, LiveCard } from "../browser/LiveCard.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
 import { ThemeBackdrop } from "../themes/ThemeBackdrop.tsx";
@@ -584,7 +585,16 @@ export function ConversationView({
                           }}
                           // In a room, who is answering now, after everything said there.
                           ListFooterComponent={
-                            room === null ? null : (
+                            room === null ? (
+                              bot === null ? null : (
+                                <View
+                                  className="w-full self-center"
+                                  style={{ maxWidth: layout.textColumn }}
+                                >
+                                  <LiveCard botId={bot.id} width={Math.max(column - 32, 1)} />
+                                </View>
+                              )
+                            ) : (
                               <View
                                 className="w-full self-center"
                                 style={{ maxWidth: layout.textColumn }}
@@ -616,6 +626,8 @@ export function ConversationView({
                   </Quotes>
                 </EntryWidths>
               </ConversationVisualsContext>
+              {/* Over the top of the list, while the live card at its end is out of view. */}
+              {bot !== null && !quiet && <BrowserPill botId={bot.id} shown={!end.atEnd} />}
               {/* An app shown full screen or pinned, over the list and under the composer. */}
               <StagedConnectorApp bottom={composerHeight} />
             </AppStage>
