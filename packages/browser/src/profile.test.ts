@@ -14,7 +14,7 @@ const executablePath = process.env["J3_TEST_CHROMIUM"];
 
 describe.skipIf(executablePath === undefined)("a profile's sign-ins", () => {
   it.live(
-    "gives its cookies as they were set, and its sites' storage and databases, from a copy",
+    "gives its cookies as they were set, and its sites' storage and databases, from a copy, with no history to find them by",
     () =>
       Effect.gen(function* () {
         if (executablePath === undefined) return;
@@ -22,10 +22,15 @@ describe.skipIf(executablePath === undefined)("a profile's sign-ins", () => {
         const path = yield* Path.Path;
         const profile = yield* fs.makeTempDirectoryScoped({ prefix: "j3-old-profile-" });
         yield* writeTestProfile(profile, executablePath);
+        // As `chrome-headless-shell` leaves a profile: with no history, so the
+        // sites are found from their storage alone.
+        yield* fs.remove(path.join(profile, "Default", "History"), { force: true });
+        yield* fs.remove(path.join(profile, "Default", "History-journal"), { force: true });
         const cookieFile = path.join(profile, "Default", "Cookies");
         const before = yield* fs.readFile(cookieFile);
+        const work = path.join(yield* fs.makeTempDirectoryScoped({ prefix: "j3-move-" }), "copy");
 
-        const read = yield* readProfileSignIns({ profile, executablePath });
+        const read = yield* readProfileSignIns({ profile, executablePath, workFolder: work });
 
         const byName = new Map(read.cookies.map((cookie) => [cookie.name, cookie]));
         const remember = byName.get("remember");
@@ -59,7 +64,11 @@ describe.skipIf(executablePath === undefined)("a profile's sign-ins", () => {
           storage: { origin: NOTES, localStorage: [{ name: "theme", value: "dark" }] },
         });
 
+        // Its pages, from their storage; not the domain of a cookie alone.
+        assert.sameMembers([...read.visited], [MAIL, NOTES]);
+
         assert.deepStrictEqual(yield* fs.readFile(cookieFile), before);
+        assert.isFalse(yield* fs.exists(work));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     120_000,
   );
