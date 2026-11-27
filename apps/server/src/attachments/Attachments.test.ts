@@ -354,6 +354,30 @@ it.layer(server)("attachments", (it) => {
       }),
   );
 
+  it.effect("never takes what a link at an upload's file leads to as the recording", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const layout = yield* Layout.Layout;
+      const token = yield* pairedToken;
+      const bytes = zipOf(100);
+      const upload = yield* startedRecording(token, "linked.zip", bytes.length);
+      // Another file of the declared size, put at the upload's name by a link.
+      const elsewhere = path.join(layout.attachments, "..", "elsewhere.zip");
+      yield* fs.writeFile(elsewhere, bytes);
+      yield* fs.symlink(elsewhere, path.join(layout.attachments, "uploads", `${upload.id}.part`));
+
+      const finishing = yield* recordingPiece(token, upload.id, bytes.length, new Uint8Array(0));
+      assert.strictEqual(finishing.status, 409);
+      const offset = yield* HttpClientResponse.schemaBodyJson(RecordingOffset)(finishing);
+      assert.strictEqual(offset.received, 0);
+      const written = yield* recordingPiece(token, upload.id, 0, bytes);
+      assert.strictEqual(written.status, 409);
+      const standing = yield* recordingStatus(token, upload.id).pipe(Effect.flatMap(asRecording));
+      assert.isUndefined(standing.attachment);
+    }),
+  );
+
   it.effect("removes an upload the device gives up", () =>
     Effect.gen(function* () {
       const token = yield* pairedToken;

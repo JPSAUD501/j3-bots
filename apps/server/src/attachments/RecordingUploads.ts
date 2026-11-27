@@ -236,10 +236,14 @@ export const layer = Layer.effect(
       return record.value;
     });
 
-    /** The bytes the upload's file holds: none before its first piece. */
+    /**
+     * The bytes the upload's file holds: none before its first piece. A link
+     * at its name is not the file (`lstat`), so it counts as none, and the
+     * next piece's write refuses it.
+     */
     const receivedOf = (id: RecordingUploadId) =>
-      fs.stat(partOf(id)).pipe(
-        Effect.map((info) => Number(info.size)),
+      fs.lstat(partOf(id)).pipe(
+        Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
         Effect.orElseSucceed(() => 0),
       );
 
@@ -317,6 +321,12 @@ export const layer = Layer.effect(
       id: RecordingUploadId,
       record: UploadRecord,
     ) {
+      // Only the file the pieces were written to becomes the attachment,
+      // never what a link put at its name leads to.
+      const part = yield* fs.lstat(partOf(id)).pipe(Effect.option);
+      if (Option.isNone(part) || part.value.type !== "File") {
+        return yield* exposed({ message: `${partOf(id)} is not the upload's own file.` });
+      }
       if (!endsAsZip(yield* tailOf(id, record.size))) {
         yield* remove(id);
         return yield* new Invalid({ reason: "attachment" });
