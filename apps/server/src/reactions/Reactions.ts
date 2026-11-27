@@ -44,7 +44,7 @@ export const REACTION_SETTLE = Duration.seconds(4);
 const ONE_EMOJI = /^\p{RGI_Emoji}$/v;
 
 /** Whether `text` is exactly one emoji. */
-export const isOneEmoji = (text: string): boolean => ONE_EMOJI.test(text);
+const isOneEmoji = (text: string): boolean => ONE_EMOJI.test(text);
 
 /** A message and where it is, or why there is none to react to. */
 type Found =
