@@ -1324,6 +1324,7 @@ const sentences = {
   "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",
   "composer.file.uploadingUnmeasured": "Enviando…",
+  "composer.file.transcribing": "Escrevendo o que você disse, {percent}",
   "composer.file.remove": "Remover {name}",
   "composer.file.failed": "{name} não pode ser enviado: {reason}",
   "composer.file.empty": "O arquivo está vazio",

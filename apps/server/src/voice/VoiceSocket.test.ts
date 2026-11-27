@@ -87,6 +87,7 @@ const open = (query: string, headers: Readonly<Record<string, string>> = {}) =>
     return {
       next: Queue.take(received),
       start: send(JSON.stringify({ type: "start" })),
+      startTranscript: send(JSON.stringify({ type: "start", transcript: true })),
       audio: send(audio()),
       finish: (draft?: { text: string; start: number; end: number }) =>
         send(JSON.stringify(draft === undefined ? { type: "finish" } : { type: "finish", draft })),
@@ -272,6 +273,47 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
         { text: "eggs milk", draft: { text: "Buy: " } },
       ]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "answers a transcript's words with the audio they were heard in, and never tidies them",
+    () =>
+      Effect.gen(function* () {
+        // The operator asked for the tidy-up, which is for the composer only.
+        const { speech, bearer } = yield* scene({ cleanUp: true });
+        yield* speech.scriptWords([
+          { committed: "", tentative: "" },
+          { committed: "", tentative: "open" },
+          { committed: "open", tentative: "the" },
+          { committed: "open the invoices", tentative: "" },
+        ]);
+        yield* speech.scriptText({ finished: "open the invoices", tidied: "Open the invoices." });
+        const tidiedBefore = (yield* speech.tidyRequests).length;
+        const client = yield* open("", bearer);
+        yield* client.startTranscript;
+        yield* speech.nextStream;
+        assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: true }));
+        for (let piece = 0; piece < 4; piece++) yield* client.audio;
+        // Each piece is a quarter second; the first heard nothing.
+        assert.deepStrictEqual(
+          yield* client.next,
+          frame({ type: "words", committed: "", tentative: "open", heardMs: 500 }),
+        );
+        assert.deepStrictEqual(
+          yield* client.next,
+          frame({ type: "words", committed: "open", tentative: "the", heardMs: 750 }),
+        );
+        assert.deepStrictEqual(
+          yield* client.next,
+          frame({ type: "words", committed: "open the invoices", tentative: "", heardMs: 1000 }),
+        );
+        yield* client.finish();
+        assert.deepStrictEqual(
+          yield* client.next,
+          frame({ type: "done", text: "open the invoices" }),
+        );
+        assert.strictEqual((yield* speech.tidyRequests).length, tidiedBefore);
+      }).pipe(Effect.scoped),
   );
 
   it.effect(

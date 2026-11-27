@@ -1017,6 +1017,8 @@ export const HostedBridge = Schema.Struct({
   openRecorder: Callable,
   onRecording: Callable,
   readRecording: Callable,
+  readRecordingSpeech: Callable,
+  keepTranscript: Callable,
   releaseRecording: Callable,
   recorderJob: Callable,
   recorderStarted: Callable,
