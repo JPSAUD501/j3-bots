@@ -10,7 +10,7 @@ import {
   type Notification,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { createI18n } from "./i18n.ts";
+import { createI18n } from "./catalogs.ts";
 import { notificationText, type NotificationNames } from "./notification.ts";
 
 const scout = BotId.make("scout");

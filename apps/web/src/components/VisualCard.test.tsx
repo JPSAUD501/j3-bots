@@ -2,7 +2,7 @@
 import { BotId, VISUAL_FRAME_PATH } from "@j3-bots/contracts";
 import { at, message } from "@j3-bots/client-runtime/testing";
 import { buildTimeline } from "@j3-bots/client-runtime/presentation";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderTestMarkup } from "../app/testRoot";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { copySample, sampleSecrets } from "../gallery/sampleSecrets";
 import { Timeline, type TimelineIntents } from "./Timeline";
@@ -58,7 +58,7 @@ const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
 
 /** The markup of a conversation holding one message from Scout that shows `page`. */
 const shown = (page: string) =>
-  renderToStaticMarkup(
+  renderTestMarkup(
     <Timeline
       rows={buildTimeline([
         message("2026-11-20T10:00:00Z", scout, "March was the peak.", {
