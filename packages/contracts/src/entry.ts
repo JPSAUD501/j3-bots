@@ -133,6 +133,71 @@ export const ConversationMentions = Schema.Array(ConversationMention).check(
   Schema.isMaxLength(MAX_CONVERSATION_MENTIONS),
 );
 
+/** The most messages one message quotes (decision 0094): a reply and passages together. */
+export const MAX_QUOTES = 3;
+
+/** The most characters (UTF-16 code units) of a quoted passage. */
+export const MAX_QUOTE_PASSAGE_LENGTH = 2_000;
+
+/** The most characters (UTF-16 code units) of a replied message's start that a reply keeps. */
+export const QUOTE_OPENING_LENGTH = 300;
+
+/**
+ * A passage of a message, quoted word for word: some of its text, trimmed,
+ * never empty.
+ */
+export const QuotePassage = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_QUOTE_PASSAGE_LENGTH),
+  Schema.makeFilter((passage: string) =>
+    passage !== passage.trim() || passage.trim() === "" ? "Trimmed, and not empty." : true,
+  ),
+);
+
+/**
+ * A message the operator's message quotes, as they send it: a message of the
+ * same conversation or room, whole (a reply) or, with `passage`, a part of
+ * its text.
+ */
+export const QuoteRequest = Schema.Struct({
+  entryId: EntryId,
+  passage: Schema.optionalKey(QuotePassage),
+});
+export type QuoteRequest = typeof QuoteRequest.Type;
+
+/** What a message quotes, in the order the operator added them, at most one whole. */
+export const QuoteRequests = Schema.Array(QuoteRequest).check(Schema.isMaxLength(MAX_QUOTES));
+
+/**
+ * What a quote shows of its message, kept when it was sent so it reads the
+ * same if the message changes later:
+ * - `passage`: the part of its text the operator picked;
+ * - `message`: a reply to the whole message, with its start, at most
+ *   `QUOTE_OPENING_LENGTH` characters (empty for one with only files), and
+ *   whether it went on past that.
+ */
+export const Quoted = Schema.Union([
+  Schema.TaggedStruct("passage", { text: QuotePassage }),
+  Schema.TaggedStruct("message", {
+    opening: Schema.String.check(Schema.isMaxLength(QUOTE_OPENING_LENGTH)),
+    more: Schema.Boolean,
+  }),
+]);
+export type Quoted = typeof Quoted.Type;
+
+/**
+ * A message a message quotes (decision 0094): which, who said it and when,
+ * and what of it is quoted. Its message's id outlives it, as an author's does:
+ * a client that cannot find it says so where the quote is.
+ */
+export const MessageQuote = Schema.Struct({
+  entryId: EntryId,
+  author: Author,
+  saidAt: Schema.DateTimeUtc,
+  quoted: Quoted,
+});
+export type MessageQuote = typeof MessageQuote.Type;
+
 /** The most UTF-16 code units one reaction's emoji takes: a long ZWJ sequence fits. */
 export const MAX_REACTION_LENGTH = 32;
 
@@ -216,6 +281,13 @@ export const MessageEntry = Schema.TaggedStruct("message", {
    * plain text it is.
    */
   conversationMentions: Schema.optionalKey(ConversationMentions),
+  /**
+   * The messages it quotes, in the order added (decision 0094): a reply to one
+   * of them whole, or passages of them, each of its conversation or room.
+   * Absent from a message that quotes none, and from a server that predates
+   * quotes, and an older client drops it and shows the text alone.
+   */
+  quotes: Schema.optionalKey(Schema.Array(MessageQuote).check(Schema.isMaxLength(MAX_QUOTES))),
   /** Whether it reached its recipients. Messages written by bots are always `delivered`. */
   delivery: MessageDelivery,
   /** The operator's command that created it, so a client can replace its optimistic copy. */

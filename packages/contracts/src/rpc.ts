@@ -59,6 +59,7 @@ import {
   LookingAt,
   MAX_SECRET_ASK_VALUES,
   ConversationMentions,
+  QuoteRequests,
   Mentions,
   MessageText,
   PREVIEW_LENGTH,
@@ -137,8 +138,8 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 //
 // A client offers sections, a bot's `sectionId` and `entries.markUnread` only
 // once a roster snapshot carries `sections`, and `@` in a bot's conversation
-// only once it carries `conversationMentions` (docs/architecture/clients.md,
-// "Protocol compatibility").
+// only once it carries `conversationMentions`, and Reply and Quote only once it
+// carries `quotes` (docs/architecture/clients.md, "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
 const after = { after: Schema.NullOr(Sequence) };
@@ -187,6 +188,11 @@ export const RosterRpcs = RpcGroup.make(
          * conversation only then.
          */
         conversationMentions: Schema.optionalKey(Schema.Literal(true)),
+        /**
+         * Always `true` from a server that takes `message.send`'s `quotes`;
+         * a client offers Reply and Quote only then.
+         */
+        quotes: Schema.optionalKey(Schema.Literal(true)),
       }),
       Schema.TaggedStruct("changed", {
         upsert: Schema.Array(RosterItem),
@@ -276,6 +282,9 @@ export const EntryRpcs = RpcGroup.make(
    * inline images over `MAX_INLINE_IMAGES_SIZE` together. Fails with
    * `Invalid("message-length")`, writing nothing, when the message as the bot
    * would read it is too long for that engine to take in one message. Fails
+   * with `Invalid("quotes")`, writing nothing, for a quote of anything but a
+   * message of the same conversation or room, a passage not in its text, the
+   * same quote twice, or more than one reply. Fails
    * with `Conflict("room-archived")` in an archived room.
    */
   Rpc.make("message.send", {
@@ -302,6 +311,14 @@ export const EntryRpcs = RpcGroup.make(
        * what it is. A server that predates it ignores it.
        */
       lookingAt: Schema.optionalKey(LookingAt),
+      /**
+       * The messages it quotes (decision 0094), each of the same
+       * conversation or room: at most one whole, as a reply, and passages,
+       * each found word for word in its message's text. Offered only once
+       * the roster snapshot carries `quotes`: a server that predates them
+       * ignores it.
+       */
+      quotes: Schema.optionalKey(QuoteRequests),
     },
     success: EntryId,
     error: CommandError,
