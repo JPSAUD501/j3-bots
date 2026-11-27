@@ -5,44 +5,44 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { chromeFolders, chromePlatformOf } from "./chrome.ts";
 
-// What the engine's headless browser needs from a Linux host, found the way
-// the engine's own `t3 browser setup` finds it (**Read** at `bc0f04d`,
-// `apps/server/src/preview/PreviewBrowserHost.ts` and
-// `apps/server/src/cli/browser.ts`). Nothing here changes the host. The fix is
-// not that command: run as root, it would run the engine's executable, which
-// the service account can replace. It is the same steps written as plain
-// commands that run, as root, only system tools.
+// What the server's own browser, Chrome for Testing (`chrome.ts`), needs from
+// a Linux host: the checks T3 Code's `t3 browser setup` makes for its browser
+// (**Read** at `bc0f04d`, `apps/server/src/preview/PreviewBrowserHost.ts` and
+// `apps/server/src/cli/browser.ts`), made for this one. Nothing here changes
+// the host. The fix is plain commands that run, as root, only system tools:
+// never the browser or J3 Bots, files the service account can replace.
 
 /** Set on Ubuntu 23.10 and later: unprivileged user namespaces, which Chrome's sandbox uses, need an AppArmor profile. */
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 
 /**
- * The profile the engine's setup writes for its browser, by path and name:
- * the engine counts the sandbox as allowed once this file is on disk.
+ * The profile that lets the server's browser make its sandbox, by path and
+ * name: the sandbox counts as allowed once this file is on disk.
  */
-const APPARMOR_PROFILE = "/etc/apparmor.d/t3-chrome-headless-shell";
+const APPARMOR_PROFILE = "/etc/apparmor.d/j3-bots-chrome";
 
 /**
- * Its content, as the engine's setup writes it (the engine's is under the MIT
- * license, as is its source): only the browser the engine downloads may make
- * the user namespace its sandbox needs, which any program may on a host
- * without the restriction. It gives no other right, and runs nothing as root.
+ * Its content: only the browser J3 Bots downloads, at the path `chrome.ts`
+ * keeps it at under any home, may make the user namespace its sandbox needs,
+ * which any program may on a host without the restriction. It gives no other
+ * right, and runs nothing as root.
  */
 const APPARMOR_PROFILE_LINES = [
-  "# Lets the J3 Bots engine's headless browser use Chrome's sandbox.",
+  "# Lets the J3 Bots server's browser use Chrome's sandbox.",
   "abi <abi/4.0>,",
   "include <tunables/global>",
-  "profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-headless-shell flags=(unconfined) {",
+  "profile j3-bots-chrome /**/browser/chrome/*/chrome-linux*/chrome flags=(unconfined) {",
   "  userns,",
-  "  include if exists <local/t3-chrome-headless-shell>",
+  "  include if exists <local/j3-bots-chrome>",
   "}",
 ];
 
 /**
- * The Debian and Ubuntu packages the browser loads, as the engine's setup
- * installs them: of each, the first name apt offers, since Ubuntu 24.04 and
- * Debian 13 renamed some (`t64`).
+ * The Debian and Ubuntu packages the browser loads, as T3 Code's setup
+ * installs them for its Chrome build: of each, the first name apt offers,
+ * since Ubuntu 24.04 and Debian 13 renamed some (`t64`).
  */
 const DEBIAN_PACKAGES: ReadonlyArray<readonly [string, ...Array<string>]> = [
   ["libnss3"],
@@ -79,22 +79,22 @@ const LIBRARY_NAME = /^[A-Za-z0-9_+-][A-Za-z0-9._+-]*\.so(\.[0-9]+)*$/;
 /**
  * Whether Chrome's sandbox can start, and if not, why:
  * - `no-profile`: AppArmor restricts unprivileged user namespaces and the
- *   engine's profile is not on disk;
- * - `profile-unloaded`: the profile is on disk, yet the engine found the
+ *   profile is not on disk;
+ * - `profile-unloaded`: the profile is on disk, yet the server found the
  *   sandbox blocked when it last started the browser: the kernel has not
  *   loaded it, as on a host restored from an image. Only root can read the
  *   loaded profiles, so only a start shows it;
- * - `unknown`: the engine found the sandbox blocked on a host without the
+ * - `unknown`: the server found the sandbox blocked on a host without the
  *   restriction, for a cause this check does not know.
  */
 export type SandboxBlock = "none" | "no-profile" | "profile-unloaded" | "unknown";
 
-/** What stands between this host and the engine's browser, on Linux. */
+/** What stands between this host and the server's browser, on Linux. */
 export interface BrowserHostNeeds {
   readonly sandbox: SandboxBlock;
   /**
-   * Whether the browser is downloaded yet: the engine downloads it, about
-   * 130 MB, the first time a bot uses it.
+   * Whether the browser is downloaded yet: the server downloads it, about
+   * 210 MB, the first time a tab opens on the server.
    */
   readonly downloaded: boolean;
   /** The shared libraries the downloaded browser cannot load; none until it is downloaded. */
@@ -171,7 +171,7 @@ export const setupOf = (input: {
       return { setup, packagesByHand: false };
     case "dnf":
       // dnf installs a library by the file name a package provides; the
-      // engine's browser is built for 64-bit only.
+      // browser is built for 64-bit only.
       setup.push(
         line([
           "sudo",
@@ -191,54 +191,24 @@ export const setupOf = (input: {
 /** The profile `setupOf` writes, line by line. */
 export const apparmorProfile = APPARMOR_PROFILE_LINES;
 
-/**
- * The browser release the pinned engine runs: it starts exactly this version,
- * downloading it on first use, and keeps the one it replaced beside it
- * (**Read** at `bc0f04d`, `apps/server/src/preview/PreviewBrowser.ts`,
- * `VERSION` and `installedExecutable`). Moves with the pin
- * (docs/architecture/engine.md, "Upgrading the engine").
- */
-const ENGINE_BROWSER_VERSION = "158.0.8127.88";
-
-/**
- * The folder the engine keeps its Linux browser in for a processor
- * architecture, as Chrome for Testing names its builds; none for one the
- * browser has no build for (**Read** at `bc0f04d`,
- * `apps/server/src/preview/PreviewBrowser.ts`, `chromePlatform`).
- */
-export const browserPlatformOf = (arch: string): string | undefined =>
-  arch === "x64" ? "linux64" : arch === "arm64" ? "linux-arm64" : undefined;
-
-/**
- * The browser the engine runs, if it is downloaded:
- * `tools/chrome-headless-shell/<platform>/<version>/` under the engine's data
- * directory, for this machine's architecture. Another version there is one
- * the engine kept from before, which it no longer starts.
- */
-const installedBrowser = Effect.fn("engine.installedBrowser")(function* (home: string) {
+/** The server's browser, if it is downloaded under the server's `home`. */
+const installedBrowser = Effect.fn("browser.installedBrowser")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = browserPlatformOf(process.arch);
-  if (platform === undefined) return Option.none<string>();
-  const executable = path.join(
-    home,
-    "tools",
-    "chrome-headless-shell",
-    platform,
-    ENGINE_BROWSER_VERSION,
-    "chrome-headless-shell",
-  );
+  const platform = chromePlatformOf(process.platform, process.arch);
+  if (Option.isNone(platform)) return Option.none<string>();
+  const { executable } = chromeFolders(path, home, platform.value);
   return (yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)))
     ? Option.some(executable)
     : Option.none<string>();
 });
 
 /**
- * What the engine's browser needs from this Linux host, for the engine's data
- * directory `home`. `sandboxRefused`: the engine found the sandbox blocked
- * when it last started the browser, which the files here may not show.
+ * What the server's browser needs from this Linux host, for the server's
+ * `home`. `sandboxRefused`: the server found the sandbox blocked when it last
+ * started the browser, which the files here may not show.
  */
-export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(function* (input: {
+export const inspectBrowserHost = Effect.fn("browser.inspectBrowserHost")(function* (input: {
   readonly home: string;
   readonly sandboxRefused: boolean;
 }) {

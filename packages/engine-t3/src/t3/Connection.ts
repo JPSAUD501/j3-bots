@@ -12,7 +12,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
-import { GetSettingsRpc, UpdateSettingsRpc } from "./BrowserAccess.ts";
+import { GetSettingsRpc, UpdateSettingsRpc } from "./Settings.ts";
 import { ORCHESTRATION_PROTOCOL } from "./Pin.ts";
 import { GetServerConfigRpc } from "./Policy.ts";
 import { SubscribeServerConfigRpc } from "./Providers.ts";
@@ -22,7 +22,7 @@ import { baseUrl } from "./Supervisor.ts";
 // except that its config stream reads each provider's usage limits apart
 // (`SubscribeServerConfigRpc`), a read of its config reads only its
 // policy's runtime-mode ceiling (`GetServerConfigRpc`), and its settings are
-// read and written only for the projects' overrides (`BrowserAccess.ts`).
+// read and written only for the projects' overrides (`Settings.ts`).
 // Each dial signs in with a fresh one-use ticket bought with the bearer token,
 // as the engine's own clients do, so a reconnect never replays a spent ticket.
 //

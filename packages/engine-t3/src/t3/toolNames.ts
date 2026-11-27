@@ -2,22 +2,13 @@
 import { Label, SkillName, type StepSkill, type WorkStep, type WorkTool } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { TOOL_SERVER } from "./Provision.ts";
+import { ENGINE_TOOL_SERVER, TOOL_SERVER } from "./Provision.ts";
 
 /**
  * The tools a step names now. `background-task` and `plan` name only steps
  * recorded before the turn's work told them (decision 0070).
  */
 type NamedTool = Exclude<WorkTool, "background-task" | "plan">;
-
-/**
- * The engine's own tool server, as the harnesses name its tools:
- * `mcp__t3-code__delegate_task` on Claude Code, `t3-code.delegate_task` on
- * Codex and on ACP agents. **Verified** on `0.1.11`: a step of the scripted
- * agent's `delegate_task` call carried `t3-code.delegate_task`; the code it
- * rests on is unchanged at `bc0f04d`.
- */
-const ENGINE_TOOL_SERVER = "t3-code";
 
 /** A tool's server and bare name, from the forms the harnesses give it. */
 const split = (name: string): { readonly server: string | null; readonly tool: string } => {
@@ -41,7 +32,8 @@ const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
 /**
  * J3 Bots' own tools that are steps of a bot's work, unlike the rest of them,
  * which are events of their own: those that change or read its MCP servers
- * and skills (decision 0049), by their bare names in the `j3` namespace.
+ * and skills (decision 0049), and its browser's (decision 0110), by their
+ * bare names in the `j3` namespace.
  */
 const OWN_STEP_TOOLS: ReadonlyMap<string, NamedTool> = new Map([
   ["add_mcp_server", "mcp-server-added"],
@@ -55,11 +47,23 @@ const OWN_STEP_TOOLS: ReadonlyMap<string, NamedTool> = new Map([
   ["remove_skill", "skill-removed"],
   ["list_skills", "skills-read"],
   ["use_connector_skill", "connector-skill"],
+  ...[
+    "browser_tabs",
+    "browser_open",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_act",
+    "browser_evaluate",
+    "browser_wait_for",
+    "browser_dialog",
+    "browser_close",
+  ].map((tool): readonly [string, NamedTool] => [tool, "browser"]),
 ]);
 
 /**
  * Whether a bare `j3` tool name is a step of the bot's work: a connector's
- * tool, or one of J3 Bots' own that manages its MCP servers and skills.
+ * tool, or one of J3 Bots' own that manages its MCP servers and skills or
+ * uses its browser.
  */
 export const isStepTool = (tool: string): boolean =>
   isConnectorTool(tool) || OWN_STEP_TOOLS.has(tool);

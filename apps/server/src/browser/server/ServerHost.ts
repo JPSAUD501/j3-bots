@@ -70,7 +70,7 @@ const HINT_PLATFORM: Readonly<Record<ChromePlatform, string>> = {
   win64: "Windows",
 };
 
-export const userAgentOf = (platform: ChromePlatform) =>
+const userAgentOf = (platform: ChromePlatform) =>
   `Mozilla/5.0 (${PLATFORM_UA[platform]}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${MAJOR}.0.0.0 Safari/537.36`;
 
 const brands = (version: (major: string) => string) => [

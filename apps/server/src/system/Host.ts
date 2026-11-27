@@ -3,7 +3,6 @@
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
-import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -14,6 +13,7 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { type BrowserHostNeeds, inspectBrowserHost } from "../browser/server/hostNeeds.ts";
 import { freeSpaceAt } from "./freeSpace.ts";
 import { type PortState, portStateOf } from "./Ports.ts";
 import { runPowerShell } from "./PowerShell.ts";
@@ -75,16 +75,16 @@ export class Host extends Context.Service<
      */
     readonly reachable: (url: string) => Effect.Effect<boolean>;
     /**
-     * What the engine's headless browser needs from this Linux host, for the
-     * engine's data directory `home`: it reads the AppArmor settings, and
-     * runs the downloaded browser, `ldd`, `fc-match` and `apt-cache` to ask
-     * about libraries, fonts and packages. `sandboxRefused`: the running
-     * server says the engine found the sandbox blocked.
+     * What the server's own browser needs from this Linux host, for the
+     * server's `home`: it reads the AppArmor settings, and runs the
+     * downloaded browser, `ldd`, `fc-match` and `apt-cache` to ask about
+     * libraries, fonts and packages. `sandboxRefused`: the server found the
+     * sandbox blocked when it last started the browser.
      */
     readonly browserNeeds: (input: {
       readonly home: string;
       readonly sandboxRefused: boolean;
-    }) => Effect.Effect<EngineLive.BrowserHostNeeds>;
+    }) => Effect.Effect<BrowserHostNeeds>;
   }
 >()("@j3-bots/server/system/Host") {}
 
@@ -249,7 +249,7 @@ export const layer = Layer.effect(
       ),
       browserNeeds: Effect.fn("Host.browserNeeds")(
         (input: { readonly home: string; readonly sandboxRefused: boolean }) =>
-          EngineLive.inspectBrowserHost(input),
+          inspectBrowserHost(input),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

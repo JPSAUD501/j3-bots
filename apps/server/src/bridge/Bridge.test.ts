@@ -5,7 +5,7 @@ import { assert, it } from "@effect/vitest";
 import { type BotId, CommandId } from "@j3-bots/contracts";
 import { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import { toolList } from "@j3-bots/prompts";
+import { browserToolList, toolList } from "@j3-bots/prompts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -228,9 +228,10 @@ it.layer(endpoint)("j3 bridge", (it) => {
         call(5, "create_bot", { name: "Scout", title: "Repository watch", listed: true }),
       ]);
 
+      // A new bot's browser is on: its own tools, then the browser's.
       assert.deepStrictEqual(
         replies.get(2)?.tools?.map((tool) => tool.name),
-        toolList.map((tool) => tool.name),
+        [...toolList, ...browserToolList].map((tool) => tool.name),
       );
       assert.deepStrictEqual(replies.get(3)?.content?.[0]?.text, '{"recorded":true}');
       assert.isTrue(replies.get(4)?.isError);

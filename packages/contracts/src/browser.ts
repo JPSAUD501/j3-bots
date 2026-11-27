@@ -49,8 +49,9 @@ export type BrowserDialog = typeof BrowserDialog.Type;
  * - `desktop`: in the J3 Bots app on that computer, in its own browser.
  * - `server`: in the server's own browser.
  * - `parked`: its host went away (the app closed, or the server's browser
- *   let an idle tab go). It keeps its address, title and last picture, and
- *   the next bot that uses it opens it again on the server.
+ *   let an idle tab go). It keeps its address and title, and the next bot
+ *   that uses it opens it again where a new tab opens: in the app the person
+ *   used last, else on the server.
  */
 export const BrowserTabWhere = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("desktop"), device: DeviceId }),
@@ -186,8 +187,12 @@ export const BROWSER_PERSON_HOLD_MS = 10_000;
  *
  * - `invalid` (1008): the request named no tab or a size out of range, or the
  *   device was revoked while the socket was open.
- * - `reconnect` (1012): the browser restarted; open the socket again.
- * - `unavailable` (1013): the engine is not ready; try again later.
+ * - `reconnect` (1012): the browser restarted; open the socket again. Only
+ *   from a server before J3 Bots' own browser (no `sharedBrowser` in the
+ *   roster): on one with it, a tab whose host goes away keeps its socket and
+ *   its last picture, and its pictures resume wherever it opens again.
+ * - `unavailable` (1013): the engine is not ready; try again later. Only from
+ *   a server before J3 Bots' own browser.
  * - `replaced` (4409): this device opened another socket on the same tab,
  *   which took this one's place, control included.
  */
@@ -281,7 +286,12 @@ export const BrowserServerFrame = Schema.Union([
     y: Coordinate,
     botId: Schema.optionalKey(BotId),
   }),
-  /** The engine's browser cannot start until the host is set up; `j3-bots doctor` says how. */
+  /**
+   * The engine's browser cannot start until the host is set up; `j3-bots
+   * doctor` says how. Only from a server before J3 Bots' own browser (no
+   * `sharedBrowser` in the roster): on one with it, the engine status's
+   * `browser` says whether the server's own browser can run.
+   */
   Schema.Struct({
     type: Schema.Literal("setup-needed"),
     need: Schema.Literals(["sandbox", "libraries"]),

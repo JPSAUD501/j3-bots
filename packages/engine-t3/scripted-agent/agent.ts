@@ -466,20 +466,13 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  * - `secret`: asks for a secret through the engine's `request_secret` tool:
  *   one value, or the comma-separated `fields`, each labelled with its name
  *   and masked unless `plain` names it too.
- * - `browse`: opens `url` in the engine's browser (`preview_open`), then acts
- *   on the tab every `every` ms (default 1000) for up to `for` ms (default
- *   60000). It speaks through the engine's `send_to_user` the first time an
- *   action is refused, with the engine's reason, and the first time one
- *   works again after, and ends then.
  * - `delegate`: hands a task to a child agent through the engine's
  *   `delegate_task` tool, then ends; the engine wakes the session when the
  *   child's task ends. The child runs `plain`, or with `child=slow`, `slow`
- *   for two minutes, or with `child=browser`, `browser`.
- * - `send`: sends the thread `to` a message through the engine's
- *   `t3_thread_send` tool, which has it run `browser`, then ends.
+ *   for two minutes.
  * - `browser`: calls the engine's `t3_preview_list`, which only a session
- *   given the browser may call, then says `allowed` or `refused` through the
- *   engine's `send_to_user`.
+ *   given the engine's browser may call, then says `allowed` or `refused`
+ *   through the engine's `send_to_user`.
  * - `team`: a primary bot building a team on J3 Bots' own tools: creates
  *   `count` teammates (default 4) with `create_bot`, starts a room with them
  *   with `start_room`, whose kickoff has each member run `room-answer`, then
@@ -631,24 +624,10 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   },
   delegate: async (turn) => {
     const named = turn.args.get("child");
-    const child =
-      named === "slow"
-        ? "[[script:slow every=500 for=120000]]"
-        : named === "browser"
-          ? "[[script:browser]]"
-          : "[[script:plain]]";
+    const child = named === "slow" ? "[[script:slow every=500 for=120000]]" : "[[script:plain]]";
     await callHostTool(turn, "delegate_task", {
       task: child,
       title: "Scripted delegate",
-    });
-    reportUsage(turn);
-    return turn.signal.aborted ? "cancelled" : "end_turn";
-  },
-  send: async (turn) => {
-    await callHostTool(turn, "t3_thread_send", {
-      threadId: turn.args.get("to") ?? "",
-      message: "[[script:browser]]",
-      mode: "auto",
     });
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";
@@ -707,35 +686,6 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   "room-answer": async (turn) => {
     const seen = turn.text.match(/Answer #\d+\./g)?.length ?? 0;
     await callBotTool(turn, "say", { text: `Answer #${seen + 1}.`, done: true });
-    reportUsage(turn);
-    return turn.signal.aborted ? "cancelled" : "end_turn";
-  },
-  browse: async (turn) => {
-    const every = Number(turn.args.get("every") ?? "1000");
-    const until = Date.now() + Number(turn.args.get("for") ?? "60000");
-    const speak = (message: string) => callHostTool(turn, "send_to_user", { message });
-    const opened = await callHostTool(turn, "preview_open", {
-      url: turn.args.get("url") ?? "about:blank",
-    });
-    if (opened.failed) {
-      await speak(`Browser failed: ${opened.text}`);
-      reportUsage(turn);
-      return "end_turn";
-    }
-    let refused = false;
-    while (!turn.signal.aborted && Date.now() < until) {
-      await sleep(every, turn.signal);
-      if (turn.signal.aborted) break;
-      // A scroll the page does not notice: an action, which needs the tab.
-      const acted = await callHostTool(turn, "preview_act", { action: "scroll", deltaY: 1 });
-      if (acted.failed && !refused) {
-        refused = true;
-        await speak(`Browser refused: ${acted.text}`);
-      } else if (!acted.failed && refused) {
-        await speak("Browser acted again.");
-        break;
-      }
-    }
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";
   },

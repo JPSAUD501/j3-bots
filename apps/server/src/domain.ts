@@ -7,7 +7,7 @@ import * as WorkImages from "./attachments/WorkImages.ts";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
 import * as BrowserHelp from "./browser/BrowserHelp.ts";
-import * as BrowserTabs from "./browser/BrowserTabs.ts";
+import * as Browser from "./browser/Browser.ts";
 import * as BrowserViewers from "./browser/BrowserViewers.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as EngineSessions from "./bots/EngineSessions.ts";
@@ -85,13 +85,14 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 
 /**
  * Every service of the server's domain, over a migrated database, the server's
- * configuration, the filesystem, an `Engine` with its `BrowserBridge`, the
- * cloud providers dictation sends recordings to (`CloudSpeech`), a
+ * configuration, the filesystem, an `Engine`, the server's own browser
+ * (`ServerBrowser`), the cloud providers dictation sends recordings to
+ * (`CloudSpeech`), a
  * `PushSender`, the disk's free space (`DiskSpace`), the HTTP client
  * connectors' sign-ins use (`OAuthHttp`), an `McpRegistry`, the
  * `HarnessSources` J3 Bots installs harnesses from and finds the operator's
  * own with, and the `SkillRepositories` skills are installed from. Which
- * engine, providers, sender, disk, client, registry, sources and
+ * engine, browser, providers, sender, disk, client, registry, sources and
  * repositories are the caller's: the real ones in `server.ts`, in-memory or
  * local ones in tests. Building it starts the turn machinery, the push
  * worker and the reaction worker, which run for as long as the layer's scope.
@@ -158,7 +159,9 @@ export const layer = Layer.mergeAll(
       Wakes.layer,
       WorkSteps.layer,
       RecordingUploads.layer,
-      BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
+      Layer.mergeAll(BrowserViewers.layer, Browser.tabAccessLayer).pipe(
+        Layer.provideMerge(Browser.layer),
+      ),
       Secrets.layer,
     ),
   ),

@@ -113,7 +113,7 @@ export const SECRET_ASK_EXISTS =
   "You may use a secret of this name already, so no card was shown. Use it by this reference.";
 
 /** For the tools a delegated worker can see but must not use. */
-export const BOT_ONLY =
+const BOT_ONLY =
   "Only the bot itself calls this. A subagent or delegated worker does not: it reports in its final reply.";
 
 const text = (min: number, max: number) =>
@@ -1791,8 +1791,8 @@ export const toMcpTool = (tool: ToolDefinition): McpTool => ({
 /** Every `j3` tool in the shape MCP's `tools/list` returns, in table order. */
 export const toolList: ReadonlyArray<McpTool> = Object.values(tools).map(toMcpTool);
 
-/** The `j3` tools that run without asking, in every permission mode: all but those that ask. */
-export const preApprovedTools: ReadonlyArray<string> = Object.values(tools)
+/** J3 Bots' own `j3` tools that run without asking, in every permission mode: all but those that ask. */
+export const preApprovedOwnTools: ReadonlyArray<string> = Object.values(tools)
   .filter((tool: ToolDefinition) => !tool.asks)
   .map((tool) => tool.name);
 

@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -21,6 +22,7 @@ import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { ServerConfig } from "../config.ts";
 import { Devices } from "../devices/Devices.ts";
 import * as Home from "../home/Home.ts";
+import { ServerBrowser, withBrowser } from "../browser/server/ServerBrowser.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import { connectProviders } from "../providers/connect.ts";
@@ -89,6 +91,7 @@ const routes = Layer.mergeAll(
         ADMIN_PATHS.status,
         Effect.gen(function* () {
           const engine = yield* EngineState;
+          const serverBrowser = yield* ServerBrowser;
           const devices = yield* Devices;
           const origins = yield* reachableOrigins(listener, publicOrigin).pipe(
             Effect.provideService(Network, network),
@@ -100,7 +103,10 @@ const routes = Layer.mergeAll(
             listener,
             toolPort,
             enginePort,
-            engine: yield* engine.current,
+            engine: withBrowser(
+              yield* engine.current,
+              Option.flatten(yield* Stream.runHead(serverBrowser.hostStatus)),
+            ),
             pairedDevices: yield* devices.pairedCount,
             webClient,
             ...Option.match(publicOrigin, {

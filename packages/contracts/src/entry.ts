@@ -750,8 +750,10 @@ export const BrowserHelpEntry = Schema.TaggedStruct("browser-help", {
   /** The host name of the page the tab was on ("example.com"); empty when it had none. */
   site: Schema.String.check(Schema.isMaxLength(253)),
   /**
-   * The tab the step is in. A ref names a tab only while the server that
-   * minted it runs, so after a restart a client opens the bot's front tab.
+   * The tab the step is in. On a server that shares its tabs (decision
+   * 0110) a ref names its tab for as long as the tab is kept, across
+   * restarts; a card from before names an engine tab that no longer exists,
+   * and a client opens the bot's front tab instead.
    */
   tab: BrowserTabRef,
   status: Schema.Union([

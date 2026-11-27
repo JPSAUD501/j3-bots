@@ -6,15 +6,11 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import {
-  apparmorProfile,
-  browserPlatformOf,
-  inspectBrowserHost,
-  missingLibrariesOf,
-  setupOf,
-} from "./BrowserHost.ts";
+import * as Option from "effect/Option";
+import { chromeFolders, chromePlatformOf } from "./chrome.ts";
+import { apparmorProfile, inspectBrowserHost, missingLibrariesOf, setupOf } from "./hostNeeds.ts";
 
-describe("the browser's host setup", () => {
+describe("the server browser's host setup", () => {
   it("writes, through sudo tee, exactly the profile it shows", () => {
     const { setup } = setupOf({
       sandbox: "no-profile",
@@ -26,10 +22,10 @@ describe("the browser's host setup", () => {
     assert.isDefined(write);
     const [produce, sink] = write.split(" | ");
     assert.isDefined(produce);
-    assert.strictEqual(sink, "sudo tee /etc/apparmor.d/t3-chrome-headless-shell > /dev/null");
+    assert.strictEqual(sink, "sudo tee /etc/apparmor.d/j3-bots-chrome > /dev/null");
     const written = NodeChildProcess.execFileSync("sh", ["-c", produce], { encoding: "utf8" });
     assert.strictEqual(written, apparmorProfile.map((profileLine) => `${profileLine}\n`).join(""));
-    assert.strictEqual(load, "sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell");
+    assert.strictEqual(load, "sudo apparmor_parser -r /etc/apparmor.d/j3-bots-chrome");
   });
 
   it("loads a profile on disk the system has not loaded, and has no command for a cause it does not know", () => {
@@ -39,7 +35,7 @@ describe("the browser's host setup", () => {
       packageManager: { _tag: "none" },
     } as const;
     assert.deepStrictEqual(setupOf({ ...needs, sandbox: "profile-unloaded" }), {
-      setup: ["sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell"],
+      setup: ["sudo apparmor_parser -r /etc/apparmor.d/j3-bots-chrome"],
       packagesByHand: false,
     });
     assert.deepStrictEqual(setupOf({ ...needs, sandbox: "unknown" }), {
@@ -82,39 +78,37 @@ describe("the browser's host setup", () => {
     assert.deepStrictEqual(missingLibrariesOf("$(reboot).so", ""), []);
   });
 
-  const platform = browserPlatformOf(process.arch);
-  it.effect.skipIf(process.platform === "win32" || platform === undefined)(
-    "checks the browser the engine runs, not one it kept from before, for another processor, or another left there",
+  const platform = Option.getOrUndefined(chromePlatformOf(process.platform, process.arch));
+  it.effect.skipIf(process.platform !== "linux" || platform === undefined)(
+    "checks the libraries of the browser the server downloaded, once it has",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const home = yield* fs.makeTempDirectoryScoped();
-        const other = platform === "linux64" ? "linux-arm64" : "linux64";
-        const browser = (version: string, script: string, built = platform ?? "") =>
+        if (platform === undefined) return;
+        const { executable } = chromeFolders(path, home, platform);
+        const browser = (script: string) =>
           Effect.gen(function* () {
-            const folder = path.join(home, "tools", "chrome-headless-shell", built, version);
-            yield* fs.makeDirectory(folder, { recursive: true });
-            const executable = path.join(folder, "chrome-headless-shell");
+            yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
             yield* fs.writeFileString(executable, `#!/bin/sh\n${script}\n`);
             yield* fs.chmod(executable, 0o755);
           });
-        const broken =
-          "echo 'chrome-headless-shell: error while loading shared libraries: libold.so.1: cannot open shared object file' >&2; exit 127";
-        // Only the one the engine kept from before, and its own built for another
-        // processor: the engine downloads the one it runs on first use.
-        yield* browser("157.0.8075.62", broken);
-        yield* browser("158.0.8127.88", broken, other);
+
         const before = yield* inspectBrowserHost({ home, sandboxRefused: false });
         assert.isFalse(before.downloaded);
         assert.deepStrictEqual(before.missingLibraries, []);
 
-        // Once it has, that one is checked, whatever else is there.
-        yield* browser("158.0.8127.88", "echo 'Google Chrome for Testing 158.0.8127.88'");
-        yield* browser("159.0.8200.10", broken);
-        const needs = yield* inspectBrowserHost({ home, sandboxRefused: false });
-        assert.isTrue(needs.downloaded);
-        assert.deepStrictEqual(needs.missingLibraries, []);
+        yield* browser(
+          "echo 'chrome: error while loading shared libraries: libgbm.so.1: cannot open shared object file' >&2; exit 127",
+        );
+        const broken = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        assert.isTrue(broken.downloaded);
+        assert.deepStrictEqual(broken.missingLibraries, ["libgbm.so.1"]);
+
+        yield* browser("echo 'Google Chrome for Testing 158.0.8127.88'");
+        const working = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        assert.deepStrictEqual(working.missingLibraries, []);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

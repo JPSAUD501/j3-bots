@@ -100,11 +100,3 @@ export const IdempotencyKey = Schema.String.check(
   Schema.isMaxLength(128),
 ).pipe(Schema.brand("IdempotencyKey"));
 export type IdempotencyKey = typeof IdempotencyKey.Type;
-
-/**
- * One tab of the engine's browser. Its value names the tab and the session it
- * was opened in, and only this package reads it; the server keeps it and gives
- * clients a ref of its own instead.
- */
-export const EngineTabId = opaque.pipe(Schema.brand("EngineTabId"));
-export type EngineTabId = typeof EngineTabId.Type;

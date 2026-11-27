@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
+import type { BotId, BrowserTabRef, SharedBrowserTab } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import * as ClientRuntime from "../src/client.ts";
 import { Connection } from "../src/connection/Connection.ts";
 import { Actions } from "../src/intents/Actions.ts";
@@ -20,7 +21,7 @@ import {
 import * as TestPlatform from "./platform.ts";
 
 // A client's view of a bot's tab, against the real server's media socket over
-// the in-memory engine's browser.
+// the server's own browser, which a fake page host stands in for.
 
 const server = Server.layer(Layer.empty);
 
@@ -30,31 +31,46 @@ const client = Layer.unwrap(
   ),
 );
 
-const jpeg = (byte: number) => new Uint8Array([0xff, 0xd8, byte, 0xff, 0xd9]);
+const LOGIN = "https://www.example.com/login";
 
 const statusIs =
   (tag: BrowserViewStatus["_tag"]) =>
   (state: BrowserViewState): boolean =>
     state.status._tag === tag;
 
-/** Each scene's tab is a tab of its own: the server is one for every test. */
-let scenes = 0;
+/** Waits until `check` holds, polling: the fake host has no events of its own. */
+const eventually = (check: Effect.Effect<boolean>) =>
+  check.pipe(Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("5 millis") }));
 
-/** A paired client, and a bot with one tab open, which the client lists. */
+/** The host's calls of `call` on `ref`: the host is one for every test. */
+const callsOn = (host: Server.FakePageHost, call: string, ref: BrowserTabRef) =>
+  Effect.map(host.calls, (calls) => calls.filter((each) => each.call === call && each.tab === ref));
+
+/** The tab as the server shares it, once it is listed. */
+const shared = (ref: BrowserTabRef) =>
+  Effect.gen(function* () {
+    const browser = yield* Server.Browser;
+    const found = yield* browser.all.pipe(
+      Stream.map(({ tabs }) => tabs.find((tab) => tab.ref === ref)),
+      Stream.filter((tab): tab is SharedBrowserTab => tab !== undefined),
+      Stream.runHead,
+    );
+    return Option.getOrThrow(found);
+  });
+
+/** A paired client, and a bot with a tab open in the server's browser, which the client lists. */
 const scene = Effect.gen(function* () {
-  scenes += 1;
-  const tab = `login-${scenes}`;
   const { code } = yield* (yield* Server.Devices).startPairing;
   const connection = yield* Connection;
   yield* connection.pair({ code, deviceName: "Phone" });
   yield* waitFor(connection.state, (state) => state._tag === "connected");
   const commandId = yield* (yield* Actions).commandId;
   const bot = yield* connection.call((rpc) => rpc["bot.create"]({ commandId, name: "Scout" }));
-  yield* Server.botHasTabs(bot.id, [
-    { id: tab, url: "https://www.example.com/login", title: "Sign in" },
-  ]);
+  const opened = yield* Server.botOpens(bot.id, LOGIN);
   const ref = yield* tabRef(bot.id);
-  return { botId: bot.id, ref, tab };
+  assert.strictEqual(ref, opened);
+  const host = yield* (yield* Server.TestServerBrowser).running;
+  return { botId: bot.id, ref, host };
 });
 
 const tabRef = (botId: BotId) =>
@@ -66,24 +82,23 @@ const tabRef = (botId: BotId) =>
     );
     if (listed._tag !== "ready") return yield* Effect.die("The tabs never loaded");
     const front = listed.value.find((tab) => tab.front);
-    assert.strictEqual(front?.url, "https://www.example.com/login");
+    assert.strictEqual(front?.url, LOGIN);
     return Option.getOrThrow(Option.fromNullishOr(front)).ref;
   });
 
-/** A view of `ref`, the engine's `tab`, and the engine's viewer behind it. */
+/** A view of `ref`, live, and the size the server asked the host's screencast for. */
 const watch = (
-  { ref, tab }: { readonly ref: BrowserTabRef; readonly tab: string },
+  { ref, host }: { readonly ref: BrowserTabRef; readonly host: Server.FakePageHost },
   size: BrowserViewSize = { maxWidth: 1080, quality: 55 },
 ) =>
   Effect.gen(function* () {
-    const browser = yield* Browser;
-    const engine = yield* Server.TestBrowserControl;
-    const view = yield* browser.view({ ref, size: () => size });
-    let viewer = yield* engine.nextViewer;
-    // Viewers an earlier test left behind are of other tabs.
-    while (viewer.tab !== tab) viewer = yield* engine.nextViewer;
+    const view = yield* (yield* Browser).view({ ref, size: () => size });
+    yield* eventually(
+      Effect.map(callsOn(host, "tab.screencast", ref), (calls) => calls.length > 0),
+    );
+    const [screencast] = yield* callsOn(host, "tab.screencast", ref);
     yield* waitFor(view.state, statusIs("live"));
-    return { view, viewer };
+    return { view, asked: screencast?.size };
   });
 
 /** The next picture the view holds after `previous`. */
@@ -92,60 +107,52 @@ const pictureAfter = (view: BrowserView, previous: number) =>
     Effect.map((picture) => Option.getOrThrow(Option.fromNullishOr(picture))),
   );
 
-/** Waits until `check` holds of the engine's viewer, polling: it has no events of its own. */
-const eventually = (check: Effect.Effect<boolean>) =>
-  check.pipe(Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("5 millis") }));
+/** How many of the tab's pictures the host has heard were drawn. */
+const ackedOn = (host: Server.FakePageHost, ref: BrowserTabRef) =>
+  Effect.map(host.acked, (acked) => acked.filter((each) => each.tab === ref).length);
 
 it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
   it.effect("asks for the size the screen draws, and the next picture only once one is drawn", () =>
     Effect.gen(function* () {
       const opened = yield* scene;
-      const { view, viewer } = yield* watch(opened);
-      assert.deepStrictEqual(viewer.size, { maxWidth: 1080, maxHeight: 800, quality: 55 });
+      const { host, ref } = opened;
+      const { view, asked } = yield* watch(opened);
+      assert.deepStrictEqual(asked, { maxWidth: 1080, maxHeight: 800, quality: 55 });
 
-      yield* viewer.emit({ _tag: "viewport", width: 1280, height: 800 });
-      yield* viewer.emit({ _tag: "frame", jpeg: jpeg(1) });
-      yield* viewer.emit({ _tag: "frame", jpeg: jpeg(2) });
+      yield* host.paint(ref);
+      yield* host.paint(ref);
       const first = yield* pictureAfter(view, 0);
-      assert.deepStrictEqual([...first.jpeg], [...jpeg(1)]);
       assert.deepStrictEqual(view.state.get().viewport, { width: 1280, height: 800 });
       // The second waits behind the first until the screen has drawn it.
       assert.strictEqual(view.picture.get()?.sequence, first.sequence);
-      assert.strictEqual(yield* viewer.acks, 0);
+      assert.strictEqual(yield* ackedOn(host, ref), 0);
 
       yield* view.ack(first.sequence);
       const second = yield* pictureAfter(view, first.sequence);
-      assert.deepStrictEqual([...second.jpeg], [...jpeg(2)]);
-      yield* eventually(Effect.map(viewer.acks, (acks) => acks === 1));
+      assert.strictEqual(yield* ackedOn(host, ref), 1);
       // An acknowledgement twice over is one.
       yield* view.ack(first.sequence);
       yield* view.ack(second.sequence);
       yield* view.ack(second.sequence);
-      yield* eventually(Effect.map(viewer.acks, (acks) => acks === 2));
+      yield* eventually(Effect.map(ackedOn(host, ref), (acked) => acked === 2));
     }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
   it.effect("asks a screen taller than the largest picture for the largest", () =>
     Effect.gen(function* () {
       const opened = yield* scene;
-      const { viewer } = yield* watch(opened, { maxWidth: 1080, maxHeight: 2400, quality: 55 });
-      assert.deepStrictEqual(viewer.size, { maxWidth: 1080, maxHeight: 2160, quality: 55 });
+      const { asked } = yield* watch(opened, { maxWidth: 1080, maxHeight: 2400, quality: 55 });
+      assert.deepStrictEqual(asked, { maxWidth: 1080, maxHeight: 2160, quality: 55 });
     }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
   it.effect("keeps the tab through a dropped socket, and opens it again on its own", () =>
     Effect.gen(function* () {
       const opened = yield* scene;
+      const { host, ref } = opened;
       const network = yield* TestPlatform.TestNetwork;
-      const { view, viewer } = yield* watch(opened);
+      const { view } = yield* watch(opened);
       yield* view.send({ type: "take" });
-      yield* eventually(Effect.map(viewer.inputs, (inputs) => inputs.length === 1));
-      yield* viewer.emit({
-        _tag: "control",
-        controller: "this-viewer",
-        generation: 1,
-        dialog: null,
-      });
       yield* waitFor(view.state, (state) => state.control?.controller === "you");
 
       yield* network.dropSockets;
@@ -153,26 +160,23 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
       const dropped = yield* waitFor(view.state, statusIs("reconnecting"));
       assert.strictEqual(dropped.control?.controller, "you");
       yield* waitFor(view.state, statusIs("live"));
-      // The server kept the engine's viewer for this device: no other opened, nothing given back.
-      assert.isFalse(yield* viewer.isReleased);
-      assert.deepStrictEqual(yield* viewer.inputs, [{ type: "take" }]);
+      // The person still holds the tab until they give it back: a dropped socket gives nothing back.
+      const tab = yield* shared(ref);
+      assert.isTrue(tab.heldBy?.kind === "person" && tab.heldBy.until === null);
       yield* view.send({ type: "text", text: "operator@example.com" });
-      yield* eventually(Effect.map(viewer.inputs, (inputs) => inputs.length === 2));
+      yield* eventually(
+        Effect.map(callsOn(host, "tab.input", ref), (inputs) => inputs.length === 1),
+      );
     }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
   it.effect("gives the tab back only when asked, even sent while the socket was down", () =>
     Effect.gen(function* () {
       const opened = yield* scene;
+      const { host, ref } = opened;
       const lifecycle = yield* TestPlatform.TestLifecycle;
-      const { view, viewer } = yield* watch(opened);
+      const { view } = yield* watch(opened);
       yield* view.send({ type: "take" });
-      yield* viewer.emit({
-        _tag: "control",
-        controller: "this-viewer",
-        generation: 1,
-        dialog: null,
-      });
       yield* waitFor(view.state, (state) => state.control?.controller === "you");
 
       yield* lifecycle.set("background");
@@ -182,8 +186,9 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
       yield* view.send({ type: "release" });
       yield* lifecycle.set("foreground");
       yield* waitFor(view.state, statusIs("live"));
-      yield* eventually(Effect.map(viewer.inputs, (inputs) => inputs.length === 2));
-      assert.deepStrictEqual(yield* viewer.inputs, [{ type: "take" }, { type: "release" }]);
+      yield* waitFor(view.state, (state) => state.control?.controller !== "you");
+      assert.notStrictEqual((yield* shared(ref)).heldBy?.kind, "person");
+      assert.deepStrictEqual(yield* callsOn(host, "tab.input", ref), []);
     }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
@@ -200,16 +205,14 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
   it.effect("stops for good when the tab closes", () =>
     Effect.gen(function* () {
       const opened = yield* scene;
-      const { view, viewer } = yield* watch(opened);
-      yield* viewer.close(new Server.ViewerClosed({ reason: "gone" }));
+      const { view } = yield* watch(opened);
+      yield* (yield* Server.Browser).close(opened.ref).pipe(Effect.orDie);
       yield* waitFor(view.state, statusIs("gone"));
     }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
   it.effect("opens from an app's client, whose platform answers asynchronously", () =>
     Effect.gen(function* () {
-      scenes += 1;
-      const tab = `login-${scenes}`;
       const origin = yield* Server.origin;
       const { code } = yield* (yield* Server.Devices).startPairing;
       const app = yield* Effect.acquireRelease(
@@ -223,9 +226,7 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
         app.call((rpc) => rpc["bot.create"]({ commandId, name: "Scout" })),
       );
       if (created._tag !== "Success") return yield* Effect.die("The bot was not created");
-      yield* Server.botHasTabs(created.value.id, [
-        { id: tab, url: "https://www.example.com/login", title: "Sign in" },
-      ]);
+      yield* Server.botOpens(created.value.id, LOGIN);
       const tabs = app.openBrowserTabs(created.value.id);
       const listed = yield* waitFor(
         tabs.state,
@@ -239,15 +240,5 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
       view.close();
       tabs.release();
     }).pipe(Effect.scoped),
-  );
-
-  it.effect("says what the host lacks when the browser cannot start", () =>
-    Effect.gen(function* () {
-      const opened = yield* scene;
-      const { view, viewer } = yield* watch(opened);
-      yield* viewer.close(new Server.ViewerClosed({ reason: "setup-needed", need: "libraries" }));
-      const ended = yield* waitFor(view.state, statusIs("setup-needed"));
-      assert.deepStrictEqual(ended.status, { _tag: "setup-needed", need: "libraries" });
-    }).pipe(Effect.scoped, Effect.provide(client)),
   );
 });

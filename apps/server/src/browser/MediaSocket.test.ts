@@ -4,16 +4,13 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { assert, it } from "@effect/vitest";
 import {
   BrowserServerFrame,
-  type BrowserTabRef,
-  CommandId,
+  BrowserTabRef,
   HTTP_PATHS,
   SocketTicketGrant,
 } from "@j3-bots/contracts";
-import { EngineTabId } from "@j3-bots/engine-t3";
-import { TestBrowserControl } from "@j3-bots/engine-t3/testing";
+import { makeFakePageHost } from "@j3-bots/browser/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -24,7 +21,6 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Socket from "effect/socket/Socket";
 import { DeviceAuth } from "../auth/DeviceAuth.ts";
-import { Bots } from "../bots/Bots.ts";
 import { Devices } from "../devices/Devices.ts";
 import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
@@ -32,9 +28,8 @@ import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
 import * as RefusedNames from "../web/RefusedNames.ts";
-import { engineSession } from "../testing/turns.ts";
 import * as WebClient from "../web/WebClient.ts";
-import { BrowserTabs } from "./BrowserTabs.ts";
+import { Browser } from "./Browser.ts";
 import * as MediaSocket from "./MediaSocket.ts";
 import { MAX_SOCKET_BUFFER_BYTES } from "./MediaSocket.ts";
 
@@ -82,8 +77,20 @@ const open = (query: string, headers: Readonly<Record<string, string>> = {}) =>
       ),
       Effect.forkScoped,
     );
+    /** The next message, passing over who acts on the tab and pings, which these tests do not follow. */
+    const next: Effect.Effect<Received> = Effect.gen(function* () {
+      while (true) {
+        const message = yield* Queue.take(received);
+        if (
+          message._tag !== "frame" ||
+          (message.frame.type !== "control" && message.frame.type !== "ping")
+        ) {
+          return message;
+        }
+      }
+    });
     return {
-      next: Queue.take(received),
+      next,
       send: (text: string) => writer.write(text).pipe(Effect.orDie),
     };
   });
@@ -98,37 +105,55 @@ const ticketFor = (token: string) =>
 
 let scenes = 0;
 
-/** A paired device, and a bot with one tab open, which the server has listed. */
+/** Waits until `check` holds, on the real clock these tests run on. */
+const until = (check: Effect.Effect<boolean>) =>
+  Effect.gen(function* () {
+    for (let round = 0; round < 500; round++) {
+      if (yield* check) return;
+      yield* Effect.sleep("10 millis");
+    }
+    return yield* Effect.die("The condition never held");
+  });
+
+/**
+ * A paired device whose app's browser is attached for the test's scope, and
+ * a tab the person opened there. `picture` sets what each picture of the
+ * tab's screencast holds from then on.
+ */
 const scene = Effect.gen(function* () {
   const n = ++scenes;
   const devices = yield* Devices;
   const { code } = yield* devices.startPairing;
   const paired = yield* devices.pair({ code, name: `Laptop ${n}` });
-  const bot = yield* (yield* Bots).create({
-    commandId: CommandId.make(`create-${n}`),
-    draft: { name: `Scout ${n}` },
+  const fake = yield* makeFakePageHost({ host: { kind: "desktop", device: paired.deviceId } });
+  let jpeg: Uint8Array | null = null;
+  const browser = yield* Browser;
+  yield* browser.attachHost({
+    ...fake,
+    screencast: (input) =>
+      fake
+        .screencast(input)
+        .pipe(Stream.map((frame) => (jpeg === null ? frame : { ...frame, jpeg }))),
   });
-  const session = yield* engineSession(bot.id);
-  const browser = yield* TestBrowserControl;
-  yield* browser.setTabs([
-    {
-      id: EngineTabId.make(`tab-${n}`),
-      sessionId: session,
-      url: "https://example.com/",
-      title: "Example",
-      loading: false,
-      activeAt: n,
-    },
-  ]);
-  const listed = yield* (yield* BrowserTabs).subscribe(bot.id, paired.deviceId).pipe(
-    Stream.filter((frame) => frame.tabs.length === 1),
-    Stream.runHead,
-    Effect.orDie,
-  );
-  const tab = Option.getOrThrow(listed).tabs[0];
-  if (tab === undefined) return yield* Effect.die("The bot's tab is listed");
-  const ref: BrowserTabRef = tab.ref;
-  return { browser, deviceId: paired.deviceId, token: paired.token, ref };
+  const ref = BrowserTabRef.make(`media-tab-${n}`);
+  yield* browser.openForPerson({ device: paired.deviceId, ref, url: "https://example.com/" });
+  const callsOf = (call: string) =>
+    Effect.map(fake.calls, (calls) => calls.filter((each) => each.call === call).length);
+  return {
+    host: fake,
+    deviceId: paired.deviceId,
+    token: paired.token,
+    ref,
+    callsOf,
+    /** Once a socket watches the tab, paints the next picture of it. */
+    paint: until(Effect.map(callsOf("tab.screencast"), (count) => count > 0)).pipe(
+      Effect.andThen(fake.paint(ref)),
+    ),
+    picture: (bytes: Uint8Array) =>
+      Effect.sync(() => {
+        jpeg = bytes;
+      }),
+  };
 });
 
 const server = Ports.serve(
@@ -151,34 +176,49 @@ it.layer(server, { excludeTestServices: true })("media socket", (it) => {
       });
       assert.strictEqual(missing.status, 401);
       assert.strictEqual(wrong.status, 401);
-    }),
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("asks a request that is no upgrade to upgrade", () =>
+    Effect.gen(function* () {
+      const { token, ref } = yield* scene;
+      const plain = yield* HttpClient.get(`${HTTP_PATHS.browser}?ref=${ref}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      assert.strictEqual(plain.status, 426);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("shows the tab to a ticket's device, once, and passes on only what decodes", () =>
     Effect.gen(function* () {
-      const { browser, token, ref } = yield* scene;
+      const { token, ref, paint, callsOf, host } = yield* scene;
       const ticket = encodeURIComponent(yield* ticketFor(token));
       const client = yield* open(`?ref=${ref}&ticket=${ticket}`);
-      const viewer = yield* browser.nextViewer;
 
-      const jpeg = new Uint8Array([0xff, 0xd8, 0x01, 0xff, 0xd9]);
-      yield* viewer.emit({ _tag: "viewport", width: 1280, height: 800 });
-      yield* viewer.emit({ _tag: "frame", jpeg });
+      yield* paint;
       assert.deepStrictEqual(yield* client.next, {
         _tag: "frame",
         frame: { type: "viewport", width: 1280, height: 800 },
       });
-      assert.deepStrictEqual(yield* client.next, { _tag: "picture", bytes: jpeg });
+      assert.deepStrictEqual(yield* client.next, {
+        _tag: "picture",
+        bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      });
 
       yield* client.send("not json");
       yield* client.send(JSON.stringify({ type: "clipboard", text: "a password" }));
       yield* client.send(JSON.stringify({ type: "navigate", url: "file:///etc/passwd" }));
       yield* client.send(JSON.stringify({ type: "text", text: "hello" }));
       yield* client.send(JSON.stringify({ type: "ack" }));
-      yield* viewer.emit({ _tag: "viewport", width: 1280, height: 800 });
-      yield* client.next;
-      assert.deepStrictEqual(yield* viewer.inputs, [{ type: "text", text: "hello" }]);
-      assert.strictEqual(yield* viewer.acks, 1);
+      // Answered after everything sent before it.
+      yield* client.send(JSON.stringify({ type: "probe", x: 1, y: 2 }));
+      assert.deepStrictEqual(yield* client.next, {
+        _tag: "frame",
+        frame: { type: "probe", x: 1, y: 2, editable: false },
+      });
+      assert.strictEqual(yield* callsOf("tab.input"), 1);
+      assert.strictEqual(yield* callsOf("tab.navigate"), 0);
+      assert.deepStrictEqual(yield* host.acked, [{ tab: ref, frame: 1 }]);
 
       const replayed = yield* HttpClient.get(`${HTTP_PATHS.browser}?ref=${ref}&ticket=${ticket}`);
       assert.strictEqual(replayed.status, 401);
@@ -199,15 +239,17 @@ it.layer(server, { excludeTestServices: true })("media socket", (it) => {
 
   it.effect("closes the device's sockets when it is revoked, and refuses it after", () =>
     Effect.gen(function* () {
-      const { browser, deviceId, token, ref } = yield* scene;
+      const { deviceId, token, ref, paint } = yield* scene;
       const bearer = { authorization: `Bearer ${token}` };
       const client = yield* open(`?ref=${ref}`, bearer);
-      const viewer = yield* browser.nextViewer;
+      yield* paint;
+      yield* client.next;
 
       yield* (yield* DeviceAuth).revoke(deviceId);
 
-      assert.deepStrictEqual(yield* client.next, { _tag: "closed", code: 1008 });
-      yield* viewer.released;
+      while ((yield* client.next)._tag !== "closed") {
+        // Pictures already on their way.
+      }
       const refused = yield* HttpClient.get(`${HTTP_PATHS.browser}?ref=${ref}`, {
         headers: bearer,
       });
@@ -217,19 +259,20 @@ it.layer(server, { excludeTestServices: true })("media socket", (it) => {
 
   it.effect("drops a client a picture would leave owing more than its socket may hold", () =>
     Effect.gen(function* () {
-      const { browser, token, ref } = yield* scene;
+      const { token, ref, paint, picture } = yield* scene;
       const client = yield* open(`?ref=${ref}`, { authorization: `Bearer ${token}` });
-      const viewer = yield* browser.nextViewer;
 
       const fits = new Uint8Array(MAX_SOCKET_BUFFER_BYTES / 2).fill(7);
-      yield* viewer.emit({ _tag: "frame", jpeg: fits });
+      yield* picture(fits);
+      yield* paint;
+      yield* client.next;
       const shown = yield* client.next;
       assert.strictEqual(shown._tag === "picture" ? shown.bytes.byteLength : 0, fits.byteLength);
       yield* client.send(JSON.stringify({ type: "ack" }));
 
-      yield* viewer.emit({ _tag: "frame", jpeg: new Uint8Array(MAX_SOCKET_BUFFER_BYTES).fill(7) });
+      yield* picture(new Uint8Array(MAX_SOCKET_BUFFER_BYTES).fill(7));
+      yield* paint;
       assert.strictEqual((yield* client.next)._tag, "closed");
-      yield* viewer.released;
     }).pipe(Effect.scoped),
   );
 });
@@ -247,15 +290,14 @@ it.layer(
     "closes a socket whose client sends a message over the limit, and keeps one at it",
     () =>
       Effect.gen(function* () {
-        const { browser, token, ref } = yield* scene;
+        const { token, ref, callsOf } = yield* scene;
         const bearer = { authorization: `Bearer ${token}` };
         const client = yield* open(`?ref=${ref}`, bearer);
-        const viewer = yield* browser.nextViewer;
 
         // At the limit: read, found not to be a frame, and dropped.
         yield* client.send("x".repeat(Listener.MAX_SOCKET_MESSAGE_BYTES));
         yield* client.send(JSON.stringify({ type: "text", text: "hello" }));
-        assert.deepStrictEqual(yield* viewer.nextInput, { type: "text", text: "hello" });
+        yield* until(Effect.map(callsOf("tab.input"), (count) => count === 1));
 
         yield* client.send("x".repeat(Listener.MAX_SOCKET_MESSAGE_BYTES + 1));
         assert.deepStrictEqual(yield* client.next, { _tag: "closed", code: 1009 });

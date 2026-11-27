@@ -52,6 +52,12 @@ export interface FakeFill {
 export interface FakeHostCall {
   readonly call: string;
   readonly tab?: BrowserTabRef;
+  /** For `tab.screencast`: the size and quality asked for. */
+  readonly size?: {
+    readonly maxWidth: number;
+    readonly maxHeight: number;
+    readonly quality: number;
+  };
 }
 
 /**
@@ -233,8 +239,9 @@ export const makeFakePageHost = (
       });
 
     const host: FakePageHost = {
+      // Built at each call: the tabs and the store are the host's as they are now.
       hello: record("host.hello").pipe(
-        Effect.as({
+        Effect.map(() => ({
           protocol: BROWSER_HOST_PROTOCOL_VERSION,
           host: options.host ?? { kind: "server" },
           platform: { os: "linux", arch: "x64" },
@@ -242,7 +249,7 @@ export const makeFakePageHost = (
           capabilities,
           ...(cookieStore === undefined ? {} : { cookieStore }),
           tabs: [...tabs.values()].filter((tab) => !tab.private).map((tab) => tab.state),
-        }),
+        })),
       ),
       // Recorded once subscribed, so a test that waits for the call loses no event.
       events: Stream.unwrap(
@@ -353,7 +360,7 @@ export const makeFakePageHost = (
             height: 800,
           }),
         ),
-      screencast: ({ tab }) =>
+      screencast: ({ tab, maxWidth, maxHeight, quality }) =>
         Stream.unwrap(
           Effect.gen(function* () {
             yield* find(tab);
@@ -369,7 +376,13 @@ export const makeFakePageHost = (
                       }),
                     );
                   watchers.set(tab, { queue, out: undefined, next: undefined });
-                  return record("tab.screencast", tab);
+                  return Effect.sync(() => {
+                    calls.push({
+                      call: "tab.screencast",
+                      tab,
+                      size: { maxWidth, maxHeight, quality },
+                    });
+                  });
                 }),
                 () => Effect.sync(() => watchers.delete(tab)),
               ),

@@ -28,13 +28,13 @@ import {
   type RoomRead,
   type RoomReadEntry,
 } from "./roomRead.ts";
+import { BROWSER_NOTES, browserToolList, preApprovedTools } from "./browserTools.ts";
 import { sharedSkills } from "./skills.ts";
 import {
   BROWSER_HELP_REQUESTED,
   FILL_NOTES,
   MANAGEMENT_NOTES,
   MANAGEMENT_REFUSED,
-  preApprovedTools,
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
   SECRET_ASK_VALUES_SHOWN,
@@ -509,6 +509,10 @@ const fingerprint = (): string => {
     BROWSER_TEMPLATE,
     CONNECTORS_TEMPLATE,
     JSON.stringify(toolList),
+    JSON.stringify(browserToolList),
+    ...Object.values(BROWSER_NOTES).map((note) =>
+      typeof note === "string" ? note : note("failed", 1),
+    ),
     BROWSER_HELP_REQUESTED,
     SECRET_ASK_SHOWN,
     SECRET_ASK_VALUES_SHOWN,

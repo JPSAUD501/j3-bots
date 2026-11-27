@@ -2,6 +2,7 @@
 import {
   type AttachmentId,
   type BotId,
+  BrowserTabRef,
   Conflict,
   type Entry,
   Invalid,
@@ -18,14 +19,18 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
+import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 import { ConnectorAuth } from "../connectors/oauth/ConnectorAuth.ts";
 import { toCommandError } from "../connectors/oauth/errors.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { BrowserHelp } from "../browser/BrowserHelp.ts";
-import { BrowserTabs } from "../browser/BrowserTabs.ts";
+import { Browser } from "../browser/Browser.ts";
+import { Ids } from "../Ids.ts";
+import { ServerBrowser, withBrowser } from "../browser/server/ServerBrowser.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Templates } from "../bots/Templates.ts";
 import { Devices } from "../devices/Devices.ts";
@@ -105,16 +110,25 @@ export const handlers = J3Rpcs.toLayer(
     const harnesses = yield* Harnesses;
     const accounts = yield* ProviderAccounts;
     const { providerHome } = homeLayout(yield* Path.Path, (yield* ServerConfig).home);
+    const browser = yield* Browser;
+    const receipts = yield* CommandReceipts;
+    const ids = yield* Ids;
+    const serverBrowser = yield* ServerBrowser;
     /**
      * The engine's status as clients get it: each AI account with what the
-     * operator can set up of it, and each with its harness's copy.
+     * operator can set up of it, each with its harness's copy, and whether
+     * the server's own browser can run here.
      */
-    const served = Stream.zipLatestAll(engine.status, accounts.changes, harnesses.copies).pipe(
-      Stream.map(([status, each, copies]) =>
-        withCopies(withAccounts(status, each, providerHome), copies),
+    const served = Stream.zipLatestAll(
+      engine.status,
+      accounts.changes,
+      harnesses.copies,
+      serverBrowser.hostStatus,
+    ).pipe(
+      Stream.map(([status, each, copies, browserStatus]) =>
+        withBrowser(withCopies(withAccounts(status, each, providerHome), copies), browserStatus),
       ),
     );
-    const browserTabs = yield* BrowserTabs;
     const secrets = yield* Secrets;
     const voice = yield* Voice;
     const secretAsks = yield* SecretAsks;
@@ -326,7 +340,46 @@ export const handlers = J3Rpcs.toLayer(
       // The request carries the key: it is never logged, and has no receipt.
       "provider.connect": (request) =>
         connectProviders(request).pipe(Effect.provideContext(connectContext)),
-      "browser.subscribe": ({ botId }) => browserTabs.subscribe(botId, device.id),
+      "browser.subscribe": ({ botId }) => browser.ofBot(botId, device.id),
+      "browser.subscribeAll": () => browser.all,
+      // The tab's ref is minted under the receipt, and the tab opened with
+      // it after: a retry finds the tab its first attempt opened.
+      "browser.open": ({ commandId, url }) =>
+        receipts
+          .once({
+            commandId,
+            method: "browser.open",
+            payload: { commandId, url },
+            result: Schema.Struct({ ref: BrowserTabRef }),
+            apply: ids.make("tab").pipe(Effect.map((id) => ({ ref: BrowserTabRef.make(id) }))),
+          })
+          .pipe(
+            Effect.tap(({ ref }) =>
+              browser
+                .openForPerson({ device: device.id, url, ref })
+                .pipe(Effect.mapError(() => new Conflict({ reason: "browser-unavailable" }))),
+            ),
+          ),
+      // Closing again closes nothing more: a retry after a lost reply succeeds.
+      "browser.close": ({ commandId, ref }) =>
+        receipts
+          .once({
+            commandId,
+            method: "browser.close",
+            payload: { commandId, ref },
+            result: Schema.Void,
+            apply: browser.handsOf(ref).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.fail(new NotFound({ resource: "browser-tab" })),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            ),
+          })
+          .pipe(
+            Effect.andThen(browser.close(ref).pipe(Effect.catchTag("NotFound", () => Effect.void))),
+          ),
       // The secrets' requests carry or answer values: none is logged, and none has a receipt.
       "secrets.status": () => secrets.status,
       "secrets.list": () => secrets.list,

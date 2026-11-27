@@ -2,4 +2,3 @@
 export * from "./TestEngine.ts";
 export * from "./Descriptor.ts";
 export { installedRuntimes } from "../t3/Install.ts";
-export { type FakeViewer, layer as browserLayer, TestBrowserControl } from "./TestBrowser.ts";

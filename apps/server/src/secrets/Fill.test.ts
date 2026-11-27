@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
+import type { FakePageHost } from "@j3-bots/browser/testing";
 import {
-  type BrowserInput,
+  type BrowserFillField,
+  type BrowserTabRef,
+  DeviceId,
   type FillOutcome,
   type SecretDraft,
   SecretId,
@@ -9,9 +12,10 @@ import {
   SiteOrigin,
   type WorkStep,
 } from "@j3-bots/contracts";
-import { EngineTabId, type SessionId, type TurnId } from "@j3-bots/engine-t3";
+import type { SessionId, TurnId } from "@j3-bots/engine-t3";
+import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { FILL_NOTES } from "@j3-bots/prompts";
-import { type FakeViewer, TestBrowserControl, TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -20,11 +24,13 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import type * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
-import { BrowserTabs } from "../browser/BrowserTabs.ts";
-import { Devices } from "../devices/Devices.ts";
+import { EngineSessions } from "../bots/EngineSessions.ts";
+import { Browser } from "../browser/Browser.ts";
+import { botOpens, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
@@ -32,12 +38,11 @@ import {
   conversation,
   createBot,
   engineSession,
-  eventually,
-  mainSessionId,
   finishRunning,
   nextTurn,
   sendToBot,
   turnEnded,
+  until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
@@ -68,13 +73,15 @@ const domain = TestDomain.layer;
 
 /**
  * A bot with its browser on, the login `example` saved for `origins` and
- * usable by it, one tab open at `url`, and a turn running.
+ * usable by it, its own tab open at `url` in the server's browser with the
+ * focus on `focus`, and a turn running.
  */
 const scene = (input: {
   readonly url: string;
   readonly origins?: ReadonlyArray<string>;
   readonly browserAccess?: boolean;
   readonly allowed?: boolean;
+  readonly focus?: BrowserFillField | "other";
 }) =>
   Effect.gen(function* () {
     const bot = yield* createBot("Ana");
@@ -90,24 +97,15 @@ const scene = (input: {
       draft: draft(input.origins ?? ["https://example.com"]),
       access: { _tag: "bots", botIds: (input.allowed ?? true) ? [bot.id] : [] },
     });
-    const browser = yield* TestBrowserControl;
-    const tab = EngineTabId.make("tab-1");
-    yield* browser.setTabs([
-      {
-        id: tab,
-        sessionId: session,
-        url: input.url,
-        title: "Sign in",
-        loading: false,
-        activeAt: 1,
-      },
-    ]);
-    const tabs = yield* BrowserTabs;
-    yield* eventually(tabs.frontOf(session));
-    const caller = { id: yield* mainSessionId(bot.id), botId: bot.id };
+    const tab = yield* botOpens(bot.id, input.url);
+    const host = yield* (yield* TestServerBrowser).running;
+    const focus = (field: BrowserFillField | "other") =>
+      host.serve(input.url, { title: "Sign in", tree: "", focus: field });
+    yield* focus(input.focus ?? "password");
+    const caller = Option.getOrThrow(yield* (yield* EngineSessions).ofEngineSession(session));
     yield* sendToBot(bot.id, "Sign in to Example.");
     const turnId = yield* nextTurn(bot.id);
-    return { bot, session, browser, tab, caller, turnId };
+    return { bot, session, tab, host, focus, caller, turnId };
   });
 
 let requests = 0;
@@ -135,7 +133,6 @@ const request = (
     return {
       requestId: `fill-${++requests}`,
       caller: at.caller,
-      engineSessionId: at.session,
       secret,
       field,
       submit: submit ?? false,
@@ -143,195 +140,116 @@ const request = (
     } satisfies FillRequest;
   });
 
-/** Answers the server's take of the tab as the engine does once it holds it. */
-const grantTake = (viewer: FakeViewer) =>
+const fill = (made: Effect.Effect<FillRequest, never, TestEngineControl>) =>
   Effect.gen(function* () {
-    const first = yield* viewer.nextInput;
-    assert.deepStrictEqual(first, { type: "take" });
-    yield* viewer.emit({ _tag: "control", controller: "this-viewer", generation: 1, dialog: null });
+    return yield* (yield* CredentialFills).fillLogin(yield* made);
   });
 
-/** Starts a fill, holding the tab for it as the engine would, and answers it with its viewer. */
-const fillHeld = (fill: Effect.Effect<FillRequest, never, TestEngineControl>) =>
+/** What the host typed, in order, with the value and whether Enter followed. */
+const typed = (host: FakePageHost) =>
+  Effect.map(host.fills, (fills) =>
+    fills.map((one) => ({
+      field: one.field,
+      value: Redacted.value(one.value),
+      submitted: one.submitted,
+    })),
+  );
+
+/** How many times the host was asked to type. */
+const fillCalls = (host: FakePageHost) =>
+  Effect.map(host.calls, (calls) => calls.filter((call) => call.call === "tab.fill").length);
+
+/** The host says its tab is now as `change` says, as a page it runs reports itself. */
+const reports = (
+  host: FakePageHost,
+  tab: BrowserTabRef,
+  change: { readonly url?: string; readonly loading?: boolean },
+) =>
   Effect.gen(function* () {
-    const browser = yield* TestBrowserControl;
-    const fills = yield* CredentialFills;
-    const running = yield* fills.fillLogin(yield* fill).pipe(Effect.forkChild);
-    const viewer = yield* browser.nextViewer;
-    yield* grantTake(viewer);
-    return { running, viewer };
+    const browser = yield* Browser;
+    const page = Option.getOrThrow(yield* browser.handsOf(tab)).page;
+    const next = { ...page, ...change };
+    yield* host.emit({ type: "tab.changed", page: next });
+    yield* until(
+      browser
+        .handsOf(tab)
+        .pipe(
+          Effect.map((hands) =>
+            Option.exists(
+              hands,
+              ({ page: now }) => now.url === next.url && now.loading === next.loading,
+            ),
+          ),
+        ),
+    );
   });
 
-/** Moves the test clock on, a second at a time, until `running` ends: the fill's waits pass. */
-const runOut = <A, E>(running: Fiber.Fiber<A, E>) =>
+/** Nobody holds the tab: the fill gave it back. */
+const givenBack = (tab: BrowserTabRef) =>
   Effect.gen(function* () {
-    while (running.pollUnsafe() === undefined) {
-      yield* TestClock.adjust("1 second");
-      yield* Effect.yieldNow;
-    }
-    return yield* Fiber.join(running);
+    const hands = Option.getOrThrow(yield* (yield* Browser).handsOf(tab));
+    assert.isNull((yield* hands.control.state).holder);
   });
-
-const typed = (inputs: ReadonlyArray<BrowserInput>) =>
-  inputs.flatMap((input) => (input.type === "text" ? [input.text] : []));
-
-const ENTER_DOWN = {
-  type: "key",
-  action: "down",
-  key: "Enter",
-  code: "Enter",
-  text: "\r",
-  keyCode: 13,
-  modifiers: 0,
-} as const;
-const ENTER_UP = {
-  type: "key",
-  action: "up",
-  key: "Enter",
-  code: "Enter",
-  keyCode: 13,
-  modifiers: 0,
-} as const;
-
-const keys = (inputs: ReadonlyArray<BrowserInput>) =>
-  inputs.flatMap((input) => (input.type === "key" ? [`${input.key} ${input.action}`] : []));
-
-const loaded = (url: string) => ({ _tag: "loaded", url }) as const;
-
-/** Fills `fill` where no viewer is opened: the answer comes before the page. */
-const fillUnheld = (fill: Effect.Effect<FillRequest, never, TestEngineControl>) =>
-  Effect.gen(function* () {
-    const fills = yield* CredentialFills;
-    return yield* fills.fillLogin(yield* fill);
-  });
-
-const PROBE = { type: "probe", x: 0, y: 0 } as const;
 
 describe("filling a saved login", () => {
-  it.effect("types the password while it holds the tab, presses Enter, then gives it back", () =>
-    Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      // Checked after the take and again before typing; then the page loads the next.
-      yield* at.browser.scriptReads([
-        loaded(LOGIN_URL),
-        loaded(LOGIN_URL),
-        { _tag: "loading", url: "https://example.com/home" },
-        loaded("https://example.com/home"),
-      ]);
-      const { running, viewer } = yield* fillHeld(request(at, "password"));
-
-      assert.deepStrictEqual(yield* runOut(running), { _tag: "filled", submitted: true });
-      yield* viewer.released;
-      // Enter within the hold, and the tab given back only once the engine
-      // answered a probe sent after them: the input before it has run.
-      assert.deepStrictEqual(yield* viewer.inputs, [
-        { type: "take" },
-        { type: "text", text: PASSWORD },
-        ENTER_DOWN,
-        ENTER_UP,
-        PROBE,
-        { type: "release" },
-      ]);
-      // Settings says where the login was used last.
-      const [login] = yield* (yield* Secrets).list;
-      assert.deepStrictEqual(
-        login?.lastUse === null ? null : [login?.lastUse?.botId, login?.lastUse?.use],
-        [at.bot.id, { _tag: "browser", origin: SiteOrigin.make("https://example.com") }],
-      );
-    }).pipe(Effect.provide(domain)),
+  it.effect(
+    "has the host type the password where the focus is, submit it, and give the tab back",
+    () =>
+      Effect.gen(function* () {
+        const at = yield* scene({ url: LOGIN_URL });
+        // Asked without `submit`: a password is submitted anyway.
+        assert.deepStrictEqual(yield* fill(request(at, "password", false)), {
+          _tag: "filled",
+          submitted: true,
+        });
+        assert.deepStrictEqual(yield* typed(at.host), [
+          { field: "password", value: PASSWORD, submitted: true },
+        ]);
+        yield* givenBack(at.tab);
+        // Settings says where the login was used last.
+        const [login] = yield* (yield* Secrets).list;
+        assert.deepStrictEqual(
+          login?.lastUse === null ? null : [login?.lastUse?.botId, login?.lastUse?.use],
+          [at.bot.id, { _tag: "browser", origin: SiteOrigin.make("https://example.com") }],
+        );
+      }).pipe(Effect.provide(domain)),
   );
 
-  it.effect("submits a password filled without `submit`, and clears it on a page that stays", () =>
+  it.effect("types a user name alone, and has Enter pressed only when asked", () =>
     Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      const { running, viewer } = yield* fillHeld(request(at, "password", false));
-
-      // The page never moves on: the server waits it out, then clears the field.
-      assert.deepStrictEqual(yield* runOut(running), { _tag: "filled", submitted: true });
-      const pressed = keys(yield* viewer.inputs);
-      assert.deepStrictEqual(pressed.slice(0, 2), ["Enter down", "Enter up"]);
-      assert.deepStrictEqual(
-        pressed.slice(2),
-        Array.from(PASSWORD).flatMap(() => ["Backspace down", "Backspace up"]),
-      );
-      assert.deepStrictEqual((yield* viewer.inputs).slice(-2), [PROBE, { type: "release" }]);
-    }).pipe(Effect.provide(domain)),
-  );
-
-  it.effect("clears a password on a page that only changed its address", () =>
-    Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      // `history.pushState` after a failed sign-in: loaded at another address, the same document.
-      yield* at.browser.scriptReads([
-        loaded(LOGIN_URL),
-        loaded(LOGIN_URL),
-        loaded(`${LOGIN_URL}?error=1`),
-      ]);
-      const { running, viewer } = yield* fillHeld(request(at, "password"));
-
-      assert.deepStrictEqual(yield* runOut(running), { _tag: "filled", submitted: true });
-      assert.strictEqual(
-        keys(yield* viewer.inputs).filter((key) => key === "Backspace down").length,
-        Array.from(PASSWORD).length,
-      );
-    }).pipe(Effect.provide(domain)),
-  );
-
-  it.effect("clears a password on a page that loaded at its own address again", () =>
-    Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      // A sign-in that failed and showed the form again, or one answered with no new document.
-      yield* at.browser.scriptReads([
-        loaded(LOGIN_URL),
-        loaded(LOGIN_URL),
-        { _tag: "loading", url: LOGIN_URL },
-      ]);
-      const { running, viewer } = yield* fillHeld(request(at, "password"));
-
-      assert.deepStrictEqual(yield* runOut(running), { _tag: "filled", submitted: true });
-      assert.strictEqual(
-        keys(yield* viewer.inputs).filter((key) => key === "Backspace down").length,
-        Array.from(PASSWORD).length,
-      );
-    }).pipe(Effect.provide(domain)),
-  );
-
-  it.effect("types a user name alone, and presses Enter only when asked", () =>
-    Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      const first = yield* fillHeld(request(at, "username"));
-      assert.deepStrictEqual(yield* Fiber.join(first.running), {
+      const at = yield* scene({ url: LOGIN_URL, focus: "username" });
+      assert.deepStrictEqual(yield* fill(request(at, "username")), {
         _tag: "filled",
         submitted: false,
       });
-      const inputs = yield* first.viewer.inputs;
-      assert.deepStrictEqual(typed(inputs), [USERNAME]);
-      assert.deepStrictEqual(keys(inputs), []);
-
       // Named by its name, as by its reference.
-      const second = yield* fillHeld(request(at, "username", true, "example"));
-      assert.deepStrictEqual(yield* Fiber.join(second.running), {
+      assert.deepStrictEqual(yield* fill(request(at, "username", true, "example")), {
         _tag: "filled",
         submitted: true,
       });
-      assert.deepStrictEqual(keys(yield* second.viewer.inputs), ["Enter down", "Enter up"]);
+      assert.deepStrictEqual(yield* typed(at.host), [
+        { field: "username", value: USERNAME, submitted: false },
+        { field: "username", value: USERNAME, submitted: true },
+      ]);
     }).pipe(Effect.provide(domain)),
   );
 
   it.effect("types the one-time code of the moment, as RFC 6238 gives it", () =>
     Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
+      const at = yield* scene({ url: LOGIN_URL, focus: "totp" });
       // The seed's codes at T = 0 s (counter 0, RFC 4226 Appendix D, to eight
       // digits) and T = 59 s (RFC 6238 Appendix B); `totp.test.ts` has the rest.
-      for (const [seconds, code] of [
-        [0, "84755224"],
-        [59, "94287082"],
-      ] as const) {
-        yield* TestClock.setTime(seconds * 1000);
-        const { running, viewer } = yield* fillHeld(request(at, "totp"));
-        assert.deepStrictEqual(yield* Fiber.join(running), { _tag: "filled", submitted: false });
-        assert.deepStrictEqual(typed(yield* viewer.inputs), [code]);
-      }
+      yield* TestClock.setTime(0);
+      assert.deepStrictEqual(yield* fill(request(at, "totp")), {
+        _tag: "filled",
+        submitted: false,
+      });
+      yield* TestClock.setTime(59_000);
+      yield* fill(request(at, "totp"));
+      assert.deepStrictEqual(
+        (yield* typed(at.host)).map((one) => one.value),
+        ["84755224", "94287082"],
+      );
     }).pipe(Effect.provide(domain)),
   );
 
@@ -340,34 +258,27 @@ describe("filling a saved login", () => {
       const at = yield* scene({
         url: "http://127.0.0.1:8080/login",
         origins: ["http://127.0.0.1:8080"],
+        focus: "username",
       });
-      const { running, viewer } = yield* fillHeld(request(at, "username"));
-      assert.deepStrictEqual(yield* Fiber.join(running), { _tag: "filled", submitted: false });
-      assert.deepStrictEqual(typed(yield* viewer.inputs), [USERNAME]);
+      assert.deepStrictEqual(yield* fill(request(at, "username")), {
+        _tag: "filled",
+        submitted: false,
+      });
+      assert.deepStrictEqual(
+        (yield* typed(at.host)).map((one) => one.value),
+        [USERNAME],
+      );
     }).pipe(Effect.provide(domain)),
   );
 
   it.effect("answers a forward retried under the same id once, with one fill", () =>
     Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      const fill = yield* request(at, "username");
-      const { running } = yield* fillHeld(Effect.succeed(fill));
-      const first = yield* Fiber.join(running);
-      const opened = yield* at.browser.opens;
-
-      assert.deepStrictEqual(yield* (yield* CredentialFills).fillLogin(fill), first);
-      assert.strictEqual(yield* at.browser.opens, opened);
-    }).pipe(Effect.provide(domain)),
-  );
-
-  it.effect("says the browser did not confirm the typing when the engine never answers", () =>
-    Effect.gen(function* () {
-      const at = yield* scene({ url: LOGIN_URL });
-      yield* at.browser.answerProbes(false);
-      const { running, viewer } = yield* fillHeld(request(at, "username"));
-
-      assert.deepStrictEqual(yield* runOut(running), refusal("unavailable"));
-      yield* viewer.released;
+      const at = yield* scene({ url: LOGIN_URL, focus: "username" });
+      const made = yield* request(at, "username");
+      const fills = yield* CredentialFills;
+      const first = yield* fills.fillLogin(made);
+      assert.deepStrictEqual(yield* fills.fillLogin(made), first);
+      assert.strictEqual(yield* fillCalls(at.host), 1);
     }).pipe(Effect.provide(domain)),
   );
 });
@@ -381,101 +292,102 @@ describe("a fill refused by the page", () => {
     ["a subdomain the login does not name", "https://accounts.example.com/", refusal("origin")],
     ["another port", "https://example.com:8443/login", refusal("origin")],
     ["plain http on another computer", "http://example.com/login", refusal("insecure")],
-    ["a page that is no web page", "file:///etc/passwd", refusal("origin")],
-    // Its origin is the address inside it, but the page is whatever made the blob.
-    ["a blob page of the login's origin", "blob:https://example.com/1f0c", refusal("origin")],
   ];
 
   for (const [what, url, expected] of refusedAt) {
     it.effect(`refuses ${what}, typing nothing`, () =>
       Effect.gen(function* () {
         const at = yield* scene({ url });
-        const { running, viewer } = yield* fillHeld(request(at, "password"));
-        assert.deepStrictEqual(yield* Fiber.join(running), expected);
-        yield* viewer.released;
-        assert.deepStrictEqual(typed(yield* viewer.inputs), []);
+        assert.deepStrictEqual(yield* fill(request(at, "password")), expected);
+        assert.strictEqual(yield* fillCalls(at.host), 0);
+        yield* givenBack(at.tab);
       }).pipe(Effect.provide(domain)),
     );
   }
 
-  it.effect("refuses a page still loading, and one that moves while the tab is held", () =>
+  // Pages the host reports itself at, which no tab is opened at.
+  const reportedAt: ReadonlyArray<readonly [string, string]> = [
+    ["a page that is no web page", "file:///etc/passwd"],
+    // Its origin is the address inside it, but the page is whatever made the blob.
+    ["a blob page of the login's origin", "blob:https://example.com/1f0c"],
+  ];
+
+  for (const [what, url] of reportedAt) {
+    it.effect(`refuses ${what}, typing nothing`, () =>
+      Effect.gen(function* () {
+        const at = yield* scene({ url: LOGIN_URL });
+        yield* reports(at.host, at.tab, { url });
+        assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("origin"));
+        assert.strictEqual(yield* fillCalls(at.host), 0);
+      }).pipe(Effect.provide(domain)),
+    );
+  }
+
+  it.effect("refuses a page still loading", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL });
-      yield* at.browser.scriptReads([{ _tag: "loading", url: LOGIN_URL }]);
-      const first = yield* fillHeld(request(at, "password"));
-      assert.deepStrictEqual(yield* Fiber.join(first.running), refusal("loading"));
+      yield* reports(at.host, at.tab, { loading: true });
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("loading"));
+      assert.strictEqual(yield* fillCalls(at.host), 0);
+    }).pipe(Effect.provide(domain)),
+  );
 
-      // The same origin, another page: still a move.
-      yield* at.browser.scriptReads([loaded(LOGIN_URL), loaded("https://example.com/other")]);
-      const tab = EngineTabId.make("tab-2");
-      yield* at.browser.setTabs([
-        {
-          id: tab,
-          sessionId: at.session,
-          url: LOGIN_URL,
-          title: "Sign in",
-          loading: false,
-          activeAt: 2,
-        },
-      ]);
-      const tabs = yield* BrowserTabs;
-      yield* eventually(
-        tabs.frontOf(at.session).pipe(Effect.map(Option.filter((front) => front.tab.id === tab))),
-      );
-      const second = yield* fillHeld(request(at, "password"));
-      assert.deepStrictEqual(yield* Fiber.join(second.running), refusal("navigated"));
-      assert.deepStrictEqual(typed(yield* second.viewer.inputs), []);
+  it.effect("passes on the host's refusal of a page that moved, typing nothing", () =>
+    Effect.gen(function* () {
+      const at = yield* scene({ url: LOGIN_URL });
+      // The server last heard of another page of the same origin; the host is
+      // still at the sign-in, so it types nowhere but where the server checked.
+      yield* reports(at.host, at.tab, { url: "https://example.com/other" });
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("navigated"));
+      assert.deepStrictEqual(yield* typed(at.host), []);
       // Nothing was typed, so the login was not used.
       const [login] = yield* (yield* Secrets).list;
       assert.isNull(login?.lastUse);
     }).pipe(Effect.provide(domain)),
   );
 
+  it.effect("passes on the host's refusal when the focus is on no field the value fits", () =>
+    Effect.gen(function* () {
+      const at = yield* scene({ url: LOGIN_URL, focus: "other" });
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("field"));
+      assert.deepStrictEqual(yield* typed(at.host), []);
+      yield* givenBack(at.tab);
+    }).pipe(Effect.provide(domain)),
+  );
+
   it.effect("takes no other fill on that tab in the same turn, whatever it asks", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: "https://evil.example.net/" });
-      const first = yield* fillHeld(request(at, "password"));
-      assert.deepStrictEqual(yield* Fiber.join(first.running), refusal("origin"));
-      const opened = yield* at.browser.opens;
-
-      assert.deepStrictEqual(yield* fillUnheld(request(at, "username")), refusal("refused-before"));
-      assert.strictEqual(yield* at.browser.opens, opened);
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("origin"));
+      assert.deepStrictEqual(yield* fill(request(at, "username")), refusal("refused-before"));
 
       // The bot's next turn looks at the page again.
       yield* finishRunning(at.bot.id);
       yield* turnEnded(at.bot.id);
       yield* sendToBot(at.bot.id, "Try again.");
       const turnId = yield* nextTurn(at.bot.id, at.turnId);
-      const next = yield* fillHeld(request({ ...at, turnId }, "username"));
-      assert.deepStrictEqual(yield* Fiber.join(next.running), refusal("origin"));
+      assert.deepStrictEqual(
+        yield* fill(request({ ...at, turnId }, "username")),
+        refusal("origin"),
+      );
     }).pipe(Effect.provide(domain)),
   );
 
-  it.effect("refuses a tab a person holds, from a device or as the engine says", () =>
+  it.effect("refuses a tab a person holds, and fills it once they gave it back", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL });
-      const tabs = yield* BrowserTabs;
+      const phone = DeviceId.make("device-phone");
+      const control = Option.getOrThrow(yield* (yield* Browser).handsOf(at.tab)).control;
+      assert.isTrue(yield* control.waitForMe(phone));
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("held"));
+      assert.strictEqual(yield* fillCalls(at.host), 0);
 
-      // The engine answers the take: another viewer has it.
-      const running = yield* (yield* CredentialFills)
-        .fillLogin(yield* request(at, "password"))
-        .pipe(Effect.forkChild);
-      const viewer = yield* at.browser.nextViewer;
-      assert.deepStrictEqual(yield* viewer.nextInput, { type: "take" });
-      yield* viewer.emit({
-        _tag: "control",
-        controller: "another-viewer",
-        generation: 1,
-        dialog: null,
+      // A person holding the tab is no refusal of the page, so the next is no `refused-before`.
+      yield* control.release(phone, false);
+      assert.deepStrictEqual(yield* fill(request(at, "password")), {
+        _tag: "filled",
+        submitted: true,
       });
-      assert.deepStrictEqual(yield* runOut(running), refusal("held"));
-
-      // A device holds it: no viewer is opened at all. A person holding the
-      // tab is no refusal of the page, so this is not `refused-before`.
-      const opened = yield* at.browser.opens;
-      yield* tabs.holding(at.tab, yield* pairDevice, true);
-      assert.deepStrictEqual(yield* fillUnheld(request(at, "password")), refusal("held"));
-      assert.strictEqual(yield* at.browser.opens, opened);
     }).pipe(Effect.provide(domain)),
   );
 });
@@ -484,7 +396,7 @@ describe("a fill refused before the page", () => {
   it.effect("refuses a login the bot may not use, and a secret that is no login", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL, allowed: false });
-      assert.deepStrictEqual(yield* fillUnheld(request(at, "password")), refusal("unknown-login"));
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("unknown-login"));
       yield* (yield* Secrets).add({
         id: SecretId.make("sec_bbbbbbbbbbbbbbbb"),
         name: SecretName.make("weather-api"),
@@ -492,67 +404,58 @@ describe("a fill refused before the page", () => {
         access: { _tag: "every-bot" },
       });
       assert.deepStrictEqual(
-        yield* fillUnheld(request(at, "password", false, "secret:weather-api")),
+        yield* fill(request(at, "password", false, "secret:weather-api")),
         refusal("unknown-login"),
       );
-      assert.strictEqual(yield* at.browser.opens, 0);
+      assert.strictEqual(yield* fillCalls(at.host), 0);
     }).pipe(Effect.provide(domain)),
   );
 
   it.effect("refuses a bot whose browser is off", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL, browserAccess: false });
-      assert.deepStrictEqual(yield* fillUnheld(request(at, "password")), refusal("no-access"));
-      assert.strictEqual(yield* at.browser.opens, 0);
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("no-access"));
+      assert.strictEqual(yield* fillCalls(at.host), 0);
     }).pipe(Effect.provide(domain)),
   );
 
-  it.effect("refuses when the operator takes the login from the bot while the take waits", () =>
+  it.effect("refuses a bot with no tab", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL });
-      const running = yield* (yield* CredentialFills)
-        .fillLogin(yield* request(at, "password"))
-        .pipe(Effect.forkChild);
-      const viewer = yield* at.browser.nextViewer;
-      assert.deepStrictEqual(yield* viewer.nextInput, { type: "take" });
-      yield* (yield* Secrets).setAccess(LOGIN_ID, { _tag: "bots", botIds: [] });
-      yield* viewer.emit({
-        _tag: "control",
-        controller: "this-viewer",
-        generation: 1,
-        dialog: null,
-      });
-
-      assert.deepStrictEqual(yield* Fiber.join(running), refusal("unknown-login"));
-      yield* viewer.released;
-      assert.deepStrictEqual(typed(yield* viewer.inputs), []);
+      yield* (yield* Browser).close(at.tab);
+      assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("no-tab"));
     }).pipe(Effect.provide(domain)),
   );
 
-  it.effect("types nothing for a turn that ended while the take waited", () =>
+  it.effect("types nothing for a turn that ended while the fill waited for the tab", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL });
-      const running = yield* (yield* CredentialFills)
-        .fillLogin(yield* request(at, "password"))
-        .pipe(Effect.forkChild);
-      const viewer = yield* at.browser.nextViewer;
-      assert.deepStrictEqual(yield* viewer.nextInput, { type: "take" });
+      const control = Option.getOrThrow(yield* (yield* Browser).handsOf(at.tab)).control;
+      // A browser step of the bot's runs on the tab: the fill waits for it to finish.
+      const gate = yield* Deferred.make<void>();
+      const acting = yield* control.act(at.bot.id, Deferred.await(gate)).pipe(Effect.forkChild);
+      yield* until(control.state.pipe(Effect.map((state) => state.acting !== null)));
+      const made = yield* request(at, "password");
+      const running = yield* (yield* CredentialFills).fillLogin(made).pipe(Effect.forkChild);
+      // Claimed for its turn, it waits on the tab.
+      const sql = yield* SqlClient.SqlClient;
+      yield* until(
+        sql`SELECT 1 FROM tool_calls WHERE id = ${made.requestId}`.pipe(
+          Effect.orDie,
+          Effect.map((rows) => rows.length > 0),
+        ),
+      );
       yield* (yield* TestEngineControl).finishTurn({
         sessionId: at.session,
         turnId: at.turnId,
         outcome: { _tag: "completed" },
       });
       yield* turnEnded(at.bot.id);
-      yield* viewer.emit({
-        _tag: "control",
-        controller: "this-viewer",
-        generation: 1,
-        dialog: null,
-      });
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(acting);
 
       assert.deepStrictEqual(yield* Fiber.join(running), refusal("stopped"));
-      yield* viewer.released;
-      assert.deepStrictEqual(typed(yield* viewer.inputs), []);
+      assert.strictEqual(yield* fillCalls(at.host), 0);
     }).pipe(Effect.provide(domain)),
   );
 
@@ -569,7 +472,7 @@ describe("a fill refused before the page", () => {
         })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "TurnEnded");
-      assert.strictEqual(yield* at.browser.opens, 0);
+      assert.strictEqual(yield* fillCalls(at.host), 0);
     }).pipe(Effect.provide(domain)),
   );
 });
@@ -589,7 +492,7 @@ it.effect(
   "keeps every value out of the tool's answers, the work fold, the entries and the log",
   () =>
     Effect.gen(function* () {
-      const { bot, session, browser, turnId } = yield* scene({ url: LOGIN_URL });
+      const { bot, session, turnId, focus } = yield* scene({ url: LOGIN_URL });
       const tools = yield* BotTools;
       const control = yield* TestEngineControl;
       const answers: Array<unknown> = [];
@@ -609,11 +512,8 @@ it.effect(
 
       yield* call("list_secrets", {});
       for (const field of ["username", "password", "totp"] as const) {
-        const running = yield* call("fill_credential", { secret: REFERENCE, field }).pipe(
-          Effect.forkChild,
-        );
-        yield* grantTake(yield* browser.nextViewer);
-        yield* runOut(running);
+        yield* focus(field);
+        yield* call("fill_credential", { secret: REFERENCE, field });
       }
 
       const fold = yield* awaitEntry(bot.id, "work-fold");
@@ -628,10 +528,10 @@ it.effect(
         step.fill === undefined ? [] : [step.fill],
       );
       assert.deepStrictEqual(
-        fillsShown.map((fill): ReadonlyArray<string | null> => [
-          fill.field,
-          fill.origin,
-          fill.outcome._tag,
+        fillsShown.map((shown): ReadonlyArray<string | null> => [
+          shown.field,
+          shown.origin,
+          shown.outcome._tag,
         ]),
         [
           ["username", "https://example.com", "filled"],
@@ -672,9 +572,3 @@ function refusal(
 ): FillOutcome {
   return { _tag: "refused", reason };
 }
-
-const pairDevice = Effect.gen(function* () {
-  const devices = yield* Devices;
-  const { code } = yield* devices.startPairing;
-  return (yield* devices.pair({ code, name: "Laptop" })).deviceId;
-});

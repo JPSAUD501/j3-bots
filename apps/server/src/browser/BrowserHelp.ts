@@ -2,6 +2,7 @@
 import {
   BotId,
   type BrowserHelpEntry,
+  BrowserTabRef,
   type CommandId,
   Conflict,
   EntryId,
@@ -9,7 +10,6 @@ import {
   NotFound,
   RoomId,
 } from "@j3-bots/contracts";
-import { EngineTabId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -32,8 +32,7 @@ import {
   SWEEP_EVERY,
   TAB_ABSENT_GRACE,
 } from "./browserHelpRules.ts";
-import { BrowserTabs } from "./BrowserTabs.ts";
-import { BrowserViewers } from "./BrowserViewers.ts";
+import { type PersonHold, TabAccess } from "./TabAccess.ts";
 
 /** How a browser help card closed. */
 type Closing = "done" | "declined" | "tab-closed" | "timed-out";
@@ -41,7 +40,7 @@ type Closing = "done" | "declined" | "tab-closed" | "timed-out";
 const OpenCard = Schema.Struct({
   entry_id: EntryId,
   bot_id: BotId,
-  engine_tab_id: EngineTabId,
+  tab_ref: BrowserTabRef,
   expires_at: Time,
 });
 
@@ -59,6 +58,10 @@ const WorkedTurn = Schema.Struct({
   seq: Schema.NullOr(DispatchSeq),
 });
 
+/** The bots on a tab the person holds. */
+const botsHeld = (held: ReadonlyArray<PersonHold>): ReadonlySet<BotId> =>
+  new Set(held.flatMap((hold) => hold.onIt));
+
 const statusOf = (closing: Closing): BrowserHelpEntry["status"] =>
   closing === "done" || closing === "declined"
     ? { _tag: closing }
@@ -67,17 +70,17 @@ const statusOf = (closing: Closing): BrowserHelpEntry["status"] =>
 /**
  * The operator's help in a bot's browser (`docs/architecture/server.md`,
  * Browser help). A `browser-help` card closes once: answered done or declined,
- * expired with its tab, or expired past its wait while no device holds the
- * bot's tabs. Each close wakes the bot for the audience of the turn that
- * asked. Apart from a card, a device that took the bot's browser while a turn
- * of its main session ran wakes the bot once it gives the browser back.
+ * expired with its tab, or expired past its wait while the person holds no
+ * tab the bot is on. Each close wakes the bot for the audience of the turn
+ * that asked. Apart from a card, a person who took a tab the bot was on while
+ * a turn of its main session ran wakes the bot once they give it back.
  */
 export class BrowserHelp extends Context.Service<
   BrowserHelp,
   {
     /**
-     * The operator's answer to a card. Any device of theirs that holds the
-     * bot's tabs lets go first, so the bot it wakes can use them.
+     * The operator's answer to a card. They let go of every tab the bot is
+     * on first, so the bot it wakes can use them.
      */
     readonly answer: (input: {
       readonly commandId: CommandId;
@@ -96,15 +99,14 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
     const wakes = yield* Wakes;
-    const tabs = yield* BrowserTabs;
-    const viewers = yield* BrowserViewers;
+    const tabs = yield* TabAccess;
     const transaction = transactional(sql);
 
     const openCards = SqlSchema.findAll({
       Request: Schema.Void,
       Result: OpenCard,
       execute: () => sql`
-        SELECT entry_id, bot_id, engine_tab_id, expires_at
+        SELECT entry_id, bot_id, tab_ref, expires_at
         FROM browser_help_cards WHERE closed_at IS NULL
       `,
     })(undefined).pipe(Effect.orDie);
@@ -172,14 +174,17 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Every device lets go of the bot's tabs, and the engine says so, or
-     * `RELEASE_WAIT` passes: a lost reply never holds up the answer. Safe to
-     * repeat: a tab nobody holds is left as it is.
+     * The person lets go of every tab the bot is on, and the tabs say so, or
+     * `RELEASE_WAIT` passes: a hold that does not end never holds up the
+     * answer. Safe to repeat: a tab nobody holds is left as it is.
      */
     const handBack = Effect.fn("BrowserHelp.handBack")(function* (botId: BotId) {
-      yield* viewers.release(yield* tabs.tabsOf(botId));
-      yield* tabs.held.pipe(
-        Stream.filter((held) => !held.some((one) => one.botId === botId)),
+      const holds = yield* tabs.personHolds.pipe(Stream.runHead);
+      for (const hold of Option.getOrElse(holds, () => [])) {
+        if (hold.onIt.includes(botId)) yield* tabs.endPersonHold(hold.tab);
+      }
+      yield* tabs.personHolds.pipe(
+        Stream.filter((held) => !held.some((hold) => hold.onIt.includes(botId))),
         Stream.runHead,
         Effect.timeoutOption(RELEASE_WAIT),
       );
@@ -217,42 +222,37 @@ export const layer = Layer.effect(
           return yield* new Conflict({ reason: "card-closed" });
         }),
       });
-      // Then every device lets go, outside the transaction, as it waits on the
-      // engine. The bot's first call when it wakes is a snapshot, which reads
-      // the page whoever holds it.
+      // Then the person lets go, outside the transaction. The bot's first
+      // call when it wakes is a snapshot, which reads the page whoever holds
+      // it.
       yield* handBack(card.author.botId);
     });
 
     // ---- Expiry -------------------------------------------------------------------
 
     /**
-     * Since when each open card's tab has been missing from the engine's
-     * list, and when each bot's tabs were last given back. Both live in
+     * Since when each open card's tab has been missing from the tabs, and
+     * when the person last gave back the tabs each bot is on. Both live in
      * memory, from the server's start: after a restart, a missing tab's grace
      * counts again from then, and a card past its wait has no hand-back grace,
-     * since no device held a tab across the restart.
+     * since nobody held a tab across the restart.
      */
     const absentSince = new Map<EntryId, DateTime.Utc>();
-    const heldBefore = new Set<BotId>();
+    /**
+     * Since when the person has held a tab each bot is on, and when they last
+     * gave back the tabs each bot is on, as `followHeld` saw the holds change.
+     */
+    const heldSince = new Map<BotId, DateTime.Utc>();
     const givenBackAt = new Map<BotId, DateTime.Utc>();
 
-    const sweep = Effect.fn("BrowserHelp.sweep")(function* (
-      open: ReadonlySet<EngineTabId>,
-      heldBy: ReadonlySet<BotId>,
-    ) {
+    const sweep = Effect.fn("BrowserHelp.sweep")(function* (open: ReadonlySet<BrowserTabRef>) {
       const now = yield* DateTime.now;
-      for (const botId of heldBefore) if (!heldBy.has(botId)) givenBackAt.set(botId, now);
-      heldBefore.clear();
-      for (const botId of heldBy) {
-        heldBefore.add(botId);
-        givenBackAt.delete(botId);
-      }
       const cards = yield* openCards;
       const stillOpen = new Set(cards.map((card) => card.entry_id));
       for (const id of absentSince.keys()) if (!stillOpen.has(id)) absentSince.delete(id);
       for (const card of cards) {
         let closing: Closing | null = null;
-        if (open.has(card.engine_tab_id)) {
+        if (open.has(card.tab_ref)) {
           absentSince.delete(card.entry_id);
         } else {
           const since = absentSince.get(card.entry_id) ?? now;
@@ -268,7 +268,7 @@ export const layer = Layer.effect(
           const graced =
             givenBack !== undefined &&
             Duration.isLessThan(DateTime.distance(givenBack, now), HAND_BACK_GRACE);
-          if (!heldBy.has(card.bot_id) && !graced) closing = "timed-out";
+          if (!heldSince.has(card.bot_id) && !graced) closing = "timed-out";
         }
         if (closing === null) continue;
         yield* transaction(close(card.entry_id, closing));
@@ -295,10 +295,11 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The operator gave back the bot's browser they took at `since`. Unless a
-     * card covered it, or a wake about the browser already waits, the bot is
-     * woken when a turn of its main session ran meanwhile: its browser calls
-     * failed while the operator held it. With no turn, nothing was blocked.
+     * The person gave back the tabs the bot is on, which they took at
+     * `since`. Unless a card covered it, or a wake about the browser already
+     * waits, the bot is woken when a turn of its main session ran meanwhile:
+     * its browser calls waited or failed while the person held them. With no
+     * turn, nothing was blocked.
      */
     const handedBack = Effect.fn("BrowserHelp.handedBack")(function* (
       botId: BotId,
@@ -332,38 +333,47 @@ export const layer = Layer.effect(
       yield* wakes.record([wake]);
     });
 
-    /** Since when a device has held one of each bot's tabs. */
-    const heldSince = new Map<BotId, DateTime.Utc>();
-
     const followHeld = Effect.fn("BrowserHelp.followHeld")(function* (
-      held: ReadonlyArray<{ readonly botId: BotId }>,
+      held: ReadonlyArray<PersonHold>,
     ) {
       const now = yield* DateTime.now;
-      const holding = new Set(held.map((one) => one.botId));
-      for (const botId of holding) if (!heldSince.has(botId)) heldSince.set(botId, now);
+      const holding = botsHeld(held);
+      for (const botId of holding) {
+        if (heldSince.has(botId)) continue;
+        heldSince.set(botId, now);
+        givenBackAt.delete(botId);
+      }
       for (const [botId, since] of heldSince) {
         if (holding.has(botId)) continue;
         heldSince.delete(botId);
+        givenBackAt.set(botId, now);
         yield* transaction(handedBack(botId, since));
       }
     });
 
     /**
-     * The sweep runs on every change of the open or held tabs, and on a
-     * steady tick for the cards' waits.
+     * One fiber follows the holds, in the order they changed, and sweeps
+     * after each change of the open or held tabs, and on a steady tick for
+     * the cards' waits: a sweep never sees a hold the holds' own record has
+     * not taken in yet. It reads the open tabs as they are when it runs.
      */
-    const sweeps = Stream.zipLatestWith(
-      Stream.zipLatestWith(tabs.open, tabs.held, (open, held) => ({ open, held })),
-      Stream.tick(SWEEP_EVERY),
-      (state) => state,
+    const run = Stream.mergeAll(
+      [
+        tabs.personHolds.pipe(Stream.map(Option.some)),
+        tabs.present.pipe(Stream.as(Option.none<ReadonlyArray<PersonHold>>())),
+        Stream.tick(SWEEP_EVERY).pipe(Stream.as(Option.none<ReadonlyArray<PersonHold>>())),
+      ],
+      { concurrency: "unbounded" },
     ).pipe(
-      Stream.runForEach(({ open, held }) => sweep(open, new Set(held.map((one) => one.botId)))),
+      Stream.runForEach((held) =>
+        Effect.gen(function* () {
+          if (Option.isSome(held)) yield* followHeld(held.value);
+          const open = yield* Stream.runHead(tabs.present);
+          yield* sweep(Option.getOrElse(open, () => new Set<BrowserTabRef>()));
+        }),
+      ),
+      Effect.andThen(Effect.never),
     );
-
-    const run = Effect.all([tabs.held.pipe(Stream.runForEach(followHeld)), sweeps], {
-      concurrency: "unbounded",
-      discard: true,
-    }).pipe(Effect.andThen(Effect.never));
 
     return BrowserHelp.of({ answer, run });
   }),

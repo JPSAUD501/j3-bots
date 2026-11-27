@@ -1,48 +1,41 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { PageHost } from "@j3-bots/browser";
 import {
   BROWSER_CLOSE_CODES,
   type BrowserClientFrame,
   type BrowserController,
+  type BrowserScreencastFrame,
   type BrowserServerFrame,
   type BrowserTabRef,
   DEFAULT_BROWSER_VIEW,
   type DeviceId,
+  type SharedBrowserTab,
 } from "@j3-bots/contracts";
-import {
-  BrowserBridge,
-  type BrowserViewer,
-  type EngineTabId,
-  ViewerClosed,
-  type ViewerController,
-  type ViewerOutput,
-} from "@j3-bots/engine-t3";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { DeviceAuth } from "../auth/DeviceAuth.ts";
-import { BrowserTabs } from "./BrowserTabs.ts";
+import { Browser, type WatchedTab } from "./Browser.ts";
 
-// What the server does between a client's media socket and the engine's view
-// of one tab. Each device has at most one viewer per tab, which a socket of
-// that device attaches to: the device's next socket on the tab takes the
-// viewer over, control included. Pictures are held in memory only, never
-// written anywhere, logged or kept once the viewer closes: at most the one
-// the client is drawing, the newest one waiting behind it, and the last one
-// the client drew, for a socket that takes the viewer over.
+// What the server does between clients' media sockets and J3 Bots' tabs
+// (decision 0110). Every socket on a tab shares one screencast of it, from
+// the host the tab runs on now, which follows the tab when it moves; while
+// the tab has no host its sockets stay open with the last picture. The host
+// is asked for its next picture once the fastest socket drew the last, and
+// each socket gets the newest picture whenever it is free. A device has one
+// socket per tab: its next takes the place of the one before. Pictures are
+// held in memory only, never written anywhere, logged or kept once the last
+// socket on the tab closes.
 
-/** How long a device keeps a tab it holds after its socket drops. */
-export const CONTROL_GRACE = Duration.seconds(60);
 /** How often the server pings a socket, and how long a silent socket lasts. */
 const PING_EVERY = Duration.seconds(15);
 export const SILENT_LIMIT = Duration.seconds(45);
@@ -77,9 +70,8 @@ export class BrowserViewers extends Context.Service<
   {
     /**
      * Serves one media socket of `deviceId` on the tab `ref` names, until the
-     * socket closes, another socket of the device takes its place, the tab
-     * closes, or the device is revoked. The engine is asked for the next
-     * picture only once the client acknowledged the last.
+     * socket closes or goes silent, another socket of the device on the tab
+     * takes its place, the tab closes, or the device is revoked.
      */
     readonly connect: (input: {
       readonly deviceId: DeviceId;
@@ -87,125 +79,77 @@ export class BrowserViewers extends Context.Service<
       readonly size: ViewSize;
       readonly link: ClientLink;
     }) => Effect.Effect<void>;
-    /**
-     * Gives `tabs` back to the bot from every device that holds one, also a
-     * device in its grace after its socket dropped. The engine says so on
-     * each viewer's next `control`, which `BrowserTabs.held` then follows.
-     */
-    readonly release: (tabs: ReadonlyArray<EngineTabId>) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/browser/BrowserViewers") {}
 
-/** A picture, and whether the engine still waits for its acknowledgement. */
+/** One picture of the tab, numbered in the order the feed got them. */
 interface Picture {
+  readonly seq: number;
   readonly jpeg: Uint8Array;
-  readonly owed: boolean;
 }
 
-/** A socket attached to a viewer, and the signal that detaches it. */
-interface Attached {
-  readonly link: ClientLink;
-  readonly detached: Deferred.Deferred<void>;
-}
-
-/** How a viewer ended, for its socket: the last frame it gets and the code it closes with. */
+/** How a socket is closed: the last frame it gets, and the code it closes with. */
 interface Closing {
   readonly frame: BrowserServerFrame | null;
   readonly code: number;
   readonly reason: string;
-  /**
-   * The device may not view the tab again, as once it is revoked: a socket
-   * that meets this ending as it attaches closes with it, and opens nothing.
-   */
-  readonly final: boolean;
 }
 
-interface Entry {
-  readonly key: string;
+const GONE: Closing = { frame: { type: "gone" }, code: 1000, reason: "gone" };
+const REVOKED: Closing = { frame: null, code: BROWSER_CLOSE_CODES.invalid, reason: "revoked" };
+const REPLACED: Closing = {
+  frame: null,
+  code: BROWSER_CLOSE_CODES.replaced,
+  reason: "replaced",
+};
+
+/** One socket on a tab. */
+interface Viewer {
   readonly deviceId: DeviceId;
-  readonly tab: EngineTabId;
-  readonly viewer: BrowserViewer;
-  readonly scope: Scope.Closeable;
-  readonly lock: Semaphore.Semaphore;
-  attached: Attached | null;
-  /** Sent to the client, not acknowledged yet. */
+  readonly link: ClientLink;
+  /** Completed to end the socket: with how it closes, or null when it already left. */
+  readonly ended: Deferred.Deferred<Closing | null>;
+  /** Sent, not acknowledged yet. */
   inFlight: Picture | null;
   /** The newest picture, waiting for the one in flight. */
   pending: Picture | null;
-  /** The last picture the client acknowledged. */
-  shown: Uint8Array | null;
-  viewport: BrowserServerFrame | null;
-  control: Extract<ViewerOutput, { readonly _tag: "control" }> | null;
-  /** Whether this device holds the tab, as the engine last said. */
-  holds: boolean;
-  /** How the viewer ended, once it has. */
-  ended: Closing | null;
-  fibers: Set<Fiber.Fiber<unknown, unknown>>;
-  grace: Fiber.Fiber<unknown, unknown> | null;
 }
 
-/** The sockets of one device on one tab, waiting their turn to attach. */
-interface Gate {
+/** Every socket on one tab, and the screencast they share. */
+interface Feed {
+  readonly ref: BrowserTabRef;
+  readonly watched: WatchedTab;
+  readonly scope: Scope.Closeable;
   readonly lock: Semaphore.Semaphore;
-  users: number;
+  readonly viewers: Set<Viewer>;
+  /** The host the tab runs on now, for the people's input. */
+  host: Option.Option<PageHost>;
+  latest: Picture | null;
+  /** The host's picture not acknowledged yet: the host sends the next only after it is. */
+  owed: { readonly seq: number; readonly host: PageHost; readonly frame: number } | null;
+  viewport: { readonly width: number; readonly height: number } | null;
+  tab: SharedBrowserTab | null;
+  generation: number;
+  nextSeq: number;
 }
 
-const keyOf = (deviceId: DeviceId, tab: EngineTabId) => `${deviceId}\u0000${tab}`;
-
-/** How many times a socket opens the device's viewer again when it ends as the socket attaches. */
-const REOPENS = 1;
-
-const CONTROLLERS: Record<ViewerController, BrowserController> = {
-  bot: "bot",
-  "this-viewer": "you",
-  "another-viewer": "another-device",
-  nobody: "nobody",
+/** Who acts on the tab, as a socket of `device` sees it. */
+const controllerFor = (tab: SharedBrowserTab, device: DeviceId): BrowserController => {
+  const holder = tab.heldBy;
+  if (holder?.kind === "person") return holder.device === device ? "you" : "another-device";
+  if (holder !== null || tab.acting !== null || tab.onIt.length > 0) return "bot";
+  return "nobody";
 };
 
-const controlFrame = (
-  control: Extract<ViewerOutput, { readonly _tag: "control" }>,
-): BrowserServerFrame => ({
-  type: "control",
-  controller: CONTROLLERS[control.controller],
-  generation: control.generation,
-  dialog: control.dialog,
-});
-
-/** How a socket is closed when the engine's viewer ends for `closed`. */
-const ending = (closed: ViewerClosed): Closing => {
-  switch (closed.reason) {
-    case "gone":
-      return { frame: { type: "gone" }, code: 1000, reason: "gone", final: false };
-    case "setup-needed":
-      return {
-        frame: { type: "setup-needed", need: closed.need ?? "libraries" },
-        code: 1000,
-        reason: "setup-needed",
-        final: false,
+const controlFrame = (feed: Feed, device: DeviceId): BrowserServerFrame | null =>
+  feed.tab === null
+    ? null
+    : {
+        type: "control",
+        controller: controllerFor(feed.tab, device),
+        generation: feed.generation,
+        dialog: feed.tab.dialog,
       };
-    case "reconnect":
-      return {
-        frame: null,
-        code: BROWSER_CLOSE_CODES.reconnect,
-        reason: "reconnect",
-        final: false,
-      };
-    case "lost":
-      return {
-        frame: null,
-        code: BROWSER_CLOSE_CODES.unavailable,
-        reason: "unavailable",
-        final: false,
-      };
-  }
-};
-
-const REVOKED: Closing = {
-  frame: null,
-  code: BROWSER_CLOSE_CODES.invalid,
-  reason: "revoked",
-  final: true,
-};
 
 /** Closes `link` as `closing` says. */
 const closeAs = Effect.fnUntraced(function* (link: ClientLink, closing: Closing) {
@@ -216,308 +160,306 @@ const closeAs = Effect.fnUntraced(function* (link: ClientLink, closing: Closing)
 export const layer = Layer.effect(
   BrowserViewers,
   Effect.gen(function* () {
-    const bridge = yield* BrowserBridge;
-    const tabs = yield* BrowserTabs;
+    const browser = yield* Browser;
     const auth = yield* DeviceAuth;
-    const serverScope = yield* Effect.scope;
-    const entries = new Map<string, Entry>();
-    const gates = new Map<string, Gate>();
+    const feeds = new Map<BrowserTabRef, Feed>();
+    /** Feeds open and close one at a time, so two sockets never open two feeds of one tab. */
+    const feedLock = yield* Semaphore.make(1);
 
-    const background = <A, E>(effect: Effect.Effect<A, E>) => Effect.forkIn(effect, serverScope);
-
-    /** Sends to the attached socket; a socket that cannot take it is detached. */
-    const sendTo = (entry: Entry, message: Uint8Array | BrowserServerFrame) => {
-      const attached = entry.attached;
-      if (attached === null) return Effect.void;
-      return attached.link
+    /** Sends to a viewer; one whose socket cannot take it is ended. */
+    const sendTo = (viewer: Viewer, message: Uint8Array | BrowserServerFrame) =>
+      viewer.link
         .send(message)
-        .pipe(Effect.catch(() => Deferred.succeed(attached.detached, undefined)));
-    };
+        .pipe(Effect.catch(() => Deferred.succeed(viewer.ended, null).pipe(Effect.asVoid)));
 
-    /** Sends the newest picture if nothing is in flight. */
-    const sendPending = Effect.fnUntraced(function* (entry: Entry) {
-      if (entry.attached === null || entry.inFlight !== null || entry.pending === null) return;
-      const picture = entry.pending;
-      entry.pending = null;
-      entry.inFlight = picture;
-      yield* sendTo(entry, picture.jpeg);
-    });
+    const sendPicture = (viewer: Viewer, picture: Picture) =>
+      Effect.suspend(() => {
+        viewer.inFlight = picture;
+        return sendTo(viewer, picture.jpeg);
+      });
 
-    /** Takes back the picture in flight to a socket that is leaving, so the next one gets it. */
-    const recall = Effect.fnUntraced(function* (entry: Entry) {
-      const picture = entry.inFlight;
-      entry.inFlight = null;
-      if (picture === null) return;
-      if (entry.pending === null) entry.pending = picture;
-      else if (picture.owed) yield* entry.viewer.ack;
-    });
+    const sendAll = (feed: Feed, frame: (viewer: Viewer) => BrowserServerFrame | null) =>
+      Effect.forEach(
+        [...feed.viewers],
+        (viewer) => {
+          const message = frame(viewer);
+          return message === null ? Effect.void : sendTo(viewer, message);
+        },
+        { discard: true },
+      );
 
-    /**
-     * Ends the viewer: its socket gets `closing`, the engine's viewer closes,
-     * which gives the tab back, and the device holds the tab no more. Runs
-     * with the entry's lock held, and is never interrupted halfway.
-     */
-    const endLocked = (entry: Entry, closing: Closing) =>
-      Effect.uninterruptible(
+    /** A picture from the host: each free socket gets it, the others get it next. */
+    const received = (feed: Feed, host: PageHost, frame: BrowserScreencastFrame) =>
+      feed.lock.withPermits(1)(
         Effect.gen(function* () {
-          if (entry.ended !== null) return;
-          entry.ended = closing;
-          if (entries.get(entry.key) === entry) entries.delete(entry.key);
-          const attached = entry.attached;
-          entry.attached = null;
-          if (attached !== null) {
-            yield* closeAs(attached.link, closing);
-            yield* Deferred.succeed(attached.detached, undefined);
+          const picture: Picture = { seq: feed.nextSeq++, jpeg: frame.jpeg };
+          feed.latest = picture;
+          feed.owed = { seq: picture.seq, host, frame: frame.frame };
+          const { width, height } = frame.viewport;
+          if (feed.viewport?.width !== width || feed.viewport.height !== height) {
+            feed.viewport = { width, height };
+            yield* sendAll(feed, () => ({ type: "viewport", width, height }));
           }
-          entry.inFlight = null;
-          entry.pending = null;
-          entry.shown = null;
-          yield* tabs.holding(entry.tab, entry.deviceId, false);
-          // Interrupted from outside, so a fiber that ends its own entry is not waited on.
-          for (const fiber of entry.fibers) yield* background(Fiber.interrupt(fiber));
-          yield* Scope.close(entry.scope, Exit.void);
+          for (const viewer of feed.viewers) {
+            if (viewer.inFlight === null) yield* sendPicture(viewer, picture);
+            else viewer.pending = picture;
+          }
         }),
       );
 
-    const end = (entry: Entry, closing: Closing) =>
-      entry.lock.withPermits(1)(endLocked(entry, closing));
+    /** Gives the host its acknowledgement once a socket drew its newest picture. */
+    const settle = (feed: Feed, drawn: Picture) =>
+      Effect.suspend(() => {
+        const owed = feed.owed;
+        if (owed === null || owed.seq !== drawn.seq) return Effect.void;
+        feed.owed = null;
+        return owed.host.screencastAck({ tab: feed.ref, frame: owed.frame }).pipe(Effect.ignore);
+      });
 
-    /** What the engine's viewer sends, for as long as it is open. */
-    const pump = (entry: Entry) =>
-      entry.viewer.output.pipe(
-        Stream.runForEach((output) =>
-          entry.lock.withPermits(1)(
+    /**
+     * The tab's screencast, from each host it runs on in turn, at the size
+     * the feed's first socket asked for. A host that fails it, or that has
+     * no screencast, leaves the sockets with the last picture until the tab
+     * moves.
+     */
+    const screencast = (feed: Feed, size: ViewSize) =>
+      feed.watched.host.pipe(
+        Stream.tap((host) =>
+          Effect.sync(() => {
+            feed.host = host;
+            feed.owed = null;
+          }),
+        ),
+        Stream.switchMap((host) =>
+          Option.match(host, {
+            onNone: () => Stream.empty,
+            onSome: (current) =>
+              current.screencast({ tab: feed.ref, ...size }).pipe(
+                Stream.mapEffect((frame) => received(feed, current, frame)),
+                Stream.catchCause(() => Stream.empty),
+              ),
+          }),
+        ),
+        Stream.runDrain,
+      );
+
+    /** Who acts on the tab, and its dialog, for every socket as it changes. */
+    const control = (feed: Feed) =>
+      feed.watched.tab.pipe(
+        Stream.runForEach((tab) =>
+          feed.lock.withPermits(1)(
             Effect.gen(function* () {
-              if (entry.ended !== null) return;
-              switch (output._tag) {
-                case "frame": {
-                  const picture = { jpeg: output.jpeg, owed: true };
-                  if (entry.attached !== null && entry.inFlight === null) {
-                    entry.inFlight = picture;
-                    yield* sendTo(entry, picture.jpeg);
-                    return;
-                  }
-                  // Only the newest waits: the one it replaces is acknowledged unsent.
-                  if (entry.pending?.owed === true) yield* entry.viewer.ack;
-                  entry.pending = picture;
-                  return;
-                }
-                case "viewport": {
-                  const frame: BrowserServerFrame = {
-                    type: "viewport",
-                    width: output.width,
-                    height: output.height,
-                  };
-                  entry.viewport = frame;
-                  yield* sendTo(entry, frame);
-                  return;
-                }
-                case "control": {
-                  entry.control = output;
-                  entry.holds = output.controller === "this-viewer";
-                  yield* tabs.holding(entry.tab, entry.deviceId, entry.holds);
-                  yield* sendTo(entry, controlFrame(output));
-                  return;
-                }
-                case "probe":
-                  yield* sendTo(entry, {
-                    type: "probe",
-                    x: output.x,
-                    y: output.y,
-                    editable: output.editable,
-                  });
-                  return;
-                case "cursor":
-                  yield* sendTo(entry, {
-                    type: "cursor",
-                    action: output.action,
-                    x: output.x,
-                    y: output.y,
-                  });
-                  return;
-              }
+              feed.tab = tab;
+              feed.generation = (yield* feed.watched.control.state).epoch;
+              yield* sendAll(feed, (viewer) => controlFrame(feed, viewer.deviceId));
             }),
           ),
         ),
-        Effect.flatMap(() => end(entry, ending(new ViewerClosed({ reason: "lost" })))),
-        Effect.catch((closed) => end(entry, ending(closed))),
       );
 
-    /**
-     * Opens the device's viewer of `tab`; `null` when the device is revoked
-     * before the engine opened it, which then never waits on the engine.
-     */
-    const open = Effect.fnUntraced(function* (
-      deviceId: DeviceId,
-      tab: EngineTabId,
-      size: ViewSize,
-    ) {
-      const scope = yield* Scope.make();
-      const opened = yield* bridge.openViewer({ tab, ...size }).pipe(
-        Scope.provide(scope),
-        Effect.asSome,
-        Effect.raceFirst(auth.revoked(deviceId).pipe(Effect.as(Option.none()))),
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit) && Option.isSome(exit.value)
-            ? Effect.void
-            : Scope.close(scope, Exit.void),
+    /** Where bots point on the tab as they act. */
+    const cursors = (feed: Feed) =>
+      browser.pointers.pipe(
+        Stream.filter((pointer) => pointer.tab === feed.ref),
+        Stream.runForEach((pointer) =>
+          feed.lock.withPermits(1)(
+            sendAll(feed, () => ({
+              type: "cursor",
+              action: pointer.action,
+              x: pointer.x,
+              y: pointer.y,
+              ...(pointer.botId === null ? {} : { botId: pointer.botId }),
+            })),
+          ),
         ),
       );
-      if (Option.isNone(opened)) return null;
-      const viewer = opened.value;
-      const entry: Entry = {
-        key: keyOf(deviceId, tab),
-        deviceId,
-        tab,
-        viewer,
-        scope,
-        lock: yield* Semaphore.make(1),
-        attached: null,
-        inFlight: null,
-        pending: null,
-        shown: null,
-        viewport: null,
-        control: null,
-        holds: false,
-        ended: null,
-        fibers: new Set(),
-        grace: null,
-      };
-      entries.set(entry.key, entry);
-      entry.fibers.add(yield* background(pump(entry)));
-      // Revoking the device closes its viewers at once, held tabs included.
-      entry.fibers.add(
-        yield* background(auth.revoked(deviceId).pipe(Effect.andThen(end(entry, REVOKED)))),
-      );
-      return entry;
-    });
 
-    /** Attaches `link` to the entry, in place of any socket before it; how it ended, if it has. */
-    const attach = (entry: Entry, link: ClientLink) =>
-      entry.lock.withPermits(1)(
+    /** The feed of `ref`, opened for its first socket; none once the tab is gone. */
+    const feedOf = (ref: BrowserTabRef, size: ViewSize) =>
+      feedLock.withPermits(1)(
         Effect.gen(function* () {
-          if (entry.ended !== null) return Result.fail(entry.ended);
-          const previous = entry.attached;
-          if (previous !== null) {
-            yield* recall(entry);
-            entry.attached = null;
-            yield* previous.link.close(BROWSER_CLOSE_CODES.replaced, "replaced");
-            yield* Deferred.succeed(previous.detached, undefined);
+          const existing = feeds.get(ref);
+          if (existing !== undefined) return Option.some(existing);
+          const scope = yield* Scope.make();
+          const watched = yield* browser.watch(ref).pipe(Scope.provide(scope));
+          if (Option.isNone(watched)) {
+            yield* Scope.close(scope, Exit.void);
+            return Option.none<Feed>();
           }
-          if (entry.grace !== null) {
-            const grace = entry.grace;
-            entry.grace = null;
-            entry.fibers.delete(grace);
-            yield* background(Fiber.interrupt(grace));
-          }
-          const attached: Attached = { link, detached: yield* Deferred.make<void>() };
-          entry.attached = attached;
-          if (entry.viewport !== null) yield* sendTo(entry, entry.viewport);
-          if (entry.control !== null) yield* sendTo(entry, controlFrame(entry.control));
-          if (entry.pending === null && entry.shown !== null) {
-            entry.pending = { jpeg: entry.shown, owed: false };
-          }
-          yield* sendPending(entry);
-          return Result.succeed(attached);
-        }),
-      );
-
-    /** The socket left: a device that holds the tab keeps it for `CONTROL_GRACE`. */
-    const detach = (entry: Entry, attached: Attached) =>
-      entry.lock.withPermits(1)(
-        Effect.gen(function* () {
-          if (entry.ended !== null || entry.attached !== attached) return;
-          entry.attached = null;
-          yield* recall(entry);
-          if (!entry.holds) {
-            return yield* endLocked(entry, {
-              frame: null,
-              code: 1000,
-              reason: "closed",
-              final: false,
-            });
-          }
-          const grace = yield* background(
-            Effect.sleep(CONTROL_GRACE).pipe(
+          const feed: Feed = {
+            ref,
+            watched: watched.value,
+            scope,
+            lock: yield* Semaphore.make(1),
+            viewers: new Set(),
+            host: Option.none(),
+            latest: null,
+            owed: null,
+            viewport: null,
+            tab: null,
+            generation: 0,
+            nextSeq: 0,
+          };
+          feeds.set(ref, feed);
+          const background = <A, E>(effect: Effect.Effect<A, E>) =>
+            Effect.forkIn(Effect.ignore(effect), scope);
+          yield* background(screencast(feed, size));
+          yield* background(control(feed));
+          yield* background(cursors(feed));
+          yield* background(
+            feed.watched.closed.pipe(
               Effect.andThen(
-                end(entry, { frame: null, code: 1000, reason: "grace", final: false }),
+                // The sockets on the tab when it closes, not when the feed opened.
+                feed.lock.withPermits(1)(
+                  Effect.suspend(() =>
+                    Effect.forEach(
+                      [...feed.viewers],
+                      (viewer) => Deferred.succeed(viewer.ended, GONE),
+                      { discard: true },
+                    ),
+                  ),
+                ),
               ),
             ),
           );
-          entry.grace = grace;
-          entry.fibers.add(grace);
+          return Option.some(feed);
         }),
       );
 
+    /** The socket left: the feed closes with its last socket. */
+    const leave = (feed: Feed, viewer: Viewer) =>
+      feedLock.withPermits(1)(
+        Effect.gen(function* () {
+          const last = yield* feed.lock.withPermits(1)(
+            Effect.gen(function* () {
+              feed.viewers.delete(viewer);
+              // A picture it never drew is not waited on.
+              const unacked = viewer.inFlight ?? viewer.pending;
+              if (unacked !== null && feed.viewers.size === 0) yield* settle(feed, unacked);
+              return feed.viewers.size === 0;
+            }),
+          );
+          if (!last || feeds.get(feed.ref) !== feed) return;
+          feeds.delete(feed.ref);
+          yield* Scope.close(feed.scope, Exit.void);
+        }),
+      );
+
+    /** Joins the feed, in place of the device's socket before it on the tab. */
+    const join = (feed: Feed, viewer: Viewer) =>
+      feed.lock.withPermits(1)(
+        Effect.gen(function* () {
+          for (const other of feed.viewers) {
+            if (other.deviceId === viewer.deviceId) yield* Deferred.succeed(other.ended, REPLACED);
+          }
+          feed.viewers.add(viewer);
+          if (feed.viewport !== null) {
+            yield* sendTo(viewer, { type: "viewport", ...feed.viewport });
+          }
+          const frame = controlFrame(feed, viewer.deviceId);
+          if (frame !== null) yield* sendTo(viewer, frame);
+          if (feed.latest !== null) yield* sendPicture(viewer, feed.latest);
+        }),
+      );
+
+    /** A person's input to the page: applied only once it holds the tab for them. */
+    const used = Effect.fnUntraced(function* (
+      feed: Feed,
+      viewer: Viewer,
+      apply: (host: PageHost) => Effect.Effect<unknown>,
+    ) {
+      if (Option.isNone(feed.host)) return;
+      if (!(yield* browser.personUsed(feed.ref, viewer.deviceId))) return;
+      yield* apply(feed.host.value);
+    });
+
+    /** Whether a person on another device holds the tab now. */
+    const heldElsewhere = (feed: Feed, viewer: Viewer) =>
+      Effect.map(
+        feed.watched.control.state,
+        ({ holder }) => holder?.kind === "person" && holder.device !== viewer.deviceId,
+      );
+
     /** One message from the client. */
-    const receive = (entry: Entry, attached: Attached, frame: BrowserClientFrame) => {
+    const receive = (feed: Feed, viewer: Viewer, frame: BrowserClientFrame) => {
+      const tab = feed.ref;
       switch (frame.type) {
         case "pong":
           return Effect.void;
         case "ack":
-          return entry.lock.withPermits(1)(
+          return feed.lock.withPermits(1)(
             Effect.gen(function* () {
-              if (entry.ended !== null || entry.attached !== attached || entry.inFlight === null) {
-                return;
-              }
-              const picture = entry.inFlight;
-              entry.inFlight = null;
-              entry.shown = picture.jpeg;
-              if (picture.owed) yield* entry.viewer.ack;
-              yield* sendPending(entry);
+              const drawn = viewer.inFlight;
+              if (drawn === null) return;
+              viewer.inFlight = null;
+              yield* settle(feed, drawn);
+              const next = viewer.pending;
+              viewer.pending = null;
+              if (next !== null) yield* sendPicture(viewer, next);
             }),
           );
-        default:
-          return entry.attached === attached ? entry.viewer.send(frame) : Effect.void;
+        case "take":
+          return feed.watched.control.waitForMe(viewer.deviceId);
+        case "release":
+          return feed.watched.control.release(viewer.deviceId, frame.idle === true);
+        case "pointer":
+          // Moving the pointer is no use of the page: it hovers for whoever
+          // holds the tab, unless that is a person on another device.
+          if (frame.action === "move") {
+            return Effect.gen(function* () {
+              if (Option.isNone(feed.host) || (yield* heldElsewhere(feed, viewer))) return;
+              yield* feed.host.value.input({ tab, input: frame }).pipe(Effect.ignore);
+            });
+          }
+          return used(feed, viewer, (host) =>
+            host.input({ tab, input: frame }).pipe(Effect.ignore),
+          );
+        case "wheel":
+        case "key":
+        case "text":
+          return used(feed, viewer, (host) =>
+            host.input({ tab, input: frame }).pipe(Effect.ignore),
+          );
+        case "navigate":
+        case "back":
+        case "forward":
+        case "reload": {
+          const to =
+            frame.type === "navigate"
+              ? { kind: "url" as const, url: frame.url }
+              : { kind: frame.type };
+          // In the background: the socket keeps taking input while the page loads.
+          return used(feed, viewer, (host) =>
+            Effect.forkIn(host.navigate({ tab, to }).pipe(Effect.ignore), feed.scope),
+          );
+        }
+        case "dialog":
+          return used(feed, viewer, (host) =>
+            host
+              .dialog({
+                tab,
+                accept: frame.accept,
+                ...(frame.promptText === undefined ? {} : { promptText: frame.promptText }),
+              })
+              .pipe(Effect.ignore),
+          );
+        case "probe":
+          return Option.match(feed.host, {
+            onNone: () => Effect.void,
+            onSome: (host) =>
+              host.probe({ tab, x: frame.x, y: frame.y }).pipe(
+                Effect.flatMap(({ editable }) =>
+                  sendTo(viewer, { type: "probe", x: frame.x, y: frame.y, editable }),
+                ),
+                Effect.ignore,
+              ),
+          });
       }
     };
 
-    /**
-     * Runs `effect` for one socket of a device on a tab while no other socket
-     * of that device on that tab runs it, in the order the sockets came. So the
-     * device gets one viewer of the tab, and the socket that came last is the
-     * one left attached.
-     */
-    const inTurn = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
-      Effect.acquireUseRelease(
-        Effect.sync(() => {
-          const gate = gates.get(key) ?? { lock: Semaphore.makeUnsafe(1), users: 0 };
-          gate.users++;
-          gates.set(key, gate);
-          return gate;
-        }),
-        (gate) => gate.lock.withPermits(1)(effect),
-        (gate) =>
-          Effect.sync(() => {
-            gate.users--;
-            if (gate.users === 0) gates.delete(key);
-          }),
-      );
-
-    /** The device's viewer of `tab`, opened if it has none, with `link` attached to it. */
-    const join = (deviceId: DeviceId, tab: EngineTabId, size: ViewSize, link: ClientLink) =>
-      inTurn(
-        keyOf(deviceId, tab),
-        Effect.gen(function* () {
-          const entry =
-            entries.get(keyOf(deviceId, tab)) ??
-            (yield* open(deviceId, tab, size).pipe(
-              Effect.option,
-              Effect.map(Option.getOrUndefined),
-            ));
-          if (entry === null) return { _tag: "ended", closing: REVOKED } as const;
-          if (entry === undefined) return { _tag: "unavailable" } as const;
-          const attached = yield* attach(entry, link);
-          return Result.isSuccess(attached)
-            ? ({ _tag: "attached", entry, attached: attached.success } as const)
-            : ({ _tag: "ended", closing: attached.failure } as const);
-        }),
-      );
-
-    /** Serves one attached socket until it closes, goes silent or is detached. */
-    const serve = Effect.fnUntraced(function* (current: Entry, socket: Attached) {
-      const link = socket.link;
-
+    /** Serves one socket on its feed until it closes, goes silent, or is ended. */
+    const serve = Effect.fnUntraced(function* (feed: Feed, viewer: Viewer) {
+      const link = viewer.link;
       let heardAt = yield* Clock.currentTimeMillis;
       const listen = link.incoming.pipe(
         Stream.runForEach((frame) =>
@@ -527,23 +469,29 @@ export const layer = Layer.effect(
                 heardAt = now;
               }),
             ),
-            Effect.andThen(receive(current, socket, frame)),
+            Effect.andThen(receive(feed, viewer, frame)),
           ),
         ),
+        Effect.as(null),
       );
       const keepAlive = Effect.gen(function* () {
         while (true) {
           yield* Effect.sleep(PING_EVERY);
           const now = yield* Clock.currentTimeMillis;
-          if (now - heardAt >= Duration.toMillis(SILENT_LIMIT)) return;
+          if (now - heardAt >= Duration.toMillis(SILENT_LIMIT)) return null;
           yield* link.send({ type: "ping" }).pipe(Effect.ignore);
         }
       });
+      const revoked = auth.revoked(viewer.deviceId).pipe(Effect.as(REVOKED));
       // The socket's request ends with the socket: it may be interrupted
-      // here, and the viewer must still learn the socket left.
-      yield* Effect.raceAll([listen, keepAlive, Deferred.await(socket.detached)]).pipe(
-        Effect.ensuring(detach(current, socket)),
-      );
+      // here, and the feed must still learn the socket left.
+      const closing = yield* Effect.raceAll([
+        listen,
+        keepAlive,
+        revoked,
+        Deferred.await(viewer.ended),
+      ]).pipe(Effect.ensuring(leave(feed, viewer)));
+      if (closing !== null) yield* closeAs(link, closing);
     });
 
     const connect = Effect.fn("BrowserViewers.connect")(function* (input: {
@@ -552,40 +500,19 @@ export const layer = Layer.effect(
       readonly size: ViewSize;
       readonly link: ClientLink;
     }) {
-      const { deviceId, link } = input;
-      // A viewer that ends as this socket attaches is opened again, once, if the
-      // tab is still there and the device may still view it.
-      for (let attempt = 0; ; attempt++) {
-        const tab = yield* tabs.resolve(input.ref);
-        if (Option.isNone(tab)) {
-          yield* link.send({ type: "gone" }).pipe(Effect.ignore);
-          return yield* link.close(1000, "gone");
-        }
-        const joined = yield* join(deviceId, tab.value, input.size, link);
-        if (joined._tag === "attached") return yield* serve(joined.entry, joined.attached);
-        if (joined._tag === "ended" && joined.closing.final) {
-          return yield* closeAs(link, joined.closing);
-        }
-        if (joined._tag === "unavailable" || attempt === REOPENS) {
-          return yield* link.close(BROWSER_CLOSE_CODES.unavailable, "unavailable");
-        }
-      }
+      const feed = yield* feedOf(input.ref, input.size);
+      if (Option.isNone(feed)) return yield* closeAs(input.link, GONE);
+      const viewer: Viewer = {
+        deviceId: input.deviceId,
+        link: input.link,
+        ended: yield* Deferred.make<Closing | null>(),
+        inFlight: null,
+        pending: null,
+      };
+      yield* join(feed.value, viewer);
+      yield* serve(feed.value, viewer);
     });
 
-    const release = (tabs: ReadonlyArray<EngineTabId>) => {
-      const wanted = new Set(tabs);
-      return Effect.forEach(
-        [...entries.values()].filter((entry) => wanted.has(entry.tab)),
-        (entry) =>
-          entry.lock.withPermits(1)(
-            entry.ended !== null || !entry.holds
-              ? Effect.void
-              : entry.viewer.send({ type: "release" }),
-          ),
-        { discard: true },
-      );
-    };
-
-    return BrowserViewers.of({ connect, release });
+    return BrowserViewers.of({ connect });
   }),
 );

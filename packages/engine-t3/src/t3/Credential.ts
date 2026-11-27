@@ -22,11 +22,11 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 /**
  * The scopes the adapter needs: read threads and projects, and operate them;
- * act on a bot's browser tab for a person who took control of it (without
- * `preview:operate` the engine silently drops a viewer's input; **Read** at
- * `bc0f04d`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77);
- * write the engine's settings, for each bot's browser access
- * (`BrowserAccess.ts`); and manage providers, for the operator's update of
+ * clear the engine's own browser profile (`clearBrowserProfile`), which
+ * **Assumed** needs `preview:operate`, as the engine's other browser
+ * methods do; write the engine's settings, for the switch for suggested
+ * replies and to clear the browser access older releases wrote
+ * (`Settings.ts`); and manage providers, for the operator's update of
  * a harness (`server.updateProvider`) and to replace a provider instance
  * for the harness J3 Bots installed (`setHarnessExecutable`), both of which
  * need `providers:manage` (**Read** at `bc0f04d`,

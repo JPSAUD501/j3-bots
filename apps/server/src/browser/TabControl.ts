@@ -33,7 +33,7 @@ export const QUEUE_WAIT = Duration.seconds(20);
 export const PERSON_HOLD = Duration.millis(BROWSER_PERSON_HOLD_MS);
 
 /** Who acts on a tab, and the bot whose action runs there now. */
-export interface ControlState {
+interface ControlState {
   readonly holder: BrowserTabHolder | null;
   readonly acting: BotId | null;
   /** Grows with each change of hands. */
@@ -52,7 +52,7 @@ export class ActRefused extends Schema.TaggedError<ActRefused>()("ActRefused", {
 }) {}
 
 /** The server's fill could not hold the tab: a person holds it, or it closed. */
-export class FillRefused extends Schema.TaggedError<FillRefused>()("FillRefused", {
+class FillRefused extends Schema.TaggedError<FillRefused>()("FillRefused", {
   reason: Schema.Literals(["person", "closed"]),
 }) {}
 
@@ -75,11 +75,15 @@ export interface TabControl {
   /**
    * The person used the page from `device`: they hold it until
    * `PERSON_HOLD` from now, or keep the open hold they asked for. Queued
-   * actions fail.
+   * actions fail. False, changing nothing, while a person on another device
+   * holds the tab: their input is then not applied.
    */
-  readonly personInput: (device: DeviceId) => Effect.Effect<void>;
-  /** "Wait for me": the person on `device` holds the tab until they give it back. */
-  readonly waitForMe: (device: DeviceId) => Effect.Effect<void>;
+  readonly personInput: (device: DeviceId) => Effect.Effect<boolean>;
+  /**
+   * "Wait for me": the person on `device` holds the tab until they give it
+   * back. False, changing nothing, while a person on another device holds it.
+   */
+  readonly waitForMe: (device: DeviceId) => Effect.Effect<boolean>;
   /**
    * The person on `device` gives the tab back: at once, or, with `idle`,
    * `PERSON_HOLD` from now. Nothing when another holds it.
@@ -281,20 +285,29 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
       );
     });
 
+    /** Whether a person on a device other than `device` holds the tab now. */
+    const heldElsewhere = (device: DeviceId) =>
+      holder?.kind === "person" && holder.device !== device;
+
     const personInput = Effect.fn("TabControl.personInput")(function* (device: DeviceId) {
       const at = yield* now;
       lapse(at);
-      if (!(holder?.kind === "person" && holder.device === device && holder.until === null)) {
+      if (heldElsewhere(device)) return false;
+      if (!(holder?.kind === "person" && holder.until === null)) {
         setHolder({ kind: "person", device, until: at + Duration.toMillis(PERSON_HOLD) });
       }
       refuseWaiting(() => new ActRefused({ reason: "person" }));
       yield* changed;
+      return true;
     });
 
     const waitForMe = Effect.fn("TabControl.waitForMe")(function* (device: DeviceId) {
+      lapse(yield* now);
+      if (heldElsewhere(device)) return false;
       setHolder({ kind: "person", device, until: null });
       refuseWaiting(() => new ActRefused({ reason: "waiting" }));
       yield* changed;
+      return true;
     });
 
     const release = Effect.fn("TabControl.release")(function* (device: DeviceId, idle: boolean) {

@@ -16,6 +16,7 @@ import {
   define,
   described,
   type McpTool,
+  preApprovedOwnTools,
   type ToolDefinition,
   toMcpTool,
   toolInput,
@@ -315,6 +316,16 @@ export type BrowserToolInput<N extends BrowserToolName> = (typeof browserTools)[
 
 /** The `browser_*` tools in the shape MCP's `tools/list` returns, for a bot whose browser is on. */
 export const browserToolList: ReadonlyArray<McpTool> = Object.values(browserTools).map(toMcpTool);
+
+/**
+ * The `j3` tools that run without asking, in every permission mode: J3 Bots'
+ * own but those that ask, and every browser tool. A bot without the browser
+ * is never listed the browser tools, and is refused a call to one.
+ */
+export const preApprovedTools: ReadonlyArray<string> = [
+  ...preApprovedOwnTools,
+  ...browserToolList.map((tool) => tool.name),
+];
 
 /** Why no browser can run a bot's tab: why the server's cannot, or that it is off. */
 export type ServerBrowserProblem =

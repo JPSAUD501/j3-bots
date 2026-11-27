@@ -70,13 +70,13 @@ export const DESKTOP_GRACE = Duration.seconds(45);
 /** The most tabs the server's browser keeps live: past it, the least used idle one is parked. */
 export const SERVER_TAB_CAP = 3;
 /** How long a server tab may go unused and unwatched before it is parked. */
-export const SERVER_TAB_IDLE = Duration.minutes(5);
+const SERVER_TAB_IDLE = Duration.minutes(5);
 /** How long a tab no person opened may go unused before it is closed. */
-export const UNUSED_TAB_LIFE = Duration.hours(24);
+const UNUSED_TAB_LIFE = Duration.hours(24);
 /** How long a bot counts as on a tab after it last used it. */
-export const ON_IT_FOR = Duration.minutes(30);
+const ON_IT_FOR = Duration.minutes(30);
 /** How often idle tabs are parked and closed, and an empty server browser closed. */
-export const SWEEP_EVERY = Duration.seconds(30);
+const SWEEP_EVERY = Duration.seconds(30);
 /** The actions on a tab whose authors a bot is told of. */
 const ACTION_LOG = 20;
 /** Where a bot's downloads land in its workspace. */
@@ -99,6 +99,8 @@ export interface WatchedTab {
   readonly ref: BrowserTabRef;
   /** The host the tab runs on now, and again whenever that changes; none while it has none. */
   readonly host: Stream.Stream<Option.Option<PageHost>>;
+  /** The tab as the list shows it, now and on every change, until it closes. */
+  readonly tab: Stream.Stream<SharedBrowserTab>;
   readonly control: TabControl;
   /** Ends once the tab closes. */
   readonly closed: Effect.Effect<void>;
@@ -167,11 +169,15 @@ export class Browser extends Context.Service<
     readonly all: Stream.Stream<SharedBrowserTabs>;
     /** The tabs `botId` is on, as `device` sees them, now and on every change. */
     readonly ofBot: (botId: BotId, device: DeviceId) => Stream.Stream<BrowserTabs, NotFound>;
-    /** Opens a tab for the person on `device`: on that desktop, else where new tabs open. */
+    /**
+     * Opens a tab for the person on `device` as `ref`: on that desktop, else
+     * where new tabs open. A tab already open as `ref` is left as it is.
+     */
     readonly openForPerson: (input: {
       readonly device: DeviceId;
+      readonly ref: BrowserTabRef;
       readonly url?: string | undefined;
-    }) => Effect.Effect<BrowserTabRef, BrowserToolRefused>;
+    }) => Effect.Effect<void, BrowserToolRefused>;
     /** Closes a tab for the person. */
     readonly close: (ref: BrowserTabRef) => Effect.Effect<void, NotFound>;
     /** A viewer of `ref` while the scope lives, which keeps the tab from being parked. */
@@ -180,18 +186,27 @@ export class Browser extends Context.Service<
     ) => Effect.Effect<Option.Option<WatchedTab>, never, Scope.Scope>;
     /** Where bots' actions point, as they act. */
     readonly pointers: Stream.Stream<BotPointer>;
-    /** The person used `ref`'s page from `device`, through a viewer: they hold it. */
-    readonly personUsed: (ref: BrowserTabRef, device: DeviceId) => Effect.Effect<void>;
+    /**
+     * The person used `ref`'s page from `device`, through a viewer: they hold
+     * it. False when the tab is gone, or a person on another device holds it:
+     * their input is then not applied.
+     */
+    readonly personUsed: (ref: BrowserTabRef, device: DeviceId) => Effect.Effect<boolean>;
     /** `botId` may browse no more: its queued actions fail and its leases end. */
     readonly withdraw: (botId: BotId) => Effect.Effect<void>;
     /**
      * Serves `host` until the scope closes or its events end: its tabs join
      * the list, and new tabs may open on it. A desktop's tabs then wait
-     * `DESKTOP_GRACE` for it to come back before they are parked.
+     * `DESKTOP_GRACE` for it to come back before they are parked. Answers
+     * the host's hello, and `ended`, which returns once its events end.
      */
     readonly attachHost: (
       host: PageHost,
-    ) => Effect.Effect<BrowserHostHello, BrowserHostError, Scope.Scope>;
+    ) => Effect.Effect<
+      { readonly hello: BrowserHostHello; readonly ended: Effect.Effect<void> },
+      BrowserHostError,
+      Scope.Scope
+    >;
     /** Why the server's own browser could not start the last time it was asked to; none once it did. */
     readonly serverProblem: Stream.Stream<Option.Option<ServerBrowserProblem>>;
     /** The tab a bot's call works on, as the `browser_*` tools resolve it. */
@@ -581,7 +596,10 @@ export const layer = Layer.effect(
             entry.activeAt = at;
             if (tab === undefined || hello.host.kind !== "desktop") return;
             tab.usedAt = at;
-            return yield* tab.control.personInput(hello.host.device);
+            // Applied in the app already, also while another device holds
+            // the tab: then it changes no hands.
+            yield* tab.control.personInput(hello.host.device);
+            return;
           }
           case "pointer": {
             const tab = own(event.tab);
@@ -614,8 +632,7 @@ export const layer = Layer.effect(
       if (hosts.get(entry.key) !== entry) return;
       hosts.delete(entry.key);
       if (entry.key === SERVER) {
-        for (const tab of [...tabs.values()])
-          if (keyOfWhere(tab.where) === SERVER) yield* park(tab);
+        for (const tab of tabs.values()) if (keyOfWhere(tab.where) === SERVER) yield* park(tab);
         return yield* bump;
       }
       const fiber = yield* Effect.sleep(DESKTOP_GRACE).pipe(
@@ -623,7 +640,7 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             graces.delete(entry.key);
             if (hosts.has(entry.key)) return;
-            for (const tab of [...tabs.values()])
+            for (const tab of tabs.values())
               if (keyOfWhere(tab.where) === entry.key) yield* park(tab);
           }),
         ),
@@ -668,13 +685,15 @@ export const layer = Layer.effect(
         yield* moveTo(known, whereOfHello(hello));
       }
       // Tabs that waited for this desktop and that it no longer holds are parked.
-      for (const tab of [...tabs.values()])
+      for (const tab of tabs.values())
         if (keyOfWhere(tab.where) === key && !hello.tabs.some((page) => page.tab === tab.ref))
           yield* park(tab);
       yield* bump;
+      const ended = yield* Deferred.make<void>();
       yield* host.events.pipe(
         Stream.runForEach(onHostEvent(entry)),
         Effect.catchCause((cause) => Effect.logWarning("A browser host's events ended", cause)),
+        Effect.ensuring(Deferred.succeed(ended, undefined)),
         // A host whose events end is gone. The server's own is closed too,
         // from outside the scope this runs in.
         Effect.andThen(
@@ -687,7 +706,7 @@ export const layer = Layer.effect(
         Effect.forkScoped,
       );
       yield* Effect.addFinalizer(() => detach(entry));
-      return hello;
+      return { hello, ended: Deferred.await(ended) };
     });
 
     /** The server's browser, started if it is not running. */
@@ -731,8 +750,9 @@ export const layer = Layer.effect(
       idle.sort((left, right) => left.usedAt - right.usedAt);
       const oldest = idle[0];
       if (oldest === undefined) return;
-      yield* host.host.close(oldest.ref).pipe(Effect.ignore);
+      // Parked first, so the host's word that the tab closed is not taken for a close.
       yield* park(oldest);
+      yield* host.host.close(oldest.ref).pipe(Effect.ignore);
     });
 
     /** Where a new tab opens: the desktop the person used last, else the server. */
@@ -1000,6 +1020,7 @@ export const layer = Layer.effect(
      * under the bot's lease.
      */
     const openTab = Effect.fnUntraced(function* (input: {
+      readonly ref?: BrowserTabRef;
       readonly openedBy: BrowserTabOpener;
       readonly target: Host;
       readonly url: string | undefined;
@@ -1007,7 +1028,7 @@ export const layer = Layer.effect(
       readonly readiness?: BrowserToolInput<"browser_open">["readiness"];
       readonly timeoutMs?: number | undefined;
     }) {
-      const ref = BrowserTabRef.make(yield* ids.make("tab"));
+      const ref = input.ref ?? BrowserTabRef.make(yield* ids.make("tab"));
       const at = yield* now;
       const bot = input.openedBy.kind === "bot" ? input.openedBy.botId : null;
       const tab = yield* makeTab({
@@ -1232,17 +1253,19 @@ export const layer = Layer.effect(
 
     const openForPerson = Effect.fn("Browser.openForPerson")(function* (input: {
       readonly device: DeviceId;
+      readonly ref: BrowserTabRef;
       readonly url?: string | undefined;
     }) {
+      if (tabs.has(input.ref)) return;
       const own = hosts.get(desktopKey(input.device));
       const target = own ?? (yield* placement);
-      const { tab } = yield* openTab({
+      yield* openTab({
+        ref: input.ref,
         openedBy: { kind: "person", device: input.device },
         target,
         url: input.url,
         background: false,
       });
-      return tab.ref;
     });
 
     const closeTab = Effect.fn("Browser.close")(function* (ref: BrowserTabRef) {
@@ -1270,6 +1293,11 @@ export const layer = Layer.effect(
         host: SubscriptionRef.changes(tab.hostChanges).pipe(
           Stream.map(() => Option.fromUndefinedOr(hostOf(tab)?.host)),
         ),
+        tab: SubscriptionRef.changes(version).pipe(
+          Stream.takeWhile(() => tabs.get(ref) === tab),
+          Stream.mapEffect(() => Effect.flatMap(now, (at) => sharedOf(tab, at))),
+          Stream.changesWith(sameFrame),
+        ),
         control: tab.control,
         closed: SubscriptionRef.changes(version).pipe(
           Stream.filter(() => tabs.get(ref) !== tab),
@@ -1284,12 +1312,13 @@ export const layer = Layer.effect(
       device: DeviceId,
     ) {
       const tab = tabs.get(ref);
-      if (tab === undefined) return;
+      if (tab === undefined) return false;
+      if (!(yield* tab.control.personInput(device))) return false;
       const at = yield* now;
       tab.usedAt = at;
-      yield* tab.control.personInput(device);
       const desktop = hosts.get(desktopKey(device));
       if (desktop !== undefined) desktop.activeAt = at;
+      return true;
     });
 
     const withdraw = Effect.fn("Browser.withdraw")(function* (botId: BotId) {
@@ -1337,7 +1366,7 @@ export const layer = Layer.effect(
     // once it has had no tab for a sweep.
     const sweep = Effect.gen(function* () {
       const at = yield* now;
-      for (const tab of [...tabs.values()]) {
+      for (const tab of tabs.values()) {
         const state = yield* tab.control.state;
         if (state.acting !== null || state.holder !== null || tab.viewers > 0) continue;
         const host = hostOf(tab);
@@ -1350,8 +1379,9 @@ export const layer = Layer.effect(
           continue;
         }
         if (tab.where.kind === "server" && at - tab.usedAt >= Duration.toMillis(SERVER_TAB_IDLE)) {
-          if (host !== undefined) yield* host.host.close(tab.ref).pipe(Effect.ignore);
+          // Parked first, so the host's word that the tab closed is not taken for a close.
           yield* park(tab);
+          if (host !== undefined) yield* host.host.close(tab.ref).pipe(Effect.ignore);
         }
       }
       const serverIdle =

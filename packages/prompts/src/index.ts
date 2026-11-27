@@ -104,7 +104,6 @@ export {
   type RoutineStepDraft,
   type ToolInput,
   type ToolName,
-  preApprovedTools,
   toolList,
   tools,
 } from "./tools.ts";
@@ -144,6 +143,7 @@ export {
   type BrowserToolInput,
   browserToolList,
   browserTools,
+  preApprovedTools,
   type ServerBrowserProblem,
 } from "./browserTools.ts";
 export { sharedSkills } from "./skills.ts";

@@ -1258,10 +1258,12 @@ export const ProviderRpcs = RpcGroup.make(
 
 export const BrowserRpcs = RpcGroup.make(
   /**
-   * The tabs the bot opened in the engine's browser, then the whole list
-   * again on every change: a tab opened, closed, navigated or loaded, or
-   * taken or given back by a person. Small, and always starts afresh. A
-   * tab's picture and control are on the media socket (`HTTP_PATHS.browser`).
+   * The tabs the bot is on, then the whole list again on every change: a tab
+   * opened, closed, moved, navigated or loaded, or taken or given back by a
+   * person. Small, and always starts afresh. A tab's picture and control are
+   * on the media socket (`HTTP_PATHS.browser`). Before J3 Bots ran its own
+   * browsers (no `sharedBrowser` in the roster), the tabs the bot opened in
+   * the engine's browser.
    */
   Rpc.make("browser.subscribe", {
     payload: { botId: BotId },

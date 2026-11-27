@@ -120,7 +120,11 @@ interface Pending {
   readonly fast: boolean;
   readonly permissionMode: PermissionMode;
   readonly browser: boolean;
-  /** The session's tools were brought to the other browser setting: they are reloaded. */
+  /**
+   * The bot's browser switch changed since the session was last brought to
+   * it: the session starts its provider again, which reads its instructions,
+   * with the browser's rules or without, afresh.
+   */
   readonly reloadTools: boolean;
   readonly changes: number;
   readonly revision: number;
@@ -167,6 +171,12 @@ export class MainSessionMoved extends Schema.TaggedError<MainSessionMoved>()(
 export interface BotSession {
   readonly id: SessionRowId;
   readonly botId: BotId;
+  /**
+   * Whether the session's instructions carry the browser's rules: the bot's
+   * browser switch as the session was last brought to it, or opened with.
+   * Its bridge lists the browser's tools only then (decision 0110).
+   */
+  readonly browser: boolean;
 }
 
 /**
@@ -301,12 +311,6 @@ export class EngineSessions extends Context.Service<
     ) => Effect.Effect<SettledOpening, EngineDown | ModelUnavailable | PermissionModeRefused>;
     /** The session an engine session id belongs to, if it is a live one of a bot. */
     readonly ofEngineSession: (sessionId: SessionId) => Effect.Effect<Option.Option<BotSession>>;
-    /**
-     * Gives the bot's project the bot's browser setting as it stands, for a
-     * side session about to open there: its first turn starts its tools with
-     * what the project allows then.
-     */
-    readonly syncBrowserAccess: (botId: BotId) => Effect.Effect<void, EngineDown>;
   }
 >()("@j3-bots/server/bots/EngineSessions") {}
 
@@ -336,9 +340,6 @@ export const layer = Layer.effect(
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
-    // One write of a project's browser access at a time, each with the bot's
-    // setting read just before it.
-    const accessWrites = yield* Semaphore.make(1);
 
     const mainSession = SqlSchema.findOneOption({
       Request: BotId,
@@ -359,9 +360,9 @@ export const layer = Layer.effect(
 
     const byEngineSession = SqlSchema.findOneOption({
       Request: SessionId,
-      Result: SessionRow,
+      Result: Schema.Struct({ ...SessionRow.fields, browser: Flag }),
       execute: (sessionId) => sql`
-        SELECT id, bot_id, engine_session_id, provider_id, open_refusals FROM sessions
+        SELECT id, bot_id, engine_session_id, provider_id, open_refusals, browser FROM sessions
         WHERE engine_session_id = ${sessionId} AND retired_at IS NULL
       `,
     });
@@ -572,44 +573,6 @@ export const layer = Layer.effect(
     );
 
     /**
-     * Gives the bot's project the bot's browser setting as it stands. Every
-     * write reads the setting afresh, one at a time, so the last one written
-     * has the latest: a caller that read an older one meanwhile has a change
-     * pending, which the next alignment brings its session to. It waits on no
-     * session's gate, so a session held by a turn never holds it up.
-     *
-     * A browser the bot lost is withdrawn from every thread of its project
-     * (`Engine.withdrawBrowserAccess`), the main session's, its delegates' and
-     * any other: a thread keeps the access it was given until its provider
-     * session is released, and the engine may start a turn there on its own.
-     * Until the withdrawal is done, every write tries it again; one that
-     * finds the browser given back has nothing to withdraw.
-     */
-    const writeBrowserAccess = Effect.fn("EngineSessions.writeBrowserAccess")(function* (
-      botId: BotId,
-    ) {
-      const found = yield* bots.find(botId);
-      if (Option.isNone(found) || Option.isNone(found.value.engineProjectId)) return;
-      const { bot, engineProjectId } = found.value;
-      const [row] = yield* sql<{ readonly browser_withdrawals: number }>`
-        SELECT browser_withdrawals FROM bots WHERE id = ${botId}
-      `.pipe(Effect.orDie);
-      const withdrawals = row?.browser_withdrawals ?? 0;
-      if (withdrawals > 0 && !bot.browser) {
-        yield* engine.withdrawBrowserAccess(engineProjectId.value);
-      } else {
-        yield* engine.setBrowserAccess({ projectId: engineProjectId.value, enabled: bot.browser });
-      }
-      if (withdrawals > 0) {
-        // Not one counted since: that one is withdrawn by the next write.
-        yield* sql`
-          UPDATE bots SET browser_withdrawals = 0
-          WHERE id = ${botId} AND browser_withdrawals = ${withdrawals}
-        `.pipe(Effect.orDie);
-      }
-    }, accessWrites.withPermits(1));
-
-    /**
      * Brings the bot's opened main session to the bot's settings, if it has
      * changes it was not brought to and still runs on the bot's provider: a
      * session on another provider is being replaced, and the one that
@@ -633,12 +596,6 @@ export const layer = Layer.effect(
             // Asked again only once the bot's settings change, or the engine
             // becomes ready again.
             if (due === "mode-refused") return due;
-            // The project first, also while a turn runs: a side session
-            // opened from now on starts with what the bot has, and the
-            // session's own, reloaded or not, too. A browser the bot lost is
-            // withdrawn from the whole project now, stopping a turn that runs
-            // with it; one it was given waits for the session's next turn.
-            yield* writeBrowserAccess(botId);
             const work = yield* workOf(rowId);
             if (work.admitted !== null || work.runningTurns > 0) {
               return "turn-running" as const;
@@ -825,8 +782,6 @@ export const layer = Layer.effect(
       // the engine is ready again.
       if (selected.modeRefused) return "mode-refused" as const;
       if (session.engine_session_id === null) {
-        // Its first turn starts its tools with what the project allows then.
-        yield* writeBrowserAccess(botId);
         const opened = yield* openUnderKey(session, {
           projectId,
           title: "Main",
@@ -884,7 +839,11 @@ export const layer = Layer.effect(
       sessionId: SessionId,
     ) {
       const row = yield* byEngineSession(sessionId);
-      return Option.map(row, (found): BotSession => ({ id: found.id, botId: found.bot_id }));
+      return Option.map(row, (found): BotSession => ({
+        id: found.id,
+        botId: found.bot_id,
+        browser: found.browser,
+      }));
     }, Effect.orDie);
 
     return EngineSessions.of({
@@ -899,7 +858,6 @@ export const layer = Layer.effect(
       ofEngineSession,
       open,
       settleOpening,
-      syncBrowserAccess: writeBrowserAccess,
     });
   }),
 );

@@ -14,7 +14,6 @@ export {
   progressText,
   pruneRuntimes,
 } from "./t3/Install.ts";
-export { type BrowserHostNeeds, inspectBrowserHost } from "./t3/BrowserHost.ts";
 export { stateFiles } from "./t3/State.ts";
 export { writtenFolders } from "./t3/PrivateFiles.ts";
 export { activeConnection } from "./t3/Provision.ts";

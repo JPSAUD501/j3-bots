@@ -548,32 +548,6 @@ export class Engine extends Context.Service<
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
 
     /**
-     * Whether the sessions of the project may use the engine's browser, which
-     * acts with the operator's signed-in sites. The engine allows it to no
-     * project unless this allowed it. A session takes the change when its
-     * provider session next starts: a session opened after this call, or one
-     * that `configureSession` reloaded the tools of. Sends nothing when the
-     * project already has it.
-     */
-    readonly setBrowserAccess: (input: {
-      readonly projectId: EngineProjectId;
-      readonly enabled: boolean;
-    }) => Effect.Effect<void, EngineDown>;
-
-    /**
-     * Takes the browser from the project at once: it disallows it, as
-     * `setBrowserAccess` does, then ends what still has it. A thread of the
-     * project keeps the browser tools its provider session started with,
-     * whoever started it: a session, a delegated child, a thread another agent
-     * launched there. So in every thread of the project, a turn running is
-     * stopped as `stop` stops one, with its delegated tasks, which holds the
-     * thread's queue, and every provider session still running is released.
-     * The thread's next turn starts a provider session without the browser.
-     * Each call sends keys of its own; one that failed can be made again.
-     */
-    readonly withdrawBrowserAccess: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
-
-    /**
      * Signs the engine's browser out of every site: deletes the cookies and
      * site data of the one browser profile every session uses. Tabs open in
      * it close.
@@ -636,7 +610,6 @@ export class Engine extends Context.Service<
         readonly permissionMode?: PermissionMode;
         /**
          * Starts the session's provider again before its next turn, so it
-         * takes the tools its project allows now (`setBrowserAccess`) and
          * runs the provider's executable now (`setHarnessExecutable`). The
          * conversation resumes where it was. Refused as a change is: while a
          * turn runs, and while background work it would end runs.
