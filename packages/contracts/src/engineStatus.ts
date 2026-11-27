@@ -387,6 +387,53 @@ export const modelOffersFast = (status: EngineStatus, model: ModelChoice): boole
   return listed === undefined ? null : listed.fast === true;
 };
 
+/**
+ * Which provider a new bot lands on when none is named, lowest first: one
+ * that runs it now, one that will once its limit resets, one a command
+ * connects, one the engine is still checking, and last one whose harness is
+ * not installed yet. J3 Bots installs a missing harness itself as the server
+ * starts (docs/decisions/0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md),
+ * and the engine lists Claude Code's catalog even before it is there, so
+ * the operator's first bot is made while its AI still downloads, and says
+ * hello once it runs. One the engine found and cannot run, as a harness that
+ * failed to start or a provider turned off, never: a bot put on it would
+ * wait for a provider nothing is bringing.
+ */
+const defaultRank = (status: EngineStatus["providers"][number]["status"]): number | null => {
+  switch (status._tag) {
+    case "ready":
+      return 0;
+    case "limited":
+      return 1;
+    case "sign-in-required":
+      return 2;
+    case "unavailable":
+      if (status.checking) return 3;
+      return status.reason === "not-installed" ? 4 : null;
+  }
+};
+
+/**
+ * The model a bot gets when none is named, in `status`: the first model of
+ * the first ready provider; with none ready, of the first that lists a model
+ * and may still run it, as `defaultRank` orders them. A first bot is not
+ * refused for want of a connected provider, or of one still being
+ * downloaded. Null while no provider lists a model it may run.
+ */
+export const defaultModel = (status: EngineStatus): ModelChoice | null => {
+  let best: { readonly rank: number; readonly model: ModelChoice } | null = null;
+  for (const provider of status.providers) {
+    const model = provider.models[0];
+    if (model === undefined) continue;
+    const rank = defaultRank(provider.status);
+    if (rank === null) continue;
+    if (best === null || rank < best.rank) {
+      best = { rank, model: { providerId: provider.id, modelId: model.id } };
+    }
+  }
+  return best?.model ?? null;
+};
+
 /** The routine whose run a turn was part of. */
 export const UsageRoutine = Schema.Union([
   /** The routine, with the name it has now. */

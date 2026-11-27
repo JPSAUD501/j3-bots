@@ -4,6 +4,7 @@ import { createI18n } from "@j3-bots/i18n";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import type { AiAccountState, AiPlace } from "../presentation/aiAccount.ts";
+import { firstAccountOf } from "../stores/ProviderSetup.ts";
 import {
   type AiAccountContext,
   aiAccountText,
@@ -44,16 +45,16 @@ const jargon = /harness|\bCLI\b|engine|PATH|binary/i;
 
 describe("an AI account, in words", () => {
   it("gives the command that signs that account in only where a command is the way", () => {
-    expect(aiAccountText("claude-code", signedOut, at("server"), ctx).command).toBe(
+    expect(aiAccountText(firstAccountOf("claude-code"), signedOut, at("server"), ctx).command).toBe(
       "j3-bots provider login claude-code",
     );
-    expect(aiAccountText("codex", signedOut, at("server"), ctx).command).toBe(
+    expect(aiAccountText(firstAccountOf("codex"), signedOut, at("server"), ctx).command).toBe(
       "j3-bots provider login codex --device-auth",
     );
-    const inApp = aiAccountText("codex", signedOut, at("desktop-app"), ctx);
+    const inApp = aiAccountText(firstAccountOf("codex"), signedOut, at("desktop-app"), ctx);
     expect(inApp.command).toBeNull();
     expect(inApp.hint).toContain("Open J3 Bots on your computer");
-    expect(aiAccountText("codex", signedOut, at("here"), ctx)).toMatchObject({
+    expect(aiAccountText(firstAccountOf("codex"), signedOut, at("here"), ctx)).toMatchObject({
       command: null,
       hint: null,
     });
@@ -65,8 +66,7 @@ describe("an AI account, in words", () => {
     const engine = ready(
       claude({ _tag: "unavailable", checking: false, reason: "failed", detail: said }),
     );
-    const text = aiAccountText(
-      "claude-code",
+    const text = aiAccountText(firstAccountOf("claude-code"),
       { _tag: "problem", kind: "failed" },
       at("here", engine),
       ctx,
@@ -77,8 +77,7 @@ describe("an AI account, in words", () => {
   });
 
   it("says a failed sign-in plainly, with what repairs it under the details", () => {
-    const text = aiAccountText(
-      "codex",
+    const text = aiAccountText(firstAccountOf("codex"),
       { _tag: "sign-in", failed: "needs-terminal" },
       at("here"),
       ctx,
@@ -94,20 +93,20 @@ describe("an AI account, in words", () => {
 
   it("says how far a download is, and that the browser opens after it once sign-in was asked for", () => {
     const getting: AiAccountState = { _tag: "getting", task: "downloading", progress: 0.42 };
-    expect(aiAccountText("claude-code", getting, at("here"), ctx)).toMatchObject({
+    expect(aiAccountText(firstAccountOf("claude-code"), getting, at("here"), ctx)).toMatchObject({
       line: "Downloading Claude… 42%",
       hint: null,
     });
-    expect(aiAccountText("claude-code", getting, { ...at("here"), queued: true }, ctx).hint).toBe(
+    expect(aiAccountText(firstAccountOf("claude-code"), getting, { ...at("here"), queued: true }, ctx).hint).toBe(
       "Your browser opens as soon as this is done.",
     );
   });
 
   it("names its button for what it does next", () => {
     const signIn = { _tag: "sign-in", queued: false, download: false, again: false } as const;
-    expect(aiActionLabel(signIn, "codex", en)).toBe("Sign in with ChatGPT");
-    expect(aiActionLabel({ ...signIn, again: true }, "codex", en)).toBe("Try again");
-    expect(aiActionLabel({ _tag: "look" }, "codex", en)).toBe("Look again");
+    expect(aiActionLabel(signIn, "ChatGPT", en)).toBe("Sign in with ChatGPT");
+    expect(aiActionLabel({ ...signIn, again: true }, "ChatGPT", en)).toBe("Try again");
+    expect(aiActionLabel({ _tag: "look" }, "ChatGPT", en)).toBe("Look again");
   });
 });
 
@@ -180,13 +179,13 @@ describe("the connect step", () => {
 
   it("says a download that failed its checksum as one that came out damaged, in both languages", () => {
     const state: AiAccountState = { _tag: "missing", canGet: true, failed: "checksum", page: null };
-    const text = aiAccountText("claude-code", state, at("server"), ctx);
+    const text = aiAccountText(firstAccountOf("claude-code"), state, at("server"), ctx);
     expect(text.line).toBe("The download came out damaged, so nothing was installed. Try again.");
     expect(text.details).toContain(
       "The download didn’t match its maker’s checksum, so nothing was installed.",
     );
     const pt = { ...ctx, i18n: createI18n("pt-BR") };
-    expect(aiAccountText("claude-code", state, at("server"), pt).line).toBe(
+    expect(aiAccountText(firstAccountOf("claude-code"), state, at("server"), pt).line).toBe(
       "O download veio corrompido, então nada foi instalado. Tente de novo.",
     );
   });
@@ -198,7 +197,7 @@ describe("the connect step", () => {
       failed: "unreachable",
       page: null,
     };
-    const text = aiAccountText("claude-code", state, at("server"), ctx);
+    const text = aiAccountText(firstAccountOf("claude-code"), state, at("server"), ctx);
     expect(text.line).toBe(
       "Couldn’t download it. Check that the server is online, then try again.",
     );
@@ -241,7 +240,7 @@ describe("the connect step", () => {
         last: { _tag: "failed", reason: "in-use", at: DateTime.makeUnsafe(0) },
       },
     });
-    const text = aiAccountText("claude-code", state, at("here", engine), ctx);
+    const text = aiAccountText(firstAccountOf("claude-code"), state, at("here", engine), ctx);
     expect(text.line).toBe(
       "Another program, such as an antivirus, was using its files. Try again in a moment.",
     );
@@ -250,7 +249,7 @@ describe("the connect step", () => {
 
   it("says a first download J3 Bots could not switch to of the account, not of a copy before it", () => {
     const state: AiAccountState = { _tag: "missing", canGet: true, failed: "engine", page: null };
-    const text = aiAccountText("claude-code", state, at("here"), ctx);
+    const text = aiAccountText(firstAccountOf("claude-code"), state, at("here"), ctx);
     expect(text.line).toBe("Claude was downloaded, but J3 Bots couldn’t start using it yet.");
     expect(text.line).not.toMatch(jargon);
     expect(text.details).toContain(

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { ProviderSignInStatus } from "@j3-bots/contracts";
+import { ProviderId, type ProviderSignInStatus } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
 import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError";
-import { followSignIn } from "./ProviderSetup.ts";
+import { firstAccountOf, followSignIn, type SignInAccount } from "./ProviderSetup.ts";
 
 const dropped = new RpcClientError({
   reason: new RpcClientDefect({ message: "The socket closed", cause: null }),
@@ -82,7 +82,7 @@ const followOver = (attempts: ReadonlyArray<Attempt>) =>
             if (Exit.isSuccess(exit)) return;
           }
         }),
-      "claude-code",
+      firstAccountOf("claude-code"),
       (status) => Effect.sync(() => void shown.push(status._tag)),
     );
     return { ...state, shown, seen };
@@ -115,5 +115,28 @@ it.effect("only follows a sign-in once a status of it came back", () =>
       "succeeded",
     ]);
     assert.isTrue(followed.seen);
+  }),
+);
+
+it.effect("names an added account to the server, and the first of a harness by the harness alone", () =>
+  Effect.gen(function* () {
+    const asked: Array<unknown> = [];
+    const named = (account: SignInAccount) =>
+      followSignIn(
+        (use) =>
+          use((payload) => {
+            asked.push(payload);
+            return Stream.fromIterable(statuses);
+          }),
+        account,
+        () => Effect.void,
+      );
+    yield* named(firstAccountOf("codex"));
+    yield* named({ harness: "codex", providerId: ProviderId.make("codex_work") });
+    // A server older than added accounts takes the first's request as it always did.
+    assert.deepStrictEqual(asked, [
+      { harness: "codex", start: true },
+      { harness: "codex", providerId: "codex_work", start: true },
+    ]);
   }),
 );

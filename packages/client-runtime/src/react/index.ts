@@ -284,6 +284,7 @@ export {
   type AiConnectModel,
   type AiIntents,
   AiSessionProvider,
+  useAiAccountModel,
   useAiConnect,
 } from "./aiConnect.ts";
 export { type BotEdit, type ProfileFieldProblem, useBotEdit } from "./botEdit.ts";

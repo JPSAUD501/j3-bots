@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EffortLevel, type EngineStatus, ModelId, ProviderId } from "@j3-bots/contracts";
+import {
+  EffortLevel,
+  type EngineStatus,
+  type ModelChoice,
+  ModelId,
+  ProviderId,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { bot } from "../../test/fixtures.ts";
 import {
   botPatch,
   editsAfterFailedBotSave,
   effortChoices,
-  modelChoices,
+  pickUnavailable,
   noBotEdits,
   withHiddenEdit,
   withProfileEdit,
@@ -45,6 +51,7 @@ describe("botPatch", () => {
           avatar: { shape: "dome", color: "cobalt" },
           model: { ...claude },
           effort: null,
+          fast: null,
           permissionMode: "supervised",
           hidden: null,
         },
@@ -107,63 +114,26 @@ describe("editsAfterFailedBotSave", () => {
   });
 });
 
-describe("modelChoices", () => {
-  const provider = (id: string, ready: boolean, models: ReadonlyArray<string>) => ({
-    id: ProviderId.make(id),
-    name: id,
-    harness: "other" as const,
-    status: ready ? { _tag: "ready" as const } : { _tag: "unavailable" as const, checking: false },
-    models: models.map((model) => ({ id: ModelId.make(model), name: model, efforts: [] })),
-    usage: [],
-  });
-  const engine = (providers: EngineStatus["providers"]): EngineStatus => ({
+describe("pickUnavailable", () => {
+  const offering = (models: ReadonlyArray<ModelChoice>): EngineStatus => ({
     state: { _tag: "ready" },
     pinnedVersion: "1",
-    providers,
+    providers: models.map((model) => ({
+      id: model.providerId,
+      name: model.providerId,
+      harness: "other",
+      status: { _tag: "ready" },
+      models: [{ id: model.modelId, name: model.modelId }],
+      usage: [],
+    })),
   });
 
-  it("offers the ready providers and the bot's own, and says when one is left out", () => {
-    const choices = modelChoices(
-      engine([provider("claude", false, ["sonnet"]), provider("codex", true, ["gpt"])]),
-      claude,
-      null,
-    );
-    expect(choices.groups.map((group) => group.providerName)).toEqual(["claude", "codex"]);
-    expect(choices.unoffered).toEqual([]);
-    expect(choices.someNotReady).toBe(false);
-
-    const elsewhere = modelChoices(
-      engine([provider("claude", true, ["opus"]), provider("codex", false, ["gpt"])]),
-      claude,
-      null,
-    );
-    expect(elsewhere.groups.map((group) => group.providerName)).toEqual(["claude"]);
-    expect(elsewhere.unoffered).toEqual([claude]);
-    expect(elsewhere.someNotReady).toBe(true);
-  });
-
-  it("keeps a pick the engine stopped offering in the list, and holds the save for another", () => {
-    const gone = modelChoices(
-      engine([provider("claude", true, ["sonnet"]), provider("codex", false, ["gpt"])]),
-      claude,
-      codex,
-    );
-    expect(gone.unoffered).toEqual([codex]);
-    expect(gone.pickUnavailable).toBe(true);
-
-    // Moving back to the bot's own model, or to one still offered, is fine.
-    expect(modelChoices(engine([provider("codex", true, ["gpt"])]), claude, claude)).toMatchObject({
-      unoffered: [claude],
-      pickUnavailable: false,
-    });
-    expect(
-      modelChoices(engine([provider("codex", true, ["gpt"])]), claude, codex).pickUnavailable,
-    ).toBe(false);
-    // Before the engine reports its models, the pick is listed and left to the server.
-    expect(modelChoices(null, claude, codex)).toMatchObject({
-      unoffered: [claude, codex],
-      pickUnavailable: false,
-    });
+  it("holds the save for a pick the engine stopped offering, never for the bot's own", () => {
+    expect(pickUnavailable(offering([claude]), claude, codex)).toBe(true);
+    expect(pickUnavailable(offering([codex]), claude, claude)).toBe(false);
+    expect(pickUnavailable(offering([codex]), claude, codex)).toBe(false);
+    // Before the engine reports its models, the pick is left to the server.
+    expect(pickUnavailable(null, claude, codex)).toBe(false);
   });
 });
 
@@ -240,6 +210,25 @@ describe("effort", () => {
       _tag: "changes",
       changes: { model: codex },
     });
+  });
+
+  it("sends fast mode as the model the form holds runs it", () => {
+    const fastClaude: EngineStatus = {
+      ...withEfforts,
+      providers: withEfforts.providers.map((provider) =>
+        provider.id === claude.providerId
+          ? { ...provider, models: provider.models.map((model) => ({ ...model, fast: true })) }
+          : provider,
+      ),
+    };
+    expect(botPatch(scout, { ...noBotEdits, fast: true }, fastClaude)).toEqual({
+      _tag: "changes",
+      changes: { fast: true },
+    });
+    // GPT has no fast mode: moving there turns it off in the same save.
+    expect(botPatch({ ...scout, fast: true }, { ...noBotEdits, model: codex }, fastClaude)).toEqual(
+      { _tag: "changes", changes: { model: codex, fast: false } },
+    );
   });
 
   it("leaves a level the model stopped taking alone until the operator changes something", () => {

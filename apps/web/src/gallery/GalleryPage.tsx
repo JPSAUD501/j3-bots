@@ -83,6 +83,7 @@ import { PlusIcon, SettingsIcon } from "lucide-react";
 import { WhatsNewPage } from "../components/WhatsNew";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+  firstAccountOf,
   isHidden,
   turnsNotRead,
   type DraftFile,
@@ -5124,12 +5125,17 @@ const harnessesFound = {
   ],
 } as const satisfies Record<string, ReadonlyArray<HarnessLocation>>;
 
-/** The providers set up from the app on this computer, with the harnesses `found` and each sign-in as `signIns`. */
+/**
+ * The providers set up from the app on this computer, with the harnesses
+ * `found` and the sign-in of each harness's first account as `signIns`.
+ */
 const localSetup = (
   found: ReadonlyArray<HarnessLocation>,
   signIns: ReadonlyArray<readonly [SignInHarness, SignInView]> = [],
 ): LocalProviderSetup => ({
-  signIns: new Map(signIns),
+  signIns: new Map(
+    signIns.map(([harness, view]) => [firstAccountOf(harness).providerId, view] as const),
+  ),
   signIn: () => {},
   cancelSignIn: () => {},
   harnesses: () => Promise.resolve(found),

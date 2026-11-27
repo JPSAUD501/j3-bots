@@ -705,14 +705,26 @@ export interface J3Client {
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
   readonly startPairing: () => Promise<Actions.IntentResult<Devices.PairingOffer>>;
 
-  /** Each harness's sign-in, as this client follows it; see `ProviderSetup`. */
-  readonly signIns: Readable<ReadonlyMap<SignInHarness, ProviderSetup.SignInView>>;
+  /** Each AI account's sign-in, as this client follows it, by provider id; see `ProviderSetup`. */
+  readonly signIns: Readable<ReadonlyMap<ProviderId, ProviderSetup.SignInView>>;
   /**
-   * Starts the harness's sign-in on the server, or follows the one under way;
+   * Starts the account's sign-in on the server, or follows the one under way;
    * `openPage` opens the page it waits on (`ProviderSetup`).
    */
-  readonly signIn: (harness: SignInHarness, openPage: (url: string) => void) => void;
-  readonly cancelSignIn: (harness: SignInHarness) => void;
+  readonly signIn: (account: ProviderSetup.SignInAccount, openPage: (url: string) => void) => void;
+  readonly cancelSignIn: (account: ProviderSetup.SignInAccount) => void;
+  /** See `EngineStatus.addAccount`: only for a server that reports `ProviderStatus.setup`. */
+  readonly addAccount: (
+    harness: SignInHarness,
+    name: string,
+  ) => Promise<Actions.IntentResult<ProviderId>>;
+  /** See `EngineStatus.setUpAccount`. */
+  readonly setUpAccount: (
+    providerId: ProviderId,
+    changes: EngineStatus.AccountChanges,
+  ) => Promise<Actions.IntentResult>;
+  /** See `EngineStatus.removeAccount`. */
+  readonly removeAccount: (providerId: ProviderId) => Promise<Actions.IntentResult>;
   /** Where the server finds each harness; null when it cannot say. */
   readonly harnessLocations: () => Promise<ReadonlyArray<HarnessLocation> | null>;
   readonly connectors: ConnectorsClient;
@@ -1138,8 +1150,12 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       totpPreview: (id) => run.promise(services.secrets.totpPreview(id)),
     },
     signIns: services.providerSetup.signIns,
-    signIn: (harness, openPage) => fire(services.providerSetup.signIn(harness, openPage)),
-    cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),
+    signIn: (account, openPage) => fire(services.providerSetup.signIn(account, openPage)),
+    cancelSignIn: (account) => fire(services.providerSetup.cancelSignIn(account)),
+    addAccount: (harness, name) => run.promise(services.engine.addAccount(harness, name)),
+    setUpAccount: (providerId, changes) =>
+      run.promise(services.engine.setUpAccount(providerId, changes)),
+    removeAccount: (providerId) => run.promise(services.engine.removeAccount(providerId)),
     harnessLocations: () => run.promise(services.providerSetup.harnesses),
     connectors: {
       state: services.connectors.state,

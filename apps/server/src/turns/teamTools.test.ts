@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   type Bot,
   BotId,
+  EffortLevel,
   type ModelChoice,
   type Notice,
   ROOM_QUIET_ROUND,
@@ -276,7 +277,7 @@ it.effect(
       );
       assert.deepStrictEqual(yield* stored(lia.id), {
         model: TestDomain.OTHER_PROVIDER_MODEL,
-        effort: "medium",
+        effort: EffortLevel.make("medium"),
         fast: false,
       });
 

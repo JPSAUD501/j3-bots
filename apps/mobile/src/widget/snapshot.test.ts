@@ -36,6 +36,7 @@ const bot = (state: BotState = { _tag: "idle" }): RosterItem => ({
     profile: { name: "Ada", title: "", avatar: { shape: "dome", color: "cobalt" }, job: "" },
     model: { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") },
     effort: null,
+    fast: false,
     permissionMode: "auto",
     primary: false,
     pinned: false,

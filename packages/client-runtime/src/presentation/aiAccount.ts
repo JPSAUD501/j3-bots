@@ -12,7 +12,7 @@ import {
   signInHarnesses,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
-import type { SignInView } from "../stores/ProviderSetup.ts";
+import { firstAccountOf, type SignInAccount, type SignInView } from "../stores/ProviderSetup.ts";
 import { providerFix } from "./engine.ts";
 
 // Connecting an AI, as the operator meets it: the account they already have,
@@ -108,11 +108,12 @@ export type AiAccountState =
 /** What a screen knows about the accounts, from the server and from this client's own sign-ins. */
 export interface AiFacts {
   /**
-   * The accounts whose last sign-in already led to a connection: its success
-   * says nothing of an account found signed out again later, which is then
-   * offered a sign-in instead of being said to be finishing.
+   * The accounts, by provider id, whose last sign-in already led to a
+   * connection: its success says nothing of an account found signed out
+   * again later, which is then offered a sign-in instead of being said to be
+   * finishing.
    */
-  readonly spent?: ReadonlySet<AiAccount>;
+  readonly spent?: ReadonlySet<ProviderId>;
   /** The engine's status; null until the server has reported it. */
   readonly engine: EngineStatus | null;
   /**
@@ -120,8 +121,8 @@ export interface AiFacts {
    * said, as on a client that does not sign in from here.
    */
   readonly locations: ReadonlyArray<HarnessLocation> | null;
-  /** Each sign-in this client follows; an account not in it has none. */
-  readonly signIns: ReadonlyMap<AiAccount, SignInView>;
+  /** Each sign-in this client follows, by provider id; an account not in it has none. */
+  readonly signIns: ReadonlyMap<ProviderId, SignInView>;
 }
 
 /**
@@ -135,6 +136,20 @@ export const aiAccountProvider = (
   const mine = (engine?.providers ?? []).filter((provider) => provider.harness === account);
   return mine.find((provider) => provider.status._tag === "ready") ?? mine[0];
 };
+
+/**
+ * The provider of `account`: the one with its id; for the first of a
+ * harness, on a server that names it otherwise, the one `aiAccountProvider`
+ * finds.
+ */
+export const providerOfAccount = (
+  engine: EngineStatus | null,
+  account: SignInAccount,
+): ProviderStatus | undefined =>
+  engine?.providers.find((provider) => provider.id === account.providerId) ??
+  (account.providerId === firstAccountOf(account.harness).providerId
+    ? aiAccountProvider(engine, account.harness)
+    : undefined);
 
 /** A part of a whole, from 0 to 1; null when the whole is not known. */
 const part = (received: number, total: number | null): number | null =>
@@ -215,36 +230,37 @@ const fromCopy = (account: AiAccount, copy: HarnessCopy): AiAccountState => {
  * sign in already when that is there, and otherwise says how far its
  * download is.
  */
-export const aiAccountState = (account: AiAccount, facts: AiFacts): AiAccountState => {
-  const signIn = facts.signIns.get(account);
+export const aiAccountState = (account: SignInAccount, facts: AiFacts): AiAccountState => {
+  const { harness, providerId } = account;
+  const signIn = facts.signIns.get(providerId);
   if (signIn?._tag === "starting") return { _tag: "signing-in", step: "opening", page: null };
   if (signIn?._tag === "waiting-for-browser") {
     return { _tag: "signing-in", step: "browser", page: signIn.url };
   }
-  const provider = aiAccountProvider(facts.engine, account);
+  const provider = providerOfAccount(facts.engine, account);
   const found =
-    facts.locations?.some((location) => location.harness === account && location.path !== null) ===
+    facts.locations?.some((location) => location.harness === harness && location.path !== null) ===
     true;
-  const copy = facts.engine?.harnesses?.[account];
+  const copy = facts.engine?.harnesses?.[harness];
   const reported: AiAccountState =
     provider !== undefined
       ? fromProvider(provider)
       : found
         ? { _tag: "sign-in", failed: null }
         : copy !== undefined
-          ? fromCopy(account, copy)
+          ? fromCopy(harness, copy)
           : { _tag: "preparing" };
   if (reported._tag !== "sign-in") return reported;
   if (signIn?._tag === "succeeded") {
-    return facts.spent?.has(account) === true ? reported : { _tag: "finishing" };
+    return facts.spent?.has(providerId) === true ? reported : { _tag: "finishing" };
   }
   return signIn?._tag === "failed" ? { _tag: "sign-in", failed: signIn.reason } : reported;
 };
 
-/** Every account's state. */
+/** The first account of each harness's state, as the first run offers them. */
 export const aiAccountStates = (facts: AiFacts): Readonly<Record<AiAccount, AiAccountState>> => ({
-  "claude-code": aiAccountState("claude-code", facts),
-  codex: aiAccountState("codex", facts),
+  "claude-code": aiAccountState(firstAccountOf("claude-code"), facts),
+  codex: aiAccountState(firstAccountOf("codex"), facts),
 });
 
 /**
@@ -352,7 +368,7 @@ export const connectStepSaysProgress = (engine: EngineStatus | null): boolean =>
   if (aiOutage(engine) !== null) return true;
   const facts: AiFacts = { engine, locations: null, signIns: new Map() };
   return aiAccounts.some((account) => {
-    const { _tag } = aiAccountState(account, facts);
+    const { _tag } = aiAccountState(firstAccountOf(account), facts);
     return _tag === "getting" || _tag === "checking";
   });
 };

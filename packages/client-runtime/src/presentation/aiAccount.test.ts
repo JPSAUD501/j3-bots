@@ -8,7 +8,7 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import type { SignInView } from "../stores/ProviderSetup.ts";
+import { firstAccountOf, type SignInView } from "../stores/ProviderSetup.ts";
 import {
   type AiAccount,
   aiAccountState,
@@ -42,13 +42,17 @@ const engineWith = (...providers: ReadonlyArray<ProviderStatus>): EngineStatus =
   providers,
 });
 
+const first = firstAccountOf;
+
 const facts = (
   engine: EngineStatus | null,
   signIns: ReadonlyArray<readonly [AiAccount, SignInView]> = [],
   found: ReadonlyArray<AiAccount> = [],
 ): AiFacts => ({
   engine,
-  signIns: new Map(signIns),
+  signIns: new Map(
+    signIns.map(([account, view]) => [firstAccountOf(account).providerId, view] as const),
+  ),
   locations: found.map((harness) => ({ harness, path: `/opt/${harness}` })),
 });
 
@@ -67,7 +71,7 @@ describe("where an AI account stands", () => {
   it("is the sign-in the operator is doing, whatever the engine still says of the provider", () => {
     const engine = engineWith(provider("claude-code", signedOut));
     expect(
-      aiAccountState("claude-code", facts(engine, [["claude-code", { _tag: "starting" }]])),
+      aiAccountState(first("claude-code"), facts(engine, [["claude-code", { _tag: "starting" }]])),
     ).toEqual({
       _tag: "signing-in",
       step: "opening",
@@ -75,7 +79,7 @@ describe("where an AI account stands", () => {
     });
     const page = "https://example.com/oauth/authorize";
     const waiting = { _tag: "waiting-for-browser", url: page, opened: true } as const;
-    expect(aiAccountState("claude-code", facts(engine, [["claude-code", waiting]]))).toEqual({
+    expect(aiAccountState(first("claude-code"), facts(engine, [["claude-code", waiting]]))).toEqual({
       _tag: "signing-in",
       step: "browser",
       page,
@@ -84,11 +88,11 @@ describe("where an AI account stands", () => {
 
   it("is finishing between a sign-in that succeeded and the engine's next check, then connected", () => {
     const done = [["codex", { _tag: "succeeded", endpoint: null }]] as const;
-    expect(aiAccountState("codex", facts(engineWith(provider("codex", signedOut)), done))).toEqual({
+    expect(aiAccountState(first("codex"), facts(engineWith(provider("codex", signedOut)), done))).toEqual({
       _tag: "finishing",
     });
     expect(
-      aiAccountState("codex", facts(engineWith(provider("codex", { _tag: "ready" })), done)),
+      aiAccountState(first("codex"), facts(engineWith(provider("codex", { _tag: "ready" })), done)),
     ).toEqual({ _tag: "ready", limit: null });
   });
 
@@ -96,15 +100,15 @@ describe("where an AI account stands", () => {
     const done = [["codex", { _tag: "succeeded", endpoint: null }]] as const;
     const signedOutAgain = {
       ...facts(engineWith(provider("codex", signedOut)), done),
-      spent: new Set(["codex"] as const),
+      spent: new Set([first("codex").providerId]),
     };
-    expect(aiAccountState("codex", signedOutAgain)).toEqual({ _tag: "sign-in", failed: null });
+    expect(aiAccountState(first("codex"), signedOutAgain)).toEqual({ _tag: "sign-in", failed: null });
   });
 
   it("keeps why the last sign-in ended on the signed-out account, so it can be tried again", () => {
     const failed = [["codex", { _tag: "failed", reason: "timed-out" }]] as const;
     expect(
-      aiAccountState("codex", facts(engineWith(provider("codex", signedOut)), failed)),
+      aiAccountState(first("codex"), facts(engineWith(provider("codex", signedOut)), failed)),
     ).toEqual({ _tag: "sign-in", failed: "timed-out" });
   });
 
@@ -114,14 +118,12 @@ describe("where an AI account stands", () => {
       task: { _tag: "downloading", receivedBytes: 50, totalBytes: 200 },
     } as const;
     expect(
-      aiAccountState(
-        "claude-code",
+      aiAccountState(first("claude-code"),
         facts(engineWith(provider("claude-code", notInstalled, downloading))),
       ),
     ).toEqual({ _tag: "getting", task: "downloading", progress: 0.25 });
     expect(
-      aiAccountState(
-        "claude-code",
+      aiAccountState(first("claude-code"),
         facts(engineWith(provider("claude-code", notInstalled, noCopy))),
       ),
     ).toEqual({ _tag: "missing", canGet: true, failed: null, page: null });
@@ -130,15 +132,13 @@ describe("where an AI account stands", () => {
       last: { _tag: "failed", reason: "unreachable", at: DateTime.makeUnsafe(0) },
     };
     expect(
-      aiAccountState(
-        "claude-code",
+      aiAccountState(first("claude-code"),
         facts(engineWith(provider("claude-code", notInstalled, failed))),
       ),
     ).toEqual({ _tag: "missing", canGet: true, failed: "unreachable", page: null });
     // A machine the server installs no build for: the maker's own page.
     expect(
-      aiAccountState(
-        "codex",
+      aiAccountState(first("codex"),
         facts(engineWith(provider("codex", notInstalled, { ...noCopy, installable: false }))),
       ),
     ).toEqual({
@@ -156,9 +156,9 @@ describe("where an AI account stands", () => {
     };
     const checking = { _tag: "unavailable", checking: true } as const;
     expect(
-      aiAccountState("codex", facts(engineWith(provider("codex", checking, downloading)))),
+      aiAccountState(first("codex"), facts(engineWith(provider("codex", checking, downloading)))),
     ).toEqual({ _tag: "getting", task: "downloading", progress: 0.25 });
-    expect(aiAccountState("codex", facts(engineWith(provider("codex", checking))))).toEqual({
+    expect(aiAccountState(first("codex"), facts(engineWith(provider("codex", checking))))).toEqual({
       _tag: "checking",
     });
   });
@@ -171,7 +171,7 @@ describe("where an AI account stands", () => {
       harnesses: { "claude-code": copy, codex: noCopy },
     });
     const verifying: HarnessCopy = { ...noCopy, task: { _tag: "verifying" } };
-    expect(aiAccountState("claude-code", facts(starting(verifying)))).toEqual({
+    expect(aiAccountState(first("claude-code"), facts(starting(verifying)))).toEqual({
       _tag: "getting",
       task: "verifying",
       progress: null,
@@ -180,7 +180,7 @@ describe("where an AI account stands", () => {
       ...noCopy,
       last: { _tag: "failed", reason: "in-use", at: DateTime.makeUnsafe(0) },
     };
-    expect(aiAccountState("claude-code", facts(starting(held)))).toEqual({
+    expect(aiAccountState(first("claude-code"), facts(starting(held)))).toEqual({
       _tag: "missing",
       canGet: true,
       failed: "in-use",
@@ -188,12 +188,12 @@ describe("where an AI account stands", () => {
     });
     // Its copy installed before the engine is up: the account can sign in already.
     const installed: HarnessCopy = { ...noCopy, source: "j3", version: "2.1.330" };
-    expect(aiAccountState("claude-code", facts(starting(installed)))).toEqual({
+    expect(aiAccountState(first("claude-code"), facts(starting(installed)))).toEqual({
       _tag: "sign-in",
       failed: null,
     });
     // One the operator stopped waits for its button.
-    expect(aiAccountState("codex", facts(starting(installed)))).toEqual({
+    expect(aiAccountState(first("codex"), facts(starting(installed)))).toEqual({
       _tag: "missing",
       canGet: true,
       failed: null,
@@ -207,8 +207,8 @@ describe("where an AI account stands", () => {
       pinnedVersion: "0.1.11",
       providers: [],
     };
-    expect(aiAccountState("codex", facts(starting))).toEqual({ _tag: "preparing" });
-    expect(aiAccountState("codex", facts(starting, [], ["codex"]))).toEqual({
+    expect(aiAccountState(first("codex"), facts(starting))).toEqual({ _tag: "preparing" });
+    expect(aiAccountState(first("codex"), facts(starting, [], ["codex"]))).toEqual({
       _tag: "sign-in",
       failed: null,
     });
@@ -216,7 +216,7 @@ describe("where an AI account stands", () => {
 
   it("counts an account at its usage limit as connected", () => {
     const limited = engineWith(provider("claude-code", { _tag: "limited", resetsAt: null }));
-    expect(aiAccountState("claude-code", facts(limited))).toEqual({
+    expect(aiAccountState(first("claude-code"), facts(limited))).toEqual({
       _tag: "ready",
       limit: { resetsAt: null },
     });

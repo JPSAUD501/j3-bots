@@ -1214,6 +1214,8 @@ const sentences = {
     "Abra o J3 Bots no seu computador e entre por lá. Esta tela percebe sozinha.",
   "ai.signedOut.server":
     "Rode isto na máquina onde o J3 Bots está instalado. Esta tela percebe sozinha.",
+  "ai.signedOut.serverAdded":
+    "Entre nela pelo J3 Bots no computador onde ele está instalado. Esta tela percebe sozinha.",
   "ai.missing": "Ainda não baixado.",
   "ai.missing.failed.checksum":
     "O download veio corrompido, então nada foi instalado. Tente de novo.",

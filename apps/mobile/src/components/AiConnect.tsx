@@ -19,7 +19,7 @@ import {
   aiActionLabel,
   type AiTone,
 } from "@j3-bots/client-runtime/wording";
-import type { EngineStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderId } from "@j3-bots/contracts";
 import { Check, ChevronDown, ChevronRight, ExternalLink } from "lucide-react-native";
 import { type ReactNode, useEffect, useState } from "react";
 import { Linking, View } from "react-native";
@@ -50,7 +50,7 @@ export interface MobileAiConnect extends AiConnectModel {
   readonly engine: EngineStatus | null;
 }
 
-const noSignIns = new Map<AiAccount, never>();
+const noSignIns = new Map<ProviderId, never>();
 
 /** The accounts as this screen connects them. */
 export function useMobileAiConnect(engine: EngineStatus | null): MobileAiConnect {

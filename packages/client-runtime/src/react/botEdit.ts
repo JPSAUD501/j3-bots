@@ -8,15 +8,16 @@ import {
   type EffortChoices,
   effortChoices,
   editsAfterFailedBotSave,
-  type ModelChoices,
-  modelChoices,
+  fastRun,
   noBotEdits,
+  pickUnavailable,
   type ProfileField,
   sameModel,
   withChanges,
   withHiddenEdit,
   withProfileEdit,
 } from "../presentation/botEdit.ts";
+import { botAccountState, type ModelSetting } from "../presentation/modelPicker.ts";
 import { type SaveProblem, shownSaveProblem } from "../presentation/saves.ts";
 
 /** Why a profile field cannot be saved as it is. */
@@ -29,6 +30,13 @@ export interface BotEdit {
   readonly job: string;
   readonly avatar: Avatar;
   readonly model: ModelChoice;
+  /** The model with the effort and fast mode it runs at, as the picker shows them. */
+  readonly setting: ModelSetting;
+  /**
+   * Where the account of the model shown stands: removed, turned off, or
+   * neither (`botAccountState`), for the notice beside the picker.
+   */
+  readonly account: "ok" | "gone" | "off";
   readonly permissionMode: PermissionMode;
   /** Among the hidden conversations rather than in the roster's list. */
   readonly hidden: boolean;
@@ -37,7 +45,6 @@ export interface BotEdit {
   readonly fieldProblem: (field: ProfileField) => ProfileFieldProblem | null;
   /** The latest save's problem, while it shows. */
   readonly problem: SaveProblem | null;
-  readonly choices: ModelChoices;
   /** The effort shown for the model the form holds, and the levels it takes. */
   readonly effort: EffortChoices;
   /** The model picked, or the one the bot runs on, is one the engine no longer offers. */
@@ -51,9 +58,9 @@ export interface BotEdit {
   /** What Save sends, or null while it cannot. */
   readonly changes: BotChanges | null;
   readonly editText: (field: ProfileField, value: string) => void;
-  readonly edit: (
-    change: Partial<Pick<BotEdits, "avatar" | "model" | "effort" | "permissionMode" | "hidden">>,
-  ) => void;
+  readonly edit: (change: Partial<Pick<BotEdits, "avatar" | "permissionMode" | "hidden">>) => void;
+  /** Takes what the operator picked in the model picker. */
+  readonly editModel: (setting: ModelSetting) => void;
 }
 
 /**
@@ -100,13 +107,14 @@ export function useBotEdit(options: {
   const permissionMode = edits.permissionMode ?? shown.permissionMode;
   const patch = botPatch(bot, edits, engine);
   const problem = shownSaveProblem(save, !failureShown);
-  const choices = modelChoices(engine, bot.model, edits.model);
+  const unavailablePick = pickUnavailable(engine, bot.model, edits.model);
   const effort = effortChoices(
     engine,
     model,
     edits.effort === null ? shown.effort : edits.effort.level,
   );
-  const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
+  const fast = fastRun(engine, model, edits.fast ?? shown.fast);
+  const canSave = patch._tag === "changes" && !unavailablePick && !saving && connected;
 
   return {
     name,
@@ -114,6 +122,8 @@ export function useBotEdit(options: {
     job: edits.job ?? shown.profile.job,
     avatar: edits.avatar ?? shown.profile.avatar,
     model,
+    setting: { model, effort: effort.shown, fast },
+    account: botAccountState(engine, model),
     permissionMode,
     hidden: edits.hidden ?? shown.hidden,
     saving,
@@ -124,13 +134,13 @@ export function useBotEdit(options: {
           ? "required"
           : "too-long",
     problem,
-    choices,
     effort,
-    modelUnavailable: problem === "model" || choices.pickUnavailable,
+    modelUnavailable: problem === "model" || unavailablePick,
     settingsChange:
       !sameModel(model, bot.model) ||
       permissionMode !== bot.permissionMode ||
-      (patch._tag === "changes" && patch.changes.effort !== undefined),
+      (patch._tag === "changes" &&
+        (patch.changes.effort !== undefined || patch.changes.fast !== undefined)),
     providerChange: model.providerId !== bot.model.providerId,
     unsaved: patch._tag !== "unchanged",
     changes: canSave && patch._tag === "changes" ? patch.changes : null,
@@ -148,6 +158,15 @@ export function useBotEdit(options: {
           ? next
           : withHiddenEdit(next, hidden, bot.hidden);
       });
+      setFailureShown(false);
+    },
+    editModel: (setting) => {
+      setEdits((current) => ({
+        ...current,
+        model: setting.model,
+        effort: { level: setting.effort },
+        fast: setting.fast,
+      }));
       setFailureShown(false);
     },
   };

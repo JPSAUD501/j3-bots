@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ModelChoice, ProviderId } from "@j3-bots/contracts";
+import { defaultModel, type EngineStatus, type ModelChoice, type ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,33 +19,6 @@ export interface RuntimeLabels {
 const HARNESS_LABELS = { "claude-code": "Claude Code", codex: "Codex" } as const;
 
 /**
- * Which provider a new bot lands on when none is named, lowest first: one
- * that runs it now, one that will once its limit resets, one a command
- * connects, one the engine is still checking, and last one whose harness is
- * not installed yet. J3 Bots installs a missing harness itself as the server
- * starts (docs/decisions/0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md),
- * and the engine lists Claude Code's catalog even before it is there
- * (**Read** at `bc0f04d`, `checkClaudeProviderStatus` in `ClaudeProvider.ts`),
- * so the operator's first bot is made while its AI still downloads, and says
- * hello once it runs. One the engine found and cannot run, as a harness that
- * failed to start or a provider turned off, never: a bot put on it would
- * wait for a provider nothing is bringing.
- */
-const defaultRank = (status: EngineStatus["providers"][number]["status"]): number | null => {
-  switch (status._tag) {
-    case "ready":
-      return 0;
-    case "limited":
-      return 1;
-    case "sign-in-required":
-      return 2;
-    case "unavailable":
-      if (status.checking) return 3;
-      return status.reason === "not-installed" ? 4 : null;
-  }
-};
-
-/**
  * Whether `status` reports the provider ready. One it does not report, as
  * while the engine is down or right after it started, is not: nothing says it
  * can run a turn.
@@ -56,27 +29,13 @@ export const providerReady = (status: EngineStatus, providerId: ProviderId): boo
   );
 
 /**
- * The model of a bot created without one, in `status`: the first model of the
- * first ready provider; with none ready, of the first that lists a model and
- * may still run it, as `defaultRank` orders them. A first bot is not refused
- * for want of a connected provider, or of one still being downloaded: its
- * hello waits for one, and it moves to the default model once that model's
- * provider is ready (`Bots.adoptDefaults`), which is how a bot made on
+ * The model of a bot created without one, in `status` (`defaultModel`). Its
+ * hello waits for the provider, and it moves to the default model once that
+ * model's provider is ready (`Bots.adoptDefaults`), which is how a bot made on
  * Claude's catalog ends up on ChatGPT when that is the account signed in.
  */
-export const defaultModelIn = (status: EngineStatus): Option.Option<ModelChoice> => {
-  let best: { readonly rank: number; readonly model: ModelChoice } | null = null;
-  for (const provider of status.providers) {
-    const model = provider.models[0];
-    if (model === undefined) continue;
-    const rank = defaultRank(provider.status);
-    if (rank === null) continue;
-    if (best === null || rank < best.rank) {
-      best = { rank, model: { providerId: provider.id, modelId: model.id } };
-    }
-  }
-  return Option.fromNullishOr(best?.model);
-};
+export const defaultModelIn = (status: EngineStatus): Option.Option<ModelChoice> =>
+  Option.fromNullishOr(defaultModel(status));
 
 /**
  * The engine's latest status, kept current, for the decisions that read it

@@ -112,7 +112,7 @@ function useAiText(ai: WebAiConnect, account: AiAccountModel): AiAccountText {
     {
       engine: ai.engine,
       place: ai.place,
-      signIn: ai.setup?.signIns.get(account.account),
+      signIn: ai.setup?.signIns.get(account.account.providerId),
       queued: account.queued,
     },
     usePresentation(),

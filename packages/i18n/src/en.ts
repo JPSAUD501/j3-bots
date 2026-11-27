@@ -1207,6 +1207,8 @@ export const en = {
     "Open J3 Bots on your computer and sign in there. This screen notices on its own.",
   "ai.signedOut.server":
     "Run this on the machine where J3 Bots is installed. This screen notices on its own.",
+  "ai.signedOut.serverAdded":
+    "Sign in to it from J3 Bots on the computer it’s installed on. This screen notices on its own.",
   "ai.missing": "Not downloaded yet.",
   "ai.missing.failed.checksum":
     "The download came out damaged, so nothing was installed. Try again.",

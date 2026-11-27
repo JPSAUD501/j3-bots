@@ -2,7 +2,9 @@
 import {
   type BotTemplate,
   BotTemplateFile,
+  defaultModel,
   defaultPermissionMode,
+  type EffortLevel,
   type EngineStatus,
   fileBytes,
   MAX_TEMPLATE_FILE_SIZE,
@@ -159,7 +161,9 @@ export const sharedTemplate = ({ text, url, files }: Shared): SharedFile | null 
 export type TemplateModel =
   /** The template's own, which the engine offers. */
   | { readonly _tag: "template"; readonly choice: ModelChoice; readonly name: string }
-  /** The template's is not offered here: the first one the engine can run takes its place. */
+  /** The one the operator picked in its place. */
+  | { readonly _tag: "picked"; readonly choice: ModelChoice; readonly name: string }
+  /** The template's is not offered here: the one a new bot gets (`defaultModel`) takes its place. */
   | {
       readonly _tag: "replaced";
       readonly choice: ModelChoice;
@@ -196,21 +200,24 @@ const modelName = (engine: EngineStatus, choice: ModelChoice): string | null => 
  * The model and permission mode the preview shows for `template`. The client
  * sends the model as chosen, so the server creates the bot on what was shown,
  * and the mode only if the operator changes it (`templateSubmission`). The
- * template's model when the engine offers it; otherwise the first model of
- * the first provider that is ready, or with none ready, of one that lists
- * models.
+ * model the operator `picked`, while the engine offers it; else the
+ * template's, where the engine offers it; otherwise the one a new bot gets.
  */
 export const templateStart = (
   template: BotTemplate,
   engine: EngineStatus | null,
+  picked: ModelChoice | null = null,
 ): TemplateStart => {
   const none = startWith({ _tag: "none" }, "supervised", template);
   if (engine === null) return none;
+  const pickedName = picked === null ? null : modelName(engine, picked);
   const own = modelName(engine, template.model);
   const model: ChosenModel | null =
-    own !== null
-      ? { _tag: "template", choice: template.model, name: own }
-      : replacement(engine, template.model);
+    picked !== null && pickedName !== null
+      ? { _tag: "picked", choice: picked, name: pickedName }
+      : own !== null
+        ? { _tag: "template", choice: template.model, name: own }
+        : replacement(engine, template.model);
   if (model === null) return none;
   return startWith(
     model,
@@ -223,27 +230,42 @@ export const templateStart = (
 export interface TemplateSubmission {
   readonly template: BotTemplate;
   readonly model: ModelChoice;
+  readonly effort?: EffortLevel;
+  readonly fast?: true;
   readonly permissionMode?: PermissionMode;
 }
 
+/** What the operator picked in the preview; null or off for what they left alone. */
+export interface TemplatePicks {
+  readonly permissionMode: PermissionMode | null;
+  /** A level of the model shown, or null for its default. */
+  readonly effort: EffortLevel | null;
+  readonly fast: boolean;
+}
+
+export const noTemplatePicks: TemplatePicks = { permissionMode: null, effort: null, fast: false };
+
 /**
- * What Create sends from the preview: the model it showed, and the permission
- * mode only when the operator picked one. Left untouched, the mode is the
- * server's to decide as the preview did (`templatePermissionMode`), from the
- * model's default when the bot is made, never a copy of what the preview
- * worked out before. Null while there is no model to make the bot on.
+ * What Create sends from the preview: the model it showed, with the effort
+ * and fast mode the operator picked for it, and the permission mode only
+ * when they picked one. Left untouched, the mode is the server's to decide
+ * as the preview did (`templatePermissionMode`), from the model's default
+ * when the bot is made, never a copy of what the preview worked out before.
+ * Null while there is no model to make the bot on.
  */
 export const templateSubmission = (
   template: BotTemplate,
   start: TemplateStart,
-  picked: PermissionMode | null,
+  picks: TemplatePicks,
 ): TemplateSubmission | null =>
   start.model._tag === "none"
     ? null
     : {
         template,
         model: start.model.choice,
-        ...(picked === null ? {} : { permissionMode: picked }),
+        ...(picks.effort === null ? {} : { effort: picks.effort }),
+        ...(picks.fast ? { fast: true } : {}),
+        ...(picks.permissionMode === null ? {} : { permissionMode: picks.permissionMode }),
       };
 
 const startWith = (
@@ -260,14 +282,8 @@ const startWith = (
 };
 
 const replacement = (engine: EngineStatus, asked: ModelChoice): ChosenModel | null => {
-  const listing = engine.providers.filter((provider) => provider.models.length > 0);
-  const provider = listing.find((each) => each.status._tag === "ready") ?? listing[0];
-  const model = provider?.models[0];
-  if (provider === undefined || model === undefined) return null;
-  return {
-    _tag: "replaced",
-    choice: { providerId: provider.id, modelId: model.id },
-    name: `${provider.name} · ${model.name}`,
-    asked: asked.modelId,
-  };
+  const choice = defaultModel(engine);
+  const name = choice === null ? null : modelName(engine, choice);
+  if (choice === null || name === null) return null;
+  return { _tag: "replaced", choice, name, asked: asked.modelId };
 };

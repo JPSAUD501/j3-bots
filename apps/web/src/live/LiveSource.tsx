@@ -519,8 +519,8 @@ function UpdatePromptHost({ blocked }: { blocked: boolean }) {
 const localProviderSetup = (j3: J3Client): ProviderSetupIntents | undefined =>
   desktop?.mode === "local"
     ? {
-        signIn: (harness) =>
-          j3.signIn(harness, (url) => {
+        signIn: (account) =>
+          j3.signIn(account, (url) => {
             window.open(url, "_blank", "noopener");
           }),
         cancelSignIn: j3.cancelSignIn,
@@ -881,6 +881,7 @@ function LiveShell({
   const harnessesSave = useReadable(j3.settingsSaves.harnesses);
   const voiceSave = useReadable(j3.settingsSaves.voice);
   const usageDataSave = useReadable(j3.settingsSaves["usage-data"]);
+  const favoritesSave = useReadable(j3.settingsSaves.favorites);
   const devices = useDevices();
   const conversation = useConversation(target);
   // The teammate conversation the address names, and every pair the roster lists.
@@ -1283,6 +1284,7 @@ function LiveShell({
       harnesses: harnessesSave,
       voice: voiceSave,
       "usage-data": usageDataSave,
+      favorites: favoritesSave,
     },
     settingsOpen,
     settingsPage,

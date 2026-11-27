@@ -683,6 +683,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
             modelId: ModelId.make("claude-sonnet-5-5"),
           },
           effort: null,
+          fast: false,
           permissionMode: "supervised",
           primary,
           browser: false,
@@ -819,6 +820,15 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
               settingsSaves: {
                 ...s.settingsSaves,
                 "usage-data": { _tag: "saved", changes: change.changes },
+              },
+            };
+          case "favorites":
+            return {
+              ...s,
+              settings: { ...s.settings, ...change.changes },
+              settingsSaves: {
+                ...s.settingsSaves,
+                favorites: { _tag: "saved", changes: change.changes },
               },
             };
         }
@@ -1077,6 +1087,7 @@ export function useSampleSource({
         harnesses: { _tag: "idle" },
         voice: { _tag: "idle" },
         "usage-data": { _tag: "idle" },
+        favorites: { _tag: "idle" },
       },
       settingsOpen: false,
       settingsPage: null,

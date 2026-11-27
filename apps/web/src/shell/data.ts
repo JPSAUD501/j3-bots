@@ -44,6 +44,7 @@ import type {
   PairBotIds,
   PairSeq,
   PromptArguments,
+  ProviderId,
   ReleaseVersion,
   RoomId,
   RosterItem,
@@ -51,7 +52,6 @@ import type {
   Section,
   SectionId,
   Settings,
-  SignInHarness,
   TeammatePair,
   UpdateChannel,
   WorkStep,
@@ -106,7 +106,7 @@ export interface ShellData {
   /** `engine` is what the server last reported, before this device lost the connection. */
   readonly engineStale: boolean;
   /** Each harness's sign-in this device follows (`ShellIntents.providerSetup`). */
-  readonly signIns: ReadonlyMap<SignInHarness, SignInView>;
+  readonly signIns: ReadonlyMap<ProviderId, SignInView>;
   /** Null until the roster first loads. */
   readonly roster: ReadonlyArray<RosterItem> | null;
   /**
