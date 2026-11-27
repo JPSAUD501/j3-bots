@@ -391,8 +391,8 @@ function Navigation({
   );
 }
 
-/** A dialog the page waits on, for the person using the page to answer. */
-function PageDialog({
+/** A dialog the page waits on, for the person using the page to answer: the wide viewer's and the live view's. */
+export function PageDialog({
   site,
   dialog,
   onAnswer,

@@ -7214,6 +7214,7 @@ function ShellFrame({
   initialPair = null,
   details = false,
   browser = false,
+  sharedBrowser = false,
   firstRun = false,
   engine,
 }: {
@@ -7223,10 +7224,14 @@ function ShellFrame({
   details?: boolean;
   /** The bot's browser open on its front tab. */
   browser?: boolean;
+  /** The server shares its tabs, so every tab is listed and the person may open and close them. */
+  sharedBrowser?: boolean;
   firstRun?: boolean;
   engine?: EngineStatus;
 }) {
-  const source = useSampleSource(engine === undefined ? { firstRun } : { firstRun, engine });
+  const source = useSampleSource(
+    engine === undefined ? { firstRun, sharedBrowser } : { firstRun, sharedBrowser, engine },
+  );
   const [selected, setSelected] = useState(initial);
   const [pair, setPair] = useState<{ botIds: PairBotIds; at: EntryId | null } | null>(
     initialPair === null ? null : { botIds: initialPair, at: null },
@@ -7298,7 +7303,14 @@ function ShellSection() {
           width={1440}
           height={800}
         >
-          <ShellFrame initial={scout} browser />
+          <ShellFrame initial={scout} browser sharedBrowser />
+        </Frame>
+        <Frame
+          label="Tablet, 900 px: Scout's browser covers the conversation, with the way back to it at the top; Back in the browser closes it too"
+          width={900}
+          height={640}
+        >
+          <ShellFrame initial={scout} browser sharedBrowser />
         </Frame>
         <Frame
           label="Tablet, 900 px: the name opens the details as a modal dialog over the conversation; Escape, the scrim or the close button returns to the title"
@@ -7323,7 +7335,21 @@ function ShellSection() {
             <ShellFrame initial={{ _tag: "bot", botId: ids.atlas }} />
           </Frame>
           <Frame
-            label="Phone: Scout's browser, a sheet over the conversation"
+            label="Phone: Scout's conversation ends with its page, live; scrolled up, See the browser shows over the top"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={scout} sharedBrowser />
+          </Frame>
+          <Frame
+            label="Phone: Scout's browser over the whole screen, its bar at the bottom: the tabs button lists every tab, with Undo after a close, and a swipe on the bar goes to the next tab"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={scout} browser sharedBrowser />
+          </Frame>
+          <Frame
+            label="Phone: a server from before shared tabs: only Scout's tabs, none opened or closed here"
             width={390}
             height={760}
           >

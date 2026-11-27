@@ -36,6 +36,9 @@ import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
+import { BrowserPill, LiveCard } from "../browser/live/LiveCard";
+import { LiveView } from "../browser/live/LiveView";
+import { NeedsYouTitle } from "../browser/live/NeedsYouTitle";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
@@ -623,7 +626,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                       drafting,
                     }}
                     recordScreen={writes ? recordScreenIn(intents.recordScreen, target) : null}
-                    {...(browserBot === null
+                    {...(browserBot === null || layout !== "wide"
                       ? {}
                       : {
                           turnExtra: (
@@ -635,8 +638,19 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                         })}
                   />
                 </AppStageProvider>
+                {/* Below the wide layout, the phone's live card ends the bot's conversation while it browses. */}
+                {browserBot !== null && layout !== "wide" && (
+                  <LiveCard botId={browserBot.id} onOpen={navigation.setBrowser} />
+                )}
               </div>
             </div>
+            {browserBot !== null && layout !== "wide" && (
+              <BrowserPill
+                botId={browserBot.id}
+                shown={!end.atEnd}
+                onOpen={navigation.setBrowser}
+              />
+            )}
             <ToLatest
               end={end}
               onPress={() => scrollToEnd(timeline)}
@@ -698,18 +712,33 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       </>
     );
     if (browserBot !== null && browserTarget !== null) {
-      details = (
-        <BrowserViewer
-          // One viewer per bot: another bot's browser opens afresh.
-          key={browserBot.id}
-          bot={browserBot}
-          target={browserTarget}
-          onClose={() => navigation.setBrowser(null)}
-          headingRef={detailsHeadingRef}
-          headingId={detailsHeadingId}
-          ref={viewerRef}
-        />
-      );
+      // Below the wide layout, the browser is the phone's live view; beside the conversation, the viewer.
+      details =
+        layout === "wide" ? (
+          <BrowserViewer
+            // One viewer per bot: another bot's browser opens afresh.
+            key={browserBot.id}
+            bot={browserBot}
+            target={browserTarget}
+            onClose={() => navigation.setBrowser(null)}
+            headingRef={detailsHeadingRef}
+            headingId={detailsHeadingId}
+            ref={viewerRef}
+          />
+        ) : (
+          <LiveView
+            key={browserBot.id}
+            bot={browserBot}
+            target={browserTarget}
+            beside={layout === "tablet"}
+            onClose={() => navigation.setBrowser(null)}
+            send={intents.sendQuickMessage}
+            onConversation={(botId) => navigation.select({ _tag: "bot", botId })}
+            headingRef={detailsHeadingRef}
+            headingId={detailsHeadingId}
+            ref={viewerRef}
+          />
+        );
     } else if (detailsOpen) {
       const close = () => navigation.setDetailsOpen(false);
       if (item._tag === "bot") {
@@ -796,6 +825,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
 
   return (
     <RosterProvider roster={rosterItems} engine={data.engine}>
+      <NeedsYouTitle />
       <BotCardProvider intents={cardIntents}>
         <BrowserProvider source={browser}>
           <AvatarConnection connected={data.connected}>

@@ -7,14 +7,19 @@ import {
   Cell,
   type Loaded,
 } from "@j3-bots/client-runtime";
+import { usesPage } from "@j3-bots/client-runtime/presentation";
 import {
   type BotId,
+  BROWSER_PERSON_HOLD_MS,
   type BrowserController,
   type BrowserInput,
   type BrowserTab,
+  type BrowserTabHolder,
   BrowserTabRef,
-  type DeviceId,
+  DeviceId,
+  type SharedBrowserTab,
 } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import type { BrowserSource } from "../browser/source";
 
 /** The sample page's size in CSS pixels. */
@@ -25,12 +30,34 @@ const PICTURE_EVERY = 800;
 const CURSOR_EVERY = 1_400;
 
 interface SampleTab {
-  readonly tab: Cell<BrowserTab>;
+  readonly ref: BrowserTabRef;
+  /** The bot on the tab; null on one the person opened. */
+  readonly botId: BotId | null;
+  url: string;
+  title: string;
+  /** Who controls it, on a server from before shared tabs. */
+  controller: BrowserController;
+  /** The person asked the tab's bots to wait for them, on a sharing server. */
+  waiting: boolean;
+  /** When the person last used the page, on a sharing server. */
+  lastInputAt: number | null;
   /** What the operator typed into the page's search field. */
   typed: string;
   /** The row the bot looks at, which moves as it reads. */
   row: number;
 }
+
+const shopTab = (ref: BrowserTabRef, botId: BotId | null): SampleTab => ({
+  ref,
+  botId,
+  url: "https://www.trailhead.example/search?q=trail+runner",
+  title: "Trail runner – Trailhead Outfitters",
+  controller: "bot",
+  waiting: false,
+  lastInputAt: null,
+  typed: "",
+  row: 0,
+});
 
 const rowsOf = ["Trail runner 2, size 42", "Trail runner 2, size 43", "Trail runner 3, size 42"];
 
@@ -49,6 +76,8 @@ const drawPage = async (
   context.scale(scale, scale);
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, PAGE.width, PAGE.height);
+  // A tab the person opened with no address is a blank page.
+  if (sample.url === "") return encoded(canvas, quality);
   context.fillStyle = "#1f2a44";
   context.fillRect(0, 0, PAGE.width, 72);
   context.fillStyle = "#ffffff";
@@ -70,61 +99,119 @@ const drawPage = async (
     context.fillStyle = index === 1 ? "#b42318" : "#067647";
     context.fillText(index === 1 ? "Out of stock" : "In stock", 1000, top + 46);
   });
+  return encoded(canvas, quality);
+};
+
+const encoded = async (canvas: OffscreenCanvas, quality: number): Promise<Uint8Array> => {
   const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: quality / 100 });
   return new Uint8Array(await blob.arrayBuffer());
 };
 
+/** The device the gallery's sharing sample takes itself to be. */
+const SAMPLE_DEVICE = DeviceId.make("sample-device");
+
 /**
- * Development's and the gallery's stand-in for the server's browser: each bot
- * in `botIds` has one tab on a sample shop. The sample bot reads it, moving
- * its pointer over the rows, until the operator takes control; then what
- * they type shows in the page's search field.
+ * Development's and the gallery's stand-in for the server's browser. Each
+ * bot in `botIds` has a tab on a sample shop, which it reads, moving its
+ * pointer over the rows, until the person uses the page; then what they type
+ * shows in the page's search field. With `shared`, it is a server that
+ * shares its tabs: every tab is listed, the first bot has a second one, and
+ * the person opens and closes tabs; without, one from before, where a tab is
+ * taken and given back.
  */
-export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
-  const tabs = new Map<BotId, SampleTab>(
-    botIds.map((botId) => [
-      botId,
-      {
-        tab: new Cell<BrowserTab>({
-          ref: BrowserTabRef.make(`tab_sample_${botId}`),
-          botId,
-          url: "https://www.trailhead.example/search?q=trail+runner",
-          title: "Trail runner – Trailhead Outfitters",
-          loading: false,
-          controller: "bot",
-          front: true,
-        }),
-        typed: "",
-        row: 0,
-      },
-    ]),
-  );
-  const byRef = (ref: BrowserTabRef) =>
-    [...tabs.values()].find((sample) => sample.tab.get().ref === ref) ?? null;
-  const setController = (sample: SampleTab, controller: BrowserController) =>
-    sample.tab.update((tab) => ({ ...tab, controller }));
+export function sampleBrowser(
+  botIds: ReadonlyArray<BotId>,
+  { shared = false }: { readonly shared?: boolean } = {},
+): BrowserSource {
+  const samples = new Map<BrowserTabRef, SampleTab>();
+  const add = (sample: SampleTab) => samples.set(sample.ref, sample);
+  for (const botId of botIds) add(shopTab(BrowserTabRef.make(`tab_sample_${botId}`), botId));
+  const [first] = botIds;
+  if (shared && first !== undefined) {
+    add({
+      ...shopTab(BrowserTabRef.make(`tab_sample_${first}_2`), first),
+      url: "https://www.trailhead.example/delivery",
+      title: "Delivery – Trailhead Outfitters",
+      row: 1,
+    });
+  }
+  // Anything that changes a tab ticks this, which every list and view reads.
+  const changed = new Cell(0);
+  const change = () => changed.update((n) => n + 1);
+  let opened = 0;
+
+  const heldBy = (sample: SampleTab): BrowserTabHolder | null => {
+    if (sample.waiting) return { kind: "person", device: SAMPLE_DEVICE, until: null };
+    if (sample.lastInputAt === null || Date.now() >= sample.lastInputAt + BROWSER_PERSON_HOLD_MS) {
+      return null;
+    }
+    return {
+      kind: "person",
+      device: SAMPLE_DEVICE,
+      until: DateTime.makeUnsafe(sample.lastInputAt + BROWSER_PERSON_HOLD_MS),
+    };
+  };
+  const held = (sample: SampleTab) =>
+    shared ? heldBy(sample) !== null : sample.controller !== "bot";
+  const sharedTab = (sample: SampleTab): SharedBrowserTab => ({
+    ref: sample.ref,
+    url: sample.url,
+    title: sample.title,
+    loading: false,
+    where: { kind: "server" },
+    openedBy:
+      sample.botId === null
+        ? { kind: "person", device: SAMPLE_DEVICE }
+        : { kind: "bot", botId: sample.botId },
+    onIt: sample.botId === null ? [] : [sample.botId],
+    acting: sample.botId !== null && !held(sample) ? sample.botId : null,
+    heldBy: heldBy(sample),
+    dialog: null,
+    private: false,
+  });
+  const botTab = (sample: SampleTab, botId: BotId, front: boolean): BrowserTab => ({
+    ref: sample.ref,
+    botId,
+    url: sample.url,
+    title: sample.title,
+    loading: false,
+    controller: sample.controller,
+    front,
+  });
+  const botTabs = (botId: BotId): ReadonlyArray<BrowserTab> => {
+    const own = [...samples.values()].filter((sample) => sample.botId === botId);
+    return own.map((sample, index) => botTab(sample, botId, index === own.length - 1));
+  };
+  /** A list that reads the samples again on every change, until released. */
+  const listOf = <A>(read: () => ReadonlyArray<A>) => {
+    const state = new Cell<Loaded<ReadonlyArray<A>>>({
+      _tag: "ready",
+      value: read(),
+      stale: false,
+    });
+    const stop = changed.subscribe(() => state.set({ _tag: "ready", value: read(), stale: false }));
+    return { state, release: stop };
+  };
 
   return {
-    pairing: new Cell<DeviceId | null>(null),
-    // A server from before shared tabs: one tab per bot, taken and given back.
-    sharedBrowser: new Cell(false),
-    openBrowserTabs: (botId) => {
-      const sample = tabs.get(botId);
-      const state = new Cell<Loaded<ReadonlyArray<BrowserTab>>>({
-        _tag: "ready",
-        value: sample === undefined ? [] : [sample.tab.get()],
-        stale: false,
-      });
-      const stop =
-        sample === undefined
-          ? () => {}
-          : sample.tab.subscribe(() =>
-              state.set({ _tag: "ready", value: [sample.tab.get()], stale: false }),
-            );
-      return { state, release: stop };
+    pairing: new Cell<DeviceId | null>(shared ? SAMPLE_DEVICE : null),
+    sharedBrowser: new Cell(shared),
+    openBrowserTabs: (botId) => listOf(() => botTabs(botId)),
+    openAllBrowserTabs: () => listOf(() => [...samples.values()].map(sharedTab)),
+    openBrowserTab: (url) => {
+      opened += 1;
+      const ref = BrowserTabRef.make(`tab_sample_opened_${opened}`);
+      add({ ...shopTab(ref, null), url: url ?? "", title: "" });
+      change();
+      return Promise.resolve({ _tag: "done", value: ref });
+    },
+    closeBrowserTab: (ref) => {
+      samples.delete(ref);
+      change();
+      return Promise.resolve({ _tag: "done", value: undefined });
     },
     openBrowserView: ({ ref, size }): BrowserViewHandle => {
-      const sample = byRef(ref);
+      const sample = samples.get(ref) ?? null;
       const state = new Cell<BrowserViewState>({
         status: { _tag: "connecting" },
         viewport: null,
@@ -157,14 +244,21 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
         (asked.maxHeight ?? PAGE.height) / PAGE.height,
         1,
       );
-      const controllerHere = (): BrowserController => sample.tab.get().controller;
-      const showControl = () =>
+      const controllerHere = (): BrowserController =>
+        shared ? (heldBy(sample) === null ? "bot" : "you") : sample.controller;
+      const showControl = () => {
+        // A tab closed while the view is open is gone.
+        if (!samples.has(sample.ref)) {
+          state.set({ ...state.get(), status: { _tag: "gone" } });
+          return;
+        }
         state.set({
           status: { _tag: "live" },
           viewport: PAGE,
           control: { controller: controllerHere(), generation, dialog: null },
         });
-      stopTab = sample.tab.subscribe(showControl);
+      };
+      stopTab = changed.subscribe(showControl);
       const sendPicture = () =>
         void drawPage(sample, scale, asked.quality ?? 70).then((jpeg) => {
           if (closed || jpeg === null) return;
@@ -175,12 +269,12 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
         showControl();
         sendPicture();
       }, 300);
-      // The bot reads the rows one after another while it holds the tab.
+      // The bot reads the rows one after another while nobody else holds the tab.
       const read = () => {
-        if (controllerHere() === "bot") {
+        if (sample.botId !== null && !held(sample)) {
           sample.row = (sample.row + 1) % rowsOf.length;
           cursor.set({
-            botId: sample.tab.get().botId,
+            botId: sample.botId,
             action: sample.row === 2 ? "click" : "move",
             x: 400 + sample.row * 60,
             y: 234 + sample.row * 96,
@@ -211,22 +305,35 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
           },
           send: (input: BrowserInput) => {
             if (sample === null) return;
+            if (shared && usesPage(input)) {
+              // The person's hold lasts from each input; once it ends, the lists say so.
+              sample.lastInputAt = Date.now();
+              later(change, BROWSER_PERSON_HOLD_MS + 50);
+            }
             switch (input.type) {
               case "take":
                 generation += 1;
-                setController(sample, "you");
+                if (shared) sample.waiting = true;
+                else sample.controller = "you";
+                change();
                 return;
               case "release":
                 generation += 1;
-                setController(sample, "bot");
+                if (shared) {
+                  sample.waiting = false;
+                  if (input.idle !== true) sample.lastInputAt = null;
+                } else sample.controller = "bot";
+                change();
                 return;
               case "text":
                 sample.typed += input.text;
+                change();
                 return;
               case "key":
                 if (input.action === "down" && input.key === "Backspace") {
                   sample.typed = sample.typed.slice(0, -1);
                 }
+                change();
                 return;
               case "probe":
                 probe.set({
@@ -237,6 +344,7 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
                 });
                 return;
               default:
+                change();
                 return;
             }
           },

@@ -1,37 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BrowserCursor, BrowserViewHandle } from "@j3-bots/client-runtime";
+import type { BrowserViewHandle } from "@j3-bots/client-runtime";
 import type { BotId, BrowserInput } from "@j3-bots/contracts";
 import {
   useEffect,
   useEffectEvent,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useBots } from "../app/context";
 import { cn } from "../lib/cn";
-import { BotCursor } from "./BotCursor";
-import {
-  buttonOf,
-  buttonsOf,
-  type KeyLike,
-  keyFrame,
-  LEAVE_PAGE_KEY,
-  modifiersOf,
-  pagePoint,
-  type Size,
-  textFrames,
-  wheelDelta,
-} from "./input";
+import { BotCursors } from "./BotCursors";
+import { PageField } from "./PageField";
+import { buttonOf, buttonsOf, modifiersOf, pagePoint, type Size, wheelDelta } from "./input";
 
 /** Two presses this close in time and place are one double click. */
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_PX = 5;
 /** A touch that moves this far is a scroll, not a tap. */
 const TOUCH_SLOP = 8;
-/** A bot's pointer folds its name to its face once it has stood still this long. */
-const NAME_FOR_MS = 2_000;
 
 interface SurfaceProps {
   readonly view: BrowserViewHandle;
@@ -53,12 +39,6 @@ interface SurfaceProps {
   /** The operator pressed the key that leaves the page. */
   readonly onLeave: () => void;
 }
-
-/**
- * What the text field holds between keys: one character a phone's keyboard
- * can delete, since it sends Backspace on an empty field to nobody.
- */
-const SENTINEL = "\u200B";
 
 /** The largest size of `aspect` that fits in `box`. */
 const contain = (box: Size, aspect: number): Size =>
@@ -334,60 +314,6 @@ export function BrowserSurface({
     if (!usable && document.activeElement === field.current) field.current?.blur();
   }, [usable]);
 
-  const keyOf = (event: ReactKeyboardEvent<HTMLTextAreaElement>): KeyLike => ({
-    key: event.key,
-    code: event.code,
-    altKey: event.altKey,
-    ctrlKey: event.ctrlKey,
-    metaKey: event.metaKey,
-    shiftKey: event.shiftKey,
-    isComposing: event.nativeEvent.isComposing,
-    keyCode: event.keyCode,
-    altGraph: event.getModifierState("AltGraph"),
-  });
-  const onKey = (action: "down" | "up") => (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!usable) return;
-    if (
-      action === "down" &&
-      event.key === LEAVE_PAGE_KEY &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey
-    ) {
-      event.preventDefault();
-      onLeave();
-      return;
-    }
-    const key = keyFrame(keyOf(event), action);
-    if (key === null) return;
-    // The page takes the key, the app's own shortcuts and the browser's do not.
-    event.preventDefault();
-    send(key);
-  };
-  const typed = (text: string) => {
-    for (const frame of textFrames(text.replaceAll(SENTINEL, ""))) send(frame);
-  };
-  const pressKey = (key: string, code: string, keyCode: number, text?: string) => {
-    for (const action of ["down", "up"] as const) {
-      send({
-        type: "key",
-        action,
-        key,
-        code,
-        ...(text !== undefined && action === "down" ? { text } : {}),
-        keyCode,
-        modifiers: 0,
-      });
-    }
-  };
-  const clear = () => {
-    const target = field.current;
-    if (target === null) return;
-    target.value = SENTINEL;
-    target.setSelectionRange(SENTINEL.length, SENTINEL.length);
-  };
-
   return (
     <div className="relative" style={{ width: fitted.width, height: fitted.height }}>
       <canvas
@@ -411,116 +337,14 @@ export function BrowserSurface({
       />
       <BotCursors view={view} viewport={viewport} onIt={onIt} faded={holding} />
       {usable && (
-        <textarea
+        <PageField
           ref={field}
-          data-browser-page=""
-          defaultValue={SENTINEL}
-          aria-label={label}
-          aria-description={description}
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onKeyDown={onKey("down")}
-          onKeyUp={onKey("up")}
-          onCompositionEnd={(event) => {
-            typed(event.data);
-            clear();
-          }}
-          onInput={(event) => {
-            const { nativeEvent } = event;
-            if (!(nativeEvent instanceof InputEvent) || nativeEvent.isComposing) return;
-            // A phone's keyboard often types, deletes and breaks lines without a key the page could take.
-            switch (nativeEvent.inputType) {
-              case "insertText":
-              case "insertReplacementText":
-                typed(nativeEvent.data ?? event.currentTarget.value);
-                break;
-              case "deleteContentBackward":
-                pressKey("Backspace", "Backspace", 8);
-                break;
-              case "insertLineBreak":
-                pressKey("Enter", "Enter", 13, "\r");
-                break;
-            }
-            clear();
-          }}
-          // The operator's clipboard and files stay theirs: nothing is pasted or dropped into the page.
-          onPaste={(event) => event.preventDefault()}
-          onDrop={(event) => event.preventDefault()}
-          className="pointer-events-none absolute start-0 top-0 size-px resize-none overflow-hidden border-0 p-0 opacity-0"
+          send={send}
+          label={label}
+          description={description}
+          onLeave={onLeave}
         />
       )}
     </div>
   );
-}
-
-interface ShownCursor {
-  readonly cursor: BrowserCursor;
-  /** The name shows from each move until the pointer has been still a while. */
-  readonly named: boolean;
-}
-
-/**
- * Each bot's pointer over the picture, where it last pointed, while the bot
- * is on the tab. A server before shared tabs names no bot: its pointer is
- * the tab's one bot's.
- */
-function BotCursors({
-  view,
-  viewport,
-  onIt,
-  faded,
-}: {
-  readonly view: BrowserViewHandle;
-  readonly viewport: Size | null;
-  readonly onIt: ReadonlyArray<BotId>;
-  readonly faded: boolean;
-}) {
-  const bots = useBots();
-  const [cursors, setCursors] = useState<ReadonlyMap<BotId, ShownCursor>>(new Map());
-  const whose = useEffectEvent((cursor: BrowserCursor) => cursor.botId ?? onIt[0] ?? null);
-  useEffect(() => {
-    const timers = new Map<BotId, number>();
-    const stop = view.onCursor((cursor) => {
-      const botId = whose(cursor);
-      if (botId === null) return;
-      setCursors((now) => new Map(now).set(botId, { cursor, named: true }));
-      window.clearTimeout(timers.get(botId));
-      timers.set(
-        botId,
-        window.setTimeout(
-          () =>
-            setCursors((now) => {
-              const shown = now.get(botId);
-              return shown === undefined
-                ? now
-                : new Map(now).set(botId, { ...shown, named: false });
-            }),
-          NAME_FOR_MS,
-        ),
-      );
-    });
-    return () => {
-      stop();
-      for (const timer of timers.values()) window.clearTimeout(timer);
-    };
-  }, [view]);
-  if (viewport === null || viewport.width === 0 || viewport.height === 0) return null;
-  return onIt.flatMap((botId) => {
-    const bot = bots.get(botId);
-    const shown = cursors.get(botId);
-    if (bot === undefined || shown === undefined) return [];
-    const { cursor, named } = shown;
-    return [
-      <BotCursor
-        key={botId}
-        bot={bot}
-        at={{ x: cursor.x / viewport.width, y: cursor.y / viewport.height }}
-        clicked={cursor.action === "click" && named ? cursor.sequence : null}
-        named={named}
-        faded={faded}
-      />,
-    ];
-  });
 }
