@@ -228,7 +228,8 @@ export const handlers = J3Rpcs.toLayer(
       "room.delete": (input) => rooms.remove(input),
       "room.stop": (input) => rooms.stop(input),
       "room.forceStop": (input) => rooms.forceStop(input),
-      "routines.subscribe": ({ botId, after }) => routines.subscribe(botId, after),
+      "routines.subscribe": ({ botId, after, withEvents }) =>
+        routines.subscribe(botId, after, withEvents ?? false),
       "routine.runs": (input) => routines.runs(input),
       "routine.create": ({ commandId, botId, ...draft }) =>
         routines.create({ commandId, botId, draft, author: operator }),

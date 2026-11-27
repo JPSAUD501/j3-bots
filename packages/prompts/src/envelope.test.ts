@@ -117,6 +117,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         { at: now, outcome: { type: "silent", note: s } },
       ],
       triggerData: s,
+      events: null,
       dueAt: now,
     },
     {
@@ -586,6 +587,7 @@ describe("renderWake", () => {
           { at: at("2026-11-17T11:03:00Z"), outcome: { type: "failed" } },
         ],
         triggerData: '{"action":"completed","conclusion":"failure"}',
+        events: null,
         dueAt: null,
       }),
     ).toMatchInlineSnapshot(`
@@ -623,6 +625,7 @@ describe("renderWake", () => {
         recentRunsLeftOut: false,
         recentRuns: [],
         triggerData: null,
+        events: null,
         // J3 Bots was not running at 08:03.
         dueAt: at("2026-11-20T11:03:00Z"),
       }),
@@ -652,6 +655,7 @@ describe("renderWake", () => {
       recentRunsLeftOut: true,
       recentRuns: [],
       triggerData: null,
+      events: null,
       dueAt: null,
     });
     expect(crowded).toContain("<recent-runs>\nEarlier runs were left out to fit.\n</recent-runs>");
@@ -667,11 +671,68 @@ describe("renderWake", () => {
       recentRunsLeftOut: true,
       recentRuns: [{ at: at("2026-11-19T11:03:00Z"), outcome: { type: "failed" } }],
       triggerData: null,
+      events: null,
       dueAt: null,
     });
     expect(trimmed).toContain(
       '<run at="2026-11-19 08:03" outcome="failed"/>\nOlder runs were left out to fit.\n</recent-runs>',
     );
+  });
+
+  it("renders an event run with each event as data, and a stopped event routine at the next turn", () => {
+    const eventRun = render({
+      kind: "routine",
+      at: now,
+      timeZone,
+      sinceLastTurn: [],
+      routine: {
+        id: Schema.decodeSync(RoutineId)("invoices"),
+        name: "Invoices",
+        trigger: { type: "event", connector: "Mail", event: "message_received" },
+        instruction: "Tell my user about invoices.",
+      },
+      runId: Schema.decodeSync(RoutineRunId)("run-1"),
+      recentRunsLeftOut: false,
+      recentRuns: [],
+      triggerData: null,
+      events: {
+        occurrences: [
+          {
+            name: "message_received",
+            at: at("2026-11-20T12:40:00Z"),
+            data: '{"subject":"Invoice 12"}',
+          },
+        ],
+        missed: true,
+      },
+      dueAt: null,
+    });
+    expect(eventRun).toContain('trigger="event" connector="Mail" event="message_received"');
+    expect(eventRun).toContain("Some events may have been missed before these");
+    expect(eventRun).toContain(
+      '<data-7f3a9c01b2d4 source="event" name="message_received" at="09:40">\n{"subject":"Invoice 12"}\n</data-7f3a9c01b2d4>',
+    );
+    const stopped = render({
+      kind: "user",
+      at: now,
+      timeZone,
+      sinceLastTurn: [
+        {
+          type: "routine-stopped",
+          routine: "Invoices",
+          routineId: Schema.decodeSync(RoutineId)("invoices"),
+          connector: "Mail",
+          at: at("2026-11-20T12:00:00Z"),
+          reason: "access-revoked",
+        },
+      ],
+      answer: null,
+      messages: [{ at: now, text: "hi", attachments: [], lookingAt: null }],
+    });
+    expect(stopped).toContain(
+      'J3 Bots stopped listening for routine "Invoices"\'s event: "Mail" no longer allows it',
+    );
+    expect(stopped).toContain("set_routine update with id invoices");
   });
 
   it("renders every system event", () => {

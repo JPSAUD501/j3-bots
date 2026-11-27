@@ -7,6 +7,7 @@ import { Attachment, AttachmentOffsets } from "./attachment.ts";
 import {
   BotId,
   CommandId,
+  ConnectorId,
   EntryId,
   EntryOrder,
   Label,
@@ -20,10 +21,10 @@ import {
 } from "./base.ts";
 import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
+import { ConnectorGlyph, ListingRef } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
-import { RoutineTrigger } from "./routine.ts";
+import { EVENT_STOP_REASONS, EventTrigger, OwnTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
 import { StepTool, TurnWork } from "./work.ts";
@@ -1016,10 +1017,47 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   routineId: RoutineId,
   name: Label,
   change: Schema.Literals(["created", "updated", "paused", "resumed", "deleted"]),
-  /** The trigger as saved by this change. */
-  trigger: RoutineTrigger,
+  /** The trigger as saved by this change: a schedule, a time or a webhook. */
+  trigger: OwnTrigger,
 });
 export type RoutineChangeEntry = typeof RoutineChangeEntry.Type;
+
+/** What can happen to a routine whose trigger is a connector's event, as its conversation shows it. */
+export const EVENT_ROUTINE_CHANGES = [
+  "created",
+  "updated",
+  "paused",
+  "resumed",
+  "deleted",
+  "stopped",
+] as const;
+
+/**
+ * A routine whose trigger is a connector's event was created or changed, by
+ * the bot or by the operator. A kind of its own, not `routine-change`: a
+ * client of protocol 11 built before 0.13.0 reads `routine-change`'s trigger
+ * as a schedule, a time or a webhook only, so it would refuse the whole
+ * conversation for one it does not know, while an entry of a kind it does not
+ * know it passes over (docs/architecture/clients.md, "Protocol compatibility").
+ */
+export const EventRoutineChangeEntry = Schema.TaggedStruct("event-routine-change", {
+  ...entry,
+  routineId: RoutineId,
+  name: Label,
+  /**
+   * As `routine-change`'s, and `stopped`: J3 Bots stopped listening for the
+   * event, for `stopped`'s reason. Open: a change a client does not know
+   * decodes as `unknown`.
+   */
+  change: OpenLiterals(EVENT_ROUTINE_CHANGES),
+  /** The trigger as saved by this change. */
+  trigger: EventTrigger,
+  /** The trigger's connector's name at this change; null when it was already removed. */
+  connector: Schema.NullOr(Label),
+  /** On a `stopped` change, why. */
+  stopped: Schema.optionalKey(OpenLiterals(EVENT_STOP_REASONS)),
+});
+export type EventRoutineChangeEntry = typeof EventRoutineChangeEntry.Type;
 
 export const Entry = Schema.Union([
   MessageEntry,
@@ -1035,6 +1073,7 @@ export const Entry = Schema.Union([
   NoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  EventRoutineChangeEntry,
 ]);
 export type Entry = typeof Entry.Type;
 
@@ -1091,6 +1130,7 @@ export const ReceivedEntry = Schema.Union([
   ReceivedNoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  EventRoutineChangeEntry,
   UnknownEntry,
 ]);
 export type ReceivedEntry = typeof ReceivedEntry.Type;
@@ -1125,6 +1165,7 @@ export const entryText = (entry: Entry): string => {
     case "connector-ask":
       return entry.name;
     case "routine-change":
+    case "event-routine-change":
       return entry.name;
     case "work-fold":
     case "notice":

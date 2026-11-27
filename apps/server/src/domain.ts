@@ -40,6 +40,7 @@ import * as RoomRouting from "./rooms/RoomRouting.ts";
 import * as Rooms from "./rooms/Rooms.ts";
 import * as Roster from "./roster/Roster.ts";
 import * as Sections from "./sections/Sections.ts";
+import * as RoutineEvents from "./routines/RoutineEvents.ts";
 import * as RoutineRunner from "./routines/RoutineRunner.ts";
 import * as RoutineRuns from "./routines/RoutineRuns.ts";
 import * as Routines from "./routines/Routines.ts";
@@ -111,6 +112,7 @@ export const layer = Layer.mergeAll(
       Rotations.layer,
       RunningWork.layer,
       RoutineRunner.layer,
+      RoutineEvents.layer,
       // The machine as the sign-ins see it: the `PATH` the server runs harnesses with.
       SignIns.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
     ),

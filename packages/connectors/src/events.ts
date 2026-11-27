@@ -36,20 +36,20 @@ export type DeliveryMode = typeof DeliveryMode.Type;
 const MAX_EVENT_NAME = 256;
 
 /** The most one listing takes, in events: the rest are left out. */
-export const MAX_LISTED_EVENTS = 200;
+const MAX_LISTED_EVENTS = 200;
 
 /** The most a webhook's body may take, in bytes, as the extension asks servers to keep it. */
 export const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
 
 /** How far a webhook's timestamp may be from now before it is refused, in seconds. */
-export const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
+const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 
 /**
  * An argument the server mirrors into an HTTP header (`x-mcp-header`), which
  * a request over HTTP must carry as `Mcp-Param-{header}`: at `path` in the
  * arguments, of a primitive `type`.
  */
-export interface ParamHeader {
+interface ParamHeader {
   readonly path: ReadonlyArray<string>;
   readonly header: string;
 }
@@ -76,7 +76,7 @@ const ListedEvent = Schema.Struct({
 const decodeListedEvent = Schema.decodeUnknownOption(ListedEvent);
 
 /** One page of `events/list`. */
-export const EventsPage = Schema.Struct({
+const EventsPage = Schema.Struct({
   events: Schema.Array(Schema.Unknown),
   nextCursor: Schema.optionalKey(Schema.String),
 });
@@ -123,9 +123,7 @@ const annotatedAnywhere = (value: Schema.Json | undefined): boolean => {
  * alike but for case. Such an event is left out of the listing, as the
  * extension asks.
  */
-export const paramHeadersOf = (
-  schema: Schema.JsonObject,
-): Option.Option<ReadonlyArray<ParamHeader>> => {
+const paramHeadersOf = (schema: Schema.JsonObject): Option.Option<ReadonlyArray<ParamHeader>> => {
   const found: Array<ParamHeader> = [];
   const seen = new Set<string>();
   const visit = (node: Schema.JsonObject, path: ReadonlyArray<string>): boolean => {
@@ -217,7 +215,7 @@ const BASE64_SUFFIX = "?=";
  * is when it is plain printable ASCII with no space at either end, else
  * wrapped as `=?base64?…?=`.
  */
-export const headerValue = (value: string): string => {
+const headerValue = (value: string): string => {
   const plain =
     value.length > 0 &&
     value === value.trim() &&
@@ -292,7 +290,7 @@ export const eventNameHeader = (body: unknown): Option.Option<string> => {
  * - `subscription-gone`: it no longer knows the subscription (`NotFound` of
  *   a subscription).
  */
-export const EVENT_REFUSALS = [
+const EVENT_REFUSALS = [
   "not-offered",
   "forbidden",
   "invalid",
@@ -355,7 +353,7 @@ const ErrorBody = Schema.Struct({
  * the extension does not define ends it as `forbidden`, the one meaning the
  * server keeps for an end it does not explain.
  */
-export const terminationOf = (error: typeof ErrorBody.Type): EventRefusal =>
+const terminationOf = (error: typeof ErrorBody.Type): EventRefusal =>
   Option.getOrElse(refusalOf(error.code, error.data), () => "forbidden");
 
 /** A cursor as sent: absent means null. */

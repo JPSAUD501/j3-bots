@@ -3,6 +3,7 @@ import {
   ApprovalDecision,
   type BotId,
   EntryId,
+  EventStopReason,
   type EntryTarget,
   QuestionAnswers,
   RoomId,
@@ -208,6 +209,14 @@ export const CatchUpNote = Schema.Union([
     changes: Schema.NonEmptyArray(
       Schema.Struct({ field: Schema.Literals(["name", "title", "job"]), value: Schema.String }),
     ),
+  }),
+  /** J3 Bots stopped listening for the connector's event an event routine runs on. */
+  Schema.TaggedStruct("routine-stopped", {
+    routine: Schema.String,
+    routineId: RoutineId,
+    connector: Schema.String,
+    at: Schema.DateTimeUtc,
+    reason: EventStopReason,
   }),
   /** The bot's main session was replaced; `digest` is what the new one is told of the conversation. */
   Schema.TaggedStruct("session-rotated", {

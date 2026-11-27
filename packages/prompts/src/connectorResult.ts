@@ -47,7 +47,7 @@ export type ConnectorResult =
 export type ConnectorData =
   | { readonly kind: "resource"; readonly uri: string }
   | { readonly kind: "prompt"; readonly name: string }
-  | { readonly kind: "listing"; readonly of: "resources" | "prompts" };
+  | { readonly kind: "listing"; readonly of: "resources" | "prompts" | "events" };
 
 /**
  * Why a connector gave no answer, as the bot is told:
@@ -165,6 +165,22 @@ export interface ListedPrompt {
   }>;
 }
 
+/**
+ * An event a connector's server says it can tell J3 Bots about (MCP's Events
+ * extension), as a bot reads it in a listing: what it takes and what each
+ * occurrence carries, as the JSON Schemas its server gave, written compactly.
+ */
+export interface ListedEvent {
+  readonly name: string;
+  readonly description: string;
+  /** The schema of what a routine's trigger asks for, as JSON. */
+  readonly arguments: string;
+  /** The schema of what each occurrence carries, as JSON, when its server gave one. */
+  readonly payload: string | null;
+  /** How its server can deliver it: J3 Bots picks one, the bot never does. */
+  readonly delivery: ReadonlyArray<string>;
+}
+
 /** The most characters of one connector's listing a bot reads. */
 export const MAX_LISTING_CHARACTERS = 20_000;
 
@@ -192,6 +208,12 @@ const promptLine = (prompt: ListedPrompt): string => {
   return `- ${prompt.name}${label}${about}${args}`;
 };
 
+const eventLine = (event: ListedEvent): string => {
+  const about = event.description === "" ? "" : `: ${event.description}`;
+  const payload = event.payload === null ? "" : ` [payload: ${event.payload}]`;
+  return `- ${event.name}${about} [arguments: ${event.arguments}]${payload} [delivery: ${event.delivery.join(", ")}]`;
+};
+
 /**
  * A connector's listing as the text of a `data` result: one line per item,
  * whole lines only, within {@link MAX_LISTING_CHARACTERS}.
@@ -199,10 +221,15 @@ const promptLine = (prompt: ListedPrompt): string => {
 export const listingText = (
   listing:
     | { readonly of: "resources"; readonly items: ReadonlyArray<ListedResource> }
-    | { readonly of: "prompts"; readonly items: ReadonlyArray<ListedPrompt> },
+    | { readonly of: "prompts"; readonly items: ReadonlyArray<ListedPrompt> }
+    | { readonly of: "events"; readonly items: ReadonlyArray<ListedEvent> },
 ): { readonly text: string; readonly cut: boolean } => {
   const lines =
-    listing.of === "resources" ? listing.items.map(resourceLine) : listing.items.map(promptLine);
+    listing.of === "resources"
+      ? listing.items.map(resourceLine)
+      : listing.of === "prompts"
+        ? listing.items.map(promptLine)
+        : listing.items.map(eventLine);
   const kept: Array<string> = [];
   let left = MAX_LISTING_CHARACTERS;
   for (const line of lines) {
@@ -219,4 +246,6 @@ export const NOTHING_LISTED = {
     "None of the connectors you can use now lists a resource that matches. A connector that is not connected lists nothing until it is.",
   prompts:
     "None of the connectors you can use now lists a prompt that matches. A connector that is not connected lists nothing until it is.",
+  events:
+    "None of the connectors you can use now offers an event that matches. A connector that is not connected lists nothing until it is; one whose server offers no events can only be checked on a schedule.",
 } as const;

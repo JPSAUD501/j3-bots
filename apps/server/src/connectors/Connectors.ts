@@ -13,8 +13,12 @@ import {
   CommandFailed,
   type ConnectorFailure,
   DEFAULT_SESSION_LIMITS,
+  type EventRefusal,
+  type EventsRefused,
+  type EventType,
   makeSupervisor,
   MAX_APP_RESOURCE_JSON_BYTES,
+  type McpEvents,
   type McpSession,
   NeedsSignIn,
   nextFailing,
@@ -82,6 +86,7 @@ import {
   type ConnectorResult,
   type ConnectorUnavailable,
   connectorToolDescription,
+  type ListedEvent,
   type ListedPrompt,
   type ListedResource,
   listingText,
@@ -223,6 +228,33 @@ export interface CalledTool extends ToolCallAnswer {
   readonly app: Option.Option<OpenedApp>;
 }
 
+/**
+ * What came of a request of a connector's events, made for a routine that
+ * listens for one: its answer; the server's refusal; `none` when its server
+ * offers no events at all; `unavailable` while J3 Bots cannot reach it, for
+ * the reason the bot would be told; `gone` once the connector is removed or
+ * no longer the bot's to use.
+ */
+export type EventsOutcome<A> =
+  | { readonly _tag: "done"; readonly value: A }
+  | { readonly _tag: "refused"; readonly reason: EventRefusal }
+  | { readonly _tag: "none" }
+  | { readonly _tag: "unavailable"; readonly reason: ConnectorUnavailable }
+  | { readonly _tag: "gone" };
+
+/** An event of a connector's, as a bot names it to set a routine on it. */
+export type EventLookup =
+  | { readonly _tag: "found"; readonly connector: ConnectorRef; readonly type: EventType }
+  /** Its server lists events, but none by that name. */
+  | { readonly _tag: "unknown"; readonly connector: ConnectorRef }
+  /** Its server offers no events. */
+  | { readonly _tag: "none"; readonly connector: ConnectorRef }
+  | {
+      readonly _tag: "unavailable";
+      readonly connector: ConnectorRef;
+      readonly reason: ConnectorUnavailable;
+    };
+
 /** The bot is offered no tool by that name, or no connector by that slug: none such, or not granted. */
 export class ToolNotOffered extends Schema.TaggedError<ToolNotOffered>()("ToolNotOffered", {}) {
   override get message(): string {
@@ -272,6 +304,33 @@ export class Connectors extends Context.Service<
       readonly slug?: string;
       readonly search?: string;
     }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * As {@link resources}, of the events their servers offer (MCP's Events
+     * extension): what each takes, carries, and how it can be delivered.
+     */
+    readonly events: (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /** The event `name` of the connector `slug` names, as its server lists it now for `botId`. */
+    readonly eventOf: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly name: string;
+    }) => Effect.Effect<EventLookup, ToolNotOffered>;
+    /**
+     * Runs `use` with the events of the connector `connectorId` names, through
+     * `botId`'s own session, while the bot may use the connector: what came of
+     * it, never a failure. A connector waiting on its operator (a sign-in, a
+     * secret) is not asked, so nothing that listens in the background shows
+     * them a card.
+     */
+    readonly withEvents: <A>(input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly use: (events: McpEvents) => Effect.Effect<A, ConnectorFailure | EventsRefused>;
+    }) => Effect.Effect<EventsOutcome<A>>;
     /** One prompt of the connector `slug` names, as its server writes it, for `botId`, framed for the bot. */
     readonly getPrompt: (input: {
       readonly botId: BotId;
@@ -1717,7 +1776,7 @@ export const layer = Layer.effect(
 
     /** Each connector's listing framed for the bot, one block each, or J3 Bots' line when there is none. */
     const framedListings = (
-      of: "resources" | "prompts",
+      of: "resources" | "prompts" | "events",
       listings: ReadonlyArray<{
         readonly connector: ConnectorRef;
         readonly listing: Parameters<typeof listingText>[0];
@@ -1795,6 +1854,121 @@ export const layer = Layer.effect(
           return Option.some<ConnectorUnavailable>(status._tag);
         case "failing":
           return Option.some<ConnectorUnavailable>("unreachable");
+      }
+    });
+
+    const withEvents = Effect.fn("Connectors.withEvents")(function* <A>(input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+      readonly use: (events: McpEvents) => Effect.Effect<A, ConnectorFailure | EventsRefused>;
+    }) {
+      const connector = (yield* grantedTo(input.botId)).find(
+        (granted) => granted.id === input.connectorId,
+      );
+      if (connector === undefined) return { _tag: "gone" } satisfies EventsOutcome<A>;
+      // A connector its last request found failing is asked again: that is
+      // how a listener finds it back. One that waits on the operator is not.
+      const blocked = yield* unusable(connector);
+      if (Option.isSome(blocked) && blocked.value !== "unreachable") {
+        return { _tag: "unavailable", reason: blocked.value } satisfies EventsOutcome<A>;
+      }
+      return yield* withSession(connector, input.botId, (session) =>
+        session.events === null
+          ? Effect.succeed<EventsOutcome<A>>({ _tag: "none" })
+          : input.use(session.events).pipe(
+              Effect.map((value): EventsOutcome<A> => ({ _tag: "done", value })),
+              Effect.catchTag("EventsRefused", (refused) =>
+                Effect.succeed<EventsOutcome<A>>({ _tag: "refused", reason: refused.reason }),
+              ),
+            ),
+      ).pipe(
+        Effect.catchTags({
+          ToolNotOffered: () => Effect.succeed<EventsOutcome<A>>({ _tag: "gone" }),
+          ConnectorUnavailableError: (failure) =>
+            Effect.succeed<EventsOutcome<A>>({ _tag: "unavailable", reason: failure.reason }),
+        }),
+      );
+    });
+
+    /** An event as a bot reads it in a listing. */
+    const listedEvent = (type: EventType): ListedEvent => ({
+      name: type.name,
+      description: type.description,
+      arguments: JSON.stringify(type.inputSchema),
+      payload: type.payloadSchema === null ? null : JSON.stringify(type.payloadSchema),
+      delivery: type.delivery,
+    });
+
+    const events = (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) =>
+      listingsOf(
+        input.botId,
+        input.slug,
+        (session) => session.events !== null,
+        (session) =>
+          session.events === null
+            ? Effect.succeed<ReadonlyArray<EventType>>([])
+            : // A server that refuses to list its events lists none.
+              session.events.list.pipe(
+                Effect.catchTag("EventsRefused", () =>
+                  Effect.succeed<ReadonlyArray<EventType>>([]),
+                ),
+              ),
+      ).pipe(
+        Effect.flatMap((listings) =>
+          framedListings(
+            "events",
+            matching(listings, input.search, (type: EventType) => [
+              type.name,
+              type.description,
+            ]).map(({ connector, items }) => ({
+              connector,
+              listing: { of: "events", items: items.map(listedEvent) },
+            })),
+          ),
+        ),
+      );
+
+    const eventOf = Effect.fn("Connectors.eventOf")(function* (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly name: string;
+    }) {
+      const connector = (yield* grantedTo(input.botId)).find(
+        (granted) => granted.slug === input.slug,
+      );
+      if (connector === undefined) return yield* new ToolNotOffered();
+      const ref = refOf(connector);
+      const listed = yield* withEvents({
+        botId: input.botId,
+        connectorId: connector.id,
+        use: (offered) => offered.list,
+      });
+      switch (listed._tag) {
+        case "done": {
+          const type = listed.value.find((offered) => offered.name === input.name);
+          return type === undefined
+            ? ({ _tag: "unknown", connector: ref } satisfies EventLookup)
+            : ({ _tag: "found", connector: ref, type } satisfies EventLookup);
+        }
+        case "gone":
+          return yield* new ToolNotOffered();
+        case "none":
+          return { _tag: "none", connector: ref } satisfies EventLookup;
+        case "refused":
+          // Its server refusing to list events offers none to set a routine on.
+          return listed.reason === "not-offered"
+            ? ({ _tag: "none", connector: ref } satisfies EventLookup)
+            : ({ _tag: "unavailable", connector: ref, reason: "failed" } satisfies EventLookup);
+        case "unavailable":
+          return {
+            _tag: "unavailable",
+            connector: ref,
+            reason: listed.reason,
+          } satisfies EventLookup;
       }
     });
 
@@ -2638,6 +2812,9 @@ export const layer = Layer.effect(
       resources,
       readResource,
       prompts,
+      events,
+      eventOf,
+      withEvents,
       getPrompt,
       menuPrompts,
       renderPrompt,

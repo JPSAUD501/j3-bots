@@ -34,7 +34,11 @@ const MAX_SKILL_BYTES = TEMPLATE_LIMITS.skillText * 4;
 
 const decodeSkill = Schema.decodeUnknownOption(TemplateSkill);
 
-/** A routine as a template carries it; none for a one-time routine, which never travels. */
+/**
+ * A routine as a template carries it; none for a one-time routine, which
+ * never travels, nor for one on a connector's event, whose connector is the
+ * operator's own.
+ */
 const templateRoutine = (routine: Routine): Option.Option<TemplateRoutine> => {
   const { name, instruction, trigger } = routine;
   switch (trigger._tag) {
@@ -43,6 +47,7 @@ const templateRoutine = (routine: Routine): Option.Option<TemplateRoutine> => {
     case "webhook":
       return Option.some({ name, instruction, trigger: { _tag: "webhook" } });
     case "once":
+    case "event":
       return Option.none();
   }
 };

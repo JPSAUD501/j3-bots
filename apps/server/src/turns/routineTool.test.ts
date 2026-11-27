@@ -21,6 +21,7 @@ import {
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
+import { eventArgumentsProblem } from "./routineTool.ts";
 
 const decodeRoutine = Schema.decodeUnknownSync(Schema.toCodecJson(Routine));
 
@@ -364,3 +365,23 @@ it.effect("rolls a refused call back whole, so a retry under its id acts once", 
     ]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it("refuses an event trigger missing what its event requires, or giving what it leaves out", () => {
+  const schema = {
+    type: "object",
+    properties: { from: { type: "string" }, constructor: { type: "string" } },
+    required: ["from", "constructor"],
+    additionalProperties: false,
+  };
+  assert.strictEqual(
+    eventArgumentsProblem(schema, { from: "ana@example.com" }),
+    "It requires constructor in arguments.",
+  );
+  assert.strictEqual(
+    eventArgumentsProblem(schema, { from: "a", constructor: "b", label: "c" }),
+    "It takes no label; its arguments are from, constructor.",
+  );
+  assert.isUndefined(eventArgumentsProblem(schema, { from: "a", constructor: "b" }));
+  // A schema that leaves its properties open takes any argument.
+  assert.isUndefined(eventArgumentsProblem({ type: "object" }, { label: "c" }));
+});

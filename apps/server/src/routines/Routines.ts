@@ -3,6 +3,7 @@ import {
   type Author,
   BotId,
   type CommandError,
+  type EventTrigger,
   type CommandId,
   EntryId,
   NonNegativeInt,
@@ -68,6 +69,12 @@ const RoutineRow = Schema.Struct({
   next_run_at: Schema.NullOr(Time),
   run_count: NonNegativeInt,
   missed_json: Schema.NullOr(Schema.String),
+  /** Whether J3 Bots listens for an event routine's event (`routine_event_listeners`). */
+  listen_state: Schema.NullOr(Schema.Literals(["listening", "waiting", "stopped"])),
+  listen_reason: Schema.NullOr(Schema.String),
+  listen_since: Schema.NullOr(Time),
+  /** An event routine's connector's name; null for any other routine, or once it is removed. */
+  connector_name: Schema.NullOr(Schema.String),
 });
 
 const RunRow = Schema.Struct({
@@ -87,7 +94,23 @@ const decodeRoutine = Schema.decodeUnknownEffect(Routine);
 const decodeMissed = Schema.decodeOption(json(RoutineMissed));
 const encodeTrigger = Schema.encodeEffect(json(RoutineTrigger));
 
-/** Whether two triggers are the same: the same schedule, time or webhook. */
+/** A JSON value with each object's keys in order, as text: equal values give equal text. */
+const canonicalJson = (value: Schema.Json): string =>
+  JSON.stringify(value, (_key, inner: unknown) =>
+    typeof inner === "object" && inner !== null && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner,
+  );
+
+/**
+ * What an event trigger listens for: its connector, its event and what it
+ * asks for, not the words it is shown in. A listener is kept while its
+ * routine's trigger keeps this key.
+ */
+const eventTriggerKey = (trigger: EventTrigger): string =>
+  canonicalJson([trigger.connectorId, trigger.name, trigger.arguments]);
+
+/** Whether two triggers are the same: the same schedule, time, webhook or event, in the same words. */
 const sameTrigger = (a: RoutineTrigger, b: RoutineTrigger): boolean => {
   switch (a._tag) {
     case "schedule":
@@ -96,6 +119,10 @@ const sameTrigger = (a: RoutineTrigger, b: RoutineTrigger): boolean => {
       return b._tag === "once" && DateTime.Equivalence(a.at, b.at);
     case "webhook":
       return b._tag === "webhook";
+    case "event":
+      return (
+        b._tag === "event" && eventTriggerKey(a) === eventTriggerKey(b) && a.summary === b.summary
+      );
   }
 };
 
@@ -174,10 +201,15 @@ export class Routines extends Context.Service<
       readonly commandId: CommandId;
       readonly routineId: RoutineId;
     }) => Effect.Effect<void, CommandError>;
-    /** Resumes with `after` as `Entries.subscribe` does. */
+    /**
+     * Resumes with `after` as `Entries.subscribe` does. Without `withEvents`,
+     * for a client built before routines ran on a connector's event, such
+     * routines are left out, and one that becomes one is sent as removed.
+     */
     readonly subscribe: (
       botId: BotId,
       after: Sequence | null,
+      withEvents: boolean,
     ) => Stream.Stream<RoutineFrame, NotFound>;
   }
 >()("@j3-bots/server/routines/Routines") {}
@@ -253,7 +285,14 @@ export const layer = Layer.effect(
 
     const SELECT = sql.literal(`
       SELECT id, bot_id, name, instruction, trigger_json, enabled, webhook_secret, next_run_at,
-        run_count, missed_json
+        run_count, missed_json,
+        (SELECT state FROM routine_event_listeners WHERE routine_id = routines.id) AS listen_state,
+        (SELECT stop_reason FROM routine_event_listeners WHERE routine_id = routines.id)
+          AS listen_reason,
+        (SELECT state_since FROM routine_event_listeners WHERE routine_id = routines.id)
+          AS listen_since,
+        (SELECT c.name FROM connectors c
+          WHERE c.id = json_extract(routines.trigger_json, '$.connectorId')) AS connector_name
       FROM routines
     `);
     const RUNS = sql.literal(`
@@ -342,6 +381,23 @@ export const layer = Layer.effect(
       } satisfies RoutineRun;
     }, Effect.orDie);
 
+    /** Whether J3 Bots listens for the event of a routine on one that is on; none for any other. */
+    const listeningOf = (row: typeof RoutineRow.Type) => {
+      const { listen_state: state, listen_since: since, listen_reason: reason } = row;
+      if (!row.enabled || row.trigger_json._tag !== "event" || state === null || since === null) {
+        return {};
+      }
+      switch (state) {
+        case "listening":
+          return { listening: { _tag: "listening" } };
+        case "waiting":
+          return { listening: { _tag: "waiting", since } };
+        case "stopped":
+          // The table holds a reason for every stop.
+          return reason === null ? {} : { listening: { _tag: "stopped", reason, since } };
+      }
+    };
+
     const toRoutine = Effect.fn("Routines.toRoutine")(function* (row: typeof RoutineRow.Type) {
       const [last] = yield* runRows({ routineId: row.id, before: null, limit: 1 });
       return yield* decodeRoutine({
@@ -361,6 +417,8 @@ export const layer = Layer.effect(
         // Missed runs another version of the server wrote in a form this one
         // cannot read are left out.
         missed: row.missed_json === null ? null : Option.getOrNull(decodeMissed(row.missed_json)),
+        ...listeningOf(row),
+        ...(row.trigger_json._tag === "event" ? { connectorName: row.connector_name } : {}),
       });
     }, Effect.orDie);
 
@@ -383,7 +441,11 @@ export const layer = Layer.effect(
       if (rows.length === 0) return yield* new NotFound({ resource: "bot" });
     });
 
-    /** Records the change and shows it in the bot's conversation. */
+    /**
+     * Records the change and shows it in the bot's conversation: a routine on
+     * a connector's event as an entry of its own kind, which a client built
+     * before such routines passes over.
+     */
     const announce = Effect.fn("Routines.announce")(function* (
       routine: Routine,
       change: "created" | "updated" | "paused" | "resumed" | "deleted",
@@ -394,17 +456,52 @@ export const layer = Layer.effect(
         routine.id,
         change === "deleted",
       );
+      const { trigger } = routine;
+      const common = { author, routineId: routine.id, name: routine.name, change } as const;
       yield* entries.append({
         target: { _tag: "conversation", botId: routine.botId },
-        entry: {
-          _tag: "routine-change",
-          author,
-          routineId: routine.id,
-          name: routine.name,
-          change,
-          trigger: routine.trigger,
-        },
+        entry:
+          trigger._tag === "event"
+            ? {
+                _tag: "event-routine-change",
+                ...common,
+                trigger,
+                connector: routine.connectorName ?? null,
+              }
+            : { _tag: "routine-change", ...common, trigger },
       });
+    });
+
+    /**
+     * Sets the routine's listener for its event anew: from now, with nothing
+     * of an earlier one's kept, events waiting to run included. A routine
+     * with another trigger has none.
+     */
+    const listenAnew = Effect.fn("Routines.listenAnew")(function* (
+      routineId: RoutineId,
+      trigger: RoutineTrigger,
+      now: DateTime.Utc,
+    ) {
+      yield* sql`DELETE FROM routine_event_pending WHERE routine_id = ${routineId}`;
+      if (trigger._tag !== "event") {
+        yield* sql`DELETE FROM routine_event_listeners WHERE routine_id = ${routineId}`;
+        return;
+      }
+      const at = timeText(now);
+      yield* sql`
+        INSERT INTO routine_event_listeners (
+          routine_id, trigger_key, cursor, missed, state, stop_reason, state_since,
+          webhook_token, webhook_secret, subscription_id, refresh_before, updated_at
+        ) VALUES (
+          ${routineId}, ${eventTriggerKey(trigger)}, NULL, 0, 'waiting', NULL, ${at},
+          NULL, NULL, NULL, NULL, ${at}
+        )
+        ON CONFLICT (routine_id) DO UPDATE SET
+          trigger_key = excluded.trigger_key, cursor = NULL, missed = 0, state = 'waiting',
+          stop_reason = NULL, state_since = excluded.state_since, webhook_token = NULL,
+          webhook_secret = NULL, subscription_id = NULL, refresh_before = NULL,
+          updated_at = excluded.updated_at
+      `;
     });
 
     const create = Effect.fn("Routines.create")(function* (input: {
@@ -438,6 +535,7 @@ export const layer = Layer.effect(
               ${Option.match(next, { onNone: () => null, onSome: timeText })}, ${at}, ${at}
             )
           `;
+          yield* listenAnew(id, input.draft.trigger, now);
           const routine = yield* find(id);
           yield* announce(routine, "created", input.author);
           yield* scheduler.nudge;
@@ -503,6 +601,22 @@ export const layer = Layer.effect(
             })}
             WHERE id = ${before.id}
           `;
+          // An event routine listens anew from now when it is turned back on,
+          // and when given an event to listen for, unless it listens for that
+          // one already: a bot setting it again after J3 Bots stopped
+          // listening starts it again too.
+          const newEvent =
+            change.trigger?._tag === "event" &&
+            (before.trigger._tag !== "event" ||
+              eventTriggerKey(change.trigger) !== eventTriggerKey(before.trigger) ||
+              before.listening?._tag === "stopped" ||
+              !before.enabled);
+          if (retriggered || newEvent || (enabled && !before.enabled)) {
+            yield* listenAnew(before.id, trigger, now);
+          } else if (!enabled) {
+            // What arrived before the pause runs nothing once it is lifted.
+            yield* sql`DELETE FROM routine_event_pending WHERE routine_id = ${before.id}`;
+          }
           const routine = yield* find(before.id);
           const kind =
             change.enabled !== undefined && change.enabled !== before.enabled
@@ -612,7 +726,21 @@ export const layer = Layer.effect(
       );
     });
 
-    const subscribe = (botId: BotId, after: Sequence | null) =>
+    /** A frame as a client that reads no event routines is sent it. */
+    const withoutEvents = (frame: RoutineFrame): RoutineFrame => {
+      const own = (routine: Routine) => routine.trigger._tag !== "event";
+      if (frame._tag === "snapshot") return { ...frame, routines: frame.routines.filter(own) };
+      return {
+        ...frame,
+        upsert: frame.upsert.filter(own),
+        remove: [
+          ...frame.remove,
+          ...frame.upsert.filter((routine) => !own(routine)).map((routine) => routine.id),
+        ],
+      };
+    };
+
+    const subscribe = (botId: BotId, after: Sequence | null, withEvents: boolean) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const signals = yield* changes.subscribe;
@@ -642,7 +770,7 @@ export const layer = Layer.effect(
                 }),
               ),
             ),
-          );
+          ).pipe(Stream.map((frame) => (withEvents ? frame : withoutEvents(frame))));
         }),
       );
 

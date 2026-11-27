@@ -12,7 +12,7 @@ import {
   NOTHING_LISTED,
   renderConnectorResultWithNonce,
 } from "./connectorResult.ts";
-import { renderWakeWithNonce, type Wake } from "./envelope.ts";
+import { type CatchUpItem, renderWakeWithNonce, type Wake } from "./envelope.ts";
 import {
   BASE_TEMPLATE,
   BOT_TEMPLATE,
@@ -63,6 +63,16 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { type: "routine-delivered", routine: "Routine", at, text: "text" },
       { type: "held-message", message },
       { type: "profile-changed", changes: [{ field: "job", value: "text" }] },
+      ...(["access-revoked", "event-gone", "connector-gone", "refused"] as const).map(
+        (reason): CatchUpItem => ({
+          type: "routine-stopped",
+          routine: "Routine",
+          routineId: Schema.decodeSync(RoutineId)("routine"),
+          connector: "Connector",
+          at,
+          reason,
+        }),
+      ),
       {
         type: "session-rotated",
         digest: [
@@ -158,9 +168,27 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       recentRuns,
       recentRunsLeftOut,
       triggerData: "text",
+      events: null,
       dueAt: at,
     })),
   ),
+  // A run on a connector's event: what arrived, and whether some was missed.
+  ...[false, true].map((missed): Wake => ({
+    ...base,
+    kind: "routine",
+    routine: {
+      id: Schema.decodeSync(RoutineId)("routine"),
+      name: "Routine",
+      trigger: { type: "event", connector: "Connector", event: "event" },
+      instruction: "text",
+    },
+    runId: Schema.decodeSync(RoutineRunId)("run"),
+    recentRuns: [],
+    recentRunsLeftOut: false,
+    triggerData: null,
+    events: { occurrences: [{ name: "event", at, data: "{}" }], missed },
+    dueAt: null,
+  })),
   ...[false, true].flatMap((askName) =>
     [false, true].map((fromTemplate): Wake => ({
       ...base,
@@ -253,6 +281,25 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
           description: "text",
           arguments: [{ name: "topic", description: "text", required: true }],
         },
+      ],
+    }),
+  },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "listing", of: "events" },
+    ...listingText({
+      of: "events",
+      items: [
+        {
+          name: "event",
+          description: "text",
+          arguments: '{"type":"object"}',
+          payload: '{"type":"object"}',
+          delivery: ["poll", "push", "webhook"],
+        },
+        { name: "event", description: "", arguments: "{}", payload: null, delivery: ["poll"] },
       ],
     }),
   },

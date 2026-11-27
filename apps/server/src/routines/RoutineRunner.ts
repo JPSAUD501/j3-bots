@@ -15,6 +15,7 @@ import {
   PROMPT_VERSION,
   renderWake,
   type RoutineRunSummary,
+  type RoutineEvents,
   type RoutineWake,
   type RoutineTrigger as EnvelopeTrigger,
 } from "@j3-bots/prompts";
@@ -56,6 +57,7 @@ import { stopTargets } from "../turns/stopTargets.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
+import { EventRunDataJson } from "./eventRuns.ts";
 import { dueToTell, RoutineRuns } from "./RoutineRuns.ts";
 import { recordRunFailure } from "./runFailure.ts";
 
@@ -78,8 +80,12 @@ const Attempt = Schema.Struct({
   name: Label,
   instruction: RoutineInstruction,
   trigger_json: json(RoutineTrigger),
+  /** For a trigger on a connector's event, the connector's name; null once it is removed. */
+  connector_name: Schema.NullOr(Schema.String),
 });
 type Attempt = typeof Attempt.Type;
+
+const decodeEventRun = Schema.decodeUnknownOption(EventRunDataJson);
 
 const SideSession = Schema.Struct({
   id: SessionRowId,
@@ -117,7 +123,7 @@ type Step =
   | "unavailable"
   | { readonly _tag: "until"; readonly at: DateTime.Utc | null };
 
-const envelopeTrigger = (trigger: RoutineTrigger): EnvelopeTrigger => {
+const envelopeTrigger = (trigger: RoutineTrigger, connector: string | null): EnvelopeTrigger => {
   switch (trigger._tag) {
     case "schedule":
       return { type: "schedule", cron: trigger.cron };
@@ -125,8 +131,20 @@ const envelopeTrigger = (trigger: RoutineTrigger): EnvelopeTrigger => {
       return { type: "once" };
     case "webhook":
       return { type: "webhook" };
+    case "event":
+      return { type: "event", connector: connector ?? "a removed connector", event: trigger.name };
   }
 };
+
+/**
+ * What a run on a connector's event was started for, from its trigger data;
+ * data this server cannot read says only that events may have been missed.
+ */
+const eventsOf = (data: string | null): RoutineEvents =>
+  Option.match(decodeEventRun(data), {
+    onNone: () => ({ occurrences: [], missed: true }),
+    onSome: (run) => ({ occurrences: run.events, missed: run.missed }),
+  });
 
 const clipped = (text: string) =>
   text.length <= RECENT_RUN_TEXT ? text : `${text.slice(0, RECENT_RUN_TEXT)}…`;
@@ -185,7 +203,11 @@ export const layer = Layer.effect(
 
     const attemptRows = sql`
       SELECT w.id AS wake_id, w.bot_id, r.id AS run_id, r.retry_at, r.trigger_data, r.due_at,
-        r.started_at, ro.id AS routine_id, ro.name, ro.instruction, ro.trigger_json
+        r.started_at, ro.id AS routine_id, ro.name, ro.instruction, ro.trigger_json,
+        (
+          SELECT c.name FROM connectors c
+          WHERE c.id = json_extract(ro.trigger_json, '$.connectorId')
+        ) AS connector_name
       FROM wakes w
       JOIN routine_runs r ON r.wake_id = w.id
       JOIN routines ro ON ro.id = r.routine_id
@@ -336,11 +358,15 @@ export const layer = Layer.effect(
         routine: {
           id: attempt.routine_id,
           name: attempt.name,
-          trigger: envelopeTrigger(attempt.trigger_json),
+          trigger: envelopeTrigger(attempt.trigger_json, attempt.connector_name),
           instruction: attempt.instruction,
         },
         runId: attempt.run_id,
-        triggerData: attempt.trigger_data,
+        // A run on an event carries the events, framed each on its own, in
+        // place of a webhook's body.
+        ...(attempt.trigger_json._tag === "event"
+          ? { triggerData: null, events: eventsOf(attempt.trigger_data) }
+          : { triggerData: attempt.trigger_data, events: null }),
         dueAt: dueToTell(due, now, timeZone),
       } as const;
       for (let count = recent.length; count > 0; count--) {

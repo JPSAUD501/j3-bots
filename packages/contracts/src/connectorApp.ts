@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { BotId, Label } from "./base.ts";
-import { ConnectorId } from "./connector.ts";
+import { BotId, ConnectorId, Label } from "./base.ts";
 
 // A connector's app: the interface an MCP server gives one of its tools (the
 // MCP Apps extension, `io.modelcontextprotocol/ui`, at its 2026-01-26

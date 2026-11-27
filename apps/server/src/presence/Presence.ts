@@ -80,6 +80,7 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "work-fold":
     case "notice":
     case "routine-change":
+    case "event-routine-change":
       return null;
   }
 };

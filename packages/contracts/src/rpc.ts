@@ -9,6 +9,7 @@ import {
   AttachmentId,
   BotId,
   CommandId,
+  ConnectorId,
   DeviceId,
   EffortLevel,
   EntryId,
@@ -28,7 +29,6 @@ import {
   Connector,
   ConnectorFieldValues,
   ConnectorGrant,
-  ConnectorId,
   ConnectorListing,
   ConnectorListingDetails,
   ConnectorPrompt,
@@ -76,7 +76,7 @@ import {
 } from "./memory.ts";
 import { PairBotIds, PairSeq, TeammateMessage, TeammatePair } from "./pair.ts";
 import { Room, RoomMembers, RoomName } from "./room.ts";
-import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
+import { OwnTrigger, Routine, RoutineInstruction, RoutineRun } from "./routine.ts";
 import {
   HarnessLocation,
   ProviderConnectionOutcome,
@@ -665,9 +665,15 @@ export const TeammatePairRpcs = RpcGroup.make(
 );
 
 export const RoutineRpcs = RpcGroup.make(
-  /** Resumes with `after` like `entries.subscribe`. */
+  /**
+   * Resumes with `after` like `entries.subscribe`. `withEvents` says the
+   * client reads a routine whose trigger is a connector's event: without it,
+   * as from a client built before 0.13.0, whose triggers are a closed set,
+   * the server leaves such routines out, and sends one that becomes one as
+   * removed. A server built before ignores the field, and has none.
+   */
   Rpc.make("routines.subscribe", {
-    payload: { botId: BotId, ...after },
+    payload: { botId: BotId, ...after, withEvents: Schema.optionalKey(Schema.Boolean) },
     success: Schema.Union([
       Schema.TaggedStruct("snapshot", { sequence: Sequence, routines: Schema.Array(Routine) }),
       Schema.TaggedStruct("changed", {
@@ -695,7 +701,8 @@ export const RoutineRpcs = RpcGroup.make(
       botId: BotId,
       name: Routine.fields.name,
       instruction: RoutineInstruction,
-      trigger: RoutineTrigger,
+      /** A client sets J3 Bots' own triggers only: a connector's event is the bot's to choose. */
+      trigger: OwnTrigger,
     },
     success: Routine,
     error: CommandError,
@@ -706,7 +713,8 @@ export const RoutineRpcs = RpcGroup.make(
       routineId: RoutineId,
       name: Schema.optionalKey(Routine.fields.name),
       instruction: Schema.optionalKey(RoutineInstruction),
-      trigger: Schema.optionalKey(RoutineTrigger),
+      /** As `routine.create`'s: a connector's event is the bot's to set. */
+      trigger: Schema.optionalKey(OwnTrigger),
       enabled: Schema.optionalKey(Schema.Boolean),
     },
     success: Routine,

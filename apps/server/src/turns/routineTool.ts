@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Connectors } from "../connectors/Connectors.ts";
 import { json } from "../persistence/columns.ts";
 import { Routines } from "../routines/Routines.ts";
 import { localInstant } from "../routines/schedule.ts";
@@ -49,6 +50,34 @@ const encodeRoutine = Schema.encodeEffect(Schema.toCodecJson(Routine));
 
 const refuse = (reason: string) => new TurnToolRefused({ reason });
 
+const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * What is wrong with `given` as the arguments of an event whose arguments
+ * schema is `schema`, by the schema's top level: a property it requires and
+ * the call leaves out, or one it does not take when it takes no others. The
+ * connector's server checks the rest when J3 Bots asks it for the event.
+ */
+export const eventArgumentsProblem = (
+  schema: Schema.JsonObject,
+  given: Readonly<Record<string, Schema.Json>>,
+): string | undefined => {
+  const required = Array.isArray(schema["required"])
+    ? schema["required"].filter((name): name is string => typeof name === "string")
+    : [];
+  const missing = required.filter((name) => !Object.hasOwn(given, name));
+  if (missing.length > 0) return `It requires ${missing.join(", ")} in arguments.`;
+  const properties = isObject(schema["properties"]) ? Object.keys(schema["properties"]) : [];
+  if (schema["additionalProperties"] === false) {
+    const unknown = Object.keys(given).filter((name) => !properties.includes(name));
+    if (unknown.length > 0) {
+      return `It takes no ${unknown.join(", ")}; its arguments are ${properties.join(", ") || "none"}.`;
+    }
+  }
+  return undefined;
+};
+
 const notYours = (id: string | undefined) =>
   refuse(`You have no routine ${id}. list_routines shows your routines' ids.`);
 
@@ -69,6 +98,7 @@ export const routineTool = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const routines = yield* Routines;
   const settings = yield* SettingsStore;
+  const connectors = yield* Connectors;
 
   const sessionOf = SqlSchema.findOneOption({
     Request: SessionRowId,
@@ -119,9 +149,59 @@ export const routineTool = Effect.gen(function* () {
     return { name: timeZone, zone: zone.value };
   });
 
+  /** The connector's event the call names, as its server lists it to the bot now. */
+  const eventTriggerOf = Effect.fn("RoutineTool.eventTriggerOf")(function* (
+    botId: BotId,
+    event: NonNullable<SetRoutineInput["event"]>,
+  ) {
+    const found = yield* connectors
+      .eventOf({ botId, slug: event.connector, name: event.name })
+      .pipe(
+        Effect.catchTag("ToolNotOffered", () =>
+          Effect.fail(
+            refuse(
+              `You have no connector ${event.connector}. list_connector_events names the connectors you can use and their events.`,
+            ),
+          ),
+        ),
+      );
+    switch (found._tag) {
+      case "unknown":
+        return yield* refuse(
+          `${found.connector.name} offers no event named ${event.name}. list_connector_events lists its events.`,
+        );
+      case "none":
+        return yield* refuse(
+          `${found.connector.name} does not tell J3 Bots when things happen. Check it on a schedule instead.`,
+        );
+      case "unavailable":
+        return yield* refuse(
+          `${found.connector.name} could not be reached to check the event, so nothing was saved. Try again later, or tell your user.`,
+        );
+      case "found": {
+        const given = event.arguments ?? {};
+        const problem = eventArgumentsProblem(found.type.inputSchema, given);
+        if (problem !== undefined) {
+          return yield* refuse(`${found.connector.name}'s ${event.name}: ${problem}`);
+        }
+        return {
+          _tag: "event",
+          connectorId: found.connector.id,
+          name: found.type.name,
+          arguments: given,
+          summary: event.summary,
+        } satisfies RoutineTrigger;
+      }
+    }
+  });
+
   /** The trigger the call gives, with its times in the operator's zone. */
-  const triggerOf = Effect.fn("RoutineTool.triggerOf")(function* (input: SetRoutineInput) {
+  const triggerOf = Effect.fn("RoutineTool.triggerOf")(function* (
+    request: Request,
+    input: SetRoutineInput,
+  ) {
     if (input.webhook === true) return { _tag: "webhook" } satisfies RoutineTrigger;
+    if (input.event !== undefined) return yield* eventTriggerOf(request.botId, input.event);
     if (input.schedule !== undefined) {
       const { name } = yield* operatorZone();
       return { _tag: "schedule", cron: input.schedule, timeZone: name } satisfies RoutineTrigger;
@@ -182,7 +262,8 @@ export const routineTool = Effect.gen(function* () {
             ),
           );
         case "webhook":
-          return Effect.die("A webhook trigger is never refused: it has no time to check");
+        case "event":
+          return Effect.die("A webhook or event trigger is never refused: it has no time to check");
       }
     };
 
@@ -199,7 +280,7 @@ export const routineTool = Effect.gen(function* () {
     once: Once,
   ) {
     yield* requireAllowed(request, input);
-    const trigger = yield* triggerOf(input);
+    const trigger = yield* triggerOf(request, input);
     const author = { _tag: "bot", botId: request.botId } as const;
     // The pin in `once` makes the call act once, so no command receipt keeps
     // another copy of the routine, and of a webhook's address.
