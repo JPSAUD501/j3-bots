@@ -94,17 +94,22 @@ export {
   tools,
 } from "./tools.ts";
 export {
+  type CatalogSkill,
   CONNECTOR_UNAVAILABLE,
   type ConnectorData,
   type ConnectorResult,
+  connectorSkillsDescription,
   type ConnectorUnavailable,
   connectorToolDescription,
   type ListedPrompt,
   type ListedResource,
+  type ListedSkill,
   listingText,
   MAX_LISTING_CHARACTERS,
   NOTHING_LISTED,
   renderConnectorResult,
+  SKILL_REFUSALS,
+  type SkillRefusal,
 } from "./connectorResult.ts";
 export {
   renderRoomMovedOn,

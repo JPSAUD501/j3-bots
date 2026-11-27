@@ -1745,7 +1745,7 @@ function WorkSection() {
             ))}
           </div>
         </Labeled>
-        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
+        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), in the background, using a connector's skills, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
           <div className="flex flex-col gap-2">
             {variants.folds.map(({ entry, steps, open }) => (
               <WorkFold
@@ -2974,7 +2974,10 @@ function ConnectorsGallerySection() {
           initialSkills={shippedSkills}
         />
         <ConnectorsVariant label="Offline" at={{ _tag: "home" }} connected={false} />
-        <ConnectorsVariant label="Connected, for all bots" at={connectorAt(0)} />
+        <ConnectorsVariant
+          label="Connected, for all bots, with the skills its server offers"
+          at={connectorAt(0)}
+        />
         <ConnectorsVariant
           label="Signing in again from a browser: paste the address"
           at={connectorAt(1, true)}

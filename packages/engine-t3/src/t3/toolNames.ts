@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { WorkStep, WorkTool } from "@j3-bots/contracts";
+import { Label, SkillName, type StepSkill, type WorkStep, type WorkTool } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TOOL_SERVER } from "./Provision.ts";
@@ -54,6 +54,7 @@ const OWN_STEP_TOOLS: ReadonlyMap<string, NamedTool> = new Map([
   ["install_skill", "skill-saved"],
   ["remove_skill", "skill-removed"],
   ["list_skills", "skills-read"],
+  ["use_connector_skill", "connector-skill"],
 ]);
 
 /**
@@ -181,6 +182,7 @@ const englishLabel: Record<NamedTool, string> = {
   secret: "Asked for a credential",
   login: "Filled a saved login",
   connector: "Used a connector",
+  "connector-skill": "Used a connector's skill",
   browser: "Used the browser",
   "pull-request": "Worked on a pull request",
   issue: "Worked on an issue",
@@ -215,6 +217,29 @@ const meaningfulTitle = (title: string | null, tool: string | null): string | nu
   return tool !== null && normalized(split(trimmed).tool) === normalized(tool) ? null : trimmed;
 };
 
+const SkillCall = Schema.Struct({ connector: Schema.String, skill: Schema.String });
+const decodeSkillCall = Schema.decodeUnknownOption(SkillCall);
+const isSkillName = Schema.is(SkillName);
+const isLabel = Schema.is(Label);
+
+/**
+ * The skill a `use_connector_skill` call loads, as its step names it: by the
+ * name the bot gave, or the folder its address ends in, and the connector by
+ * its name in the bridge, made readable; none when the call names neither so.
+ * The server names the connector as the operator knows it once it claims the
+ * call.
+ */
+const skillOf = (input: unknown): StepSkill | undefined => {
+  const call = decodeSkillCall(input);
+  if (Option.isNone(call)) return undefined;
+  const given = call.value.skill.trim();
+  const name = given.includes("/") ? given.split("/").at(-2) : given;
+  const connector = readable(call.value.connector);
+  return name !== undefined && isSkillName(name) && isLabel(connector)
+    ? { name, connector }
+    : undefined;
+};
+
 /** A tool call as the engine reports it. */
 export interface ToolCall {
   /** The tool's name; a harness may give only a title, which then carries it. */
@@ -237,7 +262,12 @@ export interface ToolCall {
 export const toolStep = (
   call: ToolCall,
 ):
-  | { readonly kind: Kind; readonly tool: NamedTool | null; readonly label: string | null }
+  | {
+      readonly kind: Kind;
+      readonly tool: NamedTool | null;
+      readonly label: string | null;
+      readonly skill?: StepSkill;
+    }
   | undefined => {
   if (call.viewsImage) return { kind: "tool", tool: "image", label: englishLabel.image };
   if (call.name === null) return { kind: "tool", tool: null, label: call.title };
@@ -249,6 +279,15 @@ export const toolStep = (
     return { kind: "tool", tool: "connector", label: connectorLabel(tool) };
   }
   const own = server === TOOL_SERVER ? OWN_STEP_TOOLS.get(tool) : undefined;
+  if (own === "connector-skill") {
+    const skill = skillOf(call.input);
+    return {
+      kind: "tool",
+      tool: own,
+      label: englishLabel[own],
+      ...(skill === undefined ? {} : { skill }),
+    };
+  }
   if (own !== undefined) return { kind: "tool", tool: own, label: englishLabel[own] };
   if (server === ENGINE_TOOL_SERVER) {
     const named = engineTool(tool);

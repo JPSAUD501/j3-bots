@@ -7,10 +7,12 @@ import { createHash } from "node:crypto";
 import {
   CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
+  connectorSkillsDescription,
   connectorToolDescription,
   listingText,
   NOTHING_LISTED,
   renderConnectorResultWithNonce,
+  SKILL_REFUSALS,
 } from "./connectorResult.ts";
 import { renderWakeWithNonce, type Wake } from "./envelope.ts";
 import {
@@ -287,8 +289,40 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
       ],
     }),
   },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "listing", of: "skills" },
+    ...listingText({
+      of: "skills",
+      items: [{ name: "skill", uri: "skill://skill/SKILL.md", description: "text" }],
+    }),
+  },
+  // A skill checked against a manifest of one file, of several, and one its server generates.
+  ...[1, 3, null].map((files): ConnectorResult => ({
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "skill", name: "skill", uri: "skill://skill/SKILL.md", files },
+    text: "text",
+    cut: false,
+  })),
+  ...[false, true].map((folder): ConnectorResult => ({
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "skill-file", skill: "skill", path: "path", folder },
+    text: "text",
+    cut: false,
+  })),
   ...CONNECTOR_UNAVAILABLE.map((reason): ConnectorResult => ({
     type: "unavailable",
+    connector: "Connector",
+    reason,
+  })),
+  ...SKILL_REFUSALS.map((reason): ConnectorResult => ({
+    type: "skill-refused",
     connector: "Connector",
     reason,
   })),
@@ -359,6 +393,25 @@ const fingerprint = (): string => {
     ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
     connectorToolDescription("Connector", "text"),
+    // Every line the catalog adds, cut short; the tool's own description is in `toolList`.
+    connectorSkillsDescription("", [
+      {
+        connector: "Connector",
+        slug: "connector",
+        name: "skill",
+        uri: "skill://skill/SKILL.md",
+        description: "text",
+        shared: false,
+      },
+      ...Array.from({ length: 12 }, () => ({
+        connector: "Connector",
+        slug: "connector",
+        name: "skill",
+        uri: "skill://other/skill/SKILL.md",
+        description: "x".repeat(300),
+        shared: true,
+      })),
+    ]),
     ...Object.values(NOTHING_LISTED),
     ...SAMPLE_CONNECTOR_RESULTS.map((result) =>
       renderConnectorResultWithNonce(result, "000000000000"),

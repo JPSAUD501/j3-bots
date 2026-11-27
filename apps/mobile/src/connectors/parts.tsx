@@ -12,6 +12,7 @@ import type {
   ConnectorField,
   ConnectorGlyph,
   ConnectorGrant,
+  ConnectorSkill,
   ConnectorTool,
 } from "@j3-bots/contracts";
 import { CONNECTOR_GLYPHS, isConnectorGlyphName } from "@j3-bots/design-tokens";
@@ -290,36 +291,56 @@ export function BotsPicker({
   );
 }
 
-const FEW_TOOLS = 5;
+const FEW_SERVED = 5;
 
-/** What a connector lets bots do: each tool's title and what it says it does, the first few at first. */
-export function ToolList({ tools }: { readonly tools: ReadonlyArray<ConnectorTool> }) {
+/** One thing a connector's server offers bots: its title and what it says it is for. */
+export interface ServedItem {
+  /** What tells it apart from the others its server offers: a tool's name, a skill's address. */
+  readonly key: string;
+  readonly title: string;
+  readonly description: string;
+}
+
+/** A connector's tools as the list shows them. */
+export const toolItems = (tools: ReadonlyArray<ConnectorTool>): ReadonlyArray<ServedItem> =>
+  tools.map((tool) => ({
+    key: tool.name,
+    title: tool.title ?? tool.name,
+    description: tool.description,
+  }));
+
+/** A connector's skills as the list shows them. */
+export const skillItems = (skills: ReadonlyArray<ConnectorSkill>): ReadonlyArray<ServedItem> =>
+  skills.map((skill) => ({ key: skill.uri, title: skill.name, description: skill.description }));
+
+/**
+ * What a connector's server offers bots, its tools or its skills: each one's
+ * title and what it says it is for, the first few at first.
+ */
+export function ServedList({ items }: { readonly items: ReadonlyArray<ServedItem> }) {
   const { t } = useI18n();
   const [all, setAll] = useState(false);
-  if (tools.length === 0) {
-    return <Text className="text-sm text-muted-foreground">{t("connector.tools.none")}</Text>;
-  }
-  const shown = all ? tools : tools.slice(0, FEW_TOOLS);
+  const shown = all ? items : items.slice(0, FEW_SERVED);
   return (
     <View className="gap-2">
-      {shown.map((tool) => (
-        <View key={tool.name}>
-          <Text className="text-sm font-medium text-foreground">{tool.title ?? tool.name}</Text>
-          {tool.description !== "" && (
+      {shown.map((item) => (
+        <View key={item.key}>
+          <Text className="text-sm font-medium text-foreground">{item.title}</Text>
+          {item.description !== "" && (
             <Text numberOfLines={2} className="text-sm text-muted-foreground">
-              {tool.description}
+              {item.description}
             </Text>
           )}
         </View>
       ))}
-      {tools.length > FEW_TOOLS && (
+      {items.length > FEW_SERVED && (
         <View className="items-start">
           <Button
             variant="quiet"
             label={
               all
-                ? t("connector.tools.showFewer")
-                : t("connector.tools.showAll", { count: tools.length })
+                ? t("connector.list.showFewer")
+                : t("connector.list.showAll", { count: items.length })
             }
             onPress={() => setAll(!all)}
           />
