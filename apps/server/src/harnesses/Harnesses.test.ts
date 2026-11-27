@@ -7,6 +7,7 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Duration from "effect/Duration";
@@ -22,11 +23,12 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { ServerConfig } from "../config.ts";
+import { Layout } from "../Layout.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { claudeCode, codex, onlyTo } from "./distributions.ts";
 import { type Harnesses, make, withCopies } from "./Harnesses.ts";
 import { sha256Hex } from "./hash.ts";
-import { type Probe, versionIn } from "./install.ts";
+import { installRelease, type Probe, versionIn } from "./install.ts";
 import { copyLayout } from "./layout.ts";
 
 const CLAUDE_BASE = "https://downloads.test/claude-code-releases";
@@ -879,4 +881,55 @@ describe("J3 Bots' own copies on this machine's file system", () => {
         }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
     );
   }
+});
+
+describe("a harness download", () => {
+  it.effect("ends the release's answer when it is stopped before reading it", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const home = path.join((yield* ServerConfig).home, "own");
+      // The signal each request is sent with, which ends its connection once aborted.
+      const sent: Array<AbortSignal> = [];
+      const neverEnding = HttpClient.make((request, _url, signal) =>
+        Effect.sync(() => {
+          sent.push(signal);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(new ReadableStream<Uint8Array>(), { status: 200 }),
+          );
+        }),
+      );
+      // The answer has come; the download stops here, before its body is read,
+      // as the server's stop may find it.
+      const answered = yield* Deferred.make<void>();
+      const downloading = yield* installRelease({
+        release: {
+          version: "2.1.326",
+          url: `${CLAUDE_BASE}/2.1.326/linux-x64/claude`,
+          sha256: sha256Hex(claudeBinary("2.1.326")),
+          size: null,
+          format: "executable",
+          fileName: "claude",
+        },
+        layout: copyLayout(path, home, "claude-code"),
+        files: yield* Layout,
+        client: onlyTo(["https://downloads.test"])(neverEnding),
+        probe: readsVersion(fs),
+        platform: MACHINE.platform,
+        report: (task) =>
+          task._tag === "downloading"
+            ? Deferred.succeed(answered, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(answered);
+
+      yield* Fiber.interrupt(downloading);
+
+      assert.deepStrictEqual(
+        sent.map((signal) => signal.aborted),
+        [true],
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
 });

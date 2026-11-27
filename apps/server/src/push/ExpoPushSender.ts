@@ -146,7 +146,10 @@ const post = <A>(
       HttpClientRequest.acceptJson,
       HttpClientRequest.bodyJson(body),
     );
-    const response = yield* client.execute(request);
+    // The answer belongs to this call's scope, which ends it however the call
+    // ends: unscoped, one left unread, by a refusal or an interruption such as
+    // the server's stop, stayed open until a garbage collection.
+    const response = yield* HttpClient.withScope(client).execute(request);
     if (response.status === 429 || response.status >= 500) {
       return yield* new PushUnavailable({ reason: `HTTP ${response.status}` });
     }
@@ -166,6 +169,7 @@ const post = <A>(
       duration: REQUEST_TIMEOUT,
       orElse: () => Effect.fail(new PushUnavailable({ reason: "timed out" })),
     }),
+    Effect.scoped,
     Effect.catchTags({
       HttpBodyError: () => Effect.die("A push message encodes as JSON"),
       HttpClientError: (error) =>

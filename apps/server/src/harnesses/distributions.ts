@@ -153,7 +153,10 @@ const checksum = () => new HarnessFailed({ reason: "checksum" });
  */
 const readSmall = Effect.fn("harnesses.readSmall")(
   function* (client: DistributionClient, url: string) {
-    const response = yield* client
+    // The answer belongs to the read's scope, which ends it however the read
+    // ends: unscoped, one left unread, by a refusal or an interruption, stayed
+    // open until a garbage collection.
+    const response = yield* HttpClient.withScope(client)
       .execute(HttpClientRequest.get(url))
       .pipe(Effect.mapError(unreachable));
     if (response.status !== 200) return yield* unreachable();
@@ -179,6 +182,7 @@ const readSmall = Effect.fn("harnesses.readSmall")(
     return body;
   },
   Effect.timeoutOrElse({ duration: LISTING_TIMEOUT, orElse: () => Effect.fail(unreachable()) }),
+  Effect.scoped,
 );
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);

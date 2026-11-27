@@ -459,6 +459,47 @@ describe("ensureInstalled", () => {
       ]);
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
+
+  it.live("ends the archive's answer when it is stopped before reading it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      // The signal each request is sent with, which ends its connection once aborted.
+      const sent: Array<AbortSignal> = [];
+      const neverEnding = HttpClient.make((request, _url, signal) =>
+        Effect.sync(() => {
+          sent.push(signal);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(new ReadableStream<Uint8Array>(), { status: 200 }),
+          );
+        }),
+      );
+      const files = yield* makePrivateFiles(() => Effect.succeed(true));
+      // The answer has come; the download stops here, before its body is read,
+      // as the server's stop may find it.
+      const writing = yield* Deferred.make<void>();
+      const installing = yield* ensureInstalled({
+        home,
+        platform: "linux",
+        arch: "x64",
+        sha256: { "linux-x64": DIGEST },
+        files: {
+          ...files,
+          writeStream: () =>
+            Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.never)),
+        },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, neverEnding), Effect.forkChild);
+      yield* Deferred.await(writing);
+
+      yield* Fiber.interrupt(installing);
+
+      assert.deepStrictEqual(
+        sent.map((signal) => signal.aborted),
+        [true],
+      );
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
 });
 
 describe("a download's progress", () => {

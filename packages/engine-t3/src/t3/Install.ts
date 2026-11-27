@@ -423,7 +423,15 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       return executable;
     }
 
-    const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
+    // The archive's answer belongs to the install's scope, which ends it however
+    // the install ends. Unscoped, an install interrupted after the answer came
+    // but before its body was read, as by the server's stop, left it open until
+    // a garbage collection: a download still arriving that kept the stopped
+    // server's process alive.
+    const client = (yield* HttpClient.HttpClient).pipe(
+      HttpClient.followRedirects(5),
+      HttpClient.withScope,
+    );
     const download = (cause: unknown) =>
       Effect.logWarning("Engine download failed", cause).pipe(
         Effect.andThen(Effect.fail(fail("download"))),
