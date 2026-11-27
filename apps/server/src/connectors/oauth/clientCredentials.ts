@@ -46,16 +46,20 @@ const PrivateJwk = Schema.Struct({
 });
 const decodeJwk = Schema.decodeUnknownOption(Schema.fromJsonString(PrivateJwk));
 
-const PEM = /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/u;
+const PEM = /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/gu;
 
 /**
- * A PEM block as a pasted one may have come: on one line, its line breaks
- * written as `\n`, or with spaces in place of them. Its body is wrapped at
- * 64 characters again, as RFC 7468 §2 writes it.
+ * The private key's PEM block as a pasted one may have come: on one line,
+ * its line breaks written as `\n`, or with spaces in place of them, and
+ * after other blocks, such as the `EC PARAMETERS` that `openssl ecparam
+ * -genkey` writes first. Its body is wrapped at 64 characters again, as
+ * RFC 7468 §2 writes it.
  */
 const pemOf = (text: string): Option.Option<string> => {
-  const found = PEM.exec(text.replaceAll("\\n", "\n"));
-  if (found === null) return Option.none();
+  const found = [...text.replaceAll("\\n", "\n").matchAll(PEM)].find((block) =>
+    (block[1] ?? "").endsWith("PRIVATE KEY"),
+  );
+  if (found === undefined) return Option.none();
   const label = found[1] ?? "";
   const body = (found[2] ?? "").replace(/\s+/gu, "");
   const lines = body.match(/.{1,64}/gu) ?? [];

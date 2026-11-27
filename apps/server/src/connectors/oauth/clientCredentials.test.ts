@@ -19,6 +19,15 @@ it("takes a private key pasted whole, on one line, or with its line breaks writt
   assert.deepStrictEqual(algorithms(pem.replaceAll("\n", "\\n")), ["ES256"]);
 });
 
+it("takes the private key from a file whose curve's parameters come first", () => {
+  // As `openssl ecparam -genkey -name prime256v1` writes it.
+  const sec1 = ec.privateKey.export({ type: "sec1", format: "pem" }).toString();
+  const parameters =
+    "-----BEGIN EC PARAMETERS-----\nBggqhkjOPQMBBw==\n-----END EC PARAMETERS-----\n";
+  assert.deepStrictEqual(algorithms(parameters + sec1), ["ES256"]);
+  assert.deepStrictEqual(algorithms((parameters + sec1).replaceAll("\n", " ")), ["ES256"]);
+});
+
 it("takes a private key as a JWK", () => {
   const jwk = JSON.stringify(
     NodeCrypto.generateKeyPairSync("ed25519").privateKey.export({ format: "jwk" }),
