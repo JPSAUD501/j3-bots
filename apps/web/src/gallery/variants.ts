@@ -18,6 +18,7 @@ import {
   RoutineId,
   SecretId,
   SecretName,
+  secretRequestFieldId,
   SiteOrigin,
   WorkStepId,
   type ApprovalEntry,
@@ -511,6 +512,28 @@ export function galleryVariants(now: DateTime.Utc) {
     reason: "To open the pull request for the docs fix I need a token that can push to the repo.",
     url: extra.url ?? null,
     placeholder: extra.placeholder ?? null,
+    fields: [],
+    delivery: "reference",
+    status,
+  });
+  /** A sign-in asked for in one card: an email shown as typed, and a masked password. */
+  const signIn = (name: string, status: SecretRequestEntry["status"]): SecretRequestEntry => ({
+    _tag: "secret-request",
+    ...base(name),
+    label: "Sign in to Mail",
+    reason: "To sort this week’s invoices into their folders I need to sign in to your mailbox.",
+    url: null,
+    placeholder: null,
+    fields: [
+      {
+        id: secretRequestFieldId(0),
+        label: "Email",
+        placeholder: "you@example.com",
+        masked: false,
+      },
+      { id: secretRequestFieldId(1), label: "Password", placeholder: null, masked: true },
+    ],
+    delivery: "file",
     status,
   });
   const secrets: ReadonlyArray<SecretRequestEntry> = [
@@ -521,6 +544,10 @@ export function galleryVariants(now: DateTime.Utc) {
     secret("secret-provided", "provided"),
     secret("secret-declined", "declined"),
     secret("secret-expired", "expired"),
+    signIn("secret-fields", "pending"),
+    signIn("secret-fields-provided", "provided"),
+    signIn("secret-fields-declined", "declined"),
+    signIn("secret-fields-expired", "expired"),
   ];
 
   const browserHelp = (

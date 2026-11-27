@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { webAddress } from "@j3-bots/client-runtime/presentation";
+import {
+  MAX_SECRET_REQUEST_VALUE_LENGTH,
+  type SecretRequestInput,
+  secretRequestAnswer,
+  secretRequestInputs,
+  webAddress,
+} from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { SecretRequestEntry } from "@j3-bots/contracts";
-import type { KeyWith } from "@j3-bots/i18n";
-import * as Redacted from "effect/Redacted";
-import { ExternalLink, KeyRound } from "lucide-react-native";
-import { useState } from "react";
-import { Linking, View } from "react-native";
+import { ExternalLink, Eye, EyeOff, KeyRound } from "lucide-react-native";
+import { type Ref, useRef, useState } from "react";
+import { Linking, type TextInputInstance, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
@@ -15,24 +19,20 @@ import { Button } from "../ui.tsx";
 import { CardFrame, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
 import { PressScale } from "../press.tsx";
 
-const closedText: Record<Exclude<SecretRequestEntry["status"], "pending">, KeyWith> = {
-  provided: "secret.provided",
-  declined: "secret.declined",
-  expired: "secret.expired",
-};
-
 /**
- * A bot asking for a credential only the operator has. The value is typed
- * into a masked field and handed on as a `Redacted`, so it never reaches a
- * log, and nothing on the phone keeps it: not the drafts, not the keyboard's
- * suggestions. The field lives only as long as the request waits; once it is
- * answered, here or elsewhere, or expires, the value is gone and the card
- * only says what happened.
+ * A bot asking for credentials only the operator has: one value, or several
+ * at once, such as an email and a password. Each value is typed into its own
+ * input, masked unless the bot said it is not secret, and handed on as a
+ * `Redacted`, so it never reaches a log, and nothing on the phone keeps it:
+ * not the drafts, not the keyboard's suggestions. The inputs live only as
+ * long as the request waits; once it is answered, here or elsewhere, or
+ * expires, the values are gone and the card only says what happened.
  */
 export function SecretRequestCard({ entry }: { readonly entry: SecretRequestEntry }) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const pending = entry.status === "pending";
   const { outcome, answered } = useOutcomeFocus(pending);
+  const inputs = secretRequestInputs(entry);
   return (
     <CardFrame icon={KeyRound} title={t("secret.title")} attention={pending}>
       <View className="gap-1">
@@ -42,10 +42,15 @@ export function SecretRequestCard({ entry }: { readonly entry: SecretRequestEntr
         )}
       </View>
       {entry.status === "pending" ? (
-        <SecretForm entry={entry} onAnswer={answered} />
+        <SecretForm entry={entry} inputs={inputs} onAnswer={answered} />
       ) : (
         <Text ref={outcome} className="text-xs text-muted-foreground">
-          {t(closedText[entry.status])}
+          {entry.status === "expired"
+            ? t("secret.expired")
+            : plural(
+                entry.status === "provided" ? "secret.provided" : "secret.declined",
+                inputs.length,
+              )}
         </Text>
       )}
     </CardFrame>
@@ -53,28 +58,44 @@ export function SecretRequestCard({ entry }: { readonly entry: SecretRequestEntr
 }
 
 /**
- * The masked field and its actions. Unmounted with the request, taking the
- * typed value with it. While an answer is on its way they take no second one
- * but keep their place.
+ * The inputs and their actions. Unmounted with the request, taking the typed
+ * values with it. The keyboard's action moves to the first input still empty,
+ * and sends once every one is filled. While an answer is on its way they take
+ * no second one but keep their place.
  */
 function SecretForm({
   entry,
+  inputs,
   onAnswer,
 }: {
   readonly entry: SecretRequestEntry;
+  readonly inputs: ReadonlyArray<SecretRequestInput>;
   readonly onAnswer: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
   const client = useJ3Client();
   const submitting = useSubmitting(entry.id);
-  const placeholderColor = useColor("accent-muted-foreground");
-  const [value, setValue] = useState("");
+  const [values, setValues] = useState<ReadonlyArray<string>>(() => inputs.map(() => ""));
+  // Each input, by position, so the keyboard's action can move to the first one still empty.
+  const fields = useRef<Array<TextInputInstance | null>>([]);
   const link = webAddress(entry.url);
+  const result = secretRequestAnswer(inputs, values);
+  const single = entry.fields.length === 0;
+  const note =
+    entry.delivery === "reference"
+      ? plural("secret.unseen", inputs.length)
+      : entry.delivery === "file"
+        ? plural("secret.inFile", inputs.length)
+        : null;
   const provide = () => {
-    if (value === "" || submitting) return;
+    if (submitting) return;
+    if (result._tag === "blank") {
+      fields.current[result.position]?.focus();
+      return;
+    }
     onAnswer();
-    void client.provideSecret(entry.id, { _tag: "provide", value: Redacted.make(value) });
-    setValue("");
+    void client.provideSecret(entry.id, result.answer);
+    setValues(inputs.map(() => ""));
   };
   const decline = () => {
     if (submitting) return;
@@ -83,26 +104,25 @@ function SecretForm({
   };
   return (
     <>
-      <TextInput
-        value={value}
-        onChangeText={setValue}
-        editable={!submitting}
-        secureTextEntry
-        autoComplete="off"
-        autoCorrect={false}
-        autoCapitalize="none"
-        spellCheck={false}
-        importantForAutofill="no"
-        textContentType="none"
-        returnKeyType="done"
-        onSubmitEditing={provide}
-        placeholder={entry.placeholder ?? undefined}
-        placeholderTextColor={placeholderColor}
-        accessibilityLabel={entry.label}
-        accessibilityHint={entry.reason === "" ? undefined : entry.reason}
-        className="min-h-11 rounded-md border border-input bg-surface px-3 text-base text-foreground"
-      />
-      <Text className="text-xs text-muted-foreground">{t("secret.unseen")}</Text>
+      {inputs.map((input, position) => (
+        <SecretInput
+          key={input.id ?? "value"}
+          ref={(element) => {
+            fields.current[position] = element;
+          }}
+          input={input}
+          labelled={!single}
+          hint={single && entry.reason !== "" ? entry.reason : undefined}
+          value={values[position] ?? ""}
+          onChange={(value) =>
+            setValues((typed) => typed.map((old, at) => (at === position ? value : old)))
+          }
+          last={position === inputs.length - 1}
+          onSubmit={provide}
+          submitting={submitting}
+        />
+      ))}
+      {note !== null && <Text className="text-xs text-muted-foreground">{note}</Text>}
       <View className="flex-row flex-wrap items-center gap-2">
         {link !== null && (
           <PressScale
@@ -125,11 +145,87 @@ function SecretForm({
             variant="primary"
             label={t("secret.provide")}
             onPress={provide}
-            disabled={value === ""}
+            disabled={result._tag === "blank"}
             held={submitting}
           />
         </View>
       </View>
     </>
+  );
+}
+
+/**
+ * One value's input: shown as typed, or masked with a button that shows it.
+ * Only a login's user name and password are offered to the phone's autofill.
+ * A masked value shown stays a password to the keyboard, which learns nothing
+ * from it.
+ */
+function SecretInput({
+  ref,
+  input,
+  labelled,
+  hint,
+  value,
+  onChange,
+  last,
+  onSubmit,
+  submitting,
+}: {
+  readonly ref: Ref<TextInputInstance>;
+  readonly input: SecretRequestInput;
+  /** Whether it shows its own label; the one input of a request for one value has the card's. */
+  readonly labelled: boolean;
+  readonly hint: string | undefined;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  /** The last input sends; the others move on. */
+  readonly last: boolean;
+  readonly onSubmit: () => void;
+  readonly submitting: boolean;
+}) {
+  const { t } = useI18n();
+  const placeholderColor = useColor("accent-muted-foreground");
+  const [shown, setShown] = useState(false);
+  const autofill = input.autofill;
+  return (
+    <View className="gap-1">
+      {labelled && <Text className="text-xs font-medium text-foreground">{input.label}</Text>}
+      <View className="justify-center">
+        <TextInput
+          ref={ref}
+          value={value}
+          onChangeText={onChange}
+          editable={!submitting}
+          secureTextEntry={input.masked && !shown}
+          keyboardType={input.masked && shown ? "visible-password" : "default"}
+          maxLength={MAX_SECRET_REQUEST_VALUE_LENGTH}
+          autoComplete={autofill ?? "off"}
+          importantForAutofill={autofill === null ? "no" : "yes"}
+          textContentType={autofill ?? "none"}
+          autoCorrect={false}
+          autoCapitalize="none"
+          spellCheck={false}
+          returnKeyType={last ? "done" : "next"}
+          submitBehavior={last ? "blurAndSubmit" : "submit"}
+          onSubmitEditing={onSubmit}
+          placeholder={input.placeholder ?? undefined}
+          placeholderTextColor={placeholderColor}
+          accessibilityLabel={input.label}
+          accessibilityHint={hint}
+          className={`min-h-11 rounded-md border border-input bg-surface px-3 text-base text-foreground ${input.masked ? "pe-12" : ""}`}
+        />
+        {input.masked && (
+          <PressScale
+            accessibilityRole="togglebutton"
+            accessibilityLabel={t("secret.show", { label: input.label })}
+            accessibilityState={{ checked: shown }}
+            onPress={() => setShown((was) => !was)}
+            className="absolute end-0 min-h-11 min-w-11 items-center justify-center"
+          >
+            <Icon icon={shown ? EyeOff : Eye} size={18} color="accent-muted-foreground" />
+          </PressScale>
+        )}
+      </View>
+    </View>
   );
 }

@@ -579,6 +579,8 @@ export function sampleTeam(now: DateTime.Utc) {
         "The rail search service only answers with an account key. I’ll use it for timetable and fare searches and nothing else.",
       url: "https://rail.example.com/account/keys",
       placeholder: "rs_live_…",
+      fields: [],
+      delivery: "reference",
       status: "pending",
     },
   ];

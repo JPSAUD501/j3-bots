@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import { Attachment, AttachmentOffsets } from "./attachment.ts";
@@ -380,23 +381,125 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
 });
 export type ApprovalEntry = typeof ApprovalEntry.Type;
 
+/** The most values one secret request asks for. */
+export const MAX_SECRET_REQUEST_FIELDS = 8;
+
 /**
- * A bot needs a credential only the operator can give. The client shows a
- * masked input and sends the value with `secret.provide`, which hands it to the
- * engine. The value is never stored in J3 Bots, so this entry has no field for
- * it. It expires when the turn that asked ends.
+ * A value's place on a secret request card: `field-1` for the first, up to
+ * `field-8`. J3 Bots' own, stable for the request; the engine adapter maps an
+ * answer back to the names the bot asked with.
+ */
+export const SecretRequestFieldId = Schema.String.check(Schema.isPattern(/^field-[1-8]$/)).pipe(
+  Schema.brand("SecretRequestFieldId"),
+);
+export type SecretRequestFieldId = typeof SecretRequestFieldId.Type;
+
+/** One value a secret request asks for, such as "Email" or "Password". */
+export const SecretRequestField = Schema.Struct({
+  id: SecretRequestFieldId,
+  label: Label,
+  placeholder: Schema.NullOr(Label),
+  /** Whether what is typed is hidden, as for a password. False shows it, as for an email. */
+  masked: Schema.Boolean,
+});
+export type SecretRequestField = typeof SecretRequestField.Type;
+
+/**
+ * Where a secret request's values go once sent:
+ * - `reference`: a store the bot reaches only through a one-use reference, so
+ *   the bot uses the value without seeing it.
+ * - `file`: private files, one per value, that the bot's commands can read
+ *   for 24 hours.
+ *
+ * Open: a client shows no promise for a way it does not know.
+ */
+export const SecretDelivery = OpenLiterals(["reference", "file"]);
+export type SecretDelivery = typeof SecretDelivery.Type;
+
+/**
+ * A value typed into a secret request card: 1 to 10,000 characters, at least
+ * one of them not a space, redacted as soon as it is decoded and checked only
+ * then, so neither a refused value nor a log of the request prints it.
+ */
+export const SecretRequestValue = Schema.Redacted(Schema.String).check(
+  Schema.makeFilter(
+    (value: Redacted.Redacted<string>) => {
+      const text = Redacted.value(value);
+      return text.length <= 10_000 && text.trim() !== "";
+    },
+    { expected: "a value of 1 to 10,000 characters that is not only spaces" },
+  ),
+);
+
+/**
+ * A bot needs credentials only the operator can give. The client shows an
+ * input per value and sends them with `secret.provide`, which hands them to
+ * the engine. No value is stored in J3 Bots, so this entry has no field for
+ * one. It expires when the turn that asked ends, or when the bot stops
+ * waiting for it.
  */
 export const SecretRequestEntry = Schema.TaggedStruct("secret-request", {
   ...entry,
-  /** What is being asked for, such as "GitHub token". */
+  /** What is being asked for, such as "GitHub token" or "Sign in to Mail". */
   label: Label,
   reason: Schema.String.check(Schema.isMaxLength(2_000)),
   /** A page where the operator can get or create the value. */
   url: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+  /** The hint in the input of a request for one value; null for a request with `fields`. */
   placeholder: Schema.NullOr(Label),
+  /**
+   * The values asked for, in order. Empty for a request for one masked value,
+   * which `label` names: the only kind a server before 0.12.0 sent.
+   */
+  fields: Schema.Array(SecretRequestField)
+    .check(Schema.isMaxLength(MAX_SECRET_REQUEST_FIELDS))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  delivery: SecretDelivery.pipe(Schema.withDecodingDefaultKey(Effect.succeed("reference"))),
   status: Schema.Literals(["pending", "provided", "declined", "expired"]),
 });
 export type SecretRequestEntry = typeof SecretRequestEntry.Type;
+
+/** The id of the field in `position` (0 for the first) on a secret request card. */
+export const secretRequestFieldId = (position: number): SecretRequestFieldId =>
+  SecretRequestFieldId.make(`field-${position + 1}`);
+
+/**
+ * The operator's answer to a secret request (`secret.provide`): the one value
+ * of a request for one, a value for each field of a request with `fields`, or
+ * a decline.
+ */
+export const SecretRequestAnswer = Schema.Union([
+  Schema.TaggedStruct("provide", { value: SecretRequestValue }),
+  Schema.TaggedStruct("provide-fields", {
+    values: Schema.Record(SecretRequestFieldId, SecretRequestValue),
+  }),
+  Schema.TaggedStruct("decline", {}),
+]);
+export type SecretRequestAnswer = typeof SecretRequestAnswer.Type;
+
+/**
+ * Whether `answer` gives a value for exactly the values a secret request with
+ * `fields` asks for: one value (`provide`) for a request without fields or
+ * with one, else a value for each field and no other (`provide-fields`). A
+ * decline always fits.
+ */
+export const answersSecretRequest = (
+  fields: ReadonlyArray<Pick<SecretRequestField, "id">>,
+  answer: SecretRequestAnswer,
+): boolean => {
+  switch (answer._tag) {
+    case "decline":
+      return true;
+    case "provide":
+      return fields.length <= 1;
+    case "provide-fields":
+      return (
+        fields.length > 0 &&
+        Object.keys(answer.values).length === fields.length &&
+        fields.every((field) => Object.hasOwn(answer.values, field.id))
+      );
+  }
+};
 
 /**
  * What a bot met in its browser that only the operator can get past: a check

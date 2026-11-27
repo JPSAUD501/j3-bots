@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, ProviderId } from "@j3-bots/contracts";
+import { ModelId, ProviderId, secretRequestFieldId } from "@j3-bots/contracts";
 import { describe, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -42,22 +42,22 @@ const REQUESTS = {
       },
     ],
   }),
-  secret: request({
-    _tag: "secret",
-    label: "Scripted token",
-    reason: "The conformance suite asks for a secret.",
-    url: null,
-    placeholder: null,
-  }),
 };
 
-/** The scripted agent's secret asked for as one field: its card is labelled as the field. */
-const FIELD_SECRET = request({
+/** A secret request as the scripted agent asks it for `act`. */
+const secretRequest = (act: Extract<Act, { _tag: "secret" }>): EngineRequest => ({
   _tag: "secret",
-  label: "Token",
+  label: "Scripted token",
   reason: "The conformance suite asks for a secret.",
   url: null,
   placeholder: null,
+  fields: (act.fields ?? []).map((field, position) => ({
+    id: secretRequestFieldId(position),
+    label: field.name,
+    placeholder: null,
+    masked: field.masked,
+  })),
+  delivery: act.fields === undefined ? "reference" : "file",
 });
 
 const bench = Layer.effect(
@@ -104,11 +104,7 @@ const bench = Layer.effect(
         case "question":
           return holdOn(sessionId, turnId, REQUESTS[act._tag]);
         case "secret":
-          return holdOn(
-            sessionId,
-            turnId,
-            act.field === undefined ? REQUESTS.secret : FIELD_SECRET,
-          );
+          return holdOn(sessionId, turnId, secretRequest(act));
         case "speak":
           return control
             .hostSpeech({ sessionId, turnId, text: act.text })

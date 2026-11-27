@@ -6,6 +6,7 @@ import type {
   PermissionMode,
   ProviderId,
   QuestionAnswers,
+  SecretRequestAnswer,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
@@ -25,6 +26,7 @@ import type {
   PermissionModeRefused,
   RequestClosed,
   RetireRejected,
+  SecretAnswerMismatch,
   SessionBusy,
   SessionNotFound,
   StopRejected,
@@ -169,9 +171,12 @@ export type RequestResponse =
   | { readonly _tag: "approval"; readonly decision: ApprovalDecision }
   | { readonly _tag: "question"; readonly answers: QuestionAnswers };
 
-export type SecretAnswer =
-  | { readonly _tag: "provide"; readonly value: Redacted.Redacted<string> }
-  | { readonly _tag: "decline" };
+/**
+ * The operator's answer to a secret request: the one value of a request for
+ * one (or for one field), a value for each field of a request with fields,
+ * keyed by the ids its `secret` request gave them, or a decline.
+ */
+export type SecretAnswer = SecretRequestAnswer;
 
 /** One harness the engine runs bots on. */
 export type ProviderInstance = {
@@ -774,8 +779,12 @@ export class Engine extends Context.Service<
     }) => Effect.Effect<void, EngineDown | SessionNotFound | RequestClosed | AnswerRejected>;
 
     /**
-     * Answers a secret request. The value goes to the engine's secret store and
-     * reaches the command that asked, never the model. Applied once by nature:
+     * Answers a secret request. The values go where the request said
+     * (`delivery`): the engine's secret store, reached by the tool that asked
+     * through a one-use reference, or private files the bot's commands read.
+     * Never the conversation. An answer that does not give a value for
+     * exactly the fields the request asks for fails with
+     * `SecretAnswerMismatch`, and the request stays open. Applied once by nature:
      * the request closes, and answering again fails with `RequestClosed`. The
      * adapter submits one answer per request at a time, so of two concurrent
      * calls the second waits and then fails with `RequestClosed`.
@@ -790,7 +799,7 @@ export class Engine extends Context.Service<
       readonly sessionId: SessionId;
       readonly requestId: RequestId;
       readonly answer: SecretAnswer;
-    }) => Effect.Effect<void, EngineDown | SessionNotFound | RequestClosed>;
+    }) => Effect.Effect<void, EngineDown | SessionNotFound | RequestClosed | SecretAnswerMismatch>;
 
     /**
      * The session's events. With `after`, either every event after that cursor,

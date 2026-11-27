@@ -19,6 +19,7 @@ import {
   type QuestionAnswers,
   type ReceivedEntry,
   RoomId,
+  type SecretRequestAnswer,
   type Sequence,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
@@ -33,7 +34,6 @@ import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import type * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -317,10 +317,8 @@ export type CardAnswer =
    */
   | { readonly _tag: "connector-ask"; readonly client: OwnAppClient | null };
 
-/** The value travels redacted from the input to the socket and is kept nowhere. */
-export type SecretAnswer =
-  | { readonly _tag: "provide"; readonly value: Redacted.Redacted<string> }
-  | { readonly _tag: "decline" };
+/** Each value travels redacted from the input to the socket and is kept nowhere. */
+export type SecretAnswer = SecretRequestAnswer;
 
 /** One open conversation or room. */
 export interface Conversation {

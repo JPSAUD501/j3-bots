@@ -414,3 +414,10 @@ export {
   inputProblem,
 } from "./connectorInput.ts";
 export { type PromptOption, promptArguments, promptOptions, promptQuery } from "./prompts.ts";
+export {
+  MAX_SECRET_REQUEST_VALUE_LENGTH,
+  secretRequestAnswer,
+  type SecretRequestInput,
+  secretRequestInputs,
+  type SecretRequestValues,
+} from "./secretRequest.ts";

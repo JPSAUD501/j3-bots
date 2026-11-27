@@ -266,12 +266,20 @@ const sentences = {
   "question.tooLong": "Sua resposta é longa demais para chegar ao bot. Encurte e envie de novo.",
 
   "secret.title": "Credencial",
-  "secret.unseen": "O bot pode usá-la sem vê-la. Ela nunca aparece nesta conversa.",
+  "secret.unseen.one": "O bot pode usá-la sem vê-la. Ela nunca aparece nesta conversa.",
+  "secret.unseen.other": "O bot pode usá-los sem vê-los. Eles nunca aparecem nesta conversa.",
+  "secret.inFile.one":
+    "Fica fora desta conversa, num arquivo privado que o bot pode ler nas próximas 24 horas.",
+  "secret.inFile.other":
+    "Ficam fora desta conversa, em arquivos privados que o bot pode ler nas próximas 24 horas.",
+  "secret.show": "Mostrar {label}",
   "secret.getOne": "Obter uma",
   "secret.decline": "Recusar",
   "secret.provide": "Enviar",
-  "secret.provided": "Enviada. Ela não aparece nesta conversa.",
-  "secret.declined": "Recusada. O bot segue sem ela.",
+  "secret.provided.one": "Enviada. Ela não aparece nesta conversa.",
+  "secret.provided.other": "Enviados. Eles não aparecem nesta conversa.",
+  "secret.declined.one": "Recusada. O bot segue sem ela.",
+  "secret.declined.other": "Recusado. O bot segue sem eles.",
   "secret.expired": "Este pedido expirou antes de ser respondido.",
 
   "browser.open": "Abrir navegador",

@@ -21,8 +21,14 @@ export type Act =
   | { readonly _tag: "question" }
   /** Speaks to the user through the engine's own tool, then ends the turn. */
   | { readonly _tag: "speak"; readonly text: string }
-  /** Asks the operator for a secret, as the one field named `field` when given, then ends the turn. */
-  | { readonly _tag: "secret"; readonly field?: string }
+  /**
+   * Asks the operator for a secret, then ends the turn: one value, or the
+   * named `fields` in order, each masked unless it says otherwise.
+   */
+  | {
+      readonly _tag: "secret";
+      readonly fields?: ReadonlyArray<{ readonly name: string; readonly masked: boolean }>;
+    }
   /**
    * Hands a short task to a delegated agent of the engine's own, then ends
    * the turn. The task's completion wakes the session with a new turn.

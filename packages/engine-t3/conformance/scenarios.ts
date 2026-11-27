@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { secretRequestFieldId } from "@j3-bots/contracts";
 import { assert } from "@effect/vitest";
 import type { Vitest } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -532,7 +533,7 @@ export const scenarios = (it: Methods) => {
     Effect.gen(function* () {
       const engine = yield* Engine;
       const bench = yield* Bench;
-      const act = { _tag: "secret", field: "token" } as const;
+      const act = { _tag: "secret", fields: [{ name: "token", masked: true }] } as const;
       const { sessionId, events, key } = yield* session("secret-field");
       const running = yield* dispatchTurn({
         ...(yield* start(key("secret-field"), act)),
@@ -542,6 +543,7 @@ export const scenarios = (it: Methods) => {
       yield* bench.perform({ sessionId, turnId: running.turnId, act });
       const opened = yield* events.next("request-opened");
 
+      // A client before 0.12.0 answers a card with one value alone.
       yield* engine.respondSecret({
         sessionId,
         requestId: opened.open.requestId,
@@ -550,8 +552,72 @@ export const scenarios = (it: Methods) => {
       const closed = yield* events.next("request-closed");
       const end = yield* finished(events, running.turnId);
 
-      // The card is labelled as the field the value is saved under.
-      assert.deepInclude(opened.open.request, { _tag: "secret", label: "Token" });
+      // The card's one input is labelled as the field the value is saved under.
+      const { request } = opened.open;
+      assert(request._tag === "secret");
+      assert.deepStrictEqual(
+        request.fields.map(({ label }) => label),
+        ["token"],
+      );
+      assert.strictEqual(closed.resolution, "provided");
+      assert.deepStrictEqual(end.outcome, { _tag: "completed" });
+    }),
+  );
+
+  it.effect("asks for several values in one card and saves each under its name", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const bench = yield* Bench;
+      const act = {
+        _tag: "secret",
+        fields: [
+          { name: "email", masked: false },
+          { name: "password", masked: true },
+        ],
+      } as const;
+      const { sessionId, events, key } = yield* session("secret-fields");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("secret-fields"), act)),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+      yield* bench.perform({ sessionId, turnId: running.turnId, act });
+      const opened = yield* events.next("request-opened");
+      const { request, requestId } = opened.open;
+      assert(request._tag === "secret");
+      assert.deepStrictEqual(
+        request.fields.map(({ id, label, masked }) => ({ id, label, masked })),
+        [
+          { id: "field-1", label: "email", masked: false },
+          { id: "field-2", label: "password", masked: true },
+        ],
+      );
+      assert.strictEqual(request.delivery, "file");
+
+      // One value alone does not answer two: refused before it reaches the engine.
+      const alone = yield* engine
+        .respondSecret({
+          sessionId,
+          requestId,
+          answer: { _tag: "provide", value: Redacted.make("someone@example.com") },
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(alone._tag, "SecretAnswerMismatch");
+
+      yield* engine.respondSecret({
+        sessionId,
+        requestId,
+        answer: {
+          _tag: "provide-fields",
+          values: {
+            [secretRequestFieldId(0)]: Redacted.make("someone@example.com"),
+            [secretRequestFieldId(1)]: Redacted.make("example-password"),
+          },
+        },
+      });
+      const closed = yield* events.next("request-closed");
+      const end = yield* finished(events, running.turnId);
+
       assert.strictEqual(closed.resolution, "provided");
       assert.deepStrictEqual(end.outcome, { _tag: "completed" });
     }),

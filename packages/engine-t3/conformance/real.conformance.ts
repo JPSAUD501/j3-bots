@@ -73,8 +73,14 @@ const directive = (act: Act) => {
     case "question":
     case "delegate":
       return `[[script:${act._tag}]]`;
-    case "secret":
-      return act.field === undefined ? "[[script:secret]]" : `[[script:secret field=${act.field}]]`;
+    case "secret": {
+      if (act.fields === undefined) return "[[script:secret]]";
+      const names = act.fields.map((field) => field.name).join(",");
+      const plain = act.fields.filter((field) => !field.masked).map((field) => field.name);
+      return plain.length === 0
+        ? `[[script:secret fields=${names}]]`
+        : `[[script:secret fields=${names} plain=${plain.join(",")}]]`;
+    }
     case "speak":
       return `[[script:speak text=${act.text}]]`;
   }

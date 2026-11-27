@@ -269,12 +269,22 @@ export const en = {
   "question.tooLong": "Your answer is too long to reach the bot. Shorten it and send it again.",
 
   "secret.title": "Credential",
-  "secret.unseen": "The bot can use it without seeing it. It never appears in this conversation.",
+  "secret.unseen.one":
+    "The bot can use it without seeing it. It never appears in this conversation.",
+  "secret.unseen.other":
+    "The bot can use them without seeing them. They never appear in this conversation.",
+  "secret.inFile.one":
+    "Kept out of this conversation, in a private file your bot can read for the next 24 hours.",
+  "secret.inFile.other":
+    "Kept out of this conversation, in private files your bot can read for the next 24 hours.",
+  "secret.show": "Show {label}",
   "secret.getOne": "Get one",
   "secret.decline": "Decline",
-  "secret.provide": "Provide",
-  "secret.provided": "Provided. It does not appear in this conversation.",
-  "secret.declined": "Declined. The bot carries on without it.",
+  "secret.provide": "Send",
+  "secret.provided.one": "Sent. It does not appear in this conversation.",
+  "secret.provided.other": "Sent. They do not appear in this conversation.",
+  "secret.declined.one": "Declined. The bot carries on without it.",
+  "secret.declined.other": "Declined. The bot carries on without them.",
   "secret.expired": "This request expired before it was answered.",
 
   "browser.open": "Open browser",

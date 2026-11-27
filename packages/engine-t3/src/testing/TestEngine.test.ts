@@ -425,7 +425,15 @@ describe("TestEngine", () => {
       const secretId = yield* control.openRequest({
         sessionId,
         turnId: missed,
-        request: { _tag: "secret", label: "Token", reason: "Deploy", url: null, placeholder: null },
+        request: {
+          _tag: "secret",
+          label: "Token",
+          reason: "Deploy",
+          url: null,
+          placeholder: null,
+          fields: [],
+          delivery: "reference",
+        },
       });
       yield* engine.respondSecret({
         sessionId,
@@ -581,7 +589,15 @@ describe("TestEngine", () => {
       const requestId = yield* control.openRequest({
         sessionId,
         turnId,
-        request: { _tag: "secret", label: "Token", reason: "Deploy", url: null, placeholder: null },
+        request: {
+          _tag: "secret",
+          label: "Token",
+          reason: "Deploy",
+          url: null,
+          placeholder: null,
+          fields: [],
+          delivery: "reference",
+        },
       });
       const answer = { _tag: "provide", value: Redacted.make("s3cr3t") } as const;
 
