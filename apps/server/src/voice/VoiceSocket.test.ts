@@ -512,6 +512,17 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
 
 // A server of its own, so no model is installed yet.
 it.layer(server, { excludeTestServices: true })("voice socket on first use", (it) => {
+  it.effect("never downloads the model for a recording's transcript", () =>
+    Effect.gen(function* () {
+      const { bearer } = yield* scene({
+        model: VoiceModelId.make(TEST_SPEECH_MODELS.buffered),
+      });
+      const client = yield* open("", bearer);
+      yield* client.startTranscript;
+      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "unavailable" }));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("says the model could not be installed when its download fails", () =>
     Effect.gen(function* () {
       const { speech, bearer } = yield* scene({

@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   cloudProviderOf,
+  MAX_VOICE_SECONDS,
   VOICE_SAMPLE_RATE,
   type VoiceSettings,
   type VoiceStatus,
 } from "@j3-bots/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
+import type { ConnectionState } from "../connection/Connection.ts";
 import { type Readable, waitFor } from "../Store.ts";
 import type { Loaded } from "../stores/reads.ts";
 import type { Synced } from "../stores/synced.ts";
@@ -191,6 +195,8 @@ type PieceOutcome =
 export interface TranscriptServices {
   /** Whether the server writes down a recording's voice (`recordingTranscripts`). */
   readonly takesTranscripts: Readable<boolean>;
+  /** The client's link to the server, which a piece waits on when it broke. */
+  readonly connection: Readable<ConnectionState>;
   /** The operator's settings, of which only dictation's matter here. */
   readonly settings: Readable<Synced<{ readonly voice: VoiceSettings | null }>>;
   /** The server's speech recognition as `Voice.status` holds it. */
@@ -201,12 +207,17 @@ export interface TranscriptServices {
 
 /** How long to wait for the settings or the server's status before going without. */
 const READ_WAIT = "20 seconds";
-/** Between tries while another device dictates. */
-const BUSY_RETRY = "3 seconds";
-/** How long to keep trying while another device dictates, in tries. */
-const BUSY_TRIES = 40;
+/** Between tries of a piece. */
+const RETRY = Duration.seconds(3);
+/**
+ * How long to keep trying while another device dictates: longer than any
+ * one dictation (`MAX_VOICE_SECONDS`) and the AI's tidy-up after it.
+ */
+const BUSY_WAIT = Duration.seconds(MAX_VOICE_SECONDS + 60);
 /** Tries of a piece whose dictation broke off, as when the connection dropped. */
 const BROKEN_TRIES = 3;
+/** How long a piece whose link broke waits for the connection to come back. */
+const RECONNECT_WAIT = "10 minutes";
 /** The most one piece may take: the engine gives up on one far sooner. */
 const PIECE_WAIT = "5 minutes";
 
@@ -271,30 +282,38 @@ const onePiece = Effect.fnUntraced(
   Effect.scoped,
 );
 
-/** One piece, tried again while the server is busy with another dictation or the link broke. */
+/**
+ * One piece, tried again while the server is busy with another dictation,
+ * and when its link broke, once the connection is back.
+ */
 const piece = Effect.fnUntraced(function* (
   services: TranscriptServices,
   pcm: Uint8Array,
   onHeard: (heardMs: number) => void,
 ) {
-  let busy = 0;
+  let busy = Duration.zero;
   let broken = 0;
   while (true) {
     const outcome: PieceOutcome = yield* onePiece(services, pcm, onHeard);
     if (outcome._tag === "heard") return outcome;
     switch (outcome.reason) {
       case "busy":
-        busy += 1;
-        if (busy >= BUSY_TRIES) return outcome;
-        yield* Effect.sleep(BUSY_RETRY);
+        busy = Duration.sum(busy, RETRY);
+        if (Duration.isGreaterThan(busy, BUSY_WAIT)) return outcome;
+        yield* Effect.sleep(RETRY);
         continue;
       case "unreachable":
       case "failed":
-      case "unknown":
+      case "unknown": {
         broken += 1;
         if (broken >= BROKEN_TRIES) return outcome;
-        yield* Effect.sleep(BUSY_RETRY);
+        yield* Effect.sleep(RETRY);
+        const back = yield* waitFor(services.connection, (now) => now._tag === "connected").pipe(
+          Effect.timeoutOption(RECONNECT_WAIT),
+        );
+        if (Option.isNone(back)) return outcome;
         continue;
+      }
       default:
         return outcome;
     }

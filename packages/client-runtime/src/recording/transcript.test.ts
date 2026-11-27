@@ -5,6 +5,7 @@ import { VoiceModelId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
+import type { ConnectionState } from "../connection/Connection.ts";
 import { Cell } from "../Store.ts";
 import type { Loaded } from "../stores/reads.ts";
 import { ready } from "../stores/synced.ts";
@@ -124,9 +125,11 @@ const services = (
     readonly place?: VoicePlace;
     readonly status?: VoiceStatus;
     readonly takesTranscripts?: boolean;
+    readonly connection?: Cell<ConnectionState>;
   } = {},
 ): TranscriptServices => ({
   takesTranscripts: new Cell(options.takesTranscripts ?? true),
+  connection: options.connection ?? new Cell<ConnectionState>({ _tag: "connected" }),
   settings: settingsFor(options.place ?? "automatic"),
   voiceStatus: Effect.succeed(
     new Cell<Loaded<VoiceStatus>>(
@@ -225,6 +228,27 @@ describe("writeDown", () => {
       assert.deepStrictEqual(
         transcript?.segments.map((segment) => segment.text),
         ["Ready."],
+      );
+    }),
+  );
+
+  it.effect("waits for the connection to come back when a piece's link broke", () =>
+    Effect.gen(function* () {
+      const server = fakeServer([{ failed: "unreachable" }, { heard: [], text: "Back." }]);
+      const connection = new Cell<ConnectionState>({ _tag: "offline" });
+      const fiber = yield* Effect.forkChild(
+        writeDown(services(server, { connection }), voice(2), () => undefined),
+        { startImmediately: true },
+      );
+      // Offline for a minute: it does not try again meanwhile.
+      yield* TestClock.adjust("1 minute");
+      assert.strictEqual(server.opened(), 1);
+      connection.set({ _tag: "connected" });
+      const transcript = yield* Fiber.join(fiber);
+      assert.strictEqual(server.opened(), 2);
+      assert.deepStrictEqual(
+        transcript?.segments.map((segment) => segment.text),
+        ["Back."],
       );
     }),
   );

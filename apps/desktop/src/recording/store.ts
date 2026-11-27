@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { type EventLine, linesText } from "./events.ts";
 import { wholeFragments, wholeLines } from "./mp4.ts";
 import {
@@ -127,6 +128,8 @@ export const makeStore = Effect.fn("recording.store")(function* (folder: string)
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const layouts = new Map<RecordingId, ZipLayout<string>>();
+  /** A ready recording is sealed again for its transcript, or removed, one at a time. */
+  const settling = yield* Semaphore.make(1);
 
   const dir = (id: RecordingId) => path.join(folder, id);
 
@@ -362,10 +365,11 @@ export const makeStore = Effect.fn("recording.store")(function* (folder: string)
       return yield* seal(id, session.value, { durationMs, interrupted });
     }),
     /** Deletes a recording: the operator discarded it, or the page sent it. */
-    remove: (id: RecordingId) => {
-      layouts.delete(id);
-      return fs.remove(dir(id), { recursive: true }).pipe(Effect.ignore);
-    },
+    remove: (id: RecordingId) =>
+      Effect.suspend(() => {
+        layouts.delete(id);
+        return fs.remove(dir(id), { recursive: true }).pipe(Effect.ignore);
+      }).pipe(settling.withPermits(1)),
     /**
      * Every recording kept: those finished, and those the app did not finish,
      * finished now from what they hold. A folder that cannot be read as a
@@ -428,7 +432,7 @@ export const makeStore = Effect.fn("recording.store")(function* (folder: string)
       if (finished.transcript !== undefined) {
         return Option.some(readyOf(id, session.value, finished.size, null));
       }
-      const added = transcript !== null && transcript.segments.length > 0;
+      const added = transcript !== null;
       if (added) {
         yield* fs.writeFileString(path.join(dir(id), TRANSCRIPT_FILE), transcriptText(transcript));
       }
@@ -446,7 +450,7 @@ export const makeStore = Effect.fn("recording.store")(function* (folder: string)
       );
       yield* fs.remove(path.join(dir(id), SPEECH_FILE)).pipe(Effect.ignore);
       return Option.some(ready);
-    }),
+    }, settling.withPermits(1)),
     /** Bytes `[start, end)` of a finished recording's zip; none once it is gone. */
     read: Effect.fn("recording.read")(function* (id: RecordingId, start: number, end: number) {
       const layout = layouts.get(id);

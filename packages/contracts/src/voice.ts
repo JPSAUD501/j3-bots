@@ -219,6 +219,7 @@ export const MAX_VOICE_DRAFT_LENGTH = 20_000;
  * `start` with `transcript` asks for a screen recording's transcript rather
  * than words for the composer: each `words` frame then says how much of the
  * audio the words were heard in (`heardMs`), and the AI never tidies them.
+ * It never downloads a model: without one installed, it fails `unavailable`.
  * Only a server whose roster snapshot carries `recordingTranscripts` takes
  * it; an older one would dictate as usual.
  *

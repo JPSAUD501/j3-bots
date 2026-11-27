@@ -239,11 +239,12 @@ export type RecordingRead = typeof RecordingRead.Type;
 const Ms = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const Said = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100_000));
 
-/** A word, and when the recognizer had heard it, in ms into the recording. */
-export const TranscriptWord = Schema.Struct({
-  t: Ms,
-  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-});
+/**
+ * A word, and when the recognizer had heard it, in ms into the recording. As
+ * long as its segment's text may be: a language written without spaces, or a
+ * recognizer repeating itself over noise, gives long ones.
+ */
+export const TranscriptWord = Schema.Struct({ t: Ms, text: Said });
 
 /**
  * What was said from `t` to `until`, in ms; `words` null where the

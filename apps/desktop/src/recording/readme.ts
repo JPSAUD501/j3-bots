@@ -94,7 +94,7 @@ const duration = (ms: number) => {
 
 const TRANSCRIPT_SECTION = `## Transcript
 
-\`${TRANSCRIPT_FILE}\` holds \`segments\`, in order, each what was said from \`t\` to \`until\` (the same clock as the events), at most 30 seconds long and cut where the voice was quietest. Stretches where nothing was said are left out. A segment's \`words\` each have a \`t\`: when the speech recognizer had heard that word, so it was said up to about a second before; a word it settled only at the segment's end has the segment's \`until\`. A segment without \`words\` was written down by a recognizer that gives only the text, so its time is the segment's. Speech recognition gets some words wrong, names most of all: when a word matters, listen to the voice at that time.
+\`${TRANSCRIPT_FILE}\` holds \`segments\`, in order, each what was said from \`t\` to \`until\` (the same clock as the events), at most 30 seconds long and cut where the voice was quietest. Stretches where nothing was said are left out: without any segment, the recognizer heard nothing said. A segment's \`words\` each have a \`t\`: when the speech recognizer had heard that word, so it was said up to about a second before; a word it settled only at the segment's end has the segment's \`until\`. A segment without \`words\` was written down by a recognizer that gives only the text, so its time is the segment's. Speech recognition gets some words wrong, names most of all: when a word matters, listen to the voice at that time.
 
 `;
 

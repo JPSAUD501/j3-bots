@@ -502,7 +502,14 @@ export const layer = Layer.effect(
       if (support._tag === "unsupported") return yield* refuse("unavailable");
       const model = chosenModel(yield* speech.models.pipe(Effect.mapError(failureOf)), voice);
       if (Option.isNone(model)) return yield* refuse("unavailable");
-      if (!model.value.installed || support.modelId !== model.value.id) {
+      if (transcript && !model.value.installed) {
+        // A recording never starts the model's download: that is dictation's to ask for.
+        return yield* refuse("unavailable");
+      }
+      if (transcript && support.modelId !== model.value.id) {
+        // Installed, so this only makes it the engine's: nothing to show meanwhile.
+        yield* ensureInstalled(model.value).pipe(Effect.mapError(failureOf));
+      } else if (!model.value.installed || support.modelId !== model.value.id) {
         if (!(yield* prepare(link, inbox, model.value))) return { text: "", draft: undefined };
       }
       yield* speech.keepLoaded(keepLoaded).pipe(Effect.mapError(failureOf));

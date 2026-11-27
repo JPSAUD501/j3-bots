@@ -843,6 +843,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
   const { connection, conversations } = services;
   const transcriptServices: Transcript.TranscriptServices = {
     takesTranscripts: services.roster.recordingTranscripts,
+    connection: connection.state,
     settings: services.settings.state,
     voiceStatus: services.voice.status,
     transcribe: services.voice.transcribe,
@@ -1063,10 +1064,16 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
                 ...recording,
                 transcribe: (progress) =>
                   Transcript.writeDown(transcriptServices, speech, progress).pipe(
-                    // Gone meanwhile, the recording cannot be read for its upload either.
                     Effect.flatMap((transcript) =>
-                      Effect.promise(() => speech.keep(transcript).catch(() => null)),
+                      Effect.promise(async () => {
+                        const keep = (kept: Transcript.RecordingTranscript | null) =>
+                          speech.keep(kept).catch(() => null);
+                        const size = await keep(transcript);
+                        // A transcript the device could not put in the zip: it goes without one.
+                        return size === null && transcript !== null ? keep(null) : size;
+                      }),
                     ),
+                    // Gone meanwhile, the recording cannot be read for its upload either.
                     Effect.filterOrFail(
                       (size): size is number => size !== null,
                       () => new Files.UploadRefused({ problem: "unreadable" }),
