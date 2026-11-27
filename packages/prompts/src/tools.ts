@@ -178,6 +178,12 @@ const SayInput = toolInput({
       "Rarely: the id of an earlier message, as your envelope gives it, that this one answers, shown above your words. Only when it would be unclear otherwise, as for an older message or one of several questions; a reply to a member's message in a room wakes that member when you mention nobody.",
     ),
   ),
+  offer: Schema.optionalKey(
+    described(
+      Schema.Literal("record-screen"),
+      "Rarely, not by default: a Record your screen button under this message, for when your user describes a task they do on their computer that you would understand better by watching it. Their recording comes as a .zip file; its README.md says how to read it.",
+    ),
+  ),
   done: Schema.optionalKey(
     described(
       Schema.Boolean,

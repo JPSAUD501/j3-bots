@@ -216,6 +216,20 @@ export const MessageQuote = Schema.Struct({
 });
 export type MessageQuote = typeof MessageQuote.Type;
 
+/**
+ * What a bot's message can offer the operator, as one button under it
+ * (decision 0098): `record-screen` opens the desktop app's screen recorder.
+ */
+export const MESSAGE_OFFER_KINDS = ["record-screen"] as const;
+
+/**
+ * An offer a bot's message carries. Its kind stays open, and a client shows
+ * none for one added after it (`unknown`); fields added later to an offer are
+ * passed over by a client that predates them.
+ */
+export const MessageOffer = Schema.Struct({ kind: OpenLiterals(MESSAGE_OFFER_KINDS) });
+export type MessageOffer = typeof MessageOffer.Type;
+
 /** The most UTF-16 code units one reaction's emoji takes: a long ZWJ sequence fits. */
 export const MAX_REACTION_LENGTH = 32;
 
@@ -317,6 +331,12 @@ export const MessageEntry = Schema.TaggedStruct("message", {
    * message.
    */
   visual: Schema.optionalKey(Visual),
+  /**
+   * What a bot's message offers the operator under its words
+   * (`MessageOffer`). Absent from every other message, and from a server that
+   * predates offers.
+   */
+  offer: Schema.optionalKey(MessageOffer),
   /**
    * The window the operator was looking at as they wrote it from quick
    * access, which the message went with. Absent from every other message,

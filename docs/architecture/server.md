@@ -391,6 +391,10 @@ A `say` may show a page above its text ([decision 0030](../decisions/0030-a-visu
 - **What is done with it.** Nothing: the server neither runs nor parses the page, which only a client's sandboxed frame renders ([Security: visuals](security.md#visuals)). It is stored as text in the entry and never written to a log, a trace, a notification or a push, which say the message's text. The roster's preview of the message is its text.
 - **How it is served.** The web client's visual page, `VISUAL_FRAME_PATH`, is served with `VISUAL_FRAME_POLICY` and no `X-Frame-Options`, so the client can frame it; every other page of the client is served with `frame-ancestors 'none'; frame-src 'self'`.
 
+## Offers
+
+A bot's `say` may offer the operator one thing to do from its message (decision 0098): `offer: "record-screen"` puts a Record your screen button under it. The server checks nothing else and stores it with the message as `MessageEntry.offer`, `{kind: "record-screen"}`, in the conversation or room the `say` goes to; a `say` without one carries none, and no other message has one. The kind is an open literal (`MESSAGE_OFFER_KINDS`): a client shows nothing for a kind it does not know, and passes over fields added to an offer later. What pressing it does is the client's ([Clients](clients.md)): the desktop app opens its screen recorder, and every other client says to open J3 Bots on the computer. No migration: the offer lives in the message's stored body.
+
 ## Sessions
 
 Each bot has one **main session**: an engine thread in the bot's project, where operator turns, room turns and teammate messages all land. One working context means a bot in a room can use what the operator told it privately, which is what makes it the same teammate everywhere.
@@ -497,7 +501,7 @@ A connector call may take up to eleven minutes at the bridge, past the connector
 
 | Tool | Purpose |
 | --- | --- |
-| `say` | Deliver a message to the audience of the turn that made the call: the operator, or the room during a room turn. Optional attachments, an optional visual ([Visuals](#visuals)), and an optional `reply_to`, a message there it answers ([Quotes](#quotes)). `done` marks the delivery complete. |
+| `say` | Deliver a message to the audience of the turn that made the call: the operator, or the room during a room turn. Optional attachments, an optional visual ([Visuals](#visuals)), an optional `reply_to`, a message there it answers ([Quotes](#quotes)), and an optional `offer` ([Offers](#offers)). `done` marks the delivery complete. |
 | `ask` | Put one question to the operator as a card with options. Ends the turn. Refused in a routine's side session. |
 | `react` | React with one emoji to a message of the conversation or room the turn is for, by the id its envelope gives it, never one of the bot's own; a new emoji replaces the bot's reaction there. Notifies nobody. `done` makes it the whole reply, as `say`'s does. See [Reactions](#reactions). |
 | `message_bot` | Send a message to one teammate, by bot id: `urgent` wakes them now; otherwise it waits for their next turn. Or post in a room the bot is a member of, by room id, from any turn, with an optional `mention` routed as a room `say`'s and an optional `reply_to` as `say`'s. Returns only an acknowledgement. See [Teammate messages](#teammate-messages). |

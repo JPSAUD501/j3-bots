@@ -693,6 +693,47 @@ for (const [why, name, file, reason] of [
   );
 }
 
+it.effect(
+  "keeps a say's offer to record the screen with its message, and none on a say without",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const tools = yield* BotTools;
+      const { bot, session, turnId } = yield* working("I send the invoices every Friday.");
+      const says = [
+        { text: "Want to show me how you do it?", offer: "record-screen" },
+        { text: "Or tell me the steps.", done: true },
+      ] as const;
+      for (const [n, args] of says.entries()) {
+        yield* control.toolCall({
+          sessionId: session,
+          turnId,
+          tool: "say",
+          input: args,
+          recorded: "now",
+        });
+        const reply = yield* tools.call({
+          requestId: `call-${n}`,
+          sessionId: session,
+          tool: "say",
+          arguments: { ...args },
+        });
+        assert.deepStrictEqual(reply, { _tag: "result", value: { status: "recorded" } });
+      }
+
+      const said = (yield* conversation(bot.id)).flatMap((entry) =>
+        entry._tag === "message" && entry.author._tag === "bot" ? [entry] : [],
+      );
+      assert.deepStrictEqual(
+        said.map(({ text, offer }) => ({ text, offer })),
+        [
+          { text: "Want to show me how you do it?", offer: { kind: "record-screen" } },
+          { text: "Or tell me the steps.", offer: undefined },
+        ],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** Where each teammate message the bot's conversation shows stands, oldest first. */
 const handoffStates = (botId: BotId) =>
   conversation(botId).pipe(

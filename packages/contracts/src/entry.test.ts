@@ -84,6 +84,17 @@ describe("an entry a client receives", () => {
     );
   });
 
+  it("keeps a message whose offer came after this build, offering nothing it does not know", () => {
+    const [offered, extended] = Schema.decodeSync(EntriesJson)([
+      { ...said(1), offer: { kind: "an-offer-from-a-newer-server" } },
+      { ...said(2), offer: { kind: "record-screen", detail: { screens: 2 } } },
+    ]);
+    assert.deepStrictEqual(offered?._tag === "message" && offered.offer, { kind: "unknown" });
+    assert.deepStrictEqual(extended?._tag === "message" && extended.offer, {
+      kind: "record-screen",
+    });
+  });
+
   it("of a kind this build knows is refused when it does not decode, not taken as unknown", () => {
     const { text: _, ...textless } = said(1);
     assert.isTrue(refused([textless]));
