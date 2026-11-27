@@ -38,6 +38,12 @@ const glyphPaths = (glyph: ConnectorGlyph): ReadonlyArray<string> | null => {
   return isConnectorGlyphName(name) ? CONNECTOR_GLYPHS[name] : null;
 };
 
+const tileLook = {
+  sm: { box: "size-6", text: "text-xs", glyph: 14 },
+  md: { box: "size-9", text: "text-base", glyph: 18 },
+  lg: { box: "size-12", text: "text-xl", glyph: 24 },
+} as const;
+
 /**
  * A connector's tile, on a quiet fill: the glyph it names, drawn as a line
  * like the app's other icons, or its first letter in the display face when it
@@ -50,28 +56,26 @@ export function ConnectorTile({
 }: {
   readonly name: string;
   readonly glyph: ConnectorGlyph | null;
-  readonly size?: "md" | "lg";
+  /** `sm` heads a connector's app in a reply. */
+  readonly size?: "sm" | "md" | "lg";
 }) {
   const stroke = useColor("accent-foreground");
   const paths = glyph === null ? null : glyphPaths(glyph);
-  const large = size === "lg";
+  const look = tileLook[size];
   return (
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      className={`shrink-0 items-center justify-center rounded-md bg-muted ${large ? "size-12" : "size-9"}`}
+      className={`shrink-0 items-center justify-center rounded-md bg-muted ${look.box}`}
     >
       {paths === null ? (
-        <Text
-          face="display"
-          className={`font-semibold text-foreground ${large ? "text-xl" : "text-base"}`}
-        >
+        <Text face="display" className={`font-semibold text-foreground ${look.text}`}>
           {Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "?"}
         </Text>
       ) : (
         <Svg
-          width={large ? 24 : 18}
-          height={large ? 24 : 18}
+          width={look.glyph}
+          height={look.glyph}
           viewBox="0 0 24 24"
           fill="none"
           stroke={stroke}

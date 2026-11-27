@@ -345,6 +345,7 @@ export {
   type ArrivalCounts,
   arrivalCounts,
   arrivedRows,
+  botRepliesAfter,
   buildTimeline,
   type CardPlace,
   cardPlace,

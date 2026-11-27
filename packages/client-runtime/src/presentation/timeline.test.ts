@@ -17,6 +17,7 @@ import { at, handoff, message } from "../../test/fixtures.ts";
 import {
   arrivalCounts,
   arrivedRows,
+  botRepliesAfter,
   buildTimeline,
   cardPlace,
   readThrough,
@@ -350,6 +351,25 @@ describe("buildTimeline", () => {
         i.kind === "event" ? i.line._tag : i.kind === "card" ? i.entry._tag : i.kind,
       ),
     ).toEqual(["divider", "operator-named", "routine-paused", "notice"]);
+  });
+});
+
+describe("botRepliesAfter", () => {
+  const rows = buildTimeline([
+    message("2026-11-20T10:00:00Z", scout, "Before"),
+    message("2026-11-20T10:01:00Z"),
+    message("2026-11-20T10:02:00Z", scout, "First"),
+    message("2026-11-20T10:03:00Z", wren, "Second"),
+  ]);
+  const texts = (since: string | null) => botRepliesAfter(rows, since).map((reply) => reply.text);
+
+  it("finds what the bots said after a row, and not what the operator said", () => {
+    const since = rows.find((row) => row.kind === "message" && row.message.text === "Before");
+    expect(texts(since?.key ?? null)).toEqual(["First", "Second"]);
+  });
+
+  it("finds nothing once the row it counts from is gone", () => {
+    expect(texts("gone")).toEqual([]);
   });
 });
 

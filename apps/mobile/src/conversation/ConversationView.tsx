@@ -77,7 +77,7 @@ import {
   useState,
 } from "react";
 import { SearchX } from "lucide-react-native";
-import { AppState, View } from "react-native";
+import { AppState, useColorScheme, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
@@ -88,6 +88,7 @@ import { AiConnect, useMobileAiConnect } from "../components/AiConnect.tsx";
 import { PendingButton } from "../components/form.tsx";
 import { StateMark } from "../components/States.tsx";
 import type { Navigation } from "../navigation.tsx";
+import { session } from "../platform/platform.ts";
 import { useRoomActions } from "../details/actions.ts";
 import { enteringWhen, openIn, popIn, settleIn, useReducedMotion } from "../motion.ts";
 import { useBots, usePresentation, useRooms } from "../presentation.tsx";
@@ -113,7 +114,8 @@ import { Reactions } from "./Reactions.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
-import { ConnectorApps } from "./ConnectorAppCard.tsx";
+import { AppStage, type PlaceBase, STAGE_MODES, useAppStageState } from "./AppStage.tsx";
+import { ConnectorAppBlock, StagedConnectorApp } from "./ConnectorAppCard.tsx";
 import { type TurnBot, WorkFold } from "./WorkFold.tsx";
 
 /** Whether the app is in the foreground. */
@@ -419,6 +421,25 @@ export function ConversationView({
       void list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
   };
 
+  // Where its connectors' apps are drawn, as they are told, and which one shows other than in the reply.
+  const opened = useReadable(session.state);
+  const server = opened._tag === "open" ? opened.origin : null;
+  const appearance = useColorScheme() === "dark" ? "dark" : "light";
+  const base = useMemo<PlaceBase>(
+    () => ({
+      appearance,
+      locale: ctx.i18n.locale,
+      timeZone: ctx.timeZone,
+      platform: "mobile",
+      touch: true,
+      hover: false,
+      modes: STAGE_MODES,
+    }),
+    [appearance, ctx.i18n.locale, ctx.timeZone],
+  );
+  const stage = useAppStageState({ rows, server, base });
+  const fullscreen = stage.staged?.mode === "fullscreen";
+
   const archived = room !== null && room.status === "archived";
   // Reply and Quote part, once the server takes quotes, where the conversation takes messages.
   const quotesTaken = useReadable(client.quotes);
@@ -472,106 +493,110 @@ export function ConversationView({
           }
         >
           <OpenMention value={openMention}>
-            <ConversationVisualsContext value={visuals}>
-              <EntryWidths value={widths}>
-                {/* What quoting and reacting to the conversation's messages open: one passage sheet, and
-                one quick bar, picker and list of who reacted. */}
-                <Quotes
-                  target={target}
-                  offered={quotesTaken && !archived}
-                  onQuoted={focusComposer}
-                  goTo={goToQuoted}
-                  highlights={lit}
-                >
-                  <Reactions>
-                    {quiet ? (
-                      item._tag === "bot" ? (
-                        <Quiet bot={item.bot} bottom={composerHeight} />
+            <AppStage value={stage}>
+              <ConversationVisualsContext value={visuals}>
+                <EntryWidths value={widths}>
+                  {/* What quoting and reacting to the conversation's messages open: one passage sheet, and
+                  one quick bar, picker and list of who reacted. */}
+                  <Quotes
+                    target={target}
+                    offered={quotesTaken && !archived}
+                    onQuoted={focusComposer}
+                    goTo={goToQuoted}
+                    highlights={lit}
+                  >
+                    <Reactions>
+                      {quiet ? (
+                        item._tag === "bot" ? (
+                          <Quiet bot={item.bot} bottom={composerHeight} />
+                        ) : (
+                          <QuietRoom room={item.room} bottom={composerHeight} />
+                        )
                       ) : (
-                        <QuietRoom room={item.room} bottom={composerHeight} />
-                      )
-                    ) : (
-                      <KeyboardAwareLegendList
-                        ref={list}
-                        data={rows}
-                        keyExtractor={(row) => row.key}
-                        getItemType={(row) => row.kind}
-                        estimatedItemSize={64}
-                        // Rows keep state of their own, such as an open fold: a row is never reused for another.
-                        recycleItems={false}
-                        renderItem={({ item: row }) => (
-                          <View
-                            className="w-full self-center"
-                            style={{ maxWidth: layout.textColumn }}
-                          >
-                            <Row
-                              row={row}
-                              room={room}
-                              turnBot={turnBot}
-                              arriving={arrived.has(row.key)}
-                              openingHold={openingHold}
-                              onOpen={onOpen}
-                              onOpenRoutine={openRoutine}
-                              onOpenBrowser={openBrowser}
-                              onOpenPair={openPair}
-                            />
-                          </View>
-                        )}
-                        extraData={{ room, widths, arrived, openingHold, turnBot }}
-                        onScroll={({
-                          nativeEvent: { contentOffset, contentSize, layoutMeasurement },
-                        }) => {
-                          visuals.scrolled();
-                          end.follow(
-                            contentSize.height - layoutMeasurement.height - contentOffset.y,
-                            layoutMeasurement.height,
-                          );
-                        }}
-                        scrollEventThrottle={64}
-                        alignItemsAtEnd
-                        initialScrollAtEnd
-                        maintainScrollAtEnd
-                        maintainVisibleContentPosition
-                        onStartReached={() => {
-                          if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
-                        }}
-                        // In a room, who is answering now, after everything said there.
-                        ListFooterComponent={
-                          room === null ? null : (
+                        <KeyboardAwareLegendList
+                          ref={list}
+                          data={rows}
+                          keyExtractor={(row) => row.key}
+                          getItemType={(row) => row.kind}
+                          estimatedItemSize={64}
+                          // Rows keep state of their own, such as an open fold: a row is never reused for another.
+                          recycleItems={false}
+                          renderItem={({ item: row }) => (
                             <View
                               className="w-full self-center"
                               style={{ maxWidth: layout.textColumn }}
                             >
-                              <RoomWork room={room} />
-                              <AnsweringLine room={room} />
+                              <Row
+                                row={row}
+                                room={room}
+                                turnBot={turnBot}
+                                arriving={arrived.has(row.key)}
+                                openingHold={openingHold}
+                                onOpen={onOpen}
+                                onOpenRoutine={openRoutine}
+                                onOpenBrowser={openBrowser}
+                                onOpenPair={openPair}
+                              />
                             </View>
-                          )
-                        }
-                        ListHeaderComponent={
-                          state?.loadingOlder === true ? (
-                            <Text className="py-3 text-center text-xs text-muted-foreground">
-                              {t("timeline.loadingOlder")}
-                            </Text>
-                          ) : null
-                        }
-                        viewabilityConfigCallbackPairs={pairs}
-                        contentInsetEndAdjustment={contentInsetEndAdjustment}
-                        keyboardOffset={insets.bottom}
-                        keyboardDismissMode="interactive"
-                        keyboardShouldPersistTaps="handled"
-                        contentContainerStyle={{
-                          paddingTop: 4,
-                          paddingBottom: toCard ? 8 + PILL_ROOM : 8,
-                        }}
-                      />
-                    )}
-                  </Reactions>
-                </Quotes>
-              </EntryWidths>
-            </ConversationVisualsContext>
+                          )}
+                          extraData={{ room, widths, arrived, openingHold, turnBot }}
+                          onScroll={({
+                            nativeEvent: { contentOffset, contentSize, layoutMeasurement },
+                          }) => {
+                            visuals.scrolled();
+                            end.follow(
+                              contentSize.height - layoutMeasurement.height - contentOffset.y,
+                              layoutMeasurement.height,
+                            );
+                          }}
+                          scrollEventThrottle={64}
+                          alignItemsAtEnd
+                          initialScrollAtEnd
+                          maintainScrollAtEnd
+                          maintainVisibleContentPosition
+                          onStartReached={() => {
+                            if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
+                          }}
+                          // In a room, who is answering now, after everything said there.
+                          ListFooterComponent={
+                            room === null ? null : (
+                              <View
+                                className="w-full self-center"
+                                style={{ maxWidth: layout.textColumn }}
+                              >
+                                <RoomWork room={room} />
+                                <AnsweringLine room={room} />
+                              </View>
+                            )
+                          }
+                          ListHeaderComponent={
+                            state?.loadingOlder === true ? (
+                              <Text className="py-3 text-center text-xs text-muted-foreground">
+                                {t("timeline.loadingOlder")}
+                              </Text>
+                            ) : null
+                          }
+                          viewabilityConfigCallbackPairs={pairs}
+                          contentInsetEndAdjustment={contentInsetEndAdjustment}
+                          keyboardOffset={insets.bottom}
+                          keyboardDismissMode="interactive"
+                          keyboardShouldPersistTaps="handled"
+                          contentContainerStyle={{
+                            paddingTop: 4,
+                            paddingBottom: toCard ? 8 + PILL_ROOM : 8,
+                          }}
+                        />
+                      )}
+                    </Reactions>
+                  </Quotes>
+                </EntryWidths>
+              </ConversationVisualsContext>
+              {/* An app shown full screen or pinned, over the list and under the composer. */}
+              <StagedConnectorApp bottom={composerHeight} />
+            </AppStage>
           </OpenMention>
           {/* Over the composer, riding on the keyboard with it. */}
-          {!quiet && (
+          {!quiet && !fullscreen && (
             <KeyboardStickyView
               offset={{ closed: 0, opened: insets.bottom }}
               style={{ position: "absolute", start: 0, end: 0, bottom: composerHeight + 8 }}
@@ -781,11 +806,12 @@ function Row({
       return (
         <AnimatedView {...enteringWhen(settles, settleIn(springs.pop))}>
           <WorkFold fold={row.fold} live={row.live ? turnBot : null} />
-          {row.fold !== null && row.fold.apps.length > 0 && (
-            <View className="px-4">
-              <ConnectorApps apps={row.fold.apps} />
-            </View>
-          )}
+        </AnimatedView>
+      );
+    case "app":
+      return (
+        <AnimatedView {...entering} className="px-4">
+          <ConnectorAppBlock app={row.app} />
         </AnimatedView>
       );
     case "card": {

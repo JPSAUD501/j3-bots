@@ -282,7 +282,6 @@ export const en = {
   "visual.expand": "Open {title} full screen",
   "visual.close": "Close",
   "visual.failed": "Couldn’t show this visual.",
-  "connectorApp.from": "{tool} · {connector}",
   "connectorApp.title": "{tool}, an app from {connector}",
   "connectorApp.failed": "Couldn’t show this app.",
   "connectorApp.askCall": "This app wants to run {tool} on {connector}, as the bot.",

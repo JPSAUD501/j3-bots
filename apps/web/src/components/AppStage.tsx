@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectorAppViewId, MessageEntry } from "@j3-bots/contracts";
-import type { ConnectorAppDisplayMode, TimelineItem } from "@j3-bots/client-runtime/presentation";
+import {
+  botRepliesAfter,
+  type ConnectorAppDisplayMode,
+  type TimelineItem,
+} from "@j3-bots/client-runtime/presentation";
 import {
   createContext,
   type ReactNode,
@@ -19,7 +23,7 @@ import {
 // to the reply. docs/architecture/clients.md, "Connector apps".
 
 /** An app shown other than in the reply. */
-export interface StagedApp {
+interface StagedApp {
   readonly viewId: ConnectorAppViewId;
   readonly mode: Exclude<ConnectorAppDisplayMode, "inline">;
 }
@@ -60,16 +64,6 @@ const noStage: AppStageState = {
   staged: null,
   show: () => "inline",
   replies: [],
-};
-
-/** The rows after the one keyed `since`, all of them when null; none once that row is gone. */
-const rowsAfter = (
-  rows: ReadonlyArray<TimelineItem>,
-  since: string | null,
-): ReadonlyArray<TimelineItem> => {
-  if (since === null) return rows;
-  const index = rows.findIndex((row) => row.key === since);
-  return index === -1 ? [] : rows.slice(index + 1);
 };
 
 const AppStageContext = createContext<AppStageState>(noStage);
@@ -133,12 +127,7 @@ export function AppStageProvider({
   );
 
   const value = useMemo<AppStageState>(() => {
-    const after = staged?.mode === "fullscreen" ? rowsAfter(rows, staged.since) : [];
-    const replies = after.flatMap((row) =>
-      row.kind === "message" && row.message._tag === "message" && row.message.author._tag === "bot"
-        ? [row.message]
-        : [],
-    );
+    const replies = staged?.mode === "fullscreen" ? botRepliesAfter(rows, staged.since) : [];
     return {
       area,
       scroller,

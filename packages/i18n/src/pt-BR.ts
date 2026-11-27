@@ -279,7 +279,6 @@ const sentences = {
   "visual.expand": "Abrir {title} em tela cheia",
   "visual.close": "Fechar",
   "visual.failed": "Não foi possível mostrar este visual.",
-  "connectorApp.from": "{tool} · {connector}",
   "connectorApp.title": "{tool}, um app de {connector}",
   "connectorApp.failed": "Não foi possível mostrar este app.",
   "connectorApp.askCall": "Este app quer executar {tool} em {connector}, como o bot.",
