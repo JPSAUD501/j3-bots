@@ -5,13 +5,14 @@ import {
   type CloudVoiceProvider,
   HTTP_PATHS,
   MAX_VOICE_FRAME_BYTES,
+  MAX_VOICE_SECONDS,
+  VOICE_SAMPLE_RATE,
   VoiceClientFrame,
   type VoiceFailure,
-  type VoiceModel,
   VoiceServerFrame,
-  type VoiceStatus,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,21 +21,16 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
-import { Connection, ReconnectPolicy } from "../connection/Connection.ts";
+import { Connection, type NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
+import type { ServerUnreachable } from "../connection/http.ts";
 import { intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { type Loaded, makeLive } from "./reads.ts";
 
-// Dictation through the server (decision 0096): its status and models on
-// the RPC socket, and each dictation on a voice socket of its own
+// Dictation through the server (decision 0107): the cloud providers' keys
+// on the RPC socket, and each dictation on a voice socket of its own
 // (`HTTP_PATHS.voice`). The audio goes out as it is recorded and is kept
-// nowhere on the device.
-
-/** What has been heard so far: settled words, then words still open to change. */
-export interface HeardWords {
-  readonly committed: string;
-  readonly tentative: string;
-}
+// nowhere on the device; the words come once the operator stops.
 
 /**
  * Why a dictation on the server ended without words: the server's reasons,
@@ -45,29 +41,14 @@ export interface HeardWords {
  */
 export type DictationFailure = VoiceFailure | "unknown" | "unreachable" | "not-paired";
 
-/**
- * For a transcript (`Voice.transcribe`), how much of the audio the engine
- * had taken, in ms, when it heard the words held: absent before any word.
- */
-interface HeardIn {
-  readonly heardMs?: number;
-}
-
 /** One dictation on the server, from the first frame to its end. */
 export type DictationState =
-  /** The socket is opening, or the server is loading the model. */
+  /** The socket is opening. */
   | { readonly _tag: "connecting" }
-  /** The server is downloading the model, on first use. */
-  | { readonly _tag: "installing"; readonly received: number; readonly total: number }
-  /**
-   * Audio is taken. `live`: words come while the operator speaks; otherwise
-   * they come once they stop.
-   */
-  | ({ readonly _tag: "listening"; readonly live: boolean } & HeardWords & HeardIn)
-  /** The operator stopped; the server is working out the last words. */
-  | ({ readonly _tag: "finishing" } & HeardWords & HeardIn)
-  /** The AI is tidying up what was heard. */
-  | ({ readonly _tag: "tidying" } & HeardWords)
+  /** Audio is taken. */
+  | { readonly _tag: "listening" }
+  /** The operator stopped; the provider is writing down what they said. */
+  | { readonly _tag: "finishing" }
   | { readonly _tag: "done"; readonly text: string }
   | { readonly _tag: "failed"; readonly reason: DictationFailure };
 
@@ -80,50 +61,30 @@ export interface Dictation {
   readonly state: Readable<DictationState>;
   /**
    * Passes on one piece of the recording: mono 16 kHz 32-bit float PCM,
-   * little-endian (`VOICE_SAMPLE_RATE`). Dropped unless the server listens,
-   * as while it downloads the model; a piece over `MAX_VOICE_FRAME_BYTES`
-   * goes in parts.
+   * little-endian (`VOICE_SAMPLE_RATE`). What is recorded while the socket
+   * opens is held and goes once the server listens, so the first words are
+   * not lost; after Stop, or once the dictation ended, a piece is dropped.
+   * A piece over `MAX_VOICE_FRAME_BYTES` goes in parts.
    */
   readonly audio: (pcm: Uint8Array) => Effect.Effect<void>;
   /**
-   * The operator stopped. `draft` is the text the words go into, with where
-   * they go, for the AI's tidy-up. Before the server listens, nothing was
-   * heard: the dictation is done with no text.
+   * The operator stopped. Before the server listens, it is finishing, and
+   * the server is told once what was held has gone.
    */
-  readonly finish: (draft?: {
-    readonly text: string;
-    readonly start: number;
-    readonly end: number;
-  }) => Effect.Effect<void>;
+  readonly finish: Effect.Effect<void>;
 }
+
+/** The most a dictation holds while its socket opens: as much as the server takes in one. */
+const MAX_HELD_BYTES = MAX_VOICE_SECONDS * VOICE_SAMPLE_RATE * 4;
 
 const decodeServerFrame = Schema.decodeUnknownOption(Schema.fromJsonString(VoiceServerFrame));
 const encodeClientFrame = Schema.encodeSync(Schema.fromJsonString(VoiceClientFrame));
 
-/** The words held, in any state that holds them. */
-const heardIn = (state: DictationState): HeardWords =>
-  "committed" in state
-    ? { committed: state.committed, tentative: state.tentative }
-    : { committed: "", tentative: "" };
-
-/** The state a frame from the server leads to, from `now`. */
-export const nextState = (now: DictationState, frame: VoiceServerFrame): DictationState => {
+/** The state a frame from the server leads to. */
+const nextState = (frame: VoiceServerFrame): DictationState => {
   switch (frame.type) {
-    case "installing":
-      return { _tag: "installing", received: frame.received, total: frame.total };
     case "listening":
-      return { _tag: "listening", live: frame.live, committed: "", tentative: "" };
-    case "words":
-      return now._tag === "listening" || now._tag === "finishing"
-        ? {
-            ...now,
-            committed: frame.committed,
-            tentative: frame.tentative,
-            ...(frame.heardMs === undefined ? {} : { heardMs: frame.heardMs }),
-          }
-        : now;
-    case "tidying":
-      return { _tag: "tidying", ...heardIn(now) };
+      return { _tag: "listening" };
     case "done":
       return { _tag: "done", text: frame.text };
     case "failed":
@@ -131,19 +92,125 @@ export const nextState = (now: DictationState, frame: VoiceServerFrame): Dictati
   }
 };
 
+/**
+ * One dictation on the voice socket at `address`, opened with the
+ * `WebSocketConstructor` in context, for as long as its scope lives.
+ * `transcript` asks for a piece of a screen recording's voice.
+ */
+export const openDictation = Effect.fnUntraced(function* (
+  address: Effect.Effect<string, NotPaired | ServerUnreachable>,
+  openTimeout: Duration.Input,
+  transcript: boolean,
+) {
+  const state = new Cell<DictationState>({ _tag: "connecting" });
+  /** Writes on the open socket; false once it is closed. */
+  let write: ((data: string | Uint8Array) => Effect.Effect<boolean>) | null = null;
+  /** What was recorded before the server listened, oldest first. */
+  const held: Array<Uint8Array> = [];
+  let heldBytes = 0;
+  /** Whether the operator stopped before the server listened. */
+  let stoppedEarly = false;
+  /** Writes `pcm` in frames the server takes; false once the socket is closed. */
+  const send = Effect.fnUntraced(function* (pcm: Uint8Array) {
+    for (let offset = 0; offset < pcm.byteLength; offset += MAX_VOICE_FRAME_BYTES) {
+      const piece = pcm.subarray(offset, offset + MAX_VOICE_FRAME_BYTES);
+      if (write === null || !(yield* write(piece))) return false;
+    }
+    return true;
+  });
+  const fail = (reason: DictationFailure) =>
+    Effect.sync(() => {
+      if (!isOver(state.get())) state.set({ _tag: "failed", reason });
+    });
+
+  const run = Effect.gen(function* () {
+    const socket = yield* Socket.makeWebSocket(yield* address, { openTimeout });
+    const reader = yield* socket.reader;
+    const writer = yield* socket.writer;
+    write = (data) =>
+      writer.write(data).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+    yield* write(
+      encodeClientFrame(transcript ? { type: "start", transcript: true } : { type: "start" }),
+    );
+    while (!isOver(state.get())) {
+      for (const message of yield* reader.pull) {
+        if (typeof message !== "string") continue;
+        // A frame this client does not know is passed over.
+        const frame = decodeServerFrame(message);
+        if (Option.isNone(frame)) continue;
+        const next = nextState(frame.value);
+        if (next._tag !== "listening" || isOver(state.get())) {
+          state.set(next);
+          continue;
+        }
+        // Held pieces go first; one recorded meanwhile joins them, so the order holds.
+        for (let piece = held.shift(); piece !== undefined; piece = held.shift()) {
+          if (!(yield* send(piece))) break;
+        }
+        held.length = 0;
+        heldBytes = 0;
+        if (!stoppedEarly) {
+          state.set(next);
+          continue;
+        }
+        const told = write !== null && (yield* write(encodeClientFrame({ type: "finish" })));
+        if (!told) yield* fail("unreachable");
+      }
+    }
+  }).pipe(
+    Effect.catchTags({
+      NotPaired: () => fail("not-paired"),
+      ServerUnreachable: () => fail("unreachable"),
+      SocketError: () => fail("unreachable"),
+    }),
+    Effect.ensuring(
+      Effect.sync(() => {
+        write = null;
+      }),
+    ),
+    Effect.scoped,
+  );
+  yield* Effect.forkScoped(run);
+
+  const audio = Effect.fn("Dictation.audio")(function* (pcm: Uint8Array) {
+    const now = state.get()._tag;
+    if (now === "connecting") {
+      if (heldBytes + pcm.byteLength > MAX_HELD_BYTES) return;
+      held.push(pcm.slice());
+      heldBytes += pcm.byteLength;
+      return;
+    }
+    if (now === "listening") yield* send(pcm);
+  });
+
+  const finish = Effect.gen(function* () {
+    const now = state.get();
+    if (now._tag === "connecting") {
+      stoppedEarly = true;
+      state.set({ _tag: "finishing" });
+      return;
+    }
+    if (now._tag !== "listening") return;
+    state.set({ _tag: "finishing" });
+    const sent = write !== null && (yield* write(encodeClientFrame({ type: "finish" })));
+    if (!sent) yield* fail("unreachable");
+  });
+
+  return { state, audio, finish } satisfies Dictation;
+});
+
 export class Voice extends Context.Service<
   Voice,
   {
     /**
-     * Whether the server can recognize speech now, and with which model,
-     * while held. Hold it only from a server whose settings carry `voice`:
-     * an older one has no such subscription.
+     * Whether a key is saved for each cloud provider, while held. Hold it
+     * only from a server whose settings carry `voice`: an older one has no
+     * such subscription.
      */
-    readonly status: Effect.Effect<Readable<Loaded<VoiceStatus>>, never, Scope.Scope>;
-    /** Whether a key is saved for each cloud provider, while held; as `status`. */
     readonly cloudKeys: Effect.Effect<Readable<Loaded<CloudVoiceKeys>>, never, Scope.Scope>;
-    /** Every model the server can run. */
-    readonly models: Effect.Effect<IntentResult<ReadonlyArray<VoiceModel>>>;
     /** OpenRouter's models that transcribe. */
     readonly cloudModels: Effect.Effect<IntentResult<ReadonlyArray<CloudVoiceModel>>>;
     /** Saves the key for a cloud provider in the server's Secrets, or removes it with null. */
@@ -155,9 +222,8 @@ export class Voice extends Context.Service<
     readonly dictate: Effect.Effect<Dictation, never, Scope.Scope>;
     /**
      * Starts writing down a piece of a screen recording's voice on the
-     * server: a dictation whose words say how much audio they were heard in
-     * (`heardMs`) and are never tidied. Only for a server whose roster
-     * snapshot carries `recordingTranscripts`.
+     * server. Only for a server whose roster snapshot carries
+     * `recordingTranscripts`.
      */
     readonly transcribe: Effect.Effect<Dictation, never, Scope.Scope>;
   }
@@ -171,13 +237,6 @@ export const layer = Layer.effect(
     const makeWebSocket = yield* Socket.WebSocketConstructor;
     const policy = yield* ReconnectPolicy;
 
-    const status = makeLive<void, VoiceStatus>({
-      scope,
-      connection,
-      keyOf: () => "status",
-      follow: (_, client, set) =>
-        client["voice.subscribe"]().pipe(Stream.runForEach((next) => set(() => next))),
-    });
     const cloudKeys = makeLive<void, CloudVoiceKeys>({
       scope,
       connection,
@@ -186,9 +245,6 @@ export const layer = Layer.effect(
         client["voice.cloudKeys"]().pipe(Stream.runForEach((next) => set(() => next))),
     });
 
-    const models = connection
-      .call((client) => client["voice.models"]())
-      .pipe(Effect.exit, Effect.map(intentResult));
     const cloudModels = connection
       .call((client) => client["voice.cloudModels"]())
       .pipe(Effect.exit, Effect.map(intentResult));
@@ -197,91 +253,15 @@ export const layer = Layer.effect(
         .call((client) => client["voice.setCloudKey"]({ provider, key }))
         .pipe(Effect.exit, Effect.map(intentResult));
 
-    const open = Effect.fnUntraced(function* (transcript: boolean) {
-      const state = new Cell<DictationState>({ _tag: "connecting" });
-      /** Writes on the open socket; false once it is closed. */
-      let write: ((data: string | Uint8Array) => Effect.Effect<boolean>) | null = null;
-      const fail = (reason: DictationFailure) =>
-        Effect.sync(() => {
-          if (!isOver(state.get())) state.set({ _tag: "failed", reason });
-        });
-
-      const run = Effect.gen(function* () {
-        const address = yield* connection.socketAddress(HTTP_PATHS.voice, {});
-        const socket = yield* Socket.makeWebSocket(address, {
-          openTimeout: policy.openTimeout,
-        }).pipe(Effect.provideService(Socket.WebSocketConstructor, makeWebSocket));
-        const reader = yield* socket.reader;
-        const writer = yield* socket.writer;
-        write = (data) =>
-          writer.write(data).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-        yield* write(
-          encodeClientFrame(transcript ? { type: "start", transcript: true } : { type: "start" }),
-        );
-        while (!isOver(state.get())) {
-          for (const message of yield* reader.pull) {
-            if (typeof message !== "string") continue;
-            // A frame this client does not know is passed over.
-            const frame = decodeServerFrame(message);
-            if (Option.isSome(frame)) state.update((now) => nextState(now, frame.value));
-          }
-        }
-      }).pipe(
-        Effect.catchTags({
-          NotPaired: () => fail("not-paired"),
-          ServerUnreachable: () => fail("unreachable"),
-          SocketError: () => fail("unreachable"),
-        }),
-        Effect.ensuring(
-          Effect.sync(() => {
-            write = null;
-          }),
-        ),
-        Effect.scoped,
-      );
-      yield* Effect.forkScoped(run);
-
-      const audio = Effect.fn("Dictation.audio")(function* (pcm: Uint8Array) {
-        if (write === null || state.get()._tag !== "listening") return;
-        for (let offset = 0; offset < pcm.byteLength; offset += MAX_VOICE_FRAME_BYTES) {
-          yield* write(pcm.subarray(offset, offset + MAX_VOICE_FRAME_BYTES));
-        }
-      });
-
-      const finish = Effect.fn("Dictation.finish")(function* (draft?: {
-        readonly text: string;
-        readonly start: number;
-        readonly end: number;
-      }) {
-        const now = state.get();
-        if (now._tag !== "listening") {
-          if (!isOver(now)) state.set({ _tag: "done", text: "" });
-          return;
-        }
-        state.set({
-          _tag: "finishing",
-          committed: now.committed,
-          tentative: now.tentative,
-          ...(now.heardMs === undefined ? {} : { heardMs: now.heardMs }),
-        });
-        const sent =
-          write !== null &&
-          (yield* write(
-            encodeClientFrame(draft === undefined ? { type: "finish" } : { type: "finish", draft }),
-          ));
-        if (!sent) yield* fail("unreachable");
-      });
-
-      return { state, audio, finish } satisfies Dictation;
-    });
+    const open = (transcript: boolean) =>
+      openDictation(
+        connection.socketAddress(HTTP_PATHS.voice, {}),
+        policy.openTimeout,
+        transcript,
+      ).pipe(Effect.provideService(Socket.WebSocketConstructor, makeWebSocket));
 
     return Voice.of({
-      status: status.acquire(undefined),
       cloudKeys: cloudKeys.acquire(undefined),
-      models,
       cloudModels,
       setCloudKey,
       dictate: open(false),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Addressing } from "@j3-bots/client-runtime";
 import { targetKey } from "@j3-bots/client-runtime";
+import { withComment } from "@j3-bots/client-runtime/presentation";
 import type { BotId, EntryTarget, SuggestedReply } from "@j3-bots/contracts";
 import type { RefObject } from "react";
 import type { ShellData, ShellIntents } from "../shell/data";
@@ -14,13 +15,20 @@ interface DraftComposerProps {
   readonly recipient: string;
   readonly data: Pick<
     ShellData,
-    "draft" | "offer" | "draftsLoading" | "draftsFailed" | "draftNotSaved" | "connectors"
+    | "draft"
+    | "offer"
+    | "draftsLoading"
+    | "draftsFailed"
+    | "draftNotSaved"
+    | "connectors"
+    | "quoteComments"
   >;
   readonly intents: Pick<
     ShellIntents,
     | "setDraftText"
     | "attachFiles"
     | "detachFile"
+    | "quoteInDraft"
     | "unquoteInDraft"
     | "openAttachment"
     | "sendDraft"
@@ -81,6 +89,14 @@ export function DraftComposer({
       files={draft.files}
       quotes={draft.quotes}
       onUnquote={(index) => intents.unquoteInDraft(target, index)}
+      {...(data.quoteComments
+        ? {
+            onCommentQuote: (index: number, comment: string) => {
+              const quote = draft.quotes[index];
+              if (quote !== undefined) intents.quoteInDraft(target, withComment(quote, comment));
+            },
+          }
+        : {})}
       sending={draft.sending}
       loading={data.draftsLoading}
       {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}

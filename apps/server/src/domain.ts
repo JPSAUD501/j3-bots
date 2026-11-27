@@ -84,12 +84,13 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 
 /**
  * Every service of the server's domain, over a migrated database, the server's
- * configuration, the filesystem, an `Engine` with its `BrowserBridge` and
- * `EngineSpeech`, a `PushSender`, the disk's free space (`DiskSpace`), the
- * HTTP client connectors' sign-ins use (`OAuthHttp`), an
- * `McpRegistry`, the `HarnessSources` J3 Bots installs harnesses from and
- * finds the operator's own with, and the `SkillRepositories` skills are
- * installed from. Which engine, sender, disk, client, registry, sources and
+ * configuration, the filesystem, an `Engine` with its `BrowserBridge`, the
+ * cloud providers dictation sends recordings to (`CloudSpeech`), a
+ * `PushSender`, the disk's free space (`DiskSpace`), the HTTP client
+ * connectors' sign-ins use (`OAuthHttp`), an `McpRegistry`, the
+ * `HarnessSources` J3 Bots installs harnesses from and finds the operator's
+ * own with, and the `SkillRepositories` skills are installed from. Which
+ * engine, providers, sender, disk, client, registry, sources and
  * repositories are the caller's: the real ones in `server.ts`, in-memory or
  * local ones in tests. Building it starts the turn machinery, the push
  * worker and the reaction worker, which run for as long as the layer's scope.
@@ -121,8 +122,7 @@ export const layer = Layer.mergeAll(
       RoutineEvents.layer,
       // The machine as the sign-ins see it: the `PATH` the server runs harnesses with.
       SignIns.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
-      // The machine's memory: how soon the engine unloads a speech model.
-      Voice.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
+      Voice.layer,
     ),
   ),
   Layer.provideMerge(

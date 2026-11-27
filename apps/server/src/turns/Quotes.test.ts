@@ -80,9 +80,13 @@ it.effect(
       const id = yield* write(toAna, "Go with this.", [
         { entryId: report },
         { entryId: options, passage: "alpha" },
-        { entryId: options, passage: "beta" },
+        { entryId: options, passage: "beta", comment: "Cheaper, I think." },
       ]);
       const quotes = quotesOf(yield* conversation(ana.bot.id), id);
+      assert.deepStrictEqual(
+        quotes?.map((quote) => quote.comment),
+        [undefined, undefined, "Cheaper, I think."],
+      );
       assert.deepStrictEqual(
         quotes?.map((quote) => [quote.entryId, quote.author._tag, quote.quoted]),
         [
@@ -118,6 +122,8 @@ it.effect(
             { entryId: options, passage: "alpha" },
             { entryId: options, passage: "alpha" },
           ],
+          // A comment on a reply, which is the message itself.
+          [{ entryId: options, comment: "This one." }],
         ],
         (quotes: ReadonlyArray<QuoteRequest>) => Effect.flip(write(toAna, "hi", quotes)),
       );
@@ -127,27 +133,39 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("shows the bot each quote after the message, as what someone said then", () =>
-  Effect.gen(function* () {
-    const ana = yield* member("Ana");
-    const toAna: EntryTarget = { _tag: "conversation", botId: ana.bot.id };
-    const options = yield* write(toAna, "Two options: alpha, or beta.");
-    yield* flushed(ana.bot.id);
-    const first = yield* nextTurn(ana.bot.id);
-    yield* finish(ana, first, [ana]);
+it.effect(
+  "shows the bot each quote after the message, as what someone said then, and the operator's comment in it",
+  () =>
+    Effect.gen(function* () {
+      const ana = yield* member("Ana");
+      const toAna: EntryTarget = { _tag: "conversation", botId: ana.bot.id };
+      const options = yield* write(toAna, "Two options: alpha, or beta.");
+      yield* flushed(ana.bot.id);
+      const first = yield* nextTurn(ana.bot.id);
+      yield* finish(ana, first, [ana]);
 
-    yield* write(toAna, "This one, please.", [{ entryId: options, passage: "beta" }]);
-    yield* flushed(ana.bot.id);
-    const envelope = (yield* received(ana.session)).at(-1)?.text ?? "";
-    assert.include(envelope, "This one, please.");
-    assert.include(envelope, QUOTES_LINE);
-    assert.match(
-      envelope,
-      new RegExp(
-        `<data-[0-9a-f]+ source="quote" id="${options}" from="user" at="[0-9:]+" part="passage">\\nbeta\\n</data-`,
-      ),
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
+      yield* write(toAna, "This one, please.", [
+        { entryId: options, passage: "alpha" },
+        { entryId: options, passage: "beta", comment: "Cheaper, I think." },
+      ]);
+      yield* flushed(ana.bot.id);
+      const envelope = (yield* received(ana.session)).at(-1)?.text ?? "";
+      assert.include(envelope, "This one, please.");
+      // The comment is the operator's word, in their message, on the second passage of the two.
+      assert.match(
+        envelope,
+        new RegExp(
+          `<message from="user"[^>]*>\\nThis one, please\\.\\n<comment quote="2">Cheaper, I think\\.</comment>\\n</message>`,
+        ),
+      );
+      assert.include(envelope, QUOTES_LINE);
+      assert.match(
+        envelope,
+        new RegExp(
+          `<data-[0-9a-f]+ source="quote" n="2" id="${options}" from="user" at="[0-9:]+" part="passage">\\nbeta\\n</data-`,
+        ),
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(

@@ -226,6 +226,7 @@ export {
   replyTo,
   takesPassage,
   takesReply,
+  withComment,
   withQuote,
 } from "./quotes.ts";
 export {
@@ -334,6 +335,7 @@ export {
   type DictationBlock,
   type DictationPath,
   dictationPath,
+  followTyping,
   levelOf,
   placeHeard,
 } from "./dictation.ts";

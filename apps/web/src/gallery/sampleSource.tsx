@@ -1015,6 +1015,7 @@ function toData(state: State, secrets: SecretsView): ShellData {
     sections: state.sections,
     conversationMentions: true,
     quotes: true,
+    quoteComments: true,
     conversation: (target) => ({
       phase: "ready",
       items: state.entries[keyOf(target)] ?? [],

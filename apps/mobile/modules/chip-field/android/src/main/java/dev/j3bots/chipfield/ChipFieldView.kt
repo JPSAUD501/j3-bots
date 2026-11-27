@@ -13,7 +13,6 @@ import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextWatcher
-import android.text.style.ForegroundColorSpan
 import android.util.Base64
 import android.util.LruCache
 import android.util.TypedValue
@@ -306,7 +305,6 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     val (text, keys) = read(current)
     if (text != value.text || keys != value.keys) setValue(value)
     showMentions(value.mentions)
-    showOpen(value.open)
   }
 
   private fun setValue(value: FieldValue) {
@@ -366,37 +364,6 @@ class ChipFieldView(context: Context, appContext: AppContext) :
       applying = false
     }
     reportHeight()
-  }
-
-  /**
-   * Draws the words dictation may still change lighter, and the rest in the
-   * text's own color. The text is left as it is.
-   */
-  private fun showOpen(open: OpenWords?) {
-    val text = field.text ?: return
-    val wanted = open?.takeIf { it.start in 0 until it.end && it.end <= text.length }
-    val shown = text.getSpans(0, text.length, OpenWordsSpan::class.java)
-    val same = if (wanted == null) {
-      shown.isEmpty()
-    } else {
-      shown.size == 1 && text.getSpanStart(shown[0]) == wanted.start &&
-        text.getSpanEnd(shown[0]) == wanted.end
-    }
-    if (same) return
-    applying = true
-    try {
-      for (span in shown) text.removeSpan(span)
-      if (wanted != null) {
-        text.setSpan(
-          OpenWordsSpan(argb(fieldLook.mutedColor)),
-          wanted.start,
-          wanted.end,
-          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
-      }
-    } finally {
-      applying = false
-    }
   }
 
   fun focusField() {
@@ -460,9 +427,6 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     main.removeCallbacksAndMessages(null)
   }
 }
-
-/** Words dictation may still change: the text's own, in the placeholder's color until they settle. */
-private class OpenWordsSpan(color: Int) : ForegroundColorSpan(color)
 
 /** `path`'s image, decoded at about `size` pixels on its shorter side; null when it cannot be read. */
 private fun decodeThumbnail(path: String, size: Int): Bitmap? {

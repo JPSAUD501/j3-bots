@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   CloudVoiceModelId,
+  CloudVoiceProvider,
   Label,
   ModelChoice,
   PositiveInt,
@@ -8,7 +9,6 @@ import {
   TimeZone,
   UpdateChannel,
   VoiceLanguage,
-  VoiceModelId,
   VoicePlace,
   type VoiceSettings,
   VoiceWords,
@@ -37,9 +37,8 @@ const SettingsRow = Schema.Struct({
   voice_place: VoicePlace,
   voice_language: VoiceLanguage,
   voice_words_json: json(VoiceWords),
+  voice_provider: Schema.NullOr(CloudVoiceProvider),
   voice_remove_fillers: Flag,
-  voice_clean_up: Flag,
-  voice_model: Schema.NullOr(VoiceModelId),
   voice_openrouter_model: Schema.NullOr(CloudVoiceModelId),
   telemetry: Flag,
   favorite_models_json: json(Schema.Array(ModelChoice)),
@@ -51,6 +50,7 @@ const encodeFavorites = Schema.encodeSync(json(Schema.Array(ModelChoice)));
 /** Dictation's preferences until the operator changes them, as the migration sets them. */
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   place: "automatic",
+  provider: null,
   language: "auto",
   words: [],
   removeFillers: true,
@@ -89,8 +89,8 @@ export const layer = Layer.effect(
       execute: () => sql`
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
           notifications_enabled, notification_previews, update_channel, auto_update_harnesses,
-          suggest_replies, voice_place, voice_language, voice_words_json, voice_remove_fillers,
-          voice_clean_up, voice_model, voice_openrouter_model, telemetry, favorite_models_json
+          suggest_replies, voice_place, voice_provider, voice_language, voice_words_json,
+          voice_remove_fillers, voice_openrouter_model, telemetry, favorite_models_json
         FROM settings WHERE id = 1
       `,
     });
@@ -114,11 +114,13 @@ export const layer = Layer.effect(
           suggestReplies: row.suggest_replies,
           voice: {
             place: row.voice_place,
+            provider: row.voice_provider,
             language: row.voice_language,
             words: row.voice_words_json,
             removeFillers: row.voice_remove_fillers,
-            cleanUp: row.voice_clean_up,
-            model: row.voice_model,
+            // Neither is this server's: sent as nothing, for clients of protocol 11.
+            cleanUp: false,
+            model: null,
             openRouterModel: row.voice_openrouter_model,
           },
           telemetry: { enabled: row.telemetry, heldOff },
@@ -145,11 +147,10 @@ export const layer = Layer.effect(
             auto_update_harnesses = ${settings.autoUpdateHarnesses ? 1 : 0},
             suggest_replies = ${settings.suggestReplies === false ? 0 : 1},
             voice_place = ${voice.place},
+            voice_provider = ${voice.provider ?? null},
             voice_language = ${voice.language},
             voice_words_json = ${encodeWords(voice.words)},
             voice_remove_fillers = ${voice.removeFillers ? 1 : 0},
-            voice_clean_up = ${voice.cleanUp ? 1 : 0},
-            voice_model = ${voice.model},
             voice_openrouter_model = ${voice.openRouterModel},
             telemetry = ${settings.telemetry?.enabled === false ? 0 : 1},
             favorite_models_json = ${encodeFavorites(settings.favoriteModels ?? [])},

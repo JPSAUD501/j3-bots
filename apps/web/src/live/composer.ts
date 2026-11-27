@@ -28,6 +28,7 @@ export interface ComposerSource {
     | "draftNotSaved"
     | "conversationMentions"
     | "quotes"
+    | "quoteComments"
   >;
   readonly intents: Pick<
     ShellIntents,
@@ -61,7 +62,12 @@ export interface ComposerSource {
  * them, dictation included; `say` tells the operator when a message could
  * not be kept.
  */
-export function useComposerSource(j3: J3Client, say: (text: string) => void): ComposerSource {
+export function useComposerSource(
+  j3: J3Client,
+  say: (text: string) => void,
+  /** Opens Settings → Voice, where it is at hand. */
+  openVoiceSettings?: () => void,
+): ComposerSource {
   const { t } = useI18n();
   const drafts = useReadable(j3.drafts);
   const offers = useReadable(j3.draftOffers);
@@ -70,12 +76,14 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
   const notSaved = useReadable(j3.draftsNotSaved);
   const conversationMentions = useReadable(j3.conversationMentions);
   const quotes = useReadable(j3.quotes);
+  const quoteComments = useReadable(j3.quoteComments);
   const settings = useReadable(j3.settings);
   const dictation = useDictationSource({
     voice: j3.voice,
     settings: settings._tag === "ready" ? settings.value.voice : null,
     microphone: openMicrophone,
     app: desktop === null ? "browser" : "desktop",
+    setUp: openVoiceSettings,
   });
   const send: ComposerSource["send"] = (target, addressing, context) =>
     j3.sendDraft(target, addressing, context).then((result) => {
@@ -92,6 +100,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
       draftNotSaved: (asked) => notSaved.has(targetKey(asked)),
       conversationMentions,
       quotes,
+      quoteComments,
     },
     intents: {
       setDraftText: j3.setDraftText,

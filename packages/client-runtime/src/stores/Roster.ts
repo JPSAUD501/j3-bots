@@ -82,6 +82,12 @@ export class Roster extends Context.Service<
      */
     readonly quotes: Readable<boolean>;
     /**
+     * Whether the server takes the operator's comment on a passage they
+     * quote (decision 0106), as its latest roster snapshot says. Only then
+     * does a client offer one.
+     */
+    readonly quoteComments: Readable<boolean>;
+    /**
      * Whether the server takes screen recordings (decision 0098), uploaded
      * in resumable pieces, as its latest roster snapshot says. Only then does
      * a client offer to record the screen.
@@ -146,6 +152,7 @@ export const layer = Layer.effect(
     const sections = new Cell<ReadonlyArray<Section> | null>(null);
     const conversationMentions = new Cell(false);
     const quotes = new Cell(false);
+    const quoteComments = new Cell(false);
     const screenRecordings = new Cell(false);
     const recordingTranscripts = new Cell(false);
 
@@ -170,6 +177,7 @@ export const layer = Layer.effect(
                     sections.set(frame.sections ?? null);
                     conversationMentions.set(frame.conversationMentions === true);
                     quotes.set(frame.quotes === true);
+                    quoteComments.set(frame.quoteComments === true);
                     screenRecordings.set(frame.screenRecordings === true);
                     recordingTranscripts.set(frame.recordingTranscripts === true);
                     return state.set(ready(frame.items));
@@ -281,6 +289,7 @@ export const layer = Layer.effect(
       sections,
       conversationMentions,
       quotes,
+      quoteComments,
       screenRecordings,
       recordingTranscripts,
       stop,

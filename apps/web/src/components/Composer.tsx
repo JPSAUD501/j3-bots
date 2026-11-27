@@ -49,7 +49,7 @@ import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { useAttachmentImage } from "./attachmentImages";
 import { BotAvatar, RoomAvatar, type RoomAvatarMember } from "./avatar/BotAvatar";
-import { DictationButton, type DictationSource, useDictation } from "./Dictation";
+import { DictationControl, DictationNotice, type DictationSource, useDictation } from "./Dictation";
 import {
   ChipField,
   dropOffset,
@@ -62,10 +62,21 @@ import {
 import { FileKindIcon } from "./FileCard";
 import { MentionChip, RoomMentionChip } from "./MentionChip";
 import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./PromptPicker";
-import { DraftQuotes } from "./Quotes";
+import { DraftQuoteChips } from "./Quotes";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+
+/**
+ * A line the composer shows inside itself, over the text: a problem in the
+ * `blocked` tone, or a quiet state. Whatever a composer has to say goes here
+ * (decision 0106), never under it.
+ */
+interface ComposerNote {
+  readonly key: string;
+  readonly text: string;
+  readonly tone: "blocked" | "muted";
+}
 
 /**
  * The send button's three looks: nothing to send yet, a message ready to go,
@@ -126,6 +137,12 @@ interface ComposerProps {
   readonly quotes?: ReadonlyArray<MessageQuote>;
   /** Takes the quote at `index` out of the draft. */
   readonly onUnquote?: (index: number) => void;
+  /**
+   * Sets the operator's comment on the passage the draft quotes at `index`
+   * (decision 0106); empty takes it off. Without it, as facing a server that
+   * takes no comments, a passage offers none.
+   */
+  readonly onCommentQuote?: (index: number, comment: string) => void;
   /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
   readonly sending?: boolean;
   /**
@@ -204,11 +221,13 @@ export function focusAtEnd(field: HTMLElement | null) {
  * picked, pasted or dropped upload at once and stand in the text as chips:
  * where the caret was, or where they were dropped. A chip shows its image or
  * its kind, and its name; it is deleted as one character, and a click opens
- * its file once uploaded. A file that cannot go says why below the composer.
+ * its file once uploaded. A file that cannot go says why inside the composer.
  * The message goes once every file has uploaded. Where dictation exists, a
- * microphone stands beside Send (`useDictation`): while it runs, the field
- * shows the words where the caret was and takes no edit, and Escape cancels
- * it; nothing it hears is sent by itself. A message over a limit
+ * microphone stands beside Send (`useDictation`): while it records, it opens
+ * into a capsule with the time and the voice's level, the field still takes
+ * typing, and Escape cancels it; the words land where the caret was, and
+ * nothing it hears is sent by itself. Why it gave no words shows inside the
+ * composer, over the text, with Set up where that fixes it. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, or the drafts load or could not be read, the field stays
  * focused but read-only, and attaching and removing files show as
@@ -216,7 +235,7 @@ export function focusAtEnd(field: HTMLElement | null) {
  * composer asks for them again. A draft that could not be
  * read says so above the composer, with a way to read it again: once read, the
  * focus returns to the field; read in vain, it says so again. A draft the
- * device could not keep says so quietly below the composer until it is kept. Text
+ * device could not keep says so quietly inside the composer until it is kept. Text
  * replaced in another tab is offered back above the composer until the operator
  * restores or dismisses it; either way the focus returns to the field. The
  * field draws no ring of its own: while anything in it has focus, the composer
@@ -224,8 +243,7 @@ export function focusAtEnd(field: HTMLElement | null) {
  * `@` opens a list of the members and `@everyone` above the composer: arrow keys
  * move through it, keeping the active option in view, Enter or Tab picks, so
  * a second Enter sends, Escape closes it until the next `@`, and a tap picks
- * without taking the focus from the field. Only a pick mentions a member; a
- * quiet line under the composer says who the message wakes. In a bot's
+ * without taking the focus from the field. Only a pick mentions a member. In a bot's
  * conversation, `/` opens the prompts its connectors offer the same way; a
  * prompt with arguments asks for them above the composer, and what its server
  * writes becomes the draft, which the operator reads and sends as their own.
@@ -233,9 +251,14 @@ export function focusAtEnd(field: HTMLElement | null) {
  * is empty and no list is open, with Use beside it: Use, or Tab, puts it in
  * the draft with the caret after it, to send or change; Escape sets it aside
  * until a later answer brings another.
- * It leaves as soon as the operator types. What the draft quotes shows above
- * the field: its reply as a strip, each passage as a chip, each with a way
- * out, after which the focus returns to the field.
+ * It leaves as soon as the operator types. What the draft quotes shows inside
+ * the composer, above the text, each as a chip with a way out, after which
+ * the focus returns to the field; a passage's pencil takes a comment on it.
+ *
+ * Nothing shows under the composer (decision 0106): what it has to say about
+ * the draft (a file that cannot go, a limit, dictation, a draft not kept)
+ * is a quiet line inside it, over the text, and its words are announced as
+ * they were before. Typing goes on meanwhile.
  */
 export function Composer({
   draftKey,
@@ -246,6 +269,7 @@ export function Composer({
   files = [],
   quotes = [],
   onUnquote,
+  onCommentQuote,
   sending = false,
   loading = false,
   unread,
@@ -287,8 +311,8 @@ export function Composer({
     available: settled,
     onValueChange: (text, moved) => onValueChange(text, moved),
   });
-  // The draft takes no change while it is handed over, loads, could not be read, or is dictated into.
-  const frozen = !settled || dictation.running;
+  // The draft takes no change while it is handed over, loads or could not be read.
+  const frozen = !settled;
   // Files the draft already held when shown appear in place; only those attached since arrive.
   const restored = useRestored(
     draftKey,
@@ -354,7 +378,7 @@ export function Composer({
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
     setNotTaken(false);
-    dictation.edited();
+    dictation.edited(change.text, change.selection[1]);
     const edit: FieldInput = {
       before: value,
       after: change.text,
@@ -431,6 +455,23 @@ export function Composer({
         ]
       : [],
   );
+  // Files just dropped and not taken come first: the operator is waiting on them now.
+  const alert = notTaken
+    ? t("composer.waitToAttach")
+    : problem === null
+      ? null
+      : messageProblemText(problem, i18n);
+  // What the composer says inside itself, the most pressing first. A file that cannot go is
+  // announced once, above; its chip marks it.
+  const notes: ReadonlyArray<ComposerNote> = [
+    ...(alert === null ? [] : [{ key: "alert", text: alert, tone: "blocked" } as const]),
+    ...failures.map((failure) => ({ ...failure, tone: "blocked" }) as const),
+    ...(prompt.cut ? [{ key: "cut", text: t("prompt.cut"), tone: "muted" } as const] : []),
+    // Quiet: it clears by itself once the device keeps the draft.
+    ...(notSaved
+      ? [{ key: "notSaved", text: t("composer.notSaved"), tone: "muted" } as const]
+      : []),
+  ];
   return (
     <form
       className="flex flex-col gap-1.5"
@@ -530,206 +571,225 @@ export function Composer({
           onCancel={prompt.cancel}
         />
       )}
-      {onUnquote !== undefined && (
-        <DraftQuotes
-          quotes={quotes}
-          unavailable={frozen}
-          onRemove={(index) => {
-            onUnquote(index);
-            focusField();
-          }}
-        />
-      )}
       <div
         ref={boxRef}
-        className="flex items-end gap-1 rounded-composer border border-input bg-surface p-1 shadow-raised transition-[border-color,box-shadow] duration-(--duration-state) focus-within:border-(--tint) focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--tint)_22%,transparent)]"
+        className="flex min-w-0 flex-col rounded-composer border border-input bg-surface p-1 shadow-raised transition-[border-color,box-shadow] duration-(--duration-state) focus-within:border-(--tint) focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--tint)_22%,transparent)]"
       >
-        {onAttachFiles && (
-          <>
-            {onRecordScreen === undefined ? (
-              <Button
-                variant="ghost-muted"
-                size="icon-pill"
-                onClick={() => {
-                  if (!frozen) pickerRef.current?.click();
-                }}
-                aria-disabled={frozen}
-                aria-label={t("composer.attach")}
+        {/* What the composer says about the draft: inside it, over the text, never under it. */}
+        {notes.length > 0 && (
+          <ul aria-hidden className="flex flex-col px-2 pt-1 text-xs">
+            {notes.map((note) => (
+              <li
+                key={note.key}
+                title={note.text}
+                className={cn(
+                  "truncate tabular-nums",
+                  note.tone === "blocked" ? "text-blocked" : "text-muted-foreground",
+                )}
               >
-                <PlusIcon />
-              </Button>
-            ) : (
-              <Menu defaultOpen={addMenuOpen}>
-                <MenuTrigger
-                  disabled={frozen}
-                  render={
-                    <Button variant="ghost-muted" size="icon-pill" aria-label={t("composer.add")} />
+                {note.text}
+              </li>
+            ))}
+          </ul>
+        )}
+        {dictation.offered && <DictationNotice dictation={dictation} />}
+        {onUnquote !== undefined && (
+          <DraftQuoteChips
+            quotes={quotes}
+            unavailable={frozen}
+            onRemove={(index) => {
+              onUnquote(index);
+              focusField();
+            }}
+            onComment={
+              onCommentQuote === undefined
+                ? undefined
+                : (index, comment) => {
+                    onCommentQuote(index, comment);
+                    focusField();
                   }
+            }
+          />
+        )}
+        <div className="flex items-end gap-1">
+          {onAttachFiles && (
+            <>
+              {onRecordScreen === undefined ? (
+                <Button
+                  variant="ghost-muted"
+                  size="icon-pill"
+                  onClick={() => {
+                    if (!frozen) pickerRef.current?.click();
+                  }}
+                  aria-disabled={frozen}
+                  aria-label={t("composer.attach")}
                 >
                   <PlusIcon />
-                </MenuTrigger>
-                <MenuPopup>
-                  <MenuItem icon={<PaperclipIcon />} onClick={() => pickerRef.current?.click()}>
-                    {t("composer.attach.files")}
-                  </MenuItem>
-                  <MenuItem icon={<MonitorDotIcon />} onClick={onRecordScreen}>
-                    {t("composer.recordScreen")}
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            )}
-            <input
-              ref={pickerRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(event) => {
-                attach(event.currentTarget.files);
-                // The same file can be picked again after it was removed.
-                event.currentTarget.value = "";
-              }}
-            />
-          </>
-        )}
-        <ChipField
-          ref={fieldRef}
-          value={dictation.preview?.text ?? value}
-          chips={files.map((file) => ({
-            key: file.key,
-            content: (
-              <DraftFileChip
-                file={file}
-                arriving={!restored.has(file.key)}
-                onRemove={onDetachFile ? () => detach(file.key) : undefined}
-                onOpen={onOpenFile}
-                unavailable={frozen}
+                </Button>
+              ) : (
+                <Menu defaultOpen={addMenuOpen}>
+                  <MenuTrigger
+                    disabled={frozen}
+                    render={
+                      <Button
+                        variant="ghost-muted"
+                        size="icon-pill"
+                        aria-label={t("composer.add")}
+                      />
+                    }
+                  >
+                    <PlusIcon />
+                  </MenuTrigger>
+                  <MenuPopup>
+                    <MenuItem icon={<PaperclipIcon />} onClick={() => pickerRef.current?.click()}>
+                      {t("composer.attach.files")}
+                    </MenuItem>
+                    <MenuItem icon={<MonitorDotIcon />} onClick={onRecordScreen}>
+                      {t("composer.recordScreen")}
+                    </MenuItem>
+                  </MenuPopup>
+                </Menu>
+              )}
+              <input
+                ref={pickerRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(event) => {
+                  attach(event.currentTarget.files);
+                  // The same file can be picked again after it was removed.
+                  event.currentTarget.value = "";
+                }}
               />
-            ),
-          }))}
-          runs={[
-            ...(dictation.preview === null
-              ? mentionRuns(value, mentions, mentionable)
-              : mentionRuns(dictation.preview.text, dictation.preview.mentions, mentionable)),
-            ...(dictation.preview?.open == null
-              ? []
-              : [
-                  {
-                    ...dictation.preview.open,
-                    // Words still open to change: lighter than the settled ones, which are the text's own.
-                    content: (
-                      <span className="text-muted-foreground">{dictation.preview.open.text}</span>
-                    ),
-                  },
-                ]),
-          ]}
-          readOnly={frozen}
-          onChange={follow}
-          onSelect={(event) => {
-            const field = event.currentTarget;
-            remember(field);
-            const at = fieldSelection(field);
-            if (at !== null) mention.follow(fieldText(field), at);
-          }}
-          onFocus={(event) => {
-            const field = event.currentTarget;
-            remember(field);
-            const at = fieldSelection(field);
-            if (at !== null) mention.follow(fieldText(field), at);
-            prompt.follow();
-          }}
-          onBlur={() => {
-            mention.leave();
-            prompt.leave();
-          }}
-          onCut={(event) => remember(event.currentTarget)}
-          onDragStart={(event) => {
-            dragged.current = draggedText(
-              value,
-              fieldSelection(event.currentTarget) ?? [0, 0],
-              mentions,
-            );
-          }}
-          onDragEnd={() => {
-            dragged.current = null;
-          }}
-          onDrop={(event) => {
-            const field = event.currentTarget;
-            remember(field);
-            if (!onAttachFiles || event.dataTransfer.files.length === 0) return;
-            event.preventDefault();
-            const at = dropOffset(field, event.clientX, event.clientY);
-            attach(event.dataTransfer.files, at ?? undefined);
-          }}
-          onKeyDown={(event) => {
-            remember(event.currentTarget);
-            if (mention.onKeyDown(event) || prompt.onKeyDown(event)) return;
-            const plainKey = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-            if (offered !== null && plainKey && !event.nativeEvent.isComposing) {
-              if (event.key === "Tab") {
-                event.preventDefault();
-                takeSuggestion(offered);
-                return;
-              }
-              if (event.key === "Escape") {
-                // Taken here, so the shell does not close the details as well.
-                event.preventDefault();
-                setSetAside(suggestion?.after ?? null);
-                return;
-              }
-            }
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            </>
+          )}
+          <ChipField
+            ref={fieldRef}
+            value={value}
+            chips={files.map((file) => ({
+              key: file.key,
+              content: (
+                <DraftFileChip
+                  file={file}
+                  arriving={!restored.has(file.key)}
+                  onRemove={onDetachFile ? () => detach(file.key) : undefined}
+                  onOpen={onOpenFile}
+                  unavailable={frozen}
+                />
+              ),
+            }))}
+            runs={mentionRuns(value, mentions, mentionable)}
+            readOnly={frozen}
+            onChange={follow}
+            onSelect={(event) => {
+              const field = event.currentTarget;
+              remember(field);
+              const at = fieldSelection(field);
+              if (at !== null) mention.follow(fieldText(field), at);
+            }}
+            onFocus={(event) => {
+              const field = event.currentTarget;
+              remember(field);
+              const at = fieldSelection(field);
+              if (at !== null) mention.follow(fieldText(field), at);
+              prompt.follow();
+            }}
+            onBlur={() => {
+              mention.leave();
+              prompt.leave();
+            }}
+            onCut={(event) => remember(event.currentTarget)}
+            onDragStart={(event) => {
+              dragged.current = draggedText(
+                value,
+                fieldSelection(event.currentTarget) ?? [0, 0],
+                mentions,
+              );
+            }}
+            onDragEnd={() => {
+              dragged.current = null;
+            }}
+            onDrop={(event) => {
+              const field = event.currentTarget;
+              remember(field);
+              if (!onAttachFiles || event.dataTransfer.files.length === 0) return;
               event.preventDefault();
-              send();
-            }
-          }}
-          onPaste={(event) => {
-            remember(event.currentTarget);
-            if (!onAttachFiles || event.clipboardData.files.length === 0) return;
-            event.preventDefault();
-            attach(event.clipboardData.files);
-          }}
-          placeholder={offered ?? label}
-          aria-label={label}
-          aria-describedby={offered === null ? undefined : suggestionId}
-          {...mention.fieldProps}
-          {...prompt.fieldProps}
-          data-composer=""
-          data-dictating={dictation.running ? "" : undefined}
-          className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
-        />
-        {offered !== null && (
-          <Button
-            variant="ghost-muted"
-            size="sm"
-            // The field keeps the focus, so the keyboard stays up on a touch screen.
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => takeSuggestion(offered)}
-            aria-label={t("composer.suggestion.useLabel")}
-            className="appear shrink-0 gap-1.5 rounded-full pointer-coarse:h-(--layout-touch-target)"
-          >
-            {t("composer.suggestion.use")}
-            <Kbd aria-hidden className="hidden pointer-fine:inline-flex">
-              Tab
-            </Kbd>
-          </Button>
-        )}
-        {dictation.offered && <DictationButton dictation={dictation} unavailable={!settled} />}
-        <Button
-          type="submit"
-          variant="ghost"
-          size="icon-pill"
-          data-send={sendState}
-          className={sendButton}
-          aria-disabled={!ready}
-          aria-label={t("composer.send")}
-          aria-describedby={uploading ? waitingId : undefined}
-        >
-          {/* Keyed by its state, so the arrow pops in when the message can go and flies off with it. */}
-          <ArrowUpIcon
-            key={sendState}
-            className={sendState === "ready" ? "pop-in" : sendState === "sending" ? "send-off" : ""}
+              const at = dropOffset(field, event.clientX, event.clientY);
+              attach(event.dataTransfer.files, at ?? undefined);
+            }}
+            onKeyDown={(event) => {
+              remember(event.currentTarget);
+              if (mention.onKeyDown(event) || prompt.onKeyDown(event)) return;
+              const plainKey = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+              if (offered !== null && plainKey && !event.nativeEvent.isComposing) {
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  takeSuggestion(offered);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  // Taken here, so the shell does not close the details as well.
+                  event.preventDefault();
+                  setSetAside(suggestion?.after ?? null);
+                  return;
+                }
+              }
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                send();
+              }
+            }}
+            onPaste={(event) => {
+              remember(event.currentTarget);
+              if (!onAttachFiles || event.clipboardData.files.length === 0) return;
+              event.preventDefault();
+              attach(event.clipboardData.files);
+            }}
+            placeholder={offered ?? label}
+            aria-label={label}
+            aria-describedby={offered === null ? undefined : suggestionId}
+            {...mention.fieldProps}
+            {...prompt.fieldProps}
+            data-composer=""
+            data-dictating={dictation.phase === "idle" ? undefined : ""}
+            className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
           />
-        </Button>
+          {offered !== null && (
+            <Button
+              variant="ghost-muted"
+              size="sm"
+              // The field keeps the focus, so the keyboard stays up on a touch screen.
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => takeSuggestion(offered)}
+              aria-label={t("composer.suggestion.useLabel")}
+              className="appear shrink-0 gap-1.5 rounded-full pointer-coarse:h-(--layout-touch-target)"
+            >
+              {t("composer.suggestion.use")}
+              <Kbd aria-hidden className="hidden pointer-fine:inline-flex">
+                Tab
+              </Kbd>
+            </Button>
+          )}
+          {dictation.offered && <DictationControl dictation={dictation} unavailable={!settled} />}
+          <Button
+            type="submit"
+            variant="ghost"
+            size="icon-pill"
+            data-send={sendState}
+            className={sendButton}
+            aria-disabled={!ready}
+            aria-label={t("composer.send")}
+            aria-describedby={uploading ? waitingId : undefined}
+          >
+            {/* Keyed by its state, so the arrow pops in when the message can go and flies off with it. */}
+            <ArrowUpIcon
+              key={sendState}
+              className={
+                sendState === "ready" ? "pop-in" : sendState === "sending" ? "send-off" : ""
+              }
+            />
+          </Button>
+        </div>
       </div>
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
@@ -737,35 +797,13 @@ export function Composer({
       <span id={suggestionId} hidden>
         {offered !== null && t("composer.suggestion", { text: offered })}
       </span>
-      {/* What dictation is doing while that is not plain from the words arriving. */}
-      <p role="status" className="px-3 text-xs text-muted-foreground tabular-nums empty:hidden">
-        {dictation.status}
+      {/* The notes' words, announced as they come: a problem at once, the rest politely. */}
+      <p role="status" className="sr-only">
+        {notes.flatMap((note) => (note.tone === "muted" ? [note.text] : [])).join(" ")}
       </p>
-      {prompt.cut && (
-        <p role="status" className="px-3 text-xs text-muted-foreground">
-          {t("prompt.cut")}
-        </p>
-      )}
-      {/* Quiet: it clears by itself once the device keeps the draft. */}
-      {notSaved && (
-        <p role="status" className="px-3 text-xs text-muted-foreground">
-          {t("composer.notSaved")}
-        </p>
-      )}
-      <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
-        {/* Files just dropped and not taken come first: the operator is waiting on them now. */}
-        {notTaken
-          ? t("composer.waitToAttach")
-          : (dictation.problem ?? (problem === null ? null : messageProblemText(problem, i18n)))}
+      <p role="alert" className="sr-only">
+        {alert}
       </p>
-      {/* Each file that cannot go, which its chip marks, says why. Announced once, above. */}
-      {failures.length > 0 && (
-        <ul aria-hidden className="flex flex-col px-3 text-xs text-blocked">
-          {failures.map((failure) => (
-            <li key={failure.key}>{failure.text}</li>
-          ))}
-        </ul>
-      )}
     </form>
   );
 }

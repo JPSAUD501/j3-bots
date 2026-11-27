@@ -103,7 +103,11 @@ export const widestMention = (mention: ConversationMention): MentionRef =>
 /** What a quote shows of its message, as an envelope carries it. */
 export const quotedRef = (quote: MessageQuote): QuoteRef["quoted"] =>
   quote.quoted._tag === "passage"
-    ? { kind: "passage", text: quote.quoted.text }
+    ? {
+        kind: "passage",
+        text: quote.quoted.text,
+        ...(quote.comment === undefined ? {} : { comment: quote.comment }),
+      }
     : { kind: "message", opening: quote.quoted.opening, more: quote.quoted.more };
 
 /**

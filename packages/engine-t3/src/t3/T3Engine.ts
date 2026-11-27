@@ -72,7 +72,6 @@ import {
   type ToolBridge,
 } from "../Engine.ts";
 import { BrowserBridge } from "../Browser.ts";
-import { EngineSpeech } from "../Speech.ts";
 import {
   AnswerRejected,
   BackgroundWorkRunning,
@@ -110,7 +109,6 @@ import {
 import { type BrowserHostNeeds, inspectBrowserHost } from "./BrowserHost.ts";
 import { boundedCommand } from "./Command.ts";
 import { makeBrowserBridge } from "./BrowserBridge.ts";
-import { makeSpeech } from "./Speech.ts";
 import { makeEngineRpc } from "./Connection.ts";
 import { secretAnswerFor } from "./secretAnswer.ts";
 import {
@@ -3050,11 +3048,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     synchronize,
     suggestedReplies,
   });
-  const speech = makeSpeech({ state, port: options.port, token: currentToken, http });
-  return Context.make(Engine, engine).pipe(
-    Context.add(BrowserBridge, browser),
-    Context.add(EngineSpeech, speech),
-  );
+  return Context.make(Engine, engine).pipe(Context.add(BrowserBridge, browser));
 });
 
 /**

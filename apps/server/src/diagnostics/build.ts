@@ -286,11 +286,10 @@ const Settings = Schema.Struct({
   suggest_replies: Flag,
   operator_name_set: Flag,
   voice_place: Schema.String,
+  voice_provider: Schema.NullOr(Schema.String),
   voice_language: Schema.String,
   voice_words: Count,
   voice_remove_fillers: Flag,
-  voice_clean_up: Flag,
-  voice_model: Schema.NullOr(Schema.String),
 });
 
 const Failure = Schema.Struct({
@@ -566,7 +565,7 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
           notifications_enabled, notification_previews, update_channel,
           auto_update_harnesses, suggest_replies, operator_name IS NOT NULL AS operator_name_set,
           voice_place, voice_language, json_array_length(voice_words_json) AS voice_words,
-          voice_remove_fillers, voice_clean_up, voice_model
+          voice_remove_fillers, voice_provider
         FROM settings WHERE id = 1
       `,
     ).pipe(
@@ -603,11 +602,10 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
                 // The words the operator taught dictation may be names: only how many.
                 voice: {
                   place: settings.voice_place,
+                  provider: settings.voice_provider,
                   language: settings.voice_language,
                   words: settings.voice_words,
                   removeFillers: flag(settings.voice_remove_fillers),
-                  cleanUp: flag(settings.voice_clean_up),
-                  model: settings.voice_model,
                 },
               }),
         }),

@@ -489,6 +489,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             quote: (quote: MessageQuote) => {
               if (intents.quoteInDraft(target, quote) === "added") focusAtEnd(composerRef.current);
             },
+            comments: data.quoteComments,
           }
         : null;
     const toggleDetails = () =>

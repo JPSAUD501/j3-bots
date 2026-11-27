@@ -26,16 +26,21 @@ export interface PillProps {
   readonly onResume: () => void;
   readonly onStop: () => void;
   readonly onDiscard: () => void;
+  /** Discard asks once more as the control first shows, as the gallery shows it. */
+  readonly discarding?: boolean;
 }
 
 const noDrag = "[-webkit-app-region:no-drag]";
 
 /**
- * The floating control while the screens are recorded (decision 0098): the
- * bot listening, a red dot, the voice's level, and Pause or Resume, Stop and
- * Discard. No clock: what matters is that it records, not for how long. It
- * is dragged by any part that is not a button, and Discard asks once more,
- * in place, since it throws the recording away.
+ * The floating control while the screens are recorded (decisions 0098 and
+ * 0107): small and round, in the app's own surface. The bot listening, a red
+ * dot while it records, the voice's level, and Discard, Pause or Resume and
+ * Stop as icon buttons, each named in its tooltip. No clock: what matters is
+ * that it records, not for how long. It is dragged by any part that is not a
+ * button, and Discard asks once more, in place, since it throws the
+ * recording away. The app keeps the window out of the recording where the
+ * system allows it.
  */
 export function Pill({
   face,
@@ -47,9 +52,10 @@ export function Pill({
   onResume,
   onStop,
   onDiscard,
+  discarding: asking = false,
 }: PillProps) {
   const { t } = useI18n();
-  const [discarding, setDiscarding] = useState(false);
+  const [discarding, setDiscarding] = useState(asking);
   const busy = phase === "starting" || phase === "finishing";
   const status =
     phase === "starting"
@@ -59,10 +65,11 @@ export function Pill({
         : phase === "paused"
           ? t("recorder.paused")
           : null;
+  const pauseLabel = phase === "paused" ? t("recorder.resume") : t("recorder.pause");
   return (
     <div
       className={cn(
-        "flex h-12 items-center gap-2.5 bg-surface ps-2 pe-1.5 text-foreground [-webkit-app-region:drag]",
+        "flex h-10 items-center gap-2 bg-surface ps-1.5 pe-1 text-foreground [-webkit-app-region:drag]",
         solid ? "h-full w-full" : "w-full rounded-pill border border-border shadow-overlay",
       )}
     >
@@ -71,31 +78,32 @@ export function Pill({
           avatar={face.avatar}
           seed={face.seed}
           state={phase === "recording" ? "listening" : "idle"}
-          size={32}
+          size={24}
         />
       )}
       <span
         role="img"
         aria-label={phase === "paused" ? t("recorder.paused") : t("recorder.recording")}
         className={cn(
-          "size-2.5 shrink-0 rounded-full transition-colors duration-(--duration-state)",
+          "size-2 shrink-0 rounded-full transition-colors duration-(--duration-state)",
           // Red while it records; an empty ring while it does not.
-          phase === "recording" ? "bg-blocked" : "border-2 border-muted-foreground",
+          phase === "recording" ? "bg-blocked" : "border-[1.5px] border-muted-foreground",
+          face === null && "ms-1.5",
         )}
       />
-      {status !== null ? (
+      {discarding ? null : status !== null ? (
         <span className="min-w-0 truncate text-xs text-muted-foreground">{status}</span>
       ) : (
         level !== null && (
           <LevelBars level={level} label={t("recorder.voice")} className="text-muted-foreground" />
         )
       )}
-      {space === "low" && (
+      {space === "low" && !discarding && (
         <span
           role="img"
           aria-label={t("recorder.lowSpace")}
           title={t("recorder.lowSpace")}
-          className="flex shrink-0 text-waiting [&_svg]:size-4"
+          className="flex shrink-0 text-waiting [&_svg]:size-3.5"
         >
           <HardDriveIcon aria-hidden />
         </span>
@@ -103,10 +111,15 @@ export function Pill({
       <span className={cn("ms-auto flex shrink-0 items-center gap-0.5", noDrag)}>
         {discarding ? (
           <>
-            <Button size="sm" variant="ghost" onClick={() => setDiscarding(false)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2.5"
+              onClick={() => setDiscarding(false)}
+            >
               {t("recorder.keep")}
             </Button>
-            <Button size="sm" variant="destructive" onClick={onDiscard}>
+            <Button size="sm" variant="destructive" className="h-7 px-2.5" onClick={onDiscard}>
               {t("recorder.discard")}
             </Button>
           </>
@@ -118,24 +131,30 @@ export function Pill({
               aria-disabled={busy}
               aria-label={t("recorder.discard")}
               title={t("recorder.discard")}
+              className="size-7"
               onClick={() => {
                 if (!busy) setDiscarding(true);
               }}
             >
-              <Trash2Icon />
+              <Trash2Icon className="size-3.5" />
             </Button>
             <Button
               size="icon-sm"
               variant="ghost"
               aria-disabled={busy}
-              aria-label={phase === "paused" ? t("recorder.resume") : t("recorder.pause")}
-              title={phase === "paused" ? t("recorder.resume") : t("recorder.pause")}
+              aria-label={pauseLabel}
+              title={pauseLabel}
+              className="size-7"
               onClick={() => {
                 if (phase === "paused") onResume();
                 else if (phase === "recording") onPause();
               }}
             >
-              {phase === "paused" ? <PlayIcon /> : <PauseIcon />}
+              {phase === "paused" ? (
+                <PlayIcon className="size-3.5 fill-current" />
+              ) : (
+                <PauseIcon className="size-3.5 fill-current" />
+              )}
             </Button>
             <Button
               size="icon-sm"
@@ -143,11 +162,12 @@ export function Pill({
               aria-disabled={busy}
               aria-label={t("recorder.stop")}
               title={t("recorder.stop")}
+              className="size-7"
               onClick={() => {
                 if (!busy) onStop();
               }}
             >
-              <SquareIcon className="fill-current" />
+              <SquareIcon className="size-3 fill-current" />
             </Button>
           </>
         )}

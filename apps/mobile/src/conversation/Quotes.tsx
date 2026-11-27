@@ -5,9 +5,15 @@ import {
   type QuotableMessage,
   replyTo,
   takesPassage,
+  withComment,
 } from "@j3-bots/client-runtime/presentation";
-import { useDraft, useJ3Client } from "@j3-bots/client-runtime/react";
-import type { EntryId, EntryTarget, MessageQuote } from "@j3-bots/contracts";
+import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
+import {
+  type EntryId,
+  type EntryTarget,
+  MAX_QUOTE_COMMENT_LENGTH,
+  type MessageQuote,
+} from "@j3-bots/contracts";
 import { motion } from "@j3-bots/design-tokens";
 import {
   createContext,
@@ -194,7 +200,8 @@ export function Quotes({
 
 /**
  * A message's words in a field that takes no change, to select a passage of
- * them, and Quote, which quotes what is selected. Quote waits for a
+ * them, an optional comment on it where the server takes one (decision
+ * 0106), and Quote, which quotes what is selected. Quote waits for a
  * selection, and says why it cannot quote one too long, or one more than the
  * draft takes.
  *
@@ -213,8 +220,11 @@ function PassagePicker({
   readonly onQuote: (passage: MessageQuote) => void;
 }) {
   const { t } = usePresentation().i18n;
+  const client = useJ3Client();
+  const comments = useReadable(client.quoteComments);
   const draft = useDraft(target);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [comment, setComment] = useState("");
   const passage = useMemo(
     () => passageOf(message, selection.start, selection.end),
     [message, selection],
@@ -240,12 +250,23 @@ function PassagePicker({
           {problem}
         </Text>
       )}
+      {comments && (
+        <TextInput
+          multiline
+          value={comment}
+          maxLength={MAX_QUOTE_COMMENT_LENGTH}
+          placeholder={t("quote.comment.placeholder")}
+          accessibilityLabel={t("quote.comment.label")}
+          onChangeText={setComment}
+          className="max-h-32 min-h-11 rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground"
+        />
+      )}
       <Button
         label={t("quote.quote")}
         variant="primary"
         disabled={ready === null}
         onPress={() => {
-          if (ready !== null) onQuote(ready);
+          if (ready !== null) onQuote(withComment(ready, comment));
         }}
       />
     </View>
