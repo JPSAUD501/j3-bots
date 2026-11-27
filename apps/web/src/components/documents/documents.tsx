@@ -125,16 +125,19 @@ function documentCache(
       if (known !== undefined) return Promise.resolve(known);
       const pending = loading.get(attachment.id);
       if (pending !== undefined) return pending;
-      const next = read(attachment).then((state) => {
-        loading.delete(attachment.id);
-        if (!used) {
-          if (state._tag === "pdf") state.close();
+      // Whatever goes wrong unforeseen, it is asked for again the next time it shows.
+      const next = read(attachment)
+        .catch((): DocumentState => ({ _tag: "unreachable" }))
+        .then((state) => {
+          loading.delete(attachment.id);
+          if (!used) {
+            if (state._tag === "pdf") state.close();
+            return state;
+          }
+          // One that could not be fetched is asked for again the next time it shows.
+          if (state._tag !== "unreachable") keep(attachment.id, state);
           return state;
-        }
-        // One that could not be fetched is asked for again the next time it shows.
-        if (state._tag !== "unreachable") keep(attachment.id, state);
-        return state;
-      });
+        });
       loading.set(attachment.id, next);
       return next;
     },
@@ -201,6 +204,12 @@ export function useDocument(attachment: Attachment, wanted: boolean): DocumentSt
     cache,
     document: cache?.peek(attachment) ?? { _tag: "loading" },
   }));
+  // Wanted again, it is asked for again: what it showed before may be closed since.
+  const [wantedBefore, setWantedBefore] = useState(wanted);
+  if (wanted !== wantedBefore) {
+    setWantedBefore(wanted);
+    setState({ key, cache, document: { _tag: "loading" } });
+  }
   const attachmentNow = useEffectEvent(() => attachment);
   useEffect(() => {
     if (cache === null || !wanted) return;

@@ -18,16 +18,41 @@ export function readMarkdown(text: string, cut: boolean): DocumentContent {
 }
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)/;
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+// Each of these is tried on a line, so none may backtrack across a run of
+// blanks: a line's blank ends are taken off by hand first (`trimBlanks`).
+const HEADING = /^ {0,3}(#{1,6})(?=[ \t]|$)/;
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const ITEM = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
 const TASK = /^\[([ xX])\][ \t]+(.*)$/;
-const DIVIDER = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+const DIVIDER = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?$/;
 const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/;
 const INDENTED = /^( {4}|\t)/;
 
 const BULLETS = ["•", "◦", "▪"] as const;
+
+/** `text` without the spaces and tabs at its ends. */
+function trimBlanks(text: string): string {
+  let from = 0;
+  let to = text.length;
+  while (from < to && isBlank(text[from])) from += 1;
+  while (to > from && isBlank(text[to - 1])) to -= 1;
+  return text.slice(from, to);
+}
+
+/** Whether `line` is the row of dashes under a table's header. */
+const isDivider = (line: string) => DIVIDER.test(trimBlanks(line));
+
+/** A heading's level and its text, without the `#`s that may close it; null when `line` is none. */
+function headingOf(line: string): { readonly level: number; readonly text: string } | null {
+  const start = HEADING.exec(line);
+  if (start === null) return null;
+  const text = trimBlanks(line.slice(start[0].length));
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end -= 1;
+  const closed = end === 0 ? "" : isBlank(text[end - 1]) ? trimBlanks(text.slice(0, end)) : text;
+  return { level: start[1]?.length ?? 1, text: closed };
+}
 
 const widthOf = (indent: string) => indent.replaceAll("\t", "    ").length;
 
@@ -54,7 +79,7 @@ class MarkdownReader {
       RULE.test(line) ||
       QUOTE.test(line) ||
       ITEM.test(line) ||
-      (line.includes("|") && next !== undefined && DIVIDER.test(next))
+      (line.includes("|") && next !== undefined && isDivider(next))
     );
   }
 
@@ -72,13 +97,9 @@ class MarkdownReader {
         this.code(fence[1] ?? "```");
         continue;
       }
-      const heading = HEADING.exec(line);
+      const heading = headingOf(line);
       if (heading !== null) {
-        this.push({
-          _tag: "heading",
-          level: heading[1]?.length ?? 1,
-          runs: inline(heading[2] ?? ""),
-        });
+        this.push({ _tag: "heading", level: heading.level, runs: inline(heading.text) });
         this.#at++;
         continue;
       }
@@ -95,7 +116,7 @@ class MarkdownReader {
         this.item();
         continue;
       }
-      if (line.includes("|") && next !== undefined && DIVIDER.test(next)) {
+      if (line.includes("|") && next !== undefined && isDivider(next)) {
         this.table();
         continue;
       }
@@ -250,17 +271,70 @@ const PLAIN: Style = { bold: false, italic: false, code: false };
  */
 function inline(text: string): Array<Run> {
   const runs: Array<Run> = [];
-  const joined = text
-    .replaceAll(/(?: {2,}|\\)\n/g, " ")
-    .replaceAll(/[ \t]*\n[ \t]*/g, " ")
-    .replaceAll(" ", "\n");
+  const lines = text.split("\n");
+  let joined = "";
+  lines.forEach((line, index) => {
+    const last = index === lines.length - 1;
+    const breaks = !last && (line.endsWith("  ") || line.endsWith("\\"));
+    let from = 0;
+    while (from < line.length && isBlank(line[from])) from += 1;
+    let to = line.length;
+    while (to > from && isBlank(line[to - 1])) to -= 1;
+    if (breaks && line.endsWith("\\")) to -= 1;
+    joined += line.slice(from, to);
+    if (!last) joined += breaks ? "\n" : " ";
+  });
   spans(joined.trim(), PLAIN, runs);
   return runs;
 }
 
-// What follows a link's text: its address in parentheses, perhaps in angle
-// brackets, and perhaps a title. Matched where the text's `]` is.
-const LINK_TARGET = /\(\s*<?[^\s)>]*>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/y;
+/** Whether `char` is a space or a tab, which a paragraph's lines lose at their ends. */
+const isBlank = (char: string | undefined) => char === " " || char === "\t";
+
+const isSpace = (char: string | undefined) => char !== undefined && /\s/.test(char);
+
+/**
+ * Where the target after a link's text ends, the `(` at `from` opening it, or
+ * -1 when none does: an address, perhaps in angle brackets and holding one
+ * pair of parentheses, then perhaps a title in quotes, then `)`. A scan ends
+ * at the first `(` that opens no pair, and the target of a link inside the
+ * pair of another ends at that pair's `)`, so no two scans cover the same
+ * text for long, and a text's targets together take time in proportion to it.
+ */
+function linkTargetEnd(text: string, from: number): number {
+  let at = from + 1;
+  while (isSpace(text[at])) at += 1;
+  if (text[at] === "<") at += 1;
+  for (;;) {
+    const char = text[at];
+    if (char === undefined || char === ")" || char === ">" || isSpace(char)) break;
+    if (char === "(") {
+      let inner = at + 1;
+      while (
+        text[inner] !== undefined &&
+        !"()<>".includes(text[inner] ?? "") &&
+        !isSpace(text[inner])
+      ) {
+        inner += 1;
+      }
+      if (text[inner] !== ")") return -1;
+      at = inner + 1;
+      continue;
+    }
+    at += 1;
+  }
+  if (text[at] === ">") at += 1;
+  let gap = at;
+  while (isSpace(text[gap])) gap += 1;
+  const quote = text[gap];
+  if (gap > at && (quote === '"' || quote === "'")) {
+    const closing = text.indexOf(quote, gap + 1);
+    if (closing < 0) return -1;
+    gap = closing + 1;
+    while (isSpace(text[gap])) gap += 1;
+  }
+  return text[gap] === ")" ? gap + 1 : -1;
+}
 // An address in angle brackets; it cannot hold another `<`, so each `<` scans only up to the next.
 const AUTOLINK = /<((?:https?|mailto):[^\s<>]+)>/iy;
 
@@ -309,8 +383,7 @@ class Closers {
     if (close >= this.text.length) return null;
     let end = this.targets.get(close);
     if (end === undefined) {
-      LINK_TARGET.lastIndex = close + 1;
-      end = LINK_TARGET.test(this.text) ? LINK_TARGET.lastIndex : -1;
+      end = this.text[close + 1] === "(" ? linkTargetEnd(this.text, close + 1) : -1;
       this.targets.set(close, end);
     }
     return end < 0 ? null : { text: this.text.slice(open + 1, close), end };
@@ -327,20 +400,38 @@ class Closers {
   /**
    * Where emphasis opened with `marker`, whose text starts at `from`, closes:
    * after text, not after a space or a backslash, nor before a letter for
-   * `_`; a single marker never closes inside a run of them.
+   * `_`. A run of markers closes doubles from its start, so a single one
+   * closes only at the last of a run of an odd length: `*a **b***` is
+   * italic around bold, and `**b**` closes no single one.
    */
   closing(marker: string, from: number): number {
     let places = this.emphasis.get(marker);
     if (places === undefined) {
       const found: Array<number> = [];
-      for (let at = this.text.indexOf(marker, 1); at > 0; at = this.text.indexOf(marker, at + 1)) {
+      const closes = (at: number) => {
         const before = this.text[at - 1];
-        const after = this.text[at + marker.length];
-        if (marker.length === 1 && (after === marker || before === marker)) continue;
-        if (before !== undefined && /\s/.test(before)) continue;
-        if (before === "\\") continue;
-        if (marker[0] === "_" && wordy(after)) continue;
-        found.push(at);
+        return (
+          before !== undefined &&
+          !/\s/.test(before) &&
+          before !== "\\" &&
+          !(marker[0] === "_" && wordy(this.text[at + marker.length]))
+        );
+      };
+      if (marker.length === 1) {
+        for (let at = this.text.indexOf(marker); at >= 0; at = this.text.indexOf(marker, at)) {
+          let end = at;
+          while (this.text[end + 1] === marker) end += 1;
+          if ((end - at) % 2 === 0 && closes(end)) found.push(end);
+          at = end + 1;
+        }
+      } else {
+        for (
+          let at = this.text.indexOf(marker, 1);
+          at > 0;
+          at = this.text.indexOf(marker, at + 1)
+        ) {
+          if (closes(at)) found.push(at);
+        }
       }
       places = found;
       this.emphasis.set(marker, places);

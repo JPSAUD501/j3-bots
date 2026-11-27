@@ -115,21 +115,31 @@ async function read(
   }
   const root = folder();
   if (native === null || root === null) return { _tag: "unreadable" };
+  const file = new File(root, pdfName(attachment));
+  // Kept only for a PDF that reads: any other is deleted at once.
+  const discard = () => {
+    try {
+      if (file.exists) file.delete();
+    } catch {
+      // Gone already, or left to the next run's clearing.
+    }
+  };
   try {
     root.create({ intermediates: true, idempotent: true });
-    const file = new File(root, pdfName(attachment));
     file.create({ overwrite: true });
     await file.write(bytes);
     if (started !== generation) {
-      file.delete();
+      discard();
       return { _tag: "unreachable" };
     }
     const shape = decodeShape(await native.shape(file.uri, DOCUMENT_LIMITS.pages));
     if (shape._tag === "None" || shape.value === null || shape.value.count === 0) {
+      discard();
       return { _tag: "unreadable" };
     }
     return { _tag: "pdf", uri: file.uri, count: shape.value.count, pages: shape.value.pages };
   } catch {
+    discard();
     return { _tag: "unreadable" };
   }
 }

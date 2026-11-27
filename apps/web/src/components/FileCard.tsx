@@ -118,19 +118,19 @@ export function MessageFile({
   return <FileCard attachment={attachment} onOpen={onOpen} />;
 }
 
-/** Whether `element` has come into view, once: it stays so. */
-function useSeen(element: RefObject<HTMLElement | null>): boolean {
-  const [seen, setSeen] = useState(false);
+/** Whether `element` is in view now. */
+function useInView(element: RefObject<HTMLElement | null>): boolean {
+  const [inView, setInView] = useState(false);
   useEffect(() => {
     const target = element.current;
-    if (target === null || seen) return;
+    if (target === null) return;
     const observer = new IntersectionObserver(([entry]) => {
-      if (entry?.isIntersecting === true) setSeen(true);
+      setInView(entry?.isIntersecting === true);
     });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [element, seen]);
-  return seen;
+  }, [element]);
+  return inView;
 }
 
 // The card's width, and its preview's, in CSS pixels.
@@ -139,14 +139,16 @@ const CARD_WIDTH = 240;
 /**
  * A document a message carries: the top of its first page, or its first
  * rows, above its name and what it is ("PDF, 12 pages"). It is fetched and
- * read as it comes into view, in a frame of fixed size, so the conversation
+ * read as it comes into view, and asked for again when it comes back, in a
+ * frame of fixed size, so the conversation
  * never moves as it arrives. Opening it shows it whole.
  */
 function DocumentCard({ attachment, onOpen }: { attachment: Attachment; onOpen: () => void }) {
   const i18n = useI18n();
   const { t } = i18n;
   const card = useRef<HTMLButtonElement>(null);
-  const document = useDocument(attachment, useSeen(card));
+  // Only while it shows: the page lets go of documents no card in view shows.
+  const document = useDocument(attachment, useInView(card));
   return (
     <button
       ref={card}

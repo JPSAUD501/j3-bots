@@ -142,6 +142,8 @@ export function pictures(zip: Zip): (part: string) => DocumentImage | null {
   let pixelsShown = 0;
   const read = new Map<string, { readonly image: DocumentImage; readonly pixels: number } | null>();
   return (part) => {
+    // Past the count, no picture is unpacked at all.
+    if (count >= DOCUMENT_LIMITS.images) return null;
     let known = read.get(part);
     if (known === undefined) {
       const bytes = zip.bytes(part);
@@ -159,7 +161,6 @@ export function pictures(zip: Zip): (part: string) => DocumentImage | null {
     }
     if (
       known === null ||
-      count >= DOCUMENT_LIMITS.images ||
       bytesShown + known.image.bytes.length > DOCUMENT_LIMITS.imagesBytes ||
       pixelsShown + known.pixels > DOCUMENT_LIMITS.imagesPixels
     ) {

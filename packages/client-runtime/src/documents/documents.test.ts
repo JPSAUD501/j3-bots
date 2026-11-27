@@ -176,7 +176,7 @@ describe("Word documents", () => {
     expect(lines(blocksOf(content))).toEqual(["image image/png"]);
   });
 
-  it("counts a picture each time it shows, and leaves out one whose header says it is enormous", () => {
+  it("counts a picture each time it shows, and leaves out one whose header says it is enormous, or past the count", () => {
     const drawing = (id: string) =>
       `<w:p><w:r><w:drawing><a:blip r:embed="${id}"/></w:drawing></w:r></w:p>`;
     // The same few bytes, but saying they are 60,000 pixels square.
@@ -185,14 +185,20 @@ describe("Word documents", () => {
     new DataView(huge.buffer).setUint32(20, 60_000);
     const content = read(
       "word",
-      word(drawing("rId9") + drawing("rId5").repeat(DOCUMENT_LIMITS.images + 10), {
-        "word/_rels/document.xml.rels": `<Relationships>
-          <Relationship Id="rId5" Type="image" Target="media/image1.png"/>
-          <Relationship Id="rId9" Type="image" Target="media/huge.png"/>
-        </Relationships>`,
-        "word/media/image1.png": PNG,
-        "word/media/huge.png": huge,
-      }),
+      word(
+        drawing("rId9") + drawing("rId5").repeat(DOCUMENT_LIMITS.images + 10) + drawing("rId7"),
+        {
+          "word/_rels/document.xml.rels": `<Relationships>
+            <Relationship Id="rId5" Type="image" Target="media/image1.png"/>
+            <Relationship Id="rId9" Type="image" Target="media/huge.png"/>
+            <Relationship Id="rId7" Type="image" Target="media/past.png"/>
+          </Relationships>`,
+          "word/media/image1.png": PNG,
+          "word/media/huge.png": huge,
+          // Past the count it is never unpacked: unpacked, it would make the file too big.
+          "word/media/past.png": new Uint8Array(DOCUMENT_LIMITS.partBytes + 1),
+        },
+      ),
     );
     expect(blocksOf(content).filter((block) => block._tag === "image")).toHaveLength(
       DOCUMENT_LIMITS.images,
@@ -487,12 +493,32 @@ describe("Markdown files", () => {
       `${"[".repeat(200_000)}](`,
       "a *".repeat(70_000),
       "<http:".repeat(40_000),
+      "[a](".repeat(200_000),
+      `[a](${" ".repeat(400_000)}x`,
     ]) {
       const [block] = blocksOf(read("markdown", strToU8(text)));
       expect(block?._tag === "paragraph" && block.runs.map((run) => run.text).join("")).toBe(
         text.trim(),
       );
     }
+  });
+
+  it("closes italics and bold together where their markers meet", () => {
+    const [block] = blocksOf(read("markdown", strToU8("*see **this*** and **that**")));
+    expect(block?._tag === "paragraph" && block.runs).toEqual([
+      { text: "see ", bold: false, italic: true, code: false },
+      { text: "this", bold: true, italic: true, code: false },
+      { text: " and ", bold: false, italic: false, code: false },
+      { text: "that", bold: true, italic: false, code: false },
+    ]);
+  });
+
+  it("shows a link as its text, whether its address holds parentheses or a title", () => {
+    const text = 'See [the page](https://example.com/Foo_(bar) "Its title") and [here](<a b>).';
+    const [block] = blocksOf(read("markdown", strToU8(text)));
+    expect(block?._tag === "paragraph" && block.runs.map((run) => run.text).join("")).toBe(
+      "See the page and [here](<a b>).",
+    );
   });
 });
 

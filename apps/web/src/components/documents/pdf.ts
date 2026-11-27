@@ -39,20 +39,30 @@ class BundledDecoders {
 
 let library: Promise<typeof import("pdfjs-dist")> | null = null;
 
+/** PDF.js, loaded once; a load that failed, offline say, is tried again the next time. */
 const pdfjs = () => {
-  library ??= import("pdfjs-dist");
+  library ??= import("pdfjs-dist").catch((error: unknown) => {
+    library = null;
+    throw error;
+  });
   return library;
 };
 
-/** How opening a PDF ended: open, with the way to close it and its worker, or unreadable. */
+/**
+ * How opening a PDF ended: open, with the way to close it and its worker;
+ * unreadable; or unreachable, when PDF.js itself could not be loaded.
+ */
 export type PdfOpened =
   | { readonly _tag: "opened"; readonly pdf: PDFDocumentProxy; readonly close: () => void }
-  | { readonly _tag: "unreadable" };
+  | { readonly _tag: "unreadable" }
+  | { readonly _tag: "unreachable" };
 
 /** The largest picture in a PDF drawn, in pixels; a larger one is left out. */
 const MAX_IMAGE_PIXELS = 50_000_000;
 /** How long a PDF may take to open before it counts as unreadable. */
 const OPEN_TIMEOUT_MS = 30_000;
+/** How long PDF.js may take to let a PDF go before its worker is ended anyway. */
+const CLOSE_TIMEOUT_MS = 5_000;
 
 /**
  * Opens a PDF from a copy of its bytes (PDF.js takes the buffer it is given
@@ -60,38 +70,62 @@ const OPEN_TIMEOUT_MS = 30_000;
  * PDF.js, so PDF.js never parses on the page instead, as it does when it
  * cannot start one itself. A PDF that is protected by a password, that is
  * no PDF, or that takes too long to open is unreadable, and its worker ends.
+ * Its worker ends too once the PDF is closed, at the latest
+ * `CLOSE_TIMEOUT_MS` after.
  */
 export async function openPdf(bytes: Uint8Array): Promise<PdfOpened> {
-  const { getDocument, PDFWorker } = await pdfjs();
-  const thread = new Worker(worker, { type: "module" });
-  const port = PDFWorker.create({ port: thread });
-  const task = getDocument({
-    data: bytes.slice(),
-    worker: port,
-    BinaryDataFactory: BundledDecoders,
-    useWorkerFetch: false,
-    useSystemFonts: true,
-    enableXfa: false,
-    maxImageSize: MAX_IMAGE_PIXELS,
-  });
-  const close = () => {
-    void task.destroy().finally(() => {
-      port.destroy();
-      thread.terminate();
-    });
-  };
-  let timer: number | undefined;
-  const failed = new Promise<null>((resolve) => {
-    timer = window.setTimeout(() => resolve(null), OPEN_TIMEOUT_MS);
-    thread.addEventListener("error", () => resolve(null));
-  });
-  const pdf = await Promise.race([task.promise, failed]).catch(() => null);
-  window.clearTimeout(timer);
-  if (pdf === null) {
-    close();
+  const loaded = await pdfjs().catch(() => null);
+  if (loaded === null) return { _tag: "unreachable" };
+  const { getDocument, PDFWorker } = loaded;
+  let thread: Worker;
+  try {
+    thread = new Worker(worker, { type: "module" });
+  } catch {
     return { _tag: "unreadable" };
   }
-  return { _tag: "opened", pdf, close };
+  try {
+    const port = PDFWorker.create({ port: thread });
+    const task = getDocument({
+      data: bytes.slice(),
+      worker: port,
+      BinaryDataFactory: BundledDecoders,
+      useWorkerFetch: false,
+      useSystemFonts: true,
+      enableXfa: false,
+      maxImageSize: MAX_IMAGE_PIXELS,
+    });
+    // PDF.js waits for its worker's answer to let a PDF go: one that hangs
+    // never answers, so the worker ends by a deadline of its own.
+    let closed = false;
+    const end = () => {
+      if (closed) return;
+      closed = true;
+      port.destroy();
+      thread.terminate();
+    };
+    const close = () => {
+      const deadline = window.setTimeout(end, CLOSE_TIMEOUT_MS);
+      void task.destroy().finally(() => {
+        window.clearTimeout(deadline);
+        end();
+      });
+    };
+    let timer: number | undefined;
+    const failed = new Promise<null>((resolve) => {
+      timer = window.setTimeout(() => resolve(null), OPEN_TIMEOUT_MS);
+      thread.addEventListener("error", () => resolve(null));
+    });
+    const pdf = await Promise.race([task.promise, failed]).catch(() => null);
+    window.clearTimeout(timer);
+    if (pdf === null) {
+      close();
+      return { _tag: "unreadable" };
+    }
+    return { _tag: "opened", pdf, close };
+  } catch {
+    thread.terminate();
+    return { _tag: "unreadable" };
+  }
 }
 
 /** The most pixels a page is drawn with: a page of A4 at about 300 dots an inch. */
