@@ -412,6 +412,27 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("ends the run at a Stop of a step's bot that came after its report", () =>
+  Effect.gen(function* () {
+    const ana = yield* createBot("Ana");
+    const bia = yield* createBot("Bia");
+    // Ana's routine, whose first step is Bia's.
+    const routine = yield* ranRoutine(ana, [gather(bia.id), yes, draft(ana.id)]);
+    const turn = yield* stepTurn(routine.id, bia.id);
+    // Bia reports, and is still in her turn when the operator stops her.
+    const reported = yield* finishStep(turn, { result: "3 need a reply", ask: ASK });
+    assert.strictEqual(reported._tag, "result");
+
+    yield* (yield* Stops).stopBot({ commandId: command(), botId: bia.id });
+    yield* stopSettled;
+
+    const run = yield* settled(routine);
+    assert.strictEqual(run.status, "failed");
+    assert.deepStrictEqual(states(run), ["failed", "skipped", "skipped"]);
+    assert.deepStrictEqual([run.steps?.[0]?.failure, run.retryable], ["stopped", false]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("ends a run waiting for a yes at Stop on its card, which then takes no answer", () =>
   Effect.gen(function* () {
     const ana = yield* createBot("Ana");

@@ -564,7 +564,16 @@ export const runSteps = (deps: {
       case "never-started":
         if (yield* ended.outcome.retry) return yield* touch(run, false);
         return yield* fail(run, position, "turn-failed", { partial: false, result: null }, at);
+      // A Stop of the step's bot ends the run, also after the step reported:
+      // what the operator stopped never goes on to the next step.
       case "stopped":
+        return yield* fail(
+          run,
+          position,
+          "stopped",
+          { partial: ended.outcome.partial, result: null },
+          at,
+        );
       case "ended": {
         const stored =
           ended.wakeId === null
@@ -588,15 +597,6 @@ export const runSteps = (deps: {
             WHERE run_id = ${run.id} AND position = ${position}
           `;
           return yield* goOn(run, position, reported, at);
-        }
-        if (ended.outcome._tag === "stopped") {
-          return yield* fail(
-            run,
-            position,
-            "stopped",
-            { partial: ended.outcome.partial, result: null },
-            at,
-          );
         }
         return yield* fail(
           run,
