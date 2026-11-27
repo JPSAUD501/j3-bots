@@ -756,8 +756,10 @@ export const en = {
   "teamLine.roomStartedGone": "{bot} started a room",
   "teamLine.madeForRoom": "Made by {bot} for {room}",
   "teamLine.madeForRoomGone": "Made by {bot} for a room",
-  "teamLine.roomPaused": "{room} paused: its bots talked as long as they may on their own, and {bot} was told",
-  "teamLine.roomPausedGone": "A room paused: its bots talked as long as they may on their own, and {bot} was told",
+  "teamLine.roomPaused":
+    "{room} paused: its bots talked as long as they may on their own, and {bot} was told",
+  "teamLine.roomPausedGone":
+    "A room paused: its bots talked as long as they may on their own, and {bot} was told",
 
   "routine.paused": "Paused",
   "routine.waiting": "Waiting for {connector} to answer",

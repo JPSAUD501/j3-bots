@@ -226,62 +226,64 @@ it.effect("refuses a question from a turn of a room of bots only, which nobody a
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("takes nothing of the operator's in a room of bots only, and keeps their other actions", () =>
-  Effect.gen(function* () {
-    const [scout, pip] = [yield* member("Scout"), yield* member("Pip")];
-    const { roomId, turnId } = yield* startBotsOnly(scout, [pip]);
-    yield* finish(scout, turnId, [scout, pip]);
-    const pipeline = yield* Pipeline;
-    const rooms = yield* Rooms;
-    const before = yield* roomEntries(roomId);
-    const kickoff = before.find((entry) => entry._tag === "message");
-    if (kickoff === undefined) return yield* Effect.die("the room has its kickoff");
-    const send = (extra: {
-      readonly mentions?: { readonly _tag: "everyone" };
-      readonly quotes?: ReadonlyArray<{ readonly entryId: EntryId }>;
-    }) =>
-      Effect.flip(
-        pipeline.sendMessage({
-          commandId: command(),
-          target: { _tag: "room", roomId },
-          text: "Make it Friday.",
-          attachments: [],
-          ...extra,
-        }),
+it.effect(
+  "takes nothing of the operator's in a room of bots only, and keeps their other actions",
+  () =>
+    Effect.gen(function* () {
+      const [scout, pip] = [yield* member("Scout"), yield* member("Pip")];
+      const { roomId, turnId } = yield* startBotsOnly(scout, [pip]);
+      yield* finish(scout, turnId, [scout, pip]);
+      const pipeline = yield* Pipeline;
+      const rooms = yield* Rooms;
+      const before = yield* roomEntries(roomId);
+      const kickoff = before.find((entry) => entry._tag === "message");
+      if (kickoff === undefined) return yield* Effect.die("the room has its kickoff");
+      const send = (extra: {
+        readonly mentions?: { readonly _tag: "everyone" };
+        readonly quotes?: ReadonlyArray<{ readonly entryId: EntryId }>;
+      }) =>
+        Effect.flip(
+          pipeline.sendMessage({
+            commandId: command(),
+            target: { _tag: "room", roomId },
+            text: "Make it Friday.",
+            attachments: [],
+            ...extra,
+          }),
+        );
+      const refused = new Conflict({ reason: "room-bots-only" });
+
+      // Their message, a reply to the kickoff, `@everyone`, a reaction, a new
+      // name or other members: each is refused, and nothing is written.
+      assert.deepStrictEqual(yield* send({}), refused);
+      assert.deepStrictEqual(yield* send({ quotes: [{ entryId: kickoff.id }] }), refused);
+      assert.deepStrictEqual(yield* send({ mentions: { _tag: "everyone" } }), refused);
+      assert.deepStrictEqual(
+        yield* Effect.flip((yield* Reactions).react({ entryId: kickoff.id, emoji: thumbsUp })),
+        refused,
       );
-    const refused = new Conflict({ reason: "room-bots-only" });
+      const update = (changes: Parameters<typeof rooms.update>[0]["changes"]) =>
+        rooms.update({ commandId: command(), roomId, changes });
+      assert.deepStrictEqual(yield* Effect.flip(update({ name: "Mine" })), refused);
+      assert.deepStrictEqual(
+        yield* Effect.flip(update({ members: [scout.bot.id, pip.bot.id].toReversed() })),
+        refused,
+      );
+      assert.deepStrictEqual(yield* roomEntries(roomId), before);
 
-    // Their message, a reply to the kickoff, `@everyone`, a reaction, a new
-    // name or other members: each is refused, and nothing is written.
-    assert.deepStrictEqual(yield* send({}), refused);
-    assert.deepStrictEqual(yield* send({ quotes: [{ entryId: kickoff.id }] }), refused);
-    assert.deepStrictEqual(yield* send({ mentions: { _tag: "everyone" } }), refused);
-    assert.deepStrictEqual(
-      yield* Effect.flip((yield* Reactions).react({ entryId: kickoff.id, emoji: thumbsUp })),
-      refused,
-    );
-    const update = (changes: Parameters<typeof rooms.update>[0]["changes"]) =>
-      rooms.update({ commandId: command(), roomId, changes });
-    assert.deepStrictEqual(yield* Effect.flip(update({ name: "Mine" })), refused);
-    assert.deepStrictEqual(
-      yield* Effect.flip(update({ members: [scout.bot.id, pip.bot.id].toReversed() })),
-      refused,
-    );
-    assert.deepStrictEqual(yield* roomEntries(roomId), before);
+      // Mentioning it in a bot's conversation only points at it, as anywhere.
+      yield* pipeline.sendMessage({
+        commandId: command(),
+        target: { _tag: "conversation", botId: scout.bot.id },
+        text: "How is it going in there?",
+        attachments: [],
+        conversationMentions: [{ _tag: "room", roomId }],
+      });
+      assert.deepStrictEqual(yield* roomEntries(roomId), before);
+      assert.deepStrictEqual(yield* roomWakeStatuses(scout.bot.id, roomId), []);
 
-    // Mentioning it in a bot's conversation only points at it, as anywhere.
-    yield* pipeline.sendMessage({
-      commandId: command(),
-      target: { _tag: "conversation", botId: scout.bot.id },
-      text: "How is it going in there?",
-      attachments: [],
-      conversationMentions: [{ _tag: "room", roomId }],
-    });
-    assert.deepStrictEqual(yield* roomEntries(roomId), before);
-    assert.deepStrictEqual(yield* roomWakeStatuses(scout.bot.id, roomId), []);
-
-    // Where it sits in their list, and whether it lasts, stay theirs.
-    const kept = yield* update({ pinned: true, hidden: true, archived: true });
-    assert.deepStrictEqual([kept.pinned, kept.hidden, kept.status], [true, true, "archived"]);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      // Where it sits in their list, and whether it lasts, stay theirs.
+      const kept = yield* update({ pinned: true, hidden: true, archived: true });
+      assert.deepStrictEqual([kept.pinned, kept.hidden, kept.status], [true, true, "archived"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );

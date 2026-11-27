@@ -697,7 +697,12 @@ describe("renderWake", () => {
         at: now,
         timeZone,
         sinceLastTurn: [],
-        room: { id: Schema.decodeSync(RoomId)("launch"), name: "Launch", members: [], botsOnly: false },
+        room: {
+          id: Schema.decodeSync(RoomId)("launch"),
+          name: "Launch",
+          members: [],
+          botsOnly: false,
+        },
         reason: "user",
         closing: false,
         newcomer: false,

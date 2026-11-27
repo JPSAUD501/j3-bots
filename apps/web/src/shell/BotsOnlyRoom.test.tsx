@@ -19,6 +19,8 @@ vi.mock("../preferences/preferences", () => ({
 }));
 vi.mock("../lib/motion", () => ({ reducedMotion: () => true, play: () => null }));
 
+const rowButton = <button type="button" />;
+
 /** The app on one room of the sample team. */
 function Harness({ selected }: { selected: RosterItemKey }) {
   const source = useSampleSource();
@@ -36,10 +38,10 @@ function Harness({ selected }: { selected: RosterItemKey }) {
           setDetailsOpen: () => {},
           browser: null,
           setBrowser: () => {},
-          rowLink: () => <button type="button" />,
+          rowLink: () => rowButton,
           pair: null,
           openPair: () => {},
-          pairLink: () => <button type="button" />,
+          pairLink: () => rowButton,
         }}
       />
     </AiSessionProvider>
