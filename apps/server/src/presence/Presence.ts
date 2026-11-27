@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import { Devices } from "../devices/Devices.ts";
 import { cut, previewOf } from "../entries/preview.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
+import { sameTarget } from "../entries/sameTarget.ts";
 
 /** One connected socket, from its handlers' start to their end. */
 export interface Viewer {
@@ -30,11 +31,6 @@ export interface Viewer {
   /** This socket's notifications, live from now on. */
   readonly notifications: Stream.Stream<Notification>;
 }
-
-const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
-  a._tag === "conversation"
-    ? b._tag === "conversation" && a.botId === b.botId
-    : b._tag === "room" && a.roomId === b.roomId;
 
 /**
  * What kind of notification an entry makes, if any: a bot's message, or a

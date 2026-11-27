@@ -13,9 +13,11 @@ import {
   type LookingAt,
   type Mentions,
   type MessageEntry,
+  type MessageQuote,
   NotFound,
   ProviderId,
   type QuestionEntry,
+  type QuoteRequest,
   RoomId,
   ROOM_CLOSING_ROUND,
   secretReference,
@@ -26,6 +28,7 @@ import type {
   CatchUpItem,
   MentionRef,
   OperatorMessage,
+  QuoteRef,
   ReactionNews,
   RoomEntry,
   RoomWake,
@@ -51,6 +54,7 @@ import { BotStore } from "../bots/BotStore.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { EngineState, providerReady } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
+import { resolveQuotes } from "../entries/quotes.ts";
 import { Ids } from "../Ids.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
@@ -68,9 +72,11 @@ import {
   longestFitting,
   operatorMessage,
   operatorZone,
+  quotedRef,
   ROOM_ENTRIES_READ,
   roomName,
   widestMention,
+  widestQuote,
   widestRoomHeader,
   widestTeammate,
 } from "./envelopes.ts";
@@ -324,6 +330,8 @@ export class Pipeline extends Context.Service<
       readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       /** The window the operator was looking at, from quick access. */
       readonly lookingAt?: LookingAt;
+      /** The messages it quotes, whole or a passage (decision 0094). */
+      readonly quotes?: ReadonlyArray<QuoteRequest>;
     }) => Effect.Effect<EntryId, NotFound | Conflict | Invalid>;
     /** Sends a failed message again, as new wakes, to the recipients it failed for. */
     readonly retryMessage: (input: {
@@ -567,6 +575,7 @@ export const layer = Layer.effect(
       readonly mentions?: Mentions;
       readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       readonly lookingAt?: LookingAt;
+      readonly quotes?: ReadonlyArray<QuoteRequest>;
     }) {
       const { commandId, ...payload } = input;
       const named = input.conversationMentions ?? [];
@@ -582,6 +591,7 @@ export const layer = Layer.effect(
             }
           }
           const room = yield* checkMentions(input.target, input.mentions, named);
+          const quotes = yield* resolveQuotes(entries, input.target, input.quotes ?? []);
           const files = yield* filesOf(input.attachments);
           const offsets = input.attachmentOffsets;
           if (offsets !== undefined && !attachmentOffsetsFit(input.text, files.length, offsets)) {
@@ -604,7 +614,11 @@ export const layer = Layer.effect(
                   [
                     {
                       _tag: "message",
-                      message: { ...message, mentions: named.map(widestMention) },
+                      message: {
+                        ...message,
+                        mentions: named.map(widestMention),
+                        quotes: quotes.map(widestQuote),
+                      },
                     },
                   ],
                 )
@@ -630,6 +644,7 @@ export const layer = Layer.effect(
                           : (input.mentions?.ids ?? []).map((id) => widestTeammate(id).name),
                       attachments: message.attachments,
                       lookingAt: message.lookingAt,
+                      quotes: quotes.map(widestQuote),
                     },
                   ],
                 };
@@ -654,6 +669,7 @@ export const layer = Layer.effect(
               ...(input.lookingAt === undefined ? {} : { lookingAt: input.lookingAt }),
               mentions: input.mentions ?? { _tag: "bots", ids: [] },
               ...(named.length === 0 ? {} : { conversationMentions: named }),
+              ...(quotes.length === 0 ? {} : { quotes }),
               delivery:
                 behind?.unsent === true
                   ? { _tag: "pending", behindOpening: true }
@@ -1210,6 +1226,7 @@ export const layer = Layer.effect(
               mentionRef(target.botId, mention),
             )
           : [];
+      const quotes = target._tag === "conversation" ? yield* quoteRefs(target.botId, message) : [];
       return {
         id: message.id,
         ...operatorMessage(
@@ -1220,6 +1237,7 @@ export const layer = Layer.effect(
           message.lookingAt,
         ),
         ...(mentions.length === 0 ? {} : { mentions }),
+        ...(quotes.length === 0 ? {} : { quotes }),
       } satisfies OperatorMessage;
     });
 
@@ -1258,6 +1276,25 @@ export const layer = Layer.effect(
     });
 
     const newsOf = reactionNews({ entries, roomOf, teammate: teammateRef });
+
+    /** A quote as `botId`'s envelope shows it: by the operator, by the bot itself, or by a teammate. */
+    const quoteRef = Effect.fn("Pipeline.quoteRef")(function* (botId: BotId, quote: MessageQuote) {
+      const { author } = quote;
+      const from =
+        author._tag === "operator"
+          ? ("user" as const)
+          : author.botId === botId
+            ? ("you" as const)
+            : yield* teammateRef(author.botId);
+      return {
+        id: quote.entryId,
+        from,
+        at: quote.saidAt,
+        quoted: quotedRef(quote),
+      } satisfies QuoteRef;
+    });
+    const quoteRefs = (botId: BotId, message: MessageEntry) =>
+      Effect.forEach(message.quotes ?? [], (quote) => quoteRef(botId, quote));
 
     /** An urgent message, from the handoff card it put in the recipient's conversation. */
     const teammateMessageOf = Effect.fn("Pipeline.teammateMessageOf")(function* (entryId: EntryId) {
@@ -1427,7 +1464,11 @@ export const layer = Layer.effect(
     });
 
     /** A room message as an envelope shows it, with the members it mentioned by name. */
-    const roomEntryOf = Effect.fn("Pipeline.roomEntryOf")(function* (message: MessageEntry) {
+    const roomEntryOf = Effect.fn("Pipeline.roomEntryOf")(function* (
+      botId: BotId,
+      message: MessageEntry,
+    ) {
+      const quotes = yield* quoteRefs(botId, message);
       const mentions =
         message.mentions._tag === "everyone"
           ? ("everyone" as const)
@@ -1440,6 +1481,7 @@ export const layer = Layer.effect(
           text: message.text,
           mentions,
           files: message.attachments.map((file) => file.name),
+          ...(quotes.length === 0 ? {} : { quotes }),
         } satisfies RoomEntry;
       }
       const { attachments, lookingAt } = operatorMessage(
@@ -1457,6 +1499,7 @@ export const layer = Layer.effect(
         mentions,
         attachments,
         lookingAt,
+        ...(quotes.length === 0 ? {} : { quotes }),
       } satisfies RoomEntry;
     });
 
@@ -1484,7 +1527,7 @@ export const layer = Layer.effect(
         sourceIds.flatMap((id) => (id === null ? [] : [id])),
       );
       const shown = (message: MessageEntry) =>
-        Effect.map(roomEntryOf(message), (entry) => ({ message, entry }));
+        Effect.map(roomEntryOf(plan.botId, message), (entry) => ({ message, entry }));
       const sources = new Map(
         (yield* Effect.forEach(unseen.sources, shown)).map((one) => [one.message.id, one]),
       );

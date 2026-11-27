@@ -82,6 +82,20 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
             { kind: "bot", ...teammate },
             { kind: "room", id: Schema.decodeSync(RoomId)("launch"), name: s, member: true },
           ],
+          quotes: [
+            {
+              id: Schema.decodeSync(EntryId)("q"),
+              from: teammate,
+              at: now,
+              quoted: { kind: "passage", text: s },
+            },
+            {
+              id: Schema.decodeSync(EntryId)("q"),
+              from: "you",
+              at: now,
+              quoted: { kind: "message", opening: s, more: true },
+            },
+          ],
         },
         { at: now, text: s, attachments: [], lookingAt: null },
       ],
@@ -107,7 +121,21 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
           attachments: [{ name: s, path: s, mediaType: s, offset: 0 }],
           lookingAt: { app: s, title: null },
         },
-        { author: teammate, at: now, text: s, mentions: "everyone", files: [s] },
+        {
+          author: teammate,
+          at: now,
+          text: s,
+          mentions: "everyone",
+          files: [s],
+          quotes: [
+            {
+              id: Schema.decodeSync(EntryId)("q"),
+              from: "user",
+              at: now,
+              quoted: { kind: "passage", text: s },
+            },
+          ],
+        },
       ],
     },
     { ...base, kind: "bot", messages: [message] },
@@ -296,6 +324,55 @@ describe("renderWake", () => {
       <mention kind="bot" id="prices" name="ML Preços"/>
       <mention kind="room" id="launch" name="Launch" member="true"/>
       <mention kind="room" id="ops" name="Ops" member="false"/>
+      </j3-wake>
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
+      "
+    `);
+  });
+
+  it("shows what a message quotes after it, each as what was said then, whoever said it", () => {
+    expect(
+      render({
+        kind: "user",
+        at: now,
+        timeZone,
+        sinceLastTurn: [],
+        answer: null,
+        messages: [
+          {
+            at: now,
+            text: "The second one, and is this still true?",
+            attachments: [],
+            lookingAt: null,
+            quotes: [
+              {
+                id: Schema.decodeSync(EntryId)("plans"),
+                from: "you",
+                at: now,
+                quoted: { kind: "message", opening: "Two plans: a quick one, or", more: true },
+              },
+              {
+                id: Schema.decodeSync(EntryId)("numbers"),
+                from: { id: botId("scout"), name: "Scout", title: "" },
+                at: now,
+                quoted: { kind: "passage", text: "revenue grew 12%" },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchInlineSnapshot(`
+      "<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      <message from="user">
+      The second one, and is this still true?
+      </message>
+      The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. \`from\` says who said each, \`you\` being you.
+      <data-7f3a9c01b2d4 source="quote" id="plans" from="you" at="09:41" part="message">
+      Two plans: a quick one, or…
+      </data-7f3a9c01b2d4>
+      <data-7f3a9c01b2d4 source="quote" id="numbers" from="Scout" from-id="scout" at="09:41" part="passage">
+      revenue grew 12%
+      </data-7f3a9c01b2d4>
       </j3-wake>
       Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
       "

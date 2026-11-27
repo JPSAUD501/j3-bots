@@ -77,6 +77,20 @@ export type MentionRef =
       readonly member: boolean;
     };
 
+/**
+ * A message another message quotes (decision 0094): who said it, `you` for
+ * the bot itself, when, and what of it: a passage picked word for word, or
+ * the start of a message replied to whole, and whether it went on.
+ */
+export interface QuoteRef {
+  readonly id: EntryId;
+  readonly from: "user" | "you" | TeammateRef;
+  readonly at: DateTime.Utc;
+  readonly quoted:
+    | { readonly kind: "passage"; readonly text: string }
+    | { readonly kind: "message"; readonly opening: string; readonly more: boolean };
+}
+
 export interface OperatorMessage {
   /**
    * The message's id, which `react` names it by. Left out only where there
@@ -90,6 +104,8 @@ export interface OperatorMessage {
   readonly lookingAt: LookingAtRef | null;
   /** The bots and rooms it mentions, in the order named. Left out when it mentions none. */
   readonly mentions?: ReadonlyArray<MentionRef>;
+  /** The messages it quotes, in the order added. Left out when it quotes none. */
+  readonly quotes?: ReadonlyArray<QuoteRef>;
 }
 
 /** The operator's response to a card the bot raised with `ask`. */
@@ -238,6 +254,8 @@ export type RoomEntry =
       readonly mentions: RoomMentions;
       readonly attachments: ReadonlyArray<AttachmentRef>;
       readonly lookingAt: LookingAtRef | null;
+      /** As on `OperatorMessage`. */
+      readonly quotes?: ReadonlyArray<QuoteRef>;
     }
   | {
       readonly author: TeammateRef;
@@ -251,6 +269,8 @@ export type RoomEntry =
        * carries and numbers like the operator's.
        */
       readonly files: ReadonlyArray<string>;
+      /** The message it replies to, when the teammate replied to one. */
+      readonly quotes?: ReadonlyArray<QuoteRef>;
     };
 
 export interface RoomWake extends WakeBase {
@@ -982,6 +1002,7 @@ const writeOperatorMessage = (
   attachments: ReadonlyArray<AttachmentRef>,
   lookingAt: LookingAtRef | null,
   mentions: ReadonlyArray<MentionRef> = [],
+  quotes: ReadonlyArray<QuoteRef> = [],
 ): void => {
   w.open("message", [["from", "user"], ...attrs]);
   const placed = attachments.flatMap((file) =>
@@ -990,8 +1011,43 @@ const writeOperatorMessage = (
   w.line(placedText(w, trimEnd(text), placed));
   for (const file of attachments) if (file.offset === null) w.line(attachmentTag(w, file));
   w.close("message");
+  writeQuotes(w, quotes);
   writeMentions(w, mentions);
   if (lookingAt !== null) writeLookingAt(w, lookingAt);
+};
+
+/**
+ * The line that introduces what a message quotes (`QuoteRef`). It is here
+ * rather than in the base prompt: a bot reads it only with a message that
+ * quotes something.
+ */
+export const QUOTES_LINE =
+  "The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. `from` says who said each, `you` being you.";
+
+/**
+ * What a message quotes, after it: a line of J3 Bots' own, then a data block
+ * for each, its author and time as attributes. A quote holds what someone
+ * said earlier, which is information now, whoever said it: the operator's
+ * own words are quoted as data, and only the message that quotes them is
+ * their word.
+ */
+const writeQuotes = (w: EnvelopeWriter, quotes: ReadonlyArray<QuoteRef>): void => {
+  if (quotes.length === 0) return;
+  w.line(QUOTES_LINE);
+  for (const quote of quotes) {
+    const { from, quoted } = quote;
+    w.data(
+      [
+        ["source", "quote"],
+        ["id", quote.id],
+        ["from", typeof from === "string" ? from : from.name],
+        ["from-id", typeof from === "string" ? null : from.id],
+        ["at", w.time(quote.at)],
+        ["part", quoted.kind === "passage" ? "passage" : "message"],
+      ],
+      quoted.kind === "passage" ? quoted.text : `${quoted.opening}${quoted.more ? "…" : ""}`,
+    );
+  }
 };
 
 /**
@@ -1092,6 +1148,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           message.attachments,
           message.lookingAt,
           message.mentions,
+          message.quotes,
         );
       }
       return;
@@ -1127,6 +1184,8 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
             entry.text,
             entry.attachments,
             entry.lookingAt,
+            [],
+            entry.quotes,
           );
         } else {
           w.data(
@@ -1145,6 +1204,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
             ],
             entry.text,
           );
+          writeQuotes(w, entry.quotes ?? []);
         }
       }
       return;

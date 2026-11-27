@@ -118,6 +118,23 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
           { kind: "room", id: Schema.decodeSync(RoomId)("room"), name: "Room", member: true },
           { kind: "room", id: Schema.decodeSync(RoomId)("room"), name: "Room", member: false },
         ],
+        // Every way a quote reads: by the operator, the bot and a teammate; a passage, and a
+        // reply to a whole message that goes on or does not.
+        quotes: [
+          { id: entryId, from: "user", at, quoted: { kind: "passage", text: "text" } },
+          {
+            id: entryId,
+            from: "you",
+            at,
+            quoted: { kind: "message", opening: "text", more: true },
+          },
+          {
+            id: entryId,
+            from: teammate,
+            at,
+            quoted: { kind: "message", opening: "text", more: false },
+          },
+        ],
       },
     ],
   },
@@ -150,7 +167,15 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
         attachments: [],
         lookingAt: { app: "App", title: null },
       },
-      { author: teammate, id: entryId, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
+      {
+        author: teammate,
+        id: entryId,
+        at,
+        text: "text",
+        mentions: ["Bot"],
+        files: ["a.pdf"],
+        quotes: [{ id: entryId, from: "user", at, quoted: { kind: "passage", text: "text" } }],
+      },
     ],
   },
   ...(["kickoff", "addressed", "everyone", "member"] as const).map((reason): Wake => ({

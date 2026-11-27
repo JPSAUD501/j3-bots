@@ -96,6 +96,7 @@ interface SayArgs {
   readonly attachments?: ReadonlyArray<string>;
   readonly to?: "dm";
   readonly done?: boolean;
+  readonly reply_to?: string;
 }
 
 /** The member, in its running turn, calls `say`: the response the tool gives it. */

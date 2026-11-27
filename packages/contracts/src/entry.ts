@@ -192,7 +192,8 @@ export type Quoted = typeof Quoted.Type;
  */
 export const MessageQuote = Schema.Struct({
   entryId: EntryId,
-  author: Author,
+  /** The operator or a bot: J3 Bots' own messages are notices in all but name, and none is quoted. */
+  author: Schema.Union([Schema.TaggedStruct("operator", {}), BotAuthor]),
   saidAt: Schema.DateTimeUtc,
   quoted: Quoted,
 });

@@ -33,6 +33,7 @@ import { Ledger } from "../turns/Ledger.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { reactionNotes } from "./notes.ts";
+import { sameTarget } from "../entries/sameTarget.ts";
 
 /**
  * How long the operator's reaction on a bot's message waits for more changes
@@ -52,11 +53,6 @@ type Found =
   | { readonly _tag: "message"; readonly target: EntryTarget; readonly message: MessageEntry }
   | { readonly _tag: "missing" }
   | { readonly _tag: "not-a-message" };
-
-const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
-  a._tag === "conversation"
-    ? b._tag === "conversation" && a.botId === b.botId
-    : b._tag === "room" && a.roomId === b.roomId;
 
 const Signal = Schema.Struct({ bot_id: Schema.String, entry_id: EntryId });
 

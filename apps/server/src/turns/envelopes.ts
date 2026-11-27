@@ -3,6 +3,7 @@ import {
   type Attachment,
   BotId,
   type ConversationMention,
+  type MessageQuote,
   type LookingAt,
   MAX_ID_LENGTH,
   MAX_LABEL_LENGTH,
@@ -15,6 +16,7 @@ import { ENGINE_INPUT_LIMIT, engineInputLength } from "@j3-bots/engine-t3";
 import type {
   AskAnswer,
   MentionRef,
+  QuoteRef,
   OperatorMessage,
   RoomWake,
   TeammateRef,
@@ -97,6 +99,24 @@ export const widestMention = (mention: ConversationMention): MentionRef =>
   mention._tag === "bot"
     ? { kind: "bot", ...widestTeammate(mention.botId) }
     : { kind: "room", id: mention.roomId, name: WIDEST_ROOM_NAME, member: false };
+
+/** What a quote shows of its message, as an envelope carries it. */
+export const quotedRef = (quote: MessageQuote): QuoteRef["quoted"] =>
+  quote.quoted._tag === "passage"
+    ? { kind: "passage", text: quote.quoted.text }
+    : { kind: "message", opening: quote.quoted.opening, more: quote.quoted.more };
+
+/**
+ * A quote as an envelope names it at its widest: a bot that said the quoted
+ * message can be renamed before the message is dispatched. What it quotes
+ * was kept with the message, and does not change.
+ */
+export const widestQuote = (quote: MessageQuote): QuoteRef => ({
+  id: quote.entryId,
+  from: quote.author._tag === "operator" ? "user" : widestTeammate(quote.author.botId),
+  at: quote.saidAt,
+  quoted: quotedRef(quote),
+});
 
 /**
  * The room as an envelope names it at its widest: its name, as many members

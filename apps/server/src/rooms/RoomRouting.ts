@@ -58,8 +58,9 @@ export interface SpeakingTurn {
 
 /**
  * Who a room message wakes (`docs/architecture/server.md`, Rooms), the
- * operator's message and a bot's alike: the members it mentions, or every
- * member but its author when it mentions nobody or everyone. Every member
+ * operator's message and a bot's alike: the members it mentions; mentioning
+ * nobody, the member it replies to; or every member but its author when it
+ * mentions nobody else or everyone. Every member
  * reads it in its next envelope either way.
  *
  * Each message takes a round, kept with its entry (`entries.room_round`). The
@@ -107,8 +108,22 @@ export class RoomRouting extends Context.Service<
 >()("@j3-bots/server/rooms/RoomRouting") {}
 
 /**
- * The members a message wakes, in member order, and why: those it mentions,
- * or, mentioning nobody or everyone, every member but its author.
+ * The member a message replies to (decision 0094): the bot that said the
+ * message it quotes whole, when that bot is a member other than its author.
+ * A passage it quotes addresses nobody.
+ */
+const repliedTo = (others: ReadonlyArray<BotId>, message: MessageEntry): BotId | null => {
+  const reply = message.quotes?.find((quote) => quote.quoted._tag === "message");
+  if (reply === undefined || reply.author._tag !== "bot") return null;
+  const { botId } = reply.author;
+  return others.includes(botId) ? botId : null;
+};
+
+/**
+ * The members a message wakes, in member order, and why: those it mentions;
+ * mentioning nobody, the member whose message it replies to, as if it
+ * mentioned that member; otherwise, mentioning nobody or everyone, every
+ * member but its author.
  */
 const woken = (
   members: ReadonlyArray<BotId>,
@@ -121,10 +136,13 @@ const woken = (
   if (mentions._tag === "everyone") {
     return others.map((id) => [id, unaddressed === "kickoff" ? "kickoff" : "everyone"] as const);
   }
-  if (mentions.ids.length === 0) return others.map((id) => [id, unaddressed] as const);
-  return others
-    .filter((id) => mentions.ids.includes(id))
-    .map((id) => [id, unaddressed === "kickoff" ? "kickoff" : "addressed"] as const);
+  const addressed = unaddressed === "kickoff" ? "kickoff" : "addressed";
+  if (mentions.ids.length === 0) {
+    const replied = repliedTo(others, message);
+    if (replied !== null) return [[replied, addressed]];
+    return others.map((id) => [id, unaddressed] as const);
+  }
+  return others.filter((id) => mentions.ids.includes(id)).map((id) => [id, addressed] as const);
 };
 
 export const layer = Layer.effect(

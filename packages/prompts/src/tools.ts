@@ -172,6 +172,12 @@ const SayInput = toolInput({
       "Only with a message to the room: the bot ids of the members you speak to, who alone are woken to answer; the others read it in their next turn. Leave it out to wake every other member.",
     ),
   ),
+  reply_to: Schema.optionalKey(
+    described(
+      Id,
+      "Rarely: the id of an earlier message, as your envelope gives it, that this one answers, shown above your words. Only when it would be unclear otherwise, as for an older message or one of several questions; a reply to a member's message in a room wakes that member when you mention nobody.",
+    ),
+  ),
   done: Schema.optionalKey(
     described(
       Schema.Boolean,
@@ -252,6 +258,12 @@ const MessageBotInput = toolInput({
     described(
       Schema.Array(Id).check(Schema.isMaxLength(6)),
       "To a room only: the bot ids of the members you speak to, who alone are woken to answer. Leave it out to wake every other member.",
+    ),
+  ),
+  reply_to: Schema.optionalKey(
+    described(
+      Id,
+      "To a room only, and rarely: the id of a message of that room, as your envelope gave it, that this post answers, as `say`'s `reply_to` does.",
     ),
   ),
 });

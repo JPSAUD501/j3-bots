@@ -31,6 +31,8 @@ export type RosterFrame =
       readonly sections: ReadonlyArray<Section>;
       /** `message.send` takes `conversationMentions`, so clients offer `@` in a bot's conversation. */
       readonly conversationMentions: true;
+      /** `message.send` takes `quotes`, so clients offer Reply and Quote. */
+      readonly quotes: true;
     }
   | {
       readonly _tag: "changed";
@@ -226,6 +228,7 @@ export const layer = Layer.effect(
             items: snapshot.map(sent),
             sections: sectionsNow,
             conversationMentions: true,
+            quotes: true,
           }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter(
