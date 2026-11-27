@@ -59,6 +59,7 @@ import { RosterRow } from "../components/RosterRow.tsx";
 import { BetweenHeader, SectionEmpty, SectionHeader } from "../components/SectionHeader.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { UpdateNotice } from "../update/UpdateNotice.tsx";
+import { WhatsNewNotice } from "../update/WhatsNew.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
 import { useI18n } from "../i18n.ts";
 import { Onboarding } from "../onboarding/Onboarding.tsx";
@@ -395,6 +396,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       </View>
       <ConnectionLine loaded />
       <UpdateNotice />
+      <WhatsNewNotice />
       <BotMenu
         pressed={pressed}
         onClose={() => setPressed(null)}

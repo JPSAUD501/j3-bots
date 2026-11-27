@@ -88,6 +88,7 @@ import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { UpdatePromptEntryButton } from "./UpdatePrompt";
+import { WhatsNewButton } from "./WhatsNew";
 import { ShortcutSetting } from "./ShortcutSetting";
 import {
   AdvancedEndpoint,
@@ -140,6 +141,7 @@ type SettingsIntents = Pick<
   | "update"
   | "serverUpdate"
   | "updatePrompt"
+  | "whatsNew"
   | "shortcut"
   | "lookingAt"
   | "providerSetup"
@@ -216,8 +218,9 @@ const pagesFor = (intents: SettingsIntents): ReadonlyArray<ReadonlyArray<Setting
     .filter((group) => group.length > 0);
 
 /**
- * The roster's footer: opens everything that is not about one bot, at the
- * list of its pages. Opening reads the settings and devices again, for what
+ * The roster's footer: the way back to the update prompt, What's new, and
+ * Settings, which opens everything that is not about one bot at the list of
+ * its pages. Opening Settings reads the settings and devices again, for what
  * another device changed.
  */
 export function SettingsButton({ data, intents }: SettingsButtonProps) {
@@ -231,6 +234,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
       {updateEntry !== null && intents.updatePrompt !== undefined && (
         <UpdatePromptEntryButton entry={updateEntry} onOpen={intents.updatePrompt.reopen} />
       )}
+      <WhatsNewButton whatsNew={intents.whatsNew} />
       <Dialog.Root
         open={data.settingsOpen}
         onOpenChange={(open) => {

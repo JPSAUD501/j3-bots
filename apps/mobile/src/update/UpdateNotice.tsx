@@ -98,8 +98,8 @@ export function UpdateNotice() {
   );
 }
 
-/** A line that opens the update prompt again, or the updates in Settings. */
-function NoticeRow(props: {
+/** A quiet line over the roster that opens what it names: the update prompt, the updates in Settings, What's new. */
+export function NoticeRow(props: {
   readonly text: string;
   /** What a screen reader says pressing it does. */
   readonly hint: string;

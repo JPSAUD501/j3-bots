@@ -145,6 +145,7 @@ import { readTemplate, useTemplateDrop } from "./templateFiles";
 import { updatable, useDesktopUpdate, useLaunchUpdate, useReportSaving } from "./appUpdate";
 import { useRemoteServerUpdate } from "./serverUpdate";
 import { useUpdatePrompt } from "./updatePrompt";
+import { useWhatsNew } from "./whatsNew";
 import {
   useDesktopLookingAt,
   useDesktopShortcut,
@@ -949,6 +950,7 @@ function LiveShell({
   const serverUpdate = useRemoteServerUpdate();
   // The way back to the update prompt after "Later", in the roster's footer.
   const updatePrompt = useUpdatePrompt(false);
+  const whatsNew = useWhatsNew();
   const shortcut = useDesktopShortcut();
   const lookingAt = useDesktopLookingAt();
   useReportSaving(useSavesUnderWay(j3));
@@ -1564,6 +1566,7 @@ function LiveShell({
     ...(local === undefined ? { serverUpdate } : { local }),
     ...(update === undefined ? {} : { update }),
     updatePrompt: { entry: updatePrompt.entry, reopen: updatePrompt.reopen },
+    whatsNew,
     ...(shortcut === undefined ? {} : { shortcut }),
     ...(lookingAt === undefined ? {} : { lookingAt }),
     ...(providerSetup === undefined ? {} : { providerSetup }),
