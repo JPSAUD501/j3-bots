@@ -210,32 +210,37 @@ it.layer(NodeServices.layer)("web client", (it) => {
     ),
   );
 
-  it.effect("compresses what a browser takes compressed, and still answers a fresh copy with 304", () =>
-    serving(
-      Effect.gen(function* () {
-        const target = "/assets/chunk-C5d6e7f8.js";
-        const gzip = yield* fetched(target, { "accept-encoding": "gzip, deflate" });
-        assert.strictEqual(gzip.headers["content-encoding"], "gzip");
-        assert.include(gzip.headers["vary"], "Accept-Encoding");
-        assert.isBelow(gzip.body.length, CHUNK.length / 3);
-        assert.strictEqual(NodeZlib.gunzipSync(gzip.body).toString("utf8"), CHUNK);
+  it.effect(
+    "compresses what a browser takes compressed, and still answers a fresh copy with 304",
+    () =>
+      serving(
+        Effect.gen(function* () {
+          const target = "/assets/chunk-C5d6e7f8.js";
+          const gzip = yield* fetched(target, { "accept-encoding": "gzip, deflate" });
+          assert.strictEqual(gzip.headers["content-encoding"], "gzip");
+          assert.include(gzip.headers["vary"], "Accept-Encoding");
+          assert.isBelow(gzip.body.length, CHUNK.length / 3);
+          assert.strictEqual(NodeZlib.gunzipSync(gzip.body).toString("utf8"), CHUNK);
 
-        const br = yield* fetched(target, { "accept-encoding": "gzip, deflate, br" });
-        assert.strictEqual(br.headers["content-encoding"], "br");
-        assert.strictEqual(NodeZlib.brotliDecompressSync(br.body).toString("utf8"), CHUNK);
+          const br = yield* fetched(target, { "accept-encoding": "gzip, deflate, br" });
+          assert.strictEqual(br.headers["content-encoding"], "br");
+          assert.strictEqual(NodeZlib.brotliDecompressSync(br.body).toString("utf8"), CHUNK);
 
-        const plain = yield* fetched(target, {});
-        assert.strictEqual(plain.headers["content-encoding"], undefined);
-        assert.strictEqual(plain.body.toString("utf8"), CHUNK);
+          const plain = yield* fetched(target, {});
+          assert.strictEqual(plain.headers["content-encoding"], undefined);
+          assert.strictEqual(plain.body.toString("utf8"), CHUNK);
 
-        // The browser sends back the compressed copy's validator.
-        const etag = gzip.headers["etag"] ?? "";
-        assert.notStrictEqual(etag, "");
-        const again = yield* fetched(target, { "accept-encoding": "gzip", "if-none-match": etag });
-        assert.strictEqual(again.status, 304);
-        assert.strictEqual(again.body.length, 0);
-      }),
-    ),
+          // The browser sends back the compressed copy's validator.
+          const etag = gzip.headers["etag"] ?? "";
+          assert.notStrictEqual(etag, "");
+          const again = yield* fetched(target, {
+            "accept-encoding": "gzip",
+            "if-none-match": etag,
+          });
+          assert.strictEqual(again.status, 304);
+          assert.strictEqual(again.body.length, 0);
+        }),
+      ),
   );
 
   it.effect("answers 404 for a missing file and an unknown API path, never the app", () =>

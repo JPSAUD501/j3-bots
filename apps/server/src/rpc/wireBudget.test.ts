@@ -558,7 +558,9 @@ const report = (frames: ReadonlyArray<Frame>, seeded: number): string => {
   for (const frame of frames) {
     if (frame.phase !== "turn") continue;
     const repeated = frame.repeated ? "[repeats the previous] " : "";
-    lines.push(`  ${frame.subscription} ${frame.tag}: ${frame.bytes} B  ${repeated}${frame.detail}`);
+    lines.push(
+      `  ${frame.subscription} ${frame.tag}: ${frame.bytes} B  ${repeated}${frame.detail}`,
+    );
     const key = `${frame.subscription} ${frame.tag}`;
     const total = totals.get(key) ?? { count: 0, bytes: 0 };
     totals.set(key, { count: total.count + 1, bytes: total.bytes + frame.bytes });
