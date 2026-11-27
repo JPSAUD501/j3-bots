@@ -5,6 +5,7 @@ import {
   type Prompt,
   type Resource,
   type SecretNeed,
+  type ServedSkill,
   type ServerInfo,
   type SignInNeed,
   statusOf,
@@ -29,7 +30,7 @@ import type { StoredConnector } from "./ConnectorStore.ts";
 export interface Seen {
   /** What its server listed last; none until a session listed its tools. */
   readonly listed: Option.Option<ReadonlyArray<CatalogTool>>;
-  /** What its server said of itself, and the resources and prompts it listed last. */
+  /** What its server said of itself, and the resources, prompts and skills it listed last. */
   readonly served: Option.Option<Served>;
   readonly failing: Option.Option<Failing>;
   /** Its server refused the credentials it was sent, and nothing has worked since. */
@@ -46,7 +47,33 @@ interface Served {
   readonly info: ServerInfo;
   readonly resources: ReadonlyArray<Resource>;
   readonly prompts: ReadonlyArray<Prompt>;
+  readonly skills: ServedSkills;
 }
+
+/**
+ * The skills a connector's server listed last (MCP's Skills extension,
+ * decision 0089), and how long that listing holds: until `until`, as its
+ * server's `ttlMs` says, and only while what signed it still signs the
+ * connector's requests, since a listing may be the account's own
+ * (`cacheScope: "private"`).
+ */
+export interface ServedSkills {
+  readonly skills: ReadonlyArray<ServedSkill>;
+  /** When it is listed again, at the next session that opens, in milliseconds since the epoch. */
+  readonly until: number;
+  /** `Seen.signing` when it was listed. */
+  readonly signing: number;
+}
+
+/** No skills: a server that serves none, or one not listed yet. */
+export const NO_SKILLS: ServedSkills = { skills: [], until: 0, signing: -1 };
+
+/** The skills of a connector's a bot may load: those its server listed, but one J3 Bots declines. */
+export const skillsOffered = (seen: Seen): ReadonlyArray<ServedSkill> =>
+  Option.match(seen.served, {
+    onNone: () => [],
+    onSome: (served) => served.skills.skills.filter((skill) => !skill.tooLarge),
+  });
 
 export const NOTHING_SEEN: Seen = {
   listed: Option.none(),
@@ -154,6 +181,19 @@ export const connectorOf = (connector: StoredConnector, state: ConnectorState): 
         : connector.signedInAt,
     tools: offeredOf(connector, seen).map(toolOf),
     server: serverOf(connector, seen),
+    ...Option.match(seen.served, {
+      onNone: () => ({}),
+      onSome: (served) =>
+        served.info.offers.skills
+          ? {
+              skills: skillsOffered(seen).map(({ uri, name, description }) => ({
+                uri,
+                name,
+                description,
+              })),
+            }
+          : {},
+    }),
     createdAt: connector.createdAt,
     lastChange: connector.lastChange,
   };

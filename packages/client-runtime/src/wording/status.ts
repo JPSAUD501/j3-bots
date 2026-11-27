@@ -378,7 +378,7 @@ function turnUnderWayLine(
   if (state.stalled) return stalledLine(state.quietSince, ctx);
   return state._tag === "thinking"
     ? { text: t("presence.thinking"), tone: "default" }
-    : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
+    : { text: activityText(state, ctx.i18n), tone: "default" };
 }
 
 /**

@@ -26,7 +26,7 @@ import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts"
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepTool, TurnWork } from "./work.ts";
+import { StepSkill, StepTool, TurnWork } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -777,6 +777,8 @@ export const WorkStep = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** For a `login` step, the fill it made or refused. */
   fill: Schema.optionalKey(CredentialFill),
+  /** For a `connector-skill` step, the skill it loads; absent when it could not be named. */
+  skill: Schema.optionalKey(StepSkill),
   /**
    * For a call to a connector's tool: the connector, and the tool's `_meta.ui`
    * as its server listed it (MCP Apps), null when it has none.
@@ -799,8 +801,13 @@ export const WorkStep = Schema.Struct({
 });
 export type WorkStep = typeof WorkStep.Type;
 
-/** What a client needs to say a step in a line: its kind, its tool and its label. */
-export const StepSummary = WorkStep.mapFields(({ kind, tool, label }) => ({ kind, tool, label }));
+/** What a client needs to say a step in a line: its kind, its tool, its label and the skill it loads. */
+export const StepSummary = WorkStep.mapFields(({ kind, tool, label, skill }) => ({
+  kind,
+  tool,
+  label,
+  skill,
+}));
 export type StepSummary = typeof StepSummary.Type;
 
 /**

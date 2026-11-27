@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { UrlPolicy } from "./guard.ts";
 import { DEFAULT_SESSION_LIMITS, openSession } from "./session.ts";
-import { type ServedSkill, skillPath } from "./skills.ts";
+import { MAX_SKILL_FILES, type ServedSkill, skillPath } from "./skills.ts";
 import { type FakeOptions, type FakeSkill, fakeMcpServer } from "./testing/fakeMcpServer.ts";
 
 /**
@@ -208,6 +208,26 @@ describe("skills", () => {
       const invoices = yield* session.skills.getSkill("skill://billing/invoices/SKILL.md");
       assert.strictEqual(invoices?.name, "invoices");
       assert.isNull(yield* session.skills.getSkill("skill://nowhere/SKILL.md"));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("declines a skill larger than the extension's limits, and reads none of it", () =>
+    Effect.gen(function* () {
+      const files = Object.fromEntries(
+        Array.from({ length: MAX_SKILL_FILES }, (_, index) => [`parts/${index}.md`, "part"]),
+      );
+      const { session, asked } = yield* serving({
+        listed: [
+          { path: "atlas", files: { ...files, "SKILL.md": skillMd("atlas", "Every part.") } },
+        ],
+      });
+      const atlas = named((yield* session.skills.listSkills).skills, "atlas");
+      assert.isTrue(atlas.tooLarge);
+      assert.deepStrictEqual(yield* session.skills.readSkillFile(atlas), {
+        _tag: "refused",
+        reason: "unlisted",
+      });
+      assert.strictEqual(asked("resources/read"), 0);
     }).pipe(Effect.scoped),
   );
 

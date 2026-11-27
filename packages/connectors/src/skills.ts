@@ -57,6 +57,12 @@ export interface ServedSkill {
   readonly description: string;
   /** How many files its manifest lists; null for a skill its server generates (`"dynamic"`). */
   readonly files: number | null;
+  /**
+   * Its manifest lists more files or bytes than the extension's limits,
+   * which J3 Bots declines: it is never read, and a bot asking for it is
+   * told why.
+   */
+  readonly tooLarge: boolean;
   /** Its entry as its server gave it, which every file read is checked against. */
   readonly entry: Skill;
 }
@@ -127,25 +133,26 @@ export interface SkillRequests {
 
 /**
  * The skill's entry as J3 Bots keeps it; null when it can't be named to a
- * bot (its address carries a secret or isn't one line) or is larger than
- * the extension's limits, which J3 Bots declines.
+ * bot: its address carries a secret or isn't one line, or it says nothing
+ * of what it is for.
  */
-export const servedOf = (entry: Skill, redact: (text: string) => string): ServedSkill | null => {
+const servedOf = (entry: Skill, redact: (text: string) => string): ServedSkill | null => {
   const { uri } = entry;
   if (uri.length > MAX_SKILL_URI || cleanText(uri) !== uri || /\s/u.test(uri)) return null;
   if (redact(uri) !== uri) return null;
-  if (entry.resources !== "dynamic") {
-    if (entry.resources.length > MAX_SKILL_FILES) return null;
-    if (entry.resources.reduce((sum, file) => sum + file.size, 0) > MAX_SKILL_BYTES) return null;
-  }
   const description = cleanDescription(redact(entry.frontmatter.description));
   if (description === "") return null;
+  const { resources } = entry;
   return {
     uri,
     // The SDK checked it against the extension's naming rule and the last segment of the address.
     name: entry.frontmatter.name,
     description,
-    files: entry.resources === "dynamic" ? null : entry.resources.length,
+    files: resources === "dynamic" ? null : resources.length,
+    tooLarge:
+      resources !== "dynamic" &&
+      (resources.length > MAX_SKILL_FILES ||
+        resources.reduce((sum, file) => sum + file.size, 0) > MAX_SKILL_BYTES),
     entry,
   };
 };
@@ -222,7 +229,7 @@ export interface SessionSkills {
   readonly offered: boolean;
   /** It also reads folders (`resources/directory/read`). */
   readonly folders: boolean;
-  /** Every skill it lists, each page walked, those J3 Bots can't load left out. */
+  /** Every skill it lists, each page walked, those J3 Bots can't name left out. */
   readonly listSkills: Effect.Effect<SkillListing, ConnectorFailure>;
   readonly getSkill: (uri: string) => Effect.Effect<ServedSkill | null, ConnectorFailure>;
   readonly readSkillFile: (
@@ -266,7 +273,7 @@ export const skillsOf = (client: Client, requests: SkillRequests): SessionSkills
 
   /**
    * The skill at `uri`, listed or not, as its server says it is now; null
-   * when it serves none there, or one J3 Bots can't load.
+   * when it serves none there, or one J3 Bots can't name.
    */
   const getSkill = (uri: string): Effect.Effect<ServedSkill | null, ConnectorFailure> =>
     offered
@@ -291,6 +298,7 @@ export const skillsOf = (client: Client, requests: SkillRequests): SessionSkills
     skill: ServedSkill,
     path?: string,
   ): Effect.Effect<SkillRead<SkillFile>, ConnectorFailure> => {
+    if (skill.tooLarge) return Effect.succeed({ _tag: "refused", reason: "unlisted" });
     const within = path === undefined ? undefined : skillPath(path);
     if (within === null || within === "") {
       return Effect.succeed({ _tag: "refused", reason: "unlisted" });

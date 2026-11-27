@@ -20,6 +20,7 @@ import {
   SecretName,
   secretRequestFieldId,
   SiteOrigin,
+  SkillName,
   WorkStepId,
   type ApprovalEntry,
   type Author,
@@ -848,6 +849,12 @@ export function galleryVariants(now: DateTime.Utc) {
       outcome,
     },
   });
+  /** A load of one of the sample Notion's skills, as its work step shows it. */
+  const skillStep = (name: string, status: WorkStep["status"]): WorkStep => ({
+    ...step("tool", "Used a connector's skill", status, "connector-skill"),
+    id: WorkStepId.make(`variant-skill-${name}`),
+    skill: { name: SkillName.make(name), connector: Label.make("Notion") },
+  });
   const folds: ReadonlyArray<{
     entry: WorkFoldEntry;
     steps: ReadonlyArray<WorkStep> | null;
@@ -930,6 +937,11 @@ export function galleryVariants(now: DateTime.Utc) {
         2,
       ),
       steps: [step("read", "invoices/2026-04.json"), step("command", "node reconcile.js --watch")],
+      open: true,
+    },
+    {
+      entry: fold("fold-skills", { _tag: "running" }, 2),
+      steps: [skillStep("meeting-notes", "completed"), skillStep("project-brief", "running")],
       open: true,
     },
     {

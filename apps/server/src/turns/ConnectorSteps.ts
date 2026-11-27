@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ConnectorId, EntryId, WorkStep, WorkStepId } from "@j3-bots/contracts";
+import { ConnectorId, EntryId, Label, WorkStep, WorkStepId } from "@j3-bots/contracts";
 import type { TurnId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,7 +16,8 @@ import { WorkSteps } from "./WorkSteps.ts";
 /**
  * What J3 Bots adds to the work step of a bot's call to a connector's tool:
  * which connector it is, the tool's `_meta.ui` (MCP Apps), and while the
- * call runs, how far it got. The engine writes the step itself, as the call
+ * call runs, how far it got. A step that loads a connector's skill gets the
+ * connector too, and its skill names the connector as the operator does. The engine writes the step itself, as the call
  * starts and ends; the step's id is the engine's id of the call, which the
  * call's claim names. So what is added is kept by the session and the call
  * (`connector_steps`), applied to the step as it is now, and applied again
@@ -50,6 +51,8 @@ const Annotation = Schema.Struct({
   connector_id: ConnectorId,
   ui_json: Schema.NullOr(json(Schema.JsonObject)),
   progress: Schema.NullOr(Schema.String),
+  /** The connector's name now; null once it is removed. */
+  connector_name: Schema.NullOr(Label),
 });
 type Annotation = typeof Annotation.Type;
 
@@ -58,6 +61,9 @@ const applied = (step: WorkStep, annotation: Annotation): WorkStep => {
   return {
     ...rest,
     connector: { connectorId: annotation.connector_id, ui: annotation.ui_json },
+    ...(step.skill !== undefined && annotation.connector_name !== null
+      ? { skill: { ...step.skill, connector: annotation.connector_name } }
+      : {}),
     // Only while it runs: a finished step says how it ended.
     ...(step.status === "running" && annotation.progress !== null
       ? { progress: annotation.progress }
@@ -74,15 +80,16 @@ export const annotate = (sql: SqlClient.SqlClient) => {
     Request: Schema.Struct({ sessionId: SessionRowId, callId: WorkStepId }),
     Result: Annotation,
     execute: ({ sessionId, callId }) => sql`
-      SELECT connector_id, ui_json, progress FROM connector_steps
-      WHERE session_id = ${sessionId} AND call_id = ${callId}
+      SELECT s.connector_id, s.ui_json, s.progress, c.name AS connector_name
+      FROM connector_steps s LEFT JOIN connectors c ON c.id = s.connector_id
+      WHERE s.session_id = ${sessionId} AND s.call_id = ${callId}
     `,
   });
   return (
     sessionId: SessionRowId,
     step: WorkStep,
   ): Effect.Effect<WorkStep, SqlError.SqlError | Schema.SchemaError> =>
-    step.kind !== "tool" || step.tool !== "connector"
+    step.kind !== "tool" || (step.tool !== "connector" && step.tool !== "connector-skill")
       ? Effect.succeed(step)
       : Effect.map(find({ sessionId, callId: step.id }), (found) =>
           Option.match(found, { onNone: () => step, onSome: (a) => applied(step, a) }),

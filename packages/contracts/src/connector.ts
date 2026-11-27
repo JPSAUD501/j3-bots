@@ -2,7 +2,7 @@
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { BotId, Label, Language, NonNegativeInt, OpenLiterals } from "./base.ts";
+import { BotId, Label, Language, NonNegativeInt, OpenLiterals, SkillName } from "./base.ts";
 import { SecretName } from "./secrets.ts";
 import { OptionalLastChange } from "./skill.ts";
 
@@ -276,6 +276,20 @@ export const ConnectorTool = Schema.Struct({
 });
 export type ConnectorTool = typeof ConnectorTool.Type;
 
+/**
+ * A skill a connector's server serves (MCP's Skills extension, decision
+ * 0089), as the operator is shown it: its name and what it is for, as the
+ * server wrote them, and its address, which tells apart two of one server's
+ * skills of the same name. Bots granted the connector may load it; there is
+ * nothing to set.
+ */
+export const ConnectorSkill = Schema.Struct({
+  uri: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
+  name: SkillName,
+  description: Schema.String.check(Schema.isMaxLength(MAX_TOOL_DESCRIPTION_LENGTH)),
+});
+export type ConnectorSkill = typeof ConnectorSkill.Type;
+
 /** A listing as its page shows it, with what Connect asks for. */
 /**
  * The addresses a sign-in at an own app's issuer returns to, for the operator
@@ -489,6 +503,11 @@ export const Connector = Schema.Struct({
   tools: Schema.Array(ConnectorTool),
   /** What its server said of itself; null until this server reached it since it started. */
   server: Schema.NullOr(ConnectorServer),
+  /**
+   * The skills its server serves, as it listed them last; absent until this
+   * server reached it since it started, and from a server that predates them.
+   */
+  skills: Schema.optionalKey(Schema.Array(ConnectorSkill)),
   createdAt: Schema.DateTimeUtc,
   /** Who last added, changed or granted it, and when: null for one changed before 0.9.0 kept it. */
   lastChange: OptionalLastChange,

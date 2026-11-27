@@ -251,6 +251,7 @@ export const layer = Layer.effect(
           retrying,
           activity: running ? step.value.label : null,
           tool: running ? step.value.tool : null,
+          ...(running && step.value.skill !== undefined ? { skill: step.value.skill } : {}),
           littleOnes: work?.littleOnes.working ?? 0,
         } as const;
       }
