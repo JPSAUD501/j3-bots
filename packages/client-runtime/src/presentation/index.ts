@@ -171,10 +171,12 @@ export {
   seenPart,
   type Size,
   type Zoom,
+  zoomedAbout,
   zoomOn,
 } from "./browserZoom.ts";
 export {
   clickAt,
+  otherButtonAt,
   LONG_PRESS_MS,
   NO_TOUCH,
   type PageTouch,

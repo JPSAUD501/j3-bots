@@ -98,6 +98,11 @@ interface ShellNavigation {
   readonly browser: BrowserTabRef | "front" | null;
   /** Opens the viewer, closing the details, or closes it. */
   readonly setBrowser: (target: BrowserTabRef | "front" | null) => void;
+  /**
+   * The tab the open browser shows now, kept in the address in place of the
+   * one it opened on, so a reload shows it again. Not a step Back goes through.
+   */
+  readonly keepBrowser: (tab: BrowserTabRef) => void;
   /** The element a roster row renders as: a router link in the app, a button in a preview. */
   readonly rowLink: (item: RosterItem) => ReactElement;
   /**
@@ -731,6 +736,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             bot={browserBot}
             target={browserTarget}
             beside={layout === "tablet"}
+            onShown={navigation.keepBrowser}
             onClose={() => navigation.setBrowser(null)}
             send={intents.sendQuickMessage}
             onConversation={(botId) => navigation.select({ _tag: "bot", botId })}

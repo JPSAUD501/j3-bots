@@ -76,14 +76,30 @@ const onPage = (point: Point, scene: TouchScene): Point | null =>
     : pagePoint(point, drawnRect(scene.picture, scene.zoom), scene.page);
 
 /** A click at `at` on the page, its pointer first moved there, as a mouse's would be. */
-export const clickAt = (at: Point, button: "left" | "right"): ReadonlyArray<BrowserInput> => {
-  const pressed = button === "left" ? 1 : 2;
+export const clickAt = (
+  at: Point,
+  button: "left" | "right" | "middle",
+): ReadonlyArray<BrowserInput> => {
+  const pressed = button === "left" ? 1 : button === "right" ? 2 : 4;
   const pointer = { x: at.x, y: at.y, clickCount: 1, modifiers: 0 } as const;
   return [
     { type: "pointer", action: "move", button: "none", buttons: 0, ...pointer },
     { type: "pointer", action: "down", button, buttons: pressed, ...pointer },
     { type: "pointer", action: "up", button, buttons: 0, ...pointer },
   ];
+};
+
+/**
+ * A mouse's other button pressed over the page: a click with it where it
+ * is, at once, never a touch. Nothing while the page cannot be used.
+ */
+export const otherButtonAt = (
+  point: Point,
+  button: "right" | "middle",
+  scene: TouchScene,
+): ReadonlyArray<BrowserInput> => {
+  const at = scene.usable ? onPage(point, scene) : null;
+  return at === null ? [] : clickAt(at, button);
 };
 
 /**

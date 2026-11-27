@@ -8,6 +8,7 @@ import {
   LONG_PRESS_MS,
   NO_TOUCH,
   NO_ZOOM,
+  otherButtonAt,
   type PageSize,
   type PageTouch,
   type Point,
@@ -21,6 +22,7 @@ import {
   touchMoved,
   touchStarted,
   type Zoom,
+  zoomedAbout,
   zoomOn,
 } from "@j3-bots/client-runtime/presentation";
 import type { BotId, BrowserInput, BrowserTabRef } from "@j3-bots/contracts";
@@ -36,7 +38,7 @@ import {
 } from "react";
 import { useReducedMotion } from "../../onboarding/motion";
 import { BotCursors } from "../BotCursors";
-import { wheelDelta } from "../input";
+import { modifiersOf, wheelDelta } from "../input";
 import { PageField } from "../PageField";
 import { keepPicture, useLastPicture } from "./pictures";
 
@@ -96,6 +98,7 @@ export function LivePage({
   onFollowing,
   holding,
   onKeyboard,
+  keyboardInset,
   label,
   description,
   onLeave,
@@ -119,6 +122,8 @@ export function LivePage({
   readonly holding: boolean;
   /** The keyboard rose on a field of the page, or went down. */
   readonly onKeyboard: (up: boolean) => void;
+  /** How much of the view's bottom a phone's on-screen keyboard and the bar over it cover, in pixels. */
+  readonly keyboardInset: number;
   readonly label: string;
   readonly description: string;
   /** The person pressed the key that leaves the page. */
@@ -260,23 +265,33 @@ export function LivePage({
   }, [following, reduced]);
 
   const field = useRef<HTMLTextAreaElement>(null);
+  // A phone's keyboard rises for a finger or a pen; with a mouse, the field keeps the focus for the computer's keyboard.
+  const coarse = useRef(false);
   /** The probe sent for the last tap, whose answer says whether to raise the keyboard. */
   const lastProbe = useRef<Point | null>(null);
   const sendAll = (inputs: ReadonlyArray<BrowserInput>) => {
     for (const input of inputs) send(input);
   };
 
-  // The field the keyboard types into comes up above it, at a size that reads.
+  // The field the keyboard types into comes up above it, at a size that reads, and stays there as the keyboard moves.
+  const typingAt = useRef<Point | null>(null);
   const bringUp = useEffectEvent((at: Point) => {
+    typingAt.current = at;
     if (picture === null || viewSize === null || page === null) return;
     onFollowing(false);
     setZoom(
       zoomOn(at, readingScale(viewSize, page), page, picture, viewSize, {
         x: viewSize.width / 2,
-        y: viewSize.height - FIELD_ABOVE_KEYBOARD,
+        y: Math.max(viewSize.height - keyboardInset - FIELD_ABOVE_KEYBOARD, 0),
       }),
     );
   });
+  // The part of the view the keyboard leaves, whether it covers the view or shrinks it.
+  const aboveKeyboard = (viewSize?.height ?? 0) - keyboardInset;
+  const keyboardMoved = useEffectEvent((visible: number) => {
+    if (typingAt.current !== null && visible > 0) bringUp(typingAt.current);
+  });
+  useEffect(() => keyboardMoved(aboveKeyboard), [aboveKeyboard]);
   const probed = useEffectEvent((answer: BrowserProbe) => {
     const asked = lastProbe.current;
     // The answer to the probe of the last tap, give or take the rounding of a coordinate.
@@ -284,6 +299,7 @@ export function LivePage({
       return;
     }
     lastProbe.current = null;
+    if (!coarse.current) return;
     if (answer.editable) {
       field.current?.focus({ preventScroll: true });
       bringUp(asked);
@@ -293,6 +309,9 @@ export function LivePage({
   useEffect(() => {
     if (!usable) field.current?.blur();
   }, [usable]);
+  // A page that goes, as when it freezes or its view ends, takes its keyboard with it.
+  const keyboardGone = useEffectEvent(() => onKeyboard(false));
+  useEffect(() => () => keyboardGone(), []);
 
   useImperativeHandle(
     ref,
@@ -300,7 +319,10 @@ export function LivePage({
       field: (step) => {
         for (const input of tabKey(step)) send(input);
       },
-      doneTyping: () => field.current?.blur(),
+      doneTyping: () => {
+        typingAt.current = null;
+        field.current?.blur();
+      },
     }),
     [send],
   );
@@ -358,22 +380,48 @@ export function LivePage({
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   };
   const points = () => [...fingers.current.values()];
-  // A phone's keyboard rises for a finger or a pen; a mouse's tap into a field raises none.
-  const coarse = useRef(false);
 
-  // A mouse's wheel scrolls the page, not the viewer: its listener must be able to prevent that.
+  // A mouse's wheel scrolls the page, grouped by frame, and a trackpad's pinch zooms the view, which is
+  // only looking. Its listener must be able to prevent the browser's own scroll and zoom.
+  const wheel = useRef<{
+    x: number;
+    y: number;
+    deltaX: number;
+    deltaY: number;
+    modifiers: number;
+  } | null>(null);
   const onWheel = useEffectEvent((event: WheelEvent) => {
     event.preventDefault();
     const element = stage.current;
-    if (!usable || element === null || drawn === null || page === null) return;
+    if (element === null || drawn === null || page === null) return;
     const rect = element.getBoundingClientRect();
     const at = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    if (event.ctrlKey) {
+      if (picture === null || viewSize === null) return;
+      onFollowing(false);
+      setZoom(keptInView(zoomedAbout(shown, at, Math.exp(-event.deltaY / 100)), picture, viewSize));
+      return;
+    }
+    if (!usable) return;
     const onPage = {
       x: ((at.x - drawn.left) / drawn.width) * page.width,
       y: ((at.y - drawn.top) / drawn.height) * page.height,
     };
     if (onPage.x < 0 || onPage.y < 0 || onPage.x > page.width || onPage.y > page.height) return;
-    send({ type: "wheel", ...onPage, ...wheelDelta(event, drawn, page), modifiers: 0 });
+    const delta = wheelDelta(event, drawn, page);
+    const held = wheel.current;
+    wheel.current = {
+      ...onPage,
+      deltaX: (held?.deltaX ?? 0) + delta.deltaX,
+      deltaY: (held?.deltaY ?? 0) + delta.deltaY,
+      modifiers: modifiersOf(event),
+    };
+    if (held !== null) return;
+    window.requestAnimationFrame(() => {
+      const scroll = wheel.current;
+      wheel.current = null;
+      if (scroll !== null) send({ type: "wheel", ...scroll });
+    });
   });
   useEffect(() => {
     const element = stage.current;
@@ -397,8 +445,16 @@ export function LivePage({
       className="relative min-h-0 flex-1 touch-none overflow-hidden bg-muted select-none"
       onPointerDown={(event) => {
         event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
         coarse.current = event.pointerType !== "mouse";
+        // With a mouse, the computer's keyboard types into the page as soon as it is pressed.
+        if (!coarse.current && usable) field.current?.focus({ preventScroll: true });
+        if (event.pointerType === "mouse" && event.button !== 0) {
+          // A mouse's other buttons click with that button, at once: only the main one taps and drags.
+          const button = event.button === 2 ? "right" : event.button === 1 ? "middle" : null;
+          if (button !== null) sendAll(otherButtonAt(pointOf(event), button, scene()));
+          return;
+        }
+        event.currentTarget.setPointerCapture(event.pointerId);
         fingers.current.set(event.pointerId, pointOf(event));
         stopLongPress();
         apply(touchStarted(touch.current, points(), scene()));
@@ -464,18 +520,18 @@ export function LivePage({
         </div>
       )}
       {children}
-      {usable && (
-        <PageField
-          ref={field}
-          send={send}
-          label={label}
-          description={description}
-          onLeave={onLeave}
-          onKeyboard={(up) => {
-            if (!up || coarse.current) onKeyboard(up);
-          }}
-        />
-      )}
+      <PageField
+        ref={field}
+        usable={usable}
+        send={send}
+        label={label}
+        description={description}
+        onLeave={onLeave}
+        onKeyboard={(up) => {
+          if (!up) typingAt.current = null;
+          if (!up || coarse.current) onKeyboard(up);
+        }}
+      />
     </div>
   );
 }

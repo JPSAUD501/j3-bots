@@ -39,6 +39,7 @@ function Harness({ selected }: { selected: RosterItemKey }) {
           setDetailsOpen: () => {},
           browser: null,
           setBrowser: () => {},
+          keepBrowser: () => {},
           rowLink: () => rowButton,
           pair: null,
           openPair: () => {},

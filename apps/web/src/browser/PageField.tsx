@@ -12,11 +12,13 @@ const SENTINEL = "\u200B";
 /**
  * The page's text field, never seen: it holds the focus while the person
  * types into the page, so input methods compose as they would anywhere, and
- * each key and what is typed goes to the page. Shown only while the page
- * can be used. The person's clipboard and files never reach it.
+ * each key and what is typed goes to the page. While the page cannot be
+ * used it takes nothing and is out of the focus order. The person's
+ * clipboard and files never reach it.
  */
 export function PageField({
   ref,
+  usable = true,
   send,
   label,
   description,
@@ -24,6 +26,8 @@ export function PageField({
   onKeyboard,
 }: {
   readonly ref: Ref<HTMLTextAreaElement>;
+  /** Whether the page can be used now. */
+  readonly usable?: boolean;
   readonly send: (input: BrowserInput) => void;
   /** What the field is called to assistive technology. */
   readonly label: string;
@@ -89,6 +93,8 @@ export function PageField({
       ref={ref}
       data-browser-page=""
       defaultValue={SENTINEL}
+      readOnly={!usable}
+      tabIndex={usable ? undefined : -1}
       aria-label={label}
       aria-description={description}
       autoCapitalize="off"

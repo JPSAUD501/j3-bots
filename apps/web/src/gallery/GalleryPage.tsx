@@ -7265,6 +7265,7 @@ function ShellFrame({
             if (open) setBrowserTarget(null);
           },
           browser: browserTarget,
+          keepBrowser: setBrowserTarget,
           setBrowser: (target) => {
             setBrowserTarget(target);
             if (target !== null) setDetailsOpen(false);

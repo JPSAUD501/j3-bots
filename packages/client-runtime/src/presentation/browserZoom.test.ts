@@ -11,6 +11,7 @@ import {
   pinched,
   readingScale,
   seenPart,
+  zoomedAbout,
   zoomOn,
 } from "./browserZoom.ts";
 
@@ -40,6 +41,17 @@ describe("the viewer's zoom", () => {
     expect(pagePoint(between, drawnRect(picture, zoom), page)).toEqual(
       pagePoint(between, drawnRect(picture, NO_ZOOM), page),
     );
+  });
+
+  it("zooms a trackpad's pinch about the pointer, within the same bounds", () => {
+    const at = { x: 120, y: 80 };
+    const zoom = zoomedAbout(NO_ZOOM, at, 2);
+    expect(zoom.scale).toBe(2);
+    expect(pagePoint(at, drawnRect(picture, zoom), page)).toEqual(
+      pagePoint(at, drawnRect(picture, NO_ZOOM), page),
+    );
+    expect(zoomedAbout(zoom, at, 0.1).scale).toBe(1);
+    expect(zoomedAbout(zoom, at, 100).scale).toBe(4);
   });
 
   it("never zooms out past the fitted width, nor in past four times it", () => {

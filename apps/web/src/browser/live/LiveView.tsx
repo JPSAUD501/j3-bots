@@ -36,7 +36,9 @@ import {
   type ReactNode,
   type Ref,
   type RefObject,
+  useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useRef,
   useState,
@@ -55,6 +57,7 @@ import { useTabView, zoomableSize } from "../useTabView";
 import { useWaitingBots } from "../waiting";
 import { AddressSheet } from "./AddressSheet";
 import { type Closed, useClosingTabs } from "./closing";
+import { useKeyboardInset } from "./keyboardInset";
 import { LivePage, type LivePageHandle } from "./LivePage";
 import { useLastPicture } from "./pictures";
 import { useSideSwipe } from "./swipe";
@@ -71,6 +74,8 @@ interface LiveViewProps {
   readonly target: BrowserTabRef | "front";
   /** Over the conversation beside the roster, with a way back to it; on a phone's width, the whole screen. */
   readonly beside: boolean;
+  /** The tab shown changed, as by a swipe or a closed tab's neighbor: the address keeps it. */
+  readonly onShown: (tab: BrowserTabRef) => void;
   readonly onClose: () => void;
   /** Sends a message straight to a bot's conversation, from the tab's sheet. */
   readonly send: QuickSend;
@@ -110,6 +115,7 @@ export function LiveView({
   bot,
   target,
   beside,
+  onShown,
   onClose,
   send,
   onConversation,
@@ -120,8 +126,8 @@ export function LiveView({
   const { t } = useI18n();
   const { source } = useBrowser();
   const { tabs, shared } = useViewerTabs(bot.id);
-  const [problem, setProblem] = useState<string | null>(null);
-  const closing = useClosingTabs(() => setProblem(t("browser.grid.closeFailed")));
+  const [problem, say] = usePassingNotice();
+  const closing = useClosingTabs(() => say(t("browser.grid.closeFailed")));
   const listed = tabs === null ? null : listedTabs(tabs, closing.closing);
 
   // The tab shown stays put as the list changes, and gives way to its neighbor once it closes.
@@ -151,11 +157,19 @@ export function LiveView({
     }));
   // Showing the page again, after another window took it or it failed to open, is a view of its own.
   const [attempt, setAttempt] = useState(0);
+  // The address follows the tab shown, so a reload shows it again.
+  const shownRef = tab?.ref ?? null;
+  const keepShown = useEffectEvent((ref: BrowserTabRef) => {
+    if (ref !== target) onShown(ref);
+  });
+  useEffect(() => {
+    if (shownRef !== null) keepShown(shownRef);
+  }, [shownRef]);
 
   const openTab = (url: string | null) => {
     void source.openBrowserTab(url).then((result) => {
       if (result._tag === "done") show(result.value, true);
-      else setProblem(t("browser.grid.openFailed"));
+      else say(t("browser.grid.openFailed"));
     });
   };
 
@@ -186,16 +200,32 @@ export function LiveView({
       send={send}
       headingRef={headingRef}
       headingId={headingId}
-      onShow={(ref) => {
-        setProblem(null);
-        show(ref);
-      }}
+      onShow={show}
       onRetry={() => setAttempt((n) => n + 1)}
       onOpenTab={openTab}
       onClose={() => close()}
       onConversation={(botId) => close(() => onConversation(botId))}
     />
   );
+}
+
+/** How long a line saying what did not work stays, as a toast on the phone. */
+const NOTICE_FOR_MS = 4_000;
+
+/** A line saying what did not work, which passes after a few seconds, and saying one. */
+function usePassingNotice(): readonly [string | null, (text: string) => void] {
+  const [notice, setNotice] = useState<{ readonly text: string; readonly id: number } | null>(null);
+  const said = useRef(0);
+  useEffect(() => {
+    if (notice === null) return;
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_FOR_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  const say = useCallback((text: string) => {
+    said.current += 1;
+    setNotice({ text, id: said.current });
+  }, []);
+  return [notice?.text ?? null, say];
 }
 
 /** Whether two lists hold the same tabs, as they were: a new list from the server need not be a change. */
@@ -282,7 +312,10 @@ function TabLive({
   const leaving = useRef(() => {});
   useEffect(() => () => leaving.current(), []);
 
-  const { stageRef, current: tabView } = useTabView(tab?.ref ?? null, zoomableSize);
+  // A phone's keyboard over the page shortens the view, which asks for no new picture while it is up.
+  const [typing, setTyping] = useState(false);
+  const keyboardInset = useKeyboardInset();
+  const { stageRef, current: tabView } = useTabView(tab?.ref ?? null, zoomableSize, typing);
   const state: BrowserViewState | null = tabView?.state ?? null;
   const use = usePageUse({ tab, send: tabView?.view.send ?? null, shared });
   const online = useOnline();
@@ -336,8 +369,9 @@ function TabLive({
     if (next !== null) showTab(next.ref);
   };
 
+  // Undo, while it can, before what did not work: a tab closed after a failure can still come back.
   const undo =
-    problem !== null ? (
+    closing.last === null && problem !== null ? (
       <Notice text={problem} />
     ) : (
       <UndoLine closed={closing.last} onUndo={closing.undo} />
@@ -365,13 +399,20 @@ function TabLive({
             follow={follow}
             onFollowing={() => setFollowing(false)}
             holding={use.holding}
-            onKeyboard={use.keyboard}
+            onKeyboard={(up) => {
+              setTyping(up);
+              use.keyboard(up);
+            }}
+            keyboardInset={keyboardInset}
             label={t("browser.page", { site: where || t("browser.panel.newTab") })}
             description={t("browser.viewer.touchIsUsing")}
             onLeave={() => closeButton.current?.focus()}
           >
             {!following && followed !== null && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+              <div
+                className="pointer-events-none absolute inset-x-0 flex justify-center"
+                style={{ bottom: 12 + keyboardInset }}
+              >
                 <Button
                   variant="outline"
                   className="pointer-events-auto rounded-pill bg-surface shadow-overlay"
@@ -409,48 +450,54 @@ function TabLive({
           />
         )}
       </div>
-      {opened !== "tabs" && undo}
-      <LiveBar
-        use={use}
-        frozen={frozen}
-        faces={tab === null ? [] : tabFaces(tab, waitsForPerson)}
-        text={frozenLine(frozen, words.text, t)}
-        action={frozen._tag === "live" ? words.action : null}
-        tabs={tabs}
-        shown={tab?.ref ?? null}
-        needsYou={needsYouElsewhere(tabs, tab?.ref ?? null, waitsForPerson)}
-        closeButton={closeButton}
-        menu={
-          <MenuPopup side="top" align="end">
-            <MenuItem icon={<ArrowRightIcon />} onClick={() => use.send({ type: "forward" })}>
-              {t("browser.live.forward")}
-            </MenuItem>
-            <MenuItem icon={<RotateCwIcon />} onClick={() => use.send({ type: "reload" })}>
-              {t("browser.live.reload")}
-            </MenuItem>
-            <MenuItem icon={<GlobeIcon />} onClick={() => setOpened("address")}>
-              {t("browser.live.goTo")}
-            </MenuItem>
-            {shared && (
-              <MenuItem icon={<PlusIcon />} onClick={() => setOpened("new")}>
-                {t("browser.live.newTab")}
+      {/* Where a phone's keyboard covers the window's bottom, the bar stands on it. */}
+      <div
+        className="relative z-10 flex shrink-0 flex-col"
+        style={keyboardInset === 0 ? undefined : { translate: `0 ${-keyboardInset}px` }}
+      >
+        {opened !== "tabs" && undo}
+        <LiveBar
+          use={use}
+          frozen={frozen}
+          faces={tab === null ? [] : tabFaces(tab, waitsForPerson)}
+          text={frozenLine(frozen, words.text, t)}
+          action={frozen._tag === "live" ? words.action : null}
+          tabs={tabs}
+          shown={tab?.ref ?? null}
+          needsYou={needsYouElsewhere(tabs, tab?.ref ?? null, waitsForPerson)}
+          closeButton={closeButton}
+          menu={
+            <MenuPopup side="top" align="end">
+              <MenuItem icon={<ArrowRightIcon />} onClick={() => use.send({ type: "forward" })}>
+                {t("browser.live.forward")}
               </MenuItem>
-            )}
-            {shared && tab !== null && (
-              <MenuItem icon={<XIcon />} destructive onClick={() => closeTab(tab)}>
-                {t("browser.live.closeTab")}
+              <MenuItem icon={<RotateCwIcon />} onClick={() => use.send({ type: "reload" })}>
+                {t("browser.live.reload")}
               </MenuItem>
-            )}
-          </MenuPopup>
-        }
-        onClose={onClose}
-        onBack={() => use.send({ type: "back" })}
-        onSheet={() => setOpened("sheet")}
-        onTabs={() => setOpened("tabs")}
-        onStep={step}
-        onField={(direction) => page.current?.field(direction)}
-        onDoneTyping={() => page.current?.doneTyping()}
-      />
+              <MenuItem icon={<GlobeIcon />} onClick={() => setOpened("address")}>
+                {t("browser.live.goTo")}
+              </MenuItem>
+              {shared && (
+                <MenuItem icon={<PlusIcon />} onClick={() => setOpened("new")}>
+                  {t("browser.live.newTab")}
+                </MenuItem>
+              )}
+              {shared && tab !== null && (
+                <MenuItem icon={<XIcon />} destructive onClick={() => closeTab(tab)}>
+                  {t("browser.live.closeTab")}
+                </MenuItem>
+              )}
+            </MenuPopup>
+          }
+          onClose={onClose}
+          onBack={() => use.send({ type: "back" })}
+          onSheet={() => setOpened("sheet")}
+          onTabs={() => setOpened("tabs")}
+          onStep={step}
+          onField={(direction) => page.current?.field(direction)}
+          onDoneTyping={() => page.current?.doneTyping()}
+        />
+      </div>
 
       {tab !== null && (
         <TabSheet

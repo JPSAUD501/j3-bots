@@ -116,6 +116,7 @@ function AppLayout() {
           browser: browser ?? null,
           setBrowser: (target) =>
             navigate({ to: ".", search: target === null ? {} : { browser: target } }),
+          keepBrowser: (tab) => navigate({ to: ".", search: { browser: tab }, replace: true }),
           rowLink,
           pair,
           openPair: ([a, b], entryId) =>

@@ -3,7 +3,7 @@ import type { BrowserViewHandle } from "@j3-bots/client-runtime";
 import { botsTab, siteOf, tabFaces, type ViewerTab } from "@j3-bots/client-runtime/presentation";
 import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
 import { AppWindowIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../../app/context";
 import { BotCursors } from "../BotCursors";
 import { useBrowser, useViewerTabs } from "../context";
@@ -14,6 +14,8 @@ import { whileFree } from "../locks";
 import { opening } from "../source";
 import { useWaitingBots } from "../waiting";
 import { keepPicture, useLastPicture } from "./pictures";
+
+const noChange = () => () => {};
 
 /** The card's picture at most this tall, as a photo in the conversation is. */
 const CARD_HEIGHT = 220;
@@ -175,6 +177,12 @@ function Picture({ tab, live }: { readonly tab: ViewerTab; readonly live: boolea
     live && onScreen,
   );
   const last = useLastPicture(tab.ref);
+  // The page's size as the view says it, kept once the view closes, so the card keeps its shape.
+  const viewport = useSyncExternalStore(
+    view === null ? noChange : view.state.subscribe,
+    () => view?.state.get().viewport ?? null,
+  );
+  if (viewport !== null && viewport !== page) setPage(viewport);
   useEffect(() => {
     if (element === null) return;
     const observer = new ResizeObserver(([entry]) => setWidth(entry?.contentRect.width ?? 0));
@@ -183,19 +191,13 @@ function Picture({ tab, live }: { readonly tab: ViewerTab; readonly live: boolea
   }, [element]);
   useEffect(() => {
     if (view === null) return;
-    const stops = [
-      view.picture.subscribe(() => {
-        const picture = view.picture.get();
-        if (picture === null) return;
-        keepPicture(tab.ref, picture.jpeg, Date.now());
-        // A card shows only the newest picture: the next may come at once.
-        view.ack(picture.sequence);
-      }),
-      view.state.subscribe(() => setPage(view.state.get().viewport)),
-    ];
-    return () => {
-      for (const stop of stops) stop();
-    };
+    return view.picture.subscribe(() => {
+      const picture = view.picture.get();
+      if (picture === null) return;
+      keepPicture(tab.ref, picture.jpeg, Date.now());
+      // A card shows only the newest picture: the next may come at once.
+      view.ack(picture.sequence);
+    });
   }, [view, tab.ref]);
   // The picture is drawn whole, in its own shape, inside the card's.
   const drawn =

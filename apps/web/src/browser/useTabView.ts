@@ -2,7 +2,15 @@
 import type { BrowserViewHandle, BrowserViewState } from "@j3-bots/client-runtime";
 import type { BrowserTabRef } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
-import { useCallback, useMemo, useState, useSyncExternalStore, type RefCallback } from "react";
+import {
+  type RefCallback,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useBrowser } from "./context";
 import { viewLockName } from "./kept";
 import { emptyStore, heldStore } from "./held";
@@ -63,6 +71,11 @@ export function useTabView(
   shownTab: BrowserTabRef | null,
   /** The size to ask the picture for, from the stage's: the stage's own unless given. */
   sizeFor: (box: Size) => Size = sameSize,
+  /**
+   * While true, a new size asks for nothing new, as while a phone's keyboard
+   * is up and gives the room back as it goes down.
+   */
+  keep = false,
 ): {
   readonly stageRef: RefCallback<HTMLElement>;
   /** The stage's size; null until measured. */
@@ -74,6 +87,10 @@ export function useTabView(
   const [box, setBox] = useState<Size | null>(null);
   // The size asked for, which changes only once the drawn size settles and differs enough.
   const [asked, setAsked] = useState<Asked | null>(null);
+  const keeping = useRef(keep);
+  useEffect(() => {
+    keeping.current = keep;
+  });
   const stageRef = useCallback(
     (element: HTMLElement | null) => {
       if (element === null) return;
@@ -90,7 +107,7 @@ export function useTabView(
         const next = viewSize(sizeFor({ width, height }), window.devicePixelRatio);
         window.clearTimeout(timer);
         if (settled === null) ask(next);
-        else if (sizeChanged(settled, next))
+        else if (!keeping.current && sizeChanged(settled, next))
           timer = window.setTimeout(() => ask(next), RESIZE_SETTLE);
       });
       observer.observe(element);

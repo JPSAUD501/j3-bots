@@ -4,6 +4,7 @@ import { NO_ZOOM } from "./browserZoom.ts";
 import {
   clickAt,
   NO_TOUCH,
+  otherButtonAt,
   type TouchScene,
   touchHeld,
   touchLifted,
@@ -42,6 +43,13 @@ describe("a finger on the page", () => {
     const up = touchLifted(down.touch, 0, sliding);
     expect(up.send).toEqual([]);
     expect(up.zoom).toEqual(sliding.zoom);
+  });
+
+  it("clicks a mouse's other button where it is, with that button", () => {
+    expect(otherButtonAt({ x: 100, y: 100 }, "middle", zoomed)).toEqual(
+      clickAt({ x: 600, y: 200 }, "middle"),
+    );
+    expect(otherButtonAt({ x: 100, y: 100 }, "right", { ...scene, usable: false })).toEqual([]);
   });
 
   it("sends nothing to a page it cannot use", () => {

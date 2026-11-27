@@ -81,6 +81,16 @@ export const pinched = (
   return { scale, x: after.x - held.x * scale, y: after.y - held.y * scale };
 };
 
+/**
+ * `start` zoomed by `factor` about `at`, a point of the view, which stays
+ * over the same part of the picture: a trackpad's pinch, as two fingers'.
+ */
+export const zoomedAbout = (start: Zoom, at: Point, factor: number): Zoom => {
+  const scale = clamp(start.scale * factor, 1, MAX_ZOOM);
+  const held = { x: (at.x - start.x) / start.scale, y: (at.y - start.y) / start.scale };
+  return { scale, x: at.x - held.x * scale, y: at.y - held.y * scale };
+};
+
 /** `start` moved by `moved`, as one finger drags a zoomed picture. */
 export const dragged = (start: Zoom, moved: Point): Zoom => ({
   scale: start.scale,
