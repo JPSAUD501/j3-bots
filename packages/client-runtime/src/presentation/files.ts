@@ -11,14 +11,19 @@ export type FileIcon = "image" | "text" | "archive" | "code" | "other";
 export function fileIcon(mediaType: string): FileIcon {
   if (mediaType.startsWith("image/")) return "image";
   if (mediaType === "application/pdf" || mediaType.startsWith("text/")) return "text";
+  // Word, Excel and PowerPoint, whose types name "openxml" but which are no code.
+  if (mediaType.startsWith("application/vnd.openxmlformats-officedocument.")) return "text";
   if (/zip|tar|gzip|compressed/.test(mediaType)) return "archive";
   if (/json|javascript|typescript|xml|yaml/.test(mediaType)) return "code";
   return "other";
 }
 
-/** The kind of file in a word, from its media type: "PNG", "ZIP"; empty when no word fits. A document says its kind in words instead (`fileDetail`). */
+/** The kind of file in a word, from its media type: "PDF", "PNG", "TXT"; empty when no word fits. */
 export function fileKind(mediaType: string): string {
   const subtype = mediaType.split("/")[1]?.split(/[+;]/)[0] ?? "";
+  if (mediaType.startsWith("text/plain")) return "TXT";
+  if (subtype === "vnd.openxmlformats-officedocument.wordprocessingml.document") return "DOCX";
+  if (subtype === "vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "XLSX";
   return subtype.length > 0 && subtype.length <= 5 ? subtype.toUpperCase() : "";
 }
 
