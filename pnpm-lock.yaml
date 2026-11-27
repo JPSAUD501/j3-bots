@@ -195,6 +195,7 @@ overrides:
   '@effect/vitest>vitest': '-'
   '@types/node': 24.12.4
   effect: 4.1.3
+  pdfjs-dist>@napi-rs/canvas: '-'
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
 
@@ -516,6 +517,9 @@ importers:
       lucide-react:
         specifier: 0.564.0
         version: 0.564.0(react@19.3.0)
+      pdfjs-dist:
+        specifier: 6.5.438
+        version: 6.5.438
       react:
         specifier: 'catalog:'
         version: 19.3.0
@@ -541,6 +545,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.1.2
         version: 6.1.2(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(jiti@2.7.0)(terser@5.51.4)(yaml@2.9.1))(babel-plugin-react-compiler@1.0.0)(oxc-transform-react@0.152.0)
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       oxc-transform-react:
         specifier: 0.152.0
         version: 0.152.0
@@ -584,6 +591,9 @@ importers:
       effect:
         specifier: 4.1.3
         version: 4.1.3
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2
@@ -5006,6 +5016,10 @@ packages:
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
+
+  pdfjs-dist@6.5.438:
+    resolution: {integrity: sha512-vg8Pw1x+AFKy4AMDvhuWl5cOYV8d698UoEANoFFhc79hqXDnZQqnOXoxw3HG907WHOg1JYOvLhP756boddFxpA==}
+    engines: {node: '>=22.13.0 || >=24'}
 
   pe-library@0.4.1:
     resolution: {integrity: sha512-eRWB5LBz7PpDu4PUlwT0PhnQfTQJlDDdPa35urV4Osrm0t0AqQFGn+UIkU3klZvwJ8KPO3VbBFsXquA6p6kqZw==}
@@ -10638,6 +10652,8 @@ snapshots:
   path-parse@1.0.7: {}
 
   pathe@2.0.3: {}
+
+  pdfjs-dist@6.5.438: {}
 
   pe-library@0.4.1: {}
 

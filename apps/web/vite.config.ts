@@ -77,5 +77,8 @@ export default defineConfig(({ mode }) => {
           }),
     },
     build: { outDir: "dist", emptyOutDir: true, sourcemap: true },
+    // A document is read in a module worker (src/components/documents), which
+    // imports the shared readers; the worker's own build keeps it a module.
+    worker: { format: "es", plugins: () => [bundleInputs("web")] },
   };
 });

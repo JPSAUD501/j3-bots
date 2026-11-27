@@ -11,7 +11,6 @@ import {
   type MentionName,
   type OpeningHold,
   type TimelineMessage,
-  showsImage,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, usePresentation } from "../app/context";
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
@@ -20,7 +19,7 @@ import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { FaceOf } from "./avatar/TeamAvatars";
-import { FileCard, PhotoCard } from "./FileCard";
+import { MessageFile } from "./FileCard";
 import { MessageText } from "./MessageText";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
@@ -236,21 +235,13 @@ export function MessageBubble({
       )}
       {/* Files placed in the text stand there; others follow it. */}
       {placed === null &&
-        message.attachments.map((attachment) =>
-          showsImage(attachment) ? (
-            <PhotoCard
-              key={attachment.id}
-              attachment={attachment}
-              onOpen={() => onOpenAttachment(attachment)}
-            />
-          ) : (
-            <FileCard
-              key={attachment.id}
-              attachment={attachment}
-              onOpen={() => onOpenAttachment(attachment)}
-            />
-          ),
-        )}
+        message.attachments.map((attachment) => (
+          <MessageFile
+            key={attachment.id}
+            attachment={attachment}
+            onOpen={() => onOpenAttachment(attachment)}
+          />
+        ))}
       {fromOperator && message.lookingAt !== undefined && (
         // The window the operator wrote it over, from quick access, which went with it.
         <p className="flex max-w-(--layout-bubble-width) min-w-0 items-center gap-1 pe-1 text-2xs text-muted-foreground">

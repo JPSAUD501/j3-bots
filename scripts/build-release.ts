@@ -118,8 +118,12 @@ interface ThirdParty {
   readonly name: string;
   readonly version: string;
   readonly license: string;
-  /** Each license or notice file the package ships, by name. */
-  readonly files: ReadonlyArray<{ readonly name: string; readonly text: string }>;
+  /**
+   * Each license or notice file the package ships at its root, and beside
+   * each file of it the bundle holds, by its path in the package. So a part
+   * under licenses of its own, as pdf.js's image decoders are, keeps them.
+   */
+  readonly files: Map<string, string>;
   /** Where it is in the release: `server`, `web`. */
   readonly parts: Set<Part>;
 }
@@ -238,6 +242,16 @@ const compiledIn = (parts: ReadonlyArray<Part>) =>
     file: NodePath.join(through.reduce(installedFrom, from), "package.json"),
   }));
 
+/** The license and notice files in `folder`, by their path from the package folder `owner`. */
+const licenseFilesIn = (owner: string, folder: string, into: Map<string, string>) => {
+  for (const entry of NodeFS.readdirSync(folder, { withFileTypes: true })) {
+    if (!entry.isFile() || !LICENSE_FILE.test(entry.name)) continue;
+    const path = NodePath.join(folder, entry.name);
+    const name = NodePath.relative(owner, path).split(NodePath.sep).join("/");
+    if (!into.has(name)) into.set(name, NodeFS.readFileSync(path, "utf8"));
+  }
+};
+
 const thirdParties = (inputs: ReadonlyArray<{ readonly part: Part; readonly file: string }>) => {
   const found = new Map<string, ThirdParty>();
   for (const { part, file } of inputs) {
@@ -248,33 +262,32 @@ const thirdParties = (inputs: ReadonlyArray<{ readonly part: Part; readonly file
     const version = text(manifest, "version") ?? "unversioned";
     const key = `${name}@${version}`;
     const known = found.get(key);
-    if (known !== undefined) {
-      known.parts.add(part);
-      continue;
-    }
-    const files = NodeFS.readdirSync(folder, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && LICENSE_FILE.test(entry.name))
-      .map((entry) => entry.name)
-      .sort()
-      .map((entry) => ({
-        name: entry,
-        text: NodeFS.readFileSync(NodePath.join(folder, entry), "utf8"),
-      }));
-    const license = declaredLicense(manifest);
-    if (license === undefined && files.length === 0) {
-      throw new Error(`${key} (${folder}) declares no license and ships no license file.`);
-    }
-    found.set(key, {
+    const entry: ThirdParty = known ?? {
       name,
       version,
-      license: license ?? "see its license file",
-      files,
-      parts: new Set([part]),
-    });
+      license: declaredLicense(manifest) ?? "see its license file",
+      files: new Map(),
+      parts: new Set(),
+    };
+    entry.parts.add(part);
+    if (known === undefined) {
+      licenseFilesIn(folder, folder, entry.files);
+      if (declaredLicense(manifest) === undefined && entry.files.size === 0) {
+        throw new Error(`${key} (${folder}) declares no license and ships no license file.`);
+      }
+      found.set(key, entry);
+    }
+    const beside = NodePath.dirname(file);
+    if (beside !== folder) licenseFilesIn(folder, beside, entry.files);
   }
-  return [...found.values()].sort((a, b) =>
-    a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name),
-  );
+  return [...found.values()]
+    .map((entry) => ({
+      ...entry,
+      files: new Map([...entry.files].sort(([a], [b]) => a.localeCompare(b))),
+    }))
+    .sort((a, b) =>
+      a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name),
+    );
 };
 
 /** The packages of `packages` that are in one of `parts`, each placed only there. */
@@ -313,9 +326,9 @@ const notices = (
       RULE,
       `${entry.name} ${entry.version}, in ${[...entry.parts].sort().join("/ and ")}/`,
       `License: ${entry.license}`,
-      ...(entry.files.length === 0
+      ...(entry.files.size === 0
         ? ["(The package ships no license file.)", ""]
-        : entry.files.flatMap((file) => [THIN, `${file.name}:`, "", file.text.trimEnd(), ""])),
+        : [...entry.files].flatMap(([name, text]) => [THIN, `${name}:`, "", text.trimEnd(), ""])),
     ]),
   ].join("\n");
 

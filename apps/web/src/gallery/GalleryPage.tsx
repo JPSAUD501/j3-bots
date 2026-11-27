@@ -111,6 +111,9 @@ import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { QuickAccess } from "../quick/QuickAccess";
 import type { PictureChip, WindowChipsView } from "../quick/WindowChips";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
+import { DocumentsProvider } from "../components/documents/documents";
+import { DocumentPane } from "../components/documents/DocumentViewer";
+import { MessageFile } from "../components/FileCard";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { ConnectorAuthCard } from "../components/connectors/ConnectorCards";
@@ -212,6 +215,7 @@ import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
 import { galleryVariants } from "./variants";
 import { galleryImage } from "./workImages";
+import { SAMPLE_DOCUMENTS, sampleDocumentBytes } from "./sampleDocuments";
 import {
   appPhases,
   appUpdate,
@@ -308,6 +312,7 @@ export default function GalleryPage() {
                 <RosterSection />
                 <RosterOrganizeSection />
                 <BubblesSection />
+                <DocumentsSection />
                 <CardsSection />
                 <WorkSection />
                 <PlanAndLittleOnesSection />
@@ -1334,12 +1339,14 @@ function BubblesSection() {
             onOpenAttachment={nothing}
             onRetry={nothing}
           />
-          <MessageBubble
-            message={bubbles.withFiles}
-            position="single"
-            onOpenAttachment={nothing}
-            onRetry={nothing}
-          />
+          <GalleryDocuments>
+            <MessageBubble
+              message={bubbles.withFiles}
+              position="single"
+              onOpenAttachment={nothing}
+              onRetry={nothing}
+            />
+          </GalleryDocuments>
           <AttachmentImagesProvider fetch={galleryImage}>
             <MessageBubble
               message={bubbles.withPhoto}
@@ -1418,6 +1425,85 @@ function BubblesSection() {
           />
         </div>
       </Labeled>
+    </Section>
+  );
+}
+
+/** The gallery's documents, read as the server's would be, in the gallery's language. */
+function GalleryDocuments({ children }: { children: ReactNode }) {
+  const { locale } = useI18n();
+  return (
+    <DocumentsProvider key={locale} fetch={sampleDocumentBytes} locale={locale}>
+      {children}
+    </DocumentsProvider>
+  );
+}
+
+const documentCards = [
+  SAMPLE_DOCUMENTS.pdf,
+  SAMPLE_DOCUMENTS.word,
+  SAMPLE_DOCUMENTS.sheet,
+  SAMPLE_DOCUMENTS.csv,
+  SAMPLE_DOCUMENTS.markdown,
+  SAMPLE_DOCUMENTS.text,
+  SAMPLE_DOCUMENTS.slides,
+  SAMPLE_DOCUMENTS.large,
+  SAMPLE_DOCUMENTS.damaged,
+  SAMPLE_DOCUMENTS.unreachable,
+  SAMPLE_DOCUMENTS.loading,
+];
+
+const documentViews = [
+  { label: "A PDF: its pages, drawn as they come into view", file: SAMPLE_DOCUMENTS.pdf },
+  {
+    label: "A Word document: headings, bold and italic, a numbered list, a table and a picture",
+    file: SAMPLE_DOCUMENTS.word,
+  },
+  {
+    label: "A spreadsheet: its sheets as tabs, dates and percentages in the reader's language",
+    file: SAMPLE_DOCUMENTS.sheet,
+  },
+  { label: "A CSV file, with semicolons and a quoted field", file: SAMPLE_DOCUMENTS.csv },
+  {
+    label: "Markdown: headings, lists, a task list, a quote and a table",
+    file: SAMPLE_DOCUMENTS.markdown,
+  },
+  { label: "Plain text", file: SAMPLE_DOCUMENTS.text },
+  {
+    label: "A presentation: each slide as its title, text and pictures",
+    file: SAMPLE_DOCUMENTS.slides,
+  },
+  {
+    label: "Couldn't open: no Word document inside, so it says why that may be and offers Save",
+    file: SAMPLE_DOCUMENTS.damaged,
+  },
+  {
+    label: "Too big: it unpacks past what a device reads, and offers Save",
+    file: SAMPLE_DOCUMENTS.tooBig,
+  },
+  { label: "Out of reach: the server did not give its bytes", file: SAMPLE_DOCUMENTS.unreachable },
+  { label: "Opening", file: SAMPLE_DOCUMENTS.loading },
+] as const;
+
+function DocumentsSection() {
+  return (
+    <Section title="Documents">
+      <GalleryDocuments>
+        <Labeled label="Cards in a conversation: each kind with the top of its first page or its first rows, and what it holds once read; a PDF too large to fetch for a card, one that cannot be read, one out of reach and one arriving">
+          <div className="flex flex-wrap gap-2">
+            {documentCards.map((file) => (
+              <MessageFile key={file.id} attachment={file} onOpen={nothing} />
+            ))}
+          </div>
+        </Labeled>
+        {documentViews.map(({ label, file }) => (
+          <Labeled key={file.id} label={`The viewer. ${label}`}>
+            <div className="flex h-[30rem] flex-col overflow-hidden rounded-lg bg-viewer text-viewer-foreground">
+              <DocumentPane attachment={file} onClose={nothing} onSave={nothing} />
+            </div>
+          </Labeled>
+        ))}
+      </GalleryDocuments>
     </Section>
   );
 }

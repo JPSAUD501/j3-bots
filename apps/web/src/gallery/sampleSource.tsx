@@ -27,6 +27,7 @@ import {
   withoutMarks,
 } from "@j3-bots/client-runtime/presentation";
 import {
+  type Attachment,
   AttachmentId,
   BotId,
   EntryId,
@@ -55,10 +56,15 @@ import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
+import { useI18n } from "../app/context";
+import { documentKind } from "@j3-bots/client-runtime/documents";
 import { AttachmentImagesProvider, type ImageSource } from "../components/attachmentImages";
 import { galleryImage } from "./workImages";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import { ImageViewer } from "../components/ImageViewer";
+import { DocumentsProvider } from "../components/documents/documents";
+import { DocumentViewer } from "../components/documents/DocumentViewer";
+import { sampleDocumentBytes } from "./sampleDocuments";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
@@ -1053,16 +1059,27 @@ export function useSampleSource({
  */
 export function SampleSourceProvider({ children }: { children: ReactNode }) {
   const { overlays, ...source } = useSampleSource();
-  // An image the operator attached here shows as it would from a server.
+  const { locale } = useI18n();
+  // An image or a document the operator attached here shows as it would from a server.
   const [viewing, setViewing] = useState<ImageSource | null>(null);
+  const [reading, setReading] = useState<Attachment | null>(null);
   const intents: ShellIntents = {
     ...source.intents,
     openAttachment: (attachment) => {
       if (showsImage(attachment) && attached.has(attachment.id)) {
         setViewing({ _tag: "file", attachment });
+      } else if (documentKind(attachment) !== null) {
+        setReading(attachment);
       }
     },
     openWorkImage: (id) => setViewing({ _tag: "work", id }),
+  };
+  // A file the operator attached here, else one of the sample's own.
+  const documentBytes = (attachment: Attachment) => {
+    const blob = attached.get(attachment.id);
+    return blob === undefined
+      ? sampleDocumentBytes(attachment)
+      : blob.arrayBuffer().then((buffer) => new Uint8Array(buffer));
   };
   return (
     <ClockProvider now={SAMPLE_NOW}>
@@ -1074,10 +1091,16 @@ export function SampleSourceProvider({ children }: { children: ReactNode }) {
               : galleryImage(image)
           }
         >
-          {children}
-          {overlays}
-          <ImageViewer image={viewing} onClose={() => setViewing(null)} onSave={() => {}} />
-          {overlays}
+          <DocumentsProvider key={locale} fetch={documentBytes} locale={locale}>
+            {children}
+            {overlays}
+            <ImageViewer image={viewing} onClose={() => setViewing(null)} onSave={() => {}} />
+            <DocumentViewer
+              attachment={reading}
+              onClose={() => setReading(null)}
+              onSave={() => {}}
+            />
+          </DocumentsProvider>
         </AttachmentImagesProvider>
       </ShellSourceProvider>
     </ClockProvider>

@@ -16,12 +16,9 @@ export function fileIcon(mediaType: string): FileIcon {
   return "other";
 }
 
-/** The kind of file in a word, from its media type: "PDF", "PNG", "TXT"; empty when no word fits. */
+/** The kind of file in a word, from its media type: "PNG", "ZIP"; empty when no word fits. A document says its kind in words instead (`fileDetail`). */
 export function fileKind(mediaType: string): string {
   const subtype = mediaType.split("/")[1]?.split(/[+;]/)[0] ?? "";
-  if (mediaType.startsWith("text/plain")) return "TXT";
-  if (subtype === "vnd.openxmlformats-officedocument.wordprocessingml.document") return "DOCX";
-  if (subtype === "vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "XLSX";
   return subtype.length > 0 && subtype.length <= 5 ? subtype.toUpperCase() : "";
 }
 

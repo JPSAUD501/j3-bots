@@ -7,6 +7,8 @@ import {
   MAX_MESSAGE_LENGTH,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
+import { documentKind, type DocumentKind } from "../documents/kinds.ts";
+import type { DocumentFacts } from "../documents/read.ts";
 import type { FileProblem, MessageProblem } from "../files/limits.ts";
 import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
 import type { OpeningHold } from "../presentation/engine.ts";
@@ -113,14 +115,48 @@ export function fileSize(bytes: number, locale: string): string {
   }).format(value);
 }
 
-/** A file's kind and size under its name: "PDF · 1.2 MB", or the size alone. */
+const documentKinds = {
+  pdf: "document.kind.pdf",
+  text: "document.kind.text",
+  markdown: "document.kind.text",
+  csv: "document.kind.csv",
+  sheet: "document.kind.sheet",
+  word: "document.kind.word",
+  slides: "document.kind.slides",
+} as const satisfies Record<DocumentKind, KeyWith>;
+
+/**
+ * A file's kind and size under its name: a document's kind in words,
+ * "Spreadsheet · 18 kB", and once it has been read what it holds, "PDF, 12
+ * pages"; another file's type, "ZIP · 1.2 MB", or its size alone.
+ */
 export function fileDetail(
-  file: { readonly mediaType: string; readonly size: number },
-  { t, locale }: I18n,
+  file: { readonly name: string; readonly mediaType: string; readonly size: number },
+  { t, plural, locale }: I18n,
+  facts: DocumentFacts = { _tag: "none" },
 ): string {
-  const kind = fileKind(file.mediaType);
   const size = fileSize(file.size, locale);
-  return kind === "" ? size : t("file.kindAndSize", { kind, size });
+  const document = documentKind(file);
+  if (document === null) {
+    const kind = fileKind(file.mediaType);
+    return kind === "" ? size : t("file.kindAndSize", { kind, size });
+  }
+  const kind = t(documentKinds[document]);
+  const count = new Intl.NumberFormat(locale);
+  switch (facts._tag) {
+    case "none":
+      return t("file.kindAndSize", { kind, size });
+    case "pages":
+      return plural("document.facts.pages", facts.count, { kind });
+    case "sheets":
+      return plural("document.facts.sheets", facts.count, { kind });
+    case "slides":
+      return plural("document.facts.slides", facts.count, { kind });
+    case "rows":
+      return facts.more
+        ? t("document.facts.manyRows", { kind, count: count.format(facts.count) })
+        : plural("document.facts.rows", facts.count, { kind });
+  }
 }
 
 /** Why a file cannot go, in one sentence. */
