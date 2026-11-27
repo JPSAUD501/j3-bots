@@ -3,7 +3,7 @@ import { EffortLevel } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { ServerProviderModel } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { effortOptions, effortsOf, sameOptions } from "./Effort.ts";
+import { effortOptions, effortsOf, levelBeforeTurn, sameOptions } from "./Effort.ts";
 
 const model = (optionDescriptors: ReadonlyArray<unknown>) =>
   Schema.decodeUnknownSync(ServerProviderModel)({
@@ -106,6 +106,22 @@ describe("effortOptions", () => {
     assert.strictEqual(effortOptions(codexModel, null), undefined);
     assert.strictEqual(effortOptions(codexModel, level("max")), undefined);
     assert.strictEqual(effortOptions(undefined, level("high")), undefined);
+  });
+});
+
+describe("levelBeforeTurn", () => {
+  const max = [{ id: "reasoningEffort", value: "max" }];
+  const xhigh = [{ id: "reasoningEffort", value: "xhigh" }];
+
+  it("drops a level the model stopped taking, and keeps one it takes", () => {
+    assert.deepStrictEqual(levelBeforeTurn(codexModel, max, undefined), []);
+    assert.strictEqual(levelBeforeTurn(codexModel, xhigh, undefined), undefined);
+  });
+
+  it("asks for a dropped level again once the model takes it, and not before", () => {
+    assert.deepStrictEqual(levelBeforeTurn(codexModel, [], xhigh), xhigh);
+    assert.strictEqual(levelBeforeTurn(codexModel, [], max), undefined);
+    assert.strictEqual(levelBeforeTurn(codexModel, [], undefined), undefined);
   });
 });
 

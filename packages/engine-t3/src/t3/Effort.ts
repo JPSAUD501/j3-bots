@@ -72,6 +72,35 @@ export const effortOptions = (
     : undefined;
 };
 
+/** Whether the engine reports, for `model`, each level that `options` ask for. */
+const offersOptions = (
+  model: ServerProviderModel,
+  options: ReadonlyArray<ProviderOptionSelection>,
+): boolean => {
+  const control = reasoningControl(model);
+  return options.every(
+    (option) =>
+      control !== undefined &&
+      option.id === control.id &&
+      control.options.some((choice) => choice.id === option.value),
+  );
+};
+
+/**
+ * The options a thread's selection takes before a turn, when they change:
+ * none, when the engine no longer reports the level the thread asks for for
+ * its model, and the level dropped so, `dropped`, once the engine reports it
+ * again. `undefined` keeps the selection as it is.
+ */
+export const levelBeforeTurn = (
+  model: ServerProviderModel,
+  asked: ReadonlyArray<ProviderOptionSelection>,
+  dropped: ReadonlyArray<ProviderOptionSelection> | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined => {
+  if (asked.length > 0) return offersOptions(model, asked) ? undefined : [];
+  return dropped !== undefined && offersOptions(model, dropped) ? dropped : undefined;
+};
+
 /** Whether two selections' options ask the same, none and an empty list alike. */
 export const sameOptions = (
   a: ReadonlyArray<ProviderOptionSelection> | undefined,
