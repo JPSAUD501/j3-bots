@@ -6,17 +6,20 @@ import {
   type NotFound,
   Routine,
   RoutineId,
+  type RoutineStep,
+  routineStepsProblem,
   RoutineTrigger,
 } from "@j3-bots/contracts";
-import type { ToolInput } from "@j3-bots/prompts";
+import { readSteps, type ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { json } from "../persistence/columns.ts";
+import { Flag, json } from "../persistence/columns.ts";
 import { Routines } from "../routines/Routines.ts";
+import { DEFAULT_YES_HOURS } from "../routines/runSteps.ts";
 import { localInstant } from "../routines/schedule.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { TurnEnded, TurnToolRefused } from "../tools/TurnTools.ts";
@@ -43,6 +46,8 @@ const SessionOfCall = Schema.Struct({
   purpose: Schema.Literals(["main", "side"]),
   /** The routine a side session runs; null in a main session, or once the routine is deleted. */
   routine_id: Schema.NullOr(RoutineId),
+  /** Whether the side session runs a step of a routine with several steps. */
+  stepped: Flag,
 });
 
 const encodeRoutine = Schema.encodeEffect(Schema.toCodecJson(Routine));
@@ -74,7 +79,11 @@ export const routineTool = Effect.gen(function* () {
     Request: SessionRowId,
     Result: SessionOfCall,
     execute: (id) => sql`
-      SELECT s.purpose, w.routine_id FROM sessions s
+      SELECT s.purpose, w.routine_id, EXISTS (
+          SELECT 1 FROM routine_runs r
+          WHERE r.id = json_extract(w.payload_json, '$.runId') AND r.steps_json IS NOT NULL
+        ) AS stepped
+      FROM sessions s
       LEFT JOIN wakes w ON w.id = s.side_wake_id
       WHERE s.id = ${id}
     `,
@@ -93,8 +102,13 @@ export const routineTool = Effect.gen(function* () {
   ) {
     const session = yield* sessionOf(request.sessionId).pipe(Effect.orDie);
     if (Option.isNone(session)) return yield* new TurnEnded();
-    const { purpose, routine_id: running } = session.value;
+    const { purpose, routine_id: running, stepped } = session.value;
     if (purpose === "main") return;
+    if (stepped) {
+      return yield* refuse(
+        "A step of a routine changes no routine. End your step with finish_step; put any change you would suggest in its result or handoff.",
+      );
+    }
     if (input.action === "pause" && running !== null && input.id === running) return;
     return yield* refuse(
       running === null
@@ -186,6 +200,48 @@ export const routineTool = Effect.gen(function* () {
       }
     };
 
+  /**
+   * The routine's steps as the call gives them: a bot step without a bot is
+   * the caller's own, a yes without hours waits a day. Every teammate named
+   * must exist, and the steps must make a routine.
+   */
+  const stepsOf = Effect.fn("RoutineTool.stepsOf")(function* (
+    request: Request,
+    input: NonNullable<ToolInput<"set_routine">["steps"]>,
+  ) {
+    const read = readSteps(input);
+    if (read._tag === "problem") return yield* refuse(read.problem);
+    const steps: Array<RoutineStep> = [];
+    for (const step of read.steps) {
+      switch (step.kind) {
+        case "bot": {
+          const botId = step.bot === undefined ? request.botId : BotId.make(step.bot);
+          const exists = yield* sql`SELECT 1 FROM bots WHERE id = ${botId}`.pipe(Effect.orDie);
+          if (exists.length === 0) {
+            return yield* refuse(
+              `You have no teammate ${botId}. list_teammates shows your teammates' ids.`,
+            );
+          }
+          steps.push({ _tag: "bot", botId, action: step.action, instruction: step.instruction });
+          break;
+        }
+        case "condition":
+          steps.push({ _tag: "condition", check: step.check });
+          break;
+        case "yes":
+          steps.push({
+            _tag: "yes",
+            onlyIf: step.onlyIf ?? null,
+            waitHours: step.waitHours ?? DEFAULT_YES_HOURS,
+          });
+          break;
+      }
+    }
+    const problem = routineStepsProblem(steps);
+    if (problem !== undefined) return yield* refuse(problem);
+    return steps;
+  });
+
   const saved = (routine: Routine) =>
     encodeRoutine(routine).pipe(
       Effect.orDie,
@@ -200,12 +256,16 @@ export const routineTool = Effect.gen(function* () {
   ) {
     yield* requireAllowed(request, input);
     const trigger = yield* triggerOf(input);
+    const steps = input.steps === undefined ? undefined : yield* stepsOf(request, input.steps);
     const author = { _tag: "bot", botId: request.botId } as const;
     // The pin in `once` makes the call act once, so no command receipt keeps
     // another copy of the routine, and of a webhook's address.
     const commandId = null;
     if (input.action === "create") {
-      const { name, instruction } = input;
+      const { name } = input;
+      const first = steps?.[0];
+      const instruction =
+        input.instruction ?? (first?._tag === "bot" ? first.instruction : undefined);
       if (name === undefined || instruction === undefined || trigger === undefined) {
         return yield* Effect.die("The tool's schema lets no create through without these");
       }
@@ -215,7 +275,7 @@ export const routineTool = Effect.gen(function* () {
           .create({
             commandId,
             botId: request.botId,
-            draft: { name, instruction, trigger },
+            draft: { name, instruction, trigger, ...(steps === undefined ? {} : { steps }) },
             author,
           })
           .pipe(Effect.catchTags({ NotFound: explain, Invalid: explain }), Effect.flatMap(saved)),
@@ -242,6 +302,7 @@ export const routineTool = Effect.gen(function* () {
         ? {
             ...(input.name === undefined ? {} : { name: input.name }),
             ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
+            ...(steps === undefined ? {} : { steps }),
             ...(trigger === undefined ? {} : { trigger }),
           }
         : { enabled: input.action === "resume" };

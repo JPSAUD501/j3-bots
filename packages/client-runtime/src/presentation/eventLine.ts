@@ -49,8 +49,25 @@ export type EventLine =
 /** Every entry that is neither a message nor a turn's work. */
 export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry>;
 
-/** What the bot asks of the operator, or a notice of something that stopped: drawn as a card. */
-export type CardEntry = Exclude<NonMessageEntry, HandoffEntry | RoutineChangeEntry>;
+/**
+ * A routine with several steps that a bot made or changed (decision 0080):
+ * drawn as its track at rest, which reads it back, rather than as a line.
+ */
+export type TrackChangeEntry = RoutineChangeEntry & {
+  readonly change: "created" | "updated";
+  readonly steps: NonNullable<RoutineChangeEntry["steps"]>;
+};
+
+/**
+ * What the bot asks of the operator, a notice of something that stopped, or
+ * a routine's track: drawn as a card.
+ */
+export type CardEntry =
+  | Exclude<NonMessageEntry, HandoffEntry | RoutineChangeEntry>
+  | TrackChangeEntry;
+
+const isTrackChange = (entry: RoutineChangeEntry): entry is TrackChangeEntry =>
+  entry.steps !== undefined && (entry.change === "created" || entry.change === "updated");
 
 /** The other bot of a teammate message: the recipient of one sent, the sender of one received. */
 export function handoffPeer(entry: HandoffEntry): BotId {
@@ -123,7 +140,9 @@ export function placeOf(entry: NonMessageEntry): EntryPlace {
     case "handoff":
       return { _tag: "line", line: { _tag: "teammates", run: teammateRun([entry]) } };
     case "routine-change":
-      return { _tag: "line", line: { _tag: "routines", changes: [entry] } };
+      return isTrackChange(entry)
+        ? { _tag: "card", entry }
+        : { _tag: "line", line: { _tag: "routines", changes: [entry] } };
     case "notice": {
       const { notice } = entry;
       if (notice._tag === "routine-paused")

@@ -84,6 +84,7 @@ import {
   type PairingFailure,
   type RecentTurns,
   type RecentTurnsState,
+  type RoutineCardCommand,
   type SignInView,
 } from "@j3-bots/client-runtime";
 import {
@@ -171,6 +172,18 @@ import { RoomWork } from "../components/RoomWork";
 import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineRunList } from "../components/RoutineRuns";
+import { RoutineTrack, RoutineTrackWindow } from "../components/RoutineTrack";
+import {
+  playedTrack,
+  sampleTrackCommand,
+  trackMoments,
+  trackName,
+  trackOwner,
+  trackRoutine,
+  trackRuns,
+  trackSteps,
+  trackTrigger,
+} from "./sampleRoutineTrack";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
@@ -314,6 +327,7 @@ export default function GalleryPage() {
                 <BubblesSection />
                 <DocumentsSection />
                 <CardsSection />
+                <RoutineTracksSection />
                 <WorkSection />
                 <PlanAndLittleOnesSection />
                 <NoticesSection />
@@ -1224,6 +1238,7 @@ function RosterOrganizeSection() {
 
 const timelineIntents: TimelineIntents = {
   answerQuestion: nothing,
+  routineCard: nothing,
   dismissQuestion: nothing,
   decideApproval: nothing,
   provideSecret: nothing,
@@ -2297,6 +2312,176 @@ const sampleRuns: ReadonlyArray<RoutineRun> = [
   }),
   sampleRun(8 * 24 * 60 + 353, "delivered"),
 ];
+
+const trackEntry = (name: string) => EntryId.make(`gallery-track-${name}`);
+
+/** A run of the sample routine on its card, answered, retried and stopped as the server would. */
+function PlayableTrack({ run: first, label }: { run: RoutineRun; label: string }) {
+  const [run, setRun] = useState(first);
+  const [submitting, setSubmitting] = useState(false);
+  const command = (next: RoutineCardCommand) => {
+    setSubmitting(true);
+    window.setTimeout(() => {
+      setRun((current) => sampleTrackCommand(current, next));
+      setSubmitting(false);
+    }, 600);
+  };
+  return (
+    <RoutineTrack
+      entryId={trackEntry(label)}
+      name={trackName}
+      trigger={trackTrigger}
+      owner={trackOwner}
+      steps={trackSteps}
+      run={run}
+      submitting={submitting}
+      onAnswer={(step, choice, note) =>
+        command({ _tag: "answer", runId: run.id, step, choice, note })
+      }
+      onRetry={() => command({ _tag: "retry", runId: run.id })}
+      onStop={() => command({ _tag: "stop", runId: run.id })}
+    />
+  );
+}
+
+/** The hand-off, played over and over: a step ends, the light runs down the line, the next bot catches it. */
+function PlayedTrack() {
+  const [at, setAt] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setAt((current) => (current + 1) % playedTrack.length),
+      2600,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <RoutineTrack
+      entryId={trackEntry("played")}
+      name={trackName}
+      trigger={trackTrigger}
+      owner={trackOwner}
+      steps={trackSteps}
+      run={playedTrack[at] ?? null}
+      onStop={nothing}
+    />
+  );
+}
+
+/** A routine just made, its stations coming in again each time it is pressed. */
+function ArrivingTrack() {
+  const [key, setKey] = useState(0);
+  return (
+    <div className="flex flex-col items-start">
+      <RoutineTrack
+        key={key}
+        entryId={trackEntry("new")}
+        name={trackName}
+        trigger={trackTrigger}
+        owner={trackOwner}
+        steps={trackSteps}
+        run={null}
+        arriving
+      />
+      <Button variant="ghost-muted" size="sm" className="mt-2" onClick={() => setKey(key + 1)}>
+        Play again
+      </Button>
+    </div>
+  );
+}
+
+const trackMomentFrames: ReadonlyArray<readonly [string, keyof typeof trackMoments]> = [
+  ["Running: Scout at work, its row lit in its color", "gathering"],
+  ["Past the condition: Atlas at work", "drafting"],
+  ["Needs your yes: the ask inside the stop (answer it)", "waiting"],
+  ["You said yes: Wren at work", "sending"],
+  ["A failed step: what happened, what to do, what is kept, Try again (press it)", "failed"],
+  ["Blocked, in the bot's own words", "blocked"],
+  ["Trying again by itself after an attempt that never started", "retrying"],
+  ["Stopped by you at the yes", "stopped"],
+];
+
+const trackEndings: ReadonlyArray<readonly [string, keyof typeof trackMoments]> = [
+  ["Done, folded into its line (open it)", "done"],
+  ["A condition that did not hold: stopped quietly, the light at the siding's bar", "nothingNew"],
+  ["You said no", "saidNo"],
+  ["No answer in time", "timedOut"],
+  ["The yes was not needed", "notNeeded"],
+];
+
+function RoutineTracksSection() {
+  const { scout } = team.bots;
+  return (
+    <Section title="Routines in steps (the Track)">
+      <Labeled label="At rest, as a bot just made it: the sentence, then the stations coming in">
+        <ArrivingTrack />
+      </Labeled>
+      <Labeled label="The hand-off, played: a step ends, the light runs down the line, the next bot catches it">
+        <div className="flex flex-col">
+          <PlayedTrack />
+        </div>
+      </Labeled>
+      {trackMomentFrames.map(([label, moment]) => (
+        <Labeled key={moment} label={label}>
+          <div className="flex flex-col">
+            <PlayableTrack run={trackMoments[moment]} label={moment} />
+          </div>
+        </Labeled>
+      ))}
+      <Labeled label="How a run ends: each folds into one line that opens its whole rail">
+        <div className="flex flex-col">
+          {trackEndings.map(([label, moment]) => (
+            <div key={moment} className="flex flex-col">
+              <span className="mt-3 text-2xs text-muted-foreground">{label}</span>
+              <RoutineTrack
+                entryId={trackEntry(moment)}
+                name={trackName}
+                trigger={trackTrigger}
+                owner={trackOwner}
+                steps={trackSteps}
+                run={trackMoments[moment]}
+              />
+            </div>
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="Where it lives: the bot's routines, with who does it and the sentence; its runs, on its track at rest and each run's mini rail; quick access around the stop">
+        <div className="flex flex-wrap items-start gap-4">
+          <Pane>
+            <BotDetails
+              bot={scout}
+              routines={[trackRoutine, ...(team.routines[scout.id] ?? [])]}
+              memory={team.memory[scout.id] ?? []}
+              files={team.files[scout.id] ?? []}
+              connectors={sampleConnectors}
+              teammates={[]}
+              modelName="Claude Code · Claude Sonnet 5.5"
+              browserHost={READY_BROWSER}
+              intents={detailsIntents}
+              stopShortcut={shortcuts.stop}
+              onClose={nothing}
+            />
+          </Pane>
+          <Pane>
+            <RoutineRunList
+              routine={trackRoutine}
+              runs={{ _tag: "ready", value: { runs: trackRuns, hasOlder: false }, stale: false }}
+            />
+          </Pane>
+          <div className="w-80 rounded-md border border-border bg-surface p-3">
+            <RoutineTrackWindow
+              name={trackName}
+              trigger={trackTrigger}
+              owner={trackOwner}
+              steps={trackSteps}
+              run={trackMoments.waiting}
+              onAnswer={nothing}
+            />
+          </div>
+        </div>
+      </Labeled>
+    </Section>
+  );
+}
 
 function DetailsSection() {
   const { scout, moss, atlas } = team.bots;

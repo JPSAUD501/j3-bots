@@ -34,9 +34,14 @@ const MAX_SKILL_BYTES = TEMPLATE_LIMITS.skillText * 4;
 
 const decodeSkill = Schema.decodeUnknownOption(TemplateSkill);
 
-/** A routine as a template carries it; none for a one-time routine, which never travels. */
+/**
+ * A routine as a template carries it; none for a one-time routine, which
+ * never travels, nor for one with several steps, whose other bots a template
+ * does not carry (decision 0080).
+ */
 const templateRoutine = (routine: Routine): Option.Option<TemplateRoutine> => {
   const { name, instruction, trigger } = routine;
+  if (routine.steps !== undefined) return Option.none();
   switch (trigger._tag) {
     case "schedule":
       return Option.some({ name, instruction, trigger: { _tag: "schedule", cron: trigger.cron } });
