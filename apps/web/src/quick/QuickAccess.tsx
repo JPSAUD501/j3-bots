@@ -483,7 +483,8 @@ export function QuickAccess({
                   target={target}
                   recipient={name}
                   data={data}
-                  intents={intents}
+                  // Put away, it hears nothing: a dictation under way is cancelled.
+                  intents={shown ? intents : { ...intents, dictation: undefined }}
                   addressing={addressing}
                   mentionable={mentionable}
                   suggestion={offeredReply(bot.suggestedReply, view.items)}

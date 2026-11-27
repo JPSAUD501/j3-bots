@@ -8,6 +8,7 @@ import {
   Conflict,
   MAX_VOICE_FRAME_BYTES,
   MAX_VOICE_SECONDS,
+  type Secret,
   SecretId,
   SecretName,
   VOICE_SAMPLE_RATE,
@@ -61,9 +62,28 @@ const MAX_AUDIO_BYTES = MAX_VOICE_SECONDS * VOICE_SAMPLE_RATE * 4;
  */
 const SMALL_HOST_BYTES = 8 * 1024 ** 3;
 
+/**
+ * How long a client may send nothing while it records. It sends a piece a
+ * tenth of a second; one silent this long is gone though its connection never
+ * closed, as a laptop put to sleep, and the dictation ends so the next can
+ * start. The engine gives up on a stream after as long (**Read**, T3 Code
+ * v0.1.13, `apps/server/src/speech/stream.ts`).
+ */
+const CLIENT_SILENCE = "15 seconds";
+
 /** The secret a cloud provider's key is kept in. */
 export const cloudKeySecret = (provider: CloudVoiceProvider): SecretName =>
   SecretName.make(`voice-${provider}`);
+
+/**
+ * Whether `secret` is a cloud key as Voice saves it: a single value no bot
+ * may use. A secret the operator made under the same name is not one, and
+ * dictation neither reads nor changes it.
+ */
+const isCloudKey = (secret: Secret): boolean =>
+  secret.kind._tag === "value" &&
+  secret.access._tag === "bots" &&
+  secret.access.botIds.length === 0;
 
 const isCloudModelId = Schema.is(CloudVoiceModelId);
 
@@ -293,7 +313,7 @@ export const layer = Layer.effect(
       Stream.mapEffect(() =>
         Effect.forEach(PROVIDERS, (provider) =>
           secrets.named(cloudKeySecret(provider)).pipe(
-            Effect.map((found) => Option.isSome(found) && found.value.kind._tag === "value"),
+            Effect.map((found) => Option.isSome(found) && isCloudKey(found.value)),
             Effect.orElseSucceed(() => false),
           ),
         ),
@@ -330,7 +350,7 @@ export const layer = Layer.effect(
       const name = cloudKeySecret(provider);
       const found = yield* secrets.named(name);
       if (key === null) {
-        if (Option.isSome(found) && found.value.kind._tag === "value") {
+        if (Option.isSome(found) && isCloudKey(found.value)) {
           yield* secrets.remove(found.value.id);
         }
         return;
@@ -353,7 +373,7 @@ export const layer = Layer.effect(
           );
         return;
       }
-      if (found.value.kind._tag !== "value") {
+      if (!isCloudKey(found.value)) {
         return yield* new Conflict({ reason: "secret-name-taken" });
       }
       yield* secrets.update({ id: found.value.id, changes: { value: key } }).pipe(
@@ -365,11 +385,16 @@ export const layer = Layer.effect(
       );
     });
 
-    /** The key saved for `provider`, which no bot may use. */
-    const keyOf = (provider: CloudVoiceProvider) =>
-      secrets
+    /** The key saved for `provider`, as Voice saves it: in no other secret. */
+    const keyOf = Effect.fn("Voice.keyOf")(function* (provider: CloudVoiceProvider) {
+      const name = cloudKeySecret(provider);
+      const found = yield* secrets
+        .named(name)
+        .pipe(Effect.mapError(() => new Refused({ reason: "failed" })));
+      if (Option.isNone(found) || !isCloudKey(found.value)) return Option.none();
+      return yield* secrets
         .referenceValues({
-          references: [{ name: cloudKeySecret(provider), field: null }],
+          references: [{ name, field: null }],
           users: { _tag: "bots", botIds: [] },
         })
         .pipe(
@@ -378,18 +403,30 @@ export const layer = Layer.effect(
             error.reason === "unavailable" ? refuse("failed") : Effect.succeedNone,
           ),
         );
+    });
 
     /**
      * What the client sends until `finish`, each piece of audio handed to
-     * `heard`. Answers the draft `finish` carries.
+     * `heard`. Answers the draft `finish` carries. While it `records`, a
+     * client silent for `CLIENT_SILENCE` has hung up.
      */
     const listen = Effect.fn("Voice.listen")(function* <E>(
       inbox: Queue.Dequeue<VoiceClientFrame | Uint8Array, Cause.Done>,
+      records: boolean,
       heard: (pcm: Uint8Array) => Effect.Effect<void, E>,
     ) {
+      const take = Queue.take(inbox).pipe(Effect.mapError(() => new HungUp()));
+      const nextFrame = records
+        ? take.pipe(
+            Effect.timeoutOrElse({
+              duration: CLIENT_SILENCE,
+              orElse: () => Effect.fail(new HungUp()),
+            }),
+          )
+        : take;
       let received = 0;
       while (true) {
-        const next = yield* Queue.take(inbox).pipe(Effect.mapError(() => new HungUp()));
+        const next = yield* nextFrame;
         if (next instanceof Uint8Array) {
           if (next.byteLength > MAX_VOICE_FRAME_BYTES || next.byteLength % 4 !== 0) {
             return yield* refuse("failed");
@@ -420,7 +457,8 @@ export const layer = Layer.effect(
         ),
         Effect.forkScoped,
       );
-      const stopped = listen(inbox, () => Effect.void).pipe(Effect.as(false));
+      // The client records nothing while it shows the download, however long it takes.
+      const stopped = listen(inbox, false, () => Effect.void).pipe(Effect.as(false));
       return yield* Effect.raceFirst(
         ensureInstalled(model).pipe(
           Effect.as(true),
@@ -457,7 +495,7 @@ export const layer = Layer.effect(
       const stream = yield* speech.openStream(optionsOf(voice)).pipe(Effect.mapError(failureOf));
       yield* link.send({ type: "listening", live: model.value.streaming });
       let last = { committed: "", tentative: "" };
-      const draft = yield* listen(inbox, (pcm) =>
+      const draft = yield* listen(inbox, true, (pcm) =>
         stream.feed(pcm).pipe(
           Effect.mapError(failureOf),
           Effect.flatMap((words) => {
@@ -484,11 +522,13 @@ export const layer = Layer.effect(
     ) {
       const model = provider === "openrouter" ? voice.openRouterModel : null;
       if (provider === "openrouter" && model === null) return yield* refuse("cloud-model");
-      const key = yield* keyOf(provider);
-      if (Option.isNone(key)) return yield* refuse("cloud-key");
+      if (Option.isNone(yield* keyOf(provider))) return yield* refuse("cloud-key");
       yield* link.send({ type: "listening", live: false });
       const pieces: Array<Uint8Array> = [];
-      const draft = yield* listen(inbox, (pcm) => Effect.sync(() => pieces.push(pcm)));
+      const draft = yield* listen(inbox, true, (pcm) => Effect.sync(() => pieces.push(pcm)));
+      // Read again: a key removed while the operator spoke sends nothing.
+      const key = yield* keyOf(provider);
+      if (Option.isNone(key)) return yield* refuse("cloud-key");
       const pcm = new Uint8Array(pieces.reduce((total, piece) => total + piece.byteLength, 0));
       pieces.reduce((offset, piece) => {
         pcm.set(piece, offset);
@@ -549,6 +589,18 @@ export const layer = Layer.effect(
       },
       Effect.scoped,
       Effect.catchTags({ HungUp: () => Effect.void, LinkClosed: () => Effect.void }),
+    );
+
+    // A key the engine still holds when it starts was left by a server that
+    // stopped during a recognition: it goes, once no dictation runs.
+    yield* engine.starts.pipe(
+      Stream.filter((start) => start !== null),
+      Stream.runForEach(() =>
+        Effect.forEach(PROVIDERS, (provider) => speech.setCloudKey(provider, null), {
+          discard: true,
+        }).pipe(Effect.ignore, lock.withPermits(1)),
+      ),
+      Effect.forkIn(scope),
     );
 
     return Voice.of({ status, models, cloudKeys, cloudModels, setCloudKey, dictate });

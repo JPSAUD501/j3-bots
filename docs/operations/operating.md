@@ -261,7 +261,7 @@ Dictation on the server runs the engine's speech model on this machine ([decisio
 
 While a dictation runs, the model takes about 1.4 GB of memory, the file it maps included; it leaves memory two minutes after the last dictation on a machine with 8 GiB or less, fifteen on a bigger one. On a 4 GB board that sits beside the bots, dictating while several bots work can press on memory; a cloud provider in Settings → Voice uses none of it.
 
-The engine runs one dictation at a time; a second device is told to wait. Audio is never written to disk, by the server or the engine (whose speech code writes only model files, **Read** at `bc0f04d`), and the server logs neither the audio nor the words. A cloud provider's key is a secret named `voice-openai`, `voice-xai` or `voice-openrouter` in Secrets; removing it there stops dictation with that provider.
+The engine runs one dictation at a time; a second device is told to wait. Audio is never written to disk, by the server or the engine (whose speech code writes only model files, **Read** at `bc0f04d`), and the server logs neither the audio nor the words. A cloud provider's key is a secret named `voice-openai`, `voice-xai` or `voice-openrouter` in Secrets; removing it there stops dictation with that provider, even one under way: what was recorded is not sent. A dictation whose device goes quiet, as a laptop put to sleep, ends after 15 seconds, so it never keeps another device waiting.
 
 ## Secrets
 

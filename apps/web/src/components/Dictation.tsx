@@ -338,6 +338,13 @@ export function useDictation({
   });
   useEffect(() => () => left(draftKey), [draftKey]);
 
+  // Dictation no longer offered, as in a window put away, cancels one under way.
+  const offered = source !== undefined;
+  const withdrawn = useEffectEvent(() => cancel());
+  useEffect(() => {
+    if (!offered) withdrawn();
+  }, [offered]);
+
   const heard: HeardWords | null =
     state !== null && "committed" in state
       ? { committed: state.committed, tentative: state.tentative }

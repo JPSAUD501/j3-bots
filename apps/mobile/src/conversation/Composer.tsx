@@ -459,7 +459,10 @@ export function Composer({
             </PressScale>
           </Animated.View>
         )}
-        {dictation !== null && <DictationButton dictation={dictation} unavailable={frozen} />}
+        {dictation !== null && (
+          // A prompt being filled in or written owns the draft until it is.
+          <DictationButton dictation={dictation} unavailable={frozen || prompt.chosen !== null} />
+        )}
         <SendButton
           state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
           tint={tint.color}

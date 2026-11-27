@@ -199,6 +199,17 @@ describe("dictation in the composer", () => {
     expect(told.values).toEqual([]);
   });
 
+  it("cancels a dictation and lets the microphone go once dictation is no longer offered, as in a window put away", async () => {
+    render("Dear Ana, thanks.", 9);
+    await press();
+    hear({ _tag: "listening", live: true, committed: "book the venue", tentative: "for" });
+    act(() => root.render(<Harness initial="Dear Ana, thanks." dictation={undefined} />));
+
+    expect(playing().cancelled).toBe(true);
+    expect(told.microphonesStopped).toBe(1);
+    expect(told.values).toEqual([]);
+  });
+
   it("keeps the words already settled when dictation fails, and says why", async () => {
     render("", 0);
     await press();

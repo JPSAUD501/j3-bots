@@ -5,13 +5,16 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   HTTP_PATHS,
+  SecretId,
   SocketTicketGrant,
+  type VoiceClientFrame,
   VoiceModelId,
   VoiceServerFrame,
   type VoiceSettingsChange,
 } from "@j3-bots/contracts";
 import { TEST_SPEECH_MODELS, TestSpeechControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -24,6 +27,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { Devices } from "../devices/Devices.ts";
 import * as Http from "../http.ts";
@@ -33,7 +37,7 @@ import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
 import * as RefusedNames from "../web/RefusedNames.ts";
-import { cloudKeySecret, Voice } from "./Voice.ts";
+import { cloudKeySecret, Voice, type VoiceLink } from "./Voice.ts";
 import * as VoiceSocket from "./VoiceSocket.ts";
 
 const decodeFrame = Schema.decodeUnknownSync(Schema.fromJsonString(VoiceServerFrame));
@@ -89,6 +93,21 @@ const open = (query: string, headers: Readonly<Record<string, string>> = {}) =>
       hangUp: writer.write(new Socket.CloseEvent(1000)).pipe(Effect.orDie),
     };
   });
+
+/** A client's end of a dictation without a socket, which never hangs up by itself. */
+const fakeLink = Effect.gen(function* () {
+  const incoming = yield* Queue.unbounded<VoiceClientFrame | Uint8Array>();
+  const sent = yield* Queue.unbounded<VoiceServerFrame>();
+  const link: VoiceLink = {
+    send: (next) => Queue.offer(sent, next).pipe(Effect.asVoid),
+    incoming: Stream.fromQueue(incoming),
+  };
+  return {
+    link,
+    say: (next: VoiceClientFrame | Uint8Array) => Queue.offer(incoming, next),
+    next: Queue.take(sent),
+  };
+});
 
 const ticketFor = (token: string) =>
   HttpClientRequest.post(HTTP_PATHS.socketTicket).pipe(
@@ -325,6 +344,90 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
       yield* (yield* DeviceAuth).revoke(deviceId);
       assert.deepStrictEqual(yield* client.next, { _tag: "closed", code: 1008 });
       yield* stream.released;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "ends a recording whose client went silent without hanging up, and takes the next one",
+    () =>
+      Effect.gen(function* () {
+        const { speech } = yield* scene();
+        const voice = yield* Voice;
+        const silent = yield* fakeLink;
+        const dictation = yield* voice.dictate(silent.link).pipe(Effect.forkScoped);
+        yield* silent.say({ type: "start" });
+        const stream = yield* speech.nextStream;
+        assert.deepStrictEqual(yield* silent.next, { type: "listening", live: true });
+        yield* silent.say(audio());
+        // As a laptop put to sleep: no more audio, and no close.
+        for (let second = 0; second < 30 && dictation.pollUnsafe() === undefined; second++) {
+          yield* TestClock.adjust("1 second");
+        }
+        yield* Fiber.join(dictation);
+        yield* stream.released;
+        assert.isFalse(yield* stream.finished);
+
+        const next = yield* fakeLink;
+        yield* voice.dictate(next.link).pipe(Effect.forkScoped);
+        yield* next.say({ type: "start" });
+        yield* speech.nextStream;
+        assert.deepStrictEqual(yield* next.next, { type: "listening", live: true });
+      }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
+  );
+
+  it.effect(
+    "sends nothing to a cloud provider whose key was removed while the operator spoke",
+    () =>
+      Effect.gen(function* () {
+        const { speech, bearer } = yield* scene({ place: "openai" });
+        const voice = yield* Voice;
+        yield* voice.setCloudKey("openai", Redacted.make("sk-test-voice"));
+        const before = (yield* speech.cloudRequests).length;
+        const client = yield* open("", bearer);
+        yield* client.start;
+        assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: false }));
+        yield* client.audio;
+        yield* voice.setCloudKey("openai", null);
+        yield* client.finish();
+        assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "cloud-key" }));
+        assert.strictEqual((yield* speech.cloudRequests).length, before);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves alone a secret the operator made under a cloud key's name", () =>
+    Effect.gen(function* () {
+      const { bearer } = yield* scene({ place: "xai" });
+      const voice = yield* Voice;
+      const secrets = yield* Secrets;
+      const name = cloudKeySecret("xai");
+      yield* secrets
+        .add({
+          id: SecretId.make("sec_operatorsownxaikey"),
+          name,
+          draft: { _tag: "value", value: Redacted.make("the operator's own") },
+          access: { _tag: "every-bot" },
+        })
+        .pipe(Effect.orDie);
+
+      const keys = yield* voice.cloudKeys.pipe(Stream.runHead);
+      assert.deepStrictEqual(
+        Option.map(keys, (now) => now.xai),
+        Option.some(false),
+      );
+      const client = yield* open("", bearer);
+      yield* client.start;
+      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "cloud-key" }));
+
+      const refused = yield* voice
+        .setCloudKey("xai", Redacted.make("xai-test-voice"))
+        .pipe(Effect.flip);
+      assert.strictEqual(refused.reason, "secret-name-taken");
+      yield* voice.setCloudKey("xai", null);
+      const kept = yield* secrets.named(name);
+      assert.deepStrictEqual(
+        Option.map(kept, (secret) => secret.access),
+        Option.some({ _tag: "every-bot" as const }),
+      );
     }).pipe(Effect.scoped),
   );
 

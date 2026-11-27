@@ -148,7 +148,12 @@ function VoiceForm({
         {nowhere && <Quiet>{t("voice.unavailable")}</Quiet>}
       </Section>
       {provider !== null && (
-        <CloudKey provider={provider} saved={keys === null ? null : keys[provider]} />
+        // One per provider: a key typed for one is never saved for another.
+        <CloudKey
+          key={provider}
+          provider={provider}
+          saved={keys === null ? null : keys[provider]}
+        />
       )}
       {provider === "openrouter" && (
         <OpenRouterModel
