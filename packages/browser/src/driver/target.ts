@@ -5,6 +5,7 @@ import {
   focusTextTarget,
   isConnected,
   isValueOnlyInput,
+  type PageElement,
   scrollElement,
   selectOptions,
 } from "./pageScripts.ts";
@@ -72,10 +73,7 @@ const onElement = async <A>(run: () => Promise<A>): Promise<A> => {
   }
 };
 
-export const handleTarget = (
-  name: string,
-  handle: ElementHandle<SVGElement | HTMLElement>,
-): Target => ({
+export const handleTarget = (name: string, handle: ElementHandle<PageElement>): Target => ({
   name,
   click: (options) => onElement(() => handle.click(options)),
   hover: (timeout) => onElement(() => handle.hover({ timeout })),
