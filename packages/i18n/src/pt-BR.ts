@@ -100,8 +100,7 @@ const sentences = {
   "presence.thinking": "Pensando",
   "presence.working": "Trabalhando",
   "presence.waiting": "Esperando por você",
-  "presence.stalled": "Sem atividade há {duration}",
-  "presence.stalledQuiet": "Sem atividade recente",
+  "presence.stalled": "Sem atividade há um tempo",
   "presence.retrying": "Com dificuldade para falar com {ai}, tentando de novo",
   "presence.retryingUnnamed": "Com dificuldade para falar com a IA, tentando de novo",
 
@@ -456,14 +455,9 @@ const sentences = {
   "approval.refused":
     "O bot não conseguiu receber esta resposta. Pare o bot e peça de novo em uma mensagem.",
 
-  "work.workedFor": "Trabalhou por {duration}",
-  "work.stoppedAfter": "Parou depois de {duration}",
-  "work.failedAfter": "Falhou depois de {duration}",
-  "work.inBackground": "Ainda trabalhando em segundo plano",
-  "work.stoppedAfterInBackground":
-    "Parou depois de {duration}, com trabalho ainda em segundo plano",
-  "work.failedAfterInBackground":
-    "Falhou depois de {duration}, com trabalho ainda em segundo plano",
+  "work.worked": "Trabalhou",
+  "work.stopped": "Parou",
+  "work.failed": "Falhou",
   "work.steps.one": "{count} passo",
   "work.steps.other": "{count} passos",
   "work.loading": "Carregando passos…",

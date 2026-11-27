@@ -594,14 +594,6 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
     yield* until(
       states.of(bot.id).pipe(Effect.map((state) => state._tag === "working" && state.stalled)),
     );
-    // The quiet counts from the turn's last step, not from its start.
-    const quiet = yield* states.of(bot.id);
-    assert.isTrue(
-      quiet._tag === "working" &&
-        quiet.quietSince !== null &&
-        DateTime.Equivalence(quiet.quietSince, at) &&
-        !DateTime.Equivalence(quiet.since, at),
-    );
     yield* control.toolCall({
       sessionId: session,
       turnId,
@@ -610,13 +602,7 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
       recorded: "now",
     });
     yield* until(
-      states
-        .of(bot.id)
-        .pipe(
-          Effect.map(
-            (state) => state._tag === "working" && !state.stalled && state.quietSince === null,
-          ),
-        ),
+      states.of(bot.id).pipe(Effect.map((state) => state._tag === "working" && !state.stalled)),
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
@@ -962,68 +948,36 @@ it.effect("says a bot is opening from its first wake's wait until its first turn
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-/**
- * A turn that ran a step and handed off to background work, now ended, with
- * its fold's steps followed.
- */
-const handedOff = Effect.gen(function* () {
-  const control = yield* TestEngineControl;
-  const bot = yield* createBot("Ana");
-  const session = yield* engineSession(bot.id);
-  yield* sendToBot(bot.id, "Start the dev server.");
-  const turnId = yield* nextTurn(bot.id);
-  const at = yield* DateTime.now;
-  yield* control.step({
-    sessionId: session,
-    turnId,
-    step: {
-      id: WorkStepId.make("step-1"),
-      kind: "command",
-      tool: null,
-      label: "pnpm dev",
-      status: "completed",
-      startedAt: at,
-      finishedAt: at,
-    },
-  });
-  yield* control.startBackgroundWork({ sessionId: session, turnId });
-  yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
-  yield* turnEnded(bot.id);
-  const backgroundOf = awaitEntry(bot.id, "work-fold").pipe(
-    Effect.map((fold) => (fold.status._tag === "finished" ? fold.status.background : null)),
-  );
-  assert.isTrue(yield* backgroundOf);
-  const fold = yield* awaitEntry(bot.id, "work-fold");
-  const following = yield* (yield* WorkSteps)
-    .follow(fold.id)
-    .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
-  return { control, session, backgroundOf, following };
-});
-
-it.effect(
-  "ends a fold's background work, and its steps' stream, when the engine lists it no more",
-  () =>
-    Effect.gen(function* () {
-      const { control, session, backgroundOf, following } = yield* handedOff;
-      yield* control.endBackgroundWork(session);
-      // The check waits for the session's events to be caught up.
-      const stops = yield* Stops;
-      yield* until(
-        stops.runPending.pipe(
-          Effect.andThen(backgroundOf),
-          Effect.map((background) => background === false),
-        ),
-      );
-      yield* Fiber.join(following);
-    }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("ends a fold's background work, and its steps' stream, when its session is lost", () =>
+// The work a turn handed off is part of its finished fold, not shown live.
+it.effect("ends a fold's steps stream with its turn, though work it handed off still runs", () =>
   Effect.gen(function* () {
-    const { control, session, backgroundOf, following } = yield* handedOff;
-    yield* control.loseSession(session);
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Start the dev server.");
+    const turnId = yield* nextTurn(bot.id);
+    const at = yield* DateTime.now;
+    yield* control.step({
+      sessionId: session,
+      turnId,
+      step: {
+        id: WorkStepId.make("step-1"),
+        kind: "command",
+        tool: null,
+        label: "pnpm dev",
+        status: "completed",
+        startedAt: at,
+        finishedAt: at,
+      },
+    });
+    const fold = yield* awaitEntry(bot.id, "work-fold");
+    const following = yield* (yield* WorkSteps)
+      .follow(fold.id)
+      .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+    yield* control.startBackgroundWork({ sessionId: session, turnId });
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    // Its steps change no more for whoever has the fold open: the stream ends.
     yield* Fiber.join(following);
-    assert.isFalse(yield* backgroundOf);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -6,19 +6,14 @@ import { workFoldTitle } from "./work.ts";
 
 /**
  * The line beside a turn under way: what the bot is doing now, as its roster
- * row says it. Out of touch with the server, the client
- * cannot know, so the line says it is only what it last knew, with no time
- * in it: a stall is only "No recent activity", since how long it has lasted
- * runs on past what the client knew.
+ * row says it. Out of touch with the server, the client cannot know, so the
+ * line says it is only what it last knew.
  */
 export function turnLine(bot: Bot, offline: boolean, ctx: PresentationContext): StatusLine {
   const { t } = ctx.i18n;
   const line = presenceLine(bot, ctx) ?? { text: t("presence.working"), tone: "default" };
   if (!offline) return line;
-  const { state } = bot;
-  const stalled = (state._tag === "thinking" || state._tag === "working") && state.stalled;
-  const status = stalled ? t("presence.stalledQuiet") : line.text;
-  return { text: t("work.offline", { status }), tone: "secondary" };
+  return { text: t("work.offline", { status: line.text }), tone: "secondary" };
 }
 
 export interface Announcement {
@@ -57,12 +52,7 @@ export function turnAnnouncement(
   switch (state._tag) {
     case "thinking":
     case "working":
-      // A stalled line counts its quiet: said once, not again each minute.
-      return {
-        key: state.stalled ? `${state._tag}:stalled` : `${state._tag}:${text}`,
-        text,
-        ending: false,
-      };
+      return { key: `${state._tag}:${text}`, text, ending: false };
     case "waiting":
     case "blocked":
     case "idle":

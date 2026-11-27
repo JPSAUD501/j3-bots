@@ -17,7 +17,6 @@ const working = (
   _tag: "working",
   since: at(started),
   stalled,
-  quietSince: stalled ? at(started) : null,
   typing: false,
   retrying: false,
   activity,
@@ -53,11 +52,10 @@ describe("turnLine", () => {
     });
   });
 
-  it("says a stall it last knew of with no time, which would run on past what it knew", () => {
-    const stalled = bot("Scout", working("git status", true));
-    for (const now of ["2026-11-20T14:10:00Z", "2026-11-20T15:40:00Z"]) {
-      expect(turnLine(stalled, true, ctxAt(now)).text).toBe("Last known: No recent activity");
-    }
+  it("says a stall it last knew of as last known", () => {
+    expect(turnLine(bot("Scout", working("git status", true)), true, ctx).text).toBe(
+      "Last known: No activity for a while",
+    );
   });
 });
 
@@ -73,9 +71,6 @@ describe("turnAnnouncement", () => {
       _tag: "finished",
       finishedAt: at("2026-11-20T14:01:12Z"),
       ending,
-      waitedMs: 0,
-      waitedBeforeMs: 0,
-      background: false,
     }) as const;
   const waiting: BotState = { _tag: "waiting", entryId: EntryId.make("card"), since: null };
   const blocked: BotState = { _tag: "blocked", failure: "usage-limit", retryAt: null };
@@ -92,7 +87,7 @@ describe("turnAnnouncement", () => {
 
   it("says once that a turn has gone quiet, not again each minute of quiet", () => {
     const quiet = said(working(null, true), "2026-11-20T14:06:00Z");
-    expect(quiet.text).toMatch(/No activity/);
+    expect(quiet.text).toBe("No activity for a while");
     expect(said(working(null, true), "2026-11-20T14:09:00Z").key).toBe(quiet.key);
     expect(quiet.key).not.toBe(said(working(null)).key);
   });
@@ -102,9 +97,9 @@ describe("turnAnnouncement", () => {
     expect(folding.text).toBe("");
     const ending = (status: WorkFoldEntry["status"]) =>
       plain(said({ _tag: "idle" }, undefined, fold(status)).text);
-    expect(ending(finished("completed"))).toBe("Worked for 1m 12s");
-    expect(ending(finished("interrupted"))).toBe("Stopped after 1m 12s");
-    expect(ending(finished("failed"))).toBe("Failed after 1m 12s");
+    expect(ending(finished("completed"))).toBe("Worked");
+    expect(ending(finished("interrupted"))).toBe("Stopped");
+    expect(ending(finished("failed"))).toBe("Failed");
     const ended = said({ _tag: "idle" }, undefined, fold(finished("completed")));
     expect(ended.key).not.toBe(folding.key);
     expect(ended.ending).toBe(true);
@@ -141,7 +136,7 @@ describe("turnAnnouncement", () => {
 });
 
 describe("nextSpoken", () => {
-  const ended = { key: "ended-fold", text: "Worked for 1m 12s", ending: true };
+  const ended = { key: "ended-fold", text: "Worked", ending: true };
   const asks = { key: "waiting", text: "Waiting for you", ending: false };
   const run = (opened: string | null, ...said: ReadonlyArray<Parameters<typeof nextSpoken>[1]>) => {
     let spoken: Spoken = { key: opened, ending: null };
@@ -159,15 +154,12 @@ describe("nextSpoken", () => {
   });
 
   it("says an ending once, though the bot idles on it again after a question", () => {
-    expect(run("working:git status", ended, asks, ended)).toEqual([
-      "Worked for 1m 12s",
-      "Waiting for you",
-    ]);
+    expect(run("working:git status", ended, asks, ended)).toEqual(["Worked", "Waiting for you"]);
   });
 
   it("says nothing for a key with no text, as a fold still finishing", () => {
     expect(
       run("working:git status", { key: "ending-fold", text: "", ending: false }, ended),
-    ).toEqual(["Worked for 1m 12s"]);
+    ).toEqual(["Worked"]);
   });
 });

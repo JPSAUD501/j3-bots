@@ -27,87 +27,17 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   work: null,
 });
 
-const finished = (
-  finishedAt: string,
-  waitedMs: number,
-  background = false,
-  ending: "completed" | "interrupted" | "failed" = "completed",
-  waitedBeforeMs = 0,
-) =>
-  fold({
-    _tag: "finished",
-    finishedAt: at(finishedAt),
-    ending,
-    waitedMs,
-    waitedBeforeMs,
-    background,
-  });
+const finished = (ending: "completed" | "interrupted" | "failed") =>
+  fold({ _tag: "finished", finishedAt: at("2026-11-20T14:01:12Z"), ending });
 
 describe("workFoldTitle", () => {
-  it("gives no duration while the turn runs, nor while the work it handed off still runs", () => {
+  it("says the turn works, then how it ended", () => {
     expect(workFoldTitle(fold({ _tag: "running" }), ctx)).toBe("Working");
-    const handedOff = workFoldTitle(finished("2026-11-20T14:05:00Z", 0, true), ctx);
-    expect(handedOff).not.toMatch(/\d/);
-  });
-
-  it("keeps a failed or stopped turn's ending and time while the work it handed off runs", () => {
-    for (const ending of ["failed", "interrupted"] as const) {
-      const ended = plain(workFoldTitle(finished("2026-11-20T14:03:00Z", 0, false, ending), ctx));
-      const running = plain(workFoldTitle(finished("2026-11-20T14:03:00Z", 0, true, ending), ctx));
-      expect(running.startsWith(ended)).toBe(true);
-      expect(running).not.toBe(ended);
-    }
-  });
-
-  it("counts the turn's time less what it spent waiting on the operator", () => {
-    expect(plain(workFoldTitle(finished("2026-11-20T14:05:00Z", 0), ctx))).toBe("Worked for 5m");
-    expect(plain(workFoldTitle(finished("2026-11-20T14:05:00Z", 3 * 60_000), ctx))).toBe(
-      "Worked for 2m",
-    );
-  });
-
-  it("counts from the turn's start when the server says it", () => {
-    const fromTurn: WorkFoldEntry = {
-      ...finished("2026-11-20T14:01:12Z", 0),
-      // The first step came 20 s into the turn, which started before it.
-      createdAt: at("2026-11-20T14:00:20Z"),
-      turnStartedAt: at("2026-11-20T14:00:00Z"),
-    };
-    expect(plain(workFoldTitle(fromTurn, ctx))).toBe("Worked for 1m 12s");
+    expect(workFoldTitle(finished("completed"), ctx)).toBe("Worked");
+    expect(workFoldTitle(finished("interrupted"), ctx)).toBe("Stopped");
+    expect(workFoldTitle(finished("failed"), ctx)).toBe("Failed");
     const ptBR = context("2026-11-20T15:00:00Z", "pt-BR", {});
-    expect(plain(workFoldTitle(fromTurn, ptBR))).toBe("Trabalhou por 1 min 12 s");
-  });
-
-  it("leaves out a wait before the fold was written only when it counts from the turn's start", () => {
-    // Two minutes on an approval before the first step, one after.
-    const waited = finished("2026-11-20T14:05:00Z", 60_000, false, "completed", 2 * 60_000);
-    expect(plain(workFoldTitle(waited, ctx))).toBe("Worked for 4m");
-    const fromTurn = { ...waited, turnStartedAt: at("2026-11-20T13:58:00Z") };
-    expect(plain(workFoldTitle(fromTurn, ctx))).toBe("Worked for 4m");
-  });
-
-  it("says how a turn stopped or failed before its first step ended, and when", () => {
-    const before = (finishedAt: string, ending: "interrupted" | "failed"): WorkFoldEntry => ({
-      ...finished(finishedAt, 0, false, ending),
-      createdAt: at(finishedAt),
-      turnStartedAt: at("2026-11-20T14:00:00Z"),
-      stepCount: 0,
-      apps: [],
-    });
-    expect(plain(workFoldTitle(before("2026-11-20T14:01:04Z", "interrupted"), ctx))).toBe(
-      "Stopped after 1m 4s",
-    );
-    expect(plain(workFoldTitle(before("2026-11-20T14:00:12Z", "failed"), ctx))).toBe(
-      "Failed after 12s",
-    );
-  });
-
-  it("says how every turn ended", () => {
-    const ended = (ending: "completed" | "interrupted" | "failed") =>
-      plain(workFoldTitle(finished("2026-11-20T14:01:12Z", 0, false, ending), ctx));
-    expect(ended("completed")).toBe("Worked for 1m 12s");
-    expect(ended("interrupted")).toBe("Stopped after 1m 12s");
-    expect(ended("failed")).toBe("Failed after 1m 12s");
+    expect(workFoldTitle(finished("completed"), ptBR)).toBe("Trabalhou");
   });
 });
 
@@ -140,8 +70,8 @@ describe("a step in plain words", () => {
 
   it("says what each kind of step does and did, never its command, path or search", () => {
     const said = (kind: WorkStep["kind"], label: string) => [
-      stepText(step(kind, label, "running"), ctx.i18n),
-      stepText(step(kind, label), ctx.i18n),
+      stepText(step(kind, label, "running"), true, ctx.i18n),
+      stepText(step(kind, label), true, ctx.i18n),
     ];
     expect(said("command", powershell)).toEqual(["Running a command", "Ran a command"]);
     expect(said("edit", "/home/someone/notes.md")).toEqual(["Editing a file", "Edited a file"]);
@@ -150,14 +80,22 @@ describe("a step in plain words", () => {
     expect(said("web", "plumbers near me")).toEqual(["Searching the web", "Searched the web"]);
     expect(said("other", "something")).toEqual(["Working", "Did some work"]);
     const ptBR = context("2026-11-20T15:00:00Z", "pt-BR", {});
-    expect(stepText(step("command", powershell, "running"), ptBR.i18n)).toBe("Rodando um comando");
+    expect(stepText(step("command", powershell, "running"), true, ptBR.i18n)).toBe(
+      "Rodando um comando",
+    );
   });
 
   it("names a tool in J3 Bots' words, or one it cannot name by the tool's own name", () => {
-    expect(stepText(step("tool", "Read a web page", "running", "web-page"), ctx.i18n)).toBe(
+    expect(stepText(step("tool", "Read a web page", "running", "web-page"), true, ctx.i18n)).toBe(
       "Reading a web page",
     );
-    expect(plain(stepText(step("tool", "Create issue"), ctx.i18n))).toBe("Used “Create issue”");
+    expect(plain(stepText(step("tool", "Create issue"), true, ctx.i18n))).toBe(
+      "Used “Create issue”",
+    );
+  });
+
+  it("says a step still running once its turn ended as done, as part of the turn", () => {
+    expect(stepText(step("command", powershell, "running"), false, ctx.i18n)).toBe("Ran a command");
   });
 
   it("keeps what the step worked on as its detail, one step in", () => {
@@ -193,10 +131,10 @@ describe("a login's fill", () => {
 
   it("names the login and the field, and whether it was filled", () => {
     const done = fill({ _tag: "filled", submitted: true }, "https://github.com");
-    expect(stepText(step(done), ctx.i18n)).toBe("Filled the password of github-work");
+    expect(stepText(step(done), true, ctx.i18n)).toBe("Filled the password of github-work");
     expect(fillDetail(done, ctx.i18n)).toBe("On https://github.com, then sent the form.");
     const refused = fill({ _tag: "refused", reason: "no-tab" }, "https://github.com");
-    expect(stepText(step(refused), ctx.i18n)).toBe("Didn’t fill the password of github-work");
+    expect(stepText(step(refused), true, ctx.i18n)).toBe("Didn’t fill the password of github-work");
   });
 
   it("shows the page a refused fill was asked on, as the server checked it", () => {

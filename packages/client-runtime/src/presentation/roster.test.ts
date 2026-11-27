@@ -169,7 +169,6 @@ describe("botStop", () => {
   const since = {
     since: at("2026-11-20T15:00:00Z"),
     stalled: false,
-    quietSince: null,
     typing: false,
     retrying: false,
   };

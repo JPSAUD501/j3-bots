@@ -12,7 +12,6 @@ import type {
   WorkTool,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
-import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { firstLine } from "../presentation/roster.ts";
 import type { PresentationContext } from "./status.ts";
 
@@ -114,19 +113,23 @@ function stepWords(
   return t(running ? plain.doing : plain.did);
 }
 
+/** A login's fill as its step says it: the login and the field, and whether it was filled. */
+export function fillText(fill: CredentialFill, i18n: I18n): string {
+  return i18n.t((fill.outcome._tag === "filled" ? filled : notFilled)[fill.field], {
+    name: fill.name,
+  });
+}
+
 /**
- * A step as its row in the work fold says it, in plain words
- * (`stepWords`). A login's fill names the login and the field, and whether
- * it was filled.
+ * A step as its row in the work fold says it, in plain words (`stepWords`),
+ * or as its login's fill (`fillText`). `turnRuns`: the fold's turn has not
+ * ended. Once it has, a step still running, work the turn handed off, reads
+ * as done with the turn.
  */
-export function stepText(step: WorkStep, i18n: I18n): string {
-  if (step.fill !== undefined) {
-    const { fill } = step;
-    return i18n.t((fill.outcome._tag === "filled" ? filled : notFilled)[fill.field], {
-      name: fill.name,
-    });
-  }
-  return stepWords(step.kind, step.tool, step.label, step.status === "running", i18n);
+export function stepText(step: WorkStep, turnRuns: boolean, i18n: I18n): string {
+  if (step.fill !== undefined) return fillText(step.fill, i18n);
+  const running = turnRuns && step.status === "running";
+  return stepWords(step.kind, step.tool, step.label, running, i18n);
 }
 
 /**
@@ -219,34 +222,19 @@ export function workDoneText(
 }
 
 /**
- * A work fold's title. While the turn runs it says so, with no duration: the
- * time is not known until it ends. Once the turn has completed with work it
- * handed off still running, it says that. Otherwise it says how the turn
- * ended and how long it worked, from the turn's start, as its clock counted,
- * less the time it waited on the operator; a turn stopped or failed says so
- * even while work it handed off still runs, and then says that too.
+ * A work fold's title: that the turn is working, or how it ended. No time:
+ * the steps beside it say what the work was.
  */
 export function workFoldTitle(entry: WorkFoldEntry, ctx: PresentationContext): string {
   const { t } = ctx.i18n;
   const { status } = entry;
   if (status._tag === "running") return t("presence.working");
-  if (status.background && status.ending === "completed") return t("work.inBackground");
-  // From the turn's start, less every wait since; from an older server, from the fold's first step.
-  const waited =
-    entry.turnStartedAt === null ? status.waitedMs : status.waitedMs + status.waitedBeforeMs;
-  const from = entry.turnStartedAt ?? entry.createdAt;
-  const worked = Math.max(0, millisBetween(from, status.finishedAt) - waited);
-  const duration = shortDuration(worked, ctx.i18n);
   switch (status.ending) {
     case "completed":
-      return t("work.workedFor", { duration });
+      return t("work.worked");
     case "interrupted":
-      return t(status.background ? "work.stoppedAfterInBackground" : "work.stoppedAfter", {
-        duration,
-      });
+      return t("work.stopped");
     case "failed":
-      return t(status.background ? "work.failedAfterInBackground" : "work.failedAfter", {
-        duration,
-      });
+      return t("work.failed");
   }
 }

@@ -110,16 +110,7 @@ const since = { since: Schema.DateTimeUtc };
  * Set by the server when the turn has shown no activity for long enough that it
  * may be stuck. Clients show it; they never derive it from their own timers.
  */
-const stalled = {
-  stalled: Schema.Boolean,
-  /**
-   * While the turn is stalled, when it last showed activity: what "No activity
-   * for…" counts from. Null while it is not, and from a server that predates it.
-   */
-  quietSince: Schema.NullOr(Schema.DateTimeUtc).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed(null)),
-  ),
-};
+const stalled = { stalled: Schema.Boolean };
 
 /**
  * Set by the server while it holds the bot's next message for a moment

@@ -10,7 +10,6 @@ const scout = bot("Scout", {
   _tag: "thinking",
   since: at(started),
   stalled: false,
-  quietSince: null,
   typing: false,
   retrying: false,
 });
@@ -39,9 +38,6 @@ const finished = (createdAt?: string) =>
       _tag: "finished",
       finishedAt: at("2026-11-20T14:01:12Z"),
       ending: "completed",
-      waitedMs: 0,
-      waitedBeforeMs: 0,
-      background: false,
     },
     started,
     createdAt,
@@ -59,7 +55,6 @@ describe("liveTurn", () => {
       _tag: "working",
       since: at(started),
       stalled: true,
-      quietSince: at(started),
       typing: false,
       retrying: false,
       activity: null,
@@ -120,9 +115,6 @@ describe("withLiveTurn", () => {
       _tag: "finished",
       finishedAt: at("2026-11-20T14:01:04Z"),
       ending: "interrupted",
-      waitedMs: 0,
-      waitedBeforeMs: 0,
-      background: false,
     });
     // The conversation hears the fold while the roster still says the turn runs.
     const foldFirst = work(withLiveTurn(buildTimeline([asked, stopped]), liveTurn(scout)));
@@ -152,9 +144,6 @@ describe("withLiveTurn", () => {
         _tag: "finished",
         finishedAt: at("2026-11-20T13:59:59Z"),
         ending: "completed",
-        waitedMs: 0,
-        waitedBeforeMs: 0,
-        background: false,
       },
       null,
       started,

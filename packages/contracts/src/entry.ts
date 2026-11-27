@@ -682,19 +682,17 @@ export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]
 export type TurnEnding = typeof TurnEnding.Type;
 
 /**
- * One turn's work, folded into a line. Its steps are read with
- * `entries.workSteps`. The line says how long the bot worked: from the start
- * of its turn (`turnStartedAt`) to its end, less `waitedBeforeMs` and
- * `waitedMs`; from a server that predates `turnStartedAt`, from the fold's
- * first step, less `waitedMs`. A turn stopped or failed before its first step
+ * One turn's work, folded into a line that says how the turn ended and how
+ * many steps it took. Its steps are read with `entries.workSteps`, work the
+ * turn handed off among them. A turn stopped or failed before its first step
  * has a fold of no steps, so how it ended stays in the conversation.
  */
 export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   ...entry,
   /**
    * When the fold's turn started, the time a working bot's state counts from
-   * (`BotState` `since`), so the fold and the turn's clock agree. Null from a
-   * server, or a fold, that predates it.
+   * (`BotState` `since`), which ties the fold to its turn. Null from a server,
+   * or a fold, that predates it.
    */
   turnStartedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
@@ -721,24 +719,6 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
     Schema.TaggedStruct("finished", {
       finishedAt: Schema.DateTimeUtc,
       ending: TurnEnding,
-      /**
-       * How long the turn waited on the operator after the fold was
-       * written: for a card it asked them to answer (an approval, a
-       * question, a credential), from the card's arrival until it closed.
-       */
-      waitedMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-      /**
-       * How long the turn waited on the operator before its fold was written,
-       * from `turnStartedAt`: kept apart from `waitedMs`, which counts from the
-       * fold's creation as clients before `turnStartedAt` read it.
-       */
-      waitedBeforeMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-      /**
-       * Work the turn handed off still runs, as the engine last reported:
-       * a background task it started, say. The fold's steps go on changing
-       * until it ends.
-       */
-      background: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }),
   ]),
 });

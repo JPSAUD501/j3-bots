@@ -108,7 +108,7 @@ const FRAME_WAIT = 400;
  * line of what it does, four at most and a count of the rest. They come out
  * from under the bot, land by their lines and bob there; one that ends jumps
  * back up into the bot, grey first if it failed. A tap on one shows its line
- * in full and how long it has worked.
+ * in full.
  *
  * The family's model (`presentation/littleOnes.ts`) is stepped on the UI
  * thread by a frame callback, on the avatars' own terms: not off screen, not

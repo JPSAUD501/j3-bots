@@ -102,8 +102,7 @@ export const en = {
   "presence.thinking": "Thinking",
   "presence.working": "Working",
   "presence.waiting": "Waiting for you",
-  "presence.stalled": "No activity for {duration}",
-  "presence.stalledQuiet": "No recent activity",
+  "presence.stalled": "No activity for a while",
   "presence.retrying": "Having trouble reaching {ai}, trying again",
   "presence.retryingUnnamed": "Having trouble reaching its AI, trying again",
 
@@ -460,14 +459,9 @@ export const en = {
   "approval.refused":
     "The bot couldn’t take this answer. Stop the bot, then ask it again in a message.",
 
-  "work.workedFor": "Worked for {duration}",
-  "work.stoppedAfter": "Stopped after {duration}",
-  "work.failedAfter": "Failed after {duration}",
-  "work.inBackground": "Still working in the background",
-  "work.stoppedAfterInBackground":
-    "Stopped after {duration}, with work still running in the background",
-  "work.failedAfterInBackground":
-    "Failed after {duration}, with work still running in the background",
+  "work.worked": "Worked",
+  "work.stopped": "Stopped",
+  "work.failed": "Failed",
   "work.steps.one": "{count} step",
   "work.steps.other": "{count} steps",
   "work.loading": "Loading steps…",

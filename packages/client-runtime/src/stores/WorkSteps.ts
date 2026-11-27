@@ -18,7 +18,7 @@ export interface WorkStepsState {
   readonly steps: ReadonlyArray<WorkStep>;
 }
 
-/** The steps behind a folded "Worked for 2m" line, while the operator has it open. */
+/** The steps behind a folded "Worked · 6 steps" line, while the operator has it open. */
 export class WorkSteps extends Context.Service<
   WorkSteps,
   {

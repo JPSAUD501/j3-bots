@@ -1627,7 +1627,6 @@ const turnStates = (() => {
         _tag: "thinking",
         since: ago(7),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
       }),
@@ -1639,7 +1638,6 @@ const turnStates = (() => {
         _tag: "thinking",
         since: ago(3),
         stalled: false,
-        quietSince: null,
         typing: true,
         retrying: false,
       }),
@@ -1651,7 +1649,6 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(72),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
         activity: "pnpm test billing",
@@ -1672,7 +1669,6 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(1220),
         stalled: true,
-        quietSince: ago(780),
         typing: false,
         retrying: false,
         activity: null,
@@ -1688,7 +1684,6 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(95),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: true,
         activity: "pnpm test billing",
@@ -1704,7 +1699,6 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(3723),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
         activity: null,
@@ -1735,7 +1729,7 @@ function WorkSection() {
             ))}
           </div>
         </Labeled>
-        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
+        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), finished with work it handed off still running, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
           <div className="flex flex-col gap-2">
             {variants.folds.map(({ entry, steps, open }) => (
               <WorkFold
@@ -1762,7 +1756,6 @@ const scoutWorking = (doing: string, littleOnes = 0): Bot => ({
     _tag: "working",
     since: DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) - 72_000),
     stalled: false,
-    quietSince: null,
     typing: false,
     retrying: false,
     activity: doing,
@@ -3626,7 +3619,6 @@ const speakingFirst = {
     _tag: "thinking",
     since: SAMPLE_NOW,
     stalled: false,
-    quietSince: null,
     typing: false,
     retrying: false,
   },
