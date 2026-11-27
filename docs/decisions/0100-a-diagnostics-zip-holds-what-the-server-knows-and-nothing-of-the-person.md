@@ -64,7 +64,7 @@ A `README.md` inside explains each file for a person or an AI:
 
 `apps/server/src/diagnostics/scrub.ts` goes over the text of every file before it enters the zip: a log line by line, as each is read, and a JSON file value by value, so its numbers and its shape stay as they are and it always parses. A text is scrubbed whole before anything cuts it, so no secret is cut in two where the scrubber cannot find it. The `README.md` is the server's own text. The scrubber replaces, in this order, so a broader rule never half-replaces a value:
 
-1. **The exact values the server holds as secrets**, read fresh for each zip, as they are and as JSON escapes them. A value that is a JSON document, as a connector's headers or sign-in, counts whole and by each text inside it. These are:
+1. **The exact values the server holds as secrets**, read fresh for each zip, as they are and as JSON escapes them. A record whose fields are a JSON document, as a connector's sign-in or headers, gives only the values typed as secret (a token, a header's value, a password), never the names and words beside them, which logs use too. These are:
    - the operator's and the connectors' sealed secrets;
    - the webhook secrets and tokens;
    - the push registrations' tokens;

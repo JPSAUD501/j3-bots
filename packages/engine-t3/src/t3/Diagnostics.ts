@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { storedToken } from "./Credential.ts";
 import { engineFolders } from "./PrivateFiles.ts";
+import { CONNECTION_FILE, StoredConnection } from "./Provision.ts";
 
 // What of the engine a diagnostics zip may hold (docs/decisions/0100-…): the
 // values the engine keeps that the zip's scrubber must take out, and the
@@ -187,13 +188,21 @@ export const engineLogNewestFirst = (
     }),
   );
 
+const decodeConnection = Schema.decodeOption(Schema.fromJsonString(StoredConnection));
+
+/** The secret values of the secret store's file `name`, holding `text`. */
+const valuesOf = (name: string, text: string): ReadonlyArray<string> =>
+  name === CONNECTION_FILE
+    ? [text, ...Option.toArray(Option.map(decodeConnection(text), (connection) => connection.key))]
+    : [text];
+
 /**
  * The secret values the engine's data directory at `home` holds, for a
  * diagnostics zip to take out wherever they appear: J3 Bots' token for the
- * engine, and each value in the engine's secret store, the provider
- * connection's key among them, whole (the zip's scrubber also takes each text
- * value of one that is JSON). A store or a value that is there but cannot be
- * read fails: the zip is not made without it.
+ * engine, and each value in the engine's secret store, whole. The provider
+ * connection's file also gives its key alone, since a log could name the key
+ * without the URL beside it; its URL is no secret. A store or a value that is
+ * there but cannot be read fails: the zip is not made without it.
  */
 export const engineSecretValues = Effect.fn("engine.secretValues")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -207,7 +216,7 @@ export const engineSecretValues = Effect.fn("engine.secretValues")(function* (ho
     return fs.stat(file).pipe(
       Effect.flatMap((info) =>
         info.type === "File" && Number(info.size) <= MAX_SECRET_FILE_BYTES
-          ? Effect.map(fs.readFileString(file), (text) => [text.trim()])
+          ? Effect.map(fs.readFileString(file), (text) => valuesOf(name, text.trim()))
           : Effect.succeed([]),
       ),
       // Removed since the folder was read: nothing to take out.

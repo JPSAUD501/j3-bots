@@ -14,6 +14,9 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type * as Migrator from "effect/sql/Migrator";
 import type * as SqlError from "effect/sql/SqlError";
 import { replaceFileDurably } from "../files.ts";
+import { json } from "../persistence/columns.ts";
+import { ConnectorSecret, NamedSecret } from "./ConnectorSecret.ts";
+import { TotpConfig } from "./totp.ts";
 import {
   KEY_BYTES,
   type KdfParams,
@@ -161,10 +164,66 @@ const inspect = Effect.fn("secrets.inspect")(function* (
   return { _tag: "ready", records, key: key.value };
 });
 
+const decodeTotp = Schema.decodeOption(json(TotpConfig));
+const decodeAddress = Schema.decodeOption(json(ConnectorSecret.fields.address));
+const decodeOAuth = Schema.decodeOption(json(ConnectorSecret.fields.oauth));
+const decodeNamed = Schema.decodeOption(json(Schema.Array(NamedSecret)));
+const decodeCommand = Schema.decodeOption(json(ConnectorSecret.fields.command));
+const decodeService = Schema.decodeOption(json(ConnectorSecret.fields.service));
+
 /**
- * Every value the secrets in `folder` hold, opened: each field of each
- * login, single value and connector secret, for a diagnostics zip to take
- * out of everything it holds. None when there are none, or none this
+ * The secrets one sealed field holds, from its text: a login's user name,
+ * password and code generator's key, a single value, and each value a
+ * connector's field types as secret. Not what a field holds beside them, as
+ * a login's sites, a header's name, an OAuth client's scopes or a form's
+ * other values: those are words a log uses, and taking them out would hide
+ * the log, not a secret. A field that does not read as its shape counts
+ * whole.
+ */
+const secretsOfField = (field: string, text: string): ReadonlyArray<Redacted.Redacted<string>> => {
+  const leaves = <A>(
+    decoded: Option.Option<A>,
+    secrets: (value: A) => ReadonlyArray<Redacted.Redacted<string> | null>,
+  ): ReadonlyArray<Redacted.Redacted<string>> =>
+    Option.match(decoded, {
+      onNone: () => [Redacted.make(text)],
+      onSome: (value) => secrets(value).filter((each) => each !== null),
+    });
+  switch (field) {
+    case "username":
+    case "password":
+    case "value":
+      return [Redacted.make(text)];
+    case "totp":
+      return leaves(decodeTotp(text), (totp) => [Redacted.make(totp.secret)]);
+    case "address":
+      return leaves(decodeAddress(text), (address) => [address]);
+    case "oauth":
+      return leaves(decodeOAuth(text), (oauth) => [
+        oauth?.client.clientSecret ?? null,
+        oauth?.tokens?.accessToken ?? null,
+        oauth?.tokens?.refreshToken ?? null,
+      ]);
+    case "headers":
+    case "env":
+    case "formSecrets":
+      return leaves(decodeNamed(text), (named) => named.map((each) => each.value));
+    case "command":
+      return leaves(decodeCommand(text), (command) => command?.args ?? []);
+    case "service":
+      return leaves(decodeService(text), (service) =>
+        service === null ? [] : [service.clientId, service.credential.value],
+      );
+    default:
+      // A login's sites and a form's other values: not secrets.
+      return [];
+  }
+};
+
+/**
+ * Every secret the secrets in `folder` hold, opened: each one each field of
+ * each login, single value and connector secret holds (`secretsOfField`),
+ * for a diagnostics zip to take out of everything it holds. None when there are none, or none this
  * release can open (no key, or a newer release's); a store that is there and
  * fails to read fails, so no zip is made without its values. Read only, with
  * the server running or not: nothing is written.
@@ -180,13 +239,14 @@ export const everyValue = Effect.fn("secrets.everyValue")(function* (folder: str
     yield* sql`SELECT record_id, field, nonce, sealed FROM record_fields`,
   ).pipe(Effect.orDie);
   const values = rows.flatMap((row) =>
-    Option.toArray(
-      Option.map(openField(found.key, row.record_id, row.field, sealedOfText(row)), (plain) => {
+    Option.match(openField(found.key, row.record_id, row.field, sealedOfText(row)), {
+      onNone: () => [],
+      onSome: (plain) => {
         const text = plain.toString("utf8");
         plain.fill(0);
-        return Redacted.make(text);
-      }),
-    ),
+        return secretsOfField(row.field, text);
+      },
+    }),
   );
   found.key.fill(0);
   return values;

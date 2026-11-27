@@ -9,13 +9,9 @@ const QUOTED_SECRET = 'pa"ss\\word';
 const CONNECTOR_TOKEN = "conn-token-value-1234";
 const HOME = "/home/ana.silva";
 const WINDOWS_HOME = "C:\\Users\\ana.silva";
-/** A connector's headers, kept as one JSON document. */
-const CONNECTOR_HEADERS = JSON.stringify({ "X-Api-Key": "plain-header-value" });
 
 const scrub = makeScrubber({
-  secrets: [SECRET, QUOTED_SECRET, CONNECTOR_TOKEN, CONNECTOR_HEADERS, "abc"].map((value) =>
-    Redacted.make(value),
-  ),
+  secrets: [SECRET, QUOTED_SECRET, CONNECTOR_TOKEN, "abc"].map((value) => Redacted.make(value)),
   home: HOME,
   user: "ana.silva",
   hosts: ["studio-desk", "bots.example.org"],
@@ -37,7 +33,6 @@ const FIXTURE = [
   `ipv6 fe80::1c2b:3aff:fe4d:5e6f and 2001:db8::8a2e:370:7334 and loopback ::1`,
   `at 14:05:33 version 0.14.0 room room_0123456789abcdefghjk took 12:30`,
   `short abc stays`,
-  `sent header plain-header-value`,
   `refused a request for bots.example.org`,
 ].join("\n");
 
@@ -87,7 +82,6 @@ describe("makeScrubber", () => {
         `ipv6 [ipv6] and [ipv6] and loopback ::1`,
         `at 14:05:33 version 0.14.0 room room_0123456789abcdefghjk took 12:30`,
         `short abc stays`,
-        `sent header [secret]`,
         `refused a request for [host]`,
       ].join("\n"),
     );
@@ -99,17 +93,16 @@ describe("makeScrubber", () => {
     assert.strictEqual(onWindows(line), '"~\\\\AppData\\\\j3" and ~\\x and ~/AppData');
   });
 
-  it("scrubs a JSON value's texts and leaves its numbers, so it still parses", () => {
+  it("scrubs a JSON value's texts and leaves its keys and numbers, so it still parses", () => {
     const short = makeScrubber({
       secrets: [Redacted.make("3737")],
       home: HOME,
       user: "",
       hosts: [],
     });
-    assert.deepStrictEqual(scrubJson(short, { port: 3737, note: "pin 3737", list: ["3737", 1] }), {
-      port: 3737,
-      note: "pin [secret]",
-      list: ["[secret]", 1],
-    });
+    assert.deepStrictEqual(
+      scrubJson(short, { port: 3737, note: "pin 3737", list: ["3737", 1], "3737": true }),
+      { port: 3737, note: "pin [secret]", list: ["[secret]", 1], "3737": true },
+    );
   });
 });

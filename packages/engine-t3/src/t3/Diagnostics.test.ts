@@ -165,11 +165,12 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
         "plain-value\n",
       );
 
-      // The token alone of the credential: its scopes are words a log uses.
+      // The token alone of the credential, and the connection whole and its key:
+      // the scopes and the URL are words a log uses.
       const values = (yield* engineSecretValues(home)).map(Redacted.value);
       assert.deepStrictEqual(
         values.toSorted(),
-        [connection, "engine-token-value", "plain-value"].toSorted(),
+        [connection, "provider-key-value", "engine-token-value", "plain-value"].toSorted(),
       );
     }),
   );

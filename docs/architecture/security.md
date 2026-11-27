@@ -440,7 +440,7 @@ A diagnostics zip ([decision 0100](../decisions/0100-a-diagnostics-zip-holds-wha
 - **No message, entry body, memory, file or name is read into it.** Failures carry their kind and ids; counts are numbers; the words taught to dictation are a count.
 - **Logs are allow-listed.** The server's log enters only as lines that decode as its own shape, without the annotations that name something of the operator's network, as the name a refused request asked for. The engine's log enters only in J3 Bots' own shape, without the span attributes the engine records.
 - **One scrubber goes over every file.** It takes out:
-  - every value the server holds as a secret, the engine's included, read fresh for each zip, and each text inside one that is a JSON document;
+  - every value the server holds as a secret, the engine's included, read fresh for each zip; of a record kept as a JSON document, only the values typed as secret;
   - anything shaped like a token or a credential;
   - email addresses, IP addresses, the home folder, the user name, the host name and the name in `publicOrigin`.
 

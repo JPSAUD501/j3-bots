@@ -1263,7 +1263,7 @@ Each log is read newest first, file by file, and stops at the first file older t
 
 **One scrubber** (`scrub.ts`) goes over every file's text before it enters the zip: a log line by line, a JSON file value by value (`scrubJson`), so it still parses whatever a secret looks like, and every text whole before it is cut. It replaces:
 
-- the values the server holds as secrets, read fresh for each zip: the vault's, the webhooks', the push registrations', the bridge key, and the engine's, as the adapter lists them; one that is a JSON document also by each text inside it;
+- the values the server holds as secrets, read fresh for each zip: the vault's, the webhooks', the push registrations', the bridge key, and the engine's, as the adapter lists them; of a record kept as a JSON document, such as a connector's sign-in, only the values typed as secret;
 - credentials, and anything shaped like a token;
 - email addresses;
 - the home folder, the OS user name, the host name and the name in `publicOrigin`;

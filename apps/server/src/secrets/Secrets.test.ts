@@ -31,6 +31,7 @@ import { oldVault, onSecretsFile, sealed, secretsFolder } from "../testing/secre
 import { referencesIn } from "./references.ts";
 import { Secrets } from "./Secrets.ts";
 import { KEY_FILE } from "./store.ts";
+import { everyValue } from "./transfer.ts";
 
 const DEVICE = DeviceId.make("device-laptop");
 
@@ -606,5 +607,48 @@ it.effect("tells references of a change only when what one resolves to may have 
     assert.isAbove(updated, shared);
     yield* secrets.remove(idOf(1));
     assert.isAbove(yield* referencesNow, updated);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("gives a diagnostics zip each secret it holds, and none of the words beside them", () =>
+  Effect.gen(function* () {
+    const secrets = yield* Secrets;
+    yield* secrets.add({
+      id: idOf(1),
+      name: name("example"),
+      draft: login("hunter2"),
+      access: everyBot,
+    });
+    yield* secrets.add({
+      id: idOf(2),
+      name: name("weather-api"),
+      draft: value("weather-token-value"),
+      access: everyBot,
+    });
+    yield* secrets.connectorSecrets.put({
+      ...connectorSecret,
+      command: { program: "node", args: [Redacted.make("--key=arg-key-value")] },
+      env: [{ name: "GITHUB_TOKEN", value: Redacted.make("env-value") }],
+      formValues: [{ name: "workspace", value: Redacted.make("not-a-secret") }],
+    });
+
+    const values = (yield* everyValue(yield* secretsFolder)).map(Redacted.value);
+    // The sites, the header's and variable's names, the program, the scopes
+    // and the form's other values are words a log uses: not among them.
+    assert.deepStrictEqual(
+      values.toSorted(),
+      [
+        "ana@example.com",
+        "hunter2",
+        "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+        "weather-token-value",
+        "https://mcp.example/mcp?key=address-key-value",
+        "access-token-value",
+        "refresh-token-value",
+        "header-value",
+        "--key=arg-key-value",
+        "env-value",
+      ].toSorted(),
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
