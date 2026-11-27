@@ -383,9 +383,10 @@ export class Drafts extends Context.Service<
      * after it, and uploads it in resumable pieces (`Files.uploadRecording`),
      * admitted against `MAX_RECORDING_SIZE`. Only a server that carries
      * `screenRecordings` takes one. It shows as `failed` when it breaks a
-     * limit or its upload fails for good. It waits for a send under way to
-     * end. `false` when the draft did not take it, as when the client is
-     * closing: the recording is left as it was.
+     * limit or its upload fails for good. It waits until the draft can take
+     * a file: its drafts read, and no send under way. `false` when the
+     * draft did not take it, as once this window follows another pairing:
+     * the recording is left as it was.
      */
     readonly attachRecording: (
       target: EntryTarget,
@@ -1135,8 +1136,16 @@ export const layer = Layer.effect(
         size: recording.size,
         recording: true,
       };
-      // A draft being sent takes no file; the send ends soon, and then it does.
-      yield* waitFor(state, (drafts) => drafts.get(key)?.sending !== true);
+      // The draft takes no file while its drafts are not read, or could not
+      // be until Retry reads them, nor while it is being sent: it waits for
+      // them, for the pairing it was given under.
+      const pairing = followed.get();
+      while (closed() || state.get().get(key)?.sending === true) {
+        yield* waitFor(unread, (value) => !value);
+        yield* waitFor(switching, (value) => !value);
+        yield* waitFor(state, (drafts) => drafts.get(key)?.sending !== true);
+      }
+      if (followed.get() !== pairing) return false;
       const [problem = null] = admitFiles(heldFiles(state.get().get(key)), [local]);
       yield* change(
         target,
@@ -1146,7 +1155,7 @@ export const layer = Layer.effect(
             : { _tag: "failed", key: fileKey, problem, ...local },
         ]),
       );
-      // Closing, the client takes nothing: the recording is left as it was.
+      // Not taken after all: the recording is left as it was.
       const taken = (state.get().get(key)?.files ?? []).some((file) => file.key === fileKey);
       if (!taken) return false;
       releases.set(fileKey, recording.release);

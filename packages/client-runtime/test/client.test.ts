@@ -4659,6 +4659,40 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   );
 
   it.effect(
+    "takes a recording that stopped while the drafts were unread once Retry reads them",
+    () =>
+      Effect.gen(function* () {
+        let refusing = false;
+        const { device, target, credential } = yield* pairedDevice("Unread recording", {
+          refuseReads: () => refusing,
+        });
+        const key = targetKey(target);
+        yield* Effect.gen(function* () {
+          yield* (yield* Drafts).setText(target, "kept before the failure");
+          yield* whenStored(device.storage, "drafts", key, holds("kept before the failure"));
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+
+        refusing = true;
+        yield* Effect.gen(function* () {
+          const drafts = yield* Drafts;
+          assert.isTrue(drafts.readFailed.get());
+          const released = { count: 0 };
+          const attaching = yield* drafts
+            .attachRecording(target, recordingOf(2000, released).recording)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          assert.strictEqual(drafts.state.get().get(key), undefined);
+
+          refusing = false;
+          assert.isTrue(yield* drafts.retryRead);
+          assert.isTrue(yield* Fiber.join(attaching));
+          const draft = drafts.state.get().get(key);
+          assert.strictEqual(draft?.text, `kept before the failure${FILE_MARK}`);
+          assert.strictEqual(draft?.files.length, 1);
+        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+      }),
+  );
+
+  it.effect(
     "saves a draft again until the device keeps it, and says meanwhile it is not saved",
     () =>
       Effect.gen(function* () {
