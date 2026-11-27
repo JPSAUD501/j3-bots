@@ -705,8 +705,8 @@ export type Destination = typeof Destination.Type;
 /**
  * Something the app asks the page to do, from its menus, its tray or quick
  * access. `focus`: the composer of the open conversation, or the roster.
- * `composer`, `next`, `previous`, `stop` and `closeDetails`: the shell's
- * keyboard shortcuts, by name. `open`: a place the operator chose in the
+ * `composer`, `next`, `previous`, `stop`, `closeDetails` and `settings`:
+ * the shell's keyboard shortcuts, by name. `open`: a place the operator chose in the
  * tray or in quick access, under the pairing whose roster listed it.
  * `record`: the sheet that starts a screen recording, on that conversation
  * or room, asked for from quick access or a bot's offer (`RecordingOpen`).
@@ -718,6 +718,7 @@ export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("previous", {}),
   Schema.TaggedStruct("stop", {}),
   Schema.TaggedStruct("closeDetails", {}),
+  Schema.TaggedStruct("settings", {}),
   Schema.TaggedStruct("open", { target: Destination, pairing: DeviceId }),
   Schema.TaggedStruct("record", { target: EntryTarget, pairing: DeviceId }),
 ]);

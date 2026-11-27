@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { themeChoices, themePalettes } from "@j3-bots/client-runtime/presentation";
+import { themeOffer, themePalettes } from "@j3-bots/client-runtime/presentation";
 import type { ThemeId } from "@j3-bots/contracts";
 import { CheckIcon, PaletteIcon } from "lucide-react";
 import { useI18n } from "../app/context";
@@ -19,15 +19,16 @@ export function ApplyThemeOffer({ themeId }: { readonly themeId: ThemeId }) {
   const { theme: appearance } = usePreferences();
   const themes = useShownThemes();
   if (themes === null) return null;
-  const choice = themeChoices(themes.themes.library).find(({ id }) => id === themeId);
-  if (choice === undefined) {
-    return themes.themes.known ? (
+  const offer = themeOffer(themeId, themes.themes.library, themes.themes.known, themes.shown);
+  if (offer._tag === "waiting") return null;
+  if (offer._tag === "gone") {
+    return (
       <p className="max-w-(--layout-bubble-width) ps-1 text-xs text-muted-foreground">
         {t("message.offer.applyTheme.gone")}
       </p>
-    ) : null;
+    );
   }
-  if (themes.shown?.id === themeId) {
+  if (offer._tag === "in-use") {
     return (
       <p className="flex max-w-(--layout-bubble-width) items-center gap-1.5 ps-1 text-xs text-muted-foreground">
         <CheckIcon aria-hidden className="size-3.5 shrink-0" />
@@ -35,6 +36,7 @@ export function ApplyThemeOffer({ themeId }: { readonly themeId: ThemeId }) {
       </p>
     );
   }
+  const { choice } = offer;
   const palette = themePalettes(choice.definition)[appearance];
   return (
     <Button variant="outline" size="sm" onClick={() => setThemeId(choice.id)}>

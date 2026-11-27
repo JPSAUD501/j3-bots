@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { themeChoices, themePalettes } from "@j3-bots/client-runtime/presentation";
+import { themeOffer, themePalettes } from "@j3-bots/client-runtime/presentation";
 import { hexColor } from "@j3-bots/design-tokens";
 import type { ThemeId } from "@j3-bots/contracts";
 import { Check, Palette } from "lucide-react-native";
@@ -28,15 +28,16 @@ export function ApplyThemeOffer({
   const appearance = useColorScheme() === "dark" ? "dark" : "light";
   const themes = useShownThemes();
   if (themes === null) return null;
-  const choice = themeChoices(themes.library).find(({ id }) => id === themeId);
-  if (choice === undefined) {
-    return themes.known ? (
+  const offer = themeOffer(themeId, themes.library, themes.known, themes.shown);
+  if (offer._tag === "waiting") return null;
+  if (offer._tag === "gone") {
+    return (
       <Text style={{ maxWidth }} className="ps-1 text-xs text-muted-foreground">
         {t("message.offer.applyTheme.gone")}
       </Text>
-    ) : null;
+    );
   }
-  if (themes.shown?.id === themeId) {
+  if (offer._tag === "in-use") {
     return (
       <View style={{ maxWidth }} className="flex-row items-center gap-1.5 ps-1">
         <Icon icon={Check} size={14} color="accent-muted-foreground" />
@@ -46,6 +47,7 @@ export function ApplyThemeOffer({
       </View>
     );
   }
+  const { choice } = offer;
   const palette = themePalettes(choice.definition)[appearance];
   return (
     <View className="flex-row">

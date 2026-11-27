@@ -24,7 +24,7 @@ export const THEME_GUIDE = [
   "Not roles, and kept in every theme: the bots' own colors, which are who they are, and the colors that say a bot needs your user or is blocked. J3 Bots moves their shade to stay readable on your canvas and apart from your accent.",
   "Contrast: text reaches 4.5:1 on what it sits on, marks and switch tracks 3:1, and every bot's color 3:1 on every canvas. A color that falls short is moved in lightness, and `theme_save` says what moved; a theme that cannot keep the rules is refused with the reason.",
   "",
-  `CSS: \`css\` (at most ${THEME_CSS_MAX_LENGTH} characters) is applied after the app's own styles, on the web and in the desktop app only; the Android app ignores it. Use \`.dark\` or \`:root:not(.dark)\` for one appearance, and !important where the app's rule is more specific. It loads no file and moves nothing on its own: no @import, image-set() or src(), url() only with #id (gradients make patterns), no @keyframes or animation, and no backslash.`,
+  `CSS: \`css\` (at most ${THEME_CSS_MAX_LENGTH} characters) is applied after the app's own styles, on the web and in the desktop app only; the Android app ignores it. Use \`.dark\` or \`:root:not(.dark)\` for one appearance, and !important where the app's rule is more specific. It loads no file and moves nothing on its own: no @import, image-set() or src(), url() only with #id (gradients make patterns), no @keyframes or animation, and no backslash. Settings always shows without it, so your user can always pick another theme.`,
   "Stable selectors (other class names change between releases):",
   ...THEME_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
   "",

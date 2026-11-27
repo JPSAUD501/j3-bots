@@ -2176,6 +2176,7 @@ export const en = {
   "desktop.menu.previous": "Previous bot or room",
   "desktop.menu.stop": "Stop",
   "desktop.menu.closeDetails": "Close details",
+  "desktop.menu.settings": "Settings",
   "desktop.menu.view": "View",
   "desktop.menu.reload": "Reload",
   "desktop.menu.devTools": "Developer tools",

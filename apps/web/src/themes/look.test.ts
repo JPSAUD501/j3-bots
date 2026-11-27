@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment happy-dom
 import { themeChoices } from "@j3-bots/client-runtime/presentation";
 import { BotId, ThemeId, type ThemeLibrary } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
-import { describe, expect, it } from "vite-plus/test";
-import { lookOf, THEME_ROOT } from "./look";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+import { drawLook, holdOwnCss, lookOf, THEME_ROOT } from "./look";
 
 const own = `[data-slot="bubble"] { border-radius: 4px; }`;
 
@@ -30,9 +31,10 @@ describe("the look a page draws for a theme", () => {
   it("is its colors over both appearances, and its own CSS only where CSS is allowed", () => {
     const withCss = lookOf(choice("square"), true);
     const colorsOnly = lookOf(choice("square"), false);
-    expect(withCss?.css).toContain(`${THEME_ROOT}.dark {`);
-    expect(withCss?.css).toContain(own);
-    expect(colorsOnly?.css).not.toContain(own);
+    expect(withCss?.colors).toContain(`${THEME_ROOT}.dark {`);
+    expect(withCss?.css).toBe(own);
+    expect(colorsOnly?.colors).toBe(withCss?.colors);
+    expect(colorsOnly?.css).toBe("");
     // The browser's chrome and the desktop app's window fill with it before the page paints.
     expect(withCss?.window.dark.background).toBe("#101418");
   });
@@ -40,5 +42,33 @@ describe("the look a page draws for a theme", () => {
   it("is nothing for the stock theme, which the app's own styles draw", () => {
     expect(lookOf(choice("palco"), true)).toBeNull();
     expect(lookOf(choice("grafite"), true)).not.toBeNull();
+  });
+});
+
+describe("Settings, while it is open", () => {
+  /** The stylesheets the page applies: a sheet whose media is `not all` applies nowhere. */
+  const applied = () =>
+    [...document.head.querySelectorAll("style")]
+      .filter((style) => style.media !== "not all")
+      .map((style) => style.textContent);
+
+  afterEach(() => {
+    holdOwnCss(false);
+    drawLook(null);
+  });
+
+  it("shows in the theme's colors without its own CSS, which comes back when it closes", () => {
+    const look = lookOf(choice("square"), true);
+    drawLook(look);
+    expect(applied()).toEqual([look?.colors, own]);
+
+    holdOwnCss(true);
+    expect(applied()).toEqual([look?.colors]);
+    // A theme that changes while Settings is open stays held off.
+    drawLook(look === null ? null : { ...look, css: `${own} * { color: red; }` });
+    expect(applied()).toEqual([look?.colors]);
+
+    holdOwnCss(false);
+    expect(applied()).toEqual([look?.colors, `${own} * { color: red; }`]);
   });
 });

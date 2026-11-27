@@ -493,6 +493,8 @@ export {
   shownTheme,
   type ThemeChoice,
   themeChoices,
+  type ThemeOffer,
+  themeOffer,
   type ThemeOrigin,
   themePalettes,
 } from "./themes.ts";

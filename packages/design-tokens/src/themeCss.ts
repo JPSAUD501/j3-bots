@@ -30,7 +30,6 @@ export const THEME_CSS_HOOKS = [
   { selector: '[data-slot="bubble"]', styles: "a message's bubble" },
   { selector: '[data-slot="composer"]', styles: "the box where the person writes" },
   { selector: '[data-slot="details"]', styles: "a bot's or room's details" },
-  { selector: '[data-slot="settings"]', styles: "the settings window" },
   { selector: '[role="dialog"]', styles: "a dialog" },
   { selector: '[data-slot="menu-popup"]', styles: "a menu" },
   { selector: '[data-slot="button"]', styles: "a button" },

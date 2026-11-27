@@ -2213,6 +2213,7 @@ const sentences = {
   "desktop.menu.previous": "Bot ou sala anterior",
   "desktop.menu.stop": "Parar",
   "desktop.menu.closeDetails": "Fechar detalhes",
+  "desktop.menu.settings": "Configurações",
   "desktop.menu.view": "Exibir",
   "desktop.menu.reload": "Recarregar",
   "desktop.menu.devTools": "Ferramentas de desenvolvedor",

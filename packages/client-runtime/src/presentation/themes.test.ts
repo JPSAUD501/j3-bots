@@ -3,7 +3,7 @@ import { BotId, type SavedTheme, ThemeId, type ThemeLibrary } from "@j3-bots/con
 import { stockPalette } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { shownTheme, themePalettes } from "./themes.ts";
+import { shownTheme, themeOffer, themePalettes } from "./themes.ts";
 
 const dusk: SavedTheme = {
   id: ThemeId.make("dusk"),
@@ -32,6 +32,27 @@ describe("the theme a device shows", () => {
   it("is the stock theme when nothing else is known, and waits for a library on its way", () => {
     expect(shownTheme(null, null, true)?.id).toBe("palco");
     expect(shownTheme("dusk", null, false)).toBeNull();
+  });
+});
+
+describe("a bot's offer of a theme", () => {
+  const offered = ThemeId.make("dusk");
+  const shown = (id: string) => shownTheme(id, library("palco"), true);
+
+  it("offers to apply a theme the device does not show", () => {
+    const offer = themeOffer(offered, library("palco"), true, shown("palco"));
+    expect(offer._tag === "apply" && offer.choice.id).toBe("dusk");
+  });
+
+  it("says it is in use once the device shows it, there and nowhere else", () => {
+    expect(themeOffer(offered, library("palco"), true, shown("dusk"))._tag).toBe("in-use");
+    expect(themeOffer(offered, library("palco"), true, shown("oceano"))._tag).toBe("apply");
+  });
+
+  it("says a theme deleted since is gone, and waits while the library is on its way", () => {
+    const empty: ThemeLibrary = { themes: [], defaultTheme: ThemeId.make("palco") };
+    expect(themeOffer(offered, empty, true, shown("palco"))._tag).toBe("gone");
+    expect(themeOffer(offered, null, false, null)._tag).toBe("waiting");
   });
 });
 

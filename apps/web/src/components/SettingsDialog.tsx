@@ -75,6 +75,8 @@ import type {
   ShellData,
   ShellIntents,
 } from "../shell/data";
+import { shellShortcuts } from "../shell/shortcuts";
+import { holdOwnCss } from "../themes/look";
 import { cn } from "../lib/cn";
 import { systemTimeZone } from "../lib/timeZone";
 import { useTabletUp } from "../lib/useTabletUp";
@@ -237,10 +239,28 @@ const pagesFor = (
     .filter((group) => group.length > 0);
 
 /**
+ * Opens Settings at the list of its pages, reading the settings and devices
+ * again, for what another device changed.
+ */
+export function openSettings(
+  intents: Pick<
+    ShellIntents,
+    "showSettingsPage" | "refreshSettings" | "refreshDevices" | "serverUpdate" | "setSettingsOpen"
+  >,
+) {
+  intents.showSettingsPage(null);
+  intents.refreshSettings();
+  intents.refreshDevices();
+  intents.serverUpdate?.refresh();
+  intents.setSettingsOpen(true);
+}
+
+/**
  * The roster's footer: the way back to the update prompt, What's new, and
  * Settings, which opens everything that is not about one bot at the list of
- * its pages. Opening Settings reads the settings and devices again, for what
- * another device changed.
+ * its pages. Settings shows without a theme's own CSS, so no theme can hide
+ * or disguise the way to another one; ⌘, or Ctrl+, opens it besides this
+ * button, which a theme's CSS could hide.
  */
 export function SettingsButton({ data, intents }: SettingsButtonProps) {
   const { t } = useI18n();
@@ -248,6 +268,12 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
   const profile = useProfileEdits(data.settingsSaves.profile);
   const updateEntry = intents.updatePrompt?.entry ?? null;
   const wide = useTabletUp();
+  const { settings: shortcut } = shellShortcuts();
+  const open = data.settingsOpen;
+  useEffect(() => {
+    holdOwnCss(open);
+    return () => holdOwnCss(false);
+  }, [open]);
   return (
     <div className="flex flex-col border-t border-border p-2">
       {updateEntry !== null && intents.updatePrompt !== undefined && (
@@ -255,22 +281,20 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
       )}
       <WhatsNewButton whatsNew={intents.whatsNew} />
       <Dialog.Root
-        open={data.settingsOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            intents.showSettingsPage(null);
-            intents.refreshSettings();
-            intents.refreshDevices();
-            intents.serverUpdate?.refresh();
-          } else {
-            profile.discard();
-            // The operator has seen how the update this device followed ended.
-            intents.serverUpdate?.dismissEnded();
+        open={open}
+        onOpenChange={(opening) => {
+          if (opening) {
+            openSettings(intents);
+            return;
           }
-          intents.setSettingsOpen(open);
+          profile.discard();
+          // The operator has seen how the update this device followed ended.
+          intents.serverUpdate?.dismissEnded();
+          intents.setSettingsOpen(false);
         }}
       >
         <Dialog.Trigger
+          aria-keyshortcuts={shortcut.aria}
           render={<Button variant="ghost-muted" className="w-full justify-start px-2" />}
         >
           <SettingsIcon aria-hidden />
@@ -279,7 +303,6 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
         <Dialog.Portal>
           <Dialog.Backdrop className={dialogBackdrop} />
           <Dialog.Popup
-            data-slot="settings"
             aria-labelledby={titleId}
             className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-3xl`}
           >

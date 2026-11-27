@@ -121,7 +121,7 @@ export function setThemeId(themeId: ThemeId | null) {
 
 /** Draws the theme this browser shows, and keeps it for the next page. */
 export function showLook(next: ThemeLook | null) {
-  if (next?.css === look?.css && next?.id === look?.id) return;
+  if (next?.id === look?.id && next?.colors === look?.colors && next?.css === look?.css) return;
   look = next;
   drawLook(next);
   keepLook(next);

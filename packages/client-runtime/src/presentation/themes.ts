@@ -76,6 +76,30 @@ export const shownTheme = (
   return libraryKnown ? STOCK_CHOICE : null;
 };
 
+/**
+ * What a bot's offer of a theme shows on a device (decision 0104): nothing
+ * while the library that may hold it is on its way, that it was deleted,
+ * that it is the theme the device shows, or Apply theme.
+ */
+export type ThemeOffer =
+  | { readonly _tag: "waiting" }
+  | { readonly _tag: "gone" }
+  | { readonly _tag: "in-use" }
+  | { readonly _tag: "apply"; readonly choice: ThemeChoice };
+
+/** What the offer of `themeId` shows, where `shown` is the theme the device shows now. */
+export const themeOffer = (
+  themeId: ThemeId,
+  library: ThemeLibrary | null,
+  libraryKnown: boolean,
+  shown: ThemeChoice | null,
+): ThemeOffer => {
+  const choice = themeChoices(library).find(({ id }) => id === themeId);
+  if (choice === undefined) return { _tag: libraryKnown ? "gone" : "waiting" };
+  if (shown?.id === themeId) return { _tag: "in-use" };
+  return { _tag: "apply", choice };
+};
+
 /** The roles this release knows, of those a theme gives: a later release's are passed over. */
 const known = (colors: ThemeColors | undefined): ThemeColors | undefined =>
   colors === undefined

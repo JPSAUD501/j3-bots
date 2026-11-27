@@ -20,11 +20,21 @@
         // The theme shown last, as src/themes/look.ts keeps it.
         try {
           const look = JSON.parse(localStorage.getItem("j3:theme-look") ?? "null");
-          if (typeof look?.css === "string" && typeof look.id === "string") {
-            const style = document.createElement("style");
-            style.id = "j3-theme";
-            style.textContent = look.css;
-            document.head.append(style);
+          if (
+            typeof look?.colors === "string" &&
+            typeof look.css === "string" &&
+            typeof look.id === "string"
+          ) {
+            const colors = document.createElement("style");
+            colors.id = "j3-theme";
+            colors.textContent = look.colors;
+            document.head.append(colors);
+            if (look.css !== "") {
+              const own = document.createElement("style");
+              own.id = "j3-theme-css";
+              own.textContent = look.css;
+              document.head.append(own);
+            }
             document.documentElement.dataset.theme = look.id;
           }
         } catch {}
