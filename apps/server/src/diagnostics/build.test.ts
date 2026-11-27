@@ -107,6 +107,9 @@ const Counts = Schema.Struct({
 });
 const decodeCounts = Schema.decodeSync(Schema.fromJsonString(Counts));
 
+const Settings = Schema.Struct({ voice: Schema.Struct({ words: Schema.Number }) });
+const decodeSettings = Schema.decodeSync(Schema.fromJsonString(Settings));
+
 it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
   it.effect("holds the files its README names, and nothing of the person", () =>
     Effect.gen(function* () {
@@ -150,6 +153,8 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       yield* entry("entry_00000000000000000003", 2, "notice", {
         notice: { _tag: "operator-named", botId: "bot_00000000000000000001", name: "Marina" },
       });
+      // A word taught to dictation, which may be someone's name.
+      yield* sql`UPDATE settings SET voice_words_json = '["Quillon"]' WHERE id = 1`;
       yield* writeServerLog([
         logLine("2026-11-10T09:00:00.000Z", "Too old to keep"),
         logLine("2026-11-26T09:00:00.000Z", `Signed a webhook with ${WEBHOOK_SECRET}`),
@@ -160,7 +165,7 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       const zip = yield* unzipped();
       assert.deepStrictEqual(zip.names, [...DIAGNOSTICS_FILES]);
       const everything = zip.names.map(zip.text).join("\n");
-      for (const kept of [BOT_NAME, "Marina", "Lisbon", WEBHOOK_SECRET, MEMORY_SECRET]) {
+      for (const kept of [BOT_NAME, "Marina", "Lisbon", "Quillon", WEBHOOK_SECRET, MEMORY_SECRET]) {
         assert.notInclude(everything, kept);
       }
 
@@ -199,6 +204,7 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
         bots: 1,
         routines: { all: 1, enabled: 1 },
       });
+      assert.strictEqual(decodeSettings(zip.text("settings.json")).voice.words, 1);
     }),
   );
 

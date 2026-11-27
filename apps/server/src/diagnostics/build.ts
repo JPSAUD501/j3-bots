@@ -121,7 +121,8 @@ rest appear by their ids alone (\`bot_…\`, \`room_…\`).
 - \`counts.json\`: how many bots, rooms, routines, connectors, conversations
   and paired devices there are. Numbers only.
 - \`settings.json\`: the server's settings. A setting that could hold a secret
-  or a path reads \`set\` or \`not set\`.
+  or a path reads \`set\` or \`not set\`, and the words taught to dictation
+  only how many there are.
 - \`telemetry.json\`: what the server sends to J3 Bots' developers on its own.
 
 A file the server could not read holds \`{ "unreadable": … }\` and says why.
@@ -261,6 +262,12 @@ const Settings = Schema.Struct({
   auto_update_harnesses: Flag,
   suggest_replies: Flag,
   operator_name_set: Flag,
+  voice_place: Schema.String,
+  voice_language: Schema.String,
+  voice_words: Count,
+  voice_remove_fillers: Flag,
+  voice_clean_up: Flag,
+  voice_model: Schema.NullOr(Schema.String),
 });
 
 const Failure = Schema.Struct({
@@ -513,7 +520,9 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
       () => sql`
         SELECT time_zone, time_zone_set, hop_limit, fan_out_limit, concurrent_turns,
           notifications_enabled, notification_previews, update_channel,
-          auto_update_harnesses, suggest_replies, operator_name IS NOT NULL AS operator_name_set
+          auto_update_harnesses, suggest_replies, operator_name IS NOT NULL AS operator_name_set,
+          voice_place, voice_language, json_array_length(voice_words_json) AS voice_words,
+          voice_remove_fillers, voice_clean_up, voice_model
         FROM settings WHERE id = 1
       `,
     ).pipe(
@@ -546,6 +555,15 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
                   updateChannel: settings.update_channel,
                   autoUpdateHarnesses: flag(settings.auto_update_harnesses),
                   suggestReplies: flag(settings.suggest_replies),
+                },
+                // The words the operator taught dictation may be names: only how many.
+                voice: {
+                  place: settings.voice_place,
+                  language: settings.voice_language,
+                  words: settings.voice_words,
+                  removeFillers: flag(settings.voice_remove_fillers),
+                  cleanUp: flag(settings.voice_clean_up),
+                  model: settings.voice_model,
                 },
               }),
         }),

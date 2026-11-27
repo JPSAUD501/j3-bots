@@ -131,6 +131,8 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 | Memory limit | That the kernel lets the service's `MemoryHigh` apply. |
 | Command | For an install made by `install.sh`, that the `j3-bots` command runs the release the service runs. |
 
+When `doctor` does not explain what you see, `j3-bots diagnostics` writes a zip to send to whoever helps you, with no messages, no names and no secrets in it ([Diagnostics](operating.md#diagnostics)).
+
 ## The service
 
 `install.sh` runs `j3-bots service install`. It stops at the first step that fails, and a failure before it writes the unit leaves an installed unit as it was:

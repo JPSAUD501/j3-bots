@@ -92,5 +92,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) | Little ones a turn handed off stay until they are home | Accepted |
 | [0096](0096-dictation-goes-through-the-engines-speech-recognition-and-stays-on-the-operators-machines.md) | Dictation goes through the engine's speech recognition, and stays on the operator's machines | Accepted |
 | [0097](0097-whats-new-ships-with-the-apps-and-follows-the-servers-version.md) | What's new ships with the apps, and follows the server's version | Accepted |
+| [0100](0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md) | A diagnostics zip holds what the server knows, and nothing of the person | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

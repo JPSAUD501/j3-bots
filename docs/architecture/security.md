@@ -431,6 +431,21 @@ The bots add, change and remove MCP servers and skills ([decision 0049](../decis
 - Conversations, rooms and memory are the operator's data, stored on their disk, in the clear.
 - Server logs record wakes, dispatches and outcomes with identifiers, not message text, and, for each provider the engine cannot run, the engine's account of why, with J3 Bots' secrets taken out ([The harnesses](#the-harnesses)).
 - No telemetry leaves the machine by default.
+- The server keeps a copy of its log in its home (`logs/`), private to the server's user like the rest of it, at most 20 MiB.
+
+### The diagnostics zip
+
+A diagnostics zip ([decision 0100](../decisions/0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md), [Server: diagnostics](server.md#diagnostics)) is made to leave the machine: the operator sends it to someone they choose. So what goes in it is chosen for that.
+
+- **No message, entry body, memory, file or name is read into it.** Failures carry their kind and ids; counts are numbers; the words taught to dictation are a count.
+- **Logs are allow-listed.** The server's log enters only as lines that decode as its own shape. The engine's log enters only in J3 Bots' own shape, without the span attributes the engine records.
+- **One scrubber goes over every file.** It takes out:
+  - every value the server holds as a secret, the engine's included, read fresh for each zip;
+  - anything shaped like a token or a credential;
+  - email addresses, IP addresses, the home folder, the user name and the host name.
+
+  A query for those values that fails stops the zip rather than leaving secrets unscrubbed. A secret of a shape the scrubber does not know, somewhere a log line quotes it, is the gap the allow-lists narrow.
+- **Who can ask.** Any paired device may ask the route, as for every route. Asking needs a JSON body, so the route answers anything else `415` before reading it, and a page elsewhere cannot send one without a preflight the server never grants. `j3-bots diagnostics` runs as the server's user and writes its file with mode 0600, never over one that is already there.
 
 ## Known gaps
 
