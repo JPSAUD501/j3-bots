@@ -1511,8 +1511,6 @@ const sentences = {
     "Uma rotina deste modelo tem um horário que o J3 Bots não consegue seguir, então nada foi criado.",
   "template.create.noModel": "Conecte um provedor antes de criar um bot.",
   "template.create.offline": "Criar um bot exige conexão com o servidor.",
-  "template.pick": "Escolher um arquivo de modelo",
-  "template.drop": "Solte para criar um bot a partir deste modelo",
   "template.read.tooLarge": "Este arquivo é grande demais para ser um modelo.",
   "template.read.newer":
     "Este modelo foi feito por um J3 Bots mais novo. Atualize este para criar um bot a partir dele.",
@@ -2217,8 +2215,6 @@ const sentences = {
   "connector.server.resources.other": "{count} recursos",
   "connector.server.prompts.one": "{count} prompt",
   "connector.server.prompts.other": "{count} prompts",
-  "connector.connect": "Conectar",
-  "connector.setUp": "Configurar",
   "connector.unsupported": "O J3 Bots ainda não consegue conectar este.",
   "connector.onComputer":
     "Este roda um comando no seu servidor. Altere ou remova pelo J3 Bots no seu computador.",
@@ -2243,7 +2239,6 @@ const sentences = {
   "connector.editCommand.saved":
     "Salvo. Ele inicia de novo com o novo comando, e uma ferramenta nova ou alterada espera por você aqui.",
   "connector.editCommand.savedValues": "Salvo. Ele inicia de novo com os novos valores.",
-  "connector.status": "Status",
   "connector.disconnect": "Desconectar",
   "connector.disconnect.title": "Desconectar {name}?",
   "connector.disconnect.body": "Os bots perdem o acesso a {name}. Sua conta lá não muda.",
@@ -2252,7 +2247,6 @@ const sentences = {
   "connector.disconnect.cancel": "Manter",
   "connector.disconnect.pending": "Desconectando…",
   "connector.disconnect.failed": "A desconexão não terminou. Tente de novo.",
-  "connector.loadFailed": "Este conector não carregou.",
   "connector.gone": "Este conector não está mais aqui.",
 
   "connect.choose": "Escolha uma opção",
@@ -2406,7 +2400,6 @@ const sentences = {
   "connectorCard.signIn": "Entrar",
   "connectorCard.signedIn": "Você entrou.",
   "connectorCard.removed": "{name} foi desconectado.",
-  "connectorCard.failed": "Isso não foi. Tente de novo.",
 
   "details.connectors": "Conectores",
   "details.noConnectors":

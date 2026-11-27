@@ -1489,8 +1489,6 @@ export const en = {
     "A routine in this template has a schedule J3 Bots can’t run, so nothing was created.",
   "template.create.noModel": "Connect a provider before creating a bot.",
   "template.create.offline": "Creating a bot takes a connection to the server.",
-  "template.pick": "Choose a template file",
-  "template.drop": "Drop to create a bot from this template",
   "template.read.tooLarge": "This file is too large to be a template.",
   "template.read.newer":
     "This template was made by a newer J3 Bots. Update this one to create a bot from it.",
@@ -2180,8 +2178,6 @@ export const en = {
   "connector.server.resources.other": "{count} resources",
   "connector.server.prompts.one": "{count} prompt",
   "connector.server.prompts.other": "{count} prompts",
-  "connector.connect": "Connect",
-  "connector.setUp": "Set up",
   "connector.unsupported": "J3 Bots can't connect this one yet.",
   "connector.onComputer":
     "This one runs a command on your server. Change it or remove it from J3 Bots on your computer.",
@@ -2206,7 +2202,6 @@ export const en = {
   "connector.editCommand.saved":
     "Saved. It starts again with the new command, and a new or changed tool waits for you here.",
   "connector.editCommand.savedValues": "Saved. It starts again with the new values.",
-  "connector.status": "Status",
   "connector.disconnect": "Disconnect",
   "connector.disconnect.title": "Disconnect {name}?",
   "connector.disconnect.body": "Bots lose access to {name}. Your account there isn't changed.",
@@ -2215,7 +2210,6 @@ export const en = {
   "connector.disconnect.cancel": "Keep it",
   "connector.disconnect.pending": "Disconnecting…",
   "connector.disconnect.failed": "Disconnecting didn't finish. Try again.",
-  "connector.loadFailed": "This connector didn't load.",
   "connector.gone": "This connector isn't here any more.",
 
   "connect.choose": "Choose one",
@@ -2367,7 +2361,6 @@ export const en = {
   "connectorCard.signIn": "Sign in",
   "connectorCard.signedIn": "Signed in.",
   "connectorCard.removed": "{name} was disconnected.",
-  "connectorCard.failed": "That didn't go through. Try again.",
 
   "details.connectors": "Connectors",
   "details.noConnectors": "{name} can't use any connectors yet. Ask {name} to add one.",

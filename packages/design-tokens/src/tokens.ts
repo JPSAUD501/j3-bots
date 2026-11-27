@@ -195,8 +195,6 @@ export const typeScale = {
 
 export type TypeInput = keyof TypeStep;
 
-export const fontWeights = { regular: 400, medium: 500, semibold: 600, bold: 700 } as const;
-
 /** The display face is set tight: its letter spacing, in em. */
 export const displayTracking = -0.035;
 
