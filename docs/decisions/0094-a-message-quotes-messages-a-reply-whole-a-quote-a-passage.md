@@ -1,6 +1,6 @@
 # 0094: A message quotes messages: a reply whole, a quote a passage
 
-**Status:** Accepted.
+**Status:** Accepted. Amended by [0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md): how quotes look in the composer and in a message, and a comment on a passage.
 
 ## Context
 
@@ -14,7 +14,7 @@ T3 Code's own client has a Cite action on a selection of an assistant's text, wh
 
 - **One idea, two gestures.** Reply quotes a whole message, from the message's actions beside React, and on Android a swipe to the right as well. Quote takes the passage selected in one message: a small button by the selection on web, desktop and quick access; on Android, Quote part in the message's menu opens its text in a sheet to select from. A selection menu item of the system's own would need native work on Android for a gesture the sheet already gives.
 - **What can be quoted.** Any message of the conversation or room, by the operator, the bot, another bot in a room, a routine's result, never J3 Bots' own. A message in another conversation or room cannot be: the server finds none there.
-- **What the server takes.** `message.send` carries up to three quotes, a bound of the contract, each the id of a message and, for a passage, its text (up to 2,000 characters, trimmed). None twice, at most one whole, each a message of the same conversation or room, each passage in its message's text exactly as written. Anything else refuses the whole message with `Invalid("quotes")`, and nothing is written.
+- **What the server takes.** `message.send` carries up to three quotes, a bound of the contract, each the id of a message and, for a passage, its text (up to 2,000 characters, trimmed) and optionally the operator's comment on it ([decision 0106](0106-quotes-sit-in-the-field-and-nothing-sits-under-it.md)). None twice, at most one whole, each a message of the same conversation or room, each passage in its message's text exactly as written. Anything else refuses the whole message with `Invalid("quotes")`, and nothing is written.
 - **What the message keeps.** Each quote as it stood: whose message, when it was said, and the passage or the start of the message (up to 300 characters, and whether it went on). A quote reads the same if its source is deleted or changes, and a client draws it without fetching anything. Tapping one reads the conversation back until the source is there, scrolls to it and marks it briefly; a source that is gone says so where the quote is.
 - **What the bot reads.** After the message, each quote in a data block of its own (who said it, `you` for the bot itself, when, and whether it is a whole message or a passage), and one line: a whole message is one it replies to, a passage the words it points at. A bot reads only messages of a conversation or room it is in, so a quote shows it nothing it could not read already.
 - **A reply in a room addresses.** A message that mentions nobody and replies to a member's message wakes that member alone, as a mention of it would; mentions win when there are some, and `@everyone` stays everyone. A passage addresses nobody: the message wakes whom it would without it. The operator's messages and the bots' follow the same rule.

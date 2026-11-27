@@ -155,14 +155,32 @@ export const QuotePassage = Schema.String.check(
   ),
 );
 
+/** The most characters (UTF-16 code units) of the operator's comment on a passage they quote. */
+export const MAX_QUOTE_COMMENT_LENGTH = 2_000;
+
+/**
+ * What the operator says about a passage they quote (decision 0106): their
+ * own words, trimmed, never empty.
+ */
+export const QuoteComment = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_QUOTE_COMMENT_LENGTH),
+  Schema.makeFilter((comment: string) =>
+    comment !== comment.trim() || comment.trim() === "" ? "Trimmed, and not empty." : true,
+  ),
+);
+
 /**
  * A message the operator's message quotes, as they send it: a message of the
  * same conversation or room, whole (a reply) or, with `passage`, a part of
- * its text.
+ * its text, which can carry their `comment` on it. Offered only once the
+ * roster snapshot carries `quoteComments`: a server that predates comments
+ * ignores one.
  */
 export const QuoteRequest = Schema.Struct({
   entryId: EntryId,
   passage: Schema.optionalKey(QuotePassage),
+  comment: Schema.optionalKey(QuoteComment),
 });
 export type QuoteRequest = typeof QuoteRequest.Type;
 
@@ -205,8 +223,9 @@ export const quoteOpening = (text: string): Extract<Quoted, { readonly _tag: "me
 
 /**
  * A message a message quotes (decision 0094): which, who said it and when,
- * and what of it is quoted. Its message's id outlives it, as an author's does:
- * a client that cannot find it says so where the quote is.
+ * and what of it is quoted, with the operator's `comment` on a passage
+ * (decision 0106). Its message's id outlives it, as an author's does: a
+ * client that cannot find it says so where the quote is.
  */
 export const MessageQuote = Schema.Struct({
   entryId: EntryId,
@@ -214,6 +233,8 @@ export const MessageQuote = Schema.Struct({
   author: Schema.Union([Schema.TaggedStruct("operator", {}), BotAuthor]),
   saidAt: Schema.DateTimeUtc,
   quoted: Quoted,
+  /** Only on a passage, and only from a server that takes comments; an older client shows the quote alone. */
+  comment: Schema.optionalKey(QuoteComment),
 });
 export type MessageQuote = typeof MessageQuote.Type;
 
@@ -550,7 +571,7 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   exact: Schema.Boolean,
   /**
-   * What "Allow for session" would allow from then on, when the card offers
+   * What "Don’t ask again" would allow from then on, when the card offers
    * it: only when `exact`, and the provider takes such a grant for this
    * approval and its scope is known. Null otherwise, and always for a summary,
    * since a grant allows again what nobody has seen exactly.

@@ -81,7 +81,7 @@ import {
 } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { PlusIcon, SettingsIcon } from "lucide-react";
-import { WhatsNewPage } from "../components/WhatsNew";
+import { WhatsNewPage, WhatsNewSection } from "../components/WhatsNew";
 import {
   type CSSProperties,
   useEffect,
@@ -123,6 +123,7 @@ import {
   type ThemeChoice,
   themeChoices,
   themePalettes,
+  withComment,
   withQuote,
 } from "@j3-bots/client-runtime/presentation";
 import { themeName } from "@j3-bots/client-runtime/wording";
@@ -194,7 +195,7 @@ import { Onboarding } from "../onboarding/Onboarding";
 import { EventLine } from "../components/EventLine";
 import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
-import { OpenQuote } from "../components/Quotes";
+import { OpenQuote, QuoteCommentEditor } from "../components/Quotes";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { LaunchUpdate } from "../components/LaunchUpdate";
@@ -1937,17 +1938,28 @@ function QuotesSection() {
       <Labeled label="Try it: hover a message for Reply, or select part of one's text for Quote. The composer gathers what you quote, and a sent message's card goes to its source and lights it">
         <QuotingDemo />
       </Labeled>
-      <Labeled label="Composer replying: the reply as a strip over the field, the start of the message on one line, and Cancel reply">
+      <Labeled label="Composer replying: the reply as a chip inside the field, above the text: the reply arrow, Scout's face, the start of the message on one line, and Cancel reply">
         <div className="max-w-(--layout-text-column)">
           <ComposerDemo initial="" recipient={scoutName} quotes={[quotes.replyToScout]} />
         </div>
       </Labeled>
-      <Labeled label="Composer with two passages quoted, each a chip with its author and the passage on two lines at most, and a way out">
+      <Labeled label="Composer with two passages quoted, each a chip inside the field with its quote mark, its author's face, the passage on one line, the pencil for a comment, and a way out; the first commented">
         <div className="max-w-(--layout-text-column)">
-          <ComposerDemo initial="Let’s do this" recipient={scoutName} quotes={quotes.passages} />
+          <ComposerDemo initial="Let’s do this" recipient={scoutName} quotes={quotes.commented} />
         </div>
       </Labeled>
-      <Labeled label="Sent: a reply to Scout's message, and a message quoting two passages, Scout's and Wren's, each card above it with its author's face and name">
+      <Labeled label="A comment being written, over a chip's pencil or by a selection's Quote: optional, Enter saves">
+        <div className="w-fit rounded-lg border border-border bg-surface shadow-overlay">
+          <QuoteCommentEditor
+            passage="test ride on Saturday at 10"
+            initial="Can we move this to 11?"
+            saveLabel="Save"
+            onSave={nothing}
+            onCancel={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="Sent: a reply to Scout's message, a message quoting two passages, and a passage with the operator's comment under it; each quote a quiet block at the top of its bubble, with no colored bar">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           <MessageBubble
             message={quotes.reply}
@@ -1957,6 +1969,12 @@ function QuotesSection() {
           />
           <MessageBubble
             message={quotes.twoPassages}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            message={quotes.commentedSent}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
@@ -2036,6 +2054,7 @@ function QuotingDemo() {
       setDrafted(next);
       focusAtEnd(field.current);
     },
+    comments: true,
   };
   return (
     <div className="flex max-w-(--layout-text-column) flex-col gap-3">
@@ -2059,6 +2078,12 @@ function QuotingDemo() {
         onValueChange={setValue}
         quotes={drafted}
         onUnquote={(index) => setDrafted((current) => current.toSpliced(index, 1))}
+        onCommentQuote={(index, comment) =>
+          setDrafted((current) => {
+            const quote = current[index];
+            return quote === undefined ? current : current.with(index, withComment(quote, comment));
+          })
+        }
         onSend={() => {
           setValue("");
           setDrafted([]);
@@ -2989,6 +3014,12 @@ function ComposerDemo({
         files={files}
         quotes={quotes}
         onUnquote={(index) => setQuotes((current) => current.toSpliced(index, 1))}
+        onCommentQuote={(index, comment) =>
+          setQuotes((current) => {
+            const quote = current[index];
+            return quote === undefined ? current : current.with(index, withComment(quote, comment));
+          })
+        }
         sending={sending}
         notSaved={notSaved}
         onAttachFiles={nothing}
@@ -3167,6 +3198,7 @@ function ComposerSection() {
 }
 
 const READY_BROWSER = { _tag: "ready" } as const;
+const BROWSER_NEEDS_SETUP = { _tag: "setup-required", needs: ["sandbox"] } as const;
 
 const detailsIntents = {
   setRoutineEnabled: nothing,
@@ -3466,9 +3498,9 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* The browser on. */}
+          {/* The browser off: the operator turned it off. */}
           <BotDetails
-            bot={{ ...atlas, browser: true }}
+            bot={{ ...atlas, browser: false }}
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
@@ -3476,6 +3508,22 @@ function DetailsSection() {
             teammates={[]}
             modelName="Claude Code · Claude Sonnet 5.5"
             browserHost={READY_BROWSER}
+            intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
+            onClose={nothing}
+          />
+        </Pane>
+        <Pane>
+          {/* The browser on, and the server's machine still needs setting up for it. */}
+          <BotDetails
+            bot={atlas}
+            routines={team.routines[atlas.id] ?? []}
+            memory={team.memory[atlas.id] ?? []}
+            files={team.files[atlas.id] ?? []}
+            connectors={sampleConnectors}
+            teammates={[]}
+            modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={BROWSER_NEEDS_SETUP}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -6370,6 +6418,19 @@ function UpdatesGallerySection() {
             data={source.data}
             intents={{ ...source.intents, whatsNew: { view: whatsNewViews.marked, open: nothing } }}
           />
+        </div>
+      </Labeled>
+      <Labeled label="The roster's footer once What's new was opened: no row until the next release">
+        <div className="w-72 rounded-md border border-border">
+          <SettingsButton
+            data={source.data}
+            intents={{ ...source.intents, whatsNew: { view: whatsNewViews.opened, open: nothing } }}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="Settings → About and updates: What's new is always there">
+        <div className="max-w-xl">
+          <WhatsNewSection whatsNew={{ view: whatsNewViews.opened, open: nothing }} />
         </div>
       </Labeled>
       <Frame label="What's new, opened" width={576} height={640}>

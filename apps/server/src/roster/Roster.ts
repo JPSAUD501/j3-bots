@@ -34,6 +34,8 @@ export type RosterFrame =
       readonly conversationMentions: true;
       /** `message.send` takes `quotes`, so clients offer Reply and Quote. */
       readonly quotes: true;
+      /** `message.send` takes a comment on a quoted passage, so clients offer one. */
+      readonly quoteComments: true;
       /** The server takes screen recordings (`HTTP_PATHS.recordingUploads`), so clients offer one. */
       readonly screenRecordings: true;
       /** The voice socket takes `start`'s `transcript`, so the desktop app writes down a recording's voice. */
@@ -254,6 +256,7 @@ export const layer = Layer.effect(
             sections: sectionsNow,
             conversationMentions: true,
             quotes: true,
+            quoteComments: true,
             screenRecordings: true,
             recordingTranscripts: true,
             themes: true,

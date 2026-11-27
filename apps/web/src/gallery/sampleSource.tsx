@@ -688,7 +688,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           effort: null,
           permissionMode: "supervised",
           primary,
-          browser: false,
+          browser: true,
           pinned: false,
           hidden: hidden ?? false,
           sectionId: null,
@@ -1009,6 +1009,7 @@ function toData(state: State, secrets: SecretsView): ShellData {
     sections: state.sections,
     conversationMentions: true,
     quotes: true,
+    quoteComments: true,
     conversation: (target) => ({
       phase: "ready",
       items: state.entries[keyOf(target)] ?? [],

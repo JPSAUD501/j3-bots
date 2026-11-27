@@ -45,11 +45,11 @@ export function openSettings(
 }
 
 /**
- * The roster's footer: the way back to the update prompt, What's new, and
- * Settings, which opens everything that is not about one bot at the list of
- * its pages. Settings shows without a theme's own CSS, so no theme can hide
- * or disguise the way to another one; ⌘, or Ctrl+, opens it besides this
- * button, which a theme's CSS could hide.
+ * The roster's footer: the way back to the update prompt, What's new while it
+ * has something unseen, and Settings, which opens everything that is not about
+ * one bot at the list of its pages. Settings shows without a theme's own CSS,
+ * so no theme can hide or disguise the way to another one; ⌘, or Ctrl+, opens
+ * it besides this button, which a theme's CSS could hide.
  */
 export function SettingsButton({ data, intents }: SettingsButtonProps) {
   const { t } = useI18n();
@@ -68,7 +68,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
       {updateEntry !== null && intents.updatePrompt !== undefined && (
         <UpdatePromptEntryButton entry={updateEntry} onOpen={intents.updatePrompt.reopen} />
       )}
-      <WhatsNewButton whatsNew={intents.whatsNew} />
+      <WhatsNewButton whatsNew={intents.whatsNew} place="footer" />
       <Dialog.Root
         open={open}
         onOpenChange={(opening) => {

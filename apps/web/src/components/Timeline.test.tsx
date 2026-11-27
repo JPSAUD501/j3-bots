@@ -92,7 +92,7 @@ describe("a conversation", () => {
 
   describe("Reply", () => {
     const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
-    const drafting: QuoteDrafting = { drafted: [], quote: () => {} };
+    const drafting: QuoteDrafting = { drafted: [], quote: () => {}, comments: true };
     /** How many messages offer Reply when the timeline has `offered`. */
     const replies = (offered: QuoteDrafting | null) =>
       renderTestMarkup(

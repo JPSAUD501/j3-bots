@@ -18,7 +18,7 @@ const megabytes = (bytes: number): number => Math.floor(bytes / 1_000_000);
 
 /**
  * How far the engine's download has come, while the server downloads it:
- * "Downloading the engine… 42 of 180 MB", or "… 42 MB" when the download did
+ * "Downloading… 42 of 180 MB", or "… 42 MB" when the download did
  * not say its size. Null when the engine is not downloading.
  */
 export function engineDownload(engine: EngineStatus, { t }: I18n): string | null {

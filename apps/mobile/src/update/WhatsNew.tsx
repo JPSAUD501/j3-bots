@@ -15,9 +15,9 @@ import { Text } from "../text.tsx";
 import { NoticeRow } from "./UpdateNotice.tsx";
 import { useWhatsNew } from "./whatsNew.ts";
 
-// "What's new" on the phone: a row at the end of Settings, always there while
-// the server has anything to show, and once after an update a quiet line
-// over the roster, "New in 0.14", until it is opened. Its screen lists what
+// "What's new" on the phone: once after an update, a quiet line over the
+// roster, "New in 0.14", until it is opened; and always a row at the end of
+// Settings' About while the server has anything to show. Its screen lists what
 // each release lets people do, the newest first.
 
 /** Each release's entries, the newest release first. Seeing it drops the mark. */
@@ -81,7 +81,7 @@ export function WhatsNewNotice() {
   );
 }
 
-/** What's new's row at the end of Settings, with its mark after an update. */
+/** What's new's row at the end of Settings' About, with its mark after an update. */
 export function WhatsNewRow() {
   const { t } = useI18n();
   const navigation = useNavigation<Navigation>();

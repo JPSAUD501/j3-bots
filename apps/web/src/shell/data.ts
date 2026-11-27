@@ -140,6 +140,8 @@ export interface ShellData {
   readonly conversationMentions: boolean;
   /** Whether the server takes quotes on a message: only then are Reply and Quote offered. */
   readonly quotes: boolean;
+  /** Whether the server takes a comment on a quoted passage: only then is one offered. */
+  readonly quoteComments: boolean;
   readonly conversation: (target: EntryTarget) => ConversationView;
   /** Every pair of bots that wrote each other, latest first; null until they load. */
   readonly pairs: ReadonlyArray<TeammatePair> | null;

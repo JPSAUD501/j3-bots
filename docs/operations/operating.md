@@ -303,7 +303,7 @@ The server migrates its database when it starts, and downloads the engine its co
 
 ## The browser
 
-A bot uses the engine's browser only once you turn on **Browser: use this computer's browser** in its details. Turning it on applies from the bot's next turn. Turning it off takes effect now: the bot's work is stopped, as **Stop** stops it, and the browser is taken from every thread of the bot's project, its delegated tasks and any other agent's thread there included, so nothing that runs there afterwards has it. The engine downloads the browser, about 130 MB, the first time a bot uses it.
+Every new bot may use the engine's browser; **Browser: Can browse the web**, in its details, turns it off or on again ([decision 0109](../decisions/0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md)). Turning it on applies from the bot's next turn. Turning it off takes effect now: the bot's work is stopped, as **Stop** stops it, and the browser is taken from every thread of the bot's project, its delegated tasks and any other agent's thread there included, so nothing that runs there afterwards has it. The engine downloads the browser, about 130 MB, the first time a bot uses it.
 
 On Linux the browser needs three things from the system: a sandbox the system allows (on Ubuntu 23.10 and later, AppArmor blocks it until a profile allows it), the shared libraries it loads, and fonts. `j3-bots doctor` checks them under Browser, and the bot's details say when this computer still needs setting up. `doctor` prints the commands that fix what is missing, for someone who can use `sudo` to run once. On Ubuntu with everything missing, they are:
 

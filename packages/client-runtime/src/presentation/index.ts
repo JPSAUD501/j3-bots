@@ -89,6 +89,7 @@ export {
   withProfileEdit,
 } from "./botEdit.ts";
 export {
+  BROWSER_SETUP_DOCS,
   type DrawnRect,
   dragWheel,
   frontTab,
@@ -198,6 +199,7 @@ export {
   replyTo,
   takesPassage,
   takesReply,
+  withComment,
   withQuote,
 } from "./quotes.ts";
 export {

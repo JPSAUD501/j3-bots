@@ -21,17 +21,15 @@ describe("the engine's first download", () => {
 
   it("says how far it has come, in whole megabytes of the size", () => {
     expect(engineProblem(downloading(42_900_000, 180_200_000), en)?.title).toBe(
-      "Downloading the engine… 42 of 180 MB",
+      "Downloading… 42 of 180 MB",
     );
     expect(engineProblem(downloading(42_900_000, 180_200_000), createI18n("pt-BR"))?.title).toBe(
-      "Baixando o motor… 42 de 180 MB",
+      "Baixando… 42 de 180 MB",
     );
   });
 
   it("says what it has when the size is not known", () => {
-    expect(engineProblem(downloading(42_900_000, null), en)?.title).toBe(
-      "Downloading the engine… 42 MB",
-    );
+    expect(engineProblem(downloading(42_900_000, null), en)?.title).toBe("Downloading… 42 MB");
   });
 });
 
@@ -81,7 +79,7 @@ describe("a provider's version and update", () => {
       line(codex({ ...behind, canUpdate: true }, { state: "failed", detail: "npm exited 1" })),
     ).toEqual({
       text: "The update didn’t finish",
-      detail: "The engine says: npm exited 1",
+      detail: "Details: npm exited 1",
       offer: true,
     });
     expect(line(codex(current, { state: "updated" }))?.text).toBe(
@@ -93,8 +91,8 @@ describe("a provider's version and update", () => {
         codex({ ...behind, canUpdate: true }, { state: "unverified", detail: "Still 0.170.0." }),
       ),
     ).toEqual({
-      text: "The update ran, but the engine couldn’t confirm a newer version",
-      detail: "The engine says: Still 0.170.0.",
+      text: "The update ran, but the new version couldn’t be confirmed",
+      detail: "Details: Still 0.170.0.",
       offer: true,
     });
     // An update that left a harness the engine no longer finds still says how it went.
