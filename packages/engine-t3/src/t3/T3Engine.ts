@@ -150,6 +150,7 @@ import {
   instanceEntry,
   instanceIdFor,
   provision,
+  provisionInstance,
   sameInstance,
   sameRuntime,
   storeConnection,
@@ -443,6 +444,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    */
   const providers = yield* SubscriptionRef.make(options.providers);
   const executables = yield* Ref.make(options.harnessExecutables);
+  /**
+   * The executables `setHarnessExecutable` sent the engine and has not yet
+   * seen it run, while it waits: a provider set up meanwhile is given them,
+   * as the engine already runs them, rather than the copy they replace.
+   */
+  const switchingTo = yield* Ref.make<Readonly<Partial<Record<CopiedHarness, string>>> | null>(
+    null,
+  );
   /** The provider whose engine instance is `instanceId`, among those J3 Bots runs now. */
   const providerOfInstance = (instanceId: string) =>
     Effect.map(SubscriptionRef.get(providers), (current) =>
@@ -2747,13 +2756,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       }),
     );
 
-  /** `provider`'s instance as provisioning writes it now. */
-  const entryOf = Effect.fnUntraced(function* (provider: ProviderInstance) {
-    const spec = (yield* specOf)(provider);
-    return {
-      instanceId: spec.instanceId,
-      entry: instanceEntry(path, yield* provisionInput, spec, yield* Ref.get(provisioned)),
-    };
+  /** How each provider's instance is written while the engine runs: with the executables it runs or is switching to. */
+  const liveSpecOf = Effect.gen(function* () {
+    const switching = yield* Ref.get(switchingTo);
+    return switching === null ? yield* specOf : instanceSpecOf(options.toolBridge, switching);
   });
 
   /**
@@ -2780,6 +2786,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       return yield* new EngineUnavailable();
     }
     const next = { ...before, [input.harness]: input.executable };
+    yield* Ref.set(switchingTo, next);
     const spec = instanceSpecOf(options.toolBridge, next);
     const sent: Array<string> = [];
     for (const provider of followers) {
@@ -2805,7 +2812,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const sent = yield* upsertExecutable({
       harness: input.harness,
       executable: input.executable ?? undefined,
-    });
+    }).pipe(Effect.onError(() => Ref.set(switchingTo, null)));
     if (sent === null) return;
     const { version } = input;
     // A report the engine made of a rebuilt instance, not one from before.
@@ -2833,6 +2840,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         duration: FIRST_CHECK_BUDGET,
         orElse: () => Effect.fail(new EngineIndeterminate()),
       }),
+      Effect.onExit(() => Ref.set(switchingTo, null)),
     );
     yield* Ref.set(executables, sent.next);
     yield* Ref.update(
@@ -2853,17 +2861,27 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   ) {
     const before = yield* SubscriptionRef.getAndSet(providers, next);
     if ((yield* SubscriptionRef.get(state))._tag !== "ready") return;
-    const spec = yield* specOf;
+    const spec = yield* liveSpecOf;
+    const input = yield* provisionInput;
     const known = new Map(before.map((provider) => [provider.id, spec(provider)] as const));
     for (const provider of next) {
       const was = known.get(provider.id);
       const now = spec(provider);
       if (was !== undefined && sameInstance(was, now)) continue;
-      const { instanceId, entry } = yield* entryOf(provider);
-      yield* mutateInstance({ operation: "upsert", instanceId, instance: entry }).pipe(
-        Effect.andThen(
-          was === undefined || sameRuntime(was, now) ? Effect.void : markReplaced(provider.id),
-        ),
+      yield* Effect.gen(function* () {
+        // A new instance's home is prepared first, as a provisioning would.
+        if (was === undefined && !(yield* provisionInstance(input, now))) {
+          yield* Ref.update(provisioned, (state) => ({
+            ...state,
+            disabled: new Set([...state.disabled, now.instanceId]),
+          }));
+        }
+        const entry = instanceEntry(path, input, now, yield* Ref.get(provisioned));
+        yield* mutateInstance({ operation: "upsert", instanceId: now.instanceId, instance: entry });
+        if (was !== undefined && !sameRuntime(was, now)) yield* markReplaced(provider.id);
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
         Effect.catch((cause) =>
           Ref.update(unsettled, (pending) => new Set([...pending, provider.id])).pipe(
             Effect.andThen(

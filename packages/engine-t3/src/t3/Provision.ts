@@ -689,17 +689,121 @@ const claudeSettings = (
  * connection: a secret the engine's words must not carry (`withoutSecrets`);
  * and the instances it turned off.
  */
+const writeJson = Effect.fnUntraced(function* (files: PrivateFiles, file: string, value: unknown) {
+  const text = yield* encodeJson(value).pipe(Effect.orDie);
+  yield* files.write(file, `${text}\n`);
+});
+
+/**
+ * Writes what `spec`'s instance needs besides its entry in the engine's
+ * settings: its secret files, then what its harness reads in its home (J3
+ * Bots' tool server, the base prompt, the connection, the shared skills).
+ * `HarnessConfigUnreadable` for a configuration of the harness that cannot be
+ * read, which is left as it was.
+ */
+const writeInstance = Effect.fnUntraced(function* (
+  input: ProvisionInput,
+  connection: StoredConnection | null,
+  spec: InstanceSpec,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { secrets } = engineFolders(path, input.home);
+  const record = homeSkillLinkRecord(path, input.home, spec.instanceId);
+
+  const secretFile = path.join(secrets, secretFileName(spec.instanceId, KEY_VARIABLE));
+  if (connection !== null && spec.kind !== "acp-local") {
+    yield* input.files.write(secretFile, connection.key);
+  } else {
+    yield* input.files.remove(secretFile);
+  }
+  for (const variable of spec.environment) {
+    yield* input.files.write(
+      path.join(secrets, secretFileName(spec.instanceId, variable.name)),
+      Redacted.value(variable.value),
+    );
+  }
+
+  const unreadable = (file: string) => (reason: string) =>
+    new HarnessConfigUnreadable({ file, reason });
+  switch (spec.kind) {
+    case "claude-code": {
+      yield* input.files.folder(spec.home);
+      // Claude Code keeps its own state in `.claude.json`; merge, never replace.
+      const stateFile = path.join(spec.home, ".claude.json");
+      const settingsFile = path.join(spec.home, "settings.json");
+      // Both are read before either is written, so a refusal changes neither.
+      const state = yield* readJsonObject(fs, stateFile, unreadable(stateFile));
+      const settings = yield* readJsonObject(fs, settingsFile, unreadable(settingsFile));
+      const servers = isJsonObject(state["mcpServers"]) ? state["mcpServers"] : {};
+      yield* writeJson(input.files, stateFile, {
+        ...state,
+        hasCompletedOnboarding: true,
+        mcpServers: {
+          ...servers,
+          [TOOL_SERVER]: {
+            type: "stdio",
+            command: input.toolBridge.command,
+            args: input.toolBridge.args,
+            // Added to the bridge's environment only, not to the commands a bot runs.
+            env: Object.fromEntries(bridgeVariables(input.toolBridge)),
+            // Milliseconds. **Verified** with Claude Code 2.1.330: a call past
+            // it is cut off, also one that reports progress, and the bridge
+            // is sent `notifications/cancelled`. **Read** there: it
+            // overrides `MCP_TOOL_TIMEOUT`, 1e8 ms by default.
+            timeout: input.toolBridge.callTimeoutSeconds * 1000,
+          },
+        },
+      });
+      yield* writeJson(input.files, settingsFile, claudeSettings(settings, connection));
+      yield* linkSharedSkills({
+        files: input.files,
+        home: spec.home,
+        shared: input.sharedSkills,
+        record,
+      });
+      return;
+    }
+    case "codex": {
+      yield* input.files.folder(spec.home);
+      const processHome = codexProcessHome(path, input, spec.instanceId);
+      if (processHome !== undefined) yield* input.files.folder(processHome);
+      const configFile = path.join(spec.home, "config.toml");
+      const text = yield* readIfPresent(fs, configFile, unreadable(configFile));
+      const edited = editToml(text ?? "", codexConfig(input, connection));
+      if (edited._tag === "unreadable") return yield* unreadable(configFile)(edited.reason);
+      yield* input.files.write(configFile, edited.text);
+      yield* linkSharedSkills({
+        files: input.files,
+        home: spec.home,
+        shared: input.sharedSkills,
+        record,
+      });
+      return;
+    }
+    case "acp-local":
+      return;
+  }
+});
+
+/** `writeInstance`, telling whether its harness configuration was written: an instance's whose was not is turned off. */
+const instanceWritten = (
+  input: ProvisionInput,
+  connection: StoredConnection | null,
+  spec: InstanceSpec,
+) =>
+  writeInstance(input, connection, spec).pipe(
+    Effect.as(true),
+    Effect.catchTag("HarnessConfigUnreadable", (error) =>
+      Effect.logWarning(error.message).pipe(Effect.as(false)),
+    ),
+  );
+
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const writeJson = Effect.fnUntraced(function* (file: string, value: unknown) {
-    const text = yield* encodeJson(value).pipe(Effect.orDie);
-    yield* input.files.write(file, `${text}\n`);
-  });
-
   const { userdata, secrets } = engineFolders(path, input.home);
-  const skillLinkRecord = (instanceId: string) => homeSkillLinkRecord(path, input.home, instanceId);
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
   for (const folder of Object.values(harnessDefaultHomes(path, input.home))) {
@@ -714,95 +818,12 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     (reason) => new EngineFileUnreadable({ file: settingsFile, reason }),
   );
 
-  const harness = Effect.fnUntraced(function* (spec: InstanceSpec) {
-    const unreadable = (file: string) => (reason: string) =>
-      new HarnessConfigUnreadable({ file, reason });
-    switch (spec.kind) {
-      case "claude-code": {
-        yield* input.files.folder(spec.home);
-        // Claude Code keeps its own state in `.claude.json`; merge, never replace.
-        const stateFile = path.join(spec.home, ".claude.json");
-        const settingsFile = path.join(spec.home, "settings.json");
-        // Both are read before either is written, so a refusal changes neither.
-        const state = yield* readJsonObject(fs, stateFile, unreadable(stateFile));
-        const settings = yield* readJsonObject(fs, settingsFile, unreadable(settingsFile));
-        const servers = isJsonObject(state["mcpServers"]) ? state["mcpServers"] : {};
-        yield* writeJson(stateFile, {
-          ...state,
-          hasCompletedOnboarding: true,
-          mcpServers: {
-            ...servers,
-            [TOOL_SERVER]: {
-              type: "stdio",
-              command: input.toolBridge.command,
-              args: input.toolBridge.args,
-              // Added to the bridge's environment only, not to the commands a bot runs.
-              env: Object.fromEntries(bridgeVariables(input.toolBridge)),
-              // Milliseconds. **Verified** with Claude Code 2.1.330: a call past
-              // it is cut off, also one that reports progress, and the bridge
-              // is sent `notifications/cancelled`. **Read** there: it
-              // overrides `MCP_TOOL_TIMEOUT`, 1e8 ms by default.
-              timeout: input.toolBridge.callTimeoutSeconds * 1000,
-            },
-          },
-        });
-        yield* writeJson(settingsFile, claudeSettings(settings, connection));
-        yield* linkSharedSkills({
-          files: input.files,
-          home: spec.home,
-          shared: input.sharedSkills,
-          record: skillLinkRecord(spec.instanceId),
-        });
-        return;
-      }
-      case "codex": {
-        yield* input.files.folder(spec.home);
-        const processHome = codexProcessHome(path, input, spec.instanceId);
-        if (processHome !== undefined) yield* input.files.folder(processHome);
-        const configFile = path.join(spec.home, "config.toml");
-        const text = yield* readIfPresent(fs, configFile, unreadable(configFile));
-        const edited = editToml(text ?? "", codexConfig(input, connection));
-        if (edited._tag === "unreadable") return yield* unreadable(configFile)(edited.reason);
-        yield* input.files.write(configFile, edited.text);
-        yield* linkSharedSkills({
-          files: input.files,
-          home: spec.home,
-          shared: input.sharedSkills,
-          record: skillLinkRecord(spec.instanceId),
-        });
-        return;
-      }
-      case "acp-local":
-        return;
-    }
-  });
-
   const disabled = new Set<string>();
   for (const spec of input.instances) {
-    const written = yield* harness(spec).pipe(
-      Effect.as(true),
-      Effect.catchTag("HarnessConfigUnreadable", (error) =>
-        Effect.logWarning(error.message).pipe(Effect.as(false)),
-      ),
-    );
-    if (!written) disabled.add(spec.instanceId);
-  }
-
-  for (const spec of input.instances) {
-    const secretFile = path.join(secrets, secretFileName(spec.instanceId, KEY_VARIABLE));
-    if (connection !== null && spec.kind !== "acp-local") {
-      yield* input.files.write(secretFile, connection.key);
-    } else {
-      yield* input.files.remove(secretFile);
-    }
-    for (const variable of spec.environment) {
-      yield* input.files.write(
-        path.join(secrets, secretFileName(spec.instanceId, variable.name)),
-        Redacted.value(variable.value),
-      );
-    }
+    if (!(yield* instanceWritten(input, connection, spec))) disabled.add(spec.instanceId);
   }
   yield* writeJson(
+    input.files,
     settingsFile,
     engineSettings(path, input, connection !== null, disabled, existing),
   );
@@ -810,6 +831,20 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     key: connection === null ? null : Redacted.make(connection.key),
     disabled,
   } as const;
+});
+
+/**
+ * Prepares an instance the engine is given while it runs, as a provisioning
+ * prepares each one (`writeInstance`), so a bot on an account added then can
+ * speak and use J3 Bots' tools as on any other. Whether its harness
+ * configuration was written: the entry of one that was not is turned off, as
+ * a provisioning turns it off.
+ */
+export const provisionInstance = Effect.fn("engine.provisionInstance")(function* (
+  input: ProvisionInput,
+  spec: InstanceSpec,
+) {
+  return yield* instanceWritten(input, yield* readConnection(input.home), spec);
 });
 
 /**
