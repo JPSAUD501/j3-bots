@@ -10,7 +10,8 @@ import type {
 } from "@j3-bots/contracts";
 import { aiNameOf } from "@j3-bots/client-runtime/presentation";
 import { createContext, use, useDeferredValue, useEffect, useMemo, type ReactNode } from "react";
-import { loadI18n, resolveLocale, type I18n } from "@j3-bots/i18n";
+import { resolveLocale, type I18n } from "@j3-bots/i18n";
+import { loadI18n } from "@j3-bots/i18n/load";
 import { usePreferences } from "../preferences/preferences";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import { useClock } from "./clock";

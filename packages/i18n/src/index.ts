@@ -7,5 +7,4 @@
  */
 export { createI18n } from "./catalogs.ts";
 export { type I18n, type KeyWith, LANGUAGE_NAMES, resolveLocale } from "./i18n.ts";
-export { loadI18n } from "./load.ts";
 export { type NotificationNames, type NotificationText, notificationText } from "./notification.ts";
