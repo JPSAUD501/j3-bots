@@ -49,7 +49,7 @@ import {
   cardAction,
   type IntentFailure,
   type IntentResult,
-  reactAction,
+  intentResult,
   retryAction,
 } from "../intents/Actions.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError, WindowLocks } from "../ports.ts";
@@ -1587,13 +1587,13 @@ export const layer = Layer.effect(
       );
     });
 
-    // No command id: it sets a state, which sending again leaves as it is.
+    // Not an action that waits for its message to change: it sets a state, so
+    // each pick is sent as made, and one that changed nothing (as another
+    // device made the same) leaves the next pick free.
     const react = (entryId: EntryId, emoji: ReactionEmoji | null) =>
-      actions.run(
-        reactAction(entryId),
-        entryId,
-        connection.call((client) => client["message.react"]({ entryId, emoji })),
-      );
+      connection
+        .call((client) => client["message.react"]({ entryId, emoji }))
+        .pipe(Effect.exit, Effect.map(intentResult));
 
     const answerCard = Effect.fn("Conversations.answerCard")(function* (
       entryId: EntryId,

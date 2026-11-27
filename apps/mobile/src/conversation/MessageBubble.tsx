@@ -34,7 +34,7 @@ import { feelLongPress } from "../platform/haptics.ts";
 import { Text } from "../text.tsx";
 import { usePresentation } from "../presentation.tsx";
 
-import { MessageFile } from "./FileCard.tsx";
+import { FileLongPress, MessageFile } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
 import { ReactionPills, type ReactionTarget, useReacting } from "./Reactions.tsx";
 import { Speaker, speakerGutter } from "./Speaker.tsx";
@@ -302,7 +302,7 @@ export function MessageBubble({
         onLongPress={openBar}
         className={`gap-1 self-stretch ${fromOperator ? "items-end" : "items-start"}`}
       >
-        {said}
+        <FileLongPress value={openBar}>{said}</FileLongPress>
       </Pressable>
     );
   const pills = reactable !== null && (
