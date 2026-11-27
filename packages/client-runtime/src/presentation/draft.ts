@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { MessageQuote } from "@j3-bots/contracts";
 import { type MessageProblem, messageProblem } from "../files/limits.ts";
 import { placedMessage } from "../files/placed.ts";
 import type { DraftFile } from "../stores/Drafts.ts";
+import { commented } from "./quotes.ts";
 
 /** Where a draft stands before Send: what it would take for the message to go. */
 export interface DraftReadiness {
-  /** No text and no uploaded file: nothing to send, so the trailing button may dictate instead. */
+  /**
+   * No text, no uploaded file and no commented passage: nothing to send, so
+   * the trailing button may dictate instead.
+   */
   readonly empty: boolean;
   /** A file is still uploading; the message waits for it. */
   readonly uploading: boolean;
@@ -17,11 +22,19 @@ export interface DraftReadiness {
   readonly sendable: boolean;
 }
 
-export function draftReadiness(text: string, files: ReadonlyArray<DraftFile>): DraftReadiness {
+/**
+ * Where a draft of `text`, `files` and `quotes` stands. A passage the
+ * operator commented says something by itself: it goes without text.
+ */
+export function draftReadiness(
+  text: string,
+  files: ReadonlyArray<DraftFile>,
+  quotes: ReadonlyArray<MessageQuote> = [],
+): DraftReadiness {
   // As `Drafts.send` sends it: without the marks that place its files.
   const trimmed = placedMessage(text).text;
   const attachments = files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : []));
-  const empty = trimmed === "" && attachments.length === 0;
+  const empty = trimmed === "" && attachments.length === 0 && !commented(quotes);
   const uploading = files.some((file) => file._tag === "uploading");
   const blocked = files.some((file) => file._tag === "failed");
   const problem = messageProblem(trimmed, attachments);

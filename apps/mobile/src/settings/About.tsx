@@ -5,13 +5,14 @@ import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/r
 import { Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { PhoneUpdatePanel, ServerUpdatePanel } from "../update/UpdatePanels.tsx";
+import { WhatsNewRow } from "../update/WhatsNew.tsx";
 import { DiagnosticsRow } from "./Diagnostics.tsx";
 import { UsageDataRow } from "./UsageData.tsx";
 
 /**
  * The versions the server and this app run, and their updates: the server's,
  * which this phone starts and follows, then the app's own, each with its
- * channel. Then privacy, as far as the server offers it.
+ * channel. Then privacy, as far as the server offers it, and What's new last.
  */
 export function AboutSection({ connected }: { readonly connected: boolean }) {
   const { t } = useI18n();
@@ -24,6 +25,7 @@ export function AboutSection({ connected }: { readonly connected: boolean }) {
         <PhoneUpdatePanel place="settings" />
       </Section>
       <PrivacySection connected={connected} />
+      <WhatsNewRow />
     </>
   );
 }

@@ -243,8 +243,9 @@ export function galleryVariants(now: DateTime.Utc) {
 
   /**
    * Replies and quotes (decision 0094): a reply quotes Scout's news whole; two
-   * passages quote it and Wren's note; in the room Wren replies to Juniper;
-   * and a reply to a message deleted since.
+   * passages quote it and Wren's note, one with the operator's comment
+   * (decision 0106); in the room Wren replies to Juniper; and a reply to a
+   * message deleted since.
    */
   const quoteOf = (source: MessageEntry, quoted: MessageQuote["quoted"]): MessageQuote => ({
     entryId: source.id,
@@ -305,6 +306,22 @@ export function galleryVariants(now: DateTime.Utc) {
       },
     ),
     juniperDraft,
+    // A passage commented (decision 0106): in the draft, and sent with words of its own or alone.
+    commented: [
+      {
+        ...quoteOf(scoutSource, { _tag: "passage", text: "test ride on Saturday at 10" }),
+        comment: "Can we move this to 11?",
+      },
+      quoteOf(wrenNote, { _tag: "passage", text: "I can bring the helmet and the lock" }),
+    ],
+    commentedSent: message("quoting-commented", operator, "", {
+      quotes: [
+        {
+          ...quoteOf(scoutSource, { _tag: "passage", text: "test ride on Saturday at 10" }),
+          comment: "Can we move this to 11? I have a call at 10.",
+        },
+      ],
+    }),
     // Its source was deleted since: going to it says so in place.
     missing: message("quoting-missing", operator, "Is this still the plan?", {
       quotes: [

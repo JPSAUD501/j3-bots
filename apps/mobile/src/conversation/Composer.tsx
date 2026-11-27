@@ -12,6 +12,7 @@ import {
   type MentionOption,
   namedMentions,
   standingMentions,
+  withComment,
 } from "@j3-bots/client-runtime/presentation";
 import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
@@ -145,7 +146,8 @@ export function Composer({
 
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
-  const { uploading, sendable, problem } = draftReadiness(text, files);
+  const { uploading, sendable, problem } = draftReadiness(text, files, draft.quotes);
+  const comments = useReadable(client.quoteComments);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;
   const uploaded = useMemo(
@@ -351,6 +353,24 @@ export function Composer({
       ? null
       : messageProblemText(problem, i18n);
 
+  // What the composer says inside itself, the most pressing first (decision 0106): nothing
+  // shows under it. A file that cannot go was said as it failed; its chip marks it.
+  const notes: ReadonlyArray<{
+    readonly key: string;
+    readonly text: string;
+    readonly tone: "blocked" | "muted";
+  }> = [
+    ...(alert === null ? [] : [{ key: "alert", text: alert, tone: "blocked" } as const]),
+    ...(failures.length > 0
+      ? [{ key: "failures", text: failuresText, tone: "blocked" } as const]
+      : []),
+    ...(cut ? [{ key: "cut", text: t("prompt.cut"), tone: "muted" } as const] : []),
+    // Quiet: it clears by itself once the device keeps the draft.
+    ...(notSaved
+      ? [{ key: "notSaved", text: t("composer.notSaved"), tone: "muted" } as const]
+      : []),
+  ];
+
   // A ready file opens; one still uploading, or that failed, has nothing to open yet.
   const openFile = (key: string) => {
     const file = files.find((held) => held.key === key);
@@ -394,81 +414,107 @@ export function Composer({
           }}
         />
       )}
-      <DraftQuotes
-        quotes={draft.quotes}
-        frozen={frozen}
-        onRemove={(index) => client.unquoteInDraft(target, index)}
-      />
       <AnimatedView
         // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
         style={[settled, focused ? { borderColor: tint.color } : undefined]}
-        className="flex-row items-end rounded-composer border border-input bg-surface"
+        className="rounded-composer border border-input bg-surface"
       >
-        <PressScale
-          depth="round"
-          accessibilityRole="button"
-          accessibilityLabel={t("composer.attach")}
-          accessibilityState={{ disabled: busy }}
-          ref={attachButton}
-          onPress={busy ? undefined : openPicker}
-          frame={composerButtonFrame}
-          hitSlop={composerButtonSlop}
-          className="size-8 items-center justify-center rounded-full active:bg-muted"
-        >
-          <Icon icon={Plus} size={18} color="accent-muted-foreground" />
-        </PressScale>
-        <ChipField
-          ref={field}
-          value={text}
-          files={files}
-          images={images}
-          mentions={fieldMentions(text, mentions, mentionable)}
-          placeholder={
-            offered ?? (dictation?.listening === true ? t("dictation.listening") : label)
-          }
-          open={dictation?.placed?.open ?? null}
-          editable={!busy}
-          label={label}
-          onEdit={edit}
-          onSelection={(next) => {
-            selection.current = next;
-            setCaret(next[0] === next[1] ? next[1] : null);
-          }}
-          onFocusChange={(now) => {
-            const [start, end] = selection.current;
-            setCaret(now && start === end ? end : null);
-            setFocused(now);
-          }}
-          onPressFile={openFile}
-          onRemoveFile={(key) => {
-            if (!busy) client.detachFile(target, key);
-          }}
-        />
-        {offered !== null && (
-          <Animated.View entering={appear} className="self-center">
-            <PressScale
-              accessibilityRole="button"
-              accessibilityLabel={t("composer.suggestion.useLabel")}
-              accessibilityHint={t("composer.suggestion", { text: offered })}
-              onPress={() => takeSuggestion(offered)}
-              className="min-h-11 justify-center rounded-full px-3 active:bg-muted"
-            >
-              <Text className="text-sm font-medium text-muted-foreground">
-                {t("composer.suggestion.use")}
+        {/* What the composer says about the draft: inside it, over the text, never under it. */}
+        {notes.length > 0 && (
+          <View className="px-3 pt-1.5">
+            {notes.map((note) => (
+              <Text
+                key={note.key}
+                numberOfLines={2}
+                accessibilityLiveRegion={note.key === "alert" ? "assertive" : "polite"}
+                className={`text-xs ${note.tone === "blocked" ? "text-blocked" : "text-muted-foreground"}`}
+              >
+                {note.text}
               </Text>
-            </PressScale>
-          </Animated.View>
+            ))}
+          </View>
         )}
-        {dictation !== null && (
-          // A prompt being filled in or written owns the draft until it is.
-          <DictationButton dictation={dictation} unavailable={frozen || prompt.chosen !== null} />
-        )}
-        <SendButton
-          state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
-          tint={tint.color}
-          hint={uploading ? t("composer.stillUploading") : undefined}
-          onSend={onSend}
+        {dictation !== null && <DictationLine dictation={dictation} />}
+        <DraftQuotes
+          quotes={draft.quotes}
+          frozen={frozen}
+          onRemove={(index) => client.unquoteInDraft(target, index)}
+          onComment={
+            comments
+              ? (index, comment) => {
+                  const quote = draft.quotes[index];
+                  if (quote !== undefined) client.quoteInDraft(target, withComment(quote, comment));
+                }
+              : undefined
+          }
         />
+        <View className="flex-row items-end">
+          <PressScale
+            depth="round"
+            accessibilityRole="button"
+            accessibilityLabel={t("composer.attach")}
+            accessibilityState={{ disabled: busy }}
+            ref={attachButton}
+            onPress={busy ? undefined : openPicker}
+            frame={composerButtonFrame}
+            hitSlop={composerButtonSlop}
+            className="size-8 items-center justify-center rounded-full active:bg-muted"
+          >
+            <Icon icon={Plus} size={18} color="accent-muted-foreground" />
+          </PressScale>
+          <ChipField
+            ref={field}
+            value={text}
+            files={files}
+            images={images}
+            mentions={fieldMentions(text, mentions, mentionable)}
+            placeholder={
+              offered ?? (dictation?.listening === true ? t("dictation.listening") : label)
+            }
+            open={dictation?.placed?.open ?? null}
+            editable={!busy}
+            label={label}
+            onEdit={edit}
+            onSelection={(next) => {
+              selection.current = next;
+              setCaret(next[0] === next[1] ? next[1] : null);
+            }}
+            onFocusChange={(now) => {
+              const [start, end] = selection.current;
+              setCaret(now && start === end ? end : null);
+              setFocused(now);
+            }}
+            onPressFile={openFile}
+            onRemoveFile={(key) => {
+              if (!busy) client.detachFile(target, key);
+            }}
+          />
+          {offered !== null && (
+            <Animated.View entering={appear} className="self-center">
+              <PressScale
+                accessibilityRole="button"
+                accessibilityLabel={t("composer.suggestion.useLabel")}
+                accessibilityHint={t("composer.suggestion", { text: offered })}
+                onPress={() => takeSuggestion(offered)}
+                className="min-h-11 justify-center rounded-full px-3 active:bg-muted"
+              >
+                <Text className="text-sm font-medium text-muted-foreground">
+                  {t("composer.suggestion.use")}
+                </Text>
+              </PressScale>
+            </Animated.View>
+          )}
+          {dictation !== null && (
+            // A prompt being filled in or written owns the draft until it is.
+            <DictationButton dictation={dictation} unavailable={frozen || prompt.chosen !== null} />
+          )}
+          <SendButton
+            state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
+            tint={tint.color}
+            hint={uploading ? t("composer.stillUploading") : undefined}
+            onSend={onSend}
+          />
+        </View>
       </AnimatedView>
       <Menu
         anchor={attachAt}
@@ -488,18 +534,6 @@ export function Composer({
           },
         ]}
       />
-      {dictation !== null && <DictationLine dictation={dictation} />}
-      {cut && <Text className="px-3 text-xs text-muted-foreground">{t("prompt.cut")}</Text>}
-      {/* Quiet: it clears by itself once the device keeps the draft. */}
-      {notSaved && (
-        <Text className="px-3 text-xs text-muted-foreground">{t("composer.notSaved")}</Text>
-      )}
-      {failures.length > 0 && <Text className="px-3 text-xs text-blocked">{failuresText}</Text>}
-      {alert !== null && (
-        <Text accessibilityLiveRegion="assertive" className="px-3 text-xs text-blocked">
-          {alert}
-        </Text>
-      )}
     </View>
   );
 }

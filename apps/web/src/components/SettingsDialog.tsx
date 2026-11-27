@@ -89,7 +89,7 @@ import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { UpdatePromptEntryButton } from "./UpdatePrompt";
-import { WhatsNewButton } from "./WhatsNew";
+import { WhatsNewButton, WhatsNewSection } from "./WhatsNew";
 import { ShortcutSetting } from "./ShortcutSetting";
 import {
   AdvancedEndpoint,
@@ -205,9 +205,10 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, About only where an update can be followed from here or
- * the server offers its usage data switch or its diagnostics, and voice only
- * from a server that dictates, since this window has no recognizer of its own.
+ * the desktop app, About only where an update can be followed from here, the
+ * server offers its usage data switch or its diagnostics, or What's new has
+ * anything to show, and voice only from a server that dictates, since this
+ * window has no recognizer of its own.
  */
 const pagesFor = (
   intents: SettingsIntents,
@@ -226,7 +227,8 @@ const pagesFor = (
               intents.serverUpdate !== undefined ||
               intents.update !== undefined ||
               intents.diagnostics !== undefined ||
-              data.settings?.telemetry !== undefined
+              data.settings?.telemetry !== undefined ||
+              intents.whatsNew.view.releases.length > 0
             );
           default:
             return true;
@@ -236,9 +238,9 @@ const pagesFor = (
     .filter((group) => group.length > 0);
 
 /**
- * The roster's footer: the way back to the update prompt, What's new, and
- * Settings, which opens everything that is not about one bot at the list of
- * its pages. Opening Settings reads the settings and devices again, for what
+ * The roster's footer: the way back to the update prompt, What's new while it
+ * has something unseen, and Settings, which opens everything that is not
+ * about one bot at the list of its pages. Opening Settings reads the settings and devices again, for what
  * another device changed.
  */
 export function SettingsButton({ data, intents }: SettingsButtonProps) {
@@ -252,7 +254,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
       {updateEntry !== null && intents.updatePrompt !== undefined && (
         <UpdatePromptEntryButton entry={updateEntry} onOpen={intents.updatePrompt.reopen} />
       )}
-      <WhatsNewButton whatsNew={intents.whatsNew} />
+      <WhatsNewButton whatsNew={intents.whatsNew} place="footer" />
       <Dialog.Root
         open={data.settingsOpen}
         onOpenChange={(open) => {
@@ -616,6 +618,7 @@ function PageBody({
             intents={intents}
             diagnostics={intents.diagnostics}
           />
+          <WhatsNewSection whatsNew={intents.whatsNew} />
         </>
       );
   }

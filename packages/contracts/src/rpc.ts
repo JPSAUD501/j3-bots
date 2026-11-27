@@ -148,7 +148,8 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 // A client offers sections, a bot's `sectionId` and `entries.markUnread` only
 // once a roster snapshot carries `sections`, and `@` in a bot's conversation
 // only once it carries `conversationMentions`, Reply and Quote only once it
-// carries `quotes`, and to record the screen only once it carries
+// carries `quotes`, a comment on a quoted passage only once it carries
+// `quoteComments`, and to record the screen only once it carries
 // `screenRecordings` (docs/architecture/clients.md, "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
@@ -203,6 +204,12 @@ export const RosterRpcs = RpcGroup.make(
          * a client offers Reply and Quote only then.
          */
         quotes: Schema.optionalKey(Schema.Literal(true)),
+        /**
+         * Always `true` from a server that takes a comment on a quoted
+         * passage (`QuoteRequest`'s `comment`); a client offers one only
+         * then.
+         */
+        quoteComments: Schema.optionalKey(Schema.Literal(true)),
         /**
          * Always `true` from a server that takes screen recordings at
          * `HTTP_PATHS.recordingUploads`; a client offers to record the
@@ -300,7 +307,7 @@ export const EntryRpcs = RpcGroup.make(
    * would read it is too long for that engine to take in one message. Fails
    * with `Invalid("quotes")`, writing nothing, for a quote of anything but a
    * message of the same conversation or room, a passage not in its text, the
-   * same quote twice, or more than one reply. Fails
+   * same quote twice, more than one reply, or a comment on a reply. Fails
    * with `Conflict("room-archived")` in an archived room.
    */
   Rpc.make("message.send", {

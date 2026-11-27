@@ -85,15 +85,16 @@ export type MentionRef =
 
 /**
  * A message another message quotes (decision 0094): who said it, `you` for
- * the bot itself, when, and what of it: a passage picked word for word, or
- * the start of a message replied to whole, and whether it went on.
+ * the bot itself, when, and what of it: a passage picked word for word, with
+ * the operator's comment on it when they wrote one (decision 0106), or the
+ * start of a message replied to whole, and whether it went on.
  */
 export interface QuoteRef {
   readonly id: EntryId;
   readonly from: "user" | "you" | TeammateRef;
   readonly at: DateTime.Utc;
   readonly quoted:
-    | { readonly kind: "passage"; readonly text: string }
+    | { readonly kind: "passage"; readonly text: string; readonly comment?: string }
     | { readonly kind: "message"; readonly opening: string; readonly more: boolean };
 }
 
@@ -1057,6 +1058,12 @@ const writeOperatorMessage = (
   );
   w.line(placedText(w, trimEnd(text), placed));
   for (const file of attachments) if (file.offset === null) w.line(attachmentTag(w, file));
+  // The operator's own words on a passage they quote: theirs, so in their message.
+  for (const quote of quotes) {
+    if (quote.quoted.kind === "passage" && quote.quoted.comment !== undefined) {
+      w.inline("comment", [["on", quote.id]], quote.quoted.comment);
+    }
+  }
   w.close("message");
   writeQuotes(w, quotes);
   writeMentions(w, mentions);
@@ -1069,7 +1076,7 @@ const writeOperatorMessage = (
  * quotes something.
  */
 export const QUOTES_LINE =
-  "The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. `from` says who said each, `you` being you.";
+  "The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. `from` says who said each, `you` being you. A `comment` in the message is your user's word on the passage whose `id` its `on` names.";
 
 /**
  * What a message quotes, after it: a line of J3 Bots' own, then a data block

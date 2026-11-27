@@ -40,7 +40,6 @@ import type { Navigation } from "../navigation.tsx";
 import { usePhoneRecognizer } from "../platform/dictation.ts";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
-import { WhatsNewRow } from "../update/WhatsNew.tsx";
 
 const pageIcons: Record<SettingsPage, LucideIcon> = {
   you: UserRound,
@@ -63,8 +62,8 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
  * a dot: the engine or no provider able to run a bot, a connector that needs
  * them, or a server update on offer. Voice is listed while the server keeps
  * dictation's settings, or, facing a server older than dictation through it,
- * while this phone dictates by itself. What's new ends the list. On a wide
- * screen it keeps to the conversation's text column.
+ * while this phone dictates by itself. On a wide screen it keeps to the
+ * conversation's text column.
  */
 export function SettingsScreen() {
   const client = useJ3Client();
@@ -120,7 +119,6 @@ export function SettingsScreen() {
           ))}
         </View>
       ))}
-      <WhatsNewRow />
     </ScrollView>
   );
 }

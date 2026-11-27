@@ -8,7 +8,15 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { passageOf, type QuotableMessage, quoteText, replyTo, withQuote } from "./quotes.ts";
+import {
+  passageOf,
+  type QuotableMessage,
+  quoteRequestOf,
+  quoteText,
+  replyTo,
+  withComment,
+  withQuote,
+} from "./quotes.ts";
 
 const message = (id: string, text: string): QuotableMessage => ({
   _tag: "message",
@@ -42,8 +50,13 @@ describe("quotes", () => {
     };
     const quick = passage(plans, "a quick one");
     const one = added([], quick);
-    // The same passage again changes nothing.
+    // The same passage again changes nothing, unless it brings a comment, which it keeps in place.
     expect(added(one, quick)).toEqual([quick]);
+    const remarked = withComment(quick, "  Too fast?  ");
+    expect(added([quick, passage(plans, "careful")], remarked)).toEqual([
+      remarked,
+      passage(plans, "careful"),
+    ]);
     // A reply goes first, and another reply takes its place.
     const replied = added(added(one, replyTo(plans)), replyTo(notes));
     expect(replied).toEqual([replyTo(notes), quick]);
@@ -52,6 +65,18 @@ describe("quotes", () => {
     expect(withQuote(full, passage(plans, "Two"))).toBe("full");
     // A reply still takes the place of the reply when the draft is full.
     expect(added(full, replyTo(plans))[0]).toEqual(replyTo(plans));
+  });
+
+  it("comments a passage in the operator's words, trimmed, and never a reply", () => {
+    const quick = passage(plans, "a quick one");
+    expect(quoteRequestOf(withComment(quick, "  Too fast?\n"))).toEqual({
+      entryId: plans.id,
+      passage: "a quick one",
+      comment: "Too fast?",
+    });
+    // Spaces alone take the comment off.
+    expect(withComment(withComment(quick, "Too fast?"), "  ")).toEqual(quick);
+    expect(withComment(replyTo(plans), "Yes")).toEqual(replyTo(plans));
   });
 
   it("quotes a selection trimmed, and nothing for spaces alone or past the longest passage", () => {

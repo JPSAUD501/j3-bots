@@ -51,6 +51,7 @@ export type QuickAccessData = Pick<
   | "draftNotSaved"
   | "conversationMentions"
   | "quotes"
+  | "quoteComments"
   | "connectors"
   | "submitting"
   | "workSteps"
@@ -453,6 +454,7 @@ export function QuickAccess({
                                       focusAtEnd(composerRef.current);
                                     }
                                   },
+                                  comments: data.quoteComments,
                                 }
                               : null,
                           }}

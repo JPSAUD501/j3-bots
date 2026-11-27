@@ -136,6 +136,8 @@ export interface QuoteDrafting {
   readonly drafted: ReadonlyArray<MessageQuote>;
   /** Adds a reply or a passage to the draft, and takes the operator to the composer. */
   readonly quote: (quote: MessageQuote) => void;
+  /** The server takes the operator's comment on a passage (decision 0106). */
+  readonly comments: boolean;
 }
 
 /** What a timeline does with quotes. */
@@ -453,6 +455,7 @@ export function Timeline({
               scope={own}
               messageOf={(id) => quotable.get(id)}
               drafted={drafting.drafted}
+              comments={drafting.comments}
               onQuote={drafting.quote}
             />
           )}

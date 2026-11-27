@@ -39,7 +39,7 @@ import {
 import { fittedMarks, insertMarks, placedMessage, withoutMarks } from "../files/placed.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable, waitFor } from "../Store.ts";
-import { sameQuotes, withQuote } from "../presentation/quotes.ts";
+import { commented, sameQuotes, withQuote } from "../presentation/quotes.ts";
 import { Conversations, keyTarget, type MentionLabel, targetKey } from "./Conversations.ts";
 import { UsageData } from "./UsageData.ts";
 
@@ -1222,7 +1222,9 @@ export const layer = Layer.effect(
       // Every file is uploaded: each mark places one of `attachments`, in order.
       const { text, offsets } = placedMessage(draft.text);
       const { files: drafted } = keptOf(draft);
-      if (context === undefined && text === "" && drafted.length === 0) return "empty";
+      // A passage the operator commented says something by itself.
+      const words = text !== "" || commented(draft.quotes);
+      if (context === undefined && !words && drafted.length === 0) return "empty";
       const pressed: Draft = { ...draft, sending: true };
       show(key, pressed);
       // The pairing the draft is sent under, as the draft's files uploaded for it.
@@ -1243,7 +1245,7 @@ export const layer = Layer.effect(
       if (followed.get() !== sentUnder) return giveBack("changed-elsewhere");
       const picture = beside?.picture;
       // The window alone is no message: it goes with words or files.
-      if (text === "" && drafted.length === 0 && picture === undefined) return giveBack("empty");
+      if (!words && drafted.length === 0 && picture === undefined) return giveBack("empty");
       const local =
         picture === undefined
           ? null

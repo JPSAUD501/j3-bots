@@ -39,7 +39,7 @@ import { usePresentation } from "../presentation.tsx";
 
 import { FileLongPress, MessageFile } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
-import { QuoteCards } from "./QuoteCards.tsx";
+import { BubbleQuotes } from "./QuoteCards.tsx";
 import { useHighlight, useQuoting } from "./Quotes.tsx";
 import {
   type MessageAction,
@@ -257,12 +257,14 @@ export function MessageBubble({
   const messageView = useRef<ComponentRef<typeof Pressable>>(null);
   const wordsView = useRef<ComponentRef<typeof View>>(null);
   // The bubble with the message's words, which a long press draws again over the quick bar's scrim.
+  const quotes = message.quotes ?? [];
+  const ink = fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground";
   const words = (
     selectable: boolean,
     style: AnimatedStyle,
     ref?: Ref<ComponentRef<typeof View>>,
   ): ReactNode =>
-    message.text !== "" && (
+    (message.text !== "" || quotes.length > 0) && (
       <View
         ref={ref}
         style={
@@ -274,26 +276,27 @@ export function MessageBubble({
           fromOperator ? `bg-bubble-operator ${operatorCorners[position]}` : botCorners[position]
         }`}
       >
-        <Animated.View style={style}>
-          <MessageText
-            text={message.text}
-            mentionable={mentionable}
-            selectable={selectable}
-            className={
-              fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground"
-            }
-            {...(placed === null
-              ? {}
-              : {
-                  placed: {
-                    files: message.attachments,
-                    offsets: placed,
-                    color: fromOperator
-                      ? "accent-bubble-operator-foreground"
-                      : "accent-bubble-bot-foreground",
-                  },
-                })}
-          />
+        <Animated.View style={style} className="gap-1.5">
+          <BubbleQuotes quotes={quotes} ink={ink} />
+          {message.text !== "" && (
+            <MessageText
+              text={message.text}
+              mentionable={mentionable}
+              selectable={selectable}
+              className={ink}
+              {...(placed === null
+                ? {}
+                : {
+                    placed: {
+                      files: message.attachments,
+                      offsets: placed,
+                      color: fromOperator
+                        ? "accent-bubble-operator-foreground"
+                        : "accent-bubble-bot-foreground",
+                    },
+                  })}
+            />
+          )}
         </Animated.View>
       </View>
     );
@@ -301,7 +304,6 @@ export function MessageBubble({
   // scrim, so selecting and reacting never answer the same press.
   const said = (
     <>
-      <QuoteCards quotes={message.quotes ?? []} side={side} maxWidth={bubbleWidth} />
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard id={message.id} visual={message.visual} />
       )}

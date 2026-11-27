@@ -15,21 +15,34 @@ import { sameTarget } from "./sameTarget.ts";
 
 /**
  * A message as a quote keeps it: whole, or the passage of its text given,
- * which must be there word for word. `null` for anything a message cannot
- * quote: J3 Bots' own message, a passage not in the text, or one that is
- * not trimmed.
+ * which must be there word for word, with the operator's comment on it.
+ * `null` for anything a message cannot quote: J3 Bots' own message, a
+ * passage not in the text, one that is not trimmed, or a comment on a whole
+ * message, whose reply is the message itself.
  */
-export const quoteOf = (message: MessageEntry, passage: string | null): MessageQuote | null => {
+export const quoteOf = (
+  message: MessageEntry,
+  passage: string | null,
+  comment: string | null = null,
+): MessageQuote | null => {
   const { author } = message;
   if (author._tag === "system") return null;
-  if (passage !== null && (passage.trim() !== passage || !message.text.includes(passage))) {
-    return null;
+  if (passage === null) {
+    if (comment !== null) return null;
+    return {
+      entryId: message.id,
+      author,
+      saidAt: message.createdAt,
+      quoted: quoteOpening(message.text),
+    };
   }
+  if (passage.trim() !== passage || !message.text.includes(passage)) return null;
   return {
     entryId: message.id,
     author,
     saidAt: message.createdAt,
-    quoted: passage === null ? quoteOpening(message.text) : { _tag: "passage", text: passage },
+    quoted: { _tag: "passage", text: passage },
+    ...(comment === null ? {} : { comment }),
   };
 };
 
@@ -51,8 +64,9 @@ export const messageIn = Effect.fn("quotes.messageIn")(function* (
 /**
  * The operator's quotes, as the message keeps them (decision 0094): each a
  * message of `target`, quoted whole at most once among them (a reply), each
- * passage word for word in its message's text, and none twice. Anything
- * else refuses them all with `Invalid("quotes")`.
+ * passage word for word in its message's text, a comment only on a passage
+ * (decision 0106), and none twice. Anything else refuses them all with
+ * `Invalid("quotes")`.
  */
 export const resolveQuotes = Effect.fn("quotes.resolve")(function* (
   entries: Entries["Service"],
@@ -69,7 +83,9 @@ export const resolveQuotes = Effect.fn("quotes.resolve")(function* (
   const quotes: Array<MessageQuote> = [];
   for (const request of requests) {
     const message = yield* messageIn(entries, target, request.entryId);
-    const quote = Option.isSome(message) ? quoteOf(message.value, request.passage ?? null) : null;
+    const quote = Option.isSome(message)
+      ? quoteOf(message.value, request.passage ?? null, request.comment ?? null)
+      : null;
     if (quote === null) return yield* new Invalid({ reason: "quotes" });
     quotes.push(quote);
   }
