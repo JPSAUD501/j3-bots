@@ -116,7 +116,11 @@ export const layer = Layer.effect(
     const newest = SqlSchema.findOneOption({
       Request: Schema.Void,
       Result: Schema.Struct({ seq: Schema.NullOr(Sequence), oldest: Schema.NullOr(Sequence) }),
-      execute: () => sql`SELECT MAX(seq) AS seq, MIN(seq) AS oldest FROM changes`,
+      // Each bound on its own: SQLite reads a lone MAX or MIN from one end of
+      // the key, and scans the table for both together.
+      execute: () => sql`
+        SELECT (SELECT MAX(seq) FROM changes) AS seq, (SELECT MIN(seq) FROM changes) AS oldest
+      `,
     });
     const bounds = newest(undefined).pipe(
       Effect.orDie,

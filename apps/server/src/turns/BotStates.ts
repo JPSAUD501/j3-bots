@@ -159,14 +159,16 @@ export const layer = Layer.effect(
     /**
      * The bot's oldest open card it waits on between turns: an `ask` it ended
      * a turn on, a request for help in its browser, or a run of its routine
-     * waiting for the operator's yes.
+     * waiting for the operator's yes. The open `ask` cards are read first
+     * (`CROSS JOIN`): with no statistics, the planner would scan the entries
+     * for the bot's instead.
      */
     const askCard = SqlSchema.findOneOption({
       Request: BotId,
       Result: Card,
       execute: (botId) => sql`
         SELECT entry_id FROM (
-          SELECT a.entry_id, e.seq FROM ask_cards a JOIN entries e ON e.id = a.entry_id
+          SELECT a.entry_id, e.seq FROM ask_cards a CROSS JOIN entries e ON e.id = a.entry_id
           WHERE e.author_bot_id = ${botId} AND a.closed_at IS NULL
           UNION ALL
           SELECT b.entry_id, e.seq FROM browser_help_cards b JOIN entries e ON e.id = b.entry_id
