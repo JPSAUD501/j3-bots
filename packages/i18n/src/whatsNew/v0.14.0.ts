@@ -3,9 +3,9 @@ import type { WhatsNewRelease } from "./types.ts";
 
 // What 0.14.0 lets people do. Written so far for what has merged; before the
 // release, add an entry each for the work still under way: MCP Apps shown in
-// the bot's reply, with fullscreen and picture-in-picture; replying to a
-// message and quoting part of one; and dictating a message with the
-// microphone. docs/operations/releasing.md says how an entry is written.
+// the bot's reply, with fullscreen and picture-in-picture, and dictating a
+// message with the microphone. docs/operations/releasing.md says how an entry
+// is written.
 
 export const v0_14_0: WhatsNewRelease = {
   version: "0.14.0",
@@ -24,6 +24,22 @@ export const v0_14_0: WhatsNewRelease = {
         en: "Type @ in the message field. Tap a name in a message to open that bot or room.",
         "pt-BR":
           "Digite @ no campo da mensagem. Toque num nome numa mensagem para abrir aquele bot ou sala.",
+      },
+    },
+    {
+      title: {
+        en: "Reply to a message, or quote part of one",
+        "pt-BR": "Responda a uma mensagem, ou cite um trecho dela",
+      },
+      body: {
+        en: "Answer one message in particular, or point at the exact words you mean, and the bot knows what you’re talking about. In a room, replying to a bot’s message speaks to that bot.",
+        "pt-BR":
+          "Responda a uma mensagem específica, ou aponte as palavras exatas que você quer dizer, e o bot sabe do que você está falando. Numa sala, responder à mensagem de um bot fala com aquele bot.",
+      },
+      where: {
+        en: "Reply is beside React on a message; on Android you can also swipe a message to the right. To quote, select words in a message and press Quote; on Android, use Quote part in the message’s menu.",
+        "pt-BR":
+          "Responder fica ao lado de Reagir numa mensagem; no Android você também pode deslizar a mensagem para a direita. Para citar, selecione palavras numa mensagem e toque em Citar; no Android, use Citar trecho no menu da mensagem.",
       },
     },
     {
