@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Just enough vector rasterizing to turn avatars into PNG images, with no
- * image library, in Node and in a browser alike: SVG path data in the subset
- * the avatars use (absolute M, L, C, Q, A and Z), filled with the nonzero rule or
- * outlined with round caps and joins, anti-aliased, and an RGBA PNG encoder.
+ * Just enough vector rasterizing to turn avatars and the app's icons into PNG
+ * images, with no image library, in Node and in a browser alike: SVG path
+ * data in the subset they use (absolute M, L, C, Q, A and Z), filled with the
+ * nonzero rule in a color or a gradient, or outlined with round caps and
+ * joins, anti-aliased, and an RGBA PNG encoder.
  */
 import { zlibSync } from "fflate";
 
@@ -331,6 +332,101 @@ function dashes(
 
 export type Rgb = readonly [number, number, number];
 
+/** One color of a gradient, at its place along it. */
+interface GradientStop {
+  /** Where it stands, from 0 at the gradient's start to 1 at its end. */
+  readonly offset: number;
+  readonly color: Rgb;
+  /** How much of what is under it the color covers there, from 0 to 1. All of it without one. */
+  readonly opacity?: number;
+}
+
+/**
+ * A fill whose color changes across the image, in the image's px: along the
+ * line `from` to `to`, or outward from `center` to `radius`. Past its ends it
+ * keeps its first and last colors, and between two stops each channel and the
+ * opacity change evenly, as an SVG gradient's do by default.
+ */
+type Gradient =
+  | {
+      readonly kind: "linear";
+      readonly from: Point;
+      readonly to: Point;
+      readonly stops: ReadonlyArray<GradientStop>;
+    }
+  | {
+      readonly kind: "radial";
+      readonly center: Point;
+      readonly radius: number;
+      readonly stops: ReadonlyArray<GradientStop>;
+    };
+
+/** What a fill lays down: one color, or a gradient. */
+export type Paint = Rgb | Gradient;
+
+/** A color and how much it covers, from 0 to 1. */
+type Shade = readonly [red: number, green: number, blue: number, opacity: number];
+
+/**
+ * The gradient's color at each place along it, from 0 to 1. Its stops are at
+ * least one, each at a finite offset from 0 to 1 and none before the one it
+ * follows, with an opacity from 0 to 1; a `RangeError` says when they are not.
+ */
+function ramp(stops: ReadonlyArray<GradientStop>): (t: number) => Shade {
+  const shades = stops.map(({ offset, color, opacity = 1 }, i): readonly [number, Shade] => {
+    const before = stops[i - 1]?.offset ?? 0;
+    if (!(offset >= before && offset <= 1) || !(opacity >= 0 && opacity <= 1)) {
+      throw new RangeError(
+        `A gradient's stops run from 0 to 1 in order, each with an opacity from 0 to 1, not ${offset} at ${opacity}.`,
+      );
+    }
+    return [offset, [...color, opacity]];
+  });
+  const [first] = shades;
+  const last = shades.at(-1);
+  if (first === undefined || last === undefined) {
+    throw new RangeError("A gradient needs at least one stop.");
+  }
+  return (t) => {
+    if (!(t > first[0])) return first[1];
+    if (t >= last[0]) return last[1];
+    const next = shades.findIndex(([offset]) => offset > t);
+    const [from, a] = shades[next - 1] ?? first;
+    const [to, b] = shades[next] ?? last;
+    const share = (t - from) / (to - from);
+    const between = (channel: 0 | 1 | 2 | 3) => a[channel] + (b[channel] - a[channel]) * share;
+    return [between(0), between(1), between(2), between(3)];
+  };
+}
+
+/**
+ * The paint's color at each point of the image. A linear gradient whose ends
+ * are one point, or a radial one without a finite radius above 0, has no
+ * direction to change along: a `RangeError` says so.
+ */
+function shader(paint: Paint): (x: number, y: number) => Shade {
+  if (!("kind" in paint)) {
+    const solid: Shade = [...paint, 1];
+    return () => solid;
+  }
+  const at = ramp(paint.stops);
+  if (paint.kind === "linear") {
+    const { from, to } = paint;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length2 = dx * dx + dy * dy;
+    if (!(length2 > 0 && Number.isFinite(length2))) {
+      throw new RangeError("A linear gradient runs between two points apart.");
+    }
+    return (x, y) => at(((x - from.x) * dx + (y - from.y) * dy) / length2);
+  }
+  const { center, radius } = paint;
+  if (!(radius > 0 && Number.isFinite(radius))) {
+    throw new RangeError(`A radial gradient's radius is above 0, not ${radius}.`);
+  }
+  return (x, y) => at(Math.hypot(x - center.x, y - center.y) / radius);
+}
+
 /** Whether `n` can be a side of an image: a whole number of px, at least 1. */
 export const isPixelCount = (n: number): boolean => Number.isInteger(n) && n >= 1;
 
@@ -359,9 +455,12 @@ export class Canvas {
     }
   }
 
-  /** Fills the subpaths with `color`, blending each edge pixel by how much of it they cover. */
-  fill(subpaths: ReadonlyArray<Subpath>, color: Rgb) {
-    this.paint(coverage(subpaths, this.width, this.height), color, 1);
+  /**
+   * Fills the subpaths with `paint`, blending each edge pixel by how much of
+   * it they cover. A gradient is read at each pixel's center.
+   */
+  fill(subpaths: ReadonlyArray<Subpath>, paint: Paint) {
+    this.paint(coverage(subpaths, this.width, this.height), paint, 1);
   }
 
   /** Outlines the subpaths in `color`, `lineWidth` wide with round caps and joins. */
@@ -385,35 +484,33 @@ export class Canvas {
       const band = strokeCoverage(subpaths, outline, this.width, this.height);
       for (let i = 0; i < band.length; i++) covered[i] = Math.max(covered[i] ?? 0, band[i] ?? 0);
     }
-    this.erase(covered, 1);
+    this.erase(covered);
   }
 
-  /** Clears along the subpaths, `lineWidth` wide with round caps and joins, as `stroke` would cover them. */
-  clearStroke(
-    subpaths: ReadonlyArray<Subpath>,
-    lineWidth: number,
-    options: { readonly opacity?: number } = {},
-  ) {
-    this.erase(strokeCoverage(subpaths, lineWidth, this.width, this.height), options.opacity ?? 1);
-  }
-
-  /** Takes away as much of each pixel as `covered` says, times `opacity`. */
-  private erase(covered: Float32Array, opacity: number) {
+  /** Takes away as much of each pixel as `covered` says. */
+  private erase(covered: Float32Array) {
     for (let i = 0; i < covered.length; i++) {
       const at = i * 4 + 3;
-      this.pixels[at] = Math.round((this.pixels[at] ?? 0) * (1 - (covered[i] ?? 0) * opacity));
+      this.pixels[at] = Math.round((this.pixels[at] ?? 0) * (1 - (covered[i] ?? 0)));
     }
   }
 
-  /** Lays `color` over the image, as much at each pixel as `covered` says, times `opacity`. */
-  private paint(covered: Float32Array, color: Rgb, opacity: number) {
+  /** Lays `paint` over the image, as much at each pixel as `covered` says, times `opacity`. */
+  private paint(covered: Float32Array, paint: Paint, opacity: number) {
+    const shade = shader(paint);
     for (let i = 0; i < covered.length; i++) {
-      const a = (covered[i] ?? 0) * opacity;
+      const share = (covered[i] ?? 0) * opacity;
+      if (share === 0) continue;
+      const [red, green, blue, cover] = shade(
+        (i % this.width) + 0.5,
+        Math.floor(i / this.width) + 0.5,
+      );
+      const a = share * cover;
       if (a === 0) continue;
       const below = (this.pixels[i * 4 + 3] ?? 0) / 255;
       // Source over, in straight alpha: over an opaque pixel the total is 1.
       const total = a + below * (1 - a);
-      color.forEach((value, channel) => {
+      [red, green, blue].forEach((value, channel) => {
         const at = i * 4 + channel;
         this.pixels[at] = Math.round(
           (value * a + (this.pixels[at] ?? 0) * below * (1 - a)) / total,

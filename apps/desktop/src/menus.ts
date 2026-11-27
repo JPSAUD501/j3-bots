@@ -55,8 +55,8 @@ const MAC = process.platform === "darwin";
 const literal = (label: string) => (MAC ? label : label.replaceAll("&", "&&"));
 
 /**
- * The tray's icon: the app icon's Pip, in its waiting form while something
- * waits, in `theme`, the one the system draws its tray in.
+ * The tray's icon: the app icon's mark, its light in its waiting form while
+ * something waits, in `theme`, the one the system draws its tray in.
  */
 const trayIcon = (attention: boolean, theme: Theme) => {
   const size = process.platform === "linux" ? 24 : 16;
@@ -64,7 +64,7 @@ const trayIcon = (attention: boolean, theme: Theme) => {
   for (const scaleFactor of [1, 2]) {
     image.addRepresentation({
       scaleFactor,
-      buffer: Buffer.from(renderTrayIcon(attention, theme, size * scaleFactor)),
+      buffer: Buffer.from(renderTrayIcon(attention, theme, size, scaleFactor)),
     });
   }
   return image;
