@@ -23,8 +23,8 @@ The MCP Apps extension, at its stable 2026-01-26 version, defines the three disp
   - The latest an app sets replaces what it set before, and an empty one takes it back.
   - The server keeps one per app, for the bot's next turn where the app is shown: the bot's conversation, or the room.
   - The bot reads it there, framed as that connector's untrusted content, as a tool's answer is. It wakes nobody, and is shown nowhere as a message.
-  - It is refused once the bot no longer has the connector.
-- **What it offers to save.** `ui/download-file` offers files, at most 8 and 16 MiB together, or addresses.
+  - It is kept only while the bot has the connector: refused once the bot no longer has it, and deleted, unread, as the connector is taken from the bot, so giving it back carries none.
+- **What it offers to save.** `ui/download-file` offers files, at most 8 and 16 MiB together, or addresses, in a request no client takes past 24 Mi characters as JSON, the most Android's bridge takes.
   - A file is saved only when the operator presses Save, under a name made safe: the browser's download, or Android's share sheet.
   - An address is shown as itself, which is where it goes, and opens in the browser, as a link does.
 - **A complete host context.** `hostContext` carries every field 2026-01-26 defines:
