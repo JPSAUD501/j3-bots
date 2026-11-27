@@ -100,7 +100,9 @@ const outputOf = (command: string, args: ReadonlyArray<string>, env: Record<stri
   Probe.outputOf(command, args, { deadline: PROBE_DEADLINE, env });
 
 const unixProbe = `printf '%s' '${START}'; printf '%s' "$PATH"; printf '%s' '${END}'`;
-const windowsProbe = `Write-Output '${START}'; Write-Output $env:PATH; Write-Output '${END}'`;
+// Redirected, PowerShell writes in the console's code page, which mangles a
+// folder with a letter outside it; it is told to write UTF-8, which is read.
+const windowsProbe = `try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; Write-Output '${START}'; Write-Output $env:PATH; Write-Output '${END}'`;
 
 /** The PATH `shell`, started as an interactive login shell, sets up. */
 const loginShellPath = (shell: string, env: Record<string, string>) =>
