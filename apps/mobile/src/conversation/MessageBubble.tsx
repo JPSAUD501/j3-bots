@@ -12,7 +12,7 @@ import {
 import { deliveryLine, type RefusedMentions } from "@j3-bots/client-runtime/wording";
 import type { Avatar, BotId } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { Reply, TextQuote } from "lucide-react-native";
+import { MonitorDot, Reply, TextQuote } from "lucide-react-native";
 import {
   type ComponentProps,
   type ComponentRef,
@@ -32,6 +32,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
+import { Icon } from "../components/Icon.tsx";
 import { feelLongPress } from "../platform/haptics.ts";
 import { Text } from "../text.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -157,7 +158,9 @@ function LineAction(props: {
  * can be selected. Where quotes are offered, the same menu replies to the
  * message or quotes part of it, and a swipe toward the reading direction
  * replies too. Above its words, the messages it quotes. The message a quote
- * leads to is highlighted for a moment.
+ * leads to is highlighted for a moment. Under a bot's offer to record the
+ * screen, a line saying to open the app on the computer, as a phone records
+ * nothing.
  */
 export function MessageBubble({
   message,
@@ -245,6 +248,11 @@ export function MessageBubble({
                 },
               ]),
         ];
+  // Only a bot offers, and only what this version knows.
+  const offersRecording =
+    message._tag === "message" &&
+    message.author._tag === "bot" &&
+    message.offer?.kind === "record-screen";
   const highlight = useHighlight(message._tag === "message" ? message.id : null);
   const messageView = useRef<ComponentRef<typeof Pressable>>(null);
   const wordsView = useRef<ComponentRef<typeof View>>(null);
@@ -303,6 +311,15 @@ export function MessageBubble({
         message.attachments.map((attachment) => (
           <MessageFile key={attachment.id} attachment={attachment} />
         ))}
+      {offersRecording && (
+        // The phone records nothing: the offer says where it can be done (decision 0098).
+        <View style={{ maxWidth: bubbleWidth }} className="flex-row items-start gap-1.5 ps-1">
+          <Icon icon={MonitorDot} size={14} color="accent-muted-foreground" />
+          <Text className="shrink text-xs text-muted-foreground">
+            {t("message.offer.recordScreen.elsewhere")}
+          </Text>
+        </View>
+      )}
     </>
   );
   const openBar = () => {
