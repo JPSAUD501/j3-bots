@@ -8,7 +8,7 @@ import { useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import type { ShellIntents } from "../shell/data";
-import { SwitchRow } from "./SettingsSwitch";
+import { SwitchRow } from "./SettingsSection";
 import { Button } from "./ui/button";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { SkeletonRows } from "./ui/skeleton";

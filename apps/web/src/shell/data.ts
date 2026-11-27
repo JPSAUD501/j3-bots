@@ -19,6 +19,7 @@ import type {
   SecretsView,
   UpdatePromptEntry,
   UpdateResult,
+  VoiceClient,
 } from "@j3-bots/client-runtime";
 import type { ConnectorsPlace, SettingsPage } from "@j3-bots/client-runtime/presentation";
 import type {
@@ -71,6 +72,7 @@ import type {
 } from "@j3-bots/desktop-bridge";
 import type * as Redacted from "effect/Redacted";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
+import type { DictationSource } from "../components/Dictation";
 import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { RenderedPrompt } from "../components/PromptPicker";
@@ -78,6 +80,12 @@ import type { RoomPlacement } from "../components/RosterMenu";
 import type { TimelineIntents } from "../components/Timeline";
 import type { WhatsNewIntents } from "../components/WhatsNew";
 import type { SecretsIntents } from "../components/secrets/parts";
+
+/** What Settings → Voice reads and changes beyond the settings themselves. */
+export type VoiceSettingsIntents = Pick<
+  VoiceClient,
+  "openStatus" | "openCloudKeys" | "models" | "cloudModels" | "setCloudKey"
+>;
 
 /** One conversation or room as the shell shows it. */
 export interface ConversationView {
@@ -277,8 +285,14 @@ export interface ShellIntents extends TimelineIntents {
   readonly forceStopBot: (botId: BotId) => void;
   /** Stop, for a room whose member's AI ignores it; the shell says so if it did not. */
   readonly forceStopRoom: (roomId: RoomId) => void;
-  /** Absent where there is no dictation. */
-  readonly dictate?: (target: EntryTarget) => void;
+  /** Dictation in the composer; absent where there is none, and no microphone shows. */
+  readonly dictation?: DictationSource | undefined;
+  /**
+   * Settings → Voice: whether the server can recognize speech and with which
+   * model, the cloud providers' keys, and the models to choose from. Absent
+   * from a server older than dictation through it.
+   */
+  readonly voice?: VoiceSettingsIntents | undefined;
   /** Resolves with the new bot's id once the server has created it, or with why it did not. */
   readonly createBot: (draft: NewBot) => Promise<IntentResult<BotId>>;
   readonly newBot: () => void;

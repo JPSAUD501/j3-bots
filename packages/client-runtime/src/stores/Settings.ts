@@ -3,6 +3,7 @@ import {
   type NotificationSettingsChange,
   type Settings as SettingsValue,
   TimeZone,
+  type VoiceSettingsChange,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,8 @@ export type SettingsChange =
   | { readonly section: "profile"; readonly changes: ProfileChanges }
   | { readonly section: "notifications"; readonly changes: NotificationSettingsChange }
   | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges }
+  /** Sent only to a server whose settings carry `voice`. */
+  | { readonly section: "voice"; readonly changes: VoiceSettingsChange }
   | { readonly section: "usage-data"; readonly changes: UsageDataChanges };
 
 /** The operator's switch for usage data; only for a server whose settings carry `telemetry`. */
@@ -62,6 +65,7 @@ export interface SettingsSaves {
   readonly profile: SettingsSave<ProfileChanges>;
   readonly notifications: SettingsSave<NotificationSettingsChange>;
   readonly harnesses: SettingsSave<HarnessSettingsChanges>;
+  readonly voice: SettingsSave<VoiceSettingsChange>;
   readonly "usage-data": SettingsSave<UsageDataChanges>;
 }
 
@@ -128,6 +132,7 @@ export const layer = Layer.effect(
       profile: new Cell<SettingsSaves["profile"]>({ _tag: "idle" }),
       notifications: new Cell<SettingsSaves["notifications"]>({ _tag: "idle" }),
       harnesses: new Cell<SettingsSaves["harnesses"]>({ _tag: "idle" }),
+      voice: new Cell<SettingsSaves["voice"]>({ _tag: "idle" }),
       "usage-data": new Cell<SettingsSaves["usage-data"]>({ _tag: "idle" }),
     };
 
@@ -182,6 +187,7 @@ export const layer = Layer.effect(
       sent: ProfileChanges &
         HarnessSettingsChanges & {
           readonly notifications?: NotificationSettingsChange;
+          readonly voice?: VoiceSettingsChange;
           readonly telemetry?: boolean;
         },
     ) {
@@ -210,6 +216,8 @@ export const layer = Layer.effect(
           });
         case "harnesses":
           return yield* save(saves.harnesses, change.changes, change.changes);
+        case "voice":
+          return yield* save(saves.voice, change.changes, { voice: change.changes });
         case "usage-data":
           return yield* save(saves["usage-data"], change.changes, {
             telemetry: change.changes.enabled,

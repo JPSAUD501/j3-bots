@@ -131,18 +131,24 @@ export function usePromptPicker({
       setChosen({ prompt, drafts, writing: false, failed: false, tried: true });
       return;
     }
-    setChosen({ prompt, drafts, writing: true, failed: false, tried: true });
-    void (menu?.render(prompt, given) ?? Promise.resolve(null)).then((written) => {
-      if (written === null) {
-        setChosen({ prompt, drafts, writing: false, failed: true, tried: true });
-        return;
-      }
-      setChosen(null);
-      setCut(written.cut);
-      placeCaret.current = written.text.length;
-      onValueChange(written.text);
-    });
+    const writing: ChosenPrompt = { prompt, drafts, writing: true, failed: false, tried: true };
+    setChosen(writing);
+    void (menu?.render(prompt, given) ?? Promise.resolve(null)).then((text) =>
+      written(writing, text),
+    );
   };
+  // An answer for a prompt cancelled, or left for another draft, writes nothing.
+  const written = useEffectEvent((asked: ChosenPrompt, text: RenderedPrompt) => {
+    if (chosen !== asked) return;
+    if (text === null) {
+      setChosen({ ...asked, writing: false, failed: true });
+      return;
+    }
+    setChosen(null);
+    setCut(text.cut);
+    placeCaret.current = text.text.length;
+    onValueChange(text.text);
+  });
 
   const pick = (prompt: PromptOption) => {
     const drafts = Object.fromEntries(prompt.arguments.map((argument) => [argument.name, ""]));

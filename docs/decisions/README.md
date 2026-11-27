@@ -90,6 +90,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0093](0093-a-connectors-app-is-part-of-the-bots-reply.md) | A connector's app is part of the bot's reply, in every display mode, and tells its bot what it shows | Accepted |
 | [0094](0094-a-message-quotes-messages-a-reply-whole-a-quote-a-passage.md) | A message quotes messages: a reply whole, a quote a passage | Accepted |
 | [0095](0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md) | Little ones a turn handed off stay until they are home | Accepted |
+| [0096](0096-dictation-goes-through-the-engines-speech-recognition-and-stays-on-the-operators-machines.md) | Dictation goes through the engine's speech recognition, and stays on the operator's machines | Accepted |
 | [0097](0097-whats-new-ships-with-the-apps-and-follows-the-servers-version.md) | What's new ships with the apps, and follows the server's version | Accepted |
 | [0099](0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md) | Usage data is the server's, typed, and on until the operator turns it off | Accepted |
 

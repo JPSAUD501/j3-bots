@@ -186,6 +186,20 @@ const sessionRow = Effect.fn(function* (botId: BotId) {
 export const mainSessionId = (botId: BotId) =>
   sessionRow(botId).pipe(Effect.map((row) => Option.getOrThrow(row).id));
 
+/**
+ * Whether the bot's main session waits on a report of its background work
+ * (`Stops`), which a turn's end while some of its turns had work makes due.
+ */
+export const backgroundCheckDue = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const session = yield* mainSessionId(botId);
+    const [row] = yield* sql<{ readonly due: number }>`
+      SELECT background_check_due AS due FROM sessions WHERE id = ${session}
+    `.pipe(Effect.orDie);
+    return row?.due === 1;
+  });
+
 /** The engine session the bot works in, which the test drives the engine through. */
 export const engineSession = (botId: BotId) =>
   eventually(

@@ -25,6 +25,7 @@ import { NotificationsSection, YouSection } from "./Profile.tsx";
 import { ProvidersSection } from "./Providers.tsx";
 import { AppearanceSection, ServerSection, SignOutSection } from "./ThisPhone.tsx";
 import { UsageSection } from "./Usage.tsx";
+import { VoiceSection } from "./Voice.tsx";
 
 /**
  * One page of Settings, named in the header, with the line that says what it
@@ -72,6 +73,8 @@ function PageBody({ page }: { readonly page: SettingsPage }) {
       return <NotificationsPage connected={connected} />;
     case "appearance":
       return <AppearanceSection />;
+    case "voice":
+      return <VoiceSection connected={connected} />;
     case "providers":
       return <ProvidersSection />;
     case "usage":

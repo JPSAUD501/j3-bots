@@ -234,7 +234,9 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
           recordAudioAndroid: false,
         },
       ],
-      // Dictation in the composer, with the platform's speech recognizer.
+      // Dictation in the composer with the phone's own recognizer, on the
+      // phone only; its microphone permission also serves dictation through
+      // the server (modules/voice-capture).
       [
         "expo-speech-recognition",
         {

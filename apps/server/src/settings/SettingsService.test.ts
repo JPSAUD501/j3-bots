@@ -32,6 +32,31 @@ it.effect("changes only the notification switch a device sent", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("saves the dictation preferences a device changed, and keeps the rest", () =>
+  Effect.gen(function* () {
+    const settings = yield* SettingsService;
+    yield* settings.update({
+      commandId: CommandId.make("voice-words"),
+      changes: { voice: { language: "pt", words: ["Wren", "J3 Bots"] } },
+    });
+    // A device that only turns the tidy-up on leaves the language and the words.
+    yield* settings.update({
+      commandId: CommandId.make("voice-tidy"),
+      changes: { voice: { cleanUp: true } },
+    });
+
+    assert.deepStrictEqual((yield* settings.get).voice, {
+      place: "automatic",
+      language: "pt",
+      words: ["Wren", "J3 Bots"],
+      removeFillers: true,
+      cleanUp: true,
+      model: null,
+      openRouterModel: null,
+    });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("takes the time zone of the first device that gives one, and keeps it", () =>
   Effect.gen(function* () {
     const settings = yield* SettingsService;

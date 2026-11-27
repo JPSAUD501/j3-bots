@@ -12,6 +12,7 @@ const settings = (telemetry: Settings["telemetry"]): Settings => ({
   updateChannel: "stable",
   autoUpdateHarnesses: true,
   suggestReplies: true,
+  voice: null,
   ...(telemetry === undefined ? {} : { telemetry }),
 });
 

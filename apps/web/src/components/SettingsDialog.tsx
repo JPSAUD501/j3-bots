@@ -21,6 +21,7 @@ import {
   GaugeIcon,
   KeyRoundIcon,
   type LucideIcon,
+  MicIcon,
   MonitorSmartphoneIcon,
   PaletteIcon,
   PlugIcon,
@@ -110,14 +111,14 @@ import {
 } from "./LocalMode";
 import { PairingQr } from "./PairingQr";
 import { PhoneAccessSetting } from "./PhoneAccess";
-import { Section } from "./SettingsSection";
+import { Section, SwitchRow } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
+import { VoiceSection } from "./VoiceSettings";
 import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
-import { SwitchRow } from "./SettingsSwitch";
 import { UsageDataSection } from "./UsageData";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
@@ -148,6 +149,7 @@ type SettingsIntents = Pick<
   | "lookingAt"
   | "providerSetup"
   | "secrets"
+  | "voice"
 >;
 
 type SettingsData = Pick<
@@ -190,6 +192,7 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
   you: UserRoundIcon,
   notifications: BellIcon,
   appearance: PaletteIcon,
+  voice: MicIcon,
   providers: CpuIcon,
   usage: GaugeIcon,
   connectors: PlugIcon,
@@ -201,24 +204,27 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, and About only where an update can be followed from here
- * or the server offers its usage data switch.
+ * the desktop app, About only where an update can be followed from here or
+ * the server offers its usage data switch, and voice only from a server that
+ * dictates, since this window has no recognizer of its own.
  */
 const pagesFor = (
   intents: SettingsIntents,
-  settings: Settings | null,
+  data: SettingsData,
 ): ReadonlyArray<ReadonlyArray<SettingsPage>> =>
   settingsGroups
     .map((group) =>
       group.filter((page) => {
         switch (page) {
+          case "voice":
+            return intents.voice !== undefined && data.settings?.voice != null;
           case "where":
             return intents.server !== undefined || intents.local !== undefined;
           case "updates":
             return (
               intents.serverUpdate !== undefined ||
               intents.update !== undefined ||
-              settings?.telemetry !== undefined
+              data.settings?.telemetry !== undefined
             );
           default:
             return true;
@@ -307,7 +313,7 @@ export function SettingsPanel({
   readonly wide: boolean;
 }) {
   const { t } = useI18n();
-  const groups = pagesFor(intents, data.settings);
+  const groups = pagesFor(intents, data);
   const page =
     data.settingsPage !== null && groups.some((group) => group.includes(data.settingsPage!))
       ? data.settingsPage
@@ -516,6 +522,16 @@ function PageBody({
       );
     case "appearance":
       return <AppearanceSection />;
+    case "voice":
+      return intents.voice === undefined ? null : (
+        <VoiceSection
+          settings={data.settings}
+          save={data.settingsSaves.voice}
+          connected={data.connected}
+          onSave={intents.updateSettings}
+          voice={intents.voice}
+        />
+      );
     case "providers":
       return (
         <EngineSection

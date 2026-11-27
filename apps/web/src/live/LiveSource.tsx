@@ -880,6 +880,7 @@ function LiveShell({
   const profileSave = useReadable(j3.settingsSaves.profile);
   const notificationsSave = useReadable(j3.settingsSaves.notifications);
   const harnessesSave = useReadable(j3.settingsSaves.harnesses);
+  const voiceSave = useReadable(j3.settingsSaves.voice);
   const usageDataSave = useReadable(j3.settingsSaves["usage-data"]);
   const devices = useDevices();
   const conversation = useConversation(target);
@@ -1231,6 +1232,7 @@ function LiveShell({
       profile: profileSave,
       notifications: notificationsSave,
       harnesses: harnessesSave,
+      voice: voiceSave,
       "usage-data": usageDataSave,
     },
     settingsOpen,
@@ -1551,6 +1553,7 @@ function LiveShell({
     },
     providerActions: providerActionsOf(j3),
     secrets: { ...j3.secrets, copy: copySecret },
+    voice: j3.voice,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

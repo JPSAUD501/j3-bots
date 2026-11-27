@@ -20,7 +20,7 @@ import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { BasePrompt } from "./BasePrompt.ts";
 import { SuggestReplies } from "./SuggestReplies.ts";
-import { SettingsStore } from "./SettingsStore.ts";
+import { DEFAULT_VOICE_SETTINGS, SettingsStore } from "./SettingsStore.ts";
 import { TelemetrySwitch } from "../telemetry/TelemetrySwitch.ts";
 
 /** The changes `settings.update` may ask for. */
@@ -123,6 +123,8 @@ export const layer = Layer.effect(
         updateChannel: changes.updateChannel ?? saved.updateChannel,
         autoUpdateHarnesses: changes.autoUpdateHarnesses ?? saved.autoUpdateHarnesses,
         suggestReplies: changes.suggestReplies ?? saved.suggestReplies,
+        // Field by field too, so a device that changes one leaves the rest.
+        voice: { ...(saved.voice ?? DEFAULT_VOICE_SETTINGS), ...changes.voice },
         ...(saved.telemetry === undefined
           ? {}
           : {

@@ -74,6 +74,7 @@ import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleSentEvents } from "./usageData";
 import { sampleBrowser } from "./sampleBrowser";
 import { copySample, sampleSecrets } from "./sampleSecrets";
+import { sampleVoice } from "./sampleVoice";
 import { galleryVariants } from "./variants";
 import {
   SAMPLE_ASKED_CONNECTOR,
@@ -791,6 +792,19 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 harnesses: { _tag: "saved", changes: change.changes },
               },
             };
+          case "voice":
+            return {
+              ...s,
+              settings: {
+                ...s.settings,
+                voice:
+                  s.settings.voice === null ? null : { ...s.settings.voice, ...change.changes },
+              },
+              settingsSaves: {
+                ...s.settingsSaves,
+                voice: { _tag: "saved", changes: change.changes },
+              },
+            };
           case "usage-data":
             return {
               ...s,
@@ -948,6 +962,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     providerActions: sampleProviderActions,
     whatsNew: { view: whatsNewViews.opened, open: () => {} },
     secrets: { ...secrets, copy: copySample },
+    voice: sampleVoice,
     refreshDevices: nothing,
     loadMoreTurns: nothing,
     retryTurns: nothing,
@@ -1033,6 +1048,7 @@ export function useSampleSource({
         profile: { _tag: "idle" },
         notifications: { _tag: "idle" },
         harnesses: { _tag: "idle" },
+        voice: { _tag: "idle" },
         "usage-data": { _tag: "idle" },
       },
       settingsOpen: false,

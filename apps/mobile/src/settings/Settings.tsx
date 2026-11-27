@@ -11,6 +11,7 @@ import {
   useEngineStatus,
   useJ3Client,
   useServerUpdate,
+  useSettings,
 } from "@j3-bots/client-runtime/react";
 import { settingsPageWords } from "@j3-bots/client-runtime/wording";
 import { layout } from "@j3-bots/design-tokens";
@@ -22,6 +23,7 @@ import {
   Gauge,
   KeyRound,
   type LucideIcon,
+  Mic,
   MonitorSmartphone,
   Palette,
   Plug,
@@ -35,6 +37,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
+import { usePhoneRecognizer } from "../platform/dictation.ts";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
 import { WhatsNewRow } from "../update/WhatsNew.tsx";
@@ -43,6 +46,7 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
   you: UserRound,
   notifications: Bell,
   appearance: Palette,
+  voice: Mic,
   providers: Cpu,
   usage: Gauge,
   connectors: Plug,
@@ -57,7 +61,9 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
  * on its own screen. Coming to it reads the settings and the devices again,
  * for what another device changed. A page that waits on the operator carries
  * a dot: the engine or no provider able to run a bot, a connector that needs
- * them, or a server update on offer. What's new ends the list. On a wide
+ * them, or a server update on offer. Voice is listed while the server keeps
+ * dictation's settings, or, facing a server older than dictation through it,
+ * while this phone dictates by itself. What's new ends the list. On a wide
  * screen it keeps to the conversation's text column.
  */
 export function SettingsScreen() {
@@ -66,6 +72,11 @@ export function SettingsScreen() {
   const status = useEngineStatus();
   const connectors = useConnectors();
   const update = useServerUpdate();
+  const settings = useSettings();
+  const voice = settings._tag === "ready" ? settings.value.voice : null;
+  const phone = usePhoneRecognizer(voice?.language ?? "auto");
+  const listed = (page: SettingsPage): boolean =>
+    page !== "voice" || voice !== null || phone?.state === "ready";
   useFocusEffect(
     useCallback(() => {
       client.refreshSettings();
@@ -104,7 +115,7 @@ export function SettingsScreen() {
     >
       {settingsGroups.map((group) => (
         <View key={group[0]} className="gap-0.5">
-          {group.map((page) => (
+          {group.filter(listed).map((page) => (
             <PageRow key={page} page={page} needsYou={needsYou(page)} />
           ))}
         </View>

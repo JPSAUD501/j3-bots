@@ -301,6 +301,14 @@ export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from
 export { providersNeedYou, type SettingsPage, settingsGroups } from "./settingsPages.ts";
 export { sentAsJson, USAGE_DATA_DOCS, type UsageDataSwitch, usageDataSwitch } from "./usageData.ts";
 export {
+  type DeviceRecognizer,
+  type DictationBlock,
+  type DictationPath,
+  dictationPath,
+  levelOf,
+  placeHeard,
+} from "./dictation.ts";
+export {
   isTemplateFileName,
   openTemplateChunks,
   openTemplateFile,
