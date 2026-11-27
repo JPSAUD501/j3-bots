@@ -416,14 +416,14 @@ export type SecretRequestField = typeof SecretRequestField.Type;
 export const SecretDelivery = OpenLiterals(["reference", "file"]);
 export type SecretDelivery = typeof SecretDelivery.Type;
 
+/** The longest value a secret request takes, in UTF-16 code units. */
+export const MAX_SECRET_REQUEST_VALUE_LENGTH = 10_000;
+
 /**
  * A value typed into a secret request card: 1 to 10,000 characters, at least
  * one of them not a space, redacted as soon as it is decoded and checked only
  * then, so neither a refused value nor a log of the request prints it.
  */
-/** The longest value a secret request takes, in UTF-16 code units. */
-export const MAX_SECRET_REQUEST_VALUE_LENGTH = 10_000;
-
 export const SecretRequestValue = Schema.Redacted(Schema.String).check(
   Schema.makeFilter(
     (value: Redacted.Redacted<string>) => {
