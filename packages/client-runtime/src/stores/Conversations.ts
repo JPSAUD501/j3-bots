@@ -366,6 +366,9 @@ export type CardAnswer =
 export type SecretAnswer = SecretRequestAnswer;
 
 /** One open conversation or room. */
+/** How reading back to an entry ended. See `Conversation.reveal`. */
+export type Revealed = "shown" | "missing" | "unreachable";
+
 export interface Conversation {
   readonly target: EntryTarget;
   readonly state: Readable<ConversationState>;
@@ -377,7 +380,7 @@ export interface Conversation {
    * the conversation's start is reached without it; `unreachable` when a
    * page could not be read.
    */
-  readonly reveal: (entryId: EntryId) => Effect.Effect<"shown" | "missing" | "unreachable">;
+  readonly reveal: (entryId: EntryId) => Effect.Effect<Revealed>;
   /**
    * Moves the operator's read mark forward to `through`, the newest entry
    * they have seen. A mark this conversation already sent, or one before it,

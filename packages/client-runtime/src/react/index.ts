@@ -33,7 +33,7 @@ import type {
 import { type ActionState, cardAction } from "../intents/Actions.ts";
 import type { Readable } from "../Store.ts";
 import type { BrowserViewSize } from "../stores/Browser.ts";
-import { type ConversationState, targetKey } from "../stores/Conversations.ts";
+import { type ConversationState, type Revealed, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { RoutineRuns } from "../stores/Details.ts";
 import type { Loaded } from "../stores/reads.ts";
@@ -207,6 +207,8 @@ export const useConversation = (
 ): {
   readonly state: ConversationState | null;
   readonly loadOlder: () => void;
+  /** Reads back until `entryId` is held. `unreachable` while nothing is held. */
+  readonly reveal: (entryId: EntryId) => Promise<Revealed>;
   readonly markRead: (through: EntryOrder) => void;
 } => {
   const handle: ConversationHandle | null = useHeld(target, targetKey, (client, value) =>
@@ -216,10 +218,12 @@ export const useConversation = (
   return {
     state,
     loadOlder: handle?.loadOlder ?? (() => {}),
+    reveal: handle?.reveal ?? revealUnreachable,
     markRead: handle?.markRead ?? (() => {}),
   };
 };
 
+const revealUnreachable = (): Promise<Revealed> => Promise.resolve("unreachable");
 const doNothing = () => {};
 const revealNothing = () => Promise.resolve(null);
 

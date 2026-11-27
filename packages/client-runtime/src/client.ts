@@ -182,10 +182,18 @@ export interface SecretsHandle {
   readonly totpPreview: (id: SecretId) => Promise<Secrets.SecretsResult<TotpPreview>>;
 }
 
+/** What reading back to an entry ends with once its conversation is let go. */
+const unreachable: Conversations.Revealed = "unreachable";
+
 export interface ConversationHandle {
   readonly target: EntryTarget;
   readonly state: Readable<Conversations.ConversationState>;
   readonly loadOlder: () => void;
+  /**
+   * Reads back until the entry `entryId` is held, as for the source of a
+   * quote: `unreachable` too when the handle was released first.
+   */
+  readonly reveal: (entryId: EntryId) => Promise<Conversations.Revealed>;
   /** Moves the read mark forward to `through`, the newest entry the operator has seen. */
   readonly markRead: (through: EntryOrder) => void;
   /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
@@ -864,12 +872,22 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     openConversation: (target) => {
       const { value, release } = hold(conversations.open(target));
+      const released = run.sync(Deferred.make<void>());
       return {
         target,
         state: value.state,
         loadOlder: () => fire(value.loadOlder),
+        reveal: (entryId) =>
+          run.promise(
+            value
+              .reveal(entryId)
+              .pipe(Effect.raceFirst(Effect.as(Deferred.await(released), unreachable))),
+          ),
         markRead: (through) => fire(value.markRead(through)),
-        release,
+        release: () => {
+          run.sync(Deferred.succeed(released, undefined));
+          release();
+        },
       };
     },
     openPair: (botIds) => {
