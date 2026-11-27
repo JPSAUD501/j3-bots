@@ -1225,6 +1225,7 @@ const ROOM_STARTED: EarlierTurn = {
         members: [ANA.id, BO.id],
         kickoff:
           "This room tests the docs release before Friday. Ana: the search on the staging site. Bo: the changelog against the merged pull requests. Rui will say when the test starts; until then, just say you are ready.",
+        with_user: true,
       },
       output: JSON.stringify({
         status: "started",

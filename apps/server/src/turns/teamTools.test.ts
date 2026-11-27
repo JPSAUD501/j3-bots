@@ -246,6 +246,7 @@ it.effect("makes no bot and starts no room once a Stop covers the turn, before i
       name: "Deploy",
       members: [pip.id],
       kickoff: "Pip deploys.",
+      with_user: true,
     });
 
     assert.include(refusalOf(created), "Your user stopped this work");
@@ -377,6 +378,7 @@ it.effect("goes on from the bots a failed turn made when the operator retries it
       name: "Support",
       members: [pip.bot.id],
       kickoff: "Pip, you take billing.",
+      with_user: true,
     });
     const roomId = decodeStarted(resultOf(started)).id;
     assert.deepStrictEqual(yield* noticesOf(pip.bot.id), [
@@ -426,6 +428,7 @@ it.effect("goes on from the bots a failed room turn made when the operator retri
       name: "Support",
       members: [pip.bot.id],
       kickoff: "Pip, you take billing.",
+      with_user: true,
     });
     const roomId = decodeStarted(resultOf(started)).id;
     assert.deepStrictEqual(yield* noticesOf(pip.bot.id), [
@@ -452,6 +455,7 @@ it.effect(
         name: "Support",
         members: [pip.bot.id, mole.bot.id, wren.bot.id],
         kickoff: "Pip takes billing, Mole takes setup, Wren reviews. Pip opens.",
+        with_user: true,
       });
 
       const roomId = decodeStarted(resultOf(started)).id;
@@ -572,6 +576,7 @@ it.effect(
             name: "Launch",
             members: [pip.bot.id, mole.bot.id, wren.bot.id],
             kickoff: "Each of you says what you take on.",
+            with_user: true,
           }),
         ),
       ).id;
@@ -650,6 +655,7 @@ it.effect(
             name: "Deploy",
             members: [pip.bot.id],
             kickoff: "Pip deploys.",
+            with_user: true,
           }),
         ),
       ).id;
@@ -695,6 +701,7 @@ it.effect("starts no room in a turn the operator did not speak in", () =>
       name: "Side project",
       members: [wren.id, pip.id],
       kickoff: "Let's go.",
+      with_user: true,
     });
 
     assert.include(refusalOf(reply), "only your user can ask for a room");
@@ -713,11 +720,13 @@ it.effect("starts no room with the caller among its members, or a mention outsid
       name: "Pair",
       members: [scout.id, wren.id],
       kickoff: "Hi.",
+      with_user: true,
     });
     const outside = yield* call(session, turnId, "start_room", {
       name: "Pair",
       members: [wren.id],
       kickoff: "Hi.",
+      with_user: true,
       mention: [pip.id],
     });
 
