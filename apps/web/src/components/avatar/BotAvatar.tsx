@@ -538,7 +538,7 @@ export function BotAvatar({
   );
 }
 
-interface RoomAvatarMember {
+export interface RoomAvatarMember {
   readonly id: string;
   readonly avatar: Avatar;
 }

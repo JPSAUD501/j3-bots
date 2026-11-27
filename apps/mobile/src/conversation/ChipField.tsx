@@ -17,7 +17,7 @@ import { useUniwind } from "uniwind";
 import { TextInput } from "../text.tsx";
 import { useColor } from "../theme.ts";
 import { MENTION_FACE } from "./MentionChip.tsx";
-import { mentionFace } from "./mentionFace.ts";
+import { mentionFace, roomMentionMark } from "./mentionFace.ts";
 
 /** What the composer does with its field besides typing in it. */
 export interface FieldHandle {
@@ -33,12 +33,19 @@ export interface FieldEdit {
   readonly selection: readonly [number, number];
 }
 
-/** A picked mention the field draws as a chip over its text: where it starts, its text, and its bot. */
+/**
+ * A picked mention the field draws as a chip over its text: where it starts,
+ * its text, and what it names, a bot by its face or a room by its mark.
+ */
 export interface FieldMention {
   readonly at: number;
   readonly text: string;
-  readonly botId: BotId;
-  readonly avatar: Avatar;
+  readonly of:
+    | { readonly _tag: "bot"; readonly botId: BotId; readonly avatar: Avatar }
+    | {
+        readonly _tag: "room";
+        readonly members: ReadonlyArray<{ readonly avatar: Avatar }>;
+      };
 }
 
 /** A status the field shows where the text goes, as dictation's, and a quieter note after it. */
@@ -55,7 +62,7 @@ interface FieldProps {
   readonly files: ReadonlyArray<DraftFile>;
   /** The local images of the draft's files that show as images, by file. */
   readonly images: ReadonlyMap<AttachmentId, string>;
-  /** The picked mentions that address their bots, drawn as chips where the field can. */
+  /** The picked mentions that count, drawn as chips where the field can. */
   readonly mentions: ReadonlyArray<FieldMention>;
   readonly placeholder: string;
   readonly status: FieldStatus | null;
@@ -74,7 +81,8 @@ interface FieldProps {
  * The composer's field: on Android, editable text in which each file of the
  * draft is a chip where the operator placed it, showing its image or a page,
  * its name and a way out, deleted as one character, and each picked mention
- * a chip with its bot's face over its text. Elsewhere, where the app has no
+ * a chip over its text: a bot's face on a tint of its color, or a room's mark
+ * on a neutral fill. Elsewhere, where the app has no
  * such field, the text without its marks, its files following it.
  */
 export function ChipField(props: FieldProps) {
@@ -220,12 +228,20 @@ function AndroidField({
       value={{
         text: value,
         keys: files.map((file) => file.key),
-        mentions: mentions.map((mention) => ({
-          start: mention.at,
-          end: mention.at + mention.text.length,
-          text: mention.text,
-          face: mentionFace(mention.avatar, mention.botId, theme, MENTION_FACE, PixelRatio.get()),
-          fill: argb(hexColor(botBubble(resolveAvatar(mention.avatar).color)[theme])),
+        mentions: mentions.map(({ at, text, of }) => ({
+          start: at,
+          end: at + text.length,
+          text,
+          ...(of._tag === "bot"
+            ? {
+                face: mentionFace(of.avatar, of.botId, theme, MENTION_FACE, PixelRatio.get()),
+                fill: argb(hexColor(botBubble(resolveAvatar(of.avatar).color)[theme])),
+              }
+            : {
+                face: roomMentionMark(of.members, theme, MENTION_FACE, PixelRatio.get()),
+                // A room has no color of its own: its chip takes the neutral fill.
+                fill: look.chipBackground,
+              }),
         })),
         eventCount,
       }}

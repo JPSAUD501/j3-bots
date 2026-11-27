@@ -2,6 +2,7 @@
 import {
   type Attachment,
   BotId,
+  type ConversationMention,
   type LookingAt,
   MAX_ID_LENGTH,
   MAX_LABEL_LENGTH,
@@ -11,7 +12,14 @@ import {
   type RoomId,
 } from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, engineInputLength } from "@j3-bots/engine-t3";
-import type { AskAnswer, OperatorMessage, RoomWake, TeammateRef, Wake } from "@j3-bots/prompts";
+import type {
+  AskAnswer,
+  MentionRef,
+  OperatorMessage,
+  RoomWake,
+  TeammateRef,
+  Wake,
+} from "@j3-bots/prompts";
 import { renderWakeForSize } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -80,6 +88,15 @@ export const widestTeammate = (id: BotId): TeammateRef => ({
   name: widest(PROFILE_LIMITS.name),
   title: widest(PROFILE_LIMITS.title),
 });
+
+/**
+ * A mention as an envelope names it at its widest: the bot or room it names
+ * can be renamed before the message is dispatched.
+ */
+export const widestMention = (mention: ConversationMention): MentionRef =>
+  mention._tag === "bot"
+    ? { kind: "bot", ...widestTeammate(mention.botId) }
+    : { kind: "room", id: mention.roomId, name: WIDEST_ROOM_NAME, member: false };
 
 /**
  * The room as an envelope names it at its widest: its name, as many members

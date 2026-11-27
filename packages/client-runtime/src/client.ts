@@ -357,6 +357,8 @@ export interface J3Client {
   readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
   /** See `Roster.sections`: null while the server has not said it has sections. */
   readonly sections: Readable<ReadonlyArray<RosterSection> | null>;
+  /** See `Roster.conversationMentions`: whether `@` is offered in a bot's conversation. */
+  readonly conversationMentions: Readable<boolean>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
   /** Each section of Settings' latest save, under way or how it ended. */
@@ -414,12 +416,12 @@ export interface J3Client {
     signal: AbortSignal,
   ) => Promise<SendWithFilesResult>;
   /**
-   * `mentions`, when given, replace the message's own. `not-kept` when the
-   * device could not keep the new attempt: nothing was sent.
+   * `readdressing`, when given, replaces whom the message was for. `not-kept`
+   * when the device could not keep the new attempt: nothing was sent.
    */
   readonly resend: (
     commandId: CommandId,
-    mentions?: Mentions,
+    readdressing?: Conversations.Readdressing,
   ) => Promise<Actions.IntentResult<EntryId> | { readonly _tag: "not-kept" }>;
   /** Resolves `false` when the device could not keep the change: the message stays as it was. */
   readonly discard: (commandId: CommandId) => Promise<boolean>;
@@ -445,8 +447,9 @@ export interface J3Client {
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
-   * Sends the draft once and clears it. `addressing` only applies in a room;
-   * leaving it out mentions nobody.
+   * Sends the draft once and clears it. `addressing` is whom a room message
+   * wakes, or what a message in a bot's conversation mentions; leaving it out
+   * mentions nobody.
    */
   readonly sendDraft: (
     target: EntryTarget,
@@ -831,6 +834,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     roster: services.roster.state,
     sections: services.roster.sections,
+    conversationMentions: services.roster.conversationMentions,
     pairs: services.pairs.state,
     engine: services.engine.state,
     settings: services.settings.state,
@@ -896,10 +900,10 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
           ? { _tag: "stopped" }
           : { _tag: "failed", failure: { _tag: "unexpected" } };
       }),
-    resend: (commandId, mentions) =>
+    resend: (commandId, readdressing) =>
       run.promise(
         conversations
-          .resend(commandId, mentions)
+          .resend(commandId, readdressing)
           .pipe(
             Effect.catchTag("LocalStorageError", () =>
               Effect.succeed({ _tag: "not-kept" } as const),

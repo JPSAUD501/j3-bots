@@ -14,7 +14,7 @@ import {
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, usePresentation } from "../app/context";
-import { deliveryLine } from "@j3-bots/client-runtime/wording";
+import { deliveryLine, type RefusedMentions } from "@j3-bots/client-runtime/wording";
 import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
@@ -74,11 +74,10 @@ interface MessageBubbleProps {
   /** A retry is on its way: Send again takes no second one. */
   readonly submitting?: boolean;
   /**
-   * The names of the members the message mentions who have left the room,
-   * for which the server refused it: said in place of the refusal. Send
-   * again then sends it without them.
+   * What the message mentions that the server refused it for, by name: said
+   * in place of the refusal. Send again then sends it without them.
    */
-  readonly leftRoom?: ReadonlyArray<string>;
+  readonly refusedMentions?: RefusedMentions | null;
   /** What Send again says when it sends somewhere else than the message did, as without them. */
   readonly retryLabel?: string;
   /** The bot whose color a bot's bubble takes; the neutral bubble when it is not known. */
@@ -110,7 +109,7 @@ export function MessageBubble({
   onRetry,
   onDiscard,
   submitting = false,
-  leftRoom,
+  refusedMentions = null,
   retryLabel,
   tint = null,
   arriving = false,
@@ -142,11 +141,7 @@ export function MessageBubble({
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
   const troubled = failed || status._tag === "unrecorded";
-  const deliveryText = deliveryLine(
-    status,
-    { submitting, leftRoom: leftRoom ?? [], openingHold },
-    ctx,
-  );
+  const deliveryText = deliveryLine(status, { submitting, refusedMentions, openingHold }, ctx);
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
   // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);

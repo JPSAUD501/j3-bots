@@ -1,27 +1,93 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, Mentions } from "@j3-bots/contracts";
+import {
+  type Bot,
+  type BotId,
+  type ConversationMention,
+  MAX_CONVERSATION_MENTIONS,
+  type Mentions,
+  type Room,
+  type RoomId,
+} from "@j3-bots/contracts";
 import type { IntentFailure } from "../intents/Actions.ts";
-import type { MentionLabel } from "../stores/Conversations.ts";
+import type { MentionLabel, Readdressing } from "../stores/Conversations.ts";
 import type { Addressing, DraftMention } from "../stores/Drafts.ts";
 import { endsAt, literalRanges, type MentionName, opensAt } from "./messageText.ts";
 
-/** A room member the operator can mention, by the name the room shows. */
-export interface Mentionable {
-  readonly id: BotId;
-  readonly name: string;
-}
-
-/** What the picker offers: one member, or every member, each asked to answer. */
-export type MentionOption =
+/**
+ * What the operator can mention, by the name the roster shows: a room's
+ * member in a room; in a bot's conversation, another bot or a room that bot
+ * is a member of.
+ */
+export type Mentionable =
   | { readonly _tag: "bot"; readonly id: BotId; readonly name: string }
-  | { readonly _tag: "everyone" };
+  | { readonly _tag: "room"; readonly id: RoomId; readonly name: string };
+
+/** What the picker offers: a bot or a room, or in a room every member, each asked to answer. */
+export type MentionOption = Mentionable | { readonly _tag: "everyone" };
 
 /** The word after `@` that mentions every member. The same in every language, as the server's. */
 export const EVERYONE = "everyone";
 
 /** What a picked mention writes in the text. */
 const mentionToken = (mention: DraftMention) =>
-  `@${mention._tag === "bot" ? mention.label : EVERYONE}`;
+  `@${mention._tag === "everyone" ? EVERYONE : mention.label}`;
+
+/** What a picked mention of a bot or a room names, as `message.send` takes it. */
+const namedBy = (mention: DraftMention): ConversationMention | null => {
+  switch (mention._tag) {
+    case "bot":
+      return { _tag: "bot", botId: mention.botId };
+    case "room":
+      return { _tag: "room", roomId: mention.roomId };
+    case "everyone":
+      return null;
+  }
+};
+
+const sameNamed = (one: ConversationMention, other: ConversationMention) =>
+  one._tag === "bot"
+    ? other._tag === "bot" && one.botId === other.botId
+    : other._tag === "room" && one.roomId === other.roomId;
+
+const offers = (mentionable: ReadonlyArray<Mentionable>, named: ConversationMention) =>
+  mentionable.some((candidate) =>
+    named._tag === "bot"
+      ? candidate._tag === "bot" && candidate.id === named.botId
+      : candidate._tag === "room" && candidate.id === named.roomId,
+  );
+
+/** The label a pick of `named` wrote, as the outbox keeps it. */
+const labelOf = (named: ConversationMention, label: string): MentionLabel =>
+  named._tag === "bot" ? { botId: named.botId, label } : { roomId: named.roomId, label };
+
+/** Whether `label` is one a pick of `named` wrote. */
+const labels = (label: MentionLabel, named: ConversationMention) =>
+  named._tag === "bot"
+    ? "botId" in label && label.botId === named.botId
+    : "roomId" in label && label.roomId === named.roomId;
+
+/**
+ * What `@` offers in a bot's own conversation: the operator's other bots, in
+ * the roster's order, then the rooms that bot is a member of and that take
+ * messages. Hidden ones too: a mention finds what is hidden, as search does
+ * (decision 0050).
+ */
+export function conversationMentionables(
+  botId: BotId,
+  bots: ReadonlyArray<Bot>,
+  rooms: ReadonlyArray<Room>,
+): ReadonlyArray<Mentionable> {
+  return [
+    ...bots.flatMap((bot): ReadonlyArray<Mentionable> =>
+      bot.id === botId ? [] : [{ _tag: "bot", id: bot.id, name: bot.profile.name }],
+    ),
+    ...rooms.flatMap((room): ReadonlyArray<Mentionable> =>
+      room.status === "active" && room.members.includes(botId)
+        ? [{ _tag: "room", id: room.id, name: room.name }]
+        : [],
+    ),
+  ];
+}
 
 const inLiteral = (ranges: ReadonlyArray<readonly [number, number]>, at: number) =>
   ranges.some(([start, end]) => at >= start && at < end);
@@ -82,7 +148,7 @@ export function addressed(
   text: string,
   mentions: ReadonlyArray<DraftMention>,
   members: ReadonlyArray<BotId>,
-): Addressing | undefined {
+): Extract<Addressing, { readonly mentions: Mentions }> | undefined {
   const standing = standingMentions(text, mentions);
   if (standing.some((mention) => mention._tag === "everyone")) {
     return { mentions: { _tag: "everyone" }, labels: [] };
@@ -93,12 +159,76 @@ export function addressed(
     if (mention._tag !== "bot" || !members.includes(mention.botId)) continue;
     if (!ids.includes(mention.botId)) ids.push(mention.botId);
     const { botId, label } = mention;
-    if (!labels.some((kept) => kept.botId === botId && kept.label === label)) {
+    if (!labels.some((kept) => "botId" in kept && kept.botId === botId && kept.label === label)) {
       labels.push({ botId, label });
     }
   }
   return ids.length === 0 ? undefined : { mentions: { _tag: "bots", ids }, labels };
 }
+
+/**
+ * In a bot's conversation, what a message mentions as it would be sent: of
+ * the mentions picked that stand (`standingMentions`), each bot and room
+ * `@` offers there, in the order they appear, up to
+ * `MAX_CONVERSATION_MENTIONS` of them. These are the picks the composer
+ * draws as chips, so what it shows is what goes.
+ */
+export function namedMentions(
+  text: string,
+  mentions: ReadonlyArray<DraftMention>,
+  mentionable: ReadonlyArray<Mentionable>,
+): ReadonlyArray<DraftMention> {
+  const named: Array<ConversationMention> = [];
+  return standingMentions(text, mentions).filter((mention) => {
+    const of = namedBy(mention);
+    if (of === null || !offers(mentionable, of)) return false;
+    if (named.some((kept) => sameNamed(kept, of))) return true;
+    if (named.length === MAX_CONVERSATION_MENTIONS) return false;
+    named.push(of);
+    return true;
+  });
+}
+
+/**
+ * What a message in a bot's conversation mentions, as `message.send` takes
+ * it: each bot and room of `namedMentions`, once, in the order they appear,
+ * with the names they were picked by where those picks stand. `undefined`
+ * when it mentions none.
+ */
+export function named(
+  text: string,
+  mentions: ReadonlyArray<DraftMention>,
+  mentionable: ReadonlyArray<Mentionable>,
+): Addressing | undefined {
+  const conversationMentions: Array<ConversationMention> = [];
+  const picked: Array<MentionLabel> = [];
+  for (const mention of namedMentions(text, mentions, mentionable)) {
+    const of = namedBy(mention);
+    if (of === null || mention._tag === "everyone") continue;
+    if (!conversationMentions.some((kept) => sameNamed(kept, of))) conversationMentions.push(of);
+    if (!picked.some((label) => labels(label, of) && label.label === mention.label)) {
+      picked.push(labelOf(of, mention.label));
+    }
+  }
+  return conversationMentions.length === 0 ? undefined : { conversationMentions, labels: picked };
+}
+
+/**
+ * The names `named` highlights: each by the names it was picked by, when the
+ * message keeps them, else by its name now. One deleted since, with no name
+ * kept, is not highlighted.
+ */
+const namesOf = (
+  named: ReadonlyArray<ConversationMention>,
+  picked: ReadonlyArray<MentionLabel>,
+  nameOf: (named: ConversationMention) => string | undefined,
+): ReadonlyArray<MentionName> =>
+  named.flatMap((of) => {
+    const kept = picked.flatMap((label) => (labels(label, of) ? [label.label] : []));
+    if (kept.length > 0) return kept.map((name) => ({ name, of }));
+    const name = nameOf(of);
+    return name === undefined ? [] : [{ name, of }];
+  });
 
 /**
  * The names a room message highlights, each with whose it is: those of the
@@ -114,13 +244,35 @@ export function mentionedNames(
   nameOf: (botId: BotId) => string | undefined,
 ): ReadonlyArray<MentionName> {
   if (mentions === null) return [];
-  if (mentions._tag === "everyone") return [{ name: EVERYONE, botId: null }];
-  return mentions.ids.flatMap((botId) => {
-    const picked = labels.flatMap((label) => (label.botId === botId ? [label.label] : []));
-    if (picked.length > 0) return picked.map((name) => ({ name, botId }));
-    const name = nameOf(botId);
-    return name === undefined ? [] : [{ name, botId }];
-  });
+  if (mentions._tag === "everyone") return [{ name: EVERYONE, of: null }];
+  return namesOf(
+    mentions.ids.map((botId) => ({ _tag: "bot", botId })),
+    labels,
+    (of) => (of._tag === "bot" ? nameOf(of.botId) : undefined),
+  );
+}
+
+/**
+ * What one of a message's mentions in a bot's conversation goes by: the name
+ * it was picked by, when the message keeps it, else its name now.
+ */
+export const mentionLabel = (
+  of: ConversationMention,
+  picked: ReadonlyArray<MentionLabel>,
+  nameOf: (named: ConversationMention) => string | undefined,
+): string | undefined => picked.find((label) => labels(label, of))?.label ?? nameOf(of);
+
+/**
+ * The names a message in a bot's conversation highlights: those of the bots
+ * and rooms it mentions, as the server took them, by the names they were
+ * picked by when the message keeps them, else by their names now.
+ */
+export function conversationMentionNames(
+  mentions: ReadonlyArray<ConversationMention> | undefined,
+  labels: ReadonlyArray<MentionLabel>,
+  nameOf: (named: ConversationMention) => string | undefined,
+): ReadonlyArray<MentionName> {
+  return mentions === undefined ? [] : namesOf(mentions, labels, nameOf);
 }
 
 /**
@@ -432,19 +584,20 @@ const nameMatches = (name: string, query: string) => {
 };
 
 /**
- * What the picker offers for `query`: the members whose name, or a word of
- * it, starts with it, in the room's order, then `@everyone` when it matches.
- * Two members of the same name are both offered: the one picked is the one
- * mentioned.
+ * What the picker offers for `query`: of `mentionable`, those whose name, or
+ * a word of it, starts with it, in their order, then, with `everyone`, as in
+ * a room, `@everyone` when it matches. Two of the same name are both offered:
+ * the one picked is the one mentioned.
  */
 export function mentionOptions(
   query: string,
-  members: ReadonlyArray<Mentionable>,
+  mentionable: ReadonlyArray<Mentionable>,
+  everyone: boolean,
 ): ReadonlyArray<MentionOption> {
-  const bots = members
-    .filter((member) => nameMatches(member.name, query))
-    .map((member): MentionOption => ({ _tag: "bot", id: member.id, name: member.name }));
-  return folded(EVERYONE).startsWith(folded(query)) ? [...bots, { _tag: "everyone" }] : bots;
+  const matching = mentionable.filter((candidate) => nameMatches(candidate.name, query));
+  return everyone && folded(EVERYONE).startsWith(folded(query))
+    ? [...matching, { _tag: "everyone" }]
+    : matching;
 }
 
 /**
@@ -505,9 +658,11 @@ export function insertMention(
   const mention: DraftMention =
     option._tag === "bot"
       ? { _tag: "bot", botId: option.id, label: option.name, position: start }
-      : { _tag: "everyone", position: start };
+      : option._tag === "room"
+        ? { _tag: "room", roomId: option.id, label: option.name, position: start }
+        : { _tag: "everyone", position: start };
   const token = mentionToken(mention);
-  const end = typedEnd(text, start, caret, option._tag === "bot" ? option.name : EVERYONE);
+  const end = typedEnd(text, start, caret, option._tag === "everyone" ? EVERYONE : option.name);
   const after = text.slice(end);
   const spaced = after !== "" && endsAt(after, 0) ? token : `${token} `;
   return {
@@ -545,5 +700,36 @@ export function mentionedWhoLeft(
   return {
     left,
     without: { _tag: "bots", ids: mentions.ids.filter((id) => members.includes(id)) },
+  };
+}
+
+/**
+ * For a message in a bot's conversation the server refused for its
+ * mentions: those `@` no longer offers there (`gone`), as a room archived or
+ * left since the pick, and the message's mentions without them, which
+ * `message.send` takes. Null when every one is still offered, as for a
+ * refusal of another kind.
+ */
+export function namedNoLonger(
+  failure: IntentFailure,
+  mentions: ReadonlyArray<ConversationMention> | undefined,
+  mentionable: ReadonlyArray<Mentionable>,
+): {
+  readonly gone: ReadonlyArray<ConversationMention>;
+  readonly without: Readdressing;
+} | null {
+  if (
+    failure._tag !== "refused" ||
+    failure.error._tag !== "Invalid" ||
+    failure.error.reason !== "mentions" ||
+    mentions === undefined
+  ) {
+    return null;
+  }
+  const gone = mentions.filter((mention) => !offers(mentionable, mention));
+  if (gone.length === 0) return null;
+  return {
+    gone,
+    without: { conversationMentions: mentions.filter((mention) => offers(mentionable, mention)) },
   };
 }

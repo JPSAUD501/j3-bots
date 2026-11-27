@@ -97,7 +97,7 @@ export type LookingAt = typeof LookingAt.Type;
 
 /**
  * Whom a room message is for. In a conversation it is always `bots` with no
- * ids. Every member reads every room message in its next turn; the mentions
+ * ids: what a message there names is `conversationMentions`. Every member reads every room message in its next turn; the mentions
  * say whom it wakes now.
  */
 export const Mentions = Schema.Union([
@@ -111,6 +111,27 @@ export const Mentions = Schema.Union([
   Schema.TaggedStruct("everyone", {}),
 ]);
 export type Mentions = typeof Mentions.Type;
+
+/** The most bots and rooms one message in a bot's conversation mentions. */
+export const MAX_CONVERSATION_MENTIONS = 6;
+
+/**
+ * A bot or a room the operator's message mentions in a bot's own
+ * conversation (decision 0092): another of their bots, or a room that bot is
+ * a member of. A mention there is a reference, not a delivery: it wakes,
+ * notifies and writes to nobody but the conversation's bot, which reads each
+ * one resolved beside the message and acts on the words.
+ */
+export const ConversationMention = Schema.Union([
+  Schema.TaggedStruct("bot", { botId: BotId }),
+  Schema.TaggedStruct("room", { roomId: RoomId }),
+]);
+export type ConversationMention = typeof ConversationMention.Type;
+
+/** A message's conversation mentions, in the order named, each once. */
+export const ConversationMentions = Schema.Array(ConversationMention).check(
+  Schema.isMaxLength(MAX_CONVERSATION_MENTIONS),
+);
 
 /** The most UTF-16 code units one reaction's emoji takes: a long ZWJ sequence fits. */
 export const MAX_REACTION_LENGTH = 32;
@@ -188,6 +209,13 @@ export const MessageEntry = Schema.TaggedStruct("message", {
    */
   attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
   mentions: Mentions,
+  /**
+   * The bots and rooms the operator's message mentions in a bot's
+   * conversation (`ConversationMention`). Absent from every other message,
+   * and from a server that predates them, which a client then shows as the
+   * plain text it is.
+   */
+  conversationMentions: Schema.optionalKey(ConversationMentions),
   /** Whether it reached its recipients. Messages written by bots are always `delivered`. */
   delivery: MessageDelivery,
   /** The operator's command that created it, so a client can replace its optimistic copy. */

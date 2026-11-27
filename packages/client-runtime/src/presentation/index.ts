@@ -167,6 +167,8 @@ export {
 } from "./secretClipboard.ts";
 export {
   addressed,
+  conversationMentionables,
+  conversationMentionNames,
   draggedText,
   type DraggedText,
   EVERYONE,
@@ -176,10 +178,14 @@ export {
   type Mentionable,
   mentionedNames,
   mentionedWhoLeft,
+  mentionLabel,
   type MentionOption,
   mentionOptions,
   mentionQuery,
   movedOption,
+  named,
+  namedMentions,
+  namedNoLonger,
   standingMentions,
 } from "./mentions.ts";
 export { type Inline, type MentionName, parseMessageText } from "./messageText.ts";

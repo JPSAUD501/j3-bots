@@ -6,6 +6,7 @@ import type {
   BrowserTabRef,
   CommandId,
   ConnectorAuthEntry,
+  ConversationMention,
   ElicitationAnswer,
   Mentions,
   EntryId,
@@ -19,12 +20,21 @@ import type {
   WorkStep,
 } from "@j3-bots/contracts";
 import type { ReactNode, RefObject } from "react";
-import type { IntentResult, MentionLabel, RoutineCardCommand } from "@j3-bots/client-runtime";
+import type {
+  IntentResult,
+  MentionLabel,
+  Readdressing,
+  RoutineCardCommand,
+} from "@j3-bots/client-runtime";
 import {
   type CardEntry,
+  conversationMentionables,
+  conversationMentionNames,
+  mentionLabel,
   latestOfLine,
   mentionedNames,
   mentionedWhoLeft,
+  namedNoLonger,
   type OpeningHold,
   type OwnAppClient,
   type OwnAppSetup,
@@ -32,7 +42,7 @@ import {
   type TimelineItem,
   trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
-import { useBots, useI18n } from "../app/context";
+import { useBots, useI18n, useRooms } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
@@ -42,6 +52,7 @@ import { ConnectorInputCard } from "./connectors/ConnectorInputCard";
 import { AnsweringLine } from "./AnsweringLine";
 import { RoomWork } from "./RoomWork";
 import { EventLine, type OpenPair } from "./EventLine";
+import { OpenMention } from "./MentionChip";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
@@ -72,10 +83,10 @@ export interface TimelineIntents {
   /** Sets the operator's reaction on a message, or takes it off with `null`. */
   readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => void;
   /**
-   * Sends again a message this device could not send, with `mentions` in
-   * place of its own when given.
+   * Sends again a message this device could not send, addressed as
+   * `readdressing` says in place of its own when given.
    */
-  readonly resendMessage: (commandId: CommandId, mentions?: Mentions) => void;
+  readonly resendMessage: (commandId: CommandId, readdressing?: Readdressing) => void;
   /** Takes a message this device could not send out of the conversation. */
   readonly discardMessage: (commandId: CommandId) => void;
   /** A fold opened: its steps are worth reading until it closes. */
@@ -140,8 +151,10 @@ interface TimelineProps {
   readonly turnExtra?: ReactNode;
   /** Opens the teammate conversation a line of teammate messages leads to, at that message. */
   readonly onOpenPair: OpenPair;
-  /** Opens the room a line of a bot's team names. */
+  /** Opens the room a line of a bot's team, or a mention, names. */
   readonly onOpenRoom: (roomId: RoomId) => void;
+  /** Opens the conversation of the bot a mention names. */
+  readonly onOpenBot: (botId: BotId) => void;
 }
 
 /**
@@ -162,142 +175,187 @@ export function Timeline({
   turnExtra,
   onOpenPair,
   onOpenRoom,
+  onOpenBot,
 }: TimelineProps) {
   const bots = useBots();
+  const rooms = useRooms();
   const i18n = useI18n();
   const { t } = i18n;
   const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
-  // In a room, a message highlights only whom it addressed, by the names it was picked by when known.
-  const highlighted = (mentions: Mentions | null, labels: ReadonlyArray<MentionLabel>) =>
-    room === null ? [] : mentionedNames(mentions, labels, nameOf);
+  const nameOfNamed = (named: ConversationMention) =>
+    named._tag === "bot" ? nameOf(named.botId) : rooms.get(named.roomId)?.name;
+  // A room message highlights only whom it addressed, and one in a bot's conversation what it
+  // mentions, by the names they were picked by when known.
+  const highlighted = (
+    message: {
+      readonly mentions: Mentions | null;
+      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
+    },
+    labels: ReadonlyArray<MentionLabel>,
+  ) =>
+    room === null
+      ? conversationMentionNames(message.conversationMentions, labels, nameOfNamed)
+      : mentionedNames(message.mentions, labels, nameOf);
+  const openMention = (named: ConversationMention) =>
+    named._tag === "bot" ? onOpenBot(named.botId) : onOpenRoom(named.roomId);
   return (
-    <div className="flex flex-col">
-      {rows.map((item) => {
-        const arriving = arrived?.has(item.key) === true;
-        // What is not a message settles in as it mounts; a message moves itself.
-        const settles = cn(arriving && "arrive origin-bottom-left");
-        if (item.kind === "divider") {
-          return (
-            <div key={item.key} className={settles}>
-              <TimeDivider at={item.at} />
-            </div>
-          );
-        }
-        if (item.kind === "work") {
-          const { fold } = item;
-          return (
-            <div
-              key={item.key}
-              {...(fold === null ? {} : { "data-seen-id": fold.id })}
-              className={cn(arriving && "arrive-pop origin-left")}
-            >
-              <WorkFold
-                fold={fold}
-                live={item.live ? turnBot : null}
-                {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
-                steps={fold === null ? null : workSteps(fold.id)}
-                onOpenImage={intents.openWorkImage}
-                onOpenChange={(open) => {
-                  if (fold === null) return;
-                  if (open) intents.openWorkFold(fold.id);
-                  else intents.closeWorkFold(fold.id);
-                }}
-              />
-              {fold !== null && <ConnectorApps apps={fold.apps} access={intents.connectorApp} />}
-            </div>
-          );
-        }
-        if (item.kind === "event") {
-          return (
-            <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
-              <EventLine
-                line={item.line}
-                room={room?.id ?? null}
-                onOpenRoutine={intents.openRoutine}
-                onOpenPair={onOpenPair}
-                onOpenRoom={onOpenRoom}
-              />
-            </div>
-          );
-        }
-        if (item.kind === "unknown") {
-          return (
-            <div key={item.key} data-seen-id={item.id} className={settles}>
-              <NeedsUpdateLine />
-            </div>
-          );
-        }
-        if (item.kind === "message") {
-          const { message } = item;
-          // One element, under one key, from Send to the server's entry, so
-          // nothing in the bubble loses focus when the entry arrives; the entry
-          // id it gains then makes it count toward the read mark.
-          if (message._tag === "outgoing") {
-            const left =
-              room === null || message.status._tag !== "not-sent"
-                ? null
-                : mentionedWhoLeft(message.status.failure, message.mentions, room.members);
-            // A member who left is named as the operator picked it, which the message keeps.
-            const labelOf = (botId: BotId) =>
-              message.labels.find((label) => label.botId === botId)?.label ??
-              nameOf(botId) ??
-              t("bot.unknown");
+    <OpenMention value={openMention}>
+      <div className="flex flex-col">
+        {rows.map((item) => {
+          const arriving = arrived?.has(item.key) === true;
+          // What is not a message settles in as it mounts; a message moves itself.
+          const settles = cn(arriving && "arrive origin-bottom-left");
+          if (item.kind === "divider") {
             return (
-              <div key={item.key}>
-                <MessageBubble
-                  message={message}
-                  position={item.position}
-                  arriving={arriving}
-                  {...(flyFrom === undefined ? {} : { flyFrom })}
-                  mentionable={highlighted(message.mentions, message.labels)}
-                  onOpenAttachment={intents.openAttachment}
-                  onRetry={() =>
-                    left === null
-                      ? intents.resendMessage(message.commandId)
-                      : intents.resendMessage(message.commandId, left.without)
-                  }
-                  onDiscard={() => intents.discardMessage(message.commandId)}
-                  {...(left === null || room === null
-                    ? {}
-                    : {
-                        leftRoom: left.left.map(labelOf),
-                        retryLabel: resendLabel(left.without, nameOf, i18n),
-                      })}
+              <div key={item.key} className={settles}>
+                <TimeDivider at={item.at} />
+              </div>
+            );
+          }
+          if (item.kind === "work") {
+            const { fold } = item;
+            return (
+              <div
+                key={item.key}
+                {...(fold === null ? {} : { "data-seen-id": fold.id })}
+                className={cn(arriving && "arrive-pop origin-left")}
+              >
+                <WorkFold
+                  fold={fold}
+                  live={item.live ? turnBot : null}
+                  {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
+                  steps={fold === null ? null : workSteps(fold.id)}
+                  onOpenImage={intents.openWorkImage}
+                  onOpenChange={(open) => {
+                    if (fold === null) return;
+                    if (open) intents.openWorkFold(fold.id);
+                    else intents.closeWorkFold(fold.id);
+                  }}
+                />
+                {fold !== null && <ConnectorApps apps={fold.apps} access={intents.connectorApp} />}
+              </div>
+            );
+          }
+          if (item.kind === "event") {
+            return (
+              <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
+                <EventLine
+                  line={item.line}
+                  room={room?.id ?? null}
+                  onOpenRoutine={intents.openRoutine}
+                  onOpenPair={onOpenPair}
+                  onOpenRoom={onOpenRoom}
                 />
               </div>
             );
           }
-          const { author } = message;
-          const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
+          if (item.kind === "unknown") {
+            return (
+              <div key={item.key} data-seen-id={item.id} className={settles}>
+                <NeedsUpdateLine />
+              </div>
+            );
+          }
+          if (item.kind === "message") {
+            const { message } = item;
+            // One element, under one key, from Send to the server's entry, so
+            // nothing in the bubble loses focus when the entry arrives; the entry
+            // id it gains then makes it count toward the read mark.
+            if (message._tag === "outgoing") {
+              const { status, target } = message;
+              const left =
+                room === null || status._tag !== "not-sent"
+                  ? null
+                  : mentionedWhoLeft(status.failure, message.mentions, room.members);
+              // Refused in a bot's conversation for what it mentions: Retry leaves out what `@`
+              // no longer offers there, as a room archived since the pick.
+              const noLonger =
+                target._tag !== "conversation" || status._tag !== "not-sent"
+                  ? null
+                  : namedNoLonger(
+                      status.failure,
+                      message.conversationMentions,
+                      conversationMentionables(
+                        target.botId,
+                        [...bots.values()],
+                        [...rooms.values()],
+                      ),
+                    );
+              // A member who left is named as the operator picked it, which the message keeps.
+              const labelOf = (botId: BotId) =>
+                message.labels.find((label) => "botId" in label && label.botId === botId)?.label ??
+                nameOf(botId) ??
+                t("bot.unknown");
+              return (
+                <div key={item.key}>
+                  <MessageBubble
+                    message={message}
+                    position={item.position}
+                    arriving={arriving}
+                    {...(flyFrom === undefined ? {} : { flyFrom })}
+                    mentionable={highlighted(message, message.labels)}
+                    onOpenAttachment={intents.openAttachment}
+                    onRetry={() =>
+                      left !== null
+                        ? intents.resendMessage(message.commandId, { mentions: left.without })
+                        : noLonger !== null
+                          ? intents.resendMessage(message.commandId, noLonger.without)
+                          : intents.resendMessage(message.commandId)
+                    }
+                    onDiscard={() => intents.discardMessage(message.commandId)}
+                    {...(left !== null && room !== null
+                      ? {
+                          refusedMentions: { _tag: "left-room", names: left.left.map(labelOf) },
+                          retryLabel: resendLabel(left.without, nameOf, i18n),
+                        }
+                      : noLonger !== null
+                        ? {
+                            refusedMentions: {
+                              _tag: "not-mentionable",
+                              names: noLonger.gone.map(
+                                (of) =>
+                                  mentionLabel(of, message.labels, nameOfNamed) ??
+                                  t(of._tag === "bot" ? "bot.unknown" : "room.unknown"),
+                              ),
+                            },
+                          }
+                        : {})}
+                  />
+                </div>
+              );
+            }
+            const { author } = message;
+            const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
+            return (
+              <div key={item.key} data-seen-id={message.id}>
+                <MessageBubble
+                  message={message}
+                  position={item.position}
+                  arriving={arriving}
+                  tint={speaker?.profile.avatar ?? null}
+                  speaker={room === null || author._tag !== "bot" ? null : author.botId}
+                  // The server's entry keeps no names picked: what it mentions goes by its name now.
+                  mentionable={highlighted(message, [])}
+                  onOpenAttachment={intents.openAttachment}
+                  onRetry={() => intents.retryMessage(message.id)}
+                  onReact={(emoji) => intents.react(message.id, emoji)}
+                  submitting={submitting(message.id)}
+                  openingHold={openingHold}
+                />
+              </div>
+            );
+          }
+          const { entry } = item;
           return (
-            <div key={item.key} data-seen-id={message.id}>
-              <MessageBubble
-                message={message}
-                position={item.position}
-                arriving={arriving}
-                tint={speaker?.profile.avatar ?? null}
-                speaker={room === null || author._tag !== "bot" ? null : author.botId}
-                // The server's entry keeps no names picked: its members go by their names now.
-                mentionable={highlighted(message.mentions, [])}
-                onOpenAttachment={intents.openAttachment}
-                onRetry={() => intents.retryMessage(message.id)}
-                onReact={(emoji) => intents.react(message.id, emoji)}
-                submitting={submitting(message.id)}
-                openingHold={openingHold}
-              />
+            <div key={item.key} data-seen-id={entry.id} className={settles}>
+              <Card entry={entry} submitting={submitting} intents={intents} secrets={secrets} />
             </div>
           );
-        }
-        const { entry } = item;
-        return (
-          <div key={item.key} data-seen-id={entry.id} className={settles}>
-            <Card entry={entry} submitting={submitting} intents={intents} secrets={secrets} />
-          </div>
-        );
-      })}
-      {room !== null && <RoomWork room={room} />}
-      {room !== null && <AnsweringLine room={room} />}
-    </div>
+        })}
+        {room !== null && <RoomWork room={room} />}
+        {room !== null && <AnsweringLine room={room} />}
+      </div>
+    </OpenMention>
   );
 }
 

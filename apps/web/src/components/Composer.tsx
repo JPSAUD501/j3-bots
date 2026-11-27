@@ -22,6 +22,7 @@ import {
   mentionOptions,
   mentionQuery,
   movedOption,
+  namedMentions,
   standingMentions,
   type DraggedText,
   type Mentionable,
@@ -39,7 +40,7 @@ import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { useAttachmentImage } from "./attachmentImages";
-import { BotAvatar } from "./avatar/BotAvatar";
+import { BotAvatar, RoomAvatar, type RoomAvatarMember } from "./avatar/BotAvatar";
 import {
   ChipField,
   dropOffset,
@@ -50,7 +51,7 @@ import {
   selectInField,
 } from "./ChipField";
 import { FileKindIcon } from "./FileCard";
-import { MentionChip } from "./MentionChip";
+import { MentionChip, RoomMentionChip } from "./MentionChip";
 import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./PromptPicker";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
@@ -68,9 +69,21 @@ const sendButton = cn(
   "data-[send=sending]:bg-(--tint) data-[send=sending]:text-avatar-ink",
 );
 
-/** A room member the composer offers after `@`, drawn by its shape. */
-export interface MentionCandidate extends Mentionable {
-  readonly avatar: Avatar;
+/** What the composer offers after `@`: a bot, drawn by its face, or a room, by its mark. */
+export type MentionCandidate =
+  | (Extract<Mentionable, { readonly _tag: "bot" }> & { readonly avatar: Avatar })
+  | (Extract<Mentionable, { readonly _tag: "room" }> & {
+      readonly members: ReadonlyArray<RoomAvatarMember>;
+    });
+
+/**
+ * What `@` offers in a draft: in a room, its members and `@everyone`; in a
+ * bot's conversation, the operator's other bots and the rooms that bot is in.
+ */
+export interface MentionChoices {
+  readonly candidates: ReadonlyArray<MentionCandidate>;
+  /** Whether `@everyone` is offered, as it is in a room. */
+  readonly everyone: boolean;
 }
 
 interface ComposerProps {
@@ -131,10 +144,10 @@ interface ComposerProps {
   };
   readonly inputRef?: RefObject<HTMLDivElement | null>;
   /**
-   * In a room, its members: typing `@` offers them and `@everyone`, and only
-   * a pick mentions one; a name typed or pasted addresses nobody.
+   * What typing `@` offers (`MentionChoices`). Only a pick mentions one; a
+   * name typed or pasted mentions nothing.
    */
-  readonly mentionable?: ReadonlyArray<MentionCandidate>;
+  readonly mentionable?: MentionChoices;
   /**
    * In a bot's conversation, the prompts its connectors offer: a draft that is
    * `/` and a word offers those that match it, and what a prompt's server
@@ -260,7 +273,7 @@ export function Composer({
     mentions,
     onValueChange,
     field: fieldRef,
-    members: frozen ? undefined : mentionable,
+    choices: frozen ? undefined : mentionable,
   });
   const prompt = usePromptPicker({
     draftKey,
@@ -428,7 +441,10 @@ export function Composer({
           <MentionList
             id={mention.listId}
             options={mention.options}
-            members={mentionable ?? []}
+            candidates={mentionable?.candidates ?? []}
+            label={
+              mentionable?.everyone === false ? t("mention.labelConversation") : t("mention.label")
+            }
             active={mention.active}
             optionId={mention.optionId}
             onPick={mention.pick}
@@ -500,7 +516,7 @@ export function Composer({
               />
             ),
           }))}
-          runs={mentionRuns(value, mentions, mentionable ?? [])}
+          runs={mentionRuns(value, mentions, mentionable)}
           readOnly={frozen}
           onChange={follow}
           onSelect={(event) => {
@@ -756,14 +772,14 @@ function useMentionPicker({
   mentions,
   onValueChange,
   field,
-  members,
+  choices,
 }: {
   draftKey: string;
   value: string;
   mentions: ReadonlyArray<DraftMention>;
   onValueChange: (value: string, mentions: ReadonlyArray<DraftMention>) => void;
   field: RefObject<HTMLDivElement | null>;
-  members: ReadonlyArray<Mentionable> | undefined;
+  choices: MentionChoices | undefined;
 }) {
   const listId = useId();
   // Where the caret is while the field has focus; null while it has none.
@@ -782,9 +798,11 @@ function useMentionPicker({
   }
 
   const query =
-    members === undefined || caret === null ? null : mentionQuery(value, caret, mentions);
+    choices === undefined || caret === null ? null : mentionQuery(value, caret, mentions);
   const options =
-    query === null || members === undefined ? [] : mentionOptions(query.query, members);
+    query === null || choices === undefined
+      ? []
+      : mentionOptions(query.query, choices.candidates, choices.everyone);
   const open = query !== null && query.start !== dismissed && options.length > 0;
   // A new query starts at the first option.
   const queryKey = query === null ? null : `${query.start}:${query.query}`;
@@ -853,7 +871,7 @@ function useMentionPicker({
       return true;
     },
     fieldProps:
-      members === undefined
+      choices === undefined
         ? {}
         : ({
             role: "combobox",
@@ -867,47 +885,66 @@ function useMentionPicker({
 }
 
 /**
- * Each pick of a member that addresses it as the draft stands, drawn as its
- * chip in the field, so what the field shows is whom the message wakes.
- * `@everyone`, and a member no longer in the room, stay text.
+ * Each pick that counts as the draft stands, drawn as its chip in the field,
+ * so what the field shows is what goes: in a room, each member it addresses;
+ * in a bot's conversation, each bot and room it mentions (`namedMentions`).
+ * `@everyone`, and what is no longer offered, stay text.
  */
 function mentionRuns(
   value: string,
   mentions: ReadonlyArray<DraftMention>,
-  members: ReadonlyArray<MentionCandidate>,
+  choices: MentionChoices | undefined,
 ): ReadonlyArray<FieldRun> {
-  return standingMentions(value, mentions).flatMap((mention) => {
-    if (mention._tag !== "bot") return [];
-    const member = members.find((candidate) => candidate.id === mention.botId);
-    if (member === undefined) return [];
-    return [
-      {
-        at: mention.position,
-        text: `@${mention.label}`,
-        content: <MentionChip avatar={member.avatar} seed={member.id} name={mention.label} />,
-      },
-    ];
+  if (choices === undefined) return [];
+  const { candidates } = choices;
+  const counted = choices.everyone
+    ? standingMentions(value, mentions)
+    : namedMentions(value, mentions, candidates);
+  return counted.flatMap((mention): ReadonlyArray<FieldRun> => {
+    if (mention._tag === "everyone") return [];
+    const at = mention.position;
+    const text = `@${mention.label}`;
+    if (mention._tag === "bot") {
+      const bot = candidates.find(
+        (candidate) => candidate._tag === "bot" && candidate.id === mention.botId,
+      );
+      if (bot?._tag !== "bot") return [];
+      return [
+        {
+          at,
+          text,
+          content: <MentionChip avatar={bot.avatar} seed={bot.id} name={mention.label} />,
+        },
+      ];
+    }
+    const room = candidates.find(
+      (candidate) => candidate._tag === "room" && candidate.id === mention.roomId,
+    );
+    if (room?._tag !== "room") return [];
+    return [{ at, text, content: <RoomMentionChip members={room.members} name={mention.label} /> }];
   });
 }
 
-/** The members and `@everyone` the operator can mention, above the composer. */
+/** What the operator can mention, above the composer: bots, rooms or `@everyone`. */
 export function MentionList({
   id,
   options,
-  members,
+  candidates,
+  label,
   active,
   optionId,
   onPick,
 }: {
   id: string;
   options: ReadonlyArray<MentionOption>;
-  members: ReadonlyArray<MentionCandidate>;
+  candidates: ReadonlyArray<MentionCandidate>;
+  /** What the list is for, as a screen reader names it. */
+  label: string;
   active: number;
   optionId: (index: number) => string;
   onPick: (option: MentionOption) => void;
 }) {
   const { t } = useI18n();
-  const avatars = new Map(members.map((member) => [member.id, member.avatar]));
   const listRef = useRef<HTMLUListElement>(null);
   const activeId = optionId(active);
   // The active option stays in view as the keys move through a list longer than it shows.
@@ -923,21 +960,25 @@ export function MentionList({
       ref={listRef}
       id={id}
       role="listbox"
-      aria-label={t("mention.label")}
+      aria-label={label}
       className="absolute start-0 bottom-0 z-10 flex max-h-60 w-full max-w-72 flex-col overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-1 shadow-overlay"
     >
       {options.map((option, index) => {
-        const avatar = option._tag === "bot" ? avatars.get(option.id) : undefined;
+        const candidate =
+          option._tag === "everyone"
+            ? undefined
+            : candidates.find((one) => one._tag === option._tag && one.id === option.id);
+        const avatar = candidate?._tag === "bot" ? candidate.avatar : undefined;
         return (
           <li
-            key={option._tag === "bot" ? option.id : EVERYONE}
+            key={option._tag === "everyone" ? EVERYONE : `${option._tag}:${option.id}`}
             id={optionId(index)}
             role="option"
             aria-selected={index === active}
             // The field keeps the focus, so the keyboard stays up on a touch screen.
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => onPick(option)}
-            // A member's option, active, takes a tint of its color, as its mention does.
+            // A bot's option, active, takes a tint of its color, as its mention does.
             className={cn(
               "flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm pointer-coarse:min-h-(--layout-touch-target)",
               avatar === undefined
@@ -945,20 +986,32 @@ export function MentionList({
                 : [tintOf(avatar), "aria-selected:bg-(--tint-bubble)"],
             )}
           >
-            {option._tag === "bot" ? (
-              <>
-                {avatar && (
-                  <BotAvatar avatar={avatar} seed={option.id} state="idle" size={20} still />
-                )}
-                <span className="min-w-0 truncate">{option.name}</span>
-              </>
-            ) : (
+            {option._tag === "everyone" ? (
               <>
                 <UsersIcon aria-hidden className="size-5 shrink-0 text-muted-foreground" />
                 <span>@{EVERYONE}</span>
                 <span className="min-w-0 truncate text-xs text-muted-foreground">
                   {t("mention.everyone")}
                 </span>
+              </>
+            ) : (
+              <>
+                {candidate?._tag === "bot" && (
+                  <BotAvatar
+                    avatar={candidate.avatar}
+                    seed={candidate.id}
+                    state="idle"
+                    size={20}
+                    still
+                  />
+                )}
+                {candidate?._tag === "room" && <RoomAvatar members={candidate.members} size={20} />}
+                <span className="min-w-0 truncate">{option.name}</span>
+                {option._tag === "room" && (
+                  <span className="ms-auto shrink-0 text-xs text-muted-foreground">
+                    {t("mention.room")}
+                  </span>
+                )}
               </>
             )}
           </li>

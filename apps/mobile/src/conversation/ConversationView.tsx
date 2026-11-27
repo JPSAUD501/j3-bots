@@ -6,9 +6,14 @@ import {
   buildTimeline,
   type CardPlace,
   cardPlace,
+  conversationMentionables,
+  conversationMentionNames,
+  mentionLabel,
   liveTurn,
   mentionedNames,
   mentionedWhoLeft,
+  named,
+  namedNoLonger,
   offeredReply,
   openingHeld,
   type OpeningHold,
@@ -28,6 +33,7 @@ import {
   useDraft,
   useEngineStatus,
   useJ3Client,
+  useReadable,
   useSelected,
 } from "@j3-bots/client-runtime/react";
 import {
@@ -40,6 +46,7 @@ import type {
   Bot,
   BotId,
   BrowserHelpEntry,
+  ConversationMention,
   EntryId,
   EntryOrder,
   EntryTarget,
@@ -47,6 +54,7 @@ import type {
   MessageEntry,
   Mentions,
   Room,
+  RoomId,
   RosterItem,
   RosterItemKey,
   RoutineId,
@@ -82,12 +90,13 @@ import { StateMark } from "../components/States.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
 import { enteringWhen, openIn, popIn, settleIn, useReducedMotion } from "../motion.ts";
-import { useBots, usePresentation } from "../presentation.tsx";
+import { useBots, usePresentation, useRooms } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
 import { Card } from "./Card.tsx";
-import { Composer, type MentionCandidate } from "./Composer.tsx";
+import { Composer, type MentionCandidate, type MentionChoices } from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
+import { OpenMention } from "./MentionChip.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
 import { AnsweringLine } from "./AnsweringLine.tsx";
@@ -371,13 +380,28 @@ export function ConversationView({
   );
 
   const draft = useDraft(target);
-  // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
+  const rooms = useRooms();
+  const conversationMentions = useReadable(client.conversationMentions);
+  const mentionable = useMemo(
+    () => mentionChoicesOf(item, bots, rooms, conversationMentions),
+    [item, bots, rooms, conversationMentions],
+  );
+  // Whom the message is for as the draft stands: only mentions picked, and still standing, count.
+  // In a room, the members it wakes; in a bot's conversation, the bots and rooms it mentions.
   const addressing =
-    room === null ? undefined : addressed(draft.text, draft.mentions, room.members);
-  const mentionable: ReadonlyArray<MentionCandidate> | undefined = room?.members.flatMap((id) => {
-    const bot = bots.get(id);
-    return bot === undefined ? [] : [{ id, name: bot.profile.name, avatar: bot.profile.avatar }];
-  });
+    room !== null
+      ? addressed(draft.text, draft.mentions, room.members)
+      : mentionable === undefined
+        ? undefined
+        : named(draft.text, draft.mentions, mentionable.candidates);
+  // A mention's chip opens what it names: a bot's conversation, or a room.
+  const openMention = useCallback(
+    (of: ConversationMention) =>
+      onOpen(
+        of._tag === "bot" ? { _tag: "bot", botId: of.botId } : { _tag: "room", roomId: of.roomId },
+      ),
+    [onOpen],
+  );
   const send = () =>
     void client.sendDraft(target, addressing).then((result) => {
       if (result === "not-kept") say(t("composer.notKept"));
@@ -412,91 +436,96 @@ export function ConversationView({
             setColumn(Math.min(event.nativeEvent.layout.width, layout.textColumn))
           }
         >
-          <ConversationVisualsContext value={visuals}>
-            <EntryWidths value={widths}>
-              {/* One quick bar, picker and list of who reacted for the conversation's messages. */}
-              <Reactions>
-                {quiet ? (
-                  item._tag === "bot" ? (
-                    <Quiet bot={item.bot} bottom={composerHeight} />
+          <OpenMention value={openMention}>
+            <ConversationVisualsContext value={visuals}>
+              <EntryWidths value={widths}>
+                {/* One quick bar, picker and list of who reacted for the conversation's messages. */}
+                <Reactions>
+                  {quiet ? (
+                    item._tag === "bot" ? (
+                      <Quiet bot={item.bot} bottom={composerHeight} />
+                    ) : (
+                      <QuietRoom room={item.room} bottom={composerHeight} />
+                    )
                   ) : (
-                    <QuietRoom room={item.room} bottom={composerHeight} />
-                  )
-                ) : (
-                  <KeyboardAwareLegendList
-                    ref={list}
-                    data={rows}
-                    keyExtractor={(row) => row.key}
-                    getItemType={(row) => row.kind}
-                    estimatedItemSize={64}
-                    // Rows keep state of their own, such as an open fold: a row is never reused for another.
-                    recycleItems={false}
-                    renderItem={({ item: row }) => (
-                      <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                        <Row
-                          row={row}
-                          room={room}
-                          turnBot={turnBot}
-                          arriving={arrived.has(row.key)}
-                          openingHold={openingHold}
-                          onOpen={onOpen}
-                          onOpenRoutine={openRoutine}
-                          onOpenBrowser={openBrowser}
-                          onOpenPair={openPair}
-                        />
-                      </View>
-                    )}
-                    extraData={{ room, widths, arrived, openingHold, turnBot }}
-                    onScroll={({
-                      nativeEvent: { contentOffset, contentSize, layoutMeasurement },
-                    }) => {
-                      visuals.scrolled();
-                      end.follow(
-                        contentSize.height - layoutMeasurement.height - contentOffset.y,
-                        layoutMeasurement.height,
-                      );
-                    }}
-                    scrollEventThrottle={64}
-                    alignItemsAtEnd
-                    initialScrollAtEnd
-                    maintainScrollAtEnd
-                    maintainVisibleContentPosition
-                    onStartReached={() => {
-                      if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
-                    }}
-                    // In a room, who is answering now, after everything said there.
-                    ListFooterComponent={
-                      room === null ? null : (
+                    <KeyboardAwareLegendList
+                      ref={list}
+                      data={rows}
+                      keyExtractor={(row) => row.key}
+                      getItemType={(row) => row.kind}
+                      estimatedItemSize={64}
+                      // Rows keep state of their own, such as an open fold: a row is never reused for another.
+                      recycleItems={false}
+                      renderItem={({ item: row }) => (
                         <View
                           className="w-full self-center"
                           style={{ maxWidth: layout.textColumn }}
                         >
-                          <RoomWork room={room} />
-                          <AnsweringLine room={room} />
+                          <Row
+                            row={row}
+                            room={room}
+                            turnBot={turnBot}
+                            arriving={arrived.has(row.key)}
+                            openingHold={openingHold}
+                            onOpen={onOpen}
+                            onOpenRoutine={openRoutine}
+                            onOpenBrowser={openBrowser}
+                            onOpenPair={openPair}
+                          />
                         </View>
-                      )
-                    }
-                    ListHeaderComponent={
-                      state?.loadingOlder === true ? (
-                        <Text className="py-3 text-center text-xs text-muted-foreground">
-                          {t("timeline.loadingOlder")}
-                        </Text>
-                      ) : null
-                    }
-                    viewabilityConfigCallbackPairs={pairs}
-                    contentInsetEndAdjustment={contentInsetEndAdjustment}
-                    keyboardOffset={insets.bottom}
-                    keyboardDismissMode="interactive"
-                    keyboardShouldPersistTaps="handled"
-                    contentContainerStyle={{
-                      paddingTop: 4,
-                      paddingBottom: toCard ? 8 + PILL_ROOM : 8,
-                    }}
-                  />
-                )}
-              </Reactions>
-            </EntryWidths>
-          </ConversationVisualsContext>
+                      )}
+                      extraData={{ room, widths, arrived, openingHold, turnBot }}
+                      onScroll={({
+                        nativeEvent: { contentOffset, contentSize, layoutMeasurement },
+                      }) => {
+                        visuals.scrolled();
+                        end.follow(
+                          contentSize.height - layoutMeasurement.height - contentOffset.y,
+                          layoutMeasurement.height,
+                        );
+                      }}
+                      scrollEventThrottle={64}
+                      alignItemsAtEnd
+                      initialScrollAtEnd
+                      maintainScrollAtEnd
+                      maintainVisibleContentPosition
+                      onStartReached={() => {
+                        if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
+                      }}
+                      // In a room, who is answering now, after everything said there.
+                      ListFooterComponent={
+                        room === null ? null : (
+                          <View
+                            className="w-full self-center"
+                            style={{ maxWidth: layout.textColumn }}
+                          >
+                            <RoomWork room={room} />
+                            <AnsweringLine room={room} />
+                          </View>
+                        )
+                      }
+                      ListHeaderComponent={
+                        state?.loadingOlder === true ? (
+                          <Text className="py-3 text-center text-xs text-muted-foreground">
+                            {t("timeline.loadingOlder")}
+                          </Text>
+                        ) : null
+                      }
+                      viewabilityConfigCallbackPairs={pairs}
+                      contentInsetEndAdjustment={contentInsetEndAdjustment}
+                      keyboardOffset={insets.bottom}
+                      keyboardDismissMode="interactive"
+                      keyboardShouldPersistTaps="handled"
+                      contentContainerStyle={{
+                        paddingTop: 4,
+                        paddingBottom: toCard ? 8 + PILL_ROOM : 8,
+                      }}
+                    />
+                  )}
+                </Reactions>
+              </EntryWidths>
+            </ConversationVisualsContext>
+          </OpenMention>
           {/* Over the composer, riding on the keyboard with it. */}
           {!quiet && (
             <KeyboardStickyView
@@ -757,17 +786,81 @@ function Row({
 
 type MessageRow = Extract<TimelineItem, { readonly kind: "message" }>;
 
-/** In a room, the names a message highlights: only whom it addressed. */
+/**
+ * The names a message highlights: in a room, only whom it addressed; in a
+ * bot's conversation, the bots and rooms it mentions. Each by the name it was
+ * picked by when the message keeps it (`labels`), else by its name now.
+ */
 function useHighlighted(room: Pick<Room, "members"> | null) {
   const bots = useBots();
-  return (mentions: Mentions | null, labels: ReadonlyArray<MentionLabel>) =>
-    room === null ? [] : mentionedNames(mentions, labels, (id) => bots.get(id)?.profile.name);
+  const rooms = useRooms();
+  const botName = (botId: BotId) => bots.get(botId)?.profile.name;
+  return (
+    message: {
+      readonly mentions: Mentions | null;
+      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
+    },
+    labels: ReadonlyArray<MentionLabel>,
+  ) =>
+    room === null
+      ? conversationMentionNames(message.conversationMentions, labels, (of) =>
+          of._tag === "bot" ? botName(of.botId) : rooms.get(of.roomId)?.name,
+        )
+      : mentionedNames(message.mentions, labels, botName);
+}
+
+/**
+ * What `@` offers in `item`'s draft, by the names the roster shows. In a room,
+ * its members, each by its face, and `@everyone`. In a bot's conversation, the
+ * operator's other bots, each by its face, and the rooms that bot is a member
+ * of, each by its mark, hidden ones too; only once the server takes them
+ * (`conversationMentions`), and nothing before.
+ */
+function mentionChoicesOf(
+  item: RosterItem,
+  bots: ReadonlyMap<BotId, Bot>,
+  rooms: ReadonlyMap<RoomId, Room>,
+  conversationMentions: boolean,
+): MentionChoices | undefined {
+  const face = (bot: Bot): MentionCandidate => ({
+    _tag: "bot",
+    id: bot.id,
+    name: bot.profile.name,
+    avatar: bot.profile.avatar,
+  });
+  if (item._tag === "room") {
+    return {
+      candidates: item.room.members.flatMap((id) => {
+        const bot = bots.get(id);
+        return bot === undefined ? [] : [face(bot)];
+      }),
+      everyone: true,
+    };
+  }
+  if (!conversationMentions) return undefined;
+  return {
+    candidates: conversationMentionables(
+      item.bot.id,
+      [...bots.values()],
+      [...rooms.values()],
+    ).flatMap((candidate): ReadonlyArray<MentionCandidate> => {
+      if (candidate._tag === "bot") {
+        const bot = bots.get(candidate.id);
+        return bot === undefined ? [] : [face(bot)];
+      }
+      const room = rooms.get(candidate.id);
+      return room === undefined ? [] : [{ ...candidate, members: roomAvatarMembers(room, bots) }];
+    }),
+    everyone: false,
+  };
 }
 
 /**
  * A message this device sent, from Send to the server's entry. One that
  * failed for mentioning a member who left the room says so, and Send again
- * sends it without them.
+ * sends it without them. One a bot's conversation refused for what it
+ * mentions is sent again without what `@` no longer offers there, as a room
+ * archived since the pick.
  */
 function OutgoingMessage({
   row,
@@ -785,15 +878,25 @@ function OutgoingMessage({
   const client = useJ3Client();
   const say = useSay();
   const bots = useBots();
+  const rooms = useRooms();
   const highlighted = useHighlighted(room);
   const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
+  const { status, target } = message;
   const left =
-    room === null || message.status._tag !== "not-sent"
+    room === null || status._tag !== "not-sent"
       ? null
-      : mentionedWhoLeft(message.status.failure, message.mentions, room.members);
+      : mentionedWhoLeft(status.failure, message.mentions, room.members);
+  const noLonger =
+    target._tag !== "conversation" || status._tag !== "not-sent"
+      ? null
+      : namedNoLonger(
+          status.failure,
+          message.conversationMentions,
+          conversationMentionables(target.botId, [...bots.values()], [...rooms.values()]),
+        );
   // A member who left is named as the operator picked it, which the message keeps.
   const labelOf = (botId: BotId) =>
-    message.labels.find((label) => label.botId === botId)?.label ??
+    message.labels.find((label) => "botId" in label && label.botId === botId)?.label ??
     nameOf(botId) ??
     t("bot.unknown");
   return (
@@ -801,23 +904,37 @@ function OutgoingMessage({
       message={message}
       position={row.position}
       arriving={arriving}
-      mentionable={highlighted(message.mentions, message.labels)}
+      mentionable={highlighted(message, message.labels)}
       onRetry={() =>
-        void client.resend(message.commandId, left?.without).then((result) => {
-          if (result._tag === "not-kept") say(t("message.changeNotKept"));
-        })
+        void client
+          .resend(message.commandId, left !== null ? { mentions: left.without } : noLonger?.without)
+          .then((result) => {
+            if (result._tag === "not-kept") say(t("message.changeNotKept"));
+          })
       }
       onDiscard={() =>
         void client.discard(message.commandId).then((discarded) => {
           if (!discarded) say(t("message.changeNotKept"));
         })
       }
-      {...(left === null || room === null
-        ? {}
-        : {
-            leftRoom: left.left.map(labelOf),
+      {...(left !== null && room !== null
+        ? {
+            refusedMentions: { _tag: "left-room", names: left.left.map(labelOf) },
             retryLabel: resendLabel(left.without, nameOf, ctx.i18n),
-          })}
+          }
+        : noLonger !== null
+          ? {
+              refusedMentions: {
+                _tag: "not-mentionable",
+                names: noLonger.gone.map(
+                  (of) =>
+                    mentionLabel(of, message.labels, (named) =>
+                      named._tag === "bot" ? nameOf(named.botId) : rooms.get(named.roomId)?.name,
+                    ) ?? t(of._tag === "bot" ? "bot.unknown" : "room.unknown"),
+                ),
+              },
+            }
+          : {})}
     />
   );
 }
@@ -852,8 +969,8 @@ function ServerMessage({
       arriving={arriving}
       tint={sender?.profile.avatar ?? null}
       speaker={room !== null && author._tag === "bot" ? author.botId : null}
-      // The server's entry keeps no names picked: its members go by their names now.
-      mentionable={highlighted(message.mentions, [])}
+      // The server's entry keeps no names picked: what it mentions goes by its name now.
+      mentionable={highlighted(message, [])}
       onRetry={() => void client.retryMessage(message.id)}
       submitting={submitting}
       openingHold={openingHold}

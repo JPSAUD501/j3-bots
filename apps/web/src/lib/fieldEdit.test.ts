@@ -12,12 +12,12 @@ import { BotId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { type FieldInput, followFieldInput } from "./fieldEdit";
 
-const member = (id: string, name: string): Mentionable => ({ id: BotId.make(id), name });
+/** A bot the draft's room can mention. */
+const member = (id: string, name: string) =>
+  ({ _tag: "bot", id: BotId.make(id), name }) as const satisfies Mentionable;
 const ana = member("ana", "Ana");
 const scout = member("scout", "Scout");
 const ids = [scout.id, ana.id];
-
-const bot = ({ id, name }: Mentionable): MentionOption => ({ _tag: "bot", id, name });
 
 /** Whom a draft's message asks, as `message.send` takes it. */
 const addressedTo = (...draft: Parameters<typeof addressed>) => addressed(...draft)?.mentions;
@@ -30,7 +30,7 @@ function picked(typed: string, option: MentionOption, mentions: ReadonlyArray<Dr
 }
 
 describe("followFieldInput", () => {
-  const { text, mentions } = picked("ask @an", bot(ana));
+  const { text, mentions } = picked("ask @an", ana);
   /** An edit that left the text as it was, over the selection `[4, 9)`: "@Ana ". */
   const unchanged = (inputType: string | null, data: string | null): FieldInput => ({
     before: text,
@@ -55,7 +55,7 @@ describe("followFieldInput", () => {
   });
 
   it("keeps a pick through an undo made with all the text selected", () => {
-    const draft = picked("@an", bot(ana));
+    const draft = picked("@an", ana);
     const typed = `${draft.text}hello`;
     const edit: FieldInput = {
       before: typed,
@@ -70,8 +70,8 @@ describe("followFieldInput", () => {
   });
 
   describe("text dragged within the field", () => {
-    const first = picked("@an", bot(ana));
-    const draft = picked(`${first.text}hi @sc`, bot(scout), first.mentions);
+    const first = picked("@an", ana);
+    const draft = picked(`${first.text}hi @sc`, scout, first.mentions);
     // "@Scout " dragged to the start.
     const source = [draft.text.indexOf("@Scout"), draft.text.length] as const;
     const dragged = draggedText(draft.text, source, draft.mentions);
@@ -113,8 +113,8 @@ describe("followFieldInput", () => {
 
     it("moves two picks of the same name when WebKit tells a move that reads the same", () => {
       const otherAna = member("ana-2", "Ana");
-      const first = picked("@an", bot(ana));
-      const both = picked(`${first.text}@an`, bot(otherAna), first.mentions);
+      const first = picked("@an", ana);
+      const both = picked(`${first.text}@an`, otherAna, first.mentions);
       expect(both.text).toBe("@Ana @Ana ");
       // The first "@Ana " dragged to the end: the field reads the same, the order is not.
       const source = [0, 5] as const;

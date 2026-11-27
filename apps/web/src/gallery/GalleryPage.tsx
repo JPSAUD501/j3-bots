@@ -123,7 +123,13 @@ import { ConnectorInputCard } from "../components/connectors/ConnectorInputCard"
 import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { type AvatarHandle, BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
-import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
+import {
+  Composer,
+  type MentionCandidate,
+  type MentionChoices,
+  MentionList,
+} from "../components/Composer";
+import { conversationChoicesOf } from "../components/mentionChoices";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { ConnectionBanner, type LocalLine } from "../components/ConnectionBanner";
@@ -1342,8 +1348,17 @@ function BubblesSection() {
             onOpenAttachment={nothing}
             onRetry={nothing}
             onDiscard={nothing}
-            leftRoom={["Wren"]}
+            refusedMentions={{ _tag: "left-room", names: ["Wren"] }}
             retryLabel={t("message.retry.room")}
+          />
+          {/* In a bot's conversation, refused because the room it mentions was archived since. */}
+          <MessageBubble
+            message={bubbles.notSent}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onDiscard={nothing}
+            refusedMentions={{ _tag: "not-mentionable", names: [team.room.name] }}
           />
           <MessageBubble
             message={bubbles.unrecorded}
@@ -1377,6 +1392,9 @@ function BubblesSection() {
       </Labeled>
       <Labeled label="Mentions in a room: each member's a chip with its face on a tint of its color, in the operator's bubble and in another bot's; @everyone and a deleted bot's name in the bubble's own text">
         <MentionBubbles />
+      </Labeled>
+      <Labeled label="Mentions in a bot's conversation: another bot as its chip, a room it is in as a chip with the room's mark on a neutral fill. In the app, a tap on either opens what it names">
+        <ConversationMentionBubble />
       </Labeled>
       <Labeled label="A bot's visuals, each above its message: a chart, a table and a diagram">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
@@ -1426,6 +1444,7 @@ function BubblesSection() {
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
             onOpenPair={nothing}
             onOpenRoom={nothing}
+            onOpenBot={nothing}
           />
         </div>
       </Labeled>
@@ -1440,6 +1459,7 @@ function BubblesSection() {
             secrets={gallerySecrets}
             onOpenPair={nothing}
             onOpenRoom={nothing}
+            onOpenBot={nothing}
           />
         </div>
       </Labeled>
@@ -2128,8 +2148,8 @@ function MentionBubbles() {
         message={{ ...bubbles.operator, text: "@Scout and @Juniper, can you check the numbers?" }}
         position="single"
         mentionable={[
-          { name: scout.profile.name, botId: scout.id },
-          { name: juniper.profile.name, botId: juniper.id },
+          { name: scout.profile.name, of: { _tag: "bot", botId: scout.id } },
+          { name: juniper.profile.name, of: { _tag: "bot", botId: juniper.id } },
         ]}
         onOpenAttachment={nothing}
         onRetry={nothing}
@@ -2138,7 +2158,7 @@ function MentionBubbles() {
         message={{ ...bubbles.bot, text: "On it. @Wren, the photo from the workshop is yours." }}
         position="single"
         tint={scout.profile.avatar}
-        mentionable={[{ name: wren.profile.name, botId: wren.id }]}
+        mentionable={[{ name: wren.profile.name, of: { _tag: "bot", botId: wren.id } }]}
         onOpenAttachment={nothing}
         onRetry={nothing}
       />
@@ -2146,8 +2166,30 @@ function MentionBubbles() {
         message={{ ...bubbles.operator, text: "@everyone, thanks. @Pip had it last week." }}
         position="single"
         mentionable={[
-          { name: EVERYONE, botId: null },
-          { name: "Pip", botId: gone },
+          { name: EVERYONE, of: null },
+          { name: "Pip", of: { _tag: "bot", botId: gone } },
+        ]}
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+      />
+    </div>
+  );
+}
+
+/** The operator's message in Scout's conversation, naming another bot and a room Scout is in. */
+function ConversationMentionBubble() {
+  const { wren } = team.bots;
+  return (
+    <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+      <MessageBubble
+        message={{
+          ...variants.bubbles.operator,
+          text: `Ask @${wren.profile.name} for the workshop photo, then tell @${team.room.name} it is in.`,
+        }}
+        position="single"
+        mentionable={[
+          { name: wren.profile.name, of: { _tag: "bot", botId: wren.id } },
+          { name: team.room.name, of: { _tag: "room", roomId: team.room.id } },
         ]}
         onOpenAttachment={nothing}
         onRetry={nothing}
@@ -2175,8 +2217,8 @@ function ComposerDemo({
   notSaved?: boolean;
   /** Text another tab replaced, on offer. */
   replaced?: string | null;
-  /** In a room, its members. */
-  mentionable?: ReadonlyArray<MentionCandidate>;
+  /** What `@` offers: in a room, its members; in a bot's conversation, its bots and rooms. */
+  mentionable?: MentionChoices;
   /** The mentions picked in `initial`. */
   mentions?: ReadonlyArray<DraftMention>;
   /** A reply the AI suggests. */
@@ -3115,29 +3157,39 @@ function RoomFormVariant({
   );
 }
 
-const roomMembers: ReadonlyArray<MentionCandidate> = team.room.members.flatMap((id) => {
-  const bot = bots.find((candidate) => candidate.id === id);
-  return bot ? [{ id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
-});
+const roomMembers: MentionChoices = {
+  candidates: team.room.members.flatMap((id): ReadonlyArray<MentionCandidate> => {
+    const bot = bots.find((candidate) => candidate.id === id);
+    return bot ? [{ _tag: "bot", id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
+  }),
+  everyone: true,
+};
+
+/** What `@` offers in Scout's conversation: the other bots, and the room Scout is in. */
+const scoutsMentions = conversationChoicesOf(team.bots.scout.id, team.roster);
 
 /** The mention list as it opens above the composer, for `query` typed after `@`. */
 function MentionVariant({
   label,
   query,
   active,
+  choices = roomMembers,
 }: {
   label: string;
   query: string;
   active: number;
+  choices?: MentionChoices;
 }) {
   const listId = useId();
+  const { t } = useI18n();
   return (
     <Labeled label={label}>
       <div className="relative h-56 max-w-72">
         <MentionList
           id={listId}
-          options={mentionOptions(query, roomMembers)}
-          members={roomMembers}
+          options={mentionOptions(query, choices.candidates, choices.everyone)}
+          candidates={choices.candidates}
+          label={t(choices.everyone ? "mention.label" : "mention.labelConversation")}
           active={active}
           optionId={(index) => `${listId}-${index}`}
           onPick={nothing}
@@ -3194,6 +3246,18 @@ function RoomsSection() {
         />
         <MentionVariant label="Mentions: after @w, the members it matches" query="w" active={0} />
         <MentionVariant label="Mentions: after @ev, only everyone" query="ev" active={0} />
+        <MentionVariant
+          label="Mentions in a bot's conversation: after @, its other bots by their faces and the rooms it is in by their marks, no @everyone"
+          query=""
+          active={0}
+          choices={scoutsMentions}
+        />
+        <MentionVariant
+          label="Mentions in a bot's conversation: after @sp, the room it matches"
+          query="sp"
+          active={0}
+          choices={scoutsMentions}
+        />
       </div>
       <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap. Only a pick mentions">
         <div className="max-w-(--layout-text-column) pt-60">
@@ -3211,6 +3275,24 @@ function RoomsSection() {
               { _tag: "bot", botId: wren.id, label: wren.profile.name, position: 11 },
               { _tag: "everyone", position: 23 },
               { _tag: "bot", botId: juniper.id, label: juniper.profile.name, position: 37 },
+            ]}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="Composer in a bot's conversation with picks: another bot and a room it is in, each a chip, deleted whole. Type @ for the list">
+        <div className="max-w-(--layout-text-column) pt-60">
+          <ComposerDemo
+            initial={`@${wren.profile.name} and @${team.room.name}, the photo is in `}
+            recipient={scout.profile.name}
+            mentionable={scoutsMentions}
+            mentions={[
+              { _tag: "bot", botId: wren.id, label: wren.profile.name, position: 0 },
+              {
+                _tag: "room",
+                roomId: team.room.id,
+                label: team.room.name,
+                position: wren.profile.name.length + 6,
+              },
             ]}
           />
         </div>
@@ -5436,6 +5518,7 @@ function QuickAccessFrame({
             onOpenConversation={() => {}}
             onOpenPair={() => {}}
             onOpenRoom={() => {}}
+            onOpenBot={() => {}}
             onClose={() => setShown(false)}
             onLeft={() => {}}
             window={

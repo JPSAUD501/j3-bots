@@ -117,6 +117,11 @@ class Taps extends Context.Service<
     readonly reacts: Queue.Queue<ReactionEmoji | null>;
     /** How many of the next `message.react` calls never answer. */
     readonly silentReacts: { count: number };
+    /**
+     * Whether the roster answers as a server from before conversation
+     * mentions does, its snapshot without `conversationMentions`.
+     */
+    readonly olderRoster: { value: boolean };
   }
 >()("@j3-bots/client-runtime/test/client.test/Taps") {}
 
@@ -136,6 +141,7 @@ const taps = Layer.effect(
       failingFreshStarts: { count: 0 },
       reacts: yield* Queue.unbounded<ReactionEmoji | null>(),
       silentReacts: { count: 0 },
+      olderRoster: { value: false },
     });
   }),
 );
@@ -227,6 +233,25 @@ const tapped = Layer.mergeAll(
             }),
           ),
         );
+    }),
+  ),
+  J3Rpcs.toLayerHandler(
+    "roster.subscribe",
+    Effect.gen(function* () {
+      const { olderRoster } = yield* Taps;
+      const subscribe = yield* J3Rpcs.accessHandler("roster.subscribe");
+      return (input, options) => {
+        const frames = subscribe(input, options);
+        return (
+          Stream.isStream(frames) ? frames : Stream.unwrap(Effect.map(frames, Stream.fromQueue))
+        ).pipe(
+          Stream.map((frame) => {
+            if (!olderRoster.value || frame._tag !== "snapshot") return frame;
+            const { conversationMentions: _, ...older } = frame;
+            return older;
+          }),
+        );
+      };
     }),
   ),
   J3Rpcs.toLayerHandler(
@@ -1205,6 +1230,22 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           state.value.some((item) => item._tag === "bot" && item.bot.id === botId),
       );
       assert.isFalse(updated._tag === "ready" && updated.stale);
+    }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("offers `@` in a bot's conversation only once the server says it takes it", () =>
+    Effect.gen(function* () {
+      const { olderRoster } = yield* Taps;
+      olderRoster.value = true;
+      yield* pairAndConnect;
+      const roster = yield* Roster;
+      yield* waitFor(roster.state, (state) => state._tag === "ready");
+      assert.isFalse(roster.conversationMentions.get());
+
+      // The server is updated: the snapshot of the next connection says it takes them.
+      olderRoster.value = false;
+      yield* (yield* TestPlatform.TestNetwork).dropSockets;
+      yield* waitFor(roster.conversationMentions, (takes) => takes);
     }).pipe(Effect.provide(client())),
   );
 
@@ -3211,7 +3252,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         );
 
         refusing.delete(text);
-        const result = yield* conversations.resend(commandId, { _tag: "bots", ids: [botId] });
+        const result = yield* conversations.resend(commandId, {
+          mentions: { _tag: "bots", ids: [botId] },
+        });
         assert.strictEqual(result._tag, "done");
         assert.strictEqual(yield* Queue.take(sends), commandId);
         const sent = yield* waitFor(conversation.state, (state) =>

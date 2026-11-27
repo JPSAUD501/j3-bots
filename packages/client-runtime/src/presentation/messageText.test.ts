@@ -3,18 +3,20 @@ import { BotId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { type MentionName, parseMessageText } from "./messageText.ts";
 
-const wren = { name: "Wren", botId: BotId.make("wren") } satisfies MentionName;
-const ana = { name: "Ana", botId: BotId.make("ana") } satisfies MentionName;
-const anaLima = { name: "Ana Lima", botId: BotId.make("ana-lima") } satisfies MentionName;
-const hal = { name: "Hal", botId: BotId.make("hal") } satisfies MentionName;
-const everyone = { name: "everyone", botId: null } satisfies MentionName;
+const bot = (name: string, id: string) =>
+  ({ name, of: { _tag: "bot", botId: BotId.make(id) } }) satisfies MentionName;
+const wren = bot("Wren", "wren");
+const ana = bot("Ana", "ana");
+const anaLima = bot("Ana Lima", "ana-lima");
+const hal = bot("Hal", "hal");
+const everyone = { name: "everyone", of: null } satisfies MentionName;
 
 const inlinesOf = (text: string, mentionable: ReadonlyArray<MentionName> = []) => {
   const [block] = parseMessageText(text, mentionable);
   return block?.kind === "paragraph" ? block.inlines : [];
 };
 
-const mention = ({ name, botId }: MentionName) => ({ kind: "mention", name, botId }) as const;
+const mention = ({ name, of }: MentionName) => ({ kind: "mention", name, of }) as const;
 
 describe("parseMessageText", () => {
   it("splits paragraphs and fenced code", () => {
@@ -78,7 +80,7 @@ describe("parseMessageText", () => {
   });
 
   it("marks a name two members share as the first of them", () => {
-    const otherAna = { name: "Ana", botId: BotId.make("other-ana") } satisfies MentionName;
+    const otherAna = bot("Ana", "other-ana");
     expect(inlinesOf("@Ana", [ana, otherAna])).toEqual([mention(ana)]);
   });
 

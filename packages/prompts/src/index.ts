@@ -36,6 +36,8 @@ export {
   LOOKING_AT_APP_LINE,
   LOOKING_AT_WINDOW_LINE,
   type LookingAtRef,
+  type MentionRef,
+  MENTIONS_LINE,
   type OperatorMessage,
   type ProfileChange,
   REACTION_LINE,

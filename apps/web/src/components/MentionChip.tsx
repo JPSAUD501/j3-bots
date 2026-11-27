@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Avatar, BotId } from "@j3-bots/contracts";
-import { use } from "react";
-import { useBots } from "../app/context";
+import type { Avatar, BotId, ConversationMention } from "@j3-bots/contracts";
+import { createContext, type ReactNode, use } from "react";
+import { useBots, useI18n, useRooms } from "../app/context";
 import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
-import { AvatarsAsleep, BotAvatar } from "./avatar/BotAvatar";
+import {
+  AvatarsAsleep,
+  BotAvatar,
+  RoomAvatar,
+  type RoomAvatarMember,
+  roomAvatarMembers,
+} from "./avatar/BotAvatar";
 
 /** The side of a mention's face, in px: as small as an event line's, so it sits in a line of text. */
 const MENTION_FACE = 16;
+
+const chip =
+  "mx-px inline-flex items-center gap-1 rounded-pill py-0.5 ps-0.5 pe-1.5 align-middle leading-none font-semibold";
 
 /**
  * A bot's mention where it stands in text: its still face and `@` and the
@@ -30,7 +39,8 @@ export function MentionChip({
     <span
       className={cn(
         tintOf(avatar),
-        "mx-px inline-flex items-center gap-1 rounded-pill bg-(--tint-bubble) py-0.5 ps-0.5 pe-1.5 align-middle leading-none font-semibold text-bubble-bot-foreground",
+        chip,
+        "bg-(--tint-bubble) text-bubble-bot-foreground",
         className,
       )}
     >
@@ -49,12 +59,81 @@ export function MentionChip({
 }
 
 /**
- * A mention in a message's text: a bot's as its chip, or, for `@everyone` and
- * a bot deleted since, the name in the text's own color, set apart by weight.
+ * A room's mention where it stands in text: its mark, two of its members, and
+ * `@` and its name, on a neutral fill, since a room has no color of its own.
  */
-export function TextMention({ name, botId }: { name: string; botId: BotId | null }) {
+export function RoomMentionChip({
+  members,
+  name,
+  className,
+}: {
+  members: ReadonlyArray<RoomAvatarMember>;
+  name: string;
+  className?: string;
+}) {
+  return (
+    <span className={cn(chip, "bg-muted text-foreground", className)}>
+      <RoomAvatar members={members} size={MENTION_FACE} />
+      {`@${name}`}
+    </span>
+  );
+}
+
+/**
+ * Opens what a mention in a message names: a bot's conversation, or a room.
+ * Where it is null, as in the gallery's still frames, a mention opens nothing.
+ */
+export const OpenMention = createContext<((named: ConversationMention) => void) | null>(null);
+
+/** A chip that opens what it names, when something can open it. */
+function Opens({
+  named,
+  name,
+  children,
+}: {
+  named: ConversationMention;
+  name: string;
+  children: ReactNode;
+}) {
+  const open = use(OpenMention);
+  const { t } = useI18n();
+  if (open === null) return children;
+  return (
+    <button
+      type="button"
+      aria-label={t("mention.open", { name })}
+      onClick={() => open(named)}
+      className="cursor-pointer rounded-pill align-middle hover:brightness-95 focus-visible:outline-2 focus-visible:outline-ring"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * A mention in a message's text: a bot's or a room's as its chip, which opens
+ * that bot's conversation or that room; or, for `@everyone` and one deleted
+ * since, the name in the text's own color, set apart by weight.
+ */
+export function TextMention({ name, of }: { name: string; of: ConversationMention | null }) {
   const bots = useBots();
-  const bot = botId === null ? undefined : bots.get(botId);
-  if (bot === undefined) return <span className="font-semibold">@{name}</span>;
-  return <MentionChip avatar={bot.profile.avatar} seed={bot.id} name={name} />;
+  const rooms = useRooms();
+  const plain = <span className="font-semibold">@{name}</span>;
+  if (of === null) return plain;
+  if (of._tag === "bot") {
+    const bot = bots.get(of.botId);
+    if (bot === undefined) return plain;
+    return (
+      <Opens named={of} name={bot.profile.name}>
+        <MentionChip avatar={bot.profile.avatar} seed={bot.id} name={name} />
+      </Opens>
+    );
+  }
+  const room = rooms.get(of.roomId);
+  if (room === undefined) return plain;
+  return (
+    <Opens named={of} name={room.name}>
+      <RoomMentionChip members={roomAvatarMembers(room, bots)} name={name} />
+    </Opens>
+  );
 }

@@ -6,7 +6,7 @@ import { deliveryLine, fileSize } from "./message.ts";
 
 describe("delivery line", () => {
   const en = context("2026-11-20T15:00:00Z", "en", {});
-  const settled = { submitting: false, leftRoom: [], openingHold: null };
+  const settled = { submitting: false, refusedMentions: null, openingHold: null };
 
   it("says a message the engine found too long apart from any other refusal", () => {
     const refused = (reason: "message-length" | "mentions") =>
@@ -26,8 +26,20 @@ describe("delivery line", () => {
       _tag: "not-sent",
       failure: { _tag: "refused", error: new Invalid({ reason: "mentions" }) },
     } as const;
-    expect(deliveryLine(status, { ...settled, leftRoom: ["Ana", "Scout"] }, en)).toBe(
+    const left = { _tag: "left-room", names: ["Ana", "Scout"] } as const;
+    expect(deliveryLine(status, { ...settled, refusedMentions: left }, en)).toBe(
       "Not sent: Ana and Scout are no longer in this room",
+    );
+  });
+
+  it("names what a bot's conversation can no longer mention in place of the refusal", () => {
+    const status = {
+      _tag: "not-sent",
+      failure: { _tag: "refused", error: new Invalid({ reason: "mentions" }) },
+    } as const;
+    const gone = { _tag: "not-mentionable", names: ["Launch"] } as const;
+    expect(deliveryLine(status, { ...settled, refusedMentions: gone }, en)).toBe(
+      "Not sent: Launch can’t be mentioned here anymore",
     );
   });
 

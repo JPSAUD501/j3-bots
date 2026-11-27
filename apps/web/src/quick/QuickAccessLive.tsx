@@ -243,6 +243,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
           onOpenConversation={() => openInMain(conversationOf)}
           onOpenPair={(botIds, at) => openInMain({ _tag: "pair", botIds, at })}
           onOpenRoom={(roomId) => openInMain({ _tag: "room", roomId })}
+          onOpenBot={(botId) => openInMain({ _tag: "conversation", botId })}
           onClose={() => setShown(false)}
           onLeft={() => app.quickAccess.hide(asked)}
           overlay={toast}

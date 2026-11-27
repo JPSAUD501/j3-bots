@@ -18,7 +18,7 @@ const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
 export interface ComposerSource {
   readonly data: Pick<
     ShellData,
-    "draft" | "offer" | "draftsLoading" | "draftsFailed" | "draftNotSaved"
+    "draft" | "offer" | "draftsLoading" | "draftsFailed" | "draftNotSaved" | "conversationMentions"
   >;
   readonly intents: Pick<
     ShellIntents,
@@ -55,6 +55,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
   const draftsLoading = useReadable(j3.draftsSwitching);
   const draftsFailed = useReadable(j3.draftsReadFailed);
   const notSaved = useReadable(j3.draftsNotSaved);
+  const conversationMentions = useReadable(j3.conversationMentions);
   const send: ComposerSource["send"] = (target, addressing, context) =>
     j3.sendDraft(target, addressing, context).then((result) => {
       if (result === "not-kept") say(t("composer.notKept"));
@@ -68,6 +69,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
       draftsLoading,
       draftsFailed,
       draftNotSaved: (asked) => notSaved.has(targetKey(asked)),
+      conversationMentions,
     },
     intents: {
       setDraftText: j3.setDraftText,

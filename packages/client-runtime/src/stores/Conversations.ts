@@ -12,6 +12,8 @@ import {
   type EntryOrder,
   EntryTarget,
   LookingAt,
+  type ConversationMention,
+  ConversationMentions,
   Mentions,
   type MessageEntry,
   MessageText,
@@ -81,9 +83,21 @@ export const keyTarget = (key: string): Option.Option<EntryTarget> => {
   }
 };
 
-/** The name a member had where the operator mentioned it, by picking it. */
-export const MentionLabel = Schema.Struct({ botId: BotId, label: Schema.String });
+/** The name a bot or a room had where the operator mentioned it, by picking it. */
+export const MentionLabel = Schema.Union([
+  Schema.Struct({ botId: BotId, label: Schema.String }),
+  Schema.Struct({ roomId: RoomId, label: Schema.String }),
+]);
 export type MentionLabel = typeof MentionLabel.Type;
+
+/**
+ * Whom a message sent again is for, in place of whom it was for when given:
+ * the members a room message mentions, or the bots and rooms a message in a
+ * bot's conversation mentions.
+ */
+export type Readdressing =
+  | { readonly mentions: Mentions }
+  | { readonly conversationMentions: ReadonlyArray<ConversationMention> };
 
 /**
  * A message the operator sent from this client that the conversation does not
@@ -105,9 +119,11 @@ export interface OutgoingMessage {
   /** The window the operator was looking at, from quick access. */
   readonly lookingAt?: LookingAt;
   readonly mentions: Mentions | null;
+  /** The bots and rooms it mentions in a bot's conversation; left out when it mentions none. */
+  readonly conversationMentions?: ReadonlyArray<ConversationMention>;
   /**
-   * The name each member it mentions had when the operator picked it, so
-   * the message can say who it meant after that member left or was renamed.
+   * The name each bot or room it mentions had when the operator picked it,
+   * so the message can say what it meant after that one left or was renamed.
    */
   readonly labels: ReadonlyArray<MentionLabel>;
   readonly createdAt: DateTime.Utc;
@@ -187,6 +203,8 @@ const StoredMessage = Schema.TaggedStruct("message", {
   /** Missing from a message sent without its window. */
   lookingAt: Schema.optionalKey(LookingAt),
   mentions: Schema.NullOr(Mentions),
+  /** Missing from a message that mentions no bot or room in a bot's conversation. */
+  conversationMentions: Schema.optionalKey(ConversationMentions),
   labels: Schema.Array(MentionLabel),
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
@@ -436,7 +454,8 @@ export class Conversations extends Context.Service<
       readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly lookingAt?: LookingAt;
       readonly mentions?: Mentions;
-      /** The names the members mentioned had when picked. */
+      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
+      /** The names the bots and rooms mentioned had when picked. */
       readonly labels?: ReadonlyArray<MentionLabel>;
       /** Heard once the message is the outbox's, on the device or in memory. */
       readonly onKept?: () => void;
@@ -459,6 +478,7 @@ export class Conversations extends Context.Service<
         readonly attachmentOffsets?: ReadonlyArray<number>;
         readonly lookingAt?: LookingAt;
         readonly mentions?: Mentions;
+        readonly conversationMentions?: ReadonlyArray<ConversationMention>;
         readonly labels?: ReadonlyArray<MentionLabel>;
       },
       claim?: {
@@ -469,15 +489,16 @@ export class Conversations extends Context.Service<
       },
     ) => Effect.Effect<boolean, LocalStorageError | InvalidMessage | NotPaired>;
     /**
-     * Sends again, with its own command id, a message that was not sent, with
-     * `mentions` in place of the ones it had when given, as when a member it
-     * mentioned has left the room. Does nothing when the device no longer
-     * keeps it as not sent: another window sent it again or discarded it.
-     * Fails, changing nothing, when the device cannot keep the new attempt.
+     * Sends again, with its own command id, a message that was not sent,
+     * addressed as `readdressing` says in place of how it was when given, as
+     * when a member it mentioned has left the room. Does nothing when the
+     * device no longer keeps it as not sent: another window sent it again or
+     * discarded it. Fails, changing nothing, when the device cannot keep the
+     * new attempt.
      */
     readonly resend: (
       commandId: CommandId,
-      mentions?: Mentions,
+      readdressing?: Readdressing,
     ) => Effect.Effect<IntentResult<EntryId>, LocalStorageError>;
     /**
      * Removes a message that was not sent from the conversation, unless the
@@ -869,6 +890,9 @@ export const layer = Layer.effect(
           : { attachmentOffsets: record.attachmentOffsets }),
         ...(record.lookingAt === undefined ? {} : { lookingAt: record.lookingAt }),
         mentions: record.mentions,
+        ...(record.conversationMentions === undefined
+          ? {}
+          : { conversationMentions: record.conversationMentions }),
         labels: record.labels,
         createdAt: record.createdAt,
         status:
@@ -1180,6 +1204,10 @@ export const layer = Layer.effect(
           : { attachmentOffsets: due.message.attachmentOffsets }),
         ...(due.message.lookingAt === undefined ? {} : { lookingAt: due.message.lookingAt }),
         ...(due.message.mentions === null ? {} : { mentions: due.message.mentions }),
+        ...(due.message.conversationMentions === undefined ||
+        due.message.conversationMentions.length === 0
+          ? {}
+          : { conversationMentions: due.message.conversationMentions }),
       }).pipe(
         Effect.exit,
         Effect.flatMap((exit) => {
@@ -1434,6 +1462,7 @@ export const layer = Layer.effect(
       readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly lookingAt?: LookingAt;
       readonly mentions?: Mentions;
+      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       readonly labels?: ReadonlyArray<MentionLabel>;
     }) {
       const attachments = input.attachments ?? [];
@@ -1450,6 +1479,9 @@ export const layer = Layer.effect(
           : { attachmentOffsets: input.attachmentOffsets }),
         ...(input.lookingAt === undefined ? {} : { lookingAt: input.lookingAt }),
         mentions: input.mentions ?? null,
+        ...(input.conversationMentions === undefined || input.conversationMentions.length === 0
+          ? {}
+          : { conversationMentions: input.conversationMentions }),
         labels: input.labels ?? [],
         createdAt: yield* DateTime.now,
         status: { _tag: "sending" },
@@ -1532,14 +1564,14 @@ export const layer = Layer.effect(
 
     const resend = Effect.fn("Conversations.resend")(function* (
       commandId: CommandId,
-      mentions?: Mentions,
+      readdressing?: Readdressing,
     ) {
       const held = outbox.get().find((candidate) => candidate.message.commandId === commandId);
       if (held === undefined) return unexpected;
       const { message, kept } = held;
       if (message.status._tag !== "not-sent") return unexpected;
       const status = { _tag: "sending" } as const;
-      const addressed = mentions === undefined ? {} : { mentions };
+      const addressed = readdressing ?? {};
       let attempt = 0;
       if (kept === null) {
         outbox.update((list) =>

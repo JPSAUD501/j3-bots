@@ -36,7 +36,8 @@ export type EnvelopeTag =
   | "secret"
   | "server"
   | "reactions"
-  | "reaction";
+  | "reaction"
+  | "mention";
 
 const ENVELOPE_TAGS: ReadonlyArray<EnvelopeTag> = [
   "j3-wake",
@@ -61,6 +62,7 @@ const ENVELOPE_TAGS: ReadonlyArray<EnvelopeTag> = [
   "server",
   "reactions",
   "reaction",
+  "mention",
 ];
 
 /** Characters that pass for one of the ASCII characters a tag is made of. */

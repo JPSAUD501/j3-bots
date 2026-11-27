@@ -17,7 +17,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  addressed,
   arrangedOrder,
   arrangeRoster,
   botStop,
@@ -38,7 +37,7 @@ import { BrowserProvider } from "../browser/context";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
-import type { MentionCandidate } from "../components/Composer";
+import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
 import { DraftComposer } from "../components/DraftComposer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
@@ -127,7 +126,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const rosterItems = data.roster ?? [];
   const pairs = data.pairs ?? [];
   const folded = useFoldedSections(data.sections);
-  const bots = rosterItems.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
     selected === null
       ? null
@@ -454,17 +452,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     // An archived room takes no messages: no composer, and a way to unarchive it.
     const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
-    // In a room, `@` mentions its members, by the names the roster shows.
-    const mentionable: ReadonlyArray<MentionCandidate> | undefined =
-      item._tag === "room"
-        ? item.room.members.flatMap((id) => {
-            const bot = bots.find((candidate) => candidate.id === id);
-            return bot ? [{ id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
-          })
-        : undefined;
-    // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
-    const addressing =
-      item._tag === "room" ? addressed(draft.text, draft.mentions, item.room.members) : undefined;
+    const mentionable = mentionChoicesOf(target, rosterItems, data.conversationMentions);
+    const addressing = addressingOf(target, draft, rosterItems, mentionable);
     const toggleDetails = () =>
       aside === "browser"
         ? viewerRef.current?.requestClose(() => navigation.setDetailsOpen(true))
@@ -573,6 +562,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   }
                   onOpenPair={navigation.openPair}
                   onOpenRoom={(roomId) => navigation.select({ _tag: "room", roomId })}
+                  onOpenBot={(botId) => navigation.select({ _tag: "bot", botId })}
                   {...(browserBot === null
                     ? {}
                     : {

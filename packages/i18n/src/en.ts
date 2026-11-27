@@ -6,6 +6,7 @@
  */
 export const en = {
   "bot.unknown": "A deleted bot",
+  "room.unknown": "A deleted room",
 
   "avatar.shape": "Shape",
   "avatar.color": "Color",
@@ -929,7 +930,10 @@ export const en = {
   "roomForm.createFailedClosed": "The room {name} wasn’t created.",
 
   "mention.label": "Mention a bot",
+  "mention.labelConversation": "Mention a bot or a room",
   "mention.everyone": "Every member answers",
+  "mention.room": "Room",
+  "mention.open": "Open {name}",
 
   "settings.title": "Settings",
   "settings.back": "All settings",
@@ -1199,6 +1203,8 @@ export const en = {
   "message.sending": "Sending…",
   "message.notSent.left.one": "Not sent: {names} is no longer in this room",
   "message.notSent.left.other": "Not sent: {names} are no longer in this room",
+  "message.notSent.notMentionable.one": "Not sent: {names} can’t be mentioned here anymore",
+  "message.notSent.notMentionable.other": "Not sent: {names} can’t be mentioned here anymore",
   "message.notSent.refused": "Not sent: the server refused it",
   "message.notSent.tooLong": "Not sent: too long for this bot to take in one message",
   "message.notSent.notPaired": "Not sent: this device is signed out",

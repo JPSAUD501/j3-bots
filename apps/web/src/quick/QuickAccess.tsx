@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EntryId, EntryPreview, PairBotIds, RoomId } from "@j3-bots/contracts";
+import type { Bot, BotId, EntryId, EntryPreview, PairBotIds, RoomId } from "@j3-bots/contracts";
 import { ArrowUpRightIcon, XIcon } from "lucide-react";
 import {
   type ReactNode,
@@ -19,6 +19,7 @@ import {
 import { RosterProvider, useI18n, usePresentation } from "../app/context";
 import { AvatarConnection, LiveBotAvatar } from "../components/avatar/mood";
 import { DraftComposer } from "../components/DraftComposer";
+import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
 import { toneClass } from "../components/RosterRow";
 import { SwapText } from "../components/SwapText";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
@@ -44,6 +45,7 @@ export type QuickAccessData = Pick<
   | "draftsLoading"
   | "draftsFailed"
   | "draftNotSaved"
+  | "conversationMentions"
   | "connectors"
   | "submitting"
   | "workSteps"
@@ -92,8 +94,10 @@ interface QuickAccessProps {
   readonly onOpenConversation: () => void;
   /** The main window, at the teammate conversation a line of the timeline leads to. */
   readonly onOpenPair: (botIds: PairBotIds, at: EntryId | null) => void;
-  /** The main window, at the room a line of the timeline names. */
+  /** The main window, at the room a line of the timeline, or a mention, names. */
   readonly onOpenRoom: (roomId: RoomId) => void;
+  /** The main window, at the conversation of the bot a mention names. */
+  readonly onOpenBot: (botId: BotId) => void;
   /** The operator closed it, with its button or Escape. */
   readonly onClose: () => void;
   /** It has gone out: nothing of it is on screen. */
@@ -140,6 +144,7 @@ export function QuickAccess({
   onOpenConversation,
   onOpenPair,
   onOpenRoom,
+  onOpenBot,
   onClose,
   onLeft,
   overlay,
@@ -150,6 +155,10 @@ export function QuickAccess({
   const name = bot.profile.name;
   const target = { _tag: "conversation", botId: bot.id } as const;
   const view = data.conversation(target);
+  // `@` offers what it offers in the main window's composer of this conversation.
+  const roster = data.roster ?? [];
+  const mentionable = mentionChoicesOf(target, roster, data.conversationMentions);
+  const addressing = addressingOf(target, data.draft(target), roster, mentionable);
   const composerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLElement>(null);
   const faceRef = useRef<HTMLSpanElement>(null);
@@ -413,6 +422,7 @@ export function QuickAccess({
                         turnBot={{ bot, lastEntry }}
                         onOpenPair={onOpenPair}
                         onOpenRoom={onOpenRoom}
+                        onOpenBot={onOpenBot}
                       />
                     </div>
                   </div>
@@ -452,6 +462,8 @@ export function QuickAccess({
                   recipient={name}
                   data={data}
                   intents={intents}
+                  addressing={addressing}
+                  mentionable={mentionable}
                   suggestion={offeredReply(bot.suggestedReply, view.items)}
                   inputRef={composerRef}
                 />
