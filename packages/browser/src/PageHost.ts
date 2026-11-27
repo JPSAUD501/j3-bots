@@ -73,6 +73,12 @@ export interface PageHost {
   readonly probe: (
     input: PageHostPayload<"tab.probe">,
   ) => Effect.Effect<{ readonly editable: boolean }, BrowserHostError>;
+  readonly putFile: (
+    input: PageHostPayload<"files.put">,
+  ) => Effect.Effect<{ readonly path: string }, BrowserHostError>;
+  readonly takeDownload: (
+    input: PageHostPayload<"download.take">,
+  ) => Effect.Effect<{ readonly bytes: Uint8Array }, BrowserHostError>;
   readonly readCookies: Effect.Effect<
     { readonly cookies: ReadonlyArray<BrowserCookie> },
     BrowserHostError
@@ -173,6 +179,8 @@ export const pageHostHandlers = (host: PageHost) =>
     "tab.screencastAck": (input) => host.screencastAck(input),
     "tab.input": (input) => host.input(input),
     "tab.probe": (input) => host.probe(input),
+    "files.put": (input) => host.putFile(input),
+    "download.take": (input) => host.takeDownload(input),
     "cookies.read": () => host.readCookies,
     "cookies.write": ({ changes }) => host.writeCookies(changes),
     "storage.read": (input) => host.readStorage(input),
@@ -209,6 +217,9 @@ export const remotePageHost = (client: PageHostClient): PageHost => ({
     client["tab.screencastAck"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   input: (input) => client["tab.input"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   probe: (input) => client["tab.probe"](input).pipe(Effect.catchTag("RpcClientError", lost)),
+  putFile: (input) => client["files.put"](input).pipe(Effect.catchTag("RpcClientError", lost)),
+  takeDownload: (input) =>
+    client["download.take"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   readCookies: client["cookies.read"]().pipe(Effect.catchTag("RpcClientError", lost)),
   writeCookies: (changes) =>
     client["cookies.write"]({ changes }).pipe(Effect.catchTag("RpcClientError", lost)),

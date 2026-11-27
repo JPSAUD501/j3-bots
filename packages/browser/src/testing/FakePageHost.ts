@@ -3,6 +3,7 @@ import {
   BROWSER_HOST_PROTOCOL_VERSION,
   type BrowserCookie,
   type BrowserCookieKey,
+  BrowserDownloadId,
   BrowserHostError,
   type BrowserHostEvent,
   type BrowserHostHello,
@@ -58,6 +59,14 @@ export interface FakePageHost extends PageHost {
   readonly acked: Effect.Effect<
     ReadonlyArray<{ readonly tab: BrowserTabRef; readonly frame: number }>
   >;
+  /** A file a bot's action downloaded on the tab: kept, and reported as `download.finished`. */
+  readonly download: (
+    tab: BrowserTabRef,
+    name: string,
+    bytes: Uint8Array,
+  ) => Effect.Effect<BrowserDownloadId>;
+  /** The files given for uploads, by the path the host answered. */
+  readonly files: Effect.Effect<ReadonlyMap<string, Uint8Array>>;
 }
 
 interface FakeTab {
@@ -96,6 +105,8 @@ export const makeFakePageHost = (
     const tabs = new Map<BrowserTabRef, FakeTab>();
     const pages = new Map<string, FakePage>();
     const cookies = new Map<string, BrowserCookie>();
+    const files = new Map<string, Uint8Array>();
+    const downloads = new Map<BrowserDownloadId, Uint8Array>();
     const storage = new Map<string, BrowserOriginStorage>();
     const calls: Array<FakeHostCall> = [];
     const acked: Array<{ readonly tab: BrowserTabRef; readonly frame: number }> = [];
@@ -179,6 +190,7 @@ export const makeFakePageHost = (
             input: true,
             cookies: true,
             storage: true,
+            files: true,
           },
           tabs: [...tabs.values()].filter((tab) => !tab.private).map((tab) => tab.state),
         }),
@@ -335,6 +347,27 @@ export const makeFakePageHost = (
         ),
       input: ({ tab }) => onTab("tab.input", tab, () => Effect.void),
       probe: ({ tab }) => onTab("tab.probe", tab, () => Effect.succeed({ editable: false })),
+      putFile: ({ tab, name, bytes }) =>
+        onTab("files.put", tab, () =>
+          Effect.sync(() => {
+            const path = `/fake/files/${tab}/${files.size}/${name}`;
+            files.set(path, bytes);
+            return { path };
+          }),
+        ),
+      takeDownload: ({ download }) =>
+        record("download.take").pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const bytes = downloads.get(download);
+              if (bytes === undefined) {
+                return Effect.fail(new BrowserHostError({ reason: "invalid-target" }));
+              }
+              downloads.delete(download);
+              return Effect.succeed({ bytes });
+            }),
+          ),
+        ),
       readCookies: record("cookies.read").pipe(
         Effect.andThen(Effect.sync(() => ({ cookies: [...cookies.values()] }))),
       ),
@@ -395,6 +428,20 @@ export const makeFakePageHost = (
           else watcher.next = frames;
         }),
       acked: Effect.sync(() => [...acked]),
+      download: (tab, name, bytes) =>
+        Effect.gen(function* () {
+          const id = BrowserDownloadId.make(`download-${downloads.size + 1}`);
+          downloads.set(id, bytes);
+          yield* PubSub.publish(events, {
+            type: "download.finished",
+            tab,
+            download: id,
+            name,
+            size: bytes.length,
+          });
+          return id;
+        }),
+      files: Effect.sync(() => new Map(files)),
     };
     return host;
   });

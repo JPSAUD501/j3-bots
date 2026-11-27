@@ -2,6 +2,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
+import { MAX_ATTACHMENT_NAME_LENGTH, MAX_ATTACHMENT_SIZE } from "./attachment.ts";
 import { DeviceId, NonNegativeInt, PositiveInt } from "./base.ts";
 import { BrowserPageInput, BrowserTabRef, MAX_BROWSER_VIEW } from "./browser.ts";
 import {
@@ -157,6 +158,9 @@ export type BrowserOriginStorage = typeof BrowserOriginStorage.Type;
  *
  * - `screencast`, `input`: a viewer can watch and drive its tabs.
  * - `cookies`, `storage`, `indexedDb`: it reads and writes sign-ins.
+ * - `files`: it hands the server a file a bot's action downloaded
+ *   (`download.finished`, `download.take`) and takes files for a bot's
+ *   upload (`files.put`).
  * - `privateTabs`: the person can open a private tab on it.
  * - `nativeView`: the person sees its tabs in a view of its own, in the
  *   app, and uses them there (`person.input`, `tab.focused`).
@@ -167,6 +171,7 @@ export const BrowserHostCapabilities = Schema.Struct({
   cookies: Schema.optionalKey(Schema.Literal(true)),
   storage: Schema.optionalKey(Schema.Literal(true)),
   indexedDb: Schema.optionalKey(Schema.Literal(true)),
+  files: Schema.optionalKey(Schema.Literal(true)),
   privateTabs: Schema.optionalKey(Schema.Literal(true)),
   nativeView: Schema.optionalKey(Schema.Literal(true)),
 });
@@ -256,6 +261,27 @@ const BROWSER_HOST_ERROR_TEXT: Record<BrowserHostError["reason"], string> = {
   closed: "The tab closed.",
 };
 
+/** A download a host keeps for the server, by an id the host mints. */
+export const BrowserDownloadId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+).pipe(Schema.brand("BrowserDownloadId"));
+export type BrowserDownloadId = typeof BrowserDownloadId.Type;
+
+/** A file's name, as a host saves it: no folder in it. */
+export const BrowserFileName = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_ATTACHMENT_NAME_LENGTH),
+  Schema.makeFilter((name: string) => !/[\\/\u0000]/.test(name) || "a name without a folder"),
+);
+
+/** A file's bytes as they cross the connection: at most an attachment's size. */
+const FileBytes = Schema.Uint8ArrayFromBase64.check(
+  Schema.makeFilter(
+    (bytes: Uint8Array) => bytes.length <= MAX_ATTACHMENT_SIZE || "at most an attachment's size",
+  ),
+);
+
 /**
  * What a host tells the server without being asked, in order.
  *
@@ -274,6 +300,10 @@ const BROWSER_HOST_ERROR_TEXT: Record<BrowserHostError["reason"], string> = {
  * - `cookies.changed`: cookies the host's pages or sites changed. Never the
  *   host's own writes from `cookies.write`, and never a private tab's.
  * - `storage.changed`: origins whose storage may have changed, to read.
+ * - `download.finished`: a file finished downloading while a bot's action
+ *   ran on the tab. The host keeps it until the server takes it
+ *   (`download.take`) or the host restarts. What the person downloads
+ *   stays with them and is not sent.
  */
 export const BrowserHostEvent = Schema.Union([
   Schema.Struct({
@@ -301,6 +331,14 @@ export const BrowserHostEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("storage.changed"),
     origins: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("download.finished"),
+    tab: BrowserTabRef,
+    download: BrowserDownloadId,
+    /** The name the site gave it. */
+    name: BrowserFileName,
+    size: NonNegativeInt,
   }),
 ]);
 export type BrowserHostEvent = typeof BrowserHostEvent.Type;
@@ -442,6 +480,25 @@ export const BrowserHostRpcs = RpcGroup.make(
   Rpc.make("tab.probe", {
     payload: { ...tab, x: Schema.Finite, y: Schema.Finite },
     success: Schema.Struct({ editable: Schema.Boolean }),
+    error: BrowserHostError,
+  }),
+  /**
+   * A file for a bot's upload. The host keeps it until the tab closes and
+   * answers the path to give `upload` in `tab.act`.
+   */
+  Rpc.make("files.put", {
+    payload: { ...tab, name: BrowserFileName, bytes: FileBytes },
+    success: Schema.Struct({ path: Schema.String }),
+    error: BrowserHostError,
+  }),
+  /**
+   * The bytes of a download `download.finished` reported. The host lets
+   * the file go once it answers: a download already taken, or never
+   * reported, fails as `invalid-target`.
+   */
+  Rpc.make("download.take", {
+    payload: { download: BrowserDownloadId },
+    success: Schema.Struct({ bytes: FileBytes }),
     error: BrowserHostError,
   }),
   /** Every cookie the shared sign-ins hold on this host. */
