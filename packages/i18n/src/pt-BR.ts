@@ -1300,6 +1300,94 @@ const sentences = {
   "composer.dictation.language": "O ditado não está disponível no idioma deste aparelho.",
   "composer.dictation.failed": "O ditado parou. Tente de novo.",
 
+  "dictation.start": "Ditar",
+  "dictation.stop": "Parar o ditado",
+  "dictation.cancel": "Cancelar o ditado",
+  "dictation.connecting": "Preparando…",
+  "dictation.installing": "Preparando o ditado, só desta vez: {received} de {total}",
+  "dictation.listening": "Ouvindo…",
+  "dictation.listeningEnd": "Ouvindo… As palavras vêm quando você parar.",
+  "dictation.finishing": "Escrevendo…",
+  "dictation.tidying": "Arrumando o texto…",
+  "dictation.level": "Nível do microfone",
+  "dictation.failed.unavailable": "Seu servidor não consegue reconhecer fala agora.",
+  "dictation.failed.busy": "Alguém está ditando em outro aparelho. Tente de novo quando terminar.",
+  "dictation.failed.install":
+    "Não deu para preparar o ditado no seu servidor. Confira a conexão dele e tente de novo.",
+  "dictation.failed.cloudKey":
+    "Adicione a chave do provedor em Configurações → Voz para ditar com ele.",
+  "dictation.failed.cloudRefused": "O provedor recusou a chave. Confira em Configurações → Voz.",
+  "dictation.failed.cloudLimit": "O limite de uso do provedor foi atingido.",
+  "dictation.failed.cloudModel": "Escolha um modelo do OpenRouter em Configurações → Voz.",
+  "dictation.failed.cloudUnavailable": "O provedor não respondeu. Tente de novo.",
+  "dictation.failed.tooLong": "O ditado para depois de cinco minutos.",
+  "dictation.failed.unreachable": "Não deu para falar com seu servidor para ditar.",
+  "dictation.failed.other": "O ditado parou. Tente de novo.",
+  "dictation.blocked.insecurePage":
+    "Os navegadores só liberam o microfone num endereço https ou no próprio computador do servidor. Use o app para computador ou o app Android, ou abra o J3 Bots num endereço https.",
+  "dictation.blocked.noDeviceRecognizer":
+    "Este aparelho não tem reconhecimento de fala para o seu idioma. Escolha Automático ou Este servidor em Configurações → Voz.",
+  "dictation.blocked.serverUnsupported":
+    "Seu servidor não consegue rodar um modelo de fala no sistema dele. Um provedor na nuvem consegue, em Configurações → Voz.",
+  "dictation.blocked.serverUnavailable":
+    "Seu servidor só reconhece fala quando o motor dele voltar a rodar.",
+  "dictation.denied.browser":
+    "O ditado precisa do microfone. Libere para este site nas configurações de site do navegador e tente de novo.",
+  "dictation.denied.desktop":
+    "O ditado precisa do microfone. Libere o J3 Bots nas configurações de privacidade do sistema e tente de novo.",
+  "dictation.noMicrophone": "Nenhum microfone foi encontrado neste aparelho.",
+
+  "settings.voice": "Voz",
+  "settings.voice.description":
+    "Ditado: onde sua fala vira texto, o idioma e as palavras que ele escreve certo.",
+  "voice.place": "Onde sua fala vira texto",
+  "voice.place.automatic": "Automático",
+  "voice.place.automatic.description":
+    "Num celular que conhece seu idioma, no próprio celular. Em qualquer outro lugar, no seu servidor.",
+  "voice.place.device": "Este aparelho",
+  "voice.place.device.description":
+    "Só o reconhecimento do próprio aparelho. Um aparelho sem ele não dita.",
+  "voice.place.server": "Este servidor",
+  "voice.place.server.description":
+    "O modelo de fala do seu próprio servidor. Sua voz fica nas suas máquinas.",
+  "voice.place.cloud.description":
+    "Seu servidor envia cada gravação ao {provider} com a sua chave quando você para, e as palavras vêm nessa hora.",
+  "voice.language": "Idioma",
+  "voice.language.auto": "Automático",
+  "voice.words": "Palavras para escrever sempre certo",
+  "voice.words.description": "Nomes e termos que o ditado deve escrever exatamente assim.",
+  "voice.words.placeholder": "Adicione uma palavra ou um nome",
+  "voice.words.add": "Adicionar",
+  "voice.words.remove": "Remover {word}",
+  "voice.removeFillers": "Tirar vícios de linguagem",
+  "voice.removeFillers.description": "Tira “hã”, “é…” e parecidos.",
+  "voice.more": "Mais",
+  "voice.model": "Modelo de fala",
+  "voice.model.description":
+    "O modelo com que seu servidor transforma fala em texto. Um maior precisa de mais memória e disco.",
+  "voice.model.recommended": "Recomendado",
+  "voice.model.installed": "No seu servidor",
+  "voice.model.installing": "Baixando: {received} de {total}",
+  "voice.model.size": "Download de {size}",
+  "voice.model.live": "Palavras enquanto você fala",
+  "voice.model.atEnd": "Palavras quando você para",
+  "voice.model.languages.one": "{count} idioma",
+  "voice.model.languages.other": "{count} idiomas",
+  "voice.model.speed": "Cerca de {seconds} s para cada 30 s de fala no seu servidor",
+  "voice.model.errors": "Erra {percent}% das palavras em {language}",
+  "voice.cleanUp": "Arrumar com IA",
+  "voice.cleanUp.description":
+    "Sua IA põe pontuação, aplica correções que você fala em voz alta e organiza listas ditadas. Cada arrumação gasta um pouco da cota da sua IA.",
+  "voice.cloud.key": "Chave do {provider}",
+  "voice.cloud.key.saved": "Salva em Segredos",
+  "voice.cloud.key.placeholder": "Cole a chave",
+  "voice.cloud.key.save": "Salvar chave",
+  "voice.cloud.key.remove": "Remover chave",
+  "voice.cloud.model": "Modelo do OpenRouter",
+  "voice.cloud.model.pick": "Escolha um modelo",
+  "voice.cloud.model.none": "O OpenRouter não oferece modelo para isso agora.",
+  "voice.unavailable": "Nem seu servidor nem este aparelho conseguem ditar.",
+
   "share.title": "Enviar para",
   "share.files.one": "{count} arquivo",
   "share.files.other": "{count} arquivos",

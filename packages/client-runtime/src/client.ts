@@ -66,6 +66,11 @@ import type {
   SignInHarness,
   UpdateChannel,
   TotpPreview,
+  CloudVoiceKeys,
+  CloudVoiceModel,
+  CloudVoiceProvider,
+  VoiceModel,
+  VoiceStatus,
 } from "@j3-bots/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -115,6 +120,7 @@ import type { Synced } from "./stores/synced.ts";
 import * as TeammatePairs from "./stores/TeammatePairs.ts";
 import * as Usage from "./stores/Usage.ts";
 import * as Secrets from "./stores/Secrets.ts";
+import * as Voice from "./stores/Voice.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
 import * as ServerUpdate from "./update/ServerUpdate.ts";
 
@@ -152,6 +158,7 @@ export const layer = SignOut.layer.pipe(
       Secrets.layer,
       Connectors.layer,
       Skills.layer,
+      Voice.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -296,6 +303,35 @@ export interface SkillsClient {
 export interface LoadedHandle<A> {
   readonly state: Readable<Loaded<A>>;
   readonly release: () => void;
+}
+
+/** One dictation on the server, until it is over or `cancel`. See `Voice.Dictation`. */
+export interface DictationHandle {
+  readonly state: Readable<Voice.DictationState>;
+  readonly audio: (pcm: Uint8Array) => void;
+  readonly finish: (draft?: {
+    readonly text: string;
+    readonly start: number;
+    readonly end: number;
+  }) => void;
+  /** Ends it: before it is over, nothing is kept and no words come. Call it once it is over too. */
+  readonly cancel: () => void;
+}
+
+/**
+ * Dictation through the server; see `Voice`. The status and keys are only
+ * for a server whose settings carry `voice`.
+ */
+export interface VoiceClient {
+  readonly openStatus: () => LoadedHandle<VoiceStatus>;
+  readonly openCloudKeys: () => LoadedHandle<CloudVoiceKeys>;
+  readonly models: () => Promise<Actions.IntentResult<ReadonlyArray<VoiceModel>>>;
+  readonly cloudModels: () => Promise<Actions.IntentResult<ReadonlyArray<CloudVoiceModel>>>;
+  readonly setCloudKey: (
+    provider: CloudVoiceProvider,
+    key: Redacted.Redacted<string> | null,
+  ) => Promise<Actions.IntentResult>;
+  readonly dictate: () => DictationHandle;
 }
 
 /** One tab of a bot's browser, shown while held. See `Browser.BrowserView`. */
@@ -664,6 +700,7 @@ export interface J3Client {
   }) => BrowserViewHandle;
   /** The operator's secrets on the server; see `Secrets`. */
   readonly secrets: SecretsHandle;
+  readonly voice: VoiceClient;
 
   readonly setView: (target: EntryTarget | null) => void;
   /**
@@ -743,6 +780,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         secrets: yield* Secrets.Secrets,
         connectors: yield* Connectors.Connectors,
         skills: yield* Skills.Skills,
+        voice: yield* Voice.Voice,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -1135,6 +1173,29 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         send: (frame) => fire(value.send(frame)),
         close: release,
       };
+    },
+
+    voice: {
+      openStatus: () => {
+        const { value, release } = hold(services.voice.status);
+        return { state: value, release };
+      },
+      openCloudKeys: () => {
+        const { value, release } = hold(services.voice.cloudKeys);
+        return { state: value, release };
+      },
+      models: () => run.promise(services.voice.models),
+      cloudModels: () => run.promise(services.voice.cloudModels),
+      setCloudKey: (provider, key) => run.promise(services.voice.setCloudKey(provider, key)),
+      dictate: () => {
+        const { value, release } = hold(services.voice.dictate);
+        return {
+          state: value.state,
+          audio: (pcm) => fire(value.audio(pcm)),
+          finish: (draft) => fire(value.finish(draft)),
+          cancel: release,
+        };
+      },
     },
 
     setView: (target) => fire(services.presence.setView(target)),
