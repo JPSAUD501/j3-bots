@@ -25,6 +25,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [Engine](architecture/engine.md): how J3 Bots runs and drives T3 Code without modifying it.
 - [Server](architecture/server.md): the domain model, the wake pipeline, rooms, memory and routines.
 - [Clients](architecture/clients.md): web, desktop and mobile.
+- [Browser](architecture/browser.md): the browsers J3 Bots runs for its bots, their hosts and the shared driver.
 - [Security](architecture/security.md): trust boundaries and what protects them.
 
 ## Prompts
@@ -78,7 +79,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 
 Changes J3 Bots would like from T3 Code, drafted here. None has been sent.
 
-- [A typed secret in the engine's browser](proposals/engine-browser-secret-input.md): typing a saved login with the engine checking the field and its frame.
+- [A typed secret in the engine's browser](proposals/engine-browser-secret-input.md): withdrawn, since J3 Bots runs its own browsers ([decision 0110](decisions/0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md)).
 
 ## Research
 
