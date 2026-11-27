@@ -16,7 +16,6 @@ import * as TestUpdates from "../testing/update.ts";
 import * as RefusedNames from "../web/RefusedNames.ts";
 import * as WebClient from "../web/WebClient.ts";
 import type { UpdateUnitPlan } from "./launch.ts";
-import * as UpdateRuns from "./UpdateRuns.ts";
 
 const OFFERED = "99.0.0";
 
@@ -25,18 +24,16 @@ const launched: Array<UpdateUnitPlan> = [];
 
 const updates = Layer.merge(
   TestUpdates.feedLayer(Effect.succeed(TestUpdates.feedStatus(Option.some(OFFERED)))),
-  UpdateRuns.layer.pipe(
-    Layer.provide(
-      TestUpdates.launcherLayer(
-        {
-          _tag: "service",
-          command: "/install/versions/current/bin/j3-bots",
-          home: "/unused",
-          searchPath: "/usr/bin",
-          release: {},
-        },
-        launched,
-      ),
+  TestUpdates.runsOn(
+    TestUpdates.launcherLayer(
+      {
+        _tag: "service",
+        command: "/install/versions/current/bin/j3-bots",
+        home: "/unused",
+        searchPath: "/usr/bin",
+        release: {},
+      },
+      launched,
     ),
   ),
 );

@@ -4,6 +4,11 @@ import {
   AttachmentId,
   Conflict,
   DESKTOP_APP_ORIGINS,
+  DIAGNOSTICS_API_VERSION,
+  DIAGNOSTICS_HTTP_PATH,
+  DIAGNOSTICS_MEDIA_TYPE,
+  DiagnosticsRequest,
+  diagnosticsFileName,
   HTTP_PATHS,
   Invalid,
   J3Rpcs,
@@ -32,6 +37,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { Attachments } from "./attachments/Attachments.ts";
 import { WorkImages } from "./attachments/WorkImages.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
+import { Diagnostics } from "./diagnostics/Diagnostics.ts";
 import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
@@ -59,6 +65,7 @@ const serverInfo = Layer.unwrap(
       version: packageJson.version,
       startedAt: yield* DateTime.now,
       updateApi: UPDATE_API_VERSION,
+      diagnostics: DIAGNOSTICS_API_VERSION,
     };
     const response = yield* HttpServerResponse.schemaJson(ServerInfo)(info).pipe(Effect.orDie);
     return HttpRouter.add("GET", HTTP_PATHS.server, Effect.succeed(response));
@@ -99,6 +106,7 @@ const requestDevice = Effect.gen(function* () {
 });
 
 const tooLarge = HttpServerResponse.empty({ status: 413 });
+const badRequest = HttpServerResponse.empty({ status: 400 });
 const unsupportedMediaType = HttpServerResponse.empty({ status: 415 });
 
 /**
@@ -188,6 +196,42 @@ const download = HttpRouter.add(
         "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
       },
     }).pipe(Effect.orDie);
+  }),
+);
+
+/** A diagnostics request is the client's surface, release and system: well under this. */
+const DIAGNOSTICS_BODY_LIMIT = 4 * 1024;
+
+const decodeDiagnosticsRequest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(DiagnosticsRequest),
+);
+
+/**
+ * The server's diagnostics zip (`DIAGNOSTICS_HTTP_PATH`), for any paired
+ * device: each is the operator's. JSON only, so a page elsewhere cannot ask
+ * for one without a preflight the server never grants.
+ */
+const diagnostics = HttpRouter.add(
+  "POST",
+  DIAGNOSTICS_HTTP_PATH,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (!isJson(request.headers["content-type"])) return unsupportedMediaType;
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const body = yield* readText(request, DIAGNOSTICS_BODY_LIMIT).pipe(Effect.result);
+    if (body._tag === "Failure") {
+      return body.failure._tag === "BodyTooLarge" ? tooLarge : badRequest;
+    }
+    const asked = yield* decodeDiagnosticsRequest(body.success).pipe(Effect.option);
+    if (Option.isNone(asked)) return badRequest;
+    const zip = yield* (yield* Diagnostics).zip(asked.value.client);
+    return HttpServerResponse.stream(zip, {
+      contentType: DIAGNOSTICS_MEDIA_TYPE,
+      headers: {
+        "content-disposition": `attachment; filename="${diagnosticsFileName(yield* DateTime.now)}"`,
+        "cache-control": "no-store",
+      },
+    });
   }),
 );
 
@@ -322,6 +366,7 @@ export const routes = Layer.mergeAll(
   upload,
   download,
   workImage,
+  diagnostics,
   Webhook.route,
   EventWebhook.route,
   UpdateRoutes.routes,

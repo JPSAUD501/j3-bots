@@ -14,6 +14,7 @@ import * as ServerConfig from "./config.ts";
 import * as OAuthEndpoints from "./connectors/oauth/endpoints.ts";
 import * as McpRegistry from "./connectors/sources/Registry.ts";
 import * as Domain from "./domain.ts";
+import * as Diagnostics from "./diagnostics/Diagnostics.ts";
 import { claimEngineRelease } from "./engine/EngineRelease.ts";
 import { engineProviders } from "./engine/providers.ts";
 import { ownExecutables } from "./harnesses/layout.ts";
@@ -24,6 +25,7 @@ import * as Installation from "./installation.ts";
 import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "./home/entries.ts";
 import * as Layout from "./Layout.ts";
 import * as Listener from "./listener.ts";
+import * as ServerLogFile from "./logs/ServerLogFile.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import * as ReleaseFeed from "./releases/ReleaseFeed.ts";
 import * as ExpoPushSender from "./push/ExpoPushSender.ts";
@@ -43,7 +45,10 @@ import * as UpdateRuns from "./update/UpdateRuns.ts";
 import * as RefusedNames from "./web/RefusedNames.ts";
 import * as WebClient from "./web/WebClient.ts";
 
-/** How the server writes its log: one JSON object per line, on the console. */
+/**
+ * How the server writes its log: one JSON object per line, on the console,
+ * and, once it holds its home, to its copy there too (`ServerLogFile`).
+ */
 export const logs = Logger.layer([Logger.consoleJson]);
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
@@ -125,7 +130,8 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     // Checks for newer releases for as long as the server runs.
     Layer.provideMerge(ReleaseFeed.layer),
     Layer.provide(
-      UpdateRuns.layer.pipe(
+      // The diagnostics zip names how the server is installed, which is how it would update.
+      Layer.merge(UpdateRuns.layer, Diagnostics.layer).pipe(
         // The desktop app runs its own server with `--admin-fd`, and updates it with itself.
         Layer.provide(UpdateLauncher.layer(Option.isSome(options.adminFd) ? "desktop" : "cli")),
         Layer.provide(Layer.merge(Systemd.layer, Host.layer)),
@@ -152,6 +158,8 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
       Layer.merge(BasePrompt.layer, SuggestReplies.layer).pipe(Layer.provide(SettingsStore.layer)),
     ),
     Layer.provide(Sqlite.layer),
+    // The log's copy in the home, once this process holds the home.
+    Layer.provide(ServerLogFile.layer),
     Layer.provide(Home.layer),
     Layer.provide(Home.configLayer),
     Layer.provide(

@@ -41,7 +41,7 @@ describe("makeScrubber", () => {
     for (const gone of [
       SECRET,
       CONNECTOR_TOKEN,
-      "pa\\\"ss",
+      'pa\\"ss',
       "hunter2",
       "abcdefghijKLMNOP0123456789",
       "eyJhbGciOiJIUzI1NiJ9",

@@ -63,5 +63,5 @@ const two = (value: number) => String(value).padStart(2, "0");
  */
 export const diagnosticsFileName = (at: DateTime.Utc): string => {
   const parts = DateTime.toPartsUtc(at);
-  return `j3-bots-diagnostics-${parts.year}-${two(parts.month)}-${two(parts.day)}-${two(parts.hours)}${two(parts.minutes)}.zip`;
+  return `j3-bots-diagnostics-${parts.year}-${two(parts.month)}-${two(parts.day)}-${two(parts.hour)}${two(parts.minute)}.zip`;
 };

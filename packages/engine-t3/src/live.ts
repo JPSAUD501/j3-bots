@@ -19,6 +19,7 @@ export { stateFiles } from "./t3/State.ts";
 export { writtenFolders } from "./t3/PrivateFiles.ts";
 export { activeConnection } from "./t3/Provision.ts";
 export { engineEnvironment } from "./t3/Command.ts";
+export { engineLogNewestFirst, engineSecretValues } from "./t3/Diagnostics.ts";
 
 /** The engine release this adapter installs and runs. */
 export const pinnedRelease: string = pin.version;

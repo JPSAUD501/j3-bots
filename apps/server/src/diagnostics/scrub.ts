@@ -39,13 +39,13 @@ export interface ScrubContext {
 }
 
 /** The shortest secret value replaced as such. */
-export const MIN_SECRET_LENGTH = 4;
+const MIN_SECRET_LENGTH = 4;
 
 /** The shortest user or host name replaced on its own: shorter ones are too common a word. */
 const MIN_NAME_LENGTH = 3;
 
 /** What each kind of value becomes. */
-export const PLACEHOLDERS = {
+const PLACEHOLDERS = {
   secret: "[secret]",
   token: "[token]",
   credentials: "[credentials]",
@@ -84,7 +84,8 @@ const LONG_BASE64 = /[A-Za-z0-9+_-]{32,}={0,2}/g;
 const isMixedBase64 = (run: string) => /[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run);
 const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/g;
 const IPV4 = /\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b/g;
-const IPV6_CANDIDATE = /(?<![0-9A-Za-z:.])[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:[0-9A-Fa-f:]*(?![0-9A-Za-z:])/g;
+const IPV6_CANDIDATE =
+  /(?<![0-9A-Za-z:.])[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:[0-9A-Fa-f:]*(?![0-9A-Za-z:])/g;
 
 const KEPT_IPV4 = new Set(["127.0.0.1", "0.0.0.0"]);
 const KEPT_IPV6 = new Set(["::1", "::"]);
@@ -100,8 +101,8 @@ const wordPattern = (name: string) =>
 const homeForms = (home: string): ReadonlyArray<string> => {
   const trimmed = home.replace(/[\\/]+$/, "");
   if (trimmed.length === 0) return [];
-  const forms = new Set([trimmed, trimmed.replace(/\\/g, "/")]);
-  for (const form of [...forms]) forms.add(asJsonString(form));
+  const plain = [trimmed, trimmed.replace(/\\/g, "/")];
+  const forms = new Set([...plain, ...plain.map(asJsonString)]);
   return [...forms].sort((a, b) => b.length - a.length);
 };
 
