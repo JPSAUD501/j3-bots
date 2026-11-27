@@ -74,6 +74,7 @@ interface PageDocument extends PageNode {
   readonly title: string;
   readonly readyState: string;
   elementFromPoint(x: number, y: number): PageElement | null;
+  execCommand(command: string, showUi: boolean, value: string): boolean;
 }
 
 /** A DOM interface as `instanceof` checks against it. */
@@ -229,15 +230,24 @@ export const isConnected = (element: unknown): boolean =>
 export type FillInput = PageInputElement;
 
 /**
- * The focused field, when the page is at `url`, loaded, and its focus is on
- * an input of its top frame (through open shadow roots) that `field` fits,
- * shown and taking input. Otherwise why not: focus in an embedded frame
- * leaves the frame's element focused here, which is no input.
+ * Types `value` into the focused field, in one step with the checks that it
+ * may: the page is at `url`, loaded, and its focus is on an input of its top
+ * frame (through open shadow roots) that `field` fits, shown and taking
+ * input. Nothing of the page's runs between the checks and the typing, so
+ * the page cannot move the focus in between. The value goes in through the
+ * document's own editing, which can only reach this document: never an
+ * embedded frame's. Focus inside an embedded frame leaves the frame's
+ * element focused here, which is no input.
+ *
+ * Answers the field once the value is in it; why not when nothing was typed;
+ * `missed` when the editing answered but the field does not hold more than
+ * before.
  */
-export const fillTarget = (
+export const typeLogin = (
   field: string,
   url: string,
-): PageInputElement | "field" | "navigated" | "loading" => {
+  value: string,
+): PageInputElement | "field" | "navigated" | "loading" | "missed" => {
   const fits: Readonly<Record<string, ReadonlyArray<string>>> = {
     username: ["text", "email", "tel"],
     password: ["password"],
@@ -253,38 +263,26 @@ export const fillTarget = (
   const box = element.getBoundingClientRect();
   if (box.width < 1 || box.height < 1 || getComputedStyle(element).visibility !== "visible")
     return "field";
-  return element;
-};
-
-/**
- * How many characters the field holds while it has the focus; null once the
- * focus moved, so the value is typed only where the fill checked.
- */
-export const focusedLength = (field: PageInputElement): number | null => {
-  let active = document.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-  return field.isConnected && active === field ? field.value.length : null;
-};
-
-/** Whether the field still has the focus and holds more than `before` characters. */
-export const typedInto = (field: PageInputElement, before: number): boolean => {
-  let active = document.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-  return field.isConnected && active === field && field.value.length > before;
+  const before = element.value.length;
+  if (!document.execCommand("insertText", false, value)) return "field";
+  return element.isConnected && element.value.length > before ? element : "missed";
 };
 
 /** Whether the field left its page or the page emptied it itself. */
 export const fieldGone = (field: PageInputElement): boolean =>
   !field.isConnected || field.value.length === 0;
 
-/** Selects what the field holds, for the key that deletes it. */
-export const selectField = (field: PageInputElement): void => {
+/**
+ * Empties the field and says whether it is empty: selected and deleted
+ * through the document's editing, as a person's Backspace would, in one step
+ * so the deletion cannot land elsewhere; then emptied outright if the page
+ * kept anything.
+ */
+export const emptyField = (field: PageInputElement): boolean => {
+  if (!field.isConnected) return true;
   field.focus();
   field.select();
-};
-
-/** Empties the field, if a key did not, and says whether it is empty. */
-export const emptyField = (field: PageInputElement): boolean => {
+  document.execCommand("delete", false, "");
   if (field.value.length > 0) {
     field.value = "";
     field.dispatchEvent(new Event("input", { bubbles: true }));

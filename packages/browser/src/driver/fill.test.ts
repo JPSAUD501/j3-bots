@@ -35,6 +35,27 @@ const PAGES: Readonly<Record<string, string>> = {
     <form onsubmit="event.preventDefault(); document.title = 'Wrong password'">
       <input id="pw" type="password">
     </form>`,
+  [`${SITE}/pushes`]: `<title>Sign in</title>
+    <form onsubmit="event.preventDefault(); history.pushState({}, '', '/try-again')">
+      <input id="pw" type="password">
+    </form>`,
+  // Moves the focus between its field and a frame of another site on every task.
+  [`${SITE}/race`]: `<title>Sign in</title>
+    <input id="pw" type="password">
+    <iframe id="cross" src="${OTHER}/catch"></iframe>
+    <script>
+      const pw = document.querySelector("#pw");
+      const frame = document.querySelector("#cross");
+      let inFrame = false;
+      const flip = () => {
+        inFrame = !inFrame;
+        (inFrame ? frame : pw).focus();
+        setTimeout(flip, 0);
+      };
+      frame.addEventListener("load", flip);
+    </script>`,
+  [`${OTHER}/catch`]: `<input id="inner" type="password">
+    <script>addEventListener("focus", () => document.querySelector("#inner").focus());</script>`,
   [`${SITE}/frame`]: `<input id="inner" type="password">`,
   [`${OTHER}/frame`]: `<input id="inner" type="password">`,
   [`${SITE}/home`]: `<title>Home</title>`,
@@ -111,6 +132,45 @@ describe.skipIf(executablePath === undefined)("fill", () => {
         assert.deepStrictEqual(result, { _tag: "typed", submitted: true, cleared: true });
         assert.strictEqual(yield* valueOf(page, "#pw"), "");
         assert.strictEqual(yield* Effect.promise(() => page.title()), "Wrong password");
+      }).pipe(Effect.scoped),
+    60_000,
+  );
+
+  it.live(
+    "takes a password out of a field the page keeps while it changes its address in place",
+    () =>
+      Effect.gen(function* () {
+        const { driver, page } = yield* driven;
+        yield* open(page, "/pushes");
+        yield* Effect.promise(() => page.focus("#pw"));
+        const result = yield* driver.fill(fillOf("password", `${SITE}/pushes`));
+        assert.deepStrictEqual(result, { _tag: "typed", submitted: true, cleared: true });
+        assert.strictEqual(page.url(), `${SITE}/try-again`);
+        assert.strictEqual(yield* valueOf(page, "#pw"), "");
+      }).pipe(Effect.scoped),
+    60_000,
+  );
+
+  it.live(
+    "never types into a frame the page moves the focus to, however it times the move",
+    () =>
+      Effect.gen(function* () {
+        const { driver, page } = yield* driven;
+        yield* open(page, "/race");
+        const outcomes = new Set<string>();
+        let typed = 0;
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const result = yield* driver.fill(fillOf("totp", `${SITE}/race`));
+          outcomes.add(result._tag === "typed" ? "typed" : result.reason);
+          if (result._tag === "typed") typed++;
+        }
+        // Each fill either typed into the page's own field or typed nothing.
+        assert.isTrue([...outcomes].every((outcome) => outcome === "typed" || outcome === "field"));
+        const inner = yield* Effect.promise(() =>
+          page.frameLocator("#cross").locator("#inner").inputValue(),
+        );
+        assert.strictEqual(inner, "");
+        assert.strictEqual(yield* valueOf(page, "#pw"), SECRET.repeat(typed));
       }).pipe(Effect.scoped),
     60_000,
   );
