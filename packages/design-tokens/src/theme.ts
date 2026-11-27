@@ -16,6 +16,7 @@
 import { botBubbleIn, botPalette } from "./botPalette.ts";
 import {
   contrastRatio,
+  hexColor,
   isColor,
   type LinearRgb,
   mixOklab,
@@ -186,6 +187,40 @@ const botsReadOn = (ground: LinearRgb, appearance: Appearance): boolean =>
   botColors.every(
     (color) => contrastRatio(parseColor(botPalette[color][appearance]), ground) >= MARK,
   );
+
+/** The veil of the canvas over a theme's picture, as a share, before a picture asks for more. */
+export const PICTURE_VEIL = 0.84;
+
+/**
+ * How much of the canvas lies over a theme's picture behind the
+ * conversation: the least, from `PICTURE_VEIL` up, under which the
+ * conversation's canvas keeps every rule `paletteProblems` holds it to,
+ * whatever the picture. A picture's whitest and its blackest are the worst
+ * it can be, since contrast follows luminance, so both are tried, laid as the
+ * screen lays them, the veil over the picture in sRGB.
+ */
+export function pictureVeil(palette: Palette, appearance: Appearance): number {
+  const canvas = hexColor(palette.background);
+  const channels = [1, 3, 5].map((at) => Number.parseInt(canvas.slice(at, at + 2), 16));
+  const underVeil = (veil: number, picture: number) =>
+    `#${channels
+      .map((channel) =>
+        Math.round(veil * channel + (1 - veil) * picture)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+  for (let percent = PICTURE_VEIL * 100; percent < 100; percent += 2) {
+    const veil = percent / 100;
+    const keeps = [0, 255].every(
+      (picture) =>
+        paletteProblems({ ...palette, background: underVeil(veil, picture) }, appearance).length ===
+        0,
+    );
+    if (keeps) return veil;
+  }
+  return 1;
+}
 
 /**
  * Every rule a palette breaks, as one English line each: empty when it

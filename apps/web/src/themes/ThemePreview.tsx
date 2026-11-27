@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { themePalettes } from "@j3-bots/client-runtime/presentation";
 import type { ThemeDefinition } from "@j3-bots/contracts";
-import { themeColorVariables } from "@j3-bots/design-tokens";
+import { pictureVeil, themeColorVariables } from "@j3-bots/design-tokens";
 import type { CSSProperties } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
@@ -25,14 +25,16 @@ export function ThemePreview({
   readonly className?: string;
 }) {
   const { t } = useI18n();
+  const palette = themePalettes(definition)[appearance];
   const style: CSSProperties & Readonly<Record<`--${string}`, string>> = {
-    ...themeColorVariables(themePalettes(definition)[appearance], appearance),
+    ...themeColorVariables(palette, appearance),
   };
+  const veil = `color-mix(in oklab, var(--background) ${Math.round(pictureVeil(palette, appearance) * 100)}%, transparent)`;
   const backdrop: CSSProperties =
     picture === null
       ? {}
       : {
-          backgroundImage: `linear-gradient(color-mix(in oklab, var(--background) 84%, transparent), color-mix(in oklab, var(--background) 84%, transparent)), url("${picture}")`,
+          backgroundImage: `linear-gradient(${veil}, ${veil}), url("${picture}")`,
           backgroundPosition: "center",
           backgroundSize: "cover",
         };

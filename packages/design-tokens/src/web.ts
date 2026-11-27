@@ -7,6 +7,8 @@ import {
   type Entry,
 } from "./themeEntries.ts";
 import { eases, lift, press, springs } from "./springs.ts";
+import { pictureVeil } from "./theme.ts";
+import { THEME_VEIL_VARIABLE } from "./themeCss.ts";
 import {
   displayTracking,
   fontFaces,
@@ -164,20 +166,25 @@ ${lines([
  * same custom properties as `:root`/`.light` and `.dark` declare, from the
  * theme's two palettes, on `root`, a selector of the page's root more
  * specific than `:root` (such as `:root[data-theme]`), so they win whichever
- * sheet loads last. Everything else (type, space, motion, shadows) stays the
+ * sheet loads last, and with them the veil over the theme's picture
+ * (`pictureVeil`). Everything else (type, space, motion, shadows) stays the
  * generated sheet's.
  */
 export function renderThemeColorsCss(
   palettes: Readonly<Record<"light" | "dark", Palette>>,
   root: string,
 ): string {
+  const veil = (appearance: "light" | "dark"): Entry => [
+    THEME_VEIL_VARIABLE.slice(2),
+    `${Math.round(pictureVeil(palettes[appearance], appearance) * 100)}%`,
+  ];
   return `${root},
 ${root}.light {
-${lines(colorEntries(palettes.light, "light", ""))}
+${lines([...colorEntries(palettes.light, "light", ""), veil("light")])}
 }
 
 ${root}.dark {
-${lines(colorEntries(palettes.dark, "dark", ""))}
+${lines([...colorEntries(palettes.dark, "dark", ""), veil("dark")])}
 }
 `;
 }

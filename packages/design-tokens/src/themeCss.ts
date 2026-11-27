@@ -39,6 +39,9 @@ export const THEME_CSS_HOOKS = [
 /** The variable a theme's background image is given in, on the page's root. */
 export const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
 
+/** The variable that says how much of the canvas lies over the picture (`pictureVeil`). */
+export const THEME_VEIL_VARIABLE = "--theme-veil";
+
 /**
  * Why `css` cannot be a theme's, or null. Theme CSS never loads a file: a
  * remote image or font would tell a third party when the app is open, and

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
 import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "./builtInThemes.ts";
-import { parseColor, perceivedDistance, toOklch } from "./color.ts";
+import { hexColor, parseColor, perceivedDistance, toOklch } from "./color.ts";
 import {
   APPEARANCES,
   paletteProblems,
+  PICTURE_VEIL,
+  pictureVeil,
   resolveTheme,
   STATE_ACCENT_DISTANCE,
   type ThemeDefinition,
@@ -116,16 +118,19 @@ describe("an override", () => {
     expect(result._tag === "refused" && result.reason).toMatch(/not a theme role.*background/);
   });
 
-  it("that is not a color is refused", () => {
-    expect(
-      resolveTheme({
-        name: "Typo",
-        canvas: "#101010",
-        accent: "#ff0000",
-        colors: { border: "red" },
-      }),
-    ).toMatchObject({ _tag: "refused" });
-  });
+  it.each(["red", "oklch(. 0 0)", "oklch(1.5 0 0)", "oklch(0.5 0 0 / 2)"])(
+    "that is not a color the browser draws as written is refused: %s",
+    (color) => {
+      expect(
+        resolveTheme({
+          name: "Typo",
+          canvas: "#101010",
+          accent: "#ff0000",
+          variants: { dark: { background: color } },
+        }),
+      ).toMatchObject({ _tag: "refused" });
+    },
+  );
 });
 
 describe("seeds", () => {
@@ -193,5 +198,36 @@ describe("theme CSS", () => {
           ' [data-slot="bubble"] { mask: url(#round); transition: background-color 150ms; }',
       ),
     ).toBeNull();
+  });
+});
+
+describe("the veil over a theme's picture", () => {
+  /** The canvas at `veil` over a picture whose every channel is `picture`, as the screen lays it. */
+  const underVeil = (canvas: string, veil: number, picture: number) =>
+    `#${[1, 3, 5]
+      .map((at) => Number.parseInt(canvas.slice(at, at + 2), 16))
+      .map((channel) =>
+        Math.round(veil * channel + (1 - veil) * picture)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+
+  it("thickens until every word on the conversation reads over a white or a black picture", () => {
+    const result = resolveTheme({
+      name: "Night",
+      canvas: "#000000",
+      accent: "#3fd0e0",
+      variants: { dark: { "muted-foreground": "#777777" } },
+    });
+    if (result._tag !== "resolved") throw new Error(result.reason);
+    const palette = result.palettes.dark;
+    const veil = pictureVeil(palette, "dark");
+    // At 84% a white picture would take the date lines under 4.5:1.
+    expect(veil).toBeGreaterThan(PICTURE_VEIL);
+    for (const picture of [0, 255]) {
+      const background = underVeil(hexColor(palette.background), veil, picture);
+      expect(paletteProblems({ ...palette, background }, "dark")).toEqual([]);
+    }
   });
 });

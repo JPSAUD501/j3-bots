@@ -24,7 +24,11 @@ const toLinear = (channel: number) =>
   channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 
 const HEX = /^#([0-9a-f]{6})$/i;
-const OKLCH = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*([\d.]+)(%?))?\s*\)$/i;
+const NUMBER = String.raw`(\d+(?:\.\d+)?|\.\d+)`;
+const OKLCH = new RegExp(
+  String.raw`^oklch\(\s*${NUMBER}\s+${NUMBER}\s+${NUMBER}\s*(?:\/\s*${NUMBER}(%?))?\s*\)$`,
+  "i",
+);
 
 /** Parses `#rrggbb` or `oklch(L C H)` / `oklch(L C H / A)`. Throws on anything else. */
 export function parseColor(value: string): LinearRgb {
@@ -44,6 +48,8 @@ export function parseColor(value: string): LinearRgb {
     const c = Number(lch[2]);
     const h = (Number(lch[3]) * Math.PI) / 180;
     const alpha = lch[4] === undefined ? 1 : Number(lch[4]) / (lch[5] === "%" ? 100 : 1);
+    // Past these the browser clamps what it draws, and the checks would read another color.
+    if (l > 1 || alpha > 1) throw new Error(`Out of range: ${value}`);
     return { ...oklabToLinear({ l, a: c * Math.cos(h), b: c * Math.sin(h) }), alpha };
   }
   throw new Error(`Unsupported color notation: ${value}`);
