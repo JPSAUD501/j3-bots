@@ -100,13 +100,15 @@ export type EffortChoice = typeof EffortChoice.Type;
 /**
  * A model the engine offers on a provider. `efforts`: the levels of effort it
  * takes, lowest first, as the engine reports them; empty for a model that
- * takes no choice of effort, and from a server older than it, at the same
- * protocol version. An older client ignores it.
+ * takes no choice of effort. A server older than it, at the same protocol
+ * version, leaves it out, which reads as no choice (`modelEfforts`), and an
+ * older client ignores it. Optional, not defaulted, so a reply read from an
+ * older server is written back as it came (the admin status reply's rule).
  */
 export const ProviderModel = Schema.Struct({
   id: ModelId,
   name: Label,
-  efforts: Schema.Array(EffortChoice).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  efforts: Schema.optionalKey(Schema.Array(EffortChoice)),
 });
 export type ProviderModel = typeof ProviderModel.Type;
 
@@ -299,15 +301,18 @@ export const defaultPermissionMode = (status: EngineStatus, model: ModelChoice):
 
 /**
  * The levels of effort `model` takes, as `status` reports them; null while the
- * engine does not list the model, whose levels are then not known.
+ * engine does not list the model, whose levels are then not known, and none
+ * from a server that does not report levels.
  */
 export const modelEfforts = (
   status: EngineStatus,
   model: ModelChoice,
-): ReadonlyArray<EffortChoice> | null =>
-  status.providers
+): ReadonlyArray<EffortChoice> | null => {
+  const listed = status.providers
     .find((provider) => provider.id === model.providerId)
-    ?.models.find((candidate) => candidate.id === model.modelId)?.efforts ?? null;
+    ?.models.find((candidate) => candidate.id === model.modelId);
+  return listed === undefined ? null : (listed.efforts ?? []);
+};
 
 /** The routine whose run a turn was part of. */
 export const UsageRoutine = Schema.Union([

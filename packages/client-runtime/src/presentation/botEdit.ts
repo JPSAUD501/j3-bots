@@ -249,7 +249,7 @@ export interface EffortChoices {
 const choiceOf = (engine: EngineStatus | null, level: EffortLevel): EffortChoice =>
   (engine?.providers ?? [])
     .flatMap((provider) => provider.models)
-    .flatMap((model) => model.efforts)
+    .flatMap((model) => model.efforts ?? [])
     .find((choice) => choice.id === level) ?? { id: level, name: level };
 
 /**
