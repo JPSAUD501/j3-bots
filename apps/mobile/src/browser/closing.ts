@@ -6,7 +6,7 @@ import { useI18n } from "../i18n.ts";
 import { useSay } from "../toast.tsx";
 
 /** How long Undo stays before a closed tab is closed for good. */
-export const UNDO_FOR_MS = 5_000;
+const UNDO_FOR_MS = 5_000;
 
 /** A tab closed a moment ago, which Undo brings back. */
 export interface Closed {

@@ -30,7 +30,7 @@ const CARD_HEIGHT = 220;
 const CARD_QUALITY = 50;
 
 /** The tab the bot is on now, or null while it is on none. */
-export function useBotsTab(botId: BotId): ViewerTab | null {
+function useBotsTab(botId: BotId): ViewerTab | null {
   const { tabs } = useViewerTabs(botId);
   return tabs === null ? null : botsTab(tabs, botId);
 }

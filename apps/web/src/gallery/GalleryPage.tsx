@@ -147,7 +147,7 @@ import type { Level } from "../record/level";
 import { Pill, type PillProps } from "../record/Pill";
 import { type Microphone, RecordSheetBody, type RecordSheetBodyProps } from "../record/RecordSheet";
 import type { PictureChip, WindowChipsView } from "../quick/WindowChips";
-import { I18nProvider, RosterProvider, useI18n } from "../app/context";
+import { I18nProvider, RosterProvider, useBots, useI18n } from "../app/context";
 import { DocumentsProvider } from "../components/documents/documents";
 import { DocumentPane } from "../components/documents/DocumentViewer";
 import { MessageFile } from "../components/FileCard";
@@ -238,6 +238,10 @@ import {
 } from "./sampleRoutineTrack";
 import { BotCard, QuickMessageField } from "../components/BotCard";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
+import { BotCursor } from "../browser/BotCursor";
+import { Faces } from "../browser/Faces";
+import { QuietLine } from "../browser/QuietLine";
+import type { TabLine } from "@j3-bots/client-runtime/presentation";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { type QuoteDrafting, Timeline, type TimelineIntents } from "../components/Timeline";
@@ -409,6 +413,7 @@ export default function GalleryPage() {
                 <ScreenRecordingSection />
                 <DocumentsSection />
                 <CardsSection />
+                <BrowserLineSection />
                 <RoutineTracksSection />
                 <WorkSection />
                 <ConnectorAppsSection />
@@ -2209,6 +2214,64 @@ function DocumentsSection() {
           </Labeled>
         ))}
       </GalleryDocuments>
+    </Section>
+  );
+}
+
+/** Who is on a tab: the faces, the one quiet line, and each bot's own pointer. */
+function BrowserLineSection() {
+  const bots = useBots();
+  const lines: ReadonlyArray<{
+    readonly label: string;
+    readonly line: Exclude<TabLine, { readonly _tag: "empty" }>;
+  }> = [
+    { label: "Bots on the tab, none acting", line: { _tag: "on-it", bots: [ids.scout, ids.wren] } },
+    {
+      label: "One acting",
+      line: { _tag: "acting", bots: [ids.scout, ids.wren], acting: ids.scout },
+    },
+    { label: "The person uses the page", line: { _tag: "waits-for-you", bots: [ids.scout] } },
+    { label: "The person stopped", line: { _tag: "back-in", bots: [ids.scout], seconds: 3 } },
+    {
+      label: "After Wait for me",
+      line: { _tag: "waits-until-continue", bots: [ids.scout, ids.wren] },
+    },
+    { label: "In use on another device", line: { _tag: "elsewhere", bots: [ids.scout] } },
+    { label: "A saved login being typed", line: { _tag: "signing-in", bots: [ids.scout] } },
+  ];
+  const scout = bots.get(ids.scout);
+  const wren = bots.get(ids.wren);
+  return (
+    <Section title="The browser: faces, the line and the bots' pointers">
+      <Labeled label="The tab's one quiet line, with the faces of its bots: lit for the one acting, amber for one that waits for the person. Only the words change; Now skips the countdown, Continue ends Wait for me">
+        <div className="flex max-w-xl flex-col divide-y divide-border rounded-lg border border-border bg-surface">
+          {lines.map(({ label, line }) => (
+            <div key={label} className="flex min-h-12 items-center gap-2 px-3 py-2">
+              <Faces
+                faces={line.bots.map((botId) => ({
+                  botId,
+                  light:
+                    line._tag === "acting" && line.acting === botId
+                      ? "acting"
+                      : line._tag === "waits-for-you"
+                        ? "waiting"
+                        : "still",
+                }))}
+              />
+              <QuietLine line={line} onNow={nothing} onContinue={nothing} className="flex-1" />
+            </div>
+          ))}
+        </div>
+      </Labeled>
+      {scout !== undefined && wren !== undefined && (
+        <Labeled label="Each bot's own pointer, in its color, with its face and name; the name folds to the face once still, a click rings, and both fade while the person holds the tab">
+          <div className="relative h-44 max-w-xl overflow-hidden rounded-lg border border-border bg-background">
+            <BotCursor bot={scout} at={{ x: 0.12, y: 0.2 }} clicked={null} named />
+            <BotCursor bot={wren} at={{ x: 0.55, y: 0.25 }} clicked={1} named={false} />
+            <BotCursor bot={scout} at={{ x: 0.3, y: 0.62 }} clicked={null} named faded />
+          </div>
+        </Labeled>
+      )}
     </Section>
   );
 }
@@ -7231,7 +7294,7 @@ function ShellSection() {
           <ShellFrame initial={{ _tag: "room", roomId: ids.fairStands }} details />
         </Frame>
         <Frame
-          label="Desktop, 1440 px: Scout's browser beside the conversation; Take control hands the page to the operator, Done gives it back"
+          label="Desktop, 1440 px: Scout's browser beside the conversation; using the page makes Scout wait, and it carries on once the operator stops"
           width={1440}
           height={800}
         >
