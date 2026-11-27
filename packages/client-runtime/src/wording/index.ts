@@ -84,7 +84,6 @@ export {
   type AiTone,
   connectStepText,
   type ConnectStepText,
-  signInStepLabel,
 } from "./aiAccount.ts";
 export {
   type LineName,

@@ -15,15 +15,11 @@ export {
   type AiAction,
   aiAction,
   type AiFacts,
+  aiOnItsWay,
   aiOutage,
   type AiPlace,
   connectStepSaysProgress,
-  openAiAccount,
-  otherAiAccount,
   queuedSignIn,
-  type SignInStep,
-  signInStepAt,
-  signInSteps,
 } from "./aiAccount.ts";
 export {
   avatarBusy,
