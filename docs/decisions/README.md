@@ -98,5 +98,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0101](0101-a-bot-is-its-name-and-its-title-and-a-helper-waits-behind-the-scenes.md) | A bot is its name and its title, and a helper waits behind the scenes | Accepted |
 | [0102](0102-a-bots-card-opens-from-its-face-and-name.md) | A bot's card opens from its face and name | Accepted |
 | [0103](0103-a-room-of-bots-only-is-read-and-never-written-by-the-operator.md) | A room of bots only is read, never written, by the operator | Accepted |
+| [0105](0105-the-web-client-loads-what-a-window-shows-and-ci-holds-it-to-a-budget.md) | The web client loads what a window shows, and CI holds it and a turn's traffic to a budget | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

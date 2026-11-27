@@ -3,7 +3,8 @@
 import { BotId, type Reaction, ReactionEmoji } from "@j3-bots/contracts";
 import { message } from "@j3-bots/client-runtime/testing";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { MessageBubble } from "./MessageBubble";
 
@@ -35,7 +36,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
   sent = [];
 });
 

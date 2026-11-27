@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderTestMarkup } from "../app/testRoot";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { SAMPLE_NOW, sampleTeam } from "../gallery/sample";
 import { sampleProviderActions } from "../gallery/sampleSource";
@@ -18,7 +18,7 @@ const withClaude = (status: (typeof team.engine.providers)[number]["status"]) =>
 });
 
 const shown = (engine: ReturnType<typeof withClaude>) =>
-  renderToStaticMarkup(
+  renderTestMarkup(
     <QuietConversation
       bot={waiting}
       engine={engine}
