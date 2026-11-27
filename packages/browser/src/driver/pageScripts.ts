@@ -36,6 +36,15 @@ interface PageInputElement extends PageHTMLElement {
   readonly type: string;
   readonly disabled: boolean;
   readonly readOnly: boolean;
+  value: string;
+  select(): void;
+  getBoundingClientRect(): { readonly width: number; readonly height: number };
+  dispatchEvent(event: PageEvent): boolean;
+}
+
+/** An event, as a script makes one to tell the page a field changed. */
+interface PageEvent {
+  readonly type: string;
 }
 
 interface PageTextAreaElement extends PageHTMLElement {
@@ -78,6 +87,9 @@ declare const HTMLInputElement: PageClass<PageInputElement>;
 declare const HTMLTextAreaElement: PageClass<PageTextAreaElement>;
 declare const HTMLLabelElement: PageClass<PageLabelElement>;
 declare const HTMLSelectElement: PageClass<PageSelectElement>;
+declare const Event: new (type: string, init: { readonly bubbles: boolean }) => PageEvent;
+declare const location: { readonly href: string };
+declare const getComputedStyle: (element: PageElement) => { readonly visibility: string };
 declare const innerWidth: number;
 declare const innerHeight: number;
 declare const devicePixelRatio: number;
@@ -201,3 +213,67 @@ export const viewportSize = () => ({
 
 /** Whether the element is still in its document. */
 export const isConnected = (element: PageElement): boolean => element.isConnected;
+
+// ---------------------------------------------------------------------------
+// Typing a saved login. These run in an isolated world of the page's top frame,
+// whose names and prototypes the page's own script cannot reach.
+
+/** The field a saved login types into: an input the page shows in its top frame. */
+export type FillInput = PageInputElement;
+
+/**
+ * The focused field, when the page is at `url`, loaded, and its focus is on
+ * an input of its top frame (through open shadow roots) that `field` fits,
+ * shown and taking input. Otherwise why not: focus in an embedded frame
+ * leaves the frame's element focused here, which is no input.
+ */
+export const fillTarget = (
+  field: string,
+  url: string,
+): PageInputElement | "field" | "navigated" | "loading" => {
+  const fits: Readonly<Record<string, ReadonlyArray<string>>> = {
+    username: ["text", "email", "tel"],
+    password: ["password"],
+    totp: ["text", "tel", "number", "password"],
+  };
+  if (location.href !== url) return "navigated";
+  if (document.readyState !== "complete") return "loading";
+  let element = document.activeElement;
+  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+  if (!(element instanceof HTMLInputElement)) return "field";
+  if (!(fits[field] ?? []).includes(element.type) || element.disabled || element.readOnly)
+    return "field";
+  const box = element.getBoundingClientRect();
+  if (box.width < 1 || box.height < 1 || getComputedStyle(element).visibility !== "visible")
+    return "field";
+  return element;
+};
+
+/** How many characters the field holds. */
+export const fieldLength = (field: PageInputElement): number => field.value.length;
+
+/** Whether the field still has the focus and holds more than `before` characters. */
+export const typedInto = (field: PageInputElement, before: number): boolean => {
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  return field.isConnected && active === field && field.value.length > before;
+};
+
+/** Whether the field left its page or the page emptied it itself. */
+export const fieldGone = (field: PageInputElement): boolean =>
+  !field.isConnected || field.value.length === 0;
+
+/** Selects what the field holds, for the key that deletes it. */
+export const selectField = (field: PageInputElement): void => {
+  field.focus();
+  field.select();
+};
+
+/** Empties the field, if a key did not, and says whether it is empty. */
+export const emptyField = (field: PageInputElement): boolean => {
+  if (field.value.length > 0) {
+    field.value = "";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  return field.value.length === 0;
+};

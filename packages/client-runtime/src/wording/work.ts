@@ -223,6 +223,8 @@ export function fillDetail(fill: CredentialFill, i18n: I18n): string {
           return origin === null
             ? t("fill.refused.origin")
             : t("fill.refused.originAt", { origin });
+        case "field":
+          return t("fill.refused.field");
         case "navigated":
           return t("fill.refused.navigated");
         case "refused-before":

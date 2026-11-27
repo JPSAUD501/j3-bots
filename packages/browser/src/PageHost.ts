@@ -4,6 +4,7 @@ import {
   type BrowserCookie,
   type BrowserCookieChanges,
   type BrowserEvaluation,
+  type BrowserFillResult,
   BrowserHostError,
   type BrowserHostEvent,
   type BrowserHostHello,
@@ -79,6 +80,9 @@ export interface PageHost {
   readonly takeDownload: (
     input: PageHostPayload<"download.take">,
   ) => Effect.Effect<{ readonly bytes: Uint8Array }, BrowserHostError>;
+  readonly fill: (
+    input: PageHostPayload<"tab.fill">,
+  ) => Effect.Effect<BrowserFillResult, BrowserHostError>;
   readonly readCookies: Effect.Effect<
     { readonly cookies: ReadonlyArray<BrowserCookie> },
     BrowserHostError
@@ -106,6 +110,7 @@ export type PageHostTabCalls = Pick<
   | "screencastAck"
   | "input"
   | "probe"
+  | "fill"
 >;
 
 const noTab = Effect.fail(new BrowserHostError({ reason: "no-tab" }));
@@ -158,6 +163,7 @@ export const driverTabCalls = (
     input: ({ tab, input }) => on(tab, (driver) => driver.input(input)),
     probe: ({ tab, x, y }) =>
       on(tab, (driver) => Effect.map(driver.probe(x, y), (editable) => ({ editable }))),
+    fill: ({ tab, ...request }) => on(tab, (driver) => driver.fill(request)),
   };
 };
 
@@ -181,6 +187,7 @@ export const pageHostHandlers = (host: PageHost) =>
     "tab.probe": (input) => host.probe(input),
     "files.put": (input) => host.putFile(input),
     "download.take": (input) => host.takeDownload(input),
+    "tab.fill": (input) => host.fill(input),
     "cookies.read": () => host.readCookies,
     "cookies.write": ({ changes }) => host.writeCookies(changes),
     "storage.read": (input) => host.readStorage(input),
@@ -220,6 +227,7 @@ export const remotePageHost = (client: PageHostClient): PageHost => ({
   putFile: (input) => client["files.put"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   takeDownload: (input) =>
     client["download.take"](input).pipe(Effect.catchTag("RpcClientError", lost)),
+  fill: (input) => client["tab.fill"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   readCookies: client["cookies.read"]().pipe(Effect.catchTag("RpcClientError", lost)),
   writeCookies: (changes) =>
     client["cookies.write"]({ changes }).pipe(Effect.catchTag("RpcClientError", lost)),

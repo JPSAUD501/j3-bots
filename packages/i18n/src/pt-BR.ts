@@ -635,6 +635,7 @@ const sentences = {
   "fill.refused.insecureAt": "{origin} não é segura.",
   "fill.refused.origin": "A página não é um dos sites do login.",
   "fill.refused.originAt": "A página, {origin}, não é um dos sites do login.",
+  "fill.refused.field": "O campo em foco não era um campo para esse valor.",
   "fill.refused.navigated": "A página mudou durante o preenchimento.",
   "fill.refused.before": "Um login já foi recusado nesta página agora há pouco.",
   "fill.refused.unavailable":

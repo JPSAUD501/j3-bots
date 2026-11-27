@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -20,6 +21,7 @@ import {
   MAX_BROWSER_TIMEOUT_MS,
   MAX_BROWSER_TYPE_LENGTH,
 } from "./browserTools.ts";
+import { FillField } from "./secrets.ts";
 
 // The page host protocol (decision 0110): what the J3 Bots server asks of a
 // browser that runs tabs for it, and what that browser tells the server.
@@ -150,6 +152,44 @@ export const BrowserOriginStorage = Schema.Struct({
 export type BrowserOriginStorage = typeof BrowserOriginStorage.Type;
 
 // ---------------------------------------------------------------------------
+// Typing a saved login
+
+/**
+ * What a saved login's value goes into, by the field it fills:
+ *
+ * - `username`: an `<input>` of type text, email or tel;
+ * - `password`: an `<input>` of type password;
+ * - `totp`: an `<input>` of type text, tel, number or password.
+ *
+ * The field must have the focus in the page's top frame (through open shadow
+ * roots), be shown, and take input. Anything else, a text area, an editable
+ * element, a search box or a field in an embedded frame, is refused.
+ */
+export const BrowserFillField = FillField;
+export type BrowserFillField = typeof BrowserFillField.Type;
+
+/**
+ * How `tab.fill` went.
+ *
+ * - `typed`: the value went into the focused field. `submitted` when Enter
+ *   was pressed after it; `cleared` when a password the page kept after it
+ *   was taken out of the field again.
+ * - `refused`: nothing was typed. `field`: the focus is not on a field that
+ *   takes this value in the top frame. `navigated`: the page is not at the
+ *   address the server checked. `loading`: the page has not finished loading.
+ */
+export const BrowserFillResult = Schema.Union([
+  Schema.TaggedStruct("typed", { submitted: Schema.Boolean, cleared: Schema.Boolean }),
+  Schema.TaggedStruct("refused", {
+    reason: Schema.Literals(["field", "navigated", "loading"]),
+  }),
+]);
+export type BrowserFillResult = typeof BrowserFillResult.Type;
+
+/** The longest value `tab.fill` types: a login's password at most. */
+export const MAX_BROWSER_FILL_LENGTH = 10_000;
+
+// ---------------------------------------------------------------------------
 // The host
 
 /**
@@ -161,6 +201,9 @@ export type BrowserOriginStorage = typeof BrowserOriginStorage.Type;
  * - `files`: it hands the server a file a bot's action downloaded
  *   (`download.finished`, `download.take`) and takes files for a bot's
  *   upload (`files.put`).
+ * - `changeEvents`: it sends `cookies.changed` and `storage.changed` itself,
+ *   as its sites change them. The server reads a host without it again
+ *   after its pages load and while it has tabs open.
  * - `privateTabs`: the person can open a private tab on it.
  * - `nativeView`: the person sees its tabs in a view of its own, in the
  *   app, and uses them there (`person.input`, `tab.focused`).
@@ -172,6 +215,7 @@ export const BrowserHostCapabilities = Schema.Struct({
   storage: Schema.optionalKey(Schema.Literal(true)),
   indexedDb: Schema.optionalKey(Schema.Literal(true)),
   files: Schema.optionalKey(Schema.Literal(true)),
+  changeEvents: Schema.optionalKey(Schema.Literal(true)),
   privateTabs: Schema.optionalKey(Schema.Literal(true)),
   nativeView: Schema.optionalKey(Schema.Literal(true)),
 });
@@ -199,6 +243,17 @@ export const BrowserHostHello = Schema.Struct({
     userAgent: Schema.String,
   }),
   capabilities: BrowserHostCapabilities,
+  /**
+   * Names the store the host keeps its shared sign-ins in: a random id the
+   * host mints when the store is created empty, keeps beside it, and mints
+   * again whenever the store is emptied. The server takes a cookie missing
+   * from a host as one the host removed only against what it last knew of
+   * this same store; a host without one is always taken as new, and nothing
+   * it lacks is removed from the others.
+   */
+  cookieStore: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(200)),
+  ),
   /**
    * The tabs the host holds now: after a reconnect, the server matches them
    * with its registry. A private tab is not among them.
@@ -474,6 +529,33 @@ export const BrowserHostRpcs = RpcGroup.make(
   /** A person's input to the page, through a viewer. */
   Rpc.make("tab.input", {
     payload: { ...tab, input: BrowserPageInput },
+    error: BrowserHostError,
+  }),
+  /**
+   * Types a saved login's value into the field that has the focus, checked
+   * beside the page right before it types: the page is at `url`, loaded, and
+   * the focused element in its top frame fits `field`. With `submit`, Enter
+   * follows; after a password it always does, and a password the page keeps
+   * on screen afterwards is taken out of the field again. The value is never
+   * logged, returned or kept.
+   */
+  Rpc.make("tab.fill", {
+    payload: {
+      ...tab,
+      field: BrowserFillField,
+      value: Schema.Redacted(Schema.String).check(
+        Schema.makeFilter(
+          (value: Redacted.Redacted<string>) => {
+            const length = Redacted.value(value).length;
+            return length >= 1 && length <= MAX_BROWSER_FILL_LENGTH;
+          },
+          { expected: `a value of 1 to ${MAX_BROWSER_FILL_LENGTH} characters` },
+        ),
+      ),
+      url: BrowserAddress,
+      submit: Schema.Boolean,
+    },
+    success: BrowserFillResult,
     error: BrowserHostError,
   }),
   /** Whether a tap at the point lands in a field that takes text. */
