@@ -11,7 +11,10 @@ import { Cell, type Readable } from "../Store.ts";
 import { makeKeyed } from "./keyed.ts";
 
 export interface WorkStepsState {
-  /** `finished`: the fold's turn ended and every step has arrived; nothing more will change. */
+  /**
+   * `finished`: the fold's turn ended and its steps so far have arrived. Work
+   * the turn handed off may add more, read when the fold is opened again.
+   */
   readonly phase: "loading" | "live" | "finished" | "not-found";
   readonly stale: boolean;
   /** In the order they started. A step that changes keeps its place. */

@@ -41,6 +41,7 @@ import {
   fillDetail,
   fillText,
   stepDetail,
+  stepMark,
   stepText,
   turnLine,
   workFoldTitle,
@@ -163,7 +164,7 @@ export function WorkFold({
   if (live !== null && !wasLive) setWasLive(true);
   const folding = live === null && wasLive;
   const hasSteps = fold !== null && fold.stepCount > 0;
-  // Once the turn has ended, a step still running, work it handed off, reads as part of it.
+  // Once the turn has ended, a step still running, work it handed off, reads as part of it (`stepMark`).
   const working = fold?.status._tag === "running";
   const root = useRef<HTMLDivElement>(null);
   useFoldedHeight(root, folding);
@@ -410,16 +411,11 @@ function LiveLine({
   );
 }
 
-/**
- * A step's mark. `working`: its fold's turn has not ended. A step still
- * running once it has, work the turn handed off, shows no mark: it reads as
- * part of the finished turn.
- */
+/** A step's mark (`stepMark`): running, done or failed, or none. */
 function StepStatus({ step, working }: { step: WorkStep; working: boolean }) {
   const { t } = usePresentation().i18n;
-  switch (step.status) {
+  switch (stepMark(step, working)) {
     case "running":
-      if (!working) return null;
       return (
         <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
           <LiveMark />
@@ -435,6 +431,8 @@ function StepStatus({ step, working }: { step: WorkStep; working: boolean }) {
           aria-label={t("work.stepDone")}
         />
       );
+    case null:
+      return null;
   }
 }
 

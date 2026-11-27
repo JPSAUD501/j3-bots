@@ -128,8 +128,20 @@ export function fillText(fill: CredentialFill, i18n: I18n): string {
  */
 export function stepText(step: WorkStep, turnRuns: boolean, i18n: I18n): string {
   if (step.fill !== undefined) return fillText(step.fill, i18n);
-  const running = turnRuns && step.status === "running";
-  return stepWords(step.kind, step.tool, step.label, running, i18n);
+  return stepWords(step.kind, step.tool, step.label, stepMark(step, turnRuns) === "running", i18n);
+}
+
+/**
+ * The mark beside a step in the work fold. `turnRuns`: the fold's turn has
+ * not ended. Once it has, a step still running, work the turn handed off,
+ * has none: it is part of the finished turn, not shown going on.
+ */
+export function stepMark(
+  step: WorkStep,
+  turnRuns: boolean,
+): "running" | "completed" | "failed" | null {
+  if (step.status === "running") return turnRuns ? "running" : null;
+  return step.status;
 }
 
 /**

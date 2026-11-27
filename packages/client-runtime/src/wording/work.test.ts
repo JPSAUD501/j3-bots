@@ -10,7 +10,7 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { fillDetail, stepDetail, stepText, workDoneText, workFoldTitle } from "./work.ts";
+import { fillDetail, stepDetail, stepMark, stepText, workDoneText, workFoldTitle } from "./work.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", {});
 
@@ -94,8 +94,13 @@ describe("a step in plain words", () => {
     );
   });
 
-  it("says a step still running once its turn ended as done, as part of the turn", () => {
-    expect(stepText(step("command", powershell, "running"), false, ctx.i18n)).toBe("Ran a command");
+  it("says and marks a step running only while its turn runs", () => {
+    const running = step("command", powershell, "running");
+    expect(stepMark(running, true)).toBe("running");
+    // Work the turn handed off, still going after it ended: done as far as the turn shows.
+    expect(stepText(running, false, ctx.i18n)).toBe("Ran a command");
+    expect(stepMark(running, false)).toBeNull();
+    expect(stepMark(step("command", powershell, "failed"), false)).toBe("failed");
   });
 
   it("keeps what the step worked on as its detail, one step in", () => {

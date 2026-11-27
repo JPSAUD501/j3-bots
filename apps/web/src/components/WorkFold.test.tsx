@@ -6,8 +6,6 @@ import {
   type LittleOne,
   type TurnWork,
   type WorkFoldEntry,
-  type WorkStep,
-  WorkStepId,
 } from "@j3-bots/contracts";
 import { at, bot } from "@j3-bots/client-runtime/testing";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -116,40 +114,5 @@ describe("a turn's row", () => {
     );
     expect(html).not.toContain("Reply to the question");
     expect(html).toContain("Checking prices");
-  });
-});
-
-describe("a turn's steps", () => {
-  const step = (label: string, status: WorkStep["status"]): WorkStep => ({
-    id: WorkStepId.make(label),
-    kind: "command",
-    tool: null,
-    label,
-    status,
-    startedAt: started,
-    finishedAt: status === "running" ? null : at("2026-11-20T10:01:00Z"),
-  });
-  const steps = [step("pnpm build", "completed"), step("node reconcile.js --watch", "running")];
-  const opened = (live: boolean) =>
-    renderToStaticMarkup(
-      <WorkFold
-        fold={fold(work, live)}
-        live={null}
-        steps={steps}
-        onOpenChange={() => {}}
-        onOpenImage={() => {}}
-        defaultOpen
-      />,
-    );
-
-  it("marks a step running while its turn runs", () => {
-    expect(opened(true)).toContain("Running");
-  });
-
-  // Work the turn handed off goes on after its reply, and reads as the finished turn's.
-  it("shows a step still running after its turn ended with no running mark", () => {
-    const html = opened(false);
-    expect(html).toContain("node reconcile.js --watch");
-    expect(html).not.toContain("Running");
   });
 });

@@ -5,6 +5,7 @@ import {
   fillDetail,
   fillText,
   stepDetail,
+  stepMark,
   stepText,
   turnLine,
   workFoldTitle,
@@ -277,11 +278,7 @@ const styles = StyleSheet.create({
 const opening = FadeIn.duration(180);
 const closing = FadeOut.duration(140);
 
-/**
- * The fold's steps. `working`: its turn has not ended. A step still running
- * once it has, work the turn handed off, shows no mark: it reads as part of
- * the finished turn.
- */
+/** The fold's steps. `working`: its turn has not ended (`stepText`, `stepMark`). */
 function Steps({
   foldId,
   working,
@@ -403,11 +400,11 @@ function FillLine({ fill }: { readonly fill: CredentialFill }) {
   );
 }
 
+/** A step's mark (`stepMark`): running, done or failed, or none. */
 function StepStatus({ step, working }: { readonly step: WorkStep; readonly working: boolean }) {
   const { t } = usePresentation().i18n;
-  switch (step.status) {
+  switch (stepMark(step, working)) {
     case "running":
-      if (!working) return null;
       return (
         <View className="flex-row items-center gap-1.5">
           <LiveMark />
@@ -426,6 +423,8 @@ function StepStatus({ step, working }: { readonly step: WorkStep; readonly worki
           <Icon icon={Check} size={14} color="accent-muted-foreground" />
         </View>
       );
+    case null:
+      return null;
   }
 }
 
