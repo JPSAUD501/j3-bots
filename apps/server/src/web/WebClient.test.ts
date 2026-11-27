@@ -230,15 +230,23 @@ it.layer(NodeServices.layer)("web client", (it) => {
           assert.strictEqual(plain.headers["content-encoding"], undefined);
           assert.strictEqual(plain.body.toString("utf8"), CHUNK);
 
-          // The browser sends back the compressed copy's validator.
+          // One validator for every encoding, which a 304 answers with the
+          // headers of the copy it refreshes.
           const etag = gzip.headers["etag"] ?? "";
-          assert.notStrictEqual(etag, "");
-          const again = yield* fetched(target, {
-            "accept-encoding": "gzip",
-            "if-none-match": etag,
-          });
-          assert.strictEqual(again.status, 304);
-          assert.strictEqual(again.body.length, 0);
+          assert.match(etag, /^W\//);
+          assert.strictEqual(br.headers["etag"], etag);
+          assert.strictEqual(plain.headers["etag"], etag);
+          assert.include(plain.headers["vary"], "Accept-Encoding");
+          for (const encoding of ["gzip", "br", "identity"]) {
+            const again = yield* fetched(target, {
+              "accept-encoding": encoding,
+              "if-none-match": etag,
+            });
+            assert.strictEqual(again.status, 304);
+            assert.strictEqual(again.body.length, 0);
+            assert.strictEqual(again.headers["etag"], etag);
+            assert.include(again.headers["vary"], "Accept-Encoding");
+          }
         }),
       ),
   );
