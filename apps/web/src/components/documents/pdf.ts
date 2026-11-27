@@ -16,7 +16,6 @@ import worker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
  *   images are the app's own files, handed over by `BundledDecoders`; it is
  *   given no fonts or character maps to fetch, so a font a PDF does not embed
  *   shows in a system font, and color profiles are left out.
- * - The page's policy keeps its scripts and connections to its own origin.
  */
 
 /** The app's copies of the decoders PDF.js asks for by name: nothing else is ever fetched. */
