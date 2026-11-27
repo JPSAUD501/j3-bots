@@ -106,7 +106,7 @@ const startBotsOnly = (starter: Member, others: ReadonlyArray<Member>) =>
     return { roomId: decodeStarted(resultOf(started)).id, turnId };
   });
 
-it.effect("starts a room of bots only on the operator's word, its members told so", () =>
+it.effect("starts a room of bots only on the operator's word, hidden, its members told so", () =>
   Effect.gen(function* () {
     const [scout, pip] = [yield* member("Scout"), yield* member("Pip")];
     const { roomId, turnId } = yield* startBotsOnly(scout, [pip]);
@@ -114,6 +114,8 @@ it.effect("starts a room of bots only on the operator's word, its members told s
 
     const room = Option.getOrThrow(yield* (yield* Rooms).find(roomId));
     assert.isTrue(room.botsOnly);
+    // It lands among the hidden conversations, as the bot did not show it.
+    assert.isTrue(room.hidden);
     yield* nextTurn(pip.bot.id);
     const envelope = yield* lastEnvelope(pip);
     assert.include(envelope, 'bots-only="true"');

@@ -1984,7 +1984,9 @@ export const layer = Layer.effect(
             .open({
               name: input.name,
               members: [found.botId, ...members],
-              hidden: input.hidden ?? false,
+              // A room of bots only lands among the hidden conversations
+              // unless the bot shows it (decision 0103).
+              hidden: input.hidden ?? !input.with_user,
               botsOnly: !input.with_user,
               madeBy: found.botId,
             })
@@ -2035,9 +2037,17 @@ export const layer = Layer.effect(
             id: room.id,
             note:
               posted?.note ??
-              (input.with_user
-                ? "The room is in your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up."
-                : "The room is in your user's list, and the members the kickoff wakes answer it there. Your user reads it but does not write there; you are told here if it pauses at its round limit. Tell your user what you set up."),
+              [
+                room.hidden
+                  ? "The room is among your user's hidden conversations, and the members the kickoff wakes answer it there."
+                  : "The room is in your user's list, and the members the kickoff wakes answer it there.",
+                ...(input.with_user
+                  ? []
+                  : [
+                      "Your user reads it but does not write there; you are told here if it pauses at its round limit.",
+                    ]),
+                "Tell your user what you set up.",
+              ].join(" "),
             ...(posted === null ? {} : { stopped: posted.stopped }),
           } satisfies Schema.Json;
         }),
