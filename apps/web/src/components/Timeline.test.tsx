@@ -16,6 +16,7 @@ const nothing = () => {};
 const secrets = sampleSecrets({ state: "ready", now: () => at("2026-11-20T10:00:00Z") });
 const intents: TimelineIntents = {
   answerQuestion: nothing,
+  routineCard: nothing,
   dismissQuestion: nothing,
   decideApproval: nothing,
   provideSecret: nothing,
@@ -25,6 +26,7 @@ const intents: TimelineIntents = {
   declineSecretAsk: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
+  react: nothing,
   resendMessage: nothing,
   discardMessage: nothing,
   openWorkFold: nothing,

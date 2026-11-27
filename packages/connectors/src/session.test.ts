@@ -13,6 +13,7 @@ import { NeedsSignIn } from "./errors.ts";
 import { EVENTS_EXTENSION } from "./events.ts";
 import type { UrlPolicy } from "./guard.ts";
 import {
+  CLIENT_CREDENTIALS_EXTENSION,
   type CallCredentials,
   type ConnectorCredentials,
   DEFAULT_SESSION_LIMITS,
@@ -21,6 +22,7 @@ import {
   type SessionLimits,
   scrubberOf,
 } from "./session.ts";
+import { SKILLS_EXTENSION } from "./skills.ts";
 import { TASKS_EXTENSION } from "./tasks.ts";
 import { type FakeOptions, fakeMcpServer } from "./testing/fakeMcpServer.ts";
 
@@ -284,6 +286,9 @@ describe("openSession", () => {
           [TASKS_EXTENSION]: {},
           [EVENTS_EXTENSION]: {},
           [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+          // A connector's server may sign J3 Bots in as a service, with credentials the operator gave.
+          [CLIENT_CREDENTIALS_EXTENSION]: {},
+          [SKILLS_EXTENSION]: {},
         },
       });
       const [tool] = yield* session.listTools;

@@ -30,9 +30,6 @@ const fold: WorkFoldEntry = {
     _tag: "finished",
     finishedAt: at("2026-11-20T10:00:12Z"),
     ending: "completed",
-    waitedMs: 0,
-    waitedBeforeMs: 0,
-    background: false,
   },
 };
 const sending: OutgoingMessage = {

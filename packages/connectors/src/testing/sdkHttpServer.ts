@@ -14,7 +14,7 @@ import { type EventsControl, type EventsFakeOptions, eventsFake } from "./events
 import { notesServer } from "./notesServer.ts";
 
 export type { Delivered, EventsControl, EventsFakeOptions } from "./eventsFake.ts";
-export { APPROVAL_URL } from "./notesServer.ts";
+export { APPROVAL_URL, DRIVE_STEP, DRIVE_STEP_URL } from "./notesServer.ts";
 
 /**
  * The notes server (`notesServer.ts`) over Streamable HTTP on loopback, at
@@ -43,6 +43,12 @@ export interface SdkHttpServer {
   readonly taskCancelled: () => boolean;
   /** Its events, when it offers them. */
   readonly events: EventsControl | null;
+  /**
+   * Says the operator finished the step on its own page with this id
+   * (`notifications/elicitation/complete`), to the client listening, at
+   * 2025-11-25.
+   */
+  readonly stepFinished: (elicitationId: string) => Promise<void>;
 }
 
 export interface SdkHttpOptions {
@@ -274,6 +280,11 @@ export const sdkHttpServer = (options: SdkHttpOptions) =>
               },
               taskCancelled: task.cancelled,
               events: events?.control ?? null,
+              stepFinished: async (elicitationId) => {
+                for (const { server: one } of legacy.values()) {
+                  await one.server.createElicitationCompletionNotifier(elicitationId)();
+                }
+              },
             },
           }),
         );

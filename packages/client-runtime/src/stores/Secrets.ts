@@ -2,7 +2,6 @@
 import {
   type CommandError,
   type EntryId,
-  type OldVaultPassword,
   type Secret,
   type SecretAccess,
   type SecretChanges,
@@ -10,6 +9,7 @@ import {
   type SecretField,
   SecretId,
   type SecretName,
+  type SecretRequestFieldId,
   type SecretsStatus,
   type TotpPreview,
 } from "@j3-bots/contracts";
@@ -47,7 +47,7 @@ export type SecretsView =
 
 /** Why a request about secrets did not take effect. */
 export type SecretsFailure =
-  /** The server refused it, with its reason: a name taken, a wrong old-vault password. */
+  /** The server refused it, with its reason: a name taken, a one-time code setup it can't read. */
   | { readonly _tag: "refused"; readonly error: CommandError }
   | { readonly _tag: "not-paired" }
   /** The server failed unexpectedly. Its cause is in the server's log. */
@@ -65,6 +65,20 @@ export interface NewSecret {
 }
 
 /**
+ * The values the operator typed into a bot's ask for several (`values`), each
+ * by its field, with the name the card saves it under.
+ */
+export interface AskedValues {
+  readonly request: EntryId;
+  readonly access: SecretAccess;
+  readonly values: ReadonlyArray<{
+    readonly field: SecretRequestFieldId;
+    readonly name: SecretName;
+    readonly value: Redacted.Redacted<string>;
+  }>;
+}
+
+/**
  * The operator's secrets, on the server: their state, followed, and the list,
  * read again whenever the revision moves while they are `ready`. Every value
  * goes to the server, and comes back, as a `Redacted`, and none is kept here:
@@ -72,20 +86,21 @@ export interface NewSecret {
  *
  * Every request may run again on a new socket when the one it went out on
  * drops (`Connection.call`), which the server's requests take: a secret is
- * added under an id this client chose, once, and opening an old vault that
- * is open already succeeds.
+ * added under an id this client chose, once.
  */
 export class Secrets extends Context.Service<
   Secrets,
   {
     readonly view: Readable<SecretsView>;
-    /** Opens a vault from before secrets with its password, typed one last time. */
-    readonly openOldVault: (password: OldVaultPassword) => Effect.Effect<SecretsResult>;
     /** Adds a secret; with `request`, it answers that bot's ask for it. */
     readonly add: (
       secret: NewSecret,
       request: EntryId | null,
     ) => Effect.Effect<SecretsResult<Secret>>;
+    /** Answers a bot's ask for several values, each added as a single value. */
+    readonly addFromAsk: (
+      asked: AskedValues,
+    ) => Effect.Effect<SecretsResult<ReadonlyArray<Secret>>>;
     readonly update: (id: SecretId, changes: SecretChanges) => Effect.Effect<SecretsResult<Secret>>;
     readonly remove: (id: SecretId) => Effect.Effect<SecretsResult>;
     readonly setAccess: (
@@ -210,12 +225,17 @@ export const layer = Layer.effect(
 
     return Secrets.of({
       view,
-      openOldVault: Effect.fn("Secrets.openOldVault")(function* (password: OldVaultPassword) {
-        return yield* request((client) => client["secrets.openOldVault"]({ password }));
-      }),
       add: Effect.fn("Secrets.add")(function* (secret: NewSecret, entry: EntryId | null) {
         const id = yield* newId;
         return yield* request((client) => client["secrets.add"]({ id, ...secret, request: entry }));
+      }),
+      addFromAsk: Effect.fn("Secrets.addFromAsk")(function* (asked: AskedValues) {
+        const values = yield* Effect.forEach(asked.values, ({ field, value }) =>
+          Effect.map(newId, (id) => ({ field, id, value })),
+        );
+        return yield* request((client) =>
+          client["secrets.addFromAsk"]({ request: asked.request, access: asked.access, values }),
+        );
       }),
       update: Effect.fn("Secrets.update")(function* (id: SecretId, changes: SecretChanges) {
         return yield* request((client) => client["secrets.update"]({ id, changes }));

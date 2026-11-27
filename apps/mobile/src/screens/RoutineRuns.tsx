@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useRoutineRuns, useRoutines } from "@j3-bots/client-runtime/react";
 import { routineLines, routineRunLines } from "@j3-bots/client-runtime/wording";
-import type { RoutineRun } from "@j3-bots/contracts";
+import { hasSeveralSteps, type RoutineRun } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
   CircleCheck,
@@ -17,6 +17,7 @@ import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { MiniRail, RoutineTrackRest } from "../conversation/RoutineTrack.tsx";
 import type { Screens } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
 
@@ -28,7 +29,10 @@ const RUN_ICON: Record<RoutineRun["status"], readonly [LucideIcon, string]> = {
   skipped: [CircleSlash, "accent-muted-foreground"],
 };
 
-/** One run: what it did and when, why it failed or was skipped, and what it noted. */
+/**
+ * One run: what it did and when, why it failed or was skipped, and what it
+ * noted. A run of a routine with several steps shows its mini rail over it.
+ */
 function RunRow({ run }: { readonly run: RoutineRun }) {
   const ctx = usePresentation();
   const lines = routineRunLines(run, ctx);
@@ -39,6 +43,11 @@ function RunRow({ run }: { readonly run: RoutineRun }) {
         <Icon icon={icon} color={color} />
       </View>
       <View className="min-w-0 flex-1 gap-0.5">
+        {run.steps !== undefined && (
+          <View className="mt-1 mb-1">
+            <MiniRail run={run} />
+          </View>
+        )}
         <View className="flex-row items-baseline gap-3">
           <Text
             className={`min-w-0 flex-1 text-base ${lines.failed ? "text-blocked" : "text-foreground"}`}
@@ -69,7 +78,8 @@ function RunRow({ run }: { readonly run: RoutineRun }) {
  * A routine's recent runs, newest first, under its schedule and when it runs
  * next: whether each reported back, had nothing to say, failed and why, or
  * was skipped. Its bot's routines stay open here, so the list is read again
- * as a run starts or ends.
+ * as a run starts or ends. A routine with several steps opens on its track
+ * at rest.
  */
 export function RoutineRunsScreen({
   navigation,
@@ -121,6 +131,16 @@ export function RoutineRunsScreen({
               </Text>
             )}
           </View>
+        </Section>
+      )}
+      {routine !== null && hasSeveralSteps(routine.steps, routine.botId) && (
+        <Section>
+          <RoutineTrackRest
+            name={routine.name}
+            trigger={routine.trigger}
+            owner={routine.botId}
+            steps={routine.steps}
+          />
         </Section>
       )}
       {/* Until the routine is known, the screen's title already says what this is. */}

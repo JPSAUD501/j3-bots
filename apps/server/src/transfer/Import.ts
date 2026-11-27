@@ -20,7 +20,7 @@ import { HOME_ENTRIES, homeLayout } from "../home/entries.ts";
 import { knownMigrations, runMigrations } from "../persistence/Migrations.ts";
 import { newWebhookSecret } from "../routines/Routines.ts";
 import { KEY_FILE, migrations as secretsMigrations } from "../secrets/store.ts";
-import { importKey, importSecrets, secretsAtHome } from "../secrets/transfer.ts";
+import { holdsSecrets, importKey, importSecrets } from "../secrets/transfer.ts";
 import { freeSpaceAt } from "../system/freeSpace.ts";
 import {
   ARCHIVE_FORMAT,
@@ -575,7 +575,7 @@ export const importHome = Effect.fn("transfer.importHome")(function* <E, R>(inpu
   const engineRelease = Option.isSome(markedRelease)
     ? markedRelease
     : yield* engineReleaseIn(path.join(home, HOME_ENTRIES.database));
-  const secrets = (yield* secretsAtHome(vault))._tag !== "none";
+  const secrets = yield* holdsSecrets(vault);
   const files = yield* homeHoldsFiles(home);
   if ((bots > 0 || secrets || files) && !input.replace && !finishing) {
     return yield* new HomeInUse({ home, bots, secrets, files });

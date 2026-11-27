@@ -1,38 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  SecretsFailure,
-  SecretsHandle,
-  SecretsResult,
-  SecretsView,
-} from "@j3-bots/client-runtime";
+import type { SecretsFailure, SecretsResult, SecretsView } from "@j3-bots/client-runtime";
 import {
   activityTime,
   secretsFailureText,
   secretsStateText,
 } from "@j3-bots/client-runtime/wording";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
-import {
-  type Bot,
-  type BotId,
-  OldVaultPassword,
-  type Secret,
-  type SecretAccess,
-} from "@j3-bots/contracts";
+import { type Bot, type BotId, type Secret, type SecretAccess } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
-import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
-import { Problem, Quiet, SkeletonRows, SwitchRow } from "../components/form.tsx";
+import { Quiet, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { QrScanner } from "../components/QrScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBotList } from "../presentation.tsx";
 import { Text, TextInput } from "../text.tsx";
 import { Button } from "../ui.tsx";
 import { totpAddressOf } from "./totpQr.ts";
-
-const decodeOldPassword = Schema.decodeUnknownOption(OldVaultPassword);
 
 /** Why a request about secrets failed, in a sentence. */
 export function useSecretsFailureText(): (failure: SecretsFailure) => string {
@@ -178,67 +162,14 @@ export function useSecretsRequest() {
 }
 
 /**
- * A vault from before secrets, opened with its password typed one last
- * time; the server keeps the logins without it from then on.
- */
-function OldVaultForm({ secrets }: { readonly secrets: SecretsHandle }) {
-  const { t } = useI18n();
-  const failureText = useSecretsFailureText();
-  const [password, setPassword] = useState("");
-  const { busy, failure, run } = useSecretsRequest();
-  const submit = () => {
-    const checked = decodeOldPassword(Redacted.make(password));
-    if (Option.isNone(checked)) return;
-    run(
-      () => secrets.openOldVault(checked.value),
-      () => setPassword(""),
-    );
-  };
-  return (
-    <View className="gap-3">
-      <Text accessibilityRole="header" className="text-base font-medium text-foreground">
-        {t("secrets.oldVault.title")}
-      </Text>
-      <Text className="text-sm text-muted-foreground">{t("secrets.oldVault.body")}</Text>
-      <SecretField
-        label={t("secrets.oldVault.password")}
-        value={password}
-        onChange={setPassword}
-        invalid={failure !== null}
-        editable={!busy}
-        onSubmit={submit}
-      />
-      <Problem>{failure === null ? null : failureText(failure)}</Problem>
-      <View className="flex-row justify-end">
-        <Button
-          variant="primary"
-          label={t("secrets.oldVault.open")}
-          onPress={submit}
-          disabled={password === ""}
-          held={busy}
-        />
-      </View>
-      <Text className="text-xs text-muted-foreground">{t("secrets.oldVault.forgot")}</Text>
-    </View>
-  );
-}
-
-/**
  * What a screen about secrets shows while they cannot be used: rows on their
- * way while their state is read, the old vault's password, or why there are
- * none. Null once they are ready.
+ * way while their state is read, or why there are none. Null once they are
+ * ready.
  */
-export function SecretsGate({
-  view,
-  secrets,
-}: {
-  readonly view: SecretsView;
-  readonly secrets: SecretsHandle;
-}): ReactNode {
+export function SecretsGate({ view }: { readonly view: SecretsView }): ReactNode {
   const i18n = useI18n();
   if (view._tag === "loading") return <SkeletonRows count={1} />;
   if (view.status.state === "ready") return null;
-  if (view.status.state === "old-vault") return <OldVaultForm secrets={secrets} />;
   return (
     <Text className="text-sm text-muted-foreground">{secretsStateText(view.status, i18n)}</Text>
   );

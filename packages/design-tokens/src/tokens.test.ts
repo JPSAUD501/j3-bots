@@ -12,7 +12,14 @@ import {
   toSrgb8,
   type LinearRgb,
 } from "./color.ts";
-import { avatarEye, botBubble, botLittle, botPalette, littleFailed } from "./botPalette.ts";
+import {
+  avatarEye,
+  botBubble,
+  botLittle,
+  botPalette,
+  littleFailed,
+  rowLightColors,
+} from "./botPalette.ts";
 import { renderFontManifest } from "./fontManifest.ts";
 import { botColors } from "./names.ts";
 import { colors, type ColorRole, typeScale, type TypeInput } from "./tokens.ts";
@@ -187,6 +194,21 @@ describe.each(modes)("%s little ones", (mode) => {
     expect(
       contrastRatio(parseColor(avatarEye.lens), parseColor(littleFailed.body[mode])),
     ).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("a new row's light", () => {
+  it("is the bot's own color on a light canvas", () => {
+    const tone = rowLightColors(botPalette.cobalt.light, "light");
+    expect(new Set([tone.spot, tone.lamp, tone.beam]).size).toBe(1);
+  });
+
+  it("is a warm white on a dark canvas, its beam taking some of the bot's color", () => {
+    const tone = rowLightColors(botPalette.cobalt.dark, "dark");
+    const away = (a: string, b: string) =>
+      perceivedDistance(parseColor(a), parseColor(b), "typical");
+    expect(away(tone.beam, tone.lamp)).toBeGreaterThan(0);
+    expect(away(tone.beam, tone.lamp)).toBeLessThan(away(tone.beam, tone.spot));
   });
 });
 

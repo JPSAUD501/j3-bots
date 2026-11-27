@@ -38,8 +38,8 @@ import {
   type SettingsSaves,
 } from "@j3-bots/client-runtime";
 import {
+  type AiAccount,
   aiAccountProvider,
-  aiAccounts,
   clockTime,
   connectorNeedsYou,
   connectorTone,
@@ -91,7 +91,7 @@ import { UpdatePromptEntryButton } from "./UpdatePrompt";
 import { ShortcutSetting } from "./ShortcutSetting";
 import {
   AdvancedEndpoint,
-  AiAccountCard,
+  AiAccountList,
   type ConnectPlace,
   connectPlaceOf,
   useWebAiConnect,
@@ -660,9 +660,10 @@ export function EngineSection({
 }
 
 /**
- * Each AI account, one card each: where it stands and its one button, then
- * the version it runs, with Update when a newer one is out; and, in the app
- * on the server's own computer, an endpoint instead, folded away.
+ * Each AI account, one row each: where it stands with its one button beside
+ * it, and once it is connected, the version it runs, with Update when a
+ * newer one is out; and, in the app on the server's own computer, an
+ * endpoint instead, folded away.
  */
 function AiAccounts({
   engine,
@@ -676,24 +677,19 @@ function AiAccounts({
   connect: ConnectPlace;
 }) {
   const ai = useWebAiConnect({ engine, connect, actions });
+  const version = (account: AiAccount) => {
+    const provider = aiAccountProvider(engine, account);
+    if (provider === undefined) return null;
+    const own = ownHarness(provider);
+    return own === null ? (
+      <ProviderUpdate provider={provider} onUpdate={actions.update} />
+    ) : (
+      <OwnHarnessLine own={own} actions={actions} />
+    );
+  };
   return (
     <>
-      <ul className="flex flex-col gap-1.5 text-sm">
-        {aiAccounts.map((account) => {
-          const provider = aiAccountProvider(engine, account);
-          const own = provider === undefined ? null : ownHarness(provider);
-          return (
-            <AiAccountCard key={account} ai={ai} account={account} stale={stale}>
-              {provider !== undefined &&
-                (own === null ? (
-                  <ProviderUpdate provider={provider} onUpdate={actions.update} />
-                ) : (
-                  <OwnHarnessLine own={own} actions={actions} />
-                ))}
-            </AiAccountCard>
-          );
-        })}
-      </ul>
+      <AiAccountList ai={ai} paths stale={stale} extra={version} />
       {!stale && <AdvancedEndpoint ai={ai} />}
     </>
   );

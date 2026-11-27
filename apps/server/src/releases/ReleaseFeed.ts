@@ -104,8 +104,7 @@ const CandidateRecord = Schema.Struct({
   channel: UpdateChannelSchema,
   publishedAt: Schema.DateTimeUtc,
   notesUrl: ReleaseNotesUrl,
-  /** Kept since highlights were added; a file from before has none until the release changes. */
-  highlights: ReleaseHighlights.pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  highlights: ReleaseHighlights,
   tag: Schema.String,
 });
 

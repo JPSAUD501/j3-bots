@@ -17,8 +17,11 @@ import {
   MessageText,
   NonNegativeInt,
   type QuestionAnswers,
+  type ReactionEmoji,
   type ReceivedEntry,
   RoomId,
+  type RoutineAnswer,
+  type RoutineRunId,
   type SecretRequestAnswer,
   type Sequence,
 } from "@j3-bots/contracts";
@@ -48,6 +51,7 @@ import {
   cardAction,
   type IntentFailure,
   type IntentResult,
+  intentResult,
   retryAction,
 } from "../intents/Actions.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError, WindowLocks } from "../ports.ts";
@@ -178,13 +182,12 @@ const StoredMessage = Schema.TaggedStruct("message", {
   target: EntryTarget,
   text: MessageText,
   attachments: Schema.Array(Attachment),
-  /** Missing from a message kept before messages placed their files, or sent without places. */
+  /** Missing from a message sent without places for its files. */
   attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
-  /** Missing from a message sent without its window, or kept before messages carried one. */
+  /** Missing from a message sent without its window. */
   lookingAt: Schema.optionalKey(LookingAt),
   mentions: Schema.NullOr(Mentions),
-  /** Missing from a message kept before messages kept them: it names none. */
-  labels: Schema.optionalKey(Schema.Array(MentionLabel)),
+  labels: Schema.Array(MentionLabel),
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
   sequence: NonNegativeInt,
@@ -301,6 +304,23 @@ export const messageStatus = (message: MessageEntry | OutgoingMessage): MessageS
       return { _tag: "failed", reason: message.delivery.reason };
   }
 };
+
+/**
+ * What the operator does on a run's card of a routine with several steps
+ * (decision 0080): answers the yes it waits for, tries a failed step again,
+ * or stops it.
+ */
+export type RoutineCardCommand =
+  | {
+      readonly _tag: "answer";
+      readonly runId: RoutineRunId;
+      /** The yes's place in the run's steps: the one the operator saw. */
+      readonly step: number;
+      readonly choice: RoutineAnswer["choice"];
+      readonly note: string | null;
+    }
+  | { readonly _tag: "retry"; readonly runId: RoutineRunId }
+  | { readonly _tag: "stop"; readonly runId: RoutineRunId };
 
 export type CardAnswer =
   | { readonly _tag: "question"; readonly answers: QuestionAnswers }
@@ -463,7 +483,18 @@ export class Conversations extends Context.Service<
     readonly discard: (commandId: CommandId) => Effect.Effect<void, LocalStorageError>;
     readonly retryMessage: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly retryNotice: (entryId: EntryId) => Effect.Effect<IntentResult>;
+    /**
+     * Sets the operator's reaction on a message, replacing theirs, or takes it
+     * off with `null`. Offered only for a message that carries `reactions`:
+     * a server that sends them takes `message.react`.
+     */
+    readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => Effect.Effect<IntentResult>;
     readonly answerCard: (entryId: EntryId, answer: CardAnswer) => Effect.Effect<IntentResult>;
+    /** `command` on the run's card `entryId`, which shows as submitting meanwhile. */
+    readonly routineCard: (
+      entryId: EntryId,
+      command: RoutineCardCommand,
+    ) => Effect.Effect<IntentResult>;
     readonly provideSecret: (entryId: EntryId, answer: SecretAnswer) => Effect.Effect<IntentResult>;
     /**
      * Runs `effect` with every delivery stopped, and starts again what is
@@ -834,7 +865,7 @@ export const layer = Layer.effect(
           : { attachmentOffsets: record.attachmentOffsets }),
         ...(record.lookingAt === undefined ? {} : { lookingAt: record.lookingAt }),
         mentions: record.mentions,
-        labels: record.labels ?? [],
+        labels: record.labels,
         createdAt: record.createdAt,
         status:
           record.status._tag === "sending" &&
@@ -1579,6 +1610,40 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * The operator's picks on each message, sent one after another: a request
+     * a closed socket left unanswered is sent again on the next, and must
+     * never land after a newer pick. A pick a newer one replaced while it
+     * waited is not sent at all.
+     */
+    const picks = new Map<EntryId, { latest: number; readonly lock: Semaphore.Semaphore }>();
+
+    // Not an action that waits for its message to change: it sets a state, so
+    // a pick that changed nothing (as another device made the same) leaves
+    // the next one free.
+    const react = (entryId: EntryId, emoji: ReactionEmoji | null): Effect.Effect<IntentResult> =>
+      Effect.suspend(() => {
+        const line = picks.get(entryId) ?? { latest: 0, lock: Semaphore.makeUnsafe(1) };
+        picks.set(entryId, line);
+        const pick = ++line.latest;
+        const send = Effect.suspend(() =>
+          pick === line.latest
+            ? connection
+                .call((client) => client["message.react"]({ entryId, emoji }))
+                .pipe(Effect.exit, Effect.map(intentResult))
+            : Effect.succeed<IntentResult>({ _tag: "done", value: undefined }),
+        );
+        return line.lock
+          .withPermits(1)(send)
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (pick === line.latest) picks.delete(entryId);
+              }),
+            ),
+          );
+      });
+
     const answerCard = Effect.fn("Conversations.answerCard")(function* (
       entryId: EntryId,
       answer: CardAnswer,
@@ -1588,6 +1653,33 @@ export const layer = Layer.effect(
         cardAction(entryId),
         entryId,
         connection.call((client) => client["card.answer"]({ commandId, entryId, answer })),
+      );
+    });
+
+    const routineCard = Effect.fn("Conversations.routineCard")(function* (
+      entryId: EntryId,
+      command: RoutineCardCommand,
+    ) {
+      const commandId = yield* actions.commandId;
+      return yield* actions.run(
+        cardAction(entryId),
+        entryId,
+        connection.call((client) => {
+          switch (command._tag) {
+            case "answer":
+              return client["routine.answer"]({
+                commandId,
+                runId: command.runId,
+                step: command.step,
+                choice: command.choice,
+                note: command.note,
+              });
+            case "retry":
+              return client["routine.retry"]({ commandId, runId: command.runId });
+            case "stop":
+              return client["routine.stopRun"]({ commandId, runId: command.runId });
+          }
+        }),
       );
     });
 
@@ -1675,7 +1767,9 @@ export const layer = Layer.effect(
       discard,
       retryMessage,
       retryNotice,
+      react,
       answerCard,
+      routineCard,
       provideSecret,
       withSendingPaused,
       discardAll,

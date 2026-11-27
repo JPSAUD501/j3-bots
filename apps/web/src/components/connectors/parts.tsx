@@ -5,6 +5,7 @@ import type {
   ConnectorField,
   ConnectorGlyph,
   ConnectorGrant,
+  ConnectorSkill,
   ConnectorTool,
 } from "@j3-bots/contracts";
 import {
@@ -239,32 +240,53 @@ export function BotsPicker({
   );
 }
 
-const FEW_TOOLS = 5;
+const FEW_SERVED = 5;
 
-/** What a connector lets bots do: each tool's title and what it says it does, the first few at first. */
-export function ToolList({ tools }: { tools: ReadonlyArray<ConnectorTool> }) {
+/** One thing a connector's server offers bots: its title and what it says it is for. */
+export interface ServedItem {
+  /** What tells it apart from the others its server offers: a tool's name, a skill's address. */
+  readonly key: string;
+  readonly title: string;
+  readonly description: string;
+}
+
+/** A connector's tools as the list shows them. */
+export const toolItems = (tools: ReadonlyArray<ConnectorTool>): ReadonlyArray<ServedItem> =>
+  tools.map((tool) => ({
+    key: tool.name,
+    title: tool.title ?? tool.name,
+    description: tool.description,
+  }));
+
+/** A connector's skills as the list shows them. */
+export const skillItems = (skills: ReadonlyArray<ConnectorSkill>): ReadonlyArray<ServedItem> =>
+  skills.map((skill) => ({ key: skill.uri, title: skill.name, description: skill.description }));
+
+/**
+ * What a connector's server offers bots, its tools or its skills: each one's
+ * title and what it says it is for, the first few at first.
+ */
+export function ServedList({ items }: { items: ReadonlyArray<ServedItem> }) {
   const { t } = useI18n();
   const [all, setAll] = useState(false);
-  if (tools.length === 0)
-    return <p className="text-sm text-muted-foreground">{t("connector.tools.none")}</p>;
-  const shown = all ? tools : tools.slice(0, FEW_TOOLS);
+  const shown = all ? items : items.slice(0, FEW_SERVED);
   return (
     <div className="flex flex-col gap-2">
       <ul className="flex flex-col gap-2">
-        {shown.map((tool) => (
-          <li key={tool.name} className="flex flex-col">
-            <span className="text-sm font-medium">{tool.title ?? tool.name}</span>
-            {tool.description !== "" && (
-              <span className="line-clamp-2 text-sm text-muted-foreground">{tool.description}</span>
+        {shown.map((item) => (
+          <li key={item.key} className="flex flex-col">
+            <span className="text-sm font-medium">{item.title}</span>
+            {item.description !== "" && (
+              <span className="line-clamp-2 text-sm text-muted-foreground">{item.description}</span>
             )}
           </li>
         ))}
       </ul>
-      {tools.length > FEW_TOOLS && (
+      {items.length > FEW_SERVED && (
         <Button size="sm" variant="ghost-muted" className="self-start" onClick={() => setAll(!all)}>
           {all
-            ? t("connector.tools.showFewer")
-            : t("connector.tools.showAll", { count: tools.length })}
+            ? t("connector.list.showFewer")
+            : t("connector.list.showAll", { count: items.length })}
         </Button>
       )}
     </div>

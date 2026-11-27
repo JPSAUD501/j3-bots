@@ -58,16 +58,20 @@ const ExportKdf = Schema.Struct({
   salt: Schema.String,
 });
 
+/** Why an export of this release leaves the secrets out. */
+export const LEFT_OUT_REASONS = ["unreadable", "newer"] as const;
+
 /** What the archive holds of the secrets. */
 export const ArchivedSecrets = Schema.Union([
   /** None: nothing was ever saved. */
   Schema.TaggedStruct("none", {}),
   /**
-   * Left out, since they could not be read: an old vault that waits for its
-   * password, a key file missing or holding another key, or a newer release's.
+   * Left out, since they could not be read: a key file missing or holding
+   * another key, or a newer release's. `old-vault`, a vault that waited for
+   * its password, only an archive from 0.12 or earlier says.
    */
   Schema.TaggedStruct("left-out", {
-    reason: Schema.Literals(["old-vault", "unreadable", "newer"]),
+    reason: Schema.Literals([...LEFT_OUT_REASONS, "old-vault"]),
   }),
   /** In `vault/vault.sqlite`, every value sealed under the key `kdf` derives from the passphrase. */
   Schema.TaggedStruct("sealed", {
@@ -79,6 +83,11 @@ export const ArchivedSecrets = Schema.Union([
   }),
 ]);
 export type ArchivedSecrets = typeof ArchivedSecrets.Type;
+
+/** What an export of this release writes of the secrets: never `old-vault`. */
+export type WrittenSecrets =
+  | Exclude<ArchivedSecrets, { readonly _tag: "left-out" }>
+  | { readonly _tag: "left-out"; readonly reason: (typeof LEFT_OUT_REASONS)[number] };
 
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/));
 

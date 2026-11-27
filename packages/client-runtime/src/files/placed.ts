@@ -52,7 +52,7 @@ export function withoutMarks(writing: Writing, drop: (index: number) => boolean)
 /**
  * `writing` placing exactly `count` files: marks past `count` go, from the
  * last, and missing ones are added at the end, for files a draft holds that
- * its text does not place, as one kept before drafts placed files.
+ * its text does not place.
  */
 export function fittedMarks(writing: Writing, count: number): Writing {
   const marks = markCount(writing.text);

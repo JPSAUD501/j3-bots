@@ -40,6 +40,32 @@ const bubbles = {
   slate: "accent-bot-bubble-slate",
 } as const satisfies Record<BotColor, string>;
 
+const lits = {
+  tomato: "accent-bot-lit-tomato",
+  tangerine: "accent-bot-lit-tangerine",
+  honey: "accent-bot-lit-honey",
+  lime: "accent-bot-lit-lime",
+  mint: "accent-bot-lit-mint",
+  teal: "accent-bot-lit-teal",
+  sky: "accent-bot-lit-sky",
+  cobalt: "accent-bot-lit-cobalt",
+  iris: "accent-bot-lit-iris",
+  orchid: "accent-bot-lit-orchid",
+  rose: "accent-bot-lit-rose",
+  slate: "accent-bot-lit-slate",
+} as const satisfies Record<BotColor, string>;
+
+/** A bot's own color in the current theme; muted for a bot that is gone. */
+export const useBotInk = (avatar: Avatar | null): string =>
+  useColor(avatar === null ? "accent-muted-foreground" : inks[botColorOf(avatar)]);
+
+/**
+ * The wash of a routine step's row while its bot does it (decision 0080):
+ * its color over the card's surface; muted for a bot that is gone.
+ */
+export const useTrackLit = (avatar: Avatar | null): string =>
+  useColor(avatar === null ? "accent-muted" : lits[botColorOf(avatar)]);
+
 /** A conversation's tint: the bot's color, and its bubbles' fill. */
 export interface Tint {
   readonly color: string;

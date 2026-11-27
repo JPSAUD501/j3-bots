@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { NonNegativeInt } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
+import { LEFT_OUT_REASONS } from "./archive.ts";
 
 // What `j3-bots export --report <file>` writes there once the archive is in
 // place, for a program that runs the export: the desktop app, which tells the
@@ -14,7 +15,7 @@ export const ExportReport = Schema.Struct({
     Schema.TaggedStruct("sealed", { records: NonNegativeInt }),
     /** Why they stayed behind: as `ArchivedSecrets` says it. */
     Schema.TaggedStruct("left-out", {
-      reason: Schema.Literals(["old-vault", "unreadable", "newer"]),
+      reason: Schema.Literals(LEFT_OUT_REASONS),
     }),
   ]),
   /** Links in the bots' folders and the shared ones. */

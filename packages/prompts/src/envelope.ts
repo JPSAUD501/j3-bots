@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import type { BotId, EntryId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,6 +64,11 @@ export interface LookingAtRef {
 }
 
 export interface OperatorMessage {
+  /**
+   * The message's id, which `react` names it by. Left out only where there
+   * is none yet: a size check before the message is written.
+   */
+  readonly id?: EntryId;
   readonly at: DateTime.Utc;
   readonly text: string;
   readonly attachments: ReadonlyArray<AttachmentRef>;
@@ -137,7 +142,32 @@ export type CatchUpItem =
       readonly connector: string;
       readonly at: DateTime.Utc;
       readonly reason: RoutineStopReason;
-    };
+    }
+  /** Reactions on a message changed since the bot's last turn: how they stand now. */
+  | { readonly type: "reactions"; readonly news: ReactionNews };
+
+/** Whoever wrote a message or reacted to one, as an envelope names them. */
+export type ReactionWho = "user" | "you" | TeammateRef;
+
+/**
+ * The reactions on one message as they stand, with the start of the message
+ * they are on: enough to know which it is without the conversation at hand.
+ */
+export interface ReactionNews {
+  /** The room the message is in; `null` for the bot's own conversation. */
+  readonly room: { readonly id: RoomId; readonly name: string } | null;
+  readonly message: {
+    readonly id: EntryId;
+    readonly from: ReactionWho;
+    /** Its start, cut to a few hundred characters. */
+    readonly excerpt: string;
+  };
+  /** In the order each reactor first reacted; never empty. */
+  readonly reactions: readonly [
+    { readonly from: ReactionWho; readonly emoji: string },
+    ...Array<{ readonly from: ReactionWho; readonly emoji: string }>,
+  ];
+}
 
 /**
  * Why J3 Bots stopped listening for a routine's event: the connector's server
@@ -185,6 +215,8 @@ export type RoomMentions = ReadonlyArray<string> | "everyone";
 export type RoomEntry =
   | {
       readonly author: "user";
+      /** The message's id, which `react` names it by; left out as for `OperatorMessage`. */
+      readonly id?: EntryId;
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
@@ -193,6 +225,8 @@ export type RoomEntry =
     }
   | {
       readonly author: TeammateRef;
+      /** The message's id, which `react` names it by; left out as for `OperatorMessage`. */
+      readonly id?: EntryId;
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
@@ -284,6 +318,38 @@ export interface RoutineRunSummary {
     | { readonly type: "skipped" };
 }
 
+/** What an earlier step of the run reported, for the steps after it. */
+export interface EarlierStep {
+  readonly bot: string;
+  readonly action: string;
+  readonly result: string;
+  readonly handoff: string | null;
+}
+
+/**
+ * The step of a routine with several steps that a wake runs (decision 0080).
+ * The routine's `instruction` is then this step's brief.
+ */
+export interface RoutineStepWake {
+  /** Among the routine's bot steps, from 1. */
+  readonly number: number;
+  readonly of: number;
+  readonly action: string;
+  /** Oldest first: what every earlier bot step of this run reported. */
+  readonly earlier: ReadonlyArray<EarlierStep>;
+  /** The yes your user gave right before this step, with what it asked and their note. */
+  readonly approved: { readonly question: string; readonly note: string | null } | null;
+  /**
+   * What follows the step before the next bot step, which its report decides:
+   * a condition it judges, a yes it asks (every run, or only when `onlyIf`
+   * holds). Null on the last step.
+   */
+  readonly next: {
+    readonly condition: string | null;
+    readonly yes: { readonly onlyIf: string | null } | null;
+  } | null;
+}
+
 export interface RoutineWake extends WakeBase {
   readonly kind: "routine";
   readonly routine: {
@@ -292,6 +358,8 @@ export interface RoutineWake extends WakeBase {
     readonly trigger: RoutineTrigger;
     readonly instruction: string;
   };
+  /** A step of a routine with several steps; absent for a one-step routine's run. */
+  readonly step?: RoutineStepWake;
   /**
    * The run this attempt belongs to: the same in every attempt of the run,
    * and in no other run. A run uses it as the key of "this occurrence".
@@ -364,8 +432,11 @@ export type SystemEvent =
        * or it waited too long.
        */
       readonly outcome: "saved" | "declined" | "expired";
-      /** The reference the bot names the secret by (`secret:<name>`), saved or not. */
-      readonly reference: string;
+      /**
+       * The references the bot names the secrets by (`secret:<name>`), saved
+       * or not: one, or each of the values it asked for together.
+       */
+      readonly references: readonly [string, ...Array<string>];
     }
   | {
       readonly name: "connector-ask";
@@ -378,6 +449,15 @@ export type SystemEvent =
       readonly server: string;
       /** What comes next for a server added, or why one failed; null otherwise. */
       readonly note: string | null;
+    }
+  | {
+      readonly name: "reaction";
+      /**
+       * Your user reacted to a message of the bot's, and these are the
+       * reactions on it as they stand: a light signal, which the bot answers
+       * only when the reaction answers something it offered.
+       */
+      readonly news: ReactionNews;
     };
 
 export interface SystemWake extends WakeBase {
@@ -399,6 +479,10 @@ export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string 
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };
+
+/** The closing line of a wake for a step of a routine with several steps. */
+export const ROUTINE_STEP_CLOSING_LINE =
+  "Nobody is waiting: send no progress message. Do your step as its instruction says, from what the earlier steps handed you. `say` to your user only what the instruction asks you to tell them. Read every date against the time the run was due: `due` above, or the time above when there is none. Your last call is one `finish_step`, never alongside another call: its result line, what the next steps need, and what `next` above asks of your report. When you cannot do the step, call it with `blocked` and say in its result what stops it. Then end your turn.";
 
 /**
  * A room envelope's closing line, by why the bot was woken: how far the
@@ -440,7 +524,9 @@ const closingLine = (wake: Wake): string =>
         ROOM_CLOSING_LINES[wake.reason],
         ...(wake.closing ? [ROOM_CLOSING_NOTE] : []),
       ].join(" ")
-    : CLOSING_LINES[wake.kind];
+    : wake.kind === "routine" && wake.step !== undefined
+      ? ROUTINE_STEP_CLOSING_LINE
+      : CLOSING_LINES[wake.kind];
 
 const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
 
@@ -491,7 +577,7 @@ const SECRET_ASK_LINES: {
   readonly [O in Extract<SystemEvent, { readonly name: "secret-ask" }>["outcome"]]: string;
 } = {
   saved:
-    "Your user saved the secret you asked for. You never see its value: use it by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
+    "Your user saved what you asked for. You never see a value: use each by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
   declined:
     "Your user declined to give the secret you asked for. Do not ask again on your own, and do not look for it elsewhere. Finish what does not need it, then end with a `say` with `done: true` that tells your user what it still blocks.",
   expired:
@@ -515,6 +601,15 @@ const CONNECTOR_ASK_LINES: {
     "Your ask to add the MCP server named below closed without an answer: it waited too long, or J3 Bots restarted while it waited. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on it, and that you will continue when they tell you to.",
 };
 
+/**
+ * What a `reaction` event says, and what to do: a reaction is a light signal,
+ * not a message. The bot answers it only when it answers an offer of the
+ * bot's and the bot knows that emoji as a yes there; otherwise the turn ends
+ * without a word, which leaves nothing in the conversation.
+ */
+export const REACTION_LINE =
+  "Your user reacted to a message of yours; the reactions on it as they stand now follow. A reaction is a light signal, not a message: by default, end your turn without a word and without a reaction. Act only if it answers something you offered there and your instructions or memory say that emoji means yes to it (they may have told you, say, that a 👍 on an offer of yours means go ahead): then say in a few words that you are on it, do it, and deliver the result with `say` as usual. Never treat it as approval for anything else.";
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -536,6 +631,8 @@ const eventLine = (event: SystemEvent): string => {
       return SECRET_ASK_LINES[event.outcome];
     case "connector-ask":
       return CONNECTOR_ASK_LINES[event.outcome];
+    case "reaction":
+      return REACTION_LINE;
   }
 };
 
@@ -640,6 +737,55 @@ export const titleOf = (ref: TeammateRef): string | null => (ref.title === "" ? 
 export const mentionsOf = (mentions: RoomMentions): string | null =>
   mentions === "everyone" ? "everyone" : mentions.length === 0 ? null : mentions.join(", ");
 
+/**
+ * A step's place in its run: what the earlier steps reported, as data since
+ * bots wrote it, the yes it follows, and what its report must decide.
+ */
+const writeStep = (w: EnvelopeWriter, step: RoutineStepWake): void => {
+  w.open("step", [
+    ["number", String(step.number)],
+    ["of", String(step.of)],
+    ["action", step.action],
+  ]);
+  for (const [index, earlier] of step.earlier.entries()) {
+    w.open("earlier-step", [
+      ["number", String(index + 1)],
+      ["bot", earlier.bot],
+      ["action", earlier.action],
+    ]);
+    w.data([["source", "routine-step"]], earlier.result);
+    if (earlier.handoff !== null) w.data([["source", "routine-step-handoff"]], earlier.handoff);
+    w.close("earlier-step");
+  }
+  if (step.approved !== null) {
+    w.open("answer", [["choice", "yes"]]);
+    w.data([["source", "routine-step"]], step.approved.question);
+    if (step.approved.note !== null) w.inline("message", [["from", "user"]], step.approved.note);
+    w.close("answer");
+  }
+  const next = step.next;
+  if (next === null) {
+    w.empty("next", [["after", "nothing: this is the last step"]]);
+  } else {
+    w.empty("next", [
+      ["condition", next.condition],
+      ["condition-report", next.condition === null ? null : "goOn: whether it holds"],
+      ["yes", next.yes === null ? null : next.yes.onlyIf === null ? "every run" : "only if"],
+      ["yes-only-if", next.yes?.onlyIf ?? null],
+      [
+        "yes-report",
+        next.yes === null
+          ? null
+          : next.yes.onlyIf === null
+            ? "ask: the question and its two choices"
+            : "ask, only when yes-only-if holds",
+      ],
+      ["after", "the next step"],
+    ]);
+  }
+  w.close("step");
+};
+
 const writeTeammateMessage = (w: EnvelopeWriter, message: TeammateMessage): void =>
   w.data(
     [
@@ -719,6 +865,37 @@ const writeEvents = (w: EnvelopeWriter, events: RoutineEvents): void => {
   }
 };
 
+/** Who wrote or reacted, as attributes: you, your user, or a teammate by name and id. */
+const whoAttributes = (who: ReactionWho): Attributes =>
+  typeof who === "string"
+    ? [["from", who]]
+    : [
+        ["from", who.name],
+        ["from-id", who.id],
+      ];
+
+/**
+ * The reactions on one message as they stand: the message by its id, the room
+ * it is in, and its start as a quote, which is never a request; then each
+ * reaction.
+ */
+const writeReactionNews = (w: EnvelopeWriter, news: ReactionNews): void => {
+  w.open("reactions", [
+    ["message", news.message.id],
+    ["room", news.room?.name ?? null],
+    ["room-id", news.room?.id ?? null],
+  ]);
+  w.data([["source", "quote"], ...whoAttributes(news.message.from)], news.message.excerpt);
+  for (const reaction of news.reactions) {
+    w.empty("reaction", [...whoAttributes(reaction.from), ["emoji", reaction.emoji]]);
+  }
+  w.close("reactions");
+};
+
+/** The line before reactions that changed since the bot's last turn. */
+const REACTIONS_SINCE_LINE =
+  "Reactions on this message changed since your last turn; they stand now as follows:";
+
 const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>): void => {
   if (items.length === 0) return;
   w.open("since-last-turn");
@@ -768,6 +945,10 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
           );
           if (message.lookingAt !== null) writeLookingAt(w, message.lookingAt);
         }
+        break;
+      case "reactions":
+        w.line(REACTIONS_SINCE_LINE);
+        writeReactionNews(w, item.news);
         break;
     }
   }
@@ -847,7 +1028,16 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       for (const message of wake.messages) {
         // Times tell coalesced messages apart; a single one was sent at the wake's time.
         const at = wake.messages.length > 1 ? w.time(message.at) : null;
-        writeOperatorMessage(w, [["at", at]], message.text, message.attachments, message.lookingAt);
+        writeOperatorMessage(
+          w,
+          [
+            ["id", message.id ?? null],
+            ["at", at],
+          ],
+          message.text,
+          message.attachments,
+          message.lookingAt,
+        );
       }
       return;
     case "room": {
@@ -875,6 +1065,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           writeOperatorMessage(
             w,
             [
+              ["id", entry.id ?? null],
               ["at", w.time(entry.at)],
               ["to", to],
             ],
@@ -886,6 +1077,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           w.data(
             [
               ["source", "room"],
+              ["id", entry.id ?? null],
               ["from", entry.author.name],
               ["from-id", entry.author.id],
               ["at", w.time(entry.at)],
@@ -920,7 +1112,13 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ["due", due?.iso ?? null],
         ["due-weekday", due?.weekday ?? null],
       ]);
+      if (wake.step !== undefined) writeStep(w, wake.step);
       w.block("instruction", [], routine.instruction);
+      if (wake.step !== undefined && wake.step.number > 1) {
+        w.close("routine");
+        if (wake.triggerData !== null) w.data([["source", "webhook"]], wake.triggerData);
+        return;
+      }
       w.open("recent-runs");
       if (wake.recentRuns.length === 0 && !wake.recentRunsLeftOut) {
         w.line("None: this is the first run.");
@@ -965,7 +1163,9 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       if (event.name === "browser-help" && event.site !== null) {
         w.empty("browser-tab", [["site", event.site]]);
       }
-      if (event.name === "secret-ask") w.empty("secret", [["reference", event.reference]]);
+      if (event.name === "secret-ask") {
+        for (const reference of event.references) w.empty("secret", [["reference", reference]]);
+      }
       if (event.name === "connector-ask") {
         w.empty("server", [
           ["name", event.server],
@@ -973,6 +1173,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ]);
       }
       if (event.name === "delegated-result") w.data([["source", "delegated-task"]], event.text);
+      if (event.name === "reaction") writeReactionNews(w, event.news);
       return;
     }
   }

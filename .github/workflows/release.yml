@@ -63,11 +63,11 @@ jobs:
       # that form is refused. A nightly's tag is its version with no `v`, so
       # that it stays outside the `v*` tags the signing environments admit. Only the versions the Android app can number
       # are taken: this is the grammar and the limits of androidVersionCode
-      # (apps/mobile/src/androidVersionCode.ts), which the Android build runs,
-      # for versions after 0.3.0. This job may write, so it runs no code from
-      # the repository and checks the version itself; a change to either check
-      # is made to both. Bracket ranges match only ASCII in the C locale, so
-      # the check holds whatever locale the runner has.
+      # (apps/mobile/src/androidVersionCode.ts), which the Android build runs.
+      # This job may write, so it runs no code from the repository and checks
+      # the version itself; a change to either check is made to both. Bracket
+      # ranges match only ASCII in the C locale, so the check holds whatever
+      # locale the runner has.
       - name: Check the version
         id: version
         shell: bash
@@ -102,12 +102,6 @@ jobs:
           # Lengths first, so no number is too long for the shell's arithmetic.
           if ((${#major} > 2 || major > 20 || ${#minor} > 2 || ${#patch} > 2 || ${#rc} > 2)) || [[ "$rc" == 99 ]]; then
             echo "::error::$version is outside what the Android app can number: a major version up to 20, a minor and a patch up to 99, a release candidate up to rc.98."
-            exit 1
-          fi
-          # Versions up to 0.3.0 keep the code they shipped with, which has no
-          # room for a nightly.
-          if [[ -n "$NIGHTLY_VERSION" ]] && ((major == 0 && (minor < 3 || (minor == 3 && patch == 0)))); then
-            echo "::error::$version is a nightly of 0.3.0 or before; nightlies start at 0.3.1."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

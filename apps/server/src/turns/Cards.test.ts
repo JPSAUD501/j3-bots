@@ -6,7 +6,6 @@ import {
   Invalid,
   type NotFound,
   secretRequestFieldId,
-  WorkStepId,
 } from "@j3-bots/contracts";
 import { Engine, type TurnOutcome } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
@@ -533,243 +532,6 @@ it.effect("refuses an answer too long to reach the bot, and leaves the card open
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-/** A running turn with a step, so its work fold shows from the start, and an approval it holds on after a minute. */
-const holdsOnApprovalAfterAMinute = Effect.gen(function* () {
-  const control = yield* TestEngineControl;
-  const bot = yield* createBot("Ana");
-  const session = yield* engineSession(bot.id);
-  yield* sendToBot(bot.id, "Clean up.");
-  const turnId = yield* nextTurn(bot.id);
-  const startedAt = yield* DateTime.now;
-  yield* control.step({
-    sessionId: session,
-    turnId,
-    step: {
-      id: WorkStepId.make("step-1"),
-      kind: "command",
-      tool: null,
-      label: "ls build",
-      status: "completed",
-      startedAt,
-      finishedAt: startedAt,
-    },
-  });
-  yield* awaitEntry(bot.id, "work-fold");
-  yield* TestClock.adjust(Duration.minutes(1));
-  yield* control.openRequest({
-    sessionId: session,
-    turnId,
-    request: {
-      _tag: "approval",
-      kind: "command",
-      action: "rm -rf build",
-      detail: null,
-      reason: null,
-      exact: true,
-      sessionGrant: null,
-    },
-  });
-  const card = yield* awaitEntry(bot.id, "approval");
-  const answer = (decision: "allow-once" | "deny") =>
-    Effect.gen(function* () {
-      const cards = yield* Cards;
-      yield* cards.answer({
-        commandId: command(),
-        entryId: card.id,
-        answer: { _tag: "approval", decision },
-      });
-      yield* cards.respondPending;
-    });
-  return { control, bot, session, turnId, card, answer };
-});
-
-/** How long the turn's fold says it worked, once it ended. */
-const workedMs = (botId: BotId) =>
-  Effect.gen(function* () {
-    yield* until(
-      awaitEntry(botId, "work-fold").pipe(Effect.map((fold) => fold.status._tag === "finished")),
-    );
-    const fold = yield* awaitEntry(botId, "work-fold");
-    if (fold.status._tag !== "finished") return yield* Effect.die(new Error("The fold runs"));
-    const from = fold.turnStartedAt ?? fold.createdAt;
-    const spanMs = DateTime.toEpochMillis(fold.status.finishedAt) - DateTime.toEpochMillis(from);
-    return spanMs - fold.status.waitedMs - fold.status.waitedBeforeMs;
-  });
-
-it.effect("leaves out of a turn's work the time it waited on a card, and only that time", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const { control, bot, session, turnId, card, answer } = yield* holdsOnApprovalAfterAMinute;
-    yield* TestClock.adjust(Duration.minutes(2));
-    yield* answer("allow-once");
-    yield* until(
-      sql<{ readonly closed_at: string | null }>`
-        SELECT closed_at FROM engine_requests WHERE entry_id = ${card.id}
-      `.pipe(
-        Effect.orDie,
-        Effect.map((rows) => rows.length === 1 && rows[0]?.closed_at !== null),
-      ),
-    );
-    yield* TestClock.adjust(Duration.minutes(3));
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
-
-    // A minute before the card, three after it was answered.
-    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.minutes(4)));
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("counts the time after a refused answer as waiting, until the turn ends", () =>
-  Effect.gen(function* () {
-    const { control, bot, session, turnId, answer } = yield* holdsOnApprovalAfterAMinute;
-    yield* TestClock.adjust(Duration.minutes(2));
-    yield* control.rejectNextAnswer;
-    yield* answer("allow-once");
-    yield* until(
-      awaitEntry(bot.id, "approval").pipe(Effect.map((found) => found.status._tag === "refused")),
-    );
-    yield* TestClock.adjust(Duration.minutes(5));
-    yield* control.finishTurn({
-      sessionId: session,
-      turnId,
-      outcome: { _tag: "interrupted" },
-    });
-
-    // Only the minute before the card was work.
-    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.minutes(1)));
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect(
-  "counts a turn's work and its wait on a card from the turn's start, as its clock does",
-  () =>
-    Effect.gen(function* () {
-      const control = yield* TestEngineControl;
-      const states = yield* BotStates;
-      const bot = yield* createBot("Ana");
-      const session = yield* engineSession(bot.id);
-      yield* sendToBot(bot.id, "Clean up.");
-      const turnId = yield* nextTurn(bot.id);
-      yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "thinking")));
-      const thinking = yield* states.of(bot.id);
-      if (thinking._tag !== "thinking")
-        return yield* Effect.die(new Error("The bot does not think"));
-
-      // The turn thinks for 20 seconds before its first step.
-      yield* TestClock.adjust(Duration.seconds(20));
-      const stepAt = yield* DateTime.now;
-      yield* control.step({
-        sessionId: session,
-        turnId,
-        step: {
-          id: WorkStepId.make("step-1"),
-          kind: "command",
-          tool: null,
-          label: "ls build",
-          status: "completed",
-          startedAt: stepAt,
-          finishedAt: stepAt,
-        },
-      });
-      const fold = yield* awaitEntry(bot.id, "work-fold");
-      assert.isTrue(
-        fold.turnStartedAt !== null && DateTime.Equivalence(fold.turnStartedAt, thinking.since),
-      );
-
-      yield* TestClock.adjust(Duration.seconds(10));
-      yield* control.openRequest({
-        sessionId: session,
-        turnId,
-        request: {
-          _tag: "approval",
-          kind: "command",
-          action: "rm -rf build",
-          detail: null,
-          reason: null,
-          exact: true,
-          sessionGrant: null,
-        },
-      });
-      const card = yield* awaitEntry(bot.id, "approval");
-      // Waiting within the turn, the clock still counts from its start.
-      const waiting = yield* states.of(bot.id);
-      assert.isTrue(
-        waiting._tag === "waiting" &&
-          waiting.entryId === card.id &&
-          waiting.since !== null &&
-          DateTime.Equivalence(waiting.since, thinking.since),
-      );
-
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "interrupted" } });
-      // The 30 seconds before the card, the first 20 of them before the fold was written.
-      assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(30)));
-    }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("keeps a wait before the turn's first step apart from the time after its fold", () =>
-  Effect.gen(function* () {
-    const control = yield* TestEngineControl;
-    const bot = yield* createBot("Ana");
-    const session = yield* engineSession(bot.id);
-    yield* sendToBot(bot.id, "Clean up.");
-    const turnId = yield* nextTurn(bot.id);
-
-    // Ten seconds of thought, then two minutes on an approval, before any step.
-    yield* TestClock.adjust(Duration.seconds(10));
-    yield* control.openRequest({
-      sessionId: session,
-      turnId,
-      request: {
-        _tag: "approval",
-        kind: "command",
-        action: "rm -rf build",
-        detail: null,
-        reason: null,
-        exact: true,
-        sessionGrant: null,
-      },
-    });
-    const card = yield* awaitEntry(bot.id, "approval");
-    yield* TestClock.adjust(Duration.minutes(2));
-    yield* (yield* Cards).answer({
-      commandId: command(),
-      entryId: card.id,
-      answer: { _tag: "approval", decision: "allow-once" },
-    });
-    yield* (yield* Cards).respondPending;
-    yield* until(
-      awaitEntry(bot.id, "approval").pipe(Effect.map((found) => found.status._tag !== "pending")),
-    );
-    const stepAt = yield* DateTime.now;
-    yield* control.step({
-      sessionId: session,
-      turnId,
-      step: {
-        id: WorkStepId.make("step-1"),
-        kind: "command",
-        tool: null,
-        label: "rm -rf build",
-        status: "completed",
-        startedAt: stepAt,
-        finishedAt: stepAt,
-      },
-    });
-    yield* awaitEntry(bot.id, "work-fold");
-    yield* TestClock.adjust(Duration.seconds(30));
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
-
-    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(40)));
-    const fold = yield* awaitEntry(bot.id, "work-fold");
-    // A client that counts from the fold's writing never sees the wait before it.
-    assert.deepStrictEqual(
-      fold.status._tag === "finished"
-        ? [fold.status.waitedMs, fold.status.waitedBeforeMs]
-        : undefined,
-      [0, Duration.toMillis(Duration.minutes(2))],
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
 /**
  * The bot thinks for `thinking`, then its turn ends by `end` before any step:
  * its conversation's work folds, read again from the start as a client that
@@ -821,7 +583,6 @@ it.effect("says a turn the operator stopped before its first step was stopped, a
       fold?.status._tag === "finished" ? fold.status.ending : undefined,
       "interrupted",
     );
-    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(64)));
     // The roster says it stopped, not that it worked.
     const item = (yield* (yield* Roster).items).find(
       (found) => found._tag === "bot" && found.bot.id === bot.id,
@@ -843,7 +604,6 @@ it.effect("says a turn that failed before its first step failed, and when", () =
       folds.map((fold) => [fold.stepCount, fold.status._tag === "finished" && fold.status.ending]),
       [[0, "failed"]],
     );
-    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(12)));
     // The notice written after the fold, with what went wrong and its retry, is what the roster shows.
     const notices = (yield* conversation(bot.id)).flatMap((entry) =>
       entry._tag === "notice" ? [[entry.notice, entry.retryable]] : [],
@@ -932,10 +692,7 @@ it.effect("counts the operator's answer to a card as the turn's activity", () =>
     yield* (yield* Cards).respondPending;
     yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag !== "waiting")));
     const after = yield* states.of(bot.id);
-    assert.deepStrictEqual(
-      after._tag === "thinking" ? [after.stalled, after.quietSince] : after._tag,
-      [false, null],
-    );
+    assert.deepStrictEqual(after._tag === "thinking" ? after.stalled : after._tag, false);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -963,7 +720,6 @@ it.effect("counts an answer as activity from when the engine took it, also when 
     const card = yield* awaitEntry(bot.id, "approval");
     // The engine takes the answer, and its close reaches the server long after.
     const stalled = yield* control.stallEvents(session);
-    const answeredAt = yield* DateTime.now;
     yield* (yield* Cards).answer({
       commandId: command(),
       entryId: card.id,
@@ -974,10 +730,7 @@ it.effect("counts an answer as activity from when the engine took it, also when 
     yield* stalled.release;
     yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag !== "waiting")));
     const after = yield* states.of(bot.id);
-    assert.deepStrictEqual(
-      after._tag === "thinking" ? [after.stalled, after.quietSince] : after._tag,
-      [true, answeredAt],
-    );
+    assert.deepStrictEqual(after._tag === "thinking" ? after.stalled : after._tag, true);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

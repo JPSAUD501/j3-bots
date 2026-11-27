@@ -24,18 +24,21 @@ interface PlacedFiles {
 /**
  * Message text with paragraphs, code and links, each bot it mentions as its
  * chip, and each of its files where it was placed, in the bubble's own text
- * color (`className`). Links open in the browser.
+ * color (`className`). Links open in the browser. Its text can be selected
+ * unless a long press on the message does something else (`selectable`).
  */
 export function MessageText({
   text,
   mentionable,
   className,
   placed,
+  selectable = true,
 }: {
   readonly text: string;
   readonly mentionable: ReadonlyArray<MentionName>;
   readonly className: string;
   readonly placed?: PlacedFiles;
+  readonly selectable?: boolean;
 }) {
   const bots = useBots();
   // A mention is a bot's chip while the bot is there; `@everyone` and a deleted bot's stay text.
@@ -50,7 +53,7 @@ export function MessageText({
           // Blocks have no identity besides their order, which never changes for a given text.
           // oxlint-disable-next-line react/no-array-index-key -- see above
           <View key={i} className="rounded-md bg-code-background px-2.5 py-2">
-            <Text selectable className={`text-xs ${className}`} face="mono">
+            <Text selectable={selectable} className={`text-xs ${className}`} face="mono">
               {block.text}
             </Text>
           </View>
@@ -58,7 +61,7 @@ export function MessageText({
           <Text
             // oxlint-disable-next-line react/no-array-index-key -- blocks are positional
             key={i}
-            selectable
+            selectable={selectable}
             // A chip is taller than a line of text: its lines make room for it.
             style={block.inlines.some(chipped) ? { lineHeight: INLINE_LINE_HEIGHT } : undefined}
             className={`text-lg ${className}`}

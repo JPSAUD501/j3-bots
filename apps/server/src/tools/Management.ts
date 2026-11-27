@@ -36,17 +36,35 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
 import { ConnectorAsks, type Needs, type Settled } from "../connectors/ConnectorAsks.ts";
 import { ConnectorSignIns } from "../connectors/auth.ts";
-import { Connectors, type ListedConnector } from "../connectors/Connectors.ts";
+import { Connectors, type ListedConnector, type ServiceSignIn } from "../connectors/Connectors.ts";
 import { ConnectorSources } from "../connectors/sources/Sources.ts";
 import type { NotASkill, SkillFetchFailed } from "../skills/SkillRepositories.ts";
 import { type SkillChangeError, Skills } from "../skills/Skills.ts";
 import type { SpeakingTurn } from "../turns/workStopped.ts";
 
 /** Why a management tool did nothing, in words the bot reads. */
+/** The client credentials a bot's call gives, as connectors take them. */
+const serviceOf = (
+  given: ToolInput<"add_mcp_server">["clientCredentials"],
+): ServiceSignIn | undefined => {
+  if (given === undefined) return undefined;
+  const credential =
+    given.privateKey === undefined
+      ? { _tag: "client-secret" as const, value: Redacted.make(given.clientSecret ?? "") }
+      : { _tag: "private-key" as const, value: Redacted.make(given.privateKey) };
+  return {
+    clientId: Redacted.make(given.clientId),
+    credential,
+    issuer: Option.fromUndefinedOr(given.issuer),
+    scope: given.scope ?? null,
+  };
+};
+
 export class ManagementRefused extends Schema.TaggedError<ManagementRefused>()(
   "ManagementRefused",
   { reason: Schema.String },
@@ -285,6 +303,20 @@ export const layer = Layer.effect(
       return { _tag: "bots", ids: [yield* requireBot(scope.bot)] } satisfies ConnectorGrant;
     });
 
+    /**
+     * What a connector request with client credentials tells the bot when it
+     * fails for them: their form, or a service that does not take them.
+     */
+    const serviceRefusal = (error: ConnectorCommandError): ManagementRefused => {
+      if (error._tag === "Invalid" && error.reason === "connector-fields") {
+        return refuse(MANAGEMENT_REFUSED.serviceCredentials);
+      }
+      if (error._tag === "Conflict" && error.reason === "sign-in-unsupported") {
+        return refuse(MANAGEMENT_REFUSED.serviceUnsupported);
+      }
+      return connectorRefusal(error);
+    };
+
     /** What a connector request's failure tells the bot. */
     const connectorRefusal = (error: ConnectorCommandError): ManagementRefused => {
       if (error._tag === "NotFound" && error.resource === "connector-listing") {
@@ -375,16 +407,24 @@ export const layer = Layer.effect(
     const addedAnswer = Effect.fnUntraced(function* (caller: Caller, connector: Connector) {
       const listed = (yield* connectors.listed).find((each) => each.connector.id === connector.id);
       const status = listed?.connector.status ?? connector.status;
-      if (status._tag === "needs-sign-in") {
+      // A service that signs in services only takes credentials the bot asks for, not a sign-in.
+      const servicesOnly =
+        status._tag === "needs-sign-in" &&
+        connector.signIn === "oauth" &&
+        (yield* signIns.signsInServicesOnly(connector.id));
+      if (status._tag === "needs-sign-in" && !servicesOnly) {
         // The operator signs in from a card in the caller's conversation.
         yield* signIns.needed({ botId: caller.botId, connectorId: connector.id });
       }
-      const note =
-        status._tag === "needs-sign-in"
+      const note = servicesOnly
+        ? MANAGEMENT_NOTES.serviceCredentialsNeeded
+        : status._tag === "needs-sign-in"
           ? MANAGEMENT_NOTES.signInPending
-          : status._tag === "connected"
-            ? MANAGEMENT_NOTES.connected
-            : MANAGEMENT_NOTES.failing;
+          : status._tag === "needs-secret" && status.reason === "refused"
+            ? MANAGEMENT_NOTES.credentialsRefused
+            : status._tag === "connected"
+              ? MANAGEMENT_NOTES.connected
+              : MANAGEMENT_NOTES.failing;
       return {
         server:
           listed === undefined
@@ -408,8 +448,15 @@ export const layer = Layer.effect(
       const grant = yield* grantFor(caller, primary, input.scope);
       const source = yield* sourceOf(input, consent);
       if (source._tag === "needs") return source;
+      const service = serviceOf(input.clientCredentials);
       const added = yield* connectors
-        .add({ id: connectorIdOf(caller.requestId), source, grant, by: by(caller) })
+        .add({
+          id: connectorIdOf(caller.requestId),
+          source,
+          grant,
+          ...(service === undefined ? {} : { service }),
+          by: by(caller),
+        })
         .pipe(
           Effect.map((connector) => ({ _tag: "added", connector }) as const),
           Effect.catchIf(
@@ -428,7 +475,11 @@ export const layer = Layer.effect(
                 : Effect.fail(refuse(MANAGEMENT_REFUSED.galleryPrivateNetwork)),
           ),
           Effect.mapError((error) =>
-            error._tag === "ManagementRefused" ? error : connectorRefusal(error),
+            error._tag === "ManagementRefused"
+              ? error
+              : service === undefined
+                ? connectorRefusal(error)
+                : serviceRefusal(error),
           ),
         );
       if (added._tag === "needs") return added;
@@ -572,15 +623,17 @@ export const layer = Layer.effect(
               args: input.command.args,
               env: pairs(input.command.env, "name"),
             });
+      const service = serviceOf(input.clientCredentials);
       const connector = yield* connectors
         .update({
           connectorId: found.connector.id,
           ...(input.name === undefined ? {} : { name: input.name }),
           ...(values === undefined ? {} : { values }),
           ...(command === undefined ? {} : { command }),
+          ...(service === undefined ? {} : { service }),
           by: by(caller),
         })
-        .pipe(Effect.mapError(connectorRefusal));
+        .pipe(Effect.mapError(service === undefined ? connectorRefusal : serviceRefusal));
       return yield* addedAnswer(caller, connector);
     });
 

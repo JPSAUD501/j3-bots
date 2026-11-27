@@ -11,6 +11,7 @@ import type {
   EntryId,
   ListingRef,
   QuestionAnswers,
+  ReactionEmoji,
   Room,
   RoomId,
   RoutineId,
@@ -18,7 +19,7 @@ import type {
   WorkStep,
 } from "@j3-bots/contracts";
 import type { ReactNode, RefObject } from "react";
-import type { IntentResult, MentionLabel } from "@j3-bots/client-runtime";
+import type { IntentResult, MentionLabel, RoutineCardCommand } from "@j3-bots/client-runtime";
 import {
   type CardEntry,
   latestOfLine,
@@ -43,6 +44,7 @@ import { EventLine, type OpenPair } from "./EventLine";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
+import { RoutineTrack } from "./RoutineTrack";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretAskCard } from "./SecretAskCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -66,6 +68,8 @@ export interface TimelineIntents {
   readonly declineSecretAsk: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
+  /** Sets the operator's reaction on a message, or takes it off with `null`. */
+  readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => void;
   /**
    * Sends again a message this device could not send, with `mentions` in
    * place of its own when given.
@@ -80,6 +84,11 @@ export interface TimelineIntents {
   /** Shows large an image a step of a bot's work looked at. */
   readonly openWorkImage: (id: WorkImageId) => void;
   readonly openRoutine: (routineId: RoutineId) => void;
+  /**
+   * The operator's yes or no to a routine's run, its Try again, or its Stop,
+   * on the run's card; `name` is the routine's, which a failure names.
+   */
+  readonly routineCard: (entryId: EntryId, name: string, command: RoutineCardCommand) => void;
   readonly openConversation: (botId: BotId) => void;
   /** Opens the connector's page with its sign-in started. */
   readonly signInConnector: (entry: ConnectorAuthEntry) => void;
@@ -271,6 +280,7 @@ export function Timeline({
                 mentionable={highlighted(message.mentions, [])}
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
+                onReact={(emoji) => intents.react(message.id, emoji)}
                 submitting={submitting(message.id)}
                 openingHold={openingHold}
               />
@@ -370,6 +380,44 @@ function Card({
           submitting={submitting(entry.id)}
         />
       );
+    case "routine-change":
+      return (
+        <RoutineTrack
+          entryId={entry.id}
+          name={entry.name}
+          trigger={entry.trigger}
+          owner={entry.author._tag === "bot" ? entry.author.botId : null}
+          steps={entry.steps}
+          run={null}
+        />
+      );
+    case "routine-run": {
+      const { run } = entry;
+      return (
+        <RoutineTrack
+          entryId={entry.id}
+          name={entry.name}
+          trigger={entry.trigger}
+          owner={entry.author.botId}
+          steps={[]}
+          run={run}
+          submitting={submitting(entry.id)}
+          onAnswer={(step, choice, note) =>
+            intents.routineCard(entry.id, entry.name, {
+              _tag: "answer",
+              runId: run.id,
+              step,
+              choice,
+              note,
+            })
+          }
+          onRetry={() =>
+            intents.routineCard(entry.id, entry.name, { _tag: "retry", runId: run.id })
+          }
+          onStop={() => intents.routineCard(entry.id, entry.name, { _tag: "stop", runId: run.id })}
+        />
+      );
+    }
     case "notice":
       return (
         <NoticeLine

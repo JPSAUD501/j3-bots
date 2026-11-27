@@ -137,3 +137,15 @@ export const OpenLiterals = <const L extends ReadonlyArray<string>>(known: L) =>
 export const LANGUAGES = ["en", "pt-BR"] as const;
 export const Language = Schema.Literals(LANGUAGES);
 export type Language = typeof Language.Type;
+
+/**
+ * A skill's name: lowercase letters, digits and inner hyphens, at most 64
+ * characters, the names harnesses list skills under and the Agent Skills
+ * format gives them, a connector's too. A bot's own skill is the folder of
+ * that name in its workspace: the name holds no separator or dot, so it can
+ * never name a place outside the bot's skills.
+ */
+export const SkillName = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
+);
+export type SkillName = typeof SkillName.Type;

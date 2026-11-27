@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import { BotId, CommandId, NonNegativeInt } from "./base.ts";
+import { BotId, CommandId, NonNegativeInt, SkillName } from "./base.ts";
 import { CommandError } from "./errors.ts";
-import { SkillName, TEMPLATE_LIMITS } from "./template.ts";
+import { TEMPLATE_LIMITS } from "./template.ts";
 
 /**
  * Who made a change to an MCP server or a skill: the operator, from a client,

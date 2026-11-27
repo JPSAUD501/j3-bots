@@ -61,7 +61,8 @@ export interface RoomActivity {
  * a session the engine still has, or whose dispatch for the room is live
  * (`intended`, `accepted`, or `delivered` with no continuation pending), and
  * each one with a room wake waiting to start, for a turn slot or for a turn of
- * its own to end. Members run in parallel, so several are named at once. Member order holds while
+ * its own to end. A reaction's quiet turn, its dispatch and its wake are not
+ * counted until the member speaks (`quietTurns`). Members run in parallel, so several are named at once. Member order holds while
  * a member goes from waiting to working, so the list changes only when a
  * member starts or ends. A member whose permission mode the engine refuses
  * waits out of the room, so it is not counted, nor is one that left the
@@ -70,7 +71,8 @@ export interface RoomActivity {
  * `memberWork`, while the work is `running`, is the plan and little ones of
  * each member's turns for the room whose work may still run there: not
  * finished, or finished with background work, such as a little one it handed
- * off, pending, in a session the engine still has (decision 0070). They show
+ * off, pending, in a session the engine still has (decision 0070), and not
+ * quiet (`quietTurns`). They show
  * as one: the latest plan, and every little one of them. A member still
  * `answering` is in a turn; one that is not left work behind it.
  *
@@ -186,7 +188,7 @@ export const layer = Layer.effect(
       SELECT ra_queue.room_id AS room_id, ra_queue.bot_id AS bot_id FROM (
         SELECT ra_turn.audience_room_id AS room_id, ra_session.bot_id AS bot_id
         FROM turns ra_turn JOIN sessions ra_session ON ra_session.id = ra_turn.session_id
-        WHERE ra_turn.audience = 'room' AND ra_turn.finished_at IS NULL
+        WHERE ra_turn.audience = 'room' AND ra_turn.finished_at IS NULL AND ra_turn.quiet = 0
           AND ra_session.lost_at IS NULL AND ra_session.engine_retired_at IS NULL
         UNION ALL
         SELECT ra_dispatch.audience_room_id, ra_dispatch.bot_id
@@ -196,11 +198,24 @@ export const layer = Layer.effect(
             ra_dispatch.status IN ('intended', 'accepted')
             OR (ra_dispatch.status = 'delivered' AND ra_dispatch.continuation_resumes_at IS NULL)
           )
+          AND NOT (
+            EXISTS (
+              SELECT 1 FROM wakes ra_carried
+              WHERE ra_carried.dispatch_id = ra_dispatch.id
+                AND json_extract(ra_carried.payload_json, '$._tag') = 'reaction'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM wakes ra_carried
+              WHERE ra_carried.dispatch_id = ra_dispatch.id
+                AND json_extract(ra_carried.payload_json, '$._tag') <> 'reaction'
+            )
+          )
         UNION ALL
         SELECT ra_wake.audience_room_id, ra_wake.bot_id
         FROM wakes ra_wake
         WHERE ra_wake.audience = 'room' AND ra_wake.status = 'pending'
           AND ra_wake.kind <> 'routine'
+          AND json_extract(ra_wake.payload_json, '$._tag') <> 'reaction'
           AND NOT ${modeRefusedSql(sql, sql`ra_wake.bot_id`)}
       ) ra_queue
       JOIN room_members ra_member
@@ -224,7 +239,7 @@ export const layer = Layer.effect(
       JOIN sessions rw_session ON rw_session.id = rw_turn.session_id
       JOIN room_members rw_member
         ON rw_member.room_id = rw_turn.audience_room_id AND rw_member.bot_id = rw_session.bot_id
-      WHERE rw_turn.audience = 'room' AND rw_turn.work_json IS NOT NULL
+      WHERE rw_turn.audience = 'room' AND rw_turn.work_json IS NOT NULL AND rw_turn.quiet = 0
         AND rw_session.lost_at IS NULL AND rw_session.engine_retired_at IS NULL
         AND (rw_turn.finished_at IS NULL OR rw_turn.background_pending = 1)
         AND rw_turn.audience_room_id IN (

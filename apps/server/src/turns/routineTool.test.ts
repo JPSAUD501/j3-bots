@@ -48,7 +48,7 @@ const working = Effect.gen(function* () {
 const setRoutine = (
   sessionId: SessionId,
   turnId: TurnId,
-  args: { readonly [key: string]: string | boolean },
+  args: { readonly [key: string]: Schema.Json },
   requestId: string,
 ) =>
   Effect.gen(function* () {
@@ -390,3 +390,50 @@ it("refuses event arguments too long to keep, missing what the event requires, o
     "Its arguments must fit in 4096 bytes as JSON; give only what the event needs.",
   );
 });
+
+it.effect(
+  "builds a routine in steps from the bot's call, with a teammate's step, and refuses one that cannot be",
+  () =>
+    Effect.gen(function* () {
+      const { bot, session, turnId } = yield* working;
+      const bia = yield* createBot("Bia");
+      const gather = {
+        kind: "bot",
+        action: "gathers last week's emails",
+        instruction: "Gather last week's emails into a list.",
+      };
+      const draft = {
+        kind: "bot",
+        bot: bia.id,
+        action: "drafts the replies",
+        instruction: "Draft a reply to each email on the list.",
+      };
+      const create = (steps: ReadonlyArray<Schema.Json>, requestId: string) =>
+        setRoutine(
+          session,
+          turnId,
+          { action: "create", name: "Inbox", webhook: true, steps },
+          requestId,
+        );
+
+      const created = savedBy(yield* create([gather, { kind: "yes" }, draft], "call-1"));
+      assert.deepStrictEqual(created.steps, [
+        { _tag: "bot", botId: bot.id, action: gather.action, instruction: gather.instruction },
+        { _tag: "yes", onlyIf: null, waitHours: 24 },
+        { _tag: "bot", botId: bia.id, action: draft.action, instruction: draft.instruction },
+      ]);
+      assert.strictEqual(created.instruction, gather.instruction);
+
+      for (const [steps, requestId] of [
+        // A step for a bot that does not exist.
+        [[gather, { ...draft, bot: "bot_nobody" }], "call-2"],
+        // A routine ends with a bot step.
+        [[gather, { kind: "yes" }], "call-3"],
+        // A condition carries only its check.
+        [[gather, { kind: "condition", check: "something new", waitHours: 2 }, draft], "call-4"],
+      ] as const) {
+        assert.strictEqual((yield* create(steps, requestId))._tag, "refused");
+      }
+      assert.strictEqual((yield* (yield* Routines).list(bot.id)).length, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

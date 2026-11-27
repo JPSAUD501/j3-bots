@@ -2,9 +2,8 @@
 import { DESKTOP_APP_ORIGINS } from "@j3-bots/contracts";
 
 /**
- * The app's id for the operating system (Windows notifications, later the
- * package and the Linux desktop entry). A development placeholder, until the
- * ids of a published build are chosen.
+ * The app's id for the operating system: Windows notifications, and the
+ * package (`appId` in electron-builder.yml).
  */
 export const APP_ID = "dev.j3bots.desktop";
 

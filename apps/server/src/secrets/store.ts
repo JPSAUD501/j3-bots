@@ -3,6 +3,7 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { migrate } from "../persistence/Migrations.ts";
 import { KEY_BYTES, openField, type Sealed, sealField } from "./crypto.ts";
@@ -99,6 +100,33 @@ export const newerThanThisRelease = Effect.fn("secrets.newerThanThisRelease")(fu
   return recorded.some(({ migration_id }) => !known.has(migration_id));
 });
 
+/**
+ * The secrets are still in a vault from before 0.9.0 that no release opened:
+ * its data key is wrapped under a master password, which only 0.12 and
+ * earlier take. Nothing here reads or changes it.
+ */
+export class OldVaultUnopened extends Schema.TaggedError<OldVaultUnopened>()(
+  "OldVaultUnopened",
+  {},
+) {
+  override get message(): string {
+    return "The secrets are in a vault from before J3 Bots 0.9.0 that was never opened. Open it with J3 Bots 0.12 first: start 0.12, type the vault's password where it asks for it, then update again.";
+  }
+}
+
+/**
+ * Whether the database `sql` holds a vault from before secrets with
+ * something in it: a keyring and at least one record.
+ */
+export const holdsUnopenedOldVault = Effect.fn("secrets.holdsUnopenedOldVault")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const keyring = yield* sql`SELECT 1 FROM keyring LIMIT 1`;
+  if (keyring.length === 0) return false;
+  const records = yield* sql`SELECT 1 FROM records LIMIT 1`;
+  return records.length > 0;
+});
+
 /** The secrets' database, open and migrated, or left alone because a newer release wrote it. */
 export type SecretsFile =
   | { readonly _tag: "open"; readonly sql: SqlClient.SqlClient }
@@ -113,8 +141,8 @@ export type SecretsFile =
 export const openSecretsFile = Effect.fn("Secrets.open")(function* (location: string) {
   const sql = yield* SqliteClient.make({ filename: location });
   yield* sql`PRAGMA foreign_keys = ON`;
-  // What is deleted is overwritten, not only unlinked: a deleted value, or an
-  // old vault's keyring, never stays readable in the file's free space.
+  // What is deleted is overwritten, not only unlinked: nothing deleted stays
+  // readable in the file's free space.
   yield* sql`PRAGMA secure_delete = ON`;
   if (yield* newerThanThisRelease(sql)) {
     yield* Effect.logWarning(

@@ -257,6 +257,14 @@ export const openCommandSession = (
                   subscribe: (input) => explainedEvent(events.subscribe(input)),
                   unsubscribe: (input) => explainedEvent(events.unsubscribe(input)),
                 },
+          skills: {
+            ...session.skills,
+            listSkills: explained(session.skills.listSkills),
+            getSkill: (uri) => explained(session.skills.getSkill(uri)),
+            readSkillFile: (skill, path) => explained(session.skills.readSkillFile(skill, path)),
+            listSkillFolder: (skill, path) =>
+              explained(session.skills.listSkillFolder(skill, path)),
+          },
         },
         ended: Effect.raceFirst(running.ended, Deferred.await(broken)),
       } satisfies CommandSession;

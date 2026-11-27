@@ -590,7 +590,7 @@ export const reserve = Effect.gen(function* () {
     case "absent":
       return;
     case "live":
-      // A server that does not take the lock, such as an older release.
+      // Live while this process holds the lock: a server that does not take it.
       return yield* new ServerAlreadyRunning({ home });
     case "not-a-socket":
       return yield* new HomeBlocked({ path: adminSocket, reason: "not-a-socket" });

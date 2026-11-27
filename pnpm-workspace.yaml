@@ -25,7 +25,7 @@ catalog:
   "@effect/tsgo": 0.67.1
   "@effect/vitest": 4.1.5
   "@types/node": 24.12.4
-  # React is shared by the web client now and the mobile client later.
+  # React is shared by the web client and the mobile client.
   "@types/react": 19.3.0
   "@types/react-dom": 19.3.0
   effect: 4.1.5

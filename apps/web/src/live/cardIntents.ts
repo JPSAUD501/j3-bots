@@ -5,6 +5,7 @@ import {
   type J3Client,
   refusedWith,
   retryAction,
+  type RoutineCardCommand,
 } from "@j3-bots/client-runtime";
 import { ownAppSetup } from "@j3-bots/client-runtime/presentation";
 import { useActions } from "@j3-bots/client-runtime/react";
@@ -17,7 +18,7 @@ import type { TimelineIntents } from "../components/Timeline";
 /**
  * What a timeline's cards and messages ask of the server, the same wherever
  * the conversation shows: an answer to a question or an approval, a secret,
- * a message sent again or taken out, a connector's request. What opens
+ * a message sent again or taken out, a reaction, a connector's request. What opens
  * another screen is left to whoever shows the timeline.
  */
 export type CardIntents = Pick<
@@ -32,6 +33,7 @@ export type CardIntents = Pick<
   | "declineSecretAsk"
   | "retryNotice"
   | "retryMessage"
+  | "react"
   | "resendMessage"
   | "discardMessage"
   | "answerConnectorInput"
@@ -39,7 +41,15 @@ export type CardIntents = Pick<
   | "connectorAskSetup"
   | "allowConnectorAsk"
   | "declineConnectorAsk"
+  | "routineCard"
 >;
+
+/** What the operator is told when their command on a routine's run did not reach it. */
+const routineFailed = {
+  answer: "routine.you.answerFailed",
+  retry: "routine.failed.retryFailed",
+  stop: "routine.track.stopFailed",
+} as const satisfies Record<RoutineCardCommand["_tag"], string>;
 
 const submitting = (state: ActionState | undefined) => state?._tag === "submitting";
 
@@ -99,6 +109,10 @@ export function useCardIntents(
     declineSecretAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
+    react: (entryId, emoji) =>
+      void j3.react(entryId, emoji).then((result) => {
+        if (result._tag === "failed") say(t("reaction.failed"));
+      }),
     resendMessage: (commandId, mentions) =>
       void j3.resend(commandId, mentions).then((result) => {
         if (result._tag === "not-kept") say(t("message.changeNotKept"));
@@ -127,5 +141,11 @@ export function useCardIntents(
         if (refusedWith(result, "answer")) say(t("connectorAsk.refused"));
       }),
     declineConnectorAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
+    // A run that moved on meanwhile closed the card: the card already shows where it is.
+    routineCard: (entryId, name, command) =>
+      void j3.routineCard(entryId, command).then((result) => {
+        if (result._tag === "done" || refusedWith(result, "card-closed")) return;
+        say(t(routineFailed[command._tag], { name }));
+      }),
   };
 }

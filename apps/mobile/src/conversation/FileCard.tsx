@@ -12,7 +12,7 @@ import {
   FileText,
   type LucideIcon,
 } from "lucide-react-native";
-import { use, useState } from "react";
+import { createContext, use, useState } from "react";
 import { Image, PixelRatio, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -41,6 +41,18 @@ const kindIcons = {
 } as const satisfies Record<FileIcon, LucideIcon>;
 
 /**
+ * What a long press on a file does where it stands: in a message one can
+ * react to, it opens the reaction bar, as a long press anywhere on the
+ * message does. A file takes the press, so its parent would never see it.
+ */
+export const FileLongPress = createContext<(() => void) | null>(null);
+
+const useLongPress = (): { readonly onLongPress?: () => void } => {
+  const onLongPress = use(FileLongPress);
+  return onLongPress === null ? {} : { onLongPress };
+};
+
+/**
  * A file in the conversation: its image or its kind, its name and size.
  * Pressing it opens it (`FileOpener`); while its bytes come, it says it is
  * opening and takes no second press.
@@ -53,9 +65,11 @@ export function FileCard({ attachment }: { readonly attachment: Attachment }) {
   const widths = use(EntryWidths);
   const image = useImageFile(client, attachment);
   const opening = opener.opening(attachment);
+  const longPress = useLongPress();
   const { name } = attachment;
   return (
     <Pressable
+      {...longPress}
       accessibilityRole="button"
       accessibilityLabel={t("file.open", { name })}
       accessibilityHint={fileDetail(attachment, i18n)}
@@ -113,8 +127,10 @@ export function InlineFile({
   const opener = useFileOpener();
   const image = useImageFile(client, attachment);
   const ink = useColor(color);
+  const longPress = useLongPress();
   return (
     <Pressable
+      {...longPress}
       accessibilityRole="button"
       accessibilityLabel={t("file.open", { name: attachment.name })}
       onPress={() => opener.open(attachment)}
@@ -154,6 +170,7 @@ export function MessageFile({ attachment }: { readonly attachment: Attachment })
   const image = useImageFile(client, attachment);
   // Bytes named as an image that do not decode as one show as the file they are.
   const [undrawable, setUndrawable] = useState(false);
+  const longPress = useLongPress();
   if (!showsImage(attachment) || image._tag === "failed" || undrawable) {
     const kind = documentKind(attachment);
     return kind !== null &&
@@ -166,6 +183,7 @@ export function MessageFile({ attachment }: { readonly attachment: Attachment })
   }
   return (
     <Pressable
+      {...longPress}
       accessibilityRole="button"
       accessibilityLabel={t("file.open", { name: attachment.name })}
       onPress={() => opener.open(attachment)}
@@ -207,8 +225,10 @@ function DocumentCard({ attachment }: { readonly attachment: Attachment }) {
     i18n,
     document === null ? undefined : factsOfState(document),
   );
+  const longPress = useLongPress();
   return (
     <Pressable
+      {...longPress}
       accessibilityRole="button"
       accessibilityLabel={t("file.open", { name })}
       accessibilityHint={detail}

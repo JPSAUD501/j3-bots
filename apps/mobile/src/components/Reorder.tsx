@@ -101,28 +101,32 @@ export function useRowMotion(
 const slide = reanimatedSpring(springs.slide);
 const soft = reanimatedSpring(springs.soft);
 
-/** The rows' motion, and the rows on their way out. */
+/** The rows' motion, the rows on their way out, and those that bring themselves in. */
 const MotionNow = createContext<{
   readonly motion: RowMotion;
   readonly leaving: ReadonlySet<string>;
-}>({ motion: undrawn.motion, leaving: new Set() });
+  readonly entering: ReadonlySet<string>;
+}>({ motion: undrawn.motion, leaving: new Set(), entering: new Set() });
 
 /**
  * Gives the list below how each of its rows moves, and which rows leave the
  * list by the operator's own hand, as a bot pinned or hidden: those fade away
  * as they go, where a row that only stops being listed, as after a search,
- * goes at once.
+ * goes at once. A row `entering` comes in with an arrival of its own
+ * (`RosterRow`), which the list does not fade in.
  */
 export function RowMoves({
   motion,
   leaving,
+  entering,
   children,
 }: {
   readonly motion: RowMotion;
   readonly leaving: ReadonlySet<string>;
+  readonly entering: ReadonlySet<string>;
   readonly children: ReactNode;
 }) {
-  const value = useMemo(() => ({ motion, leaving }), [motion, leaving]);
+  const value = useMemo(() => ({ motion, leaving, entering }), [motion, leaving, entering]);
   return <MotionNow value={value}>{children}</MotionNow>;
 }
 
@@ -153,7 +157,7 @@ const departing = FadeOut.duration(timing.state);
  * over a row still up from a move before.
  */
 export function ReorderCell({ cellKey, children, style, onLayout, onFocusCapture }: CellProps) {
-  const { motion, leaving } = useContext(MotionNow);
+  const { motion, leaving, entering } = useContext(MotionNow);
   const reduced = useReducedMotion();
   const { moves, lifted, arrived } = motion;
   const move = moves.get(cellKey);
@@ -163,7 +167,9 @@ export function ReorderCell({ cellKey, children, style, onLayout, onFocusCapture
   return (
     <Animated.View
       {...(way === undefined ? {} : { layout: way })}
-      {...(arrived.has(cellKey) && moves.size > 0 ? { entering: arriving } : {})}
+      {...(arrived.has(cellKey) && moves.size > 0 && !entering.has(cellKey)
+        ? { entering: arriving }
+        : {})}
       {...(leaving.has(cellKey) && !reduced ? { exiting: departing } : {})}
       style={[style, above]}
       onLayout={onLayout}

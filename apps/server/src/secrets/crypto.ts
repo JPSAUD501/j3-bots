@@ -11,16 +11,13 @@ import * as Redacted from "effect/Redacted";
 //   every value with AES-256-GCM, a random 96-bit nonce per value, and the
 //   value's record id and field name as associated data, so a sealed value
 //   cannot be moved to another record or field;
-// - a vault from before secrets wrapped that data key under a key-encryption
-//   key that scrypt derived from a master password, with a random salt and
-//   the parameters its keyring records. Typed once, the password unwraps it
-//   and the key moves to the key file. A wrong password fails GCM's
-//   authentication.
+// - an export seals its copy under a key scrypt derives from the export's
+//   passphrase, with a random salt and the parameters the archive records.
 //
 // The associated data still says "vault": values sealed before secrets keep
 // opening under it.
 
-/** scrypt's cost parameters, as the keyring records them. */
+/** scrypt's cost parameters, as an archive records them. */
 export interface KdfParams {
   /** CPU and memory cost: a power of two. */
   readonly n: number;
@@ -30,8 +27,8 @@ export interface KdfParams {
   readonly p: number;
 }
 
-/** The cheapest parameters `kdfParamsInRange` accepts, for tests that make an old vault. */
-export const LEAST_KDF_PARAMS: KdfParams = { n: 2 ** 14, r: 1, p: 1 };
+/** The cheapest parameters `kdfParamsInRange` accepts. */
+const LEAST_KDF_PARAMS: KdfParams = { n: 2 ** 14, r: 1, p: 1 };
 
 /** Every key here: AES-256. */
 export const KEY_BYTES = 32;
@@ -44,11 +41,11 @@ const TAG_BYTES = 16;
 /** scrypt's memory for `params`, with room to spare: Node refuses past `maxmem`. */
 const maxmemOf = (params: KdfParams) => 128 * params.n * params.r * params.p + 32 * 1024 * 1024;
 
-/** The most memory scrypt may take for a keyring read from the file: 256 MiB. */
+/** The most memory scrypt may take for parameters read from an archive: 256 MiB. */
 const MAX_KDF_MEMORY = 256 * 1024 * 1024;
 
 /**
- * Whether a keyring's scrypt parameters are ones this release derives a key
+ * Whether an archive's scrypt parameters are ones this release derives a key
  * with: N a power of two from 2^14 to 2^20, r from 1 to 32, p from 1 to 16,
  * and at most `MAX_KDF_MEMORY` in all. A file that asks for more is refused
  * rather than left to take the server's memory or time.
@@ -66,9 +63,6 @@ export const kdfParamsInRange = ({ n, r, p }: KdfParams): boolean =>
   p <= 16 &&
   128 * n * r * p <= MAX_KDF_MEMORY;
 
-/** Text the data key's wrapping and every sealed value are bound to, so neither passes for the other. */
-const DATA_KEY_AAD = Buffer.from("j3-bots vault v1\0data-key", "utf8");
-
 /** What a value is bound to: its record and its field. NUL never appears in either. */
 const fieldAad = (recordId: string, field: string) =>
   Buffer.from(`j3-bots vault v1\0${recordId}\0${field}`, "utf8");
@@ -80,7 +74,7 @@ export interface Sealed {
 }
 
 /**
- * The key-encryption key for `password`. The password is normalized (NFC),
+ * The key `password` gives. The password is normalized (NFC),
  * so the same characters typed on two systems give the same key. The copy of
  * it made here is zeroed once scrypt has it; the string itself cannot be.
  */
@@ -104,7 +98,7 @@ const deriveKey = (
   });
 
 /**
- * Runs `use` with the key-encryption key for `password`, and zeroes the key
+ * Runs `use` with the key `password` gives, and zeroes the key
  * once `use` ends: done, failed or interrupted. Deriving it is not
  * interrupted: an interruption waits for scrypt, then zeroes what it gave.
  */
@@ -112,10 +106,10 @@ export const withDerivedKey = <A, E, R>(
   password: Redacted.Redacted<string>,
   salt: Uint8Array,
   params: KdfParams,
-  use: (kek: Buffer) => Effect.Effect<A, E, R>,
+  use: (key: Buffer) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  Effect.acquireUseRelease(deriveKey(password, salt, params), use, (kek) =>
-    Effect.sync(() => kek.fill(0)),
+  Effect.acquireUseRelease(deriveKey(password, salt, params), use, (key) =>
+    Effect.sync(() => key.fill(0)),
   );
 
 const encrypt = (key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, plain: Uint8Array) => {
@@ -150,20 +144,6 @@ const decrypt = (
     body.fill(0);
   }
 };
-
-/** The data key wrapped by `kek`, under `nonce`, as a vault from before secrets kept it. */
-export const wrapDataKey = (kek: Uint8Array, dataKey: Uint8Array, nonce: Uint8Array): Sealed => ({
-  nonce,
-  sealed: encrypt(kek, nonce, DATA_KEY_AAD, dataKey),
-});
-
-/** The data key, or none when `kek` is not the key it was wrapped with: a wrong password. */
-export const unwrapDataKey = (kek: Uint8Array, wrapped: Sealed): Option.Option<Buffer> =>
-  Option.filter(decrypt(kek, wrapped.nonce, DATA_KEY_AAD, wrapped.sealed), (key) => {
-    if (key.length === KEY_BYTES) return true;
-    key.fill(0);
-    return false;
-  });
 
 /** `plain`, sealed for `field` of record `recordId`. */
 export const sealField = (

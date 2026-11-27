@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
 import { fullTime } from "../presentation/time.ts";
-import { activityTime, dividerTime, timeInSentence, upcomingTime } from "./time.ts";
+import { activityTime, dividerTime, timeInSentence } from "./time.ts";
 
 // 23:30 on Thursday, November 19 in São Paulo, already Friday in UTC.
 const ctx = context("2026-11-20T02:30:00Z");
@@ -21,9 +21,8 @@ describe("activityTime", () => {
   });
 });
 
-describe("upcomingTime and dividerTime", () => {
-  it("say tomorrow and yesterday with the time", () => {
-    expect(plain(upcomingTime(at("2026-11-20T11:47:00Z"), ctx))).toBe("Tomorrow at 8:47 AM");
+describe("dividerTime", () => {
+  it("says yesterday with the time", () => {
     expect(plain(dividerTime(at("2026-11-18T20:00:00Z"), ctx))).toBe("Yesterday at 5:00 PM");
   });
 });
@@ -51,7 +50,6 @@ describe("times never break inside themselves", () => {
   it("keeps the time whole inside longer phrases, which may still break elsewhere", () => {
     // A full no-break space: a narrow one is set too thin to read as a gap at small sizes.
     const wholeAtEnd = /8:47\u00A0AM$/;
-    expect(upcomingTime(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(fullTime(at("2026-11-23T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(timeInSentence(at("2026-11-20T11:47:00Z"), ctx)).toMatch(wholeAtEnd);
     expect(dividerTime(at("2026-11-17T11:47:00Z"), ctx)).toMatch(wholeAtEnd);

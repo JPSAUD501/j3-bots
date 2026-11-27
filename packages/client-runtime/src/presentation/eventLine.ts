@@ -62,11 +62,29 @@ export type EventLine =
 /** Every entry that is neither a message nor a turn's work. */
 export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry>;
 
-/** What the bot asks of the operator, or a notice of something that stopped: drawn as a card. */
-export type CardEntry = Exclude<
-  NonMessageEntry,
-  HandoffEntry | RoutineChangeEntry | EventRoutineChangeEntry
->;
+/**
+ * A routine with several steps that a bot made or changed (decision 0080):
+ * drawn as its track at rest, which reads it back, rather than as a line.
+ * Its trigger is one of J3 Bots' own, or a connector's event.
+ */
+export type TrackChangeEntry = (
+  | RoutineChangeEntry
+  | (EventRoutineChangeEntry & { readonly change: RoutineChangeEntry["change"] })
+) & {
+  readonly change: "created" | "updated";
+  readonly steps: NonNullable<RoutineChangeEntry["steps"]>;
+};
+
+/**
+ * What the bot asks of the operator, a notice of something that stopped, or
+ * a routine's track: drawn as a card.
+ */
+export type CardEntry =
+  | Exclude<NonMessageEntry, HandoffEntry | RoutineChangeEntry | EventRoutineChangeEntry>
+  | TrackChangeEntry;
+
+const isTrackChange = (entry: RoutineChange): entry is TrackChangeEntry =>
+  entry.steps !== undefined && (entry.change === "created" || entry.change === "updated");
 
 /** The other bot of a teammate message: the recipient of one sent, the sender of one received. */
 export function handoffPeer(entry: HandoffEntry): BotId {
@@ -139,12 +157,18 @@ export function placeOf(entry: NonMessageEntry): EntryPlace {
     case "handoff":
       return { _tag: "line", line: { _tag: "teammates", run: teammateRun([entry]) } };
     case "routine-change":
-      return { _tag: "line", line: { _tag: "routines", changes: [entry] } };
+      return isTrackChange(entry)
+        ? { _tag: "card", entry }
+        : { _tag: "line", line: { _tag: "routines", changes: [entry] } };
     case "event-routine-change": {
       const { change } = entry;
-      return change === "stopped" || change === "unknown"
-        ? { _tag: "line", line: { _tag: "event-routine", entry } }
-        : { _tag: "line", line: { _tag: "routines", changes: [{ ...entry, change }] } };
+      if (change === "stopped" || change === "unknown") {
+        return { _tag: "line", line: { _tag: "event-routine", entry } };
+      }
+      const known = { ...entry, change };
+      return isTrackChange(known)
+        ? { _tag: "card", entry: known }
+        : { _tag: "line", line: { _tag: "routines", changes: [known] } };
     }
     case "notice": {
       const { notice } = entry;

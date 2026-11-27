@@ -36,9 +36,16 @@ describe("j3 tools", () => {
     const workerRule = /A subagent or delegated worker does not: it reports in its final reply\./;
     for (const tool of toolList) {
       expect(workerRule.test(tool.description)).toBe(
-        ["say", "ask", "request_browser_help", "message_bot", "read_room", "start_room"].includes(
-          tool.name,
-        ),
+        [
+          "say",
+          "ask",
+          "react",
+          "request_browser_help",
+          "message_bot",
+          "read_room",
+          "start_room",
+          "finish_step",
+        ].includes(tool.name),
       );
     }
   });
@@ -122,6 +129,40 @@ describe("j3 tools", () => {
     expect(accepts("set_routine", { action: "delete", id: "r1", at: "2026-11-21T09:00" })).toBe(
       false,
     );
+  });
+
+  it("takes a routine in steps only when each step carries what its kind needs", () => {
+    const gather = {
+      kind: "bot",
+      action: "gathers last week's emails",
+      instruction: "Gather the emails.",
+    };
+    const reply = { kind: "bot", bot: "b2", action: "drafts replies", instruction: "Draft." };
+    const create = (steps: ReadonlyArray<object>, more: object = {}) => ({
+      action: "create",
+      name: "Inbox",
+      schedule: "3 8 * * 1",
+      steps,
+      ...more,
+    });
+    expect(
+      accepts(
+        "set_routine",
+        create([
+          gather,
+          { kind: "condition", check: "there's something new" },
+          { kind: "yes" },
+          reply,
+        ]),
+      ),
+    ).toBe(true);
+    expect(accepts("set_routine", create([gather, { kind: "condition" }, reply]))).toBe(false);
+    expect(
+      accepts("set_routine", create([gather, { kind: "yes", check: "anything" }, reply])),
+    ).toBe(false);
+    expect(accepts("set_routine", create([{ kind: "bot", action: "gathers" }]))).toBe(false);
+    expect(accepts("set_routine", create([gather], { instruction: "Gather." }))).toBe(false);
+    expect(accepts("set_routine", { action: "update", id: "r1", steps: [gather] })).toBe(true);
   });
 
   it("refuses a call the engine would record only as a summary, by its encoded size", () => {

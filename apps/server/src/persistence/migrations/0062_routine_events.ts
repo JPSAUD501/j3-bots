@@ -7,7 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 //
 // Its changes are entries of a new kind, `event-routine-change`, which the
 // check on `entries.kind` refuses: the column is replaced in place, as
-// migration 0052 replaced it, with every kind 0052 allows and the new one.
+// migration 0060 replaced it, with every kind 0060 allows and the new one.
 //
 // `routine_event_listeners` holds what J3 Bots keeps of each event routine's
 // subscription, which the server holds, never the bot: the trigger it was
@@ -38,7 +38,8 @@ export default Effect.gen(function* () {
       entry_kind IN (
         'message', 'question', 'approval', 'secret-request', 'browser-help', 'secret-ask',
         'work-fold', 'notice', 'handoff', 'routine-change', 'connector-suggestion',
-        'connector-auth', 'connector-input', 'connector-ask', 'event-routine-change'
+        'connector-auth', 'connector-input', 'connector-ask', 'routine-run',
+        'event-routine-change'
       )
     )
   `;

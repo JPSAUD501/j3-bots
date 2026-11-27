@@ -169,7 +169,6 @@ describe("botStop", () => {
   const since = {
     since: at("2026-11-20T15:00:00Z"),
     stalled: false,
-    quietSince: null,
     typing: false,
     retrying: false,
   };
@@ -178,7 +177,14 @@ describe("botStop", () => {
     expect(botStop(bot("Scout", { _tag: "thinking", ...since }))).toBe("offered");
     expect(
       botStop(
-        bot("Scout", { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 }),
+        bot("Scout", {
+          _tag: "working",
+          ...since,
+          activity: null,
+          activityKind: null,
+          tool: null,
+          littleOnes: 0,
+        }),
       ),
     ).toBe("offered");
   });
@@ -192,7 +198,14 @@ describe("botStop", () => {
       botStop(
         bot(
           "Scout",
-          { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 },
+          {
+            _tag: "working",
+            ...since,
+            activity: null,
+            activityKind: null,
+            tool: null,
+            littleOnes: 0,
+          },
           { forceStop: true },
         ),
       ),

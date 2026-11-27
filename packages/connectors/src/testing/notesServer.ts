@@ -4,6 +4,7 @@ import {
   inputRequired,
   McpServer,
   ResourceTemplate,
+  UrlElicitationRequiredError,
 } from "@modelcontextprotocol/server";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -17,9 +18,11 @@ import { EVENTS_EXTENSION } from "../events.ts";
  * client itself).
  *
  * - tools: `echo` (gives back `text`), `confirm` (asks a form, a yes or
- *   no), `approve` (asks the operator to open a page), `count` (reports
- *   progress, then answers), and `long_job` (served as a task by the HTTP
- *   fake, `sdkHttpServer.ts`);
+ *   no), `approve` (asks the operator to open a page), `connect_drive`
+ *   (at 2025-11-25, refuses its first call until the operator finishes a
+ *   step on its own page, `-32042`), `count` (reports progress, then
+ *   answers), and `long_job` (served as a task by the HTTP fake,
+ *   `sdkHttpServer.ts`);
  * - resources: `note://readme`, the template `note://{id}`, and a
  *   `ui://notes/board` page for MCP Apps;
  * - prompts: `summarize`, which takes a `topic`.
@@ -43,6 +46,10 @@ const answered = (responses: Readonly<Record<string, unknown>> | undefined, key:
 
 /** The page `approve` asks the operator to open. */
 export const APPROVAL_URL = "https://approve.notes.example/flow/7";
+
+/** The page `connect_drive` needs the operator to finish a step on, and the step's id. */
+export const DRIVE_STEP_URL = "https://drive.notes.example/connect/3";
+export const DRIVE_STEP = "drive-step-3";
 
 /** Given `events`, it says it offers events (MCP's Events extension), which its HTTP fake serves. */
 export const notesServer = (options: { readonly events?: boolean } = {}): McpServer => {
@@ -124,6 +131,24 @@ export const notesServer = (options: { readonly events?: boolean } = {}): McpSer
         });
       }
       return text(`${answer.value.action}`);
+    },
+  );
+
+  let driveAsked = false;
+  server.registerTool(
+    "connect_drive",
+    { description: "Lists the notes in the operator's drive, once it is connected." },
+    () => {
+      if (driveAsked) return text("connected");
+      driveAsked = true;
+      throw new UrlElicitationRequiredError([
+        {
+          mode: "url",
+          message: "Connect your drive to the notes app.",
+          url: DRIVE_STEP_URL,
+          elicitationId: DRIVE_STEP,
+        },
+      ]);
     },
   );
 

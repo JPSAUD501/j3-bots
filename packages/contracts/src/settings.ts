@@ -147,10 +147,7 @@ export const SettingsChange = Schema.Struct({
   timeZone: Schema.optionalKey(TimeZone),
   budgets: Schema.optionalKey(Budgets),
   notifications: Schema.optionalKey(NotificationSettingsChange),
-  /**
-   * Sent only to a server whose `ServerInfo.updateApi` is set: an older one
-   * would take the rest of the change and drop it.
-   */
+  /** The server's update channel, which the update routes' `channel` changes too. */
   updateChannel: Schema.optionalKey(UpdateChannel),
   /**
    * Sent only to a server whose providers carry `copy`: an older one would

@@ -129,8 +129,7 @@ const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
  * be read is dropped and the others kept. A server is kept only if the server
  * address screen would accept it now, so plain HTTP to a public host never
  * comes back from a file. `dropped` names the entries that were there and
- * were not kept. A file from before the app could run the server keeps no
- * mode: one that names a server is `remote`.
+ * were not kept.
  */
 export const decodeSettings = (
   text: string,
@@ -202,9 +201,7 @@ export const decodeSettings = (
   if (screenAsked !== undefined && Option.isNone(keptScreenAsked)) dropped.push("screenAsked");
   return {
     settings: {
-      mode: Option.getOrElse(keptMode, () =>
-        mode === undefined && Option.isSome(keptServer) ? "remote" : null,
-      ),
+      mode: Option.getOrNull(keptMode),
       server: Option.getOrNull(keptServer),
       localDevice: Option.getOrNull(keptLocalDevice),
       window: Option.getOrNull(keptWindow),

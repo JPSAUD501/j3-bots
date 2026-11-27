@@ -28,6 +28,7 @@ import {
 } from "react";
 import {
   arrangeRoster,
+  ARRIVAL_LENGTH,
   arrivalsSettled,
   betweenBots,
   type BotItem,
@@ -112,7 +113,7 @@ function useArrivals(items: ReadonlyArray<RosterItem>): ReadonlySet<string> {
   const { entering } = now;
   useEffect(() => {
     if (entering.size === 0) return;
-    const settled = window.setTimeout(() => setArrivals(arrivalsSettled), stage.rowLight + 600);
+    const settled = window.setTimeout(() => setArrivals(arrivalsSettled), ARRIVAL_LENGTH);
     return () => window.clearTimeout(settled);
   }, [entering]);
   return entering;
@@ -153,7 +154,7 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
 
 interface RosterProps {
   readonly items: ReadonlyArray<RosterItem>;
-  /** Null while the server has not said it has sections. */
+  /** Null until the roster loads. */
   readonly sections: ReadonlyArray<Section> | null;
   readonly selected: RosterItemKey | null;
   /** The link a row navigates with, such as a router link to its conversation. */

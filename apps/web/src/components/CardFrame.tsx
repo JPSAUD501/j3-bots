@@ -12,12 +12,16 @@ import { cn } from "../lib/cn";
  * conversation's header can bring the operator to it, and so a card whose
  * actions go away once answered can keep the keyboard's place.
  * `describedBy` names the element that says how the request ended, so focus
- * on the card reads it.
+ * on the card reads it. `attention` "blocked" draws it in the blocked
+ * color instead, for something that failed and needs the operator; `tag`
+ * names what the card waits on, or, without attention, where it stands in a
+ * quiet tag.
  */
 export function CardFrame({
   icon,
   title,
   attention = false,
+  tag,
   entryId,
   describedBy,
   ref,
@@ -25,13 +29,16 @@ export function CardFrame({
 }: {
   icon: ReactNode;
   title: string;
-  attention?: boolean;
+  attention?: boolean | "blocked";
+  tag?: string | undefined;
   entryId: EntryId;
   describedBy?: string | undefined;
   ref?: Ref<HTMLElement>;
   children: ReactNode;
 }) {
   const { t } = useI18n();
+  const blocked = attention === "blocked";
+  const tagText = tag ?? (attention === false ? null : t("card.waiting"));
   return (
     <section
       ref={ref}
@@ -41,7 +48,7 @@ export function CardFrame({
       tabIndex={-1}
       className={cn(
         "mt-3 flex w-full max-w-(--layout-card-width) origin-bottom-left scroll-my-4 flex-col gap-3 self-start rounded-bubble border bg-surface p-3.5 shadow-raised transition-[border-color] duration-(--duration-slow) @max-tablet:max-w-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-        attention ? "border-waiting/45" : "border-border",
+        blocked ? "border-blocked/45" : attention ? "border-waiting/45" : "border-border",
       )}
     >
       <header className="flex items-center gap-2.5">
@@ -49,15 +56,28 @@ export function CardFrame({
           aria-hidden
           className={cn(
             "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors duration-(--duration-slow) [&_svg]:size-4",
-            attention ? "bg-waiting-surface text-waiting" : "bg-muted text-muted-foreground",
+            blocked
+              ? "bg-blocked-surface text-blocked"
+              : attention
+                ? "bg-waiting-surface text-waiting"
+                : "bg-muted text-muted-foreground",
           )}
         >
           {icon}
         </span>
         <span className="min-w-0 flex-1 text-sm font-semibold">{title}</span>
-        {attention && (
-          <span className="shrink-0 rounded-pill bg-waiting-surface px-2.5 py-0.5 text-2xs font-medium whitespace-nowrap text-waiting">
-            {t("card.waiting")}
+        {tagText !== null && (
+          <span
+            className={cn(
+              "shrink-0 rounded-pill px-2.5 py-0.5 text-2xs font-medium whitespace-nowrap transition-colors duration-(--duration-slow)",
+              blocked
+                ? "bg-blocked-surface text-blocked"
+                : attention
+                  ? "bg-waiting-surface text-waiting"
+                  : "bg-muted text-muted-foreground",
+            )}
+          >
+            {tagText}
           </span>
         )}
       </header>

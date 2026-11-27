@@ -33,9 +33,8 @@ const decodeEscapes = (path: string): string =>
 /**
  * What the request log shows of a path that may hold a webhook's secret, or
  * `None` for one that holds none. Under `WEBHOOK_PATH` everything after it is
- * left out: the routine's id and the secret, but also a secret in any other
- * place, such as the `/hooks/<secret>` addresses given before the routine's
- * id was part of them. Every path the router could take for a webhook's is
+ * left out: the routine's id and the secret, and a secret in any other
+ * place, whatever the path's shape. Every path the router could take for a webhook's is
  * covered, whatever it answers: one written with percent-escapes, doubled
  * slashes or other letter case too. Only the prefix decides, so whatever
  * follows it, however malformed, never lets a path through unredacted.

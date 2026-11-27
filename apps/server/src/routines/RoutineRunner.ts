@@ -7,15 +7,20 @@ import {
   RoutineId,
   RoutineInstruction,
   type RoutineRunFailure,
+  RoutineAnswer,
+  RoutineAsk,
   RoutineRunId,
+  RoutineStep,
   RoutineTrigger,
 } from "@j3-bots/contracts";
-import { isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
+import { isBackgroundWorkPending, SessionId, TurnId } from "@j3-bots/engine-t3";
 import {
+  type EarlierStep,
   PROMPT_VERSION,
   renderWake,
   type RoutineRunSummary,
   type RoutineEvents,
+  type RoutineStepWake,
   type RoutineWake,
   type RoutineTrigger as EnvelopeTrigger,
 } from "@j3-bots/prompts";
@@ -53,6 +58,7 @@ import {
 } from "../turns/reconciler.ts";
 import { providerLimit } from "../turns/providerLimit.ts";
 import { sessionLoss } from "../turns/sessionRecords.ts";
+import { Stops } from "../turns/Stops.ts";
 import { stopTargets } from "../turns/stopTargets.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
@@ -60,6 +66,7 @@ import { WorkSteps } from "../turns/WorkSteps.ts";
 import { EventRunDataJson } from "./eventRuns.ts";
 import { dueToTell, RoutineRuns } from "./RoutineRuns.ts";
 import { recordRunFailure } from "./runFailure.ts";
+import { StepReport } from "./runSteps.ts";
 
 /** How many of a routine's earlier runs its envelope describes, newest first. */
 const RECENT_RUNS = 5;
@@ -82,10 +89,29 @@ const Attempt = Schema.Struct({
   trigger_json: json(RoutineTrigger),
   /** For a trigger on a connector's event, the connector's name; null once it is removed. */
   connector_name: Schema.NullOr(Schema.String),
+  /** A run of a routine with several steps: its copy of them, and the step at work. */
+  steps_json: Schema.NullOr(json(Schema.Array(RoutineStep))),
+  step: Schema.NullOr(Schema.Int),
 });
 type Attempt = typeof Attempt.Type;
 
 const decodeEventRun = Schema.decodeUnknownOption(EventRunDataJson);
+
+/** What a step before the one at work came to, for its envelope. */
+const StepSoFar = Schema.Struct({
+  position: Schema.Int,
+  state: Schema.String,
+  report_json: Schema.NullOr(json(StepReport)),
+  ask_json: Schema.NullOr(json(RoutineAsk)),
+  answer_json: Schema.NullOr(json(RoutineAnswer)),
+});
+
+/** A stopped run's step turn that showed after its Stop, which it has to end. */
+const LateTurn = Schema.Struct({
+  bot_id: BotId,
+  session_id: SessionRowId,
+  engine_turn_id: TurnId,
+});
 
 const SideSession = Schema.Struct({
   id: SessionRowId,
@@ -95,8 +121,8 @@ const SideSession = Schema.Struct({
 
 /**
  * A live side session whose attempt has ended, or that the engine lost, and
- * whether it is superseded: a retry of its attempt is due to start, or a
- * newer run of its routine has started.
+ * whether it is superseded: a retry of its attempt is due to start, a newer
+ * run of its routine, or its next step, has started, or a Stop ended its run.
  */
 const Spent = Schema.Struct({
   id: SessionRowId,
@@ -194,6 +220,7 @@ export const layer = Layer.effect(
     const settings = yield* SettingsStore;
     const random = yield* SecureRandom.SecureRandom;
     const changes = yield* ChangeLog;
+    const stops = yield* Stops;
     const { admitsStart } = admission(sql, settings);
     const limitOf = providerLimit(sql, engineState);
     const workOf = sessionWork(sql);
@@ -203,7 +230,8 @@ export const layer = Layer.effect(
 
     const attemptRows = sql`
       SELECT w.id AS wake_id, w.bot_id, r.id AS run_id, r.retry_at, r.trigger_data, r.due_at,
-        r.started_at, ro.id AS routine_id, ro.name, ro.instruction, ro.trigger_json,
+        r.started_at, ro.id AS routine_id, ro.name, ro.instruction, ro.trigger_json, r.steps_json,
+        r.step,
         (
           SELECT c.name FROM connectors c
           WHERE c.id = json_extract(ro.trigger_json, '$.connectorId')
@@ -255,6 +283,15 @@ export const layer = Layer.effect(
           OR EXISTS (
             SELECT 1 FROM wakes n JOIN sessions ns ON ns.side_wake_id = n.id
             WHERE n.routine_id = w.routine_id AND n.retry_of IS NULL AND n.rowid > w.rowid
+          )
+          -- A Stop ended its run: at its step, or at a later one, a yes it
+          -- waited for and a step still waiting for its session included.
+          OR EXISTS (
+            SELECT 1 FROM routine_runs r WHERE r.wake_id = s.side_wake_id AND r.stopped = 1
+          )
+          OR EXISTS (
+            SELECT 1 FROM routine_run_steps rs JOIN routine_runs r ON r.id = rs.run_id
+            WHERE rs.report_wake_id = s.side_wake_id AND r.stopped = 1
           ) AS superseded
         FROM sessions s
         LEFT JOIN wakes w ON w.id = s.side_wake_id
@@ -306,6 +343,67 @@ export const layer = Layer.effect(
       return texts.join("\n\n");
     });
 
+    const stepsSoFar = SqlSchema.findAll({
+      Request: RoutineRunId,
+      Result: StepSoFar,
+      execute: (runId) => sql`
+        SELECT position, state, report_json, ask_json, answer_json FROM routine_run_steps
+        WHERE run_id = ${runId} ORDER BY position
+      `,
+    });
+
+    const nameOf = Effect.fn("RoutineRunner.nameOf")(function* (botId: BotId) {
+      const found = yield* bots.find(botId);
+      return Option.isSome(found) ? found.value.bot.profile.name : "A teammate no longer here";
+    });
+
+    /**
+     * The step of a run with several steps that an attempt runs, with what
+     * the steps before it reported, the yes it follows, and what its report
+     * must decide (decision 0080). None for a one-step routine's run.
+     */
+    const stepOf = Effect.fn("RoutineRunner.stepOf")(function* (attempt: Attempt) {
+      const { steps_json: steps, step: position } = attempt;
+      if (steps === null || position === null) return Option.none<RoutineStepWake>();
+      const current = steps[position];
+      if (current?._tag !== "bot") return Option.none<RoutineStepWake>();
+      const bots_ = steps.flatMap((step, index) => (step._tag === "bot" ? [index] : []));
+      const states = yield* stepsSoFar(attempt.run_id).pipe(Effect.orDie);
+      const earlier: Array<EarlierStep> = [];
+      for (const row of states) {
+        const step = steps[row.position];
+        if (row.position >= position || step?._tag !== "bot" || row.report_json === null) continue;
+        earlier.push({
+          bot: yield* nameOf(step.botId),
+          action: step.action,
+          result: row.report_json.result,
+          handoff: row.report_json.handoff,
+        });
+      }
+      const before = states.find((row) => row.position === position - 1);
+      const approved =
+        steps[position - 1]?._tag === "yes" && before?.state === "yes" && before.ask_json !== null
+          ? { question: before.ask_json.question, note: before.answer_json?.note ?? null }
+          : null;
+      let condition: string | null = null;
+      let yes: { readonly onlyIf: string | null } | null = null;
+      let last = true;
+      for (const step of steps.slice(position + 1)) {
+        last = false;
+        if (step._tag === "bot") break;
+        if (step._tag === "condition") condition = step.check;
+        else yes = { onlyIf: step.onlyIf };
+      }
+      return Option.some<RoutineStepWake>({
+        number: bots_.indexOf(position) + 1,
+        of: bots_.length,
+        action: current.action,
+        earlier,
+        approved,
+        next: last ? null : { condition, yes },
+      });
+    });
+
     const recentRuns = Effect.fn("RoutineRunner.recentRuns")(function* (attempt: Attempt) {
       const rows = yield* earlierRuns({
         routineId: attempt.routine_id,
@@ -346,10 +444,16 @@ export const layer = Layer.effect(
      * again later, still does the work of that time.
      */
     const envelopeOf = Effect.fn("RoutineRunner.envelopeOf")(function* (attempt: Attempt) {
-      const recent = yield* recentRuns(attempt);
+      const step = yield* stepOf(attempt);
+      // A later step reads what the steps before it reported, not earlier runs.
+      const recent = Option.isSome(step) && step.value.number > 1 ? [] : yield* recentRuns(attempt);
       const now = yield* DateTime.now;
       const due = attempt.due_at ?? attempt.started_at;
       const timeZone = yield* zoneOf;
+      const current =
+        attempt.steps_json !== null && attempt.step !== null
+          ? attempt.steps_json[attempt.step]
+          : undefined;
       const base = {
         at: now,
         timeZone,
@@ -359,8 +463,9 @@ export const layer = Layer.effect(
           id: attempt.routine_id,
           name: attempt.name,
           trigger: envelopeTrigger(attempt.trigger_json, attempt.connector_name),
-          instruction: attempt.instruction,
+          instruction: current?._tag === "bot" ? current.instruction : attempt.instruction,
         },
+        ...(Option.isSome(step) ? { step: step.value } : {}),
         runId: attempt.run_id,
         // A run on an event carries the events, framed each on its own, in
         // place of a webhook's body. One the operator started carries none.
@@ -716,6 +821,54 @@ export const layer = Layer.effect(
       return "done";
     });
 
+    /**
+     * A step's turn that showed after a Stop of its run, whose dispatch the
+     * engine had taken: a Stop of that turn alone ends it now, as the Stop
+     * of the run would have.
+     */
+    const lateTurns = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: LateTurn,
+      execute: () => sql`
+        SELECT s.bot_id, s.id AS session_id, t.engine_turn_id
+        FROM routine_runs r JOIN sessions s ON s.side_wake_id = r.wake_id
+        JOIN turns t ON t.session_id = s.id
+        WHERE r.stopped = 1 AND s.retired_at IS NULL AND t.finished_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM stops p JOIN stop_targets g ON g.stop_id = p.id
+            WHERE g.session_id = s.id AND (p.engine_turn_id = t.engine_turn_id OR t.stop_id = p.id)
+          )
+      `,
+    });
+
+    /** Whether a stopped run's step may still start a turn: the engine has its dispatch. */
+    const stoppedMayStart = sql`
+      SELECT 1 FROM routine_runs r JOIN wakes w ON w.id = r.wake_id
+      JOIN dispatches d ON d.id = w.dispatch_id
+      WHERE r.stopped = 1
+        AND (d.status IN ('accepted', 'delivered') OR (d.status = 'intended' AND d.attempts > 0))
+        AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.session_id = d.session_id)
+      LIMIT 1
+    `.pipe(
+      Effect.orDie,
+      Effect.map((rows) => rows.length > 0),
+    );
+
+    const endLateTurns = Effect.fn("RoutineRunner.endLateTurns")(function* () {
+      yield* transaction(
+        Effect.gen(function* () {
+          for (const turn of yield* lateTurns(undefined)) {
+            yield* stops.endTurn(turn.bot_id, {
+              sessionId: turn.session_id,
+              turnId: turn.engine_turn_id,
+              audience: conversation,
+            });
+          }
+        }),
+      ).pipe(Effect.orDie);
+      return (yield* stoppedMayStart) ? ("deferred" as const) : ("done" as const);
+    });
+
     /** What the pass makes of one item's step; whether the engine is down. */
     const noted = (step: Step, outcome: ReturnType<typeof passOutcome>) => {
       if (step === "unavailable") return true;
@@ -737,6 +890,14 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const outcome = passOutcome();
         yield* transaction(runs.settle);
+        // The next yes to close by its deadline wakes the runner then.
+        const deadline = yield* transaction(runs.expire);
+        if (Option.isSome(deadline)) outcome.until(deadline.value);
+        const late = yield* guarded(
+          "A stopped routine step's turn could not be ended",
+          endLateTurns(),
+        );
+        if (noted(late, outcome)) return { _tag: "unavailable" } as const;
         for (const { id } of yield* staleRows) {
           const step = yield* guarded(
             "A routine's side session opened with old settings could not be replaced",

@@ -134,7 +134,6 @@ describe("rosterLine", () => {
       _tag: "thinking",
       since: at("2026-11-20T14:59:00Z"),
       stalled: false,
-      quietSince: null,
       typing: false,
       retrying: false,
     });
@@ -165,7 +164,6 @@ describe("rosterLine", () => {
               _tag: "thinking",
               since: at("2026-11-20T14:59:50Z"),
               stalled: false,
-              quietSince: null,
               typing: true,
               retrying: false,
             }
@@ -173,10 +171,10 @@ describe("rosterLine", () => {
               _tag: "working",
               since: at("2026-11-20T14:59:50Z"),
               stalled: false,
-              quietSince: null,
               typing: true,
               retrying: false,
               activity: "Reading",
+              activityKind: "read",
               tool: null,
               littleOnes: 0,
             },
@@ -187,26 +185,20 @@ describe("rosterLine", () => {
     }
   });
 
-  it("says how long a stalled turn has been quiet, from its last activity, not its start", () => {
-    const stalled = (quietSince: string | null) =>
-      bot("Scout", {
-        _tag: "working",
-        since: at("2026-11-20T14:20:00Z"),
-        stalled: true,
-        quietSince: quietSince === null ? null : at(quietSince),
-        typing: false,
-        retrying: false,
-        activity: "Reading",
-        tool: null,
-        littleOnes: 0,
-      });
-    expect(rosterLine(row(stalled("2026-11-20T14:48:00Z")), ctx)).toEqual({
-      text: "No activity for 12m",
-      tone: "waiting",
+  it("says a stalled turn has gone quiet, in words", () => {
+    const stalled = bot("Scout", {
+      _tag: "working",
+      since: at("2026-11-20T14:20:00Z"),
+      stalled: true,
+      typing: false,
+      retrying: false,
+      activity: "Reading",
+      activityKind: "read",
+      tool: null,
+      littleOnes: 0,
     });
-    // A server that does not say when it went quiet: no duration to give.
-    expect(rosterLine(row(stalled(null)), ctx)).toEqual({
-      text: "No recent activity",
+    expect(rosterLine(row(stalled), ctx)).toEqual({
+      text: "No activity for a while",
       tone: "waiting",
     });
   });
@@ -227,10 +219,10 @@ describe("a turn's trouble", () => {
     _tag: "working",
     since: at("2026-11-20T14:59:00Z"),
     stalled: true,
-    quietSince: at("2026-11-20T14:50:00Z"),
     typing: false,
     retrying: true,
     activity: "Reading",
+    activityKind: "read",
     tool: null,
     littleOnes: 0,
   });

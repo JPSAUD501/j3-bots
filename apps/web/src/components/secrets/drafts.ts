@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { NewSecret } from "@j3-bots/client-runtime";
+import type { AskedValues, NewSecret } from "@j3-bots/client-runtime";
 import { typedOrigins } from "@j3-bots/client-runtime/presentation";
 import {
   type BotId,
   type LoginOrigins,
   type SecretAccess,
   type SecretAskEntry,
+  type SecretAskValue,
   SecretChanges,
   SecretDraft,
   SecretName,
+  type SecretRequestFieldId,
+  SecretValue,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -17,6 +20,7 @@ import * as Schema from "effect/Schema";
 const decodeName = Schema.decodeUnknownOption(SecretName);
 const decodeDraft = Schema.decodeUnknownOption(SecretDraft);
 const decodeChanges = Schema.decodeUnknownOption(SecretChanges);
+const decodeValue = Schema.decodeUnknownOption(SecretValue);
 
 /** A secret's name as typed, as the contract takes it; none when it breaks the name's rules. */
 const typedName = (typed: string): Option.Option<SecretName> => decodeName(typed.trim());
@@ -111,6 +115,41 @@ export const askedSecret = (
           access: askAccess(everyBot, entry.author.botId),
         },
       };
+};
+
+/** Why the values typed into an ask for several are not ready: a name no secret takes, or a value left out. */
+export type AskedValuesProblem =
+  | { readonly _tag: "name" }
+  | { readonly _tag: "value"; readonly field: SecretRequestFieldId };
+
+/**
+ * The values a bot's ask for several saves, each under the name the bot
+ * asked for it by, for the bot that asked, or every bot. `typed` holds what
+ * the operator typed, by field; space around a pasted value is never part
+ * of it. Every value is asked for: the first left out is the problem.
+ */
+export const askedValues = (
+  entry: SecretAskEntry,
+  asked: ReadonlyArray<SecretAskValue>,
+  typed: ReadonlyMap<SecretRequestFieldId, string>,
+  everyBot: boolean,
+):
+  | { readonly _tag: "ready"; readonly value: AskedValues }
+  | { readonly _tag: "invalid"; readonly problem: AskedValuesProblem } => {
+  const values: Array<AskedValues["values"][number]> = [];
+  for (const each of asked) {
+    const name = typedName(each.name);
+    if (Option.isNone(name)) return { _tag: "invalid", problem: { _tag: "name" } };
+    const value = decodeValue(Redacted.make((typed.get(each.id) ?? "").trim()));
+    if (Option.isNone(value)) {
+      return { _tag: "invalid", problem: { _tag: "value", field: each.id } };
+    }
+    values.push({ field: each.id, name: name.value, value: value.value });
+  }
+  return {
+    _tag: "ready",
+    value: { request: entry.id, access: askAccess(everyBot, entry.author.botId), values },
+  };
 };
 
 /** What the editor of a secret typed. Editing, empty values keep what the secret has. */

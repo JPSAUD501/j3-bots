@@ -5,15 +5,18 @@ import {
   type CommandError,
   type EventTrigger,
   type CommandId,
-  EntryId,
+  Conflict,
+  hasSeveralSteps,
   NonNegativeInt,
   NotFound,
   Routine,
+  type RoutineAnswer,
+  type RoutineRun,
   RoutineId,
   RoutineMissed,
-  type RoutineRun,
-  RoutineRunFailure,
   RoutineRunId,
+  RoutineStep,
+  routineStepsProblem,
   RoutineTrigger,
   type Sequence,
 } from "@j3-bots/contracts";
@@ -39,9 +42,12 @@ import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { ServerConfig } from "../config.ts";
 import { CERTIFICATE_NAME, Network, reachableOrigins } from "../system/Network.ts";
 import { Ledger } from "../turns/Ledger.ts";
-import { DispatchRowId } from "../turns/model.ts";
+import { conversation, DispatchRowId } from "../turns/model.ts";
 import { Signals } from "../turns/Signals.ts";
-import { isLate, RoutineRuns } from "./RoutineRuns.ts";
+import { Stops } from "../turns/Stops.ts";
+import { RoutineRuns } from "./RoutineRuns.ts";
+import { runCards, runStops, type StepTurn } from "./runSteps.ts";
+import { RUN_COLUMNS, RunRow, runView } from "./runView.ts";
 import { plannedRun } from "./schedule.ts";
 import { Scheduler } from "./Scheduler.ts";
 import { WEBHOOK_PATH } from "./webhook.ts";
@@ -75,24 +81,43 @@ const RoutineRow = Schema.Struct({
   listen_since: Schema.NullOr(Time),
   /** An event routine's connector's name; null for any other routine, or once it is removed. */
   connector_name: Schema.NullOr(Schema.String),
-});
-
-const RunRow = Schema.Struct({
-  id: RoutineRunId,
-  routine_id: RoutineId,
-  wake_id: Schema.NullOr(Schema.String),
-  status: Schema.Literals(["running", "delivered", "silent", "failed", "skipped"]),
-  attempts: NonNegativeInt,
-  note: Schema.NullOr(Schema.String),
-  started_at: Time,
-  finished_at: Schema.NullOr(Time),
-  failure_json: Schema.NullOr(json(RoutineRunFailure)),
-  due_at: Schema.NullOr(Time),
+  steps_json: Schema.NullOr(json(Schema.Array(RoutineStep))),
 });
 
 const decodeRoutine = Schema.decodeUnknownEffect(Routine);
 const decodeMissed = Schema.decodeOption(json(RoutineMissed));
 const encodeTrigger = Schema.encodeEffect(json(RoutineTrigger));
+const encodeSteps = Schema.encodeEffect(json(Schema.Array(RoutineStep)));
+
+/**
+ * What a routine saves of its steps (decision 0080): its first bot step's
+ * brief as its instruction, and its steps, or null for a one-step routine,
+ * which its instruction is all of. Steps that make no routine are the
+ * caller's mistake: the bot's tool checks them first.
+ */
+const shapeOf = Effect.fn("Routines.shapeOf")(function* (
+  owner: BotId,
+  steps: ReadonlyArray<RoutineStep>,
+) {
+  const problem = routineStepsProblem(steps);
+  const [first] = steps;
+  if (problem !== undefined || first?._tag !== "bot") {
+    return yield* Effect.die(`Steps that make no routine reached Routines: ${problem ?? ""}`);
+  }
+  return {
+    instruction: first.instruction,
+    stepsJson: hasSeveralSteps(steps, owner) ? yield* encodeSteps(steps) : null,
+  };
+});
+
+/** `steps` with the first bot step's brief replaced. */
+const withFirstBrief = (
+  steps: ReadonlyArray<RoutineStep>,
+  instruction: string,
+): ReadonlyArray<RoutineStep> =>
+  steps.map((step, index) =>
+    index === 0 && step._tag === "bot" ? { ...step, instruction } : step,
+  );
 
 /** A JSON value with each object's keys in order, as text: equal values give equal text. */
 const canonicalJson = (value: Schema.Json): string =>
@@ -142,7 +167,10 @@ export type RoutineFrame =
 /** What a routine is created with. */
 export interface RoutineDraft {
   readonly name: string;
+  /** Its brief; with `steps`, ignored for the first bot step's. */
   readonly instruction: string;
+  /** Its steps, for a routine a bot builds in steps (decision 0080). */
+  readonly steps?: ReadonlyArray<RoutineStep>;
   readonly trigger: RoutineTrigger;
   /** False creates it paused, as a template's routines are. On when left out. */
   readonly enabled?: boolean;
@@ -151,7 +179,10 @@ export interface RoutineDraft {
 /** The changes `routine.update` may ask for. */
 export interface RoutineChanges {
   readonly name?: string;
+  /** For a routine with several steps, its first bot step's brief. */
   readonly instruction?: string;
+  /** All its steps, replaced. */
+  readonly steps?: ReadonlyArray<RoutineStep>;
   readonly trigger?: RoutineTrigger;
   readonly enabled?: boolean;
 }
@@ -201,6 +232,25 @@ export class Routines extends Context.Service<
       readonly commandId: CommandId;
       readonly routineId: RoutineId;
     }) => Effect.Effect<void, CommandError>;
+    /** `routine.answer`: the operator's answer to the yes a run waits for. */
+    readonly answer: (input: {
+      readonly commandId: CommandId;
+      readonly runId: RoutineRunId;
+      /** The yes the operator saw; absent from an older client. */
+      readonly step?: number | undefined;
+      readonly choice: RoutineAnswer["choice"];
+      readonly note: string | null;
+    }) => Effect.Effect<void, CommandError>;
+    /** `routine.retry`: Try again of a run that failed at a step. */
+    readonly retry: (input: {
+      readonly commandId: CommandId;
+      readonly runId: RoutineRunId;
+    }) => Effect.Effect<void, CommandError>;
+    /** `routine.stopRun`: Stop of a run of a routine with several steps. */
+    readonly stopRun: (input: {
+      readonly commandId: CommandId;
+      readonly runId: RoutineRunId;
+    }) => Effect.Effect<void, CommandError>;
     /**
      * Resumes with `after` as `Entries.subscribe` does. Without `withEvents`,
      * for a client built before routines ran on a connector's event, such
@@ -227,6 +277,9 @@ export const layer = Layer.effect(
     const ledger = yield* Ledger;
     const signals = yield* Signals;
     const routineRuns = yield* RoutineRuns;
+    const stops = yield* Stops;
+    const view = runView(sql);
+    const runStopper = runStops(sql, ledger, changes, runCards(sql, entries, changes));
     const scheduler = yield* Scheduler;
     const network = yield* Network;
     const listener = yield* Listener;
@@ -285,7 +338,7 @@ export const layer = Layer.effect(
 
     const SELECT = sql.literal(`
       SELECT id, bot_id, name, instruction, trigger_json, enabled, webhook_secret, next_run_at,
-        run_count, missed_json,
+        run_count, missed_json, steps_json,
         (SELECT state FROM routine_event_listeners WHERE routine_id = routines.id) AS listen_state,
         (SELECT stop_reason FROM routine_event_listeners WHERE routine_id = routines.id)
           AS listen_reason,
@@ -295,11 +348,7 @@ export const layer = Layer.effect(
           WHERE c.id = json_extract(routines.trigger_json, '$.connectorId')) AS connector_name
       FROM routines
     `);
-    const RUNS = sql.literal(`
-      SELECT id, routine_id, wake_id, status, attempts, note, started_at, finished_at,
-        failure_json, due_at
-      FROM routine_runs
-    `);
+    const RUNS = sql.literal(`SELECT ${RUN_COLUMNS} FROM routine_runs`);
 
     const routineRows = SqlSchema.findAll({
       Request: Schema.Struct({
@@ -357,29 +406,7 @@ export const layer = Layer.effect(
       `,
     });
 
-    const toRun = Effect.fn("Routines.toRun")(function* (row: typeof RunRow.Type) {
-      const delivered =
-        row.wake_id === null
-          ? []
-          : yield* sql<{ readonly id: string }>`
-              SELECT id FROM entries
-              WHERE wake_id = ${row.wake_id} AND author_kind = 'bot' AND kind = 'message'
-              ORDER BY seq
-            `;
-      return {
-        id: row.id,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        status: row.status,
-        attempts: row.attempts,
-        delivered: delivered.map((entry) => EntryId.make(entry.id)),
-        note: row.note,
-        ...(row.status === "failed" && row.failure_json !== null
-          ? { failure: row.failure_json }
-          : {}),
-        ...(row.due_at !== null && isLate(row.due_at, row.started_at) ? { dueAt: row.due_at } : {}),
-      } satisfies RoutineRun;
-    }, Effect.orDie);
+    const toRun = view.toRun;
 
     /** Whether J3 Bots listens for the event of a routine on one that is on; none for any other. */
     const listeningOf = (row: typeof RoutineRow.Type) => {
@@ -405,6 +432,7 @@ export const layer = Layer.effect(
         botId: row.bot_id,
         name: row.name,
         instruction: row.instruction,
+        ...(row.steps_json === null ? {} : { steps: row.steps_json }),
         trigger: row.trigger_json,
         enabled: row.enabled,
         webhookUrl:
@@ -458,6 +486,8 @@ export const layer = Layer.effect(
       );
       const { trigger } = routine;
       const common = { author, routineId: routine.id, name: routine.name, change } as const;
+      const steps =
+        routine.steps === undefined || change === "deleted" ? {} : { steps: routine.steps };
       yield* entries.append({
         target: { _tag: "conversation", botId: routine.botId },
         entry:
@@ -466,9 +496,10 @@ export const layer = Layer.effect(
                 _tag: "event-routine-change",
                 ...common,
                 trigger,
+                ...steps,
                 connector: routine.connectorName ?? null,
               }
-            : { _tag: "routine-change", ...common, trigger },
+            : { _tag: "routine-change", ...common, trigger, ...steps },
       });
     });
 
@@ -506,6 +537,17 @@ export const layer = Layer.effect(
       `;
     });
 
+    /** Ends what a Stop of a run leaves running: its step's turn, in that bot's side session. */
+    const endTurns = Effect.fn("Routines.endTurns")(function* (turns: ReadonlyArray<StepTurn>) {
+      for (const turn of turns) {
+        yield* stops.endTurn(turn.botId, {
+          sessionId: turn.sessionId,
+          turnId: turn.turnId,
+          audience: conversation,
+        });
+      }
+    });
+
     const create = Effect.fn("Routines.create")(function* (input: {
       readonly commandId: CommandId | null;
       readonly botId: BotId;
@@ -527,14 +569,19 @@ export const layer = Layer.effect(
           const id = RoutineId.make(yield* ids.make("routine"));
           const secret = input.draft.trigger._tag === "webhook" ? yield* newSecret : null;
           const at = timeText(now);
+          const shape =
+            input.draft.steps === undefined
+              ? { instruction: input.draft.instruction, stepsJson: null }
+              : yield* shapeOf(input.botId, input.draft.steps);
           yield* sql`
             INSERT INTO routines (
               id, bot_id, name, instruction, trigger_json, enabled, webhook_secret, next_run_at,
-              created_at, updated_at
+              created_at, updated_at, steps_json
             ) VALUES (
-              ${id}, ${input.botId}, ${input.draft.name}, ${input.draft.instruction},
+              ${id}, ${input.botId}, ${input.draft.name}, ${shape.instruction},
               ${yield* encodeTrigger(input.draft.trigger)}, ${enabled ? 1 : 0}, ${secret},
-              ${Option.match(next, { onNone: () => null, onSome: timeText })}, ${at}, ${at}
+              ${Option.match(next, { onNone: () => null, onSome: timeText })}, ${at}, ${at},
+              ${shape.stepsJson}
             )
           `;
           yield* listenAnew(id, input.draft.trigger, now);
@@ -589,10 +636,21 @@ export const layer = Layer.effect(
           // A webhook keeps its address while it stays a webhook.
           const secret =
             trigger._tag === "webhook" ? (row.webhook_secret ?? (yield* newSecret)) : null;
+          // Steps replace all of them; an instruction alone is the first bot step's brief.
+          const steps =
+            change.steps ??
+            (before.steps !== undefined && change.instruction !== undefined
+              ? withFirstBrief(before.steps, change.instruction)
+              : before.steps);
+          const shape =
+            steps === undefined
+              ? { instruction: change.instruction ?? before.instruction, stepsJson: null }
+              : yield* shapeOf(before.botId, steps);
           yield* sql`
             UPDATE routines SET ${sql.update({
               name: change.name ?? before.name,
-              instruction: change.instruction ?? before.instruction,
+              instruction: shape.instruction,
+              steps_json: shape.stepsJson,
               trigger_json: yield* encodeTrigger(trigger),
               enabled: enabled ? 1 : 0,
               webhook_secret: secret,
@@ -646,6 +704,15 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           const routine = yield* find(input.routineId);
+          // A run of its steps that is going ends as a Stop ends it, first.
+          const going = yield* sql<{ readonly id: string }>`
+            SELECT id FROM routine_runs
+            WHERE routine_id = ${routine.id} AND status = 'running' AND steps_json IS NOT NULL
+          `.pipe(Effect.orDie);
+          for (const { id } of going) {
+            const stopped = yield* runStopper.stopRun(RoutineRunId.make(id));
+            if (Option.isSome(stopped)) yield* endTurns(stopped.value);
+          }
           // A run still waiting for its session, or for its first send, has
           // nothing left to run. Its side session is retired then.
           for (const unsent of yield* unsentDispatches(routine.id).pipe(Effect.orDie)) {
@@ -670,6 +737,70 @@ export const layer = Layer.effect(
         payload: { routineId: input.routineId },
         result: Schema.Void,
         apply: Effect.asVoid(routineRuns.runNow(input.routineId)),
+      });
+    });
+
+    const answer = Effect.fn("Routines.answer")(function* (input: {
+      readonly commandId: CommandId;
+      readonly runId: RoutineRunId;
+      readonly step?: number | undefined;
+      readonly choice: RoutineAnswer["choice"];
+      readonly note: string | null;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "routine.answer",
+        payload: {
+          runId: input.runId,
+          step: input.step ?? null,
+          choice: input.choice,
+          note: input.note,
+        },
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          const outcome = yield* routineRuns.answer({
+            runId: input.runId,
+            step: input.step ?? null,
+            choice: input.choice,
+            note: input.note,
+          });
+          if (outcome === "closed") return yield* new Conflict({ reason: "card-closed" });
+        }),
+      });
+    });
+
+    const retry = Effect.fn("Routines.retry")(function* (input: {
+      readonly commandId: CommandId;
+      readonly runId: RoutineRunId;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "routine.retry",
+        payload: { runId: input.runId },
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          if (!(yield* routineRuns.retry(input.runId))) {
+            return yield* new Conflict({ reason: "not-retryable" });
+          }
+        }),
+      });
+    });
+
+    const stopRun = Effect.fn("Routines.stopRun")(function* (input: {
+      readonly commandId: CommandId;
+      readonly runId: RoutineRunId;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "routine.stopRun",
+        payload: { runId: input.runId },
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          const stopped = yield* runStopper.stopRun(input.runId);
+          if (Option.isNone(stopped)) return yield* new Conflict({ reason: "card-closed" });
+          yield* endTurns(stopped.value);
+          yield* sql.afterCommit(signals.routines.fire);
+        }),
       });
     });
 
@@ -777,6 +908,17 @@ export const layer = Layer.effect(
         }),
       );
 
-    return Routines.of({ list, runs, create, update, remove, run, subscribe });
+    return Routines.of({
+      list,
+      runs,
+      create,
+      update,
+      remove,
+      run,
+      answer,
+      retry,
+      stopRun,
+      subscribe,
+    });
   }),
 ).pipe(Layer.provide(SecureRandom.layerWebCrypto));

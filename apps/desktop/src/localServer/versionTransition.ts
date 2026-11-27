@@ -466,7 +466,7 @@ export const make = Effect.fn("VersionTransition.make")(function* (
           retry: true,
         }),
     ).pipe(
-      // Every start holds the lock now, a plain one too: one it cannot take is
+      // Every start holds the lock, a plain one too: one it cannot take is
       // said as what it is, with the lock's own fix.
       Effect.mapError((error) =>
         isLaunchFailed(error)

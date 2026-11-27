@@ -120,13 +120,6 @@ const secret = (min: number, max: number) =>
     ),
   );
 
-/**
- * The password a vault was sealed under before secrets, typed once to open
- * it: the server then keeps its key itself and forgets the password.
- */
-export const OldVaultPassword = secret(1, 1_024);
-export type OldVaultPassword = typeof OldVaultPassword.Type;
-
 /** A login's user name. Some logins have none. */
 export const LoginUsername = secret(0, 1_000);
 export const LoginPassword = secret(1, 10_000);
@@ -204,8 +197,9 @@ export type Secret = typeof Secret.Type;
 /**
  * - `ready`: secrets can be added and used.
  * - `old-vault`: a vault sealed under a master password, from before secrets,
- *   waits for that password to be typed one last time. Until then nothing in
- *   it can be read or changed, and nothing can be added.
+ *   waits for that password. Only a server of 0.12 or earlier says it, and
+ *   only that server's own web app takes the password; a later server
+ *   refuses to start over such a vault.
  * - `unreadable`: secrets are saved, and the key that opens them is missing
  *   or is another one: its file was deleted or replaced. Nothing in them can
  *   be read until the key is put back, or the operator starts over.

@@ -5,9 +5,11 @@ import {
   BotId,
   NotFound,
   RateLimited,
+  type RoutineAnswer,
   RoutineId,
   RoutineRun,
   RoutineRunId,
+  RoutineStep,
   RoutineTrigger,
 } from "@j3-bots/contracts";
 import { TurnOutcome } from "@j3-bots/engine-t3";
@@ -20,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
@@ -32,8 +35,17 @@ import {
   WakeFailure,
   WakeStatus,
 } from "../turns/model.ts";
+import { Signals } from "../turns/Signals.ts";
 import { stopTargets } from "../turns/stopTargets.ts";
 import { Wakes } from "../turns/Wakes.ts";
+import {
+  type AnswerOutcome,
+  runCards,
+  runSteps,
+  type StepOutcome,
+  type StepReport,
+} from "./runSteps.ts";
+import { isLate, runView } from "./runView.ts";
 
 /** How many settled runs each routine keeps, newest first, beside the one still going. */
 export const RUN_HISTORY = 100;
@@ -54,17 +66,6 @@ export const RUN_ATTEMPTS = 3;
  * until the reset anyway.
  */
 export const retryDelay = (n: number): Duration.Duration => Duration.minutes(2 ** n);
-
-/**
- * How long after it was due a run starts before it counts as late: clients
- * are told when it was due, and so is the bot. The scheduler records a run
- * within seconds of its time while the server runs.
- */
-const LATE_AFTER = Duration.minutes(1);
-
-/** Whether a run due at `due` that starts at `start` is late. */
-export const isLate = (due: DateTime.Utc, start: DateTime.Utc): boolean =>
-  Duration.isGreaterThan(DateTime.distance(due, start), LATE_AFTER);
 
 const dayIn = (at: DateTime.Utc, zone: DateTime.TimeZone) => {
   const parts = DateTime.toParts(DateTime.setZone(at, zone));
@@ -96,9 +97,12 @@ const RoutineRow = Schema.Struct({
   trigger_json: json(RoutineTrigger),
   enabled: Flag,
   webhook_secret: Schema.NullOr(Schema.String),
+  steps_json: Schema.NullOr(json(Schema.Array(RoutineStep))),
 });
 
 const RunStatus = RoutineRun.fields.status;
+
+const encodeSteps = Schema.encodeEffect(json(Schema.Array(RoutineStep)));
 
 /** What settling a run needs of its row, also when the rest of it cannot be read. */
 const Identified = Schema.Struct({
@@ -109,6 +113,10 @@ const Identified = Schema.Struct({
 
 const Ended = Schema.Struct({
   ...Identified.fields,
+  /** The bot the attempt's wake is for: the routine's own, or its step's. */
+  wake_bot_id: BotId,
+  /** The position of a run with several steps; null for a one-step routine's run. */
+  step: Schema.NullOr(Schema.Int),
   wake_id: Schema.NullOr(Schema.String),
   attempts: Schema.Int,
   wake_status: Schema.NullOr(WakeStatus),
@@ -262,6 +270,31 @@ export class RoutineRuns extends Context.Service<
      * the caller's transaction.
      */
     readonly settle: Effect.Effect<void>;
+    /**
+     * Applies the deadline of every yes it has come for, in the caller's
+     * transaction, and returns the earliest deadline still to come.
+     */
+    readonly expire: Effect.Effect<Option.Option<DateTime.Utc>>;
+    /**
+     * Records what a step's bot reported for the attempt of `wakeId`, in the
+     * caller's transaction: false when the step has its report already, or
+     * the wake is not its step's current attempt.
+     */
+    readonly report: (input: {
+      readonly runId: RoutineRunId;
+      readonly wakeId: string;
+      readonly report: StepReport;
+    }) => Effect.Effect<boolean>;
+    /** The operator's answer to the yes a run waits for, in the caller's transaction. */
+    readonly answer: (input: {
+      readonly runId: RoutineRunId;
+      /** The yes the operator saw; null from a client that does not say. */
+      readonly step: number | null;
+      readonly choice: RoutineAnswer["choice"];
+      readonly note: string | null;
+    }) => Effect.Effect<AnswerOutcome>;
+    /** Try again of a failed run, in the caller's transaction: false when it is not retryable. */
+    readonly retry: (runId: RoutineRunId) => Effect.Effect<boolean>;
   }
 >()("@j3-bots/server/routines/RoutineRuns") {}
 
@@ -274,17 +307,24 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const wakes = yield* Wakes;
     const changes = yield* ChangeLog;
+    const entries = yield* Entries;
+    const signals = yield* Signals;
+    const view = runView(sql);
+    const cards = runCards(sql, entries, changes);
 
     const routineRow = SqlSchema.findOneOption({
       Request: RoutineId,
       Result: RoutineRow,
       execute: (id) => sql`
-        SELECT id, bot_id, trigger_json, enabled, webhook_secret FROM routines WHERE id = ${id}
+        SELECT id, bot_id, trigger_json, enabled, webhook_secret, steps_json
+        FROM routines WHERE id = ${id}
       `,
     });
 
     const endedRows = (routineId: RoutineId | null) => sql`
-        SELECT r.id, r.routine_id, ro.bot_id, r.wake_id, r.attempts, w.status AS wake_status,
+        SELECT r.id, r.routine_id, ro.bot_id, COALESCE(w.bot_id, ro.bot_id) AS wake_bot_id,
+          CASE WHEN r.steps_json IS NULL THEN NULL ELSE r.step END AS step,
+          r.wake_id, r.attempts, w.status AS wake_status,
           w.failure_reason AS wake_failure, w.updated_at AS wake_updated_at, d.seq AS dispatch_seq, d.status AS dispatch_status,
           d.outcome_json,
           EXISTS (
@@ -295,7 +335,11 @@ export const layer = Layer.effect(
         JOIN routines ro ON ro.id = r.routine_id
         LEFT JOIN wakes w ON w.id = r.wake_id
         LEFT JOIN dispatches d ON d.id = w.dispatch_id
+        LEFT JOIN routine_run_steps cur ON cur.run_id = r.id AND cur.position = r.step
         WHERE r.status = 'running'
+          -- A run with several steps settles from its bot step at work, not
+          -- while it waits for a yes or before its first step starts.
+          AND (r.steps_json IS NULL OR cur.state = 'doing')
           AND (w.id IS NULL OR w.status IN ('finished', 'cancelled', 'failed'))
           ${routineId === null ? sql`` : sql`AND r.routine_id = ${routineId}`}
         ORDER BY r.started_at, r.id
@@ -347,6 +391,55 @@ export const layer = Layer.effect(
       yield* recordChange(run.bot_id, run.routine_id);
     });
 
+    const steps = runSteps({
+      sql,
+      wakes,
+      changes,
+      signals,
+      cards,
+      finish: (run, status, at) => finish(run, status, at).pipe(Effect.orDie),
+    });
+
+    /** What became of a step's attempt that ended, as the step machine reads it. */
+    const stepOutcome = Effect.fn("RoutineRuns.stepOutcome")(function* (
+      run: Ended,
+      now: DateTime.Utc,
+    ): Effect.fn.Return<StepOutcome, never> {
+      // A Stop of the step's bot that reached its turn, or its wake.
+      const stopped =
+        run.wake_status === "cancelled" ||
+        (run.dispatch_seq !== null &&
+          (yield* stops.covers(run.wake_bot_id, conversation, run.dispatch_seq)));
+      switch (run.wake_status) {
+        case null:
+          return { _tag: "bot-gone" } as const;
+        case "pending":
+        case "dispatched":
+          return { _tag: "going" } as const;
+        case "cancelled":
+          return { _tag: "stopped", partial: false } as const;
+        case "failed":
+          // The engine refused its envelope: the next attempt would fare no
+          // better. Any other failure came before its turn started.
+          if (run.wake_failure === "rejected" && !endedBeforeStart(run)) {
+            return { _tag: "never-started", retry: Effect.succeed(false) } as const;
+          }
+          return {
+            _tag: "never-started",
+            retry:
+              !stopped && run.attempts < RUN_ATTEMPTS && run.wake_id !== null
+                ? Effect.as(Effect.orDie(retry(run, now)), true)
+                : Effect.succeed(false),
+          } as const;
+        case "finished":
+          if (run.dispatch_status !== null && OPEN_DISPATCH.includes(run.dispatch_status)) {
+            return { _tag: "going" } as const;
+          }
+          if (stopped) return { _tag: "stopped", partial: true } as const;
+          return { _tag: "ended", completed: run.outcome_json?._tag === "completed" } as const;
+      }
+    }, Effect.orDie);
+
     /**
      * Settles the runs whose wake ended: every routine's, or one routine's. A
      * row that cannot be read whole, its dispatch's outcome written by
@@ -357,6 +450,7 @@ export const layer = Layer.effect(
       routineId: RoutineId | null,
     ) {
       const now = yield* DateTime.now;
+      yield* steps.expire(now, routineId);
       for (const raw of yield* endedRows(routineId)) {
         const decoded = Schema.decodeUnknownOption(Ended)(raw);
         if (Option.isNone(decoded)) {
@@ -372,6 +466,17 @@ export const layer = Layer.effect(
           continue;
         }
         const run = decoded.value;
+        if (run.step !== null) {
+          yield* steps.settle({
+            id: run.id,
+            position: run.step,
+            wakeId: run.wake_id,
+            outcome: yield* stepOutcome(run, now),
+            spoke: run.spoke,
+            at: run.wake_updated_at ?? now,
+          });
+          continue;
+        }
         let settlement = settlementOf(run);
         if (settlement._tag === "going") continue;
         if (settlement._tag === "attempt-failed") {
@@ -399,7 +504,7 @@ export const layer = Layer.effect(
     const retry = Effect.fn("RoutineRuns.retry")(function* (run: Ended, now: DateTime.Utc) {
       const [wakeId] = yield* wakes.record([
         {
-          botId: run.bot_id,
+          botId: run.wake_bot_id,
           kind: "routine",
           audience: conversation,
           payload: { _tag: "routine", routineId: run.routine_id, runId: run.id },
@@ -444,12 +549,37 @@ export const layer = Layer.effect(
       const going = yield* sql`
         SELECT 1 FROM routine_runs WHERE routine_id = ${routine.id} AND status = 'running'
       `;
+      const row = yield* routineRow(routine.id);
+      const stepped = Option.isSome(row) ? row.value.steps_json : null;
       if (going.length > 0) {
         yield* sql`
           INSERT INTO routine_runs (
             id, routine_id, status, request_key, due_at, started_at, finished_at
           ) VALUES (${runId}, ${routine.id}, 'skipped', ${request.key}, ${dueAt}, ${at}, ${at})
         `;
+      } else if (stepped !== null) {
+        // A routine with several steps: its run copies them, and the step
+        // machine starts its first bot step and posts its card.
+        const earlier = yield* sql<{ readonly id: string }>`
+          SELECT id FROM routine_runs
+          WHERE routine_id = ${routine.id} AND entry_id IS NOT NULL AND status = 'failed'
+            AND stopped = 0
+          ORDER BY started_at DESC, id DESC LIMIT 1
+        `;
+        yield* sql`
+          INSERT INTO routine_runs (
+            id, routine_id, status, trigger_data, request_key, due_at, started_at, steps_json
+          ) VALUES (
+            ${runId}, ${routine.id}, 'running', ${request.body}, ${request.key}, ${dueAt}, ${at},
+            ${yield* encodeSteps(stepped)}
+          )
+        `;
+        yield* sql`
+          UPDATE routines SET run_count = run_count + 1, missed_json = NULL WHERE id = ${routine.id}
+        `;
+        // The run it follows can no longer be tried again: its card says so.
+        for (const { id } of earlier) yield* cards.refresh(RoutineRunId.make(id), false);
+        yield* steps.begin(runId);
       } else {
         const [wakeId] = yield* wakes.record([
           {
@@ -618,6 +748,13 @@ export const layer = Layer.effect(
       );
     });
 
+    const retryRun = Effect.fn("RoutineRuns.retryRun")(function* (runId: RoutineRunId) {
+      const row = yield* view.cardRow(runId).pipe(Effect.orDie);
+      if (Option.isNone(row)) return false;
+      const shown = yield* view.toRun(row.value);
+      return yield* steps.retry(runId, shown.retryable === true);
+    });
+
     return RoutineRuns.of({
       due,
       runNow,
@@ -625,6 +762,12 @@ export const layer = Layer.effect(
       webhook,
       events,
       settle: settleEnded(null),
+      expire: Effect.flatMap(DateTime.now, (now) => steps.expire(now)),
+      report: Effect.fn("RoutineRuns.report")((input) =>
+        steps.report(input.runId, input.wakeId, input.report),
+      ),
+      answer: steps.answer,
+      retry: retryRun,
     });
   }),
 );

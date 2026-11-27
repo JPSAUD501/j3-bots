@@ -1,6 +1,6 @@
 # A bot's browser, secrets and connectors
 
-**Draft.** This page walks through the three things that reach outside the bot's own folder: a browser the bot works in, secrets you type for bots to use without reading them, and connectors to the services you use. It says what you do and what you see. What each part guards against is in [Security: the browser, secrets and connectors](../architecture/security.md#the-browser-secrets-and-connectors).
+This page walks through the three things that reach outside the bot's own folder: a browser the bot works in, secrets you type for bots to use without reading them, and connectors to the services you use. It says what you do and what you see. What each part guards against is in [Security: the browser, secrets and connectors](../architecture/security.md#the-browser-secrets-and-connectors).
 
 All three are off or empty until you act. A bot gets none of them by updating.
 
@@ -26,10 +26,6 @@ By default, only the bot that asked may use what you save. **Let every bot use i
 
 On Android it is the same, on a screen for the list and one for each secret, and a copied value shows no preview. A one-time code key can be pasted, or read with the camera from the QR code the site shows.
 
-### Coming from a vault with a master password
-
-If you saved logins before 0.9.0, **Settings → Secrets** asks for your vault password one last time. After that the server keeps the key itself and never asks again; each login gets a name from its old label, which you can change. Until you type it, no login can be used and no connector that needs a secret can reach its service. If the password is lost, [Operating: secrets](operating.md#secrets) says how to start over.
-
 ### A bot signs in with a login
 
 - **A bot uses a login only if the login allows that bot**, and its browser is on.
@@ -43,7 +39,7 @@ A bot can open pages, read them and act in them in a browser that runs on the ma
 
 ### Turn it on for a bot
 
-In the bot's details, turn on **Browser: Use this computer's browser**. It is off for every bot, including those you had before updating. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing, as **Stop** does: messages you queued for it and not yet sent are dropped too.
+In the bot's details, turn on **Browser: Use this computer's browser**. It is off for every bot until you turn it on. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing, as **Stop** does: messages you queued for it and not yet sent are dropped too.
 
 **Every bot with the switch on uses the same browser profile**, so wherever you, or one of those bots, signs in there, all of them are signed in. On those sites a bot acts as you. Give the browser to the bots whose job needs it, and no others.
 
@@ -97,7 +93,7 @@ A connector lets a bot use a service of yours, such as your notes, your tracker 
 
 Ask a bot: "connect my notes", "add this MCP server". It searches J3 Bots' gallery and the public registry, prefers the gallery's entry, and adds the connector under its permission mode: in Supervised, it asks you first. Its name is on the connector afterwards. A key the service needs is never typed into the conversation: the bot asks you to save it as a secret, and the connector names it as `${secret:<name>}`.
 
-**Settings → Connectors → Manage connectors**, or **Connectors** in a bot's details, lists the connectors your bots added and the skills they saved. It adds none itself: with nothing there yet, it says to ask a bot. J3 Bots' own skills (`j3-…`) aren't listed. See [decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md).
+**Settings → MCP and skills → Manage connectors**, or **Connectors** in a bot's details, lists the connectors your bots added and the skills they saved. It adds none itself: with nothing there yet, it says to ask a bot. J3 Bots' own skills (`j3-…`) aren't listed. See [decision 0068](../decisions/0068-settings-lists-what-the-bots-added.md).
 
 Two kinds wait on your yes, on a card in the bot's conversation:
 
@@ -133,7 +129,7 @@ A connector's page shows its status and what fixes it:
 | Needs sign-in | Its sign-in ended or was refused: some services end one after a fixed time. | Sign in again, or give its key again. |
 | Can't reach | It doesn't answer, or answers with errors, and the page says which. | Check the service; it is tried again on its own. |
 | Needs a secret | Its settings name a secret, as `${secret:<name>}`, that doesn't exist, lacks the value it takes, or isn't shared with every bot that uses the connector. Nothing is sent until it is. | **Open Secrets** to save or share it, or choose fewer bots. |
-| Secrets unavailable | The server's secrets can't be read: an old vault waits for its password, or the key file is missing. | **Open Secrets**. |
+| Secrets unavailable | The server's secrets can't be read: the key file is missing or is another one. | **Open Secrets**. |
 
 When a bot finds its connector signed out, it shows a card in its conversation that reconnects it. You are notified then, not when nobody is using the connector.
 
@@ -154,4 +150,3 @@ When a bot finds its connector signed out, it shows a card in its conversation t
 - **The browser's profile is left out of the backup** command: it holds live sessions for every site you signed in to. After a restore, sign in again. A rollback leaves it as it is, though going back to an older browser may sign you out of everything.
 - **The secrets are in the backup, sealed, without their key**: the backup command copies the key file on its own, to keep apart from the archive. Restored with it, they come back as they were. A service that replaces its sign-in each time it is renewed may refuse the one in an older backup (**Assumed**); sign that connector in again.
 - **An update's rollback never touches the secrets.** Logins, values and connectors' sign-ins stay as they are. Connectors themselves are in the database a rollback puts back: one added after the update is gone after the rollback, and is added again.
-- **Rolling back to 0.8 or earlier** finds secrets it cannot read, as written by a newer release, and leaves them alone until you update again. Rolling back to 0.3 also gives every bot the browser again, since 0.3 has no switch.

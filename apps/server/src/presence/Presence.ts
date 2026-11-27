@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  ConnectorNotice,
-  BotId,
-  DeviceId,
-  Entry,
-  EntryTarget,
-  Notification,
-  NotificationKind,
-  NotificationSettings,
+import {
+  type ConnectorNotice,
+  type BotId,
+  type DeviceId,
+  type Entry,
+  type EntryTarget,
+  type Notification,
+  type NotificationKind,
+  type NotificationSettings,
+  PREVIEW_LENGTH,
+  type RoutineNotice,
+  type RoutineRunEntry,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,7 +19,7 @@ import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Devices } from "../devices/Devices.ts";
-import { previewOf } from "../entries/preview.ts";
+import { cut, previewOf } from "../entries/preview.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 
 /** One connected socket, from its handlers' start to their end. */
@@ -45,18 +48,52 @@ const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
  */
 const kindOf = (
   entry: Entry,
-): { readonly kind: NotificationKind; readonly botId: BotId } | null => {
-  if (entry.author._tag !== "bot" || entry._tag === "handoff") return null;
+): {
+  readonly kind: NotificationKind;
+  readonly botId: BotId;
+  readonly routine: RoutineNotice | null;
+} | null => {
+  if (entry.author._tag !== "bot") return null;
+  if (entry._tag === "routine-run") {
+    const notice = routineNoticeOf(entry);
+    return notice === null ? null : { ...notice, botId: entry.author.botId };
+  }
   const kind = notificationKindOf(entry._tag);
-  return kind === null ? null : { kind, botId: entry.author.botId };
+  return kind === null ? null : { kind, botId: entry.author.botId, routine: null };
+};
+
+/**
+ * Whether a run's card needs the operator (decision 0080): the run waits for
+ * their yes, or failed at a step other than by a Stop, which they gave. Both
+ * are theirs to decide, as a question is. A card that changes otherwise
+ * notifies nothing.
+ */
+const routineNoticeOf = (
+  entry: RoutineRunEntry,
+): { readonly kind: NotificationKind; readonly routine: RoutineNotice } | null => {
+  const steps = entry.run.steps ?? [];
+  if (entry.run.status === "running" && steps.some((step) => step.state === "waiting")) {
+    return { kind: "question", routine: { name: entry.name, reason: "yes", stepBotId: null } };
+  }
+  const failed = steps.find((step) => step.state === "failed");
+  if (entry.run.status !== "failed" || failed === undefined || failed.failure === "stopped") {
+    return null;
+  }
+  return {
+    kind: "question",
+    routine: {
+      name: entry.name,
+      reason: "failed",
+      stepBotId: failed.step._tag === "bot" ? failed.step.botId : null,
+    },
+  };
 };
 
 /**
  * The notification an entry of this kind makes when it notifies, which names
  * the Android channel a push shows in: its own kind, or `connector` for either
  * connector card. Null for a kind that never notifies. A push read back from
- * its delivery takes its channel from here too, from the entry it is about:
- * so `handoff` keeps its channel for a push an earlier release recorded.
+ * its delivery takes its channel from here too, from the entry it is about.
  */
 export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null => {
   switch (kind) {
@@ -65,7 +102,6 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "approval":
     case "secret-request":
     case "browser-help":
-    case "handoff":
       return kind;
     // A bot's ask for a secret shows where the engine's secret requests do,
     // Android's channel for them included.
@@ -77,11 +113,17 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "connector-auth":
     case "connector-input":
       return "connector";
+    // A bot's message to a teammate shows in both conversations and notifies no one.
+    case "handoff":
     case "work-fold":
     case "notice":
     case "routine-change":
     case "event-routine-change":
       return null;
+    // A run's card notifies only when it needs the operator (`routineNoticeOf`),
+    // as a question.
+    case "routine-run":
+      return "question";
   }
 };
 
@@ -104,6 +146,12 @@ const connectorCard = (entry: Entry): ConnectorNotice | null => {
  */
 const previewText = (entry: Entry, settings: NotificationSettings): string | null => {
   if (!settings.previews || entry._tag === "browser-help") return null;
+  // A run's card: the question its yes asks, never a step's own words otherwise.
+  if (entry._tag === "routine-run") {
+    const asked = entry.run.steps?.find((step) => step.state === "waiting")?.ask?.question;
+    const line = cut((asked?.split("\n")[0] ?? "").trim(), PREVIEW_LENGTH);
+    return line === "" ? null : line;
+  }
   const line = (previewOf(entry, null).text.split("\n")[0] ?? "").trim();
   return line === "" ? null : line;
 };
@@ -232,6 +280,7 @@ export const layer = Layer.effect(
           preview: previewText(entry, notifications),
           connector: connectorCard(entry),
           browserHelp: browserHelpOf(entry, notifications),
+          ...(made.routine === null ? {} : { routine: made.routine }),
         },
         live: paired.filter(({ id }) => sockets.has(id)).map(({ id }) => id),
         push: paired

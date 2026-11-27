@@ -142,12 +142,14 @@ export const WakePayload = Schema.Union([
   }),
   /**
    * How the bot's ask for a secret ended: saved from its card, declined, or
-   * expired. `name` is the secret's, which the bot names it by.
+   * expired. `name` is the secret's, which the bot names it by; `alongside`
+   * the others' of an ask for several values, after the first.
    */
   Schema.TaggedStruct("secret-ask", {
     cardId: EntryId,
     outcome: Schema.Literals(["saved", "declined", "expired"]),
     name: SecretName,
+    alongside: Schema.optionalKey(Schema.Array(SecretName)),
   }),
   /**
    * How the bot's ask to add a connector its operator had to allow ended
@@ -191,6 +193,12 @@ export const WakePayload = Schema.Union([
    * of the room the bot has not seen, this one among them.
    */
   Schema.TaggedStruct("room", { entryId: EntryId, reason: RoomReason }),
+  /**
+   * The operator reacted to this bot's message (`entryId`): a `system` wake
+   * for the message's audience, whose quiet turn reads the reactions on it as
+   * they stand when it is dispatched (`reactions/Reactions.ts`).
+   */
+  Schema.TaggedStruct("reaction", { entryId: EntryId }),
 ]);
 export type WakePayload = typeof WakePayload.Type;
 
@@ -218,6 +226,12 @@ export const CatchUpNote = Schema.Union([
     at: Schema.DateTimeUtc,
     reason: EventStopReason,
   }),
+  /**
+   * Reactions on a message of the bot's conversation or of a room it is in
+   * changed: its next envelope tells them as they stand then, or nothing once
+   * none is left but its own. One per bot and message while it waits.
+   */
+  Schema.TaggedStruct("reactions", { entryId: EntryId }),
   /** The bot's main session was replaced; `digest` is what the new one is told of the conversation. */
   Schema.TaggedStruct("session-rotated", {
     digest: Schema.Array(
