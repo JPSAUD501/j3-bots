@@ -66,19 +66,23 @@ export const diagnosticsCommand = Command.make("diagnostics", { out: outFlag }).
       // The file is made here, and only here: anything already at its name, a
       // link included, is refused and left as it is. Once made, it is removed
       // again when no whole zip is written, however that ends, and only once
-      // it is closed, which Windows needs.
+      // it is closed, which Windows needs. Making it and noting it is one step,
+      // so an interruption cannot fall between them.
       let made = false;
       const running = yield* Effect.gen(function* () {
-        const handle = yield* fs
-          .open(file, { flag: "wx", mode: 0o600 })
-          .pipe(
-            Effect.mapError((error) =>
-              error.reason._tag === "AlreadyExists"
-                ? refuse(`${file} already exists. Name another file with --out.`)
-                : refuse(`${file} could not be written.`),
-            ),
-          );
-        made = true;
+        const handle = yield* fs.open(file, { flag: "wx", mode: 0o600 }).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              made = true;
+            }),
+          ),
+          Effect.uninterruptible,
+          Effect.mapError((error) =>
+            error.reason._tag === "AlreadyExists"
+              ? refuse(`${file} already exists. Name another file with --out.`)
+              : refuse(`${file} could not be written.`),
+          ),
+        );
         // The running server, when one answers, says what only it knows: the
         // engine's state and when it started. Without one, the zip says so.
         const running = hasAdminSocket(process.platform)

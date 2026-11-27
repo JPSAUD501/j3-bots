@@ -105,15 +105,29 @@ class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
 const credentialFile = (path: Path.Path, home: string) =>
   path.join(engineFolders(path, home).j3, "credential.json");
 
+/** The token of a `credential.json`, whatever else an older or newer release wrote beside it. */
+const decodeToken = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ token: Schema.String })),
+);
+
 /**
- * The token `credential.json` holds for the engine at `home`, when it holds
- * one that reads: for a diagnostics zip to take out wherever it appears.
+ * The token `credential.json` holds for the engine at `home`, for a
+ * diagnostics zip to take out wherever it appears. The token alone, since
+ * its scopes are words a log uses; the whole file when it does not read as
+ * one, so a token is never missed. None when there is no file.
  */
 export const storedToken = Effect.fn("engine.storedToken")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   return yield* fs.readFileString(credentialFile(path, home)).pipe(
-    Effect.map((text) => Option.map(decodeStored(text), (stored) => Redacted.make(stored.token))),
+    Effect.map((text) =>
+      decodeToken(text).pipe(
+        Option.map((stored) => stored.token),
+        Option.orElse(() => Option.some(text.trim())),
+        Option.filter((token) => token.length > 0),
+        Option.map((token) => Redacted.make(token)),
+      ),
+    ),
     Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
   );
 });

@@ -140,6 +140,10 @@ const recordLogs = Logger.layer([
 /** The logged lines that mention `text`. */
 const logLinesWith = (text: string) => logged.filter((line) => line.includes(text));
 
+/** A logged line's message. */
+const messageOfLine = (line: string) =>
+  Schema.decodeSync(Schema.fromJsonString(Schema.Struct({ message: Schema.String })))(line).message;
+
 /** The client listener over the test domain, its configuration changed by `configure`. */
 const served = (configure: (config: ServerConfigShape) => ServerConfigShape) =>
   Http.serve(NodeHttpServer.layerTest, { logAddress: false }).pipe(
@@ -412,7 +416,9 @@ it.layer(
       assert.notInclude(refused.body, "bots.example.com");
       const lines = logLinesWith("other.example.com");
       assert.lengthOf(lines, 1);
-      assert.include(lines[0], "bots.example.com");
+      // The server's own name, in an annotation the diagnostics zip leaves out, never its message.
+      assert.include(lines[0], '"publicName":"bots.example.com"');
+      assert.notInclude(messageOfLine(lines[0] ?? ""), "bots.example.com");
     }),
   );
 

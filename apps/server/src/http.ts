@@ -34,7 +34,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../package.json" with { type: "json" };
-import { REFUSED_NAME } from "./logs/annotations.ts";
+import { PUBLIC_NAME, REFUSED_NAME } from "./logs/annotations.ts";
 import { Attachments } from "./attachments/Attachments.ts";
 import { WorkImages } from "./attachments/WorkImages.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
@@ -306,18 +306,26 @@ const refusedNameLogger = (
   publicOrigin: Option.Option<ServerOrigin>,
   refused: RefusedNames["Service"],
 ) => {
-  const answered = Option.match(publicOrigin, {
+  const publicName = Option.map(publicOrigin, (origin) => URL.parse(origin)?.hostname ?? origin);
+  const answered = Option.match(publicName, {
     onNone: () => "localhost and IP addresses; publicOrigin is not set",
-    onSome: (origin) => `localhost, IP addresses and ${URL.parse(origin)?.hostname ?? origin}`,
+    onSome: () => `localhost, IP addresses and the name in ${PUBLIC_NAME}`,
+  });
+  // The names are the operator's network's: in annotations, which a diagnostics zip leaves out.
+  const annotations = (name: string) => ({
+    [REFUSED_NAME]: name,
+    ...Option.match(publicName, {
+      onNone: () => ({}),
+      onSome: (each) => ({ [PUBLIC_NAME]: each }),
+    }),
   });
   return (host: string | undefined) =>
     Effect.gen(function* () {
       const name = requestedName(host);
       if (!(yield* refused.record(name))) return;
-      // The name is the operator's network's: in an annotation, which a diagnostics zip leaves out.
       yield* Effect.logWarning(
         `Refused a plain-HTTP request for the name in ${REFUSED_NAME} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at that name, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
-      ).pipe(Effect.annotateLogs(REFUSED_NAME, name));
+      ).pipe(Effect.annotateLogs(annotations(name)));
     });
 };
 

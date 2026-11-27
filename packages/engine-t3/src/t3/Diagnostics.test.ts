@@ -146,11 +146,8 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
       yield* fs.makeDirectory(path.join(home, "userdata", "secrets"), { recursive: true });
       yield* fs.writeFileString(
         path.join(home, "j3", "credential.json"),
-        JSON.stringify({
-          token: "engine-token-value",
-          expiresAt: "2026-12-01T00:00:00Z",
-          scopes: ["orchestration:read"],
-        }),
+        // As a release before scopes were kept wrote it: its token still counts.
+        JSON.stringify({ token: "engine-token-value", expiresAt: "2026-12-01T00:00:00Z" }),
       );
       const connection = JSON.stringify({
         baseUrl: "https://ai.example.test",
@@ -166,7 +163,7 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
       );
 
       // The token alone of the credential, and the connection whole and its key:
-      // the scopes and the URL are words a log uses.
+      // the URL is a word a log uses.
       const values = (yield* engineSecretValues(home)).map(Redacted.value);
       assert.deepStrictEqual(
         values.toSorted(),
