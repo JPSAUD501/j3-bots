@@ -193,13 +193,16 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
 
       yield* lifecycle.set("background");
       yield* waitFor(view.state, statusIs("paused"));
-      // Typing is about a page the operator no longer sees; giving the tab back is not.
+      // Typing is about a page the operator no longer sees; giving the tab back is not, and it goes
+      // as it was asked: one the hold's end gave back says so.
       yield* view.send({ type: "text", text: "lost" });
-      yield* view.send({ type: "release" });
+      yield* view.send({ type: "release", idle: true });
       yield* lifecycle.set("foreground");
       yield* waitFor(view.state, statusIs("live"));
-      yield* waitFor(view.state, (state) => state.control?.controller !== "you");
-      assert.notStrictEqual((yield* shared(ref)).heldBy?.kind, "person");
+      // An idle release keeps the hold until it lapses, where a plain one would end it at once.
+      yield* eventually(
+        Effect.map(shared(ref), (tab) => tab.heldBy?.kind === "person" && tab.heldBy.until !== null),
+      );
       assert.deepStrictEqual(yield* callsOn(host, "tab.input", ref), []);
     }).pipe(Effect.scoped, Effect.provide(client)),
   );

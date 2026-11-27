@@ -118,8 +118,12 @@ export function LiveScreen({ navigation, route }: Props) {
     });
   }
   const tab = listed?.find((each) => each.ref === shown.tab.ref) ?? null;
+  // A tab just opened is waited for only while the list does not hold it yet.
   const show = (ref: BrowserTabRef, fresh = false) =>
-    setShown((now) => ({ ...now, tab: { ref, fresh } }));
+    setShown((now) => ({
+      ...now,
+      tab: { ref, fresh: fresh && !(now.list?.some((each) => each.ref === ref) ?? false) },
+    }));
   // Showing the page again, after another window took it or it failed to open, is a view of its own.
   const [attempt, setAttempt] = useState(0);
 
@@ -137,7 +141,7 @@ export function LiveScreen({ navigation, route }: Props) {
       navigation={navigation}
       from={from}
       tab={tab}
-      loading={listed === null || shown.tab.fresh}
+      loading={listed === null || (shown.tab.fresh && tab === null)}
       tabs={listed ?? []}
       shared={shared}
       closing={closing}
@@ -410,7 +414,7 @@ function TabLive({
             />
           )}
         </View>
-        {!lying && opened !== "tabs" && undo}
+        {opened !== "tabs" && undo}
         {!lying && bar}
       </View>
       {lying && bar}

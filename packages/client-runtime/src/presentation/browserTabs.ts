@@ -26,6 +26,11 @@ export type TabHolder =
   | { readonly _tag: "bot"; readonly botId: BotId }
   /** The person on this device. `until` is when the hold ends, in epoch ms; null while they asked the bots to wait. */
   | { readonly _tag: "you"; readonly until: number | null }
+  /**
+   * This device took the tab on a server from before shared tabs, which holds
+   * it until it is given back: when the hold ends is this device's to say.
+   */
+  | { readonly _tag: "taken" }
   /** The person on another device. */
   | { readonly _tag: "elsewhere" }
   /** The server is typing a saved login. */
@@ -72,7 +77,7 @@ const controlledBy = (controller: BrowserController, botId: BotId): TabHolder =>
       return { _tag: "bot", botId };
     // A server from before holds a tab until it is given back.
     case "you":
-      return { _tag: "you", until: null };
+      return { _tag: "taken" };
     case "another-device":
       return { _tag: "elsewhere" };
     case "nobody":
@@ -168,6 +173,7 @@ export const holdEnd = (tab: ViewerTab, use: PageUse, now: number): number | nul
     const end = local === null ? tab.holder.until : Math.max(local, tab.holder.until);
     return end > now ? end : "none";
   }
+  // A tab taken on a server from before, or nobody's: held while this device's own input is recent.
   return local !== null && local > now ? local : "none";
 };
 
@@ -445,7 +451,8 @@ export const pageUseStep = (
       const held = took || use.lastInputAt !== null || use.waiting || use.keyboard;
       return { state: NO_PAGE_USE_STATE, send: held ? [{ type: "release" }] : [] };
     }
+    // The hook says so once for a tab it took, or one the server still says this device took.
     case "hold-ended":
-      return { state: { use, took: false }, send: !shared && took ? [{ type: "release" }] : [] };
+      return { state: { use, took: false }, send: shared ? [] : [{ type: "release" }] };
   }
 };

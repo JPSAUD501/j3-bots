@@ -288,8 +288,8 @@ export const layer = Layer.effect(
       let sequence = 0;
       let probes = 0;
       let pointers = 0;
-      /** Taking or giving back the tab, asked for while no socket was open. */
-      let control: "take" | "release" | null = null;
+      /** Taking or giving back the tab, asked for while no socket was open, as it was asked. */
+      let control: Extract<BrowserInput, { readonly type: "take" | "release" }> | null = null;
 
       // What the device says it is doing is read on the view's own fiber: a
       // phone answers it asynchronously, and opening a view waits for nothing.
@@ -396,7 +396,7 @@ export const layer = Layer.effect(
           setStatus({ _tag: "live" });
           if (control !== null) {
             const asked = control;
-            if (yield* send({ type: asked })) control = null;
+            if (yield* send(asked)) control = null;
           }
           while (true) {
             const messages = yield* reader.pull.pipe(
@@ -499,7 +499,7 @@ export const layer = Layer.effect(
           }),
         send: (frame) =>
           Effect.suspend(() => {
-            const asked = frame.type === "take" || frame.type === "release" ? frame.type : null;
+            const asked = frame.type === "take" || frame.type === "release" ? frame : null;
             if (write === null) {
               if (asked !== null) control = asked;
               return Effect.void;

@@ -13,6 +13,7 @@ import {
   botViewerTab,
   followedBot,
   frozenOf,
+  holdEnd,
   listedTabs,
   neighborTab,
   nextLineChange,
@@ -128,10 +129,32 @@ describe("a tab from a server before shared tabs", () => {
       front: true,
     } as const;
     expect(botViewerTab(tab, here)).toMatchObject({ onIt: [ana], acting: ana, where: null });
-    expect(botViewerTab({ ...tab, controller: "you" }, here).holder).toEqual({
-      _tag: "you",
-      until: null,
+    expect(botViewerTab({ ...tab, controller: "you" }, here).holder).toEqual({ _tag: "taken" });
+  });
+
+  it("ends the hold of a tab taken there 10 s after this device's last input, as on any server", () => {
+    const taken = botViewerTab(
+      {
+        ref: BrowserTabRef.make("tab_old"),
+        botId: ana,
+        url: "",
+        title: "",
+        loading: false,
+        controller: "you",
+        front: true,
+      },
+      here,
+    );
+    const end = now + BROWSER_PERSON_HOLD_MS;
+    expect(holdEnd(taken, inputAt(now), now)).toBe(end);
+    expect(tabLine(taken, inputAt(now), end - 1_000)).toEqual({
+      _tag: "back-in",
+      bots: [ana],
+      seconds: 1,
     });
+    expect(holdEnd(taken, inputAt(now), end)).toBe("none");
+    // Taken with nothing done here since, as before the app restarted: nothing holds it here.
+    expect(holdEnd(taken, NO_PAGE_USE, now)).toBe("none");
   });
 });
 

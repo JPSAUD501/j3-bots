@@ -158,6 +158,8 @@ export function BrowserSurface({
     count: number;
   } | null>(null);
   const touch = useRef<{ x: number; y: number; scrolling: boolean } | null>(null);
+  // The fingers on the picture: two or more pinch, which is only looking, never a tap or a scroll.
+  const fingers = useRef(new Set<number>());
   const pendingMove = useRef<{ x: number; y: number; buttons: number; modifiers: number } | null>(
     null,
   );
@@ -216,8 +218,12 @@ export function BrowserSurface({
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
     if (event.pointerType === "touch") {
+      fingers.current.add(event.pointerId);
       // A finger scrolls by dragging and clicks by tapping; a tap on a field brings the keyboard.
-      touch.current = { x: event.clientX, y: event.clientY, scrolling: false };
+      touch.current =
+        fingers.current.size === 1
+          ? { x: event.clientX, y: event.clientY, scrolling: false }
+          : null;
       return;
     }
     field.current?.focus({ preventScroll: true });
@@ -262,6 +268,7 @@ export function BrowserSurface({
     if (holding || event.buttons !== 0) queueMove(event);
   };
   const onPointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    fingers.current.delete(event.pointerId);
     if (!usable) return;
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
@@ -389,7 +396,8 @@ export function BrowserSurface({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
+        onPointerCancel={(event) => {
+          fingers.current.delete(event.pointerId);
           touch.current = null;
         }}
         onContextMenu={(event) => {

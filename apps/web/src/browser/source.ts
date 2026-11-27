@@ -4,9 +4,14 @@ import type { BrowserViewState, J3Client } from "@j3-bots/client-runtime";
 /**
  * Where the shell's views of a bot's browser come from: the client runtime
  * in a build, a sample in the gallery and in development. `pairing` is this
- * device, which says whether a hold on a tab is its own.
+ * device, which says whether a hold on a tab is its own; `sharedBrowser`
+ * says whether the server shares its tabs, which changes what using a page
+ * sends (`usePageUse`).
  */
-export type BrowserSource = Pick<J3Client, "openBrowserTabs" | "openBrowserView" | "pairing">;
+export type BrowserSource = Pick<
+  J3Client,
+  "openBrowserTabs" | "openBrowserView" | "pairing" | "sharedBrowser"
+>;
 
 /** Whether a view is, or soon will be, showing the page. */
 export const opening = (state: BrowserViewState): boolean => {

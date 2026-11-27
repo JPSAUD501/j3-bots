@@ -163,10 +163,11 @@ function TabPane({
 
   const { source } = useBrowser();
   const here = useSyncExternalStore(source.pairing.subscribe, source.pairing.get);
+  const shared = useSyncExternalStore(source.sharedBrowser.subscribe, source.sharedBrowser.get);
   const shown = botViewerTab(tab, here);
   const { stageRef, box, current: tabView } = useTabView(tab.ref);
   const state: BrowserViewState | null = tabView?.state ?? null;
-  const use = usePageUse({ tab: shown, send: tabView?.view.send ?? null, shared: false });
+  const use = usePageUse({ tab: shown, send: tabView?.view.send ?? null, shared });
   const waitsForPerson = useWaitingBots();
   const status = state?.status._tag;
   const usable =

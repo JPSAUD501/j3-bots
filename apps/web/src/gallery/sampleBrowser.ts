@@ -106,6 +106,8 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
 
   return {
     pairing: new Cell<DeviceId | null>(null),
+    // A server from before shared tabs: one tab per bot, taken and given back.
+    sharedBrowser: new Cell(false),
     openBrowserTabs: (botId) => {
       const sample = tabs.get(botId);
       const state = new Cell<Loaded<ReadonlyArray<BrowserTab>>>({

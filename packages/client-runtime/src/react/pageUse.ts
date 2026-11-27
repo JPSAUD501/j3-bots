@@ -71,10 +71,12 @@ export const usePageUse = (input: {
   }, [at]);
 
   const holding = tab !== null && holdEnd(tab, state.use, now) !== "none";
-  // A server from before keeps the tab until it is given back: give it back as the hold ends.
+  // A server from before keeps the tab until it is given back: give it back as the hold ends,
+  // and give back a tab it still says this device took, as one taken before the app restarted.
+  const ended = !shared && !holding && (state.took || tab?.holder._tag === "taken");
   useEffect(() => {
-    if (!holding && state.took) dispatch({ _tag: "hold-ended" });
-  }, [holding, state.took, dispatch]);
+    if (ended) dispatch({ _tag: "hold-ended" });
+  }, [ended, dispatch]);
 
   return {
     line: tab === null ? { _tag: "empty" } : tabLine(tab, state.use, now),
