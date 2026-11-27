@@ -63,6 +63,7 @@ import {
   type ModelSetting,
   type EngineOptions,
   type ConnectionOutcome,
+  type CopiedHarness,
   type ProviderConnection,
   type ProviderInstance,
   type RequestResponse,
@@ -101,7 +102,11 @@ import {
   type SyncToken,
   TurnId,
 } from "../ids.ts";
-import { type ProjectOverrides, withBrowserAccess } from "./BrowserAccess.ts";
+import {
+  type InstanceMutation,
+  type ProjectOverrides,
+  withBrowserAccess,
+} from "./BrowserAccess.ts";
 import { type BrowserHostNeeds, inspectBrowserHost } from "./BrowserHost.ts";
 import { boundedCommand } from "./Command.ts";
 import { makeBrowserBridge } from "./BrowserBridge.ts";
@@ -138,13 +143,15 @@ import {
   versionNumberIn,
   withFirstCheckBudget,
 } from "./Providers.ts";
-import { effortOptions, levelBeforeTurn, sameOptions } from "./Effort.ts";
+import { levelBeforeTurn, modelOptions, sameOptions } from "./Effort.ts";
 import {
   activeConnection,
   driverOf,
   instanceEntry,
   instanceIdFor,
   provision,
+  sameInstance,
+  sameRuntime,
   storeConnection,
   TOOL_BRIDGE_VARIABLE,
   linkHomeSkills,
@@ -312,11 +319,12 @@ const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingRe
 const decodeModelId = Schema.decodeUnknownOption(ModelId);
 
 const instanceSpecOf =
-  (toolBridge: ToolBridge) =>
+  (toolBridge: ToolBridge, executables: Readonly<Partial<Record<CopiedHarness, string>>>) =>
   (provider: ProviderInstance): InstanceSpec => {
     const common = {
       instanceId: instanceIdFor(provider.id),
       name: provider.name,
+      enabled: provider.enabled,
       environment: provider.environment,
     };
     switch (provider.harness) {
@@ -326,7 +334,9 @@ const instanceSpecOf =
           ...common,
           kind: provider.harness,
           home: provider.home,
-          executable: provider.executable,
+          executable: provider.binaryPath ?? executables[provider.harness],
+          ownCopy: provider.binaryPath === undefined && executables[provider.harness] !== undefined,
+          launchArguments: provider.launchArguments,
         };
       case "acp-command":
         return {
@@ -427,38 +437,26 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const files = yield* makePrivateFiles(options.isPrivate).pipe(
     Effect.provide(SecureRandom.layerWebCrypto),
   );
-  const providerIds = new Set(options.providers.map((provider) => provider.id));
-  const providerOfInstance = new Map(
-    options.providers.map((provider) => [instanceIdFor(provider.id), provider.id]),
-  );
   /**
-   * Claude Code's instances. Claude Code echoes a steer, takes a level its
-   * model lacks as its default, and clears a level only in a new process,
-   * which the engine starts at the next turn (**Read** at `bc0f04d`,
-   * `claudeModelOptions.ts` `compileClaudeModelSelection`, `ClaudeAdapterV2.ts`
-   * `canApplyClaudeSelectionLive`).
+   * The providers as each provisioning writes them (`setProviders`), and the
+   * copy of each harness they run (`setHarnessExecutable`).
    */
-  const claudeCodeInstances = new Set(
-    options.providers.flatMap((provider) =>
-      provider.harness === "claude-code" ? [instanceIdFor(provider.id)] : [],
-    ),
-  );
-  /** What the adapter reads of the providers that is the same for the engine's life. */
-  const providerFacts: Omit<Providers, "redact"> = {
-    modelOf: (selection) => {
-      const providerId = providerOfInstance.get(selection.instanceId);
-      if (providerId === undefined) return null;
-      return Option.getOrNull(
-        Option.map(decodeModelId(selection.model), (modelId) => ({ providerId, modelId })),
-      );
-    },
-    echoesSteers: (instanceId) => claudeCodeInstances.has(instanceId),
-  };
+  const providers = yield* SubscriptionRef.make(options.providers);
+  const executables = yield* Ref.make(options.harnessExecutables);
+  /** The provider whose engine instance is `instanceId`, among those J3 Bots runs now. */
+  const providerOfInstance = (instanceId: string) =>
+    Effect.map(SubscriptionRef.get(providers), (current) =>
+      current.find((provider) => instanceIdFor(provider.id) === instanceId),
+    );
   /**
-   * The providers as each provisioning writes them, with the executable
-   * each runs now (`setHarnessExecutable`).
+   * Whether `instanceId` is a Claude Code instance. Claude Code echoes a
+   * steer, takes a level its model lacks as its default, and clears a level
+   * only in a new process, which the engine starts at the next turn (**Read**
+   * at `bc0f04d`, `claudeModelOptions.ts` `compileClaudeModelSelection`,
+   * `ClaudeAdapterV2.ts` `canApplyClaudeSelectionLive`).
    */
-  const providers = yield* Ref.make(options.providers);
+  const isClaudeCode = (instanceId: string) =>
+    Effect.map(providerOfInstance(instanceId), (provider) => provider?.harness === "claude-code");
   /** The engine's own report of its provider instances, kept while it is ready. */
   const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
@@ -468,10 +466,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * writes every instance again, which settles them all.
    */
   const unsettled = yield* Ref.make<ReadonlySet<ProviderId>>(new Set());
-  const instancesNow = Effect.map(Ref.get(providers), (current) =>
-    current.map(instanceSpecOf(options.toolBridge)),
+  const specOf = Effect.map(Ref.get(executables), (copies) =>
+    instanceSpecOf(options.toolBridge, copies),
   );
-  const instances = options.providers.map(instanceSpecOf(options.toolBridge));
+  const instancesNow = Effect.gen(function* () {
+    const spec = yield* specOf;
+    return (yield* SubscriptionRef.get(providers)).map(spec);
+  });
   /** What the last provisioning found: whether a connection is stored, and which instances it turned off. */
   const provisioned = yield* Ref.make<{
     readonly connected: boolean;
@@ -503,17 +504,34 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const key = yield* Ref.get(givenKey);
     return [
       ...(key === null ? [] : [Redacted.value(key)]),
-      ...options.providers.flatMap((provider) =>
+      ...(yield* SubscriptionRef.get(providers)).flatMap((provider) =>
         provider.environment.map((variable) => Redacted.value(variable.value)),
       ),
       ...options.toolBridge.environment.map((variable) => Redacted.value(variable.value)),
     ];
   });
   /** What the adapter reads of the providers now, with the secrets it is given. */
-  const providerReads = Effect.map(secrets, (known): Providers => ({
-    ...providerFacts,
-    redact: (text) => redact(text, known),
-  }));
+  const providerReads = Effect.gen(function* () {
+    const known = yield* secrets;
+    const current = yield* SubscriptionRef.get(providers);
+    const byInstance = new Map(
+      current.map((provider) => [instanceIdFor(provider.id), provider] as const),
+    );
+    return {
+      modelOf: (selection) => {
+        const provider = byInstance.get(selection.instanceId);
+        if (provider === undefined) return null;
+        return Option.getOrNull(
+          Option.map(decodeModelId(selection.model), (modelId) => ({
+            providerId: provider.id,
+            modelId,
+          })),
+        );
+      },
+      echoesSteers: (instanceId) => byInstance.get(instanceId)?.harness === "claude-code",
+      redact: (text) => redact(text, known),
+    } satisfies Providers;
+  });
   /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
   const provisionInput = Effect.gen(function* () {
     return {
@@ -547,7 +565,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.gen(function* () {
         if (text === (yield* Ref.get(basePrompt))) return;
         yield* Ref.set(basePrompt, text);
-        yield* writeBasePrompt({ files, instances, basePrompt: text }).pipe(
+        yield* writeBasePrompt({ files, instances: yield* instancesNow, basePrompt: text }).pipe(
           provisioning.withPermits(1),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -560,12 +578,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.forkScoped,
   );
 
-  const linkSharedSkillsNow = linkHomeSkills({
-    home: options.home,
-    files,
-    instances,
-    sharedSkills: options.sharedSkills,
-  }).pipe(
+  const linkSharedSkillsNow = Effect.flatMap(instancesNow, (instances) =>
+    linkHomeSkills({
+      home: options.home,
+      files,
+      instances,
+      sharedSkills: options.sharedSkills,
+    }),
+  ).pipe(
     provisioning.withPermits(1),
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
@@ -991,27 +1011,31 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * The engine's selection of `model`, asking it for `effort` while the engine
    * reports that level for the model (`effortOptions`).
    */
-  const modelSelection = (model: ModelChoice, effort: EffortLevel | null) => {
-    if (!providerIds.has(model.providerId)) {
-      return Effect.fail(
-        new ModelUnavailable({ providerId: model.providerId, modelId: model.modelId }),
-      );
+  const modelSelection = Effect.fnUntraced(function* (
+    model: ModelChoice,
+    effort: EffortLevel | null,
+    fast: boolean,
+  ) {
+    const known = (yield* SubscriptionRef.get(providers)).some(
+      (provider) => provider.id === model.providerId,
+    );
+    if (!known) {
+      return yield* new ModelUnavailable({ providerId: model.providerId, modelId: model.modelId });
     }
     const instanceId = ProviderInstanceId.make(instanceIdFor(model.providerId));
-    return Effect.map(SubscriptionRef.get(reported), (providers) => {
-      const options = effortOptions(
-        providers
-          .find((provider) => provider.instanceId === instanceId)
-          ?.models.find((candidate) => candidate.slug === model.modelId),
-        effort,
-      );
-      return {
-        instanceId,
-        model: model.modelId,
-        ...(options === undefined ? {} : { options }),
-      };
-    });
-  };
+    const options = modelOptions(
+      (yield* SubscriptionRef.get(reported))
+        .find((provider) => provider.instanceId === instanceId)
+        ?.models.find((candidate) => candidate.slug === model.modelId),
+      effort,
+      fast,
+    );
+    return {
+      instanceId,
+      model: model.modelId,
+      ...(options === undefined ? {} : { options }),
+    };
+  });
 
   const commandId = (purpose: string, key: string) => CommandId.make(commandIdFor(purpose, key));
   // Commands that are idempotent by nature still need distinct ids, or the engine
@@ -1357,10 +1381,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly title: string;
     readonly model: ModelChoice;
     readonly effort: EffortLevel | null;
+    readonly fast: boolean;
     readonly permissionMode: PermissionMode;
   }) {
     const sessionId = SessionId.make(threadIdFor(input.key));
-    const selection = yield* modelSelection(input.model, input.effort);
+    const selection = yield* modelSelection(input.model, input.effort, input.fast);
     const sentTo = yield* Ref.get(starts);
     // Settled by the key's receipt, as a dispatch is: the engine keeps a
     // refusal for the key, so a refused opening is never sent again.
@@ -1442,7 +1467,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const thread = mirror.thread;
     const threadId = ThreadId.make(input.sessionId);
     const wanted =
-      input.model === undefined ? undefined : yield* modelSelection(input.model, input.effort);
+      input.model === undefined
+        ? undefined
+        : yield* modelSelection(input.model, input.effort, input.fast);
     if (input.model !== undefined) yield* forgetDroppedLevel(input.sessionId);
     const selection =
       wanted !== undefined &&
@@ -1473,7 +1500,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       live &&
       selection !== undefined &&
       thread !== undefined &&
-      claudeCodeInstances.has(selection.instanceId) &&
+      (yield* isClaudeCode(selection.instanceId)) &&
       thread.modelSelection.instanceId === selection.instanceId &&
       (thread.modelSelection.options ?? []).length > 0 &&
       (selection.options ?? []).length === 0;
@@ -1722,7 +1749,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    */
   const alignLevel = Effect.fnUntraced(function* (sessionId: SessionId, mirror: Mirror) {
     const selection = mirror.thread?.modelSelection;
-    if (selection === undefined || claudeCodeInstances.has(selection.instanceId)) return;
+    if (selection === undefined || (yield* isClaudeCode(selection.instanceId))) return;
     const model = (yield* SubscriptionRef.get(reported))
       .find((provider) => provider.instanceId === selection.instanceId)
       ?.models.find((candidate) => candidate.slug === selection.model);
@@ -2456,9 +2483,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       return next;
     });
   const logProblems = Effect.fn("Engine.logProviderProblems")(function* (
-    providers: ReadonlyArray<ReportedProvider>,
+    engineProviders: ReadonlyArray<ReportedProvider>,
   ) {
-    const now = providerProblems(options.providers, providers);
+    const now = providerProblems(yield* SubscriptionRef.get(providers), engineProviders);
     const before = yield* Ref.getAndSet(logged, now);
     for (const [id, line] of now) {
       if (before.get(id) !== line) {
@@ -2498,6 +2525,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     SubscriptionRef.changes(updates),
     SubscriptionRef.changes(replaced),
     SubscriptionRef.changes(rechecks),
+    SubscriptionRef.changes(providers),
   ).pipe(
     Stream.map(
       ([
@@ -2506,6 +2534,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         requests,
         rebuilt,
         nextChecks,
+        ours,
       ]): EngineStatus => {
         switch (current._tag) {
           case "ready":
@@ -2513,7 +2542,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               state: { _tag: "ready" },
               pinnedVersion: pin.version,
               providers: providerStatuses(
-                options.providers,
+                ours,
                 engineProviders,
                 (providerId) => firstCheck || rebuilt.has(providerId),
                 requests,
@@ -2592,38 +2621,47 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // starting, is checked again on its own, without restarting the engine
   // (`RECHECK_DELAYS`), until a check does not time out or the engine stops
   // being ready, which starts a first check of its own when it is back.
-  yield* Effect.forEach(
-    options.providers,
-    (provider) =>
-      recheckWhileTimedOut(
-        Stream.zipLatestAll(
-          withFirstCheckBudget(stateChanges(state)),
-          SubscriptionRef.changes(reported),
-          SubscriptionRef.changes(replaced),
-        ).pipe(
-          Stream.map(
-            ([{ state: current, firstCheck }, engineProviders, rebuilt]) =>
-              current._tag === "ready" &&
-              checkTimedOut(
-                provider,
-                engineProviders.find(
-                  (candidate) => candidate.instanceId === instanceIdFor(provider.id),
+  // Again for each provider J3 Bots runs now: a change of the list starts over.
+  yield* SubscriptionRef.changes(providers).pipe(
+    Stream.switchMap((ours) =>
+      Stream.fromEffect(
+        Effect.forEach(
+          ours,
+          (provider) =>
+            recheckWhileTimedOut(
+              Stream.zipLatestAll(
+                withFirstCheckBudget(stateChanges(state)),
+                SubscriptionRef.changes(reported),
+                SubscriptionRef.changes(replaced),
+              ).pipe(
+                Stream.map(
+                  ([{ state: current, firstCheck }, engineProviders, rebuilt]) =>
+                    current._tag === "ready" &&
+                    checkTimedOut(
+                      provider,
+                      engineProviders.find(
+                        (candidate) => candidate.instanceId === instanceIdFor(provider.id),
+                      ),
+                      firstCheck || rebuilt.has(provider.id),
+                    ),
                 ),
-                firstCheck || rebuilt.has(provider.id),
               ),
-          ),
+              recheckProvider(provider.id),
+              (at) =>
+                SubscriptionRef.update(rechecks, (current) => {
+                  const next = new Map(current);
+                  if (at === null) next.delete(provider.id);
+                  else next.set(provider.id, at);
+                  return next;
+                }),
+            ),
+          { concurrency: "unbounded", discard: true },
         ),
-        recheckProvider(provider.id),
-        (at) =>
-          SubscriptionRef.update(rechecks, (current) => {
-            const next = new Map(current);
-            if (at === null) next.delete(provider.id);
-            else next.set(provider.id, at);
-            return next;
-          }),
       ),
-    { concurrency: "unbounded", discard: true },
-  ).pipe(Effect.forkScoped);
+    ),
+    Stream.runDrain,
+    Effect.forkScoped,
+  );
 
   /** Where an update runs once asked for: the engine's, so it ends with it. */
   const engineScope = yield* Effect.scope;
@@ -2648,7 +2686,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    */
   const updateProvider = Effect.fn("Engine.updateProvider")(function* (providerId: ProviderId) {
     yield* ready;
-    const provider = options.providers.find((candidate) => candidate.id === providerId);
+    const provider = (yield* SubscriptionRef.get(providers)).find(
+      (candidate) => candidate.id === providerId,
+    );
     // Only Claude Code and Codex have versions (`versionOf`); the server asks for nothing else.
     if (provider === undefined || provider.harness === "acp-command") return;
     const askedAt = yield* Clock.currentTimeMillis;
@@ -2681,47 +2721,21 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   });
 
   /**
-   * One instance, as provisioning writes it, upserted through the engine's
-   * own settings. The engine saves them and answers; a watcher of its own
-   * then closes the instance that changed, ending what ran on it, and builds
-   * it again from the new entry (**Read** at `bc0f04d`,
-   * `ProviderInstanceRegistryHydration.ts`, `layerSettingsWatcher`, and
-   * `ProviderInstanceRegistry.ts`, `makeReconcile`, which closes the old
-   * instance's scope before it builds the new one). A change of the
-   * executable is one; a change of only the display name or accent colour
-   * keeps the instance (`runtimeEqual`). So the answer does not
-   * say the engine runs the new executable yet: a check of the rebuilt
-   * instance that reports `version` does, and the adapter waits for it, up
-   * to the first check's budget. The entry's secret variables are marked
-   * redacted, which keeps the values the engine stores (**Read**,
+   * One mutation of the engine's own settings: an instance upserted, as
+   * provisioning writes it, or removed. The engine saves it and answers; a
+   * watcher of its own then closes the instance that changed, ending what
+   * ran on it, and builds it again from the new entry (**Read** at
+   * `bc0f04d`, `ProviderInstanceRegistryHydration.ts`, `layerSettingsWatcher`,
+   * and `ProviderInstanceRegistry.ts`, `makeReconcile`, which closes the old
+   * instance's scope before it builds the new one). A change of only the
+   * display name or accent colour keeps the instance (`runtimeEqual`). The
+   * mutation alone, with an empty patch, needs only the `providers:manage`
+   * scope (**Read**, `RpcAuthorization.ts`). The entry's secret variables are
+   * marked redacted, which keeps the values the engine stores (**Read**,
    * `settingsSecrets.ts`, `mapSettingsSecrets`).
    */
-  const upsertExecutable = Effect.fn("Engine.upsertExecutable")(function* (input: {
-    readonly providerId: ProviderId;
-    readonly executable: string | undefined;
-  }) {
-    const current = yield* Ref.get(providers);
-    const provider = current.find((each) => each.id === input.providerId);
-    if (provider === undefined || provider.harness === "acp-command") return null;
-    const settled = !(yield* Ref.get(unsettled)).has(input.providerId);
-    if (provider.executable === input.executable && settled) return null;
-    // Starting, the engine may have been given the executable before; down,
-    // its next start is. Either way it cannot say now which one it runs.
-    if ((yield* SubscriptionRef.get(state))._tag !== "ready") {
-      return yield* new EngineUnavailable();
-    }
-    const next = { ...provider, executable: input.executable };
-    const spec = instanceSpecOf(options.toolBridge)(next);
-    const entry = instanceEntry(path, yield* provisionInput, spec, yield* Ref.get(provisioned));
-    yield* Ref.update(unsettled, (now) => new Set([...now, input.providerId]));
-    yield* rpc["server.updateSettings"]({
-      patch: {},
-      providerInstanceMutation: {
-        operation: "upsert",
-        instanceId: spec.instanceId,
-        instance: entry,
-      },
-    }).pipe(
+  const mutateInstance = (mutation: InstanceMutation) =>
+    rpc["server.updateSettings"]({ patch: {}, providerInstanceMutation: mutation }).pipe(
       Effect.timeoutOrElse({
         duration: COMMAND_TIMEOUT,
         orElse: () => Effect.fail(new EngineIndeterminate()),
@@ -2732,25 +2746,71 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         ServerSettingsError: () => Effect.fail(new EngineIndeterminate()),
       }),
     );
-    yield* markReplaced(input.providerId);
-    return { next, instanceId: spec.instanceId };
+
+  /** `provider`'s instance as provisioning writes it now. */
+  const entryOf = Effect.fnUntraced(function* (provider: ProviderInstance) {
+    const spec = (yield* specOf)(provider);
+    return {
+      instanceId: spec.instanceId,
+      entry: instanceEntry(path, yield* provisionInput, spec, yield* Ref.get(provisioned)),
+    };
+  });
+
+  /**
+   * Every provider of `harness` that runs J3 Bots' copy, upserted to run
+   * `executable` instead. So the answer does not say the engine runs the new
+   * executable yet: a check of each rebuilt instance that reports `version`
+   * does, and `setHarnessExecutable` waits for it, up to the first check's
+   * budget.
+   */
+  const upsertExecutable = Effect.fn("Engine.upsertExecutable")(function* (input: {
+    readonly harness: CopiedHarness;
+    readonly executable: string | undefined;
+  }) {
+    const before = yield* Ref.get(executables);
+    const followers = (yield* SubscriptionRef.get(providers)).filter(
+      (provider) => provider.harness === input.harness && provider.binaryPath === undefined,
+    );
+    const pending = yield* Ref.get(unsettled);
+    const settled = followers.every((provider) => !pending.has(provider.id));
+    if (before[input.harness] === input.executable && settled) return null;
+    // Starting, the engine may have been given the executable before; down,
+    // its next start is. Either way it cannot say now which one it runs.
+    if ((yield* SubscriptionRef.get(state))._tag !== "ready") {
+      return yield* new EngineUnavailable();
+    }
+    const next = { ...before, [input.harness]: input.executable };
+    const spec = instanceSpecOf(options.toolBridge, next);
+    const sent: Array<string> = [];
+    for (const provider of followers) {
+      const instance = spec(provider);
+      yield* Ref.update(unsettled, (now) => new Set([...now, provider.id]));
+      yield* mutateInstance({
+        operation: "upsert",
+        instanceId: instance.instanceId,
+        instance: instanceEntry(path, yield* provisionInput, instance, yield* Ref.get(provisioned)),
+      });
+      yield* markReplaced(provider.id);
+      sent.push(instance.instanceId);
+    }
+    return { next, instanceIds: sent, providerIds: followers.map((provider) => provider.id) };
   }, provisioning.withPermits(1));
 
   const setHarnessExecutable = Effect.fn("Engine.setHarnessExecutable")(function* (input: {
-    readonly providerId: ProviderId;
+    readonly harness: CopiedHarness;
     readonly executable: string | null;
     readonly version: string | null;
   }) {
     const sentAt = yield* Clock.currentTimeMillis;
     const sent = yield* upsertExecutable({
-      providerId: input.providerId,
+      harness: input.harness,
       executable: input.executable ?? undefined,
     });
     if (sent === null) return;
     const { version } = input;
-    // A report the engine made of the rebuilt instance, not one from before.
-    const runsIt = (each: ReportedProvider) => {
-      if (each.instanceId !== sent.instanceId || Date.parse(each.checkedAt) < sentAt) return false;
+    // A report the engine made of a rebuilt instance, not one from before.
+    const runsIt = (instanceId: string) => (each: ReportedProvider) => {
+      if (each.instanceId !== instanceId || Date.parse(each.checkedAt) < sentAt) return false;
       // Back on its `PATH`: any check that ended, the harness found there or not.
       if (version === null) return each.installed || each.status === "error";
       const compatibility = each.compatibilityAdvisory?.status;
@@ -2765,21 +2825,70 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       );
     };
     yield* SubscriptionRef.changes(reported).pipe(
-      Stream.filter((engineProviders) => engineProviders.some(runsIt)),
+      Stream.filter((engineProviders) =>
+        sent.instanceIds.every((instanceId) => engineProviders.some(runsIt(instanceId))),
+      ),
       Stream.runHead,
       Effect.timeoutOrElse({
         duration: FIRST_CHECK_BUDGET,
         orElse: () => Effect.fail(new EngineIndeterminate()),
       }),
     );
-    yield* Ref.update(providers, (current) =>
-      current.map((each) => (each.id === sent.next.id ? sent.next : each)),
-    );
+    yield* Ref.set(executables, sent.next);
     yield* Ref.update(
       unsettled,
-      (now) => new Set([...now].filter((each) => each !== input.providerId)),
+      (now) => new Set([...now].filter((each) => !sent.providerIds.includes(each))),
     );
   });
+
+  /**
+   * The providers from now on (`Engine.setProviders`): kept for every later
+   * provisioning, and while the engine is ready, each new or changed one
+   * upserted and each gone removed, one mutation at a time. A mutation whose
+   * outcome is not known leaves its provider unsettled, which the next
+   * provisioning settles by writing every instance again.
+   */
+  const setProviders = Effect.fn("Engine.setProviders")(function* (
+    next: ReadonlyArray<ProviderInstance>,
+  ) {
+    const before = yield* SubscriptionRef.getAndSet(providers, next);
+    if ((yield* SubscriptionRef.get(state))._tag !== "ready") return;
+    const spec = yield* specOf;
+    const known = new Map(before.map((provider) => [provider.id, spec(provider)] as const));
+    for (const provider of next) {
+      const was = known.get(provider.id);
+      const now = spec(provider);
+      if (was !== undefined && sameInstance(was, now)) continue;
+      const { instanceId, entry } = yield* entryOf(provider);
+      yield* mutateInstance({ operation: "upsert", instanceId, instance: entry }).pipe(
+        Effect.andThen(
+          was === undefined || sameRuntime(was, now) ? Effect.void : markReplaced(provider.id),
+        ),
+        Effect.catch((cause) =>
+          Ref.update(unsettled, (pending) => new Set([...pending, provider.id])).pipe(
+            Effect.andThen(
+              Effect.logWarning("The engine did not take a provider's new settings", { cause }),
+            ),
+            Effect.annotateLogs({ providerId: provider.id }),
+          ),
+        ),
+      );
+    }
+    const kept = new Set(next.map((provider) => provider.id));
+    for (const provider of before) {
+      if (kept.has(provider.id)) continue;
+      yield* mutateInstance({
+        operation: "remove",
+        instanceId: instanceIdFor(provider.id),
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("The engine did not remove a provider", { cause }).pipe(
+            Effect.annotateLogs({ providerId: provider.id }),
+          ),
+        ),
+      );
+    }
+  }, provisioning.withPermits(1));
 
   const consoleLink = Effect.gen(function* () {
     yield* ready;
@@ -2854,6 +2963,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     recheckProvider,
     updateProvider,
     setHarnessExecutable,
+    setProviders,
     consoleLink,
     linkSharedSkills: linkSharedSkillsNow,
     linkBotSkills,

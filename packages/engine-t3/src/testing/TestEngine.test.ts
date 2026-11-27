@@ -29,6 +29,7 @@ const openSession = Effect.gen(function* () {
     title: "Scout",
     model: { providerId: ProviderId.make("claude"), modelId: ModelId.make("haiku") },
     effort: null,
+    fast: false,
     permissionMode: "auto",
   });
 });

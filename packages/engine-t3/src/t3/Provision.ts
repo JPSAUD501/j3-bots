@@ -24,8 +24,16 @@ export type InstanceSpec =
       readonly instanceId: string;
       readonly name: string;
       readonly home: string;
-      /** The harness J3 Bots installed, by its absolute path; undefined for the one on the engine's `PATH`. */
+      /**
+       * The harness it runs, by its path: the operator's choice, else J3
+       * Bots' own copy; undefined for the one on the engine's `PATH`.
+       */
       readonly executable: string | undefined;
+      /** Whether `executable` is J3 Bots' own copy, which updates only with J3 Bots. */
+      readonly ownCopy: boolean;
+      /** The operator's arguments, after J3 Bots' own; empty for none. */
+      readonly launchArguments: string;
+      readonly enabled: boolean;
       readonly environment: ReadonlyArray<EnvironmentVariable>;
     }
   | {
@@ -35,8 +43,52 @@ export type InstanceSpec =
       readonly name: string;
       readonly command: string;
       readonly args: ReadonlyArray<string>;
+      readonly enabled: boolean;
       readonly environment: ReadonlyArray<EnvironmentVariable>;
     };
+
+/**
+ * Whether two specs of an instance run the same: all but its name, which the
+ * engine changes without rebuilding the instance (**Read** at `bc0f04d`,
+ * `runtimeEqual` in `ProviderInstanceRegistry.ts`). A secret variable counts
+ * by its name and value.
+ */
+export const sameRuntime = (a: InstanceSpec, b: InstanceSpec): boolean => {
+  if (
+    a.instanceId !== b.instanceId ||
+    a.enabled !== b.enabled ||
+    a.environment.length !== b.environment.length ||
+    a.environment.some(
+      (variable, index) =>
+        variable.name !== b.environment[index]?.name ||
+        Redacted.value(variable.value) !== Redacted.value(b.environment[index].value),
+    )
+  ) {
+    return false;
+  }
+  switch (a.kind) {
+    case "claude-code":
+    case "codex":
+      return (
+        b.kind === a.kind &&
+        a.home === b.home &&
+        a.executable === b.executable &&
+        a.ownCopy === b.ownCopy &&
+        a.launchArguments === b.launchArguments
+      );
+    case "acp-local":
+      return (
+        b.kind === "acp-local" &&
+        a.command === b.command &&
+        a.args.length === b.args.length &&
+        a.args.every((arg, index) => arg === b.args[index])
+      );
+  }
+};
+
+/** Whether two specs of an instance are the same, its name included. */
+export const sameInstance = (a: InstanceSpec, b: InstanceSpec): boolean =>
+  a.name === b.name && sameRuntime(a, b);
 
 interface EnvironmentVariable {
   readonly name: string;
@@ -305,7 +357,7 @@ const instanceVariables = (
       return home === undefined ? [] : [{ name: "HOME", value: home, sensitive: false }];
     }
     case "claude-code":
-      return spec.executable === undefined
+      return !spec.ownCopy
         ? CLAUDE_MCP_VARIABLES
         : [...CLAUDE_MCP_VARIABLES, { name: "DISABLE_AUTOUPDATER", value: "1", sensitive: false }];
     case "acp-local":
@@ -315,8 +367,8 @@ const instanceVariables = (
 
 /**
  * The executable a Claude Code or Codex instance runs, when J3 Bots installed
- * it: the engine's `binaryPath`, which it runs in place of the command on its
- * `PATH` (**Read** at `bc0f04d`, `ClaudeSettings` and `CodexSettings` in
+ * it or the operator chose one: the engine's `binaryPath`, which it runs in
+ * place of the command on its `PATH` (**Read** at `bc0f04d`, `ClaudeSettings` and `CodexSettings` in
  * `contracts/src/settings.ts`).
  */
 const binaryPath = (spec: { readonly executable: string | undefined }) =>
@@ -328,10 +380,21 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
       return {
         ...binaryPath(spec),
         homePath: spec.home,
-        launchArgs: claudeLaunchArgs(input.systemPromptFile, input.toolBridge),
+        launchArgs: [
+          claudeLaunchArgs(input.systemPromptFile, input.toolBridge),
+          spec.launchArguments.trim(),
+        ]
+          .filter((part) => part.length > 0)
+          .join(" "),
       };
     case "codex":
-      return { ...binaryPath(spec), homePath: spec.home };
+      return {
+        ...binaryPath(spec),
+        homePath: spec.home,
+        ...(spec.launchArguments.trim().length === 0
+          ? {}
+          : { launchArgs: spec.launchArguments.trim() }),
+      };
     case "acp-local":
       return {
         source: "local",
@@ -382,7 +445,7 @@ export const instanceEntry = (
 ) => ({
   driver: DRIVERS[spec.kind],
   displayName: spec.name,
-  enabled: !state.disabled.has(spec.instanceId),
+  enabled: spec.enabled && !state.disabled.has(spec.instanceId),
   environment: [
     ...instanceVariables(path, input, spec),
     ...connectionVariables(spec, state.connected),

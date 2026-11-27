@@ -82,6 +82,9 @@ const setUp = Effect.gen(function* () {
       name: "Claude Code",
       home: path.join(home, "claude-code"),
       executable: undefined,
+      ownCopy: false,
+      launchArguments: "",
+      enabled: true,
       environment: [],
     },
     {
@@ -90,6 +93,9 @@ const setUp = Effect.gen(function* () {
       name: "Codex",
       home: path.join(home, "codex"),
       executable: undefined,
+      ownCopy: false,
+      launchArguments: "",
+      enabled: true,
       environment: [],
     },
   ];
@@ -460,7 +466,9 @@ describe("the harness an instance runs", () => {
         yield* provision({
           ...input,
           instances: input.instances.map((spec) =>
-            spec.kind === "claude-code" ? { ...spec, executable: "/j3/harnesses/claude" } : spec,
+            spec.kind === "claude-code"
+              ? { ...spec, executable: "/j3/harnesses/claude", ownCopy: true }
+              : spec,
           ),
         });
         const instances = (yield* settings).providerInstances;
@@ -471,6 +479,36 @@ describe("the harness an instance runs", () => {
           sensitive: false,
         });
         assert.isUndefined(instances["j3-codex"]?.config?.binaryPath);
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("an instance the operator set up", () => {
+  it.effect(
+    "runs the executable they chose, starts with their arguments after J3 Bots' own, and stays off when turned off",
+    () =>
+      Effect.gen(function* () {
+        const { input, settings } = yield* setUp;
+        yield* provision({
+          ...input,
+          instances: input.instances.map((spec) =>
+            spec.kind === "claude-code"
+              ? { ...spec, executable: "/opt/claude", launchArguments: " --chrome " }
+              : { ...spec, launchArguments: "--search", enabled: false },
+          ),
+        });
+        const instances = (yield* settings).providerInstances;
+        const claude = instances["j3-claude"];
+        assert.strictEqual(claude?.config?.binaryPath, "/opt/claude");
+        assert.match(claude?.config?.launchArgs ?? "", /^--append-system-prompt-file .* --chrome$/);
+        assert.notDeepInclude(claude?.environment ?? [], {
+          name: "DISABLE_AUTOUPDATER",
+          value: "1",
+          sensitive: false,
+        });
+        assert.isTrue(claude?.enabled);
+        assert.strictEqual(instances["j3-codex"]?.config?.launchArgs, "--search");
+        assert.isFalse(instances["j3-codex"]?.enabled);
       }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });
