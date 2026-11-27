@@ -76,6 +76,35 @@ export const StepTool = Schema.NullOr(OpenLiterals(WorkTool.literals)).pipe(
 export type StepTool = typeof StepTool.Type;
 
 /**
+ * What a step of a turn's work is: a command, a file edited or read, a
+ * search of files or of the web, a tool, work handed off, or something else.
+ * `delegation` is no longer written: the work a turn hands off is its little
+ * ones (`TurnWork`, decision 0070). Steps stored before keep it.
+ */
+export const WorkStepKind = Schema.Literals([
+  "command",
+  "edit",
+  "read",
+  "search",
+  "web",
+  "tool",
+  "delegation",
+  "other",
+]);
+export type WorkStepKind = typeof WorkStepKind.Type;
+
+/**
+ * The kind of the step a working bot is on, as a client receives it, so it
+ * can say in plain words what the bot is doing: one added after this build
+ * decodes as `unknown`, which a client words as working. `null` while no
+ * step runs; absent from a server that predates it.
+ */
+export const ActivityKind = Schema.NullOr(OpenLiterals(WorkStepKind.literals)).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+export type ActivityKind = typeof ActivityKind.Type;
+
+/**
  * The skill a `connector-skill` step loads: its name, and the connector that
  * serves it, as the operator knows it.
  */

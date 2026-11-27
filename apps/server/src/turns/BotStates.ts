@@ -240,7 +240,6 @@ export const layer = Layer.effect(
         const now = yield* DateTime.now;
         const quiet = turn.value.last_activity_at;
         const stalled = Duration.isGreaterThan(DateTime.distance(quiet, now), STALL_AFTER);
-        const quietSince = stalled ? quiet : null;
         const since = turn.value.started_at;
         const fold = turn.value.work_fold_entry_id;
         const step = fold === null ? Option.none() : yield* shown(fold);
@@ -249,17 +248,17 @@ export const layer = Layer.effect(
         const retrying = turn.value.retrying;
         // A plan or a little one is work as visible as a step.
         if (Option.isNone(step) && work === null) {
-          return { _tag: "thinking", since, stalled, quietSince, typing, retrying } as const;
+          return { _tag: "thinking", since, stalled, typing, retrying } as const;
         }
         const running = Option.isSome(step) && step.value.status === "running";
         return {
           _tag: "working",
           since,
           stalled,
-          quietSince,
           typing,
           retrying,
           activity: running ? step.value.label : null,
+          activityKind: running ? step.value.kind : null,
           tool: running ? step.value.tool : null,
           ...(running && step.value.skill !== undefined ? { skill: step.value.skill } : {}),
           littleOnes: work?.littleOnes.working ?? 0,

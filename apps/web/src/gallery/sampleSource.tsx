@@ -281,7 +281,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           _tag: "thinking",
           since: now(),
           stalled: false,
-          quietSince: null,
           typing: false,
           retrying: false,
         }),
@@ -380,7 +379,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           _tag: "thinking",
           since: now(),
           stalled: false,
-          quietSince: null,
           typing: false,
           retrying: false,
         })(working(left, { _tag: "idle" })(s)),
@@ -669,7 +667,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 _tag: "thinking",
                 since: now(),
                 stalled: false,
-                quietSince: null,
                 typing: false,
                 retrying: false,
               }
@@ -700,7 +697,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           _tag: "thinking",
           since: now(),
           stalled: false,
-          quietSince: null,
           typing: true,
           retrying: false,
         });

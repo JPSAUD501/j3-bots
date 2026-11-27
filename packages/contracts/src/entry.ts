@@ -26,7 +26,7 @@ import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts"
 import { RoutineRun, RoutineStep, RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepSkill, StepTool, TurnWork } from "./work.ts";
+import { StepSkill, StepTool, TurnWork, WorkStepKind } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -722,19 +722,17 @@ export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]
 export type TurnEnding = typeof TurnEnding.Type;
 
 /**
- * One turn's work, folded into a line. Its steps are read with
- * `entries.workSteps`. The line says how long the bot worked: from the start
- * of its turn (`turnStartedAt`) to its end, less `waitedBeforeMs` and
- * `waitedMs`; from a server that predates `turnStartedAt`, from the fold's
- * first step, less `waitedMs`. A turn stopped or failed before its first step
+ * One turn's work, folded into a line that says how the turn ended and how
+ * many steps it took. Its steps are read with `entries.workSteps`, work the
+ * turn handed off among them. A turn stopped or failed before its first step
  * has a fold of no steps, so how it ended stays in the conversation.
  */
 export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   ...entry,
   /**
    * When the fold's turn started, the time a working bot's state counts from
-   * (`BotState` `since`), so the fold and the turn's clock agree. Null from a
-   * server, or a fold, that predates it.
+   * (`BotState` `since`), which ties the fold to its turn. Null from a server,
+   * or a fold, that predates it.
    */
   turnStartedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
@@ -761,24 +759,6 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
     Schema.TaggedStruct("finished", {
       finishedAt: Schema.DateTimeUtc,
       ending: TurnEnding,
-      /**
-       * How long the turn waited on the operator after the fold was
-       * written: for a card it asked them to answer (an approval, a
-       * question, a credential), from the card's arrival until it closed.
-       */
-      waitedMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-      /**
-       * How long the turn waited on the operator before its fold was written,
-       * from `turnStartedAt`: kept apart from `waitedMs`, which counts from the
-       * fold's creation as clients before `turnStartedAt` read it.
-       */
-      waitedBeforeMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-      /**
-       * Work the turn handed off still runs, as the engine last reported:
-       * a background task it started, say. The fold's steps go on changing
-       * until it ends.
-       */
-      background: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }),
   ]),
 });
@@ -787,20 +767,7 @@ export type WorkFoldEntry = typeof WorkFoldEntry.Type;
 /** A step replaces an earlier one with the same id: a running command, then its result. */
 export const WorkStep = Schema.Struct({
   id: WorkStepId,
-  /**
-   * `delegation` is no longer written: the work a turn hands off is its
-   * little ones (`TurnWork`, decision 0070). Steps stored before keep it.
-   */
-  kind: Schema.Literals([
-    "command",
-    "edit",
-    "read",
-    "search",
-    "web",
-    "tool",
-    "delegation",
-    "other",
-  ]),
+  kind: WorkStepKind,
   /**
    * For a `tool` step, the tool in J3 Bots' words, which a client shows in
    * place of the label; `null` for a tool it cannot name, and for every other
@@ -808,8 +775,11 @@ export const WorkStep = Schema.Struct({
    */
   tool: StepTool,
   /**
-   * The step in one line: a command, a path, a search. For a tool J3 Bots
-   * names, a short English phrase, for a client that predates `tool`.
+   * The step in one line: a command, a path, a search. A client says the
+   * step in plain words from its kind and tool, and shows this only as the
+   * step's detail, one step in. For a tool J3 Bots names, a short English
+   * phrase, for a client that predates `tool`; for a tool it cannot name,
+   * the tool's own name made readable, which a client says.
    */
   label: Label,
   status: Schema.Literals(["running", "completed", "failed"]),

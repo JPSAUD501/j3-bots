@@ -277,12 +277,18 @@ export const stage = {
   /** The arrival stays at least this long, so the bot is seen arriving before its conversation opens. */
   hold: 1500,
   /**
-   * A bot or a room new to the roster: its row's light stays this long, and
-   * its words come in this long after it sets off. More than `burst` new at
-   * once, as when a roster loads again, simply appear.
+   * A bot or a room new to the roster arrives in one moment, keyed to its own
+   * landing: its light comes up `spotLead` ms before it sets off, over
+   * `spotIn`, and it comes down into its row; as it lands its name and then
+   * its line come in, `focus.gap` ms apart, and its light stays `rowHold` ms
+   * more, then goes down over `rowDim` on the `out` ease. A bot no frame
+   * draws, as one scrolled out of view, counts as landed `rowLand` ms after
+   * it set off. More than `burst` new at once, as when a roster loads again,
+   * simply appear.
    */
-  rowLight: 1500,
-  rowWords: 260,
+  rowHold: 520,
+  rowDim: 640,
+  rowLand: 900,
   burst: 3,
   /** One that leaves the roster sinks and fades in this long, on the `out` ease. */
   rowLeave: 220,

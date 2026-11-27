@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  ActivityKind,
   CredentialFill,
   FillField,
   StepSkill,
@@ -8,10 +9,10 @@ import type {
   TurnEnding,
   WorkFoldEntry,
   WorkStep,
+  WorkStepKind,
   WorkTool,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
-import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { firstLine } from "../presentation/roster.ts";
 import type { PresentationContext } from "./status.ts";
 
@@ -92,19 +93,97 @@ const notFilled: Record<FillField, KeyWith<"name">> = {
 };
 
 /**
- * A step as its row in the work fold says it: the tool in J3 Bots' words,
- * what it is doing while it runs and what it did once it ran; else the
- * step's own label, a command or a path. A login's fill names the login and
- * the field, and whether it was filled.
+ * Each kind of step in plain words: what a step of it did, and what a bot on
+ * it is doing. A tool step has words of its own (`toolWords`, or the tool's
+ * name), and a step of a kind this build does not know says only that the
+ * bot worked.
  */
-export function stepText(step: WorkStep, i18n: I18n): string {
-  if (step.fill !== undefined) {
-    const { fill } = step;
-    return i18n.t((fill.outcome._tag === "filled" ? filled : notFilled)[fill.field], {
-      name: fill.name,
-    });
+const kindWords: Record<
+  Exclude<WorkStepKind, "tool">,
+  { readonly did: Phrase; readonly doing: Phrase }
+> = {
+  command: { did: "step.command.did", doing: "step.command.doing" },
+  edit: { did: "step.edit.did", doing: "step.edit.doing" },
+  read: { did: "step.read.did", doing: "step.read.doing" },
+  search: { did: "step.search.did", doing: "step.search.doing" },
+  web: { did: "step.web.did", doing: "step.web.doing" },
+  delegation: { did: "step.delegation.did", doing: "step.delegation.doing" },
+  other: { did: "summary.workFold", doing: "presence.working" },
+};
+
+/**
+ * A step in plain words, as the operator reads it wherever it is shown: what
+ * it is doing while it runs, what it did once it ran. A tool J3 Bots names
+ * in its words, a connector's skill by its name and its connector's; a tool it cannot name by its own readable name; every other
+ * step by its kind, never by its command, path or search, which only the
+ * step's detail shows (`stepDetail`).
+ */
+function stepWords(
+  kind: ActivityKind,
+  tool: StepTool,
+  skill: StepSkill | undefined,
+  label: string | null,
+  running: boolean,
+  i18n: I18n,
+): string {
+  const { t } = i18n;
+  const said = toolText(tool, skill, running, i18n);
+  if (said !== null) return said;
+  if (kind === "tool") {
+    const name = label === null ? "" : firstLine(label);
+    if (name === "") return t(running ? "tool.builtIn.doing" : "tool.builtIn.did");
+    return t(running ? "step.tool.doing" : "step.tool.did", { label: name });
   }
-  return toolText(step.tool, step.skill, step.status === "running", i18n) ?? step.label;
+  const plain = kind === null || kind === "unknown" ? kindWords.other : kindWords[kind];
+  return t(running ? plain.doing : plain.did);
+}
+
+/** A login's fill as its step says it: the login and the field, and whether it was filled. */
+export function fillText(fill: CredentialFill, i18n: I18n): string {
+  return i18n.t((fill.outcome._tag === "filled" ? filled : notFilled)[fill.field], {
+    name: fill.name,
+  });
+}
+
+/**
+ * A step as its row in the work fold says it, in plain words (`stepWords`),
+ * or as its login's fill (`fillText`). `turnRuns`: the fold's turn has not
+ * ended. Once it has, a step still running, work the turn handed off, reads
+ * as done with the turn.
+ */
+export function stepText(step: WorkStep, turnRuns: boolean, i18n: I18n): string {
+  if (step.fill !== undefined) return fillText(step.fill, i18n);
+  return stepWords(
+    step.kind,
+    step.tool,
+    step.skill,
+    step.label,
+    stepMark(step, turnRuns) === "running",
+    i18n,
+  );
+}
+
+/**
+ * The mark beside a step in the work fold. `turnRuns`: the fold's turn has
+ * not ended. Once it has, a step still running, work the turn handed off,
+ * has none: it is part of the finished turn, not shown going on.
+ */
+export function stepMark(
+  step: WorkStep,
+  turnRuns: boolean,
+): "running" | "completed" | "failed" | null {
+  if (step.status === "running") return turnRuns ? "running" : null;
+  return step.status;
+}
+
+/**
+ * What a step worked on, as it was given: the command, the path, the search
+ * or the address, for whoever opens the step to see it. None for a tool,
+ * whose words already say it, and for a login's fill, which says its own.
+ */
+export function stepDetail(step: WorkStep): string | null {
+  if (step.fill !== undefined || step.kind === "tool") return null;
+  return step.label;
 }
 
 /**
@@ -159,22 +238,19 @@ export function fillDetail(fill: CredentialFill, i18n: I18n): string {
 }
 
 /**
- * What a working bot is doing, in a few words: its running step's tool (a
- * connector's skill by name), else that step's label, else that it is working.
+ * What a working bot is doing, in a few words: the step it is on, in plain
+ * words (`stepWords`), a connector's skill by name.
  */
 export function activityText(
   working: {
     readonly activity: string | null;
+    readonly activityKind: ActivityKind;
     readonly tool: StepTool;
     readonly skill?: StepSkill;
   },
   i18n: I18n,
 ): string {
-  return (
-    toolText(working.tool, working.skill, true, i18n) ??
-    working.activity ??
-    i18n.t("presence.working")
-  );
+  return stepWords(working.activityKind, working.tool, working.skill, working.activity, true, i18n);
 }
 
 /**
@@ -192,58 +268,23 @@ export function workDoneText(
     if (ending === "failed") return t("summary.workFailed");
     return t("summary.workFold");
   }
-  const said = toolText(step.tool, step.skill, false, i18n);
-  if (said !== null) return said;
-  const label = firstLine(step.label);
-  switch (step.kind) {
-    case "command":
-      return t("summary.ran", { label });
-    case "edit":
-      return t("summary.edited", { label });
-    case "read":
-      return t("summary.read", { label });
-    case "search":
-      return t("summary.searched", { label });
-    case "web":
-      return t("summary.searchedWeb", { label });
-    case "delegation":
-      return t("summary.handedOff", { label });
-    case "tool":
-      return t("summary.usedTool", { label });
-    case "other":
-      return label;
-  }
+  return stepWords(step.kind, step.tool, step.skill, step.label, false, i18n);
 }
 
 /**
- * A work fold's title. While the turn runs it says so, with no duration: the
- * time is not known until it ends. Once the turn has completed with work it
- * handed off still running, it says that. Otherwise it says how the turn
- * ended and how long it worked, from the turn's start, as its clock counted,
- * less the time it waited on the operator; a turn stopped or failed says so
- * even while work it handed off still runs, and then says that too.
+ * A work fold's title: that the turn is working, or how it ended. No time:
+ * the steps beside it say what the work was.
  */
 export function workFoldTitle(entry: WorkFoldEntry, ctx: PresentationContext): string {
   const { t } = ctx.i18n;
   const { status } = entry;
   if (status._tag === "running") return t("presence.working");
-  if (status.background && status.ending === "completed") return t("work.inBackground");
-  // From the turn's start, less every wait since; from an older server, from the fold's first step.
-  const waited =
-    entry.turnStartedAt === null ? status.waitedMs : status.waitedMs + status.waitedBeforeMs;
-  const from = entry.turnStartedAt ?? entry.createdAt;
-  const worked = Math.max(0, millisBetween(from, status.finishedAt) - waited);
-  const duration = shortDuration(worked, ctx.i18n);
   switch (status.ending) {
     case "completed":
-      return t("work.workedFor", { duration });
+      return t("work.worked");
     case "interrupted":
-      return t(status.background ? "work.stoppedAfterInBackground" : "work.stoppedAfter", {
-        duration,
-      });
+      return t("work.stopped");
     case "failed":
-      return t(status.background ? "work.failedAfterInBackground" : "work.failedAfter", {
-        duration,
-      });
+      return t("work.failed");
   }
 }

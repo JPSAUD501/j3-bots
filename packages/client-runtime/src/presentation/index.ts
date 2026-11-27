@@ -265,6 +265,7 @@ export {
   rosterTarget,
 } from "./roster.ts";
 export {
+  ARRIVAL_LENGTH,
   arrivalsSettled,
   keptRow,
   lifts,
@@ -337,14 +338,7 @@ export {
   type TimelineMessage,
   turnKey,
 } from "./timeline.ts";
-export {
-  foldOfTurn,
-  liveTurn,
-  type LiveTurn,
-  turnClock,
-  turnElapsed,
-  withLiveTurn,
-} from "./turn.ts";
+export { foldOfTurn, liveTurn, type LiveTurn, withLiveTurn } from "./turn.ts";
 export {
   type LittleOneState,
   littleOneDots,
