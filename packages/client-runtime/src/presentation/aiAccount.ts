@@ -13,7 +13,7 @@ import {
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
 import type { SignInView } from "../stores/ProviderSetup.ts";
-import { preparation, providerFix } from "./engine.ts";
+import { providerFix } from "./engine.ts";
 
 // Connecting an AI, as the operator meets it: the account they already have,
 // Claude or ChatGPT, never the harness that signs it in
@@ -48,10 +48,6 @@ export const aiNameOf = (engine: EngineStatus | null, providerId: ProviderId): s
   return provider.harness === "other" ? provider.name : aiAccountNames[provider.harness].name;
 };
 
-/** The account that is not `account`: what "Use ChatGPT instead" switches to. */
-export const otherAiAccount = (account: AiAccount): AiAccount =>
-  account === "claude-code" ? "codex" : "claude-code";
-
 /**
  * Where an account of the server this client talks to signs in:
  * - `here`: in this app, when the server runs on this computer;
@@ -83,7 +79,7 @@ export type AiPlace = "here" | "desktop-app" | "server";
  *   newer server gives;
  * - `preparing`: nothing is known of it yet: the server has not answered, or
  *   J3 Bots is still starting on a server that does not say what it installs.
- *   `progress` is how far J3 Bots' own first download is, when it says.
+ *   How far J3 Bots itself is, the screen says once, not on each account.
  */
 export type AiAccountState =
   | { readonly _tag: "ready"; readonly limit: { readonly resetsAt: DateTime.Utc | null } | null }
@@ -107,7 +103,7 @@ export type AiAccountState =
     }
   | { readonly _tag: "checking" }
   | { readonly _tag: "problem"; readonly kind: "failed" | "timed-out" | "off" | "unknown" }
-  | { readonly _tag: "preparing"; readonly progress: number | null };
+  | { readonly _tag: "preparing" };
 
 /** What a screen knows about the accounts, from the server and from this client's own sign-ins. */
 export interface AiFacts {
@@ -209,17 +205,6 @@ const fromCopy = (account: AiAccount, copy: HarnessCopy): AiAccountState => {
 };
 
 /**
- * How far J3 Bots' own first download is, while it starts, from what the
- * server says it is getting ready (`preparation`); null when it does not
- * say, or is past it.
- */
-const startProgress = (engine: EngineStatus | null): number | null => {
-  const own =
-    engine === null ? undefined : preparation(engine).items.find((item) => item.id === "engine");
-  return own?.state === "downloading" ? part(own.receivedBytes, own.totalBytes) : null;
-};
-
-/**
  * Where `account` stands (`AiAccountState`). A sign-in under way comes
  * first, since it is what the operator is doing. Then what the engine says of
  * the provider, with this client's last sign-in beside it: one that succeeded
@@ -248,7 +233,7 @@ export const aiAccountState = (account: AiAccount, facts: AiFacts): AiAccountSta
         ? { _tag: "sign-in", failed: null }
         : copy !== undefined
           ? fromCopy(account, copy)
-          : { _tag: "preparing", progress: startProgress(facts.engine) };
+          : { _tag: "preparing" };
   if (reported._tag !== "sign-in") return reported;
   if (signIn?._tag === "succeeded") {
     return facts.spent?.has(account) === true ? reported : { _tag: "finishing" };
@@ -263,49 +248,13 @@ export const aiAccountStates = (facts: AiFacts): Readonly<Record<AiAccount, AiAc
 });
 
 /**
- * The account a screen opens on, from each one's state: the one connected,
- * else the one signing in or just signed in, else none, so the operator is
- * asked which they have.
+ * Whether an account is connected, or on its way there with nothing more
+ * asked of the operator: signing in, signed in and being checked, or a
+ * sign-in they asked for that waits for what it needs (`queued`). The first
+ * run's Create leads then, since nothing is left to press on the account.
  */
-export const openAiAccount = (
-  states: Readonly<Record<AiAccount, AiAccountState>>,
-): AiAccount | null => {
-  const first = (wanted: ReadonlyArray<AiAccountState["_tag"]>) =>
-    aiAccounts.find((account) => wanted.includes(states[account]._tag)) ?? null;
-  return first(["ready"]) ?? first(["signing-in", "finishing"]);
-};
-
-/**
- * The three things a sign-in asks of the operator, in the order they happen:
- * a page opens in their browser, they sign in there, and they come back,
- * where the app has noticed by itself.
- */
-export const signInSteps = ["page", "sign-in", "back"] as const;
-export type SignInStep = (typeof signInSteps)[number];
-
-/**
- * Which of the sign-in's steps the operator is at, for an account in
- * `state`: the step to draw as current, with those before it done. Null
- * while no sign-in runs, when the three are only what is to come; `done`
- * once it ended signed in.
- */
-export const signInStepAt = (state: AiAccountState): SignInStep | "done" | null => {
-  switch (state._tag) {
-    case "signing-in":
-      return state.step === "opening" ? "page" : "sign-in";
-    case "finishing":
-      return "back";
-    case "ready":
-      return "done";
-    case "getting":
-    case "sign-in":
-    case "missing":
-    case "checking":
-    case "problem":
-    case "preparing":
-      return null;
-  }
-};
+export const aiOnItsWay = (state: AiAccountState, queued: boolean): boolean =>
+  queued || state._tag === "ready" || state._tag === "finishing" || state._tag === "signing-in";
 
 /**
  * What an account's one button does, in `state`, where it signs in at
@@ -391,16 +340,3 @@ export const aiOutage = (
   engine === null || engine.state._tag === "ready" || engine.state._tag === "starting"
     ? null
     : engine.state;
-
-/**
- * Whether the first run's connect step says itself how far things are, so
- * the one quiet line under every step stays silent there instead of saying
- * it twice: an account is open on it, which shows its own download or
- * check, or J3 Bots is out, which the step says in its own words. With no
- * account open, the step only asks which, and the line still says what the
- * server is getting ready.
- */
-export const connectStepSaysProgress = (
-  engine: EngineStatus | null,
-  opened: AiAccount | null,
-): boolean => opened !== null || aiOutage(engine) !== null;

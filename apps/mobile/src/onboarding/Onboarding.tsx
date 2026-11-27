@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  type AiAccount,
+  aiAccounts,
+  aiOnItsWay,
   aiOutage,
-  connectStepSaysProgress,
   defaultBotName,
   type Featured,
   nextStep,
@@ -21,8 +21,8 @@ import {
   workTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { refusedWith } from "@j3-bots/client-runtime";
-import { useAiOpened, useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
-import { aiActionLabel, connectStepText } from "@j3-bots/client-runtime/wording";
+import { useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
+import { connectStepText } from "@j3-bots/client-runtime/wording";
 import {
   type AvatarChoice,
   type BotId,
@@ -74,14 +74,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { AvatarChoices } from "../components/avatar/AvatarPicker.tsx";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar.tsx";
-import {
-  AiAccountPanel,
-  AiChoice,
-  AiDetails,
-  OtherAccount,
-  useAiText,
-  useMobileAiConnect,
-} from "../components/AiConnect.tsx";
+import { AiConnect, AiDetails, useMobileAiConnect } from "../components/AiConnect.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { useI18n } from "../i18n.ts";
@@ -482,7 +475,7 @@ export function Onboarding({
           />
         )}
       </View>
-      <StepPreparing engine={engine} step={step} />
+      <Preparing engine={engine} quiet={step === "arrival" || step === "connect"} />
     </KeyboardAvoidingView>
   );
 }
@@ -649,34 +642,14 @@ function Bloom({ look }: { readonly look: AvatarChoice }) {
   );
 }
 
-const noSignIns = new Map<AiAccount, never>();
-
-/**
- * The quiet line under a step (`Preparing`), silent where the step says the
- * same itself: the arrival, which says what it waits for under the bot, and
- * the connect step while an account is open on it or J3 Bots is out
- * (`connectStepSaysProgress`), so one screen never shows two progress lines.
- */
-function StepPreparing({
-  engine,
-  step,
-}: {
-  readonly engine: EngineStatus | null;
-  readonly step: OnboardingStep;
-}) {
-  const opened = useAiOpened({ engine, locations: null, signIns: noSignIns });
-  const quiet =
-    step === "arrival" || (step === "connect" && connectStepSaysProgress(engine, opened));
-  return <Preparing engine={engine} quiet={quiet} />;
-}
-
 /**
  * What the server is still getting ready, in one quiet line under every step:
  * the engine and the harnesses it downloads, with how far they are when the
  * server says. It holds nothing back, takes its room whether it says anything
  * or not, so nothing moves when it does, and says "ready" once, only after it
- * was seen getting ready. `quiet` keeps it silent, where the step says the
- * same itself.
+ * was seen getting ready. `quiet` keeps it silent where the step says the
+ * same itself: the arrival, which says what it waits for under the bot, and
+ * the connect step, whose accounts each say how far they are.
  */
 function Preparing({
   engine,
@@ -935,14 +908,14 @@ function FailureLine({
 }
 
 /**
- * The AI the bot thinks with, asked as one question: which one the operator
- * has. Picking one leaves that account alone on the screen, with the sign-in
- * drawn and what to do; the other stays one press away. While something is
- * still asked of the operator, picking an account or pressing its button,
- * that leads, and creating the bot is the quieter way on under it. A phone
- * signs no account in itself, so an account has a button only where there
- * is something to ask of the server, as trying a download again; otherwise
- * the big button creates the bot, which says hello when its AI is ready.
+ * The AI the bot thinks with, asked as one question, which AI it uses,
+ * answered by the accounts themselves: one row each, with what moves it
+ * forward beside the line that says where it stands. A phone signs no
+ * account in itself, so a signed-out account says how to connect it where
+ * the operator asks. While an account still asks something of the operator,
+ * creating the bot is the quieter way on under them; once one is connected
+ * or on its way, the big button creates the bot, which says hello when its
+ * AI is ready.
  */
 function ConnectStep({
   engine,
@@ -958,20 +931,16 @@ function ConnectStep({
   const i18n = useI18n();
   const { t } = i18n;
   const ai = useMobileAiConnect(engine);
-  const { opened } = ai;
-  const openedText = useAiText(ai, opened ?? ai.accounts["claude-code"]);
-  const text = connectStepText(
-    engine,
-    opened === null ? null : { account: opened.account, text: openedText },
-    opened?.state ?? null,
-    name,
-    i18n,
-  );
+  const connected = aiAccounts.find((account) => ai.accounts[account].state._tag === "ready");
+  const text = connectStepText(engine, connected ?? null, name, i18n);
   const out = aiOutage(engine) !== null;
-  // The account's own button leads while it asks something of the operator.
-  const asked = out || opened === null ? null : opened.action;
-  // Creating the bot leads once nothing is asked of them: no account to pick, no button of its own.
-  const leads = out || (opened !== null && asked === null);
+  // Creating the bot leads once an account is connected or on its way.
+  const leads =
+    out ||
+    aiAccounts.some((account) => {
+      const { state, queued } = ai.accounts[account];
+      return aiOnItsWay(state, queued);
+    });
   const createWaits = text.createWaits !== null;
   const under = text.createWaits ?? (leads ? text.later : null);
   return (
@@ -979,22 +948,13 @@ function ConnectStep({
       actions={
         <>
           <FailureLine failure={failure} name={name} />
-          {opened !== null && asked !== null ? (
+          {leads ? (
             <BigButton
-              label={aiActionLabel(asked, opened.account, i18n)}
-              onPress={opened.act}
-              disabled={opened.asking === "asking"}
+              label={t("onboarding.create", { name })}
+              onPress={onCreate}
+              disabled={createWaits}
             />
           ) : (
-            leads && (
-              <BigButton
-                label={t("onboarding.create", { name })}
-                onPress={onCreate}
-                disabled={createWaits}
-              />
-            )
-          )}
-          {!leads && (
             <Button
               variant="quiet"
               label={t("onboarding.connect.createLater", { name })}
@@ -1009,19 +969,11 @@ function ConnectStep({
       }
     >
       <StepTitle>{text.title}</StepTitle>
-      {/* Live: the step says when the account connects, without moving on by itself. */}
+      {/* Live: the step says when an account connects, without moving on by itself. */}
       <Text accessibilityLiveRegion="polite" className="text-center text-lg text-muted-foreground">
         {text.body}
       </Text>
-      {!out &&
-        (opened === null ? (
-          <AiChoice ai={ai} />
-        ) : (
-          <>
-            <AiAccountPanel ai={ai} account={opened} said={text.says} button={false} />
-            <OtherAccount ai={ai} account={opened.account} />
-          </>
-        ))}
+      {!out && <AiConnect ai={ai} />}
       {text.details.length > 0 && (
         <AiDetails>
           {text.details.map((detail) => (
