@@ -3,6 +3,7 @@ import {
   aiAccounts,
   aiOnItsWay,
   aiOutage,
+  connectStepSaysProgress,
   defaultBotName,
   nextStep,
   type OnboardingFlow,
@@ -372,7 +373,7 @@ export function Onboarding({
           engine={engine}
           starting={starting}
           here={here}
-          quiet={step === "arrival" || step === "connect"}
+          quiet={step === "arrival" || (step === "connect" && connectStepSaysProgress(engine))}
         />
       </div>
     </div>
@@ -464,7 +465,8 @@ function StepFrame({
  * or not, so nothing moves when it does, and says "ready" once, only after it
  * was seen getting ready. `quiet` keeps it silent where the step says the
  * same itself: the arrival, which says what it waits for under the bot, and
- * the connect step, whose accounts each say how far they are.
+ * the connect step while an account's row shows its own download or check,
+ * or J3 Bots is out (`connectStepSaysProgress`).
  */
 function Preparing({
   engine,

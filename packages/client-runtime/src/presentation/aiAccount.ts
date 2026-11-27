@@ -340,3 +340,19 @@ export const aiOutage = (
   engine === null || engine.state._tag === "ready" || engine.state._tag === "starting"
     ? null
     : engine.state;
+
+/**
+ * Whether the first run's connect step says itself how far things are, so
+ * the one quiet line under every step stays silent there instead of saying
+ * it twice: J3 Bots is out, which the step says in its own words, or an
+ * account's row shows its own download or check. While J3 Bots itself is
+ * only still starting, the rows say just that, and the line says how far.
+ */
+export const connectStepSaysProgress = (engine: EngineStatus | null): boolean => {
+  if (aiOutage(engine) !== null) return true;
+  const facts: AiFacts = { engine, locations: null, signIns: new Map() };
+  return aiAccounts.some((account) => {
+    const { _tag } = aiAccountState(account, facts);
+    return _tag === "getting" || _tag === "checking";
+  });
+};

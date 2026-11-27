@@ -18,6 +18,7 @@ import {
   aiNameOf,
   aiOnItsWay,
   aiOutage,
+  connectStepSaysProgress,
   queuedSignIn,
 } from "./aiAccount.ts";
 
@@ -303,6 +304,26 @@ describe("what keeps J3 Bots from running any account", () => {
       _tag: "unavailable",
       reason: "down",
     });
+  });
+});
+
+describe("the first run's quiet line, on the connect step", () => {
+  it("says how far J3 Bots is while it only starts, and leaves an account's own download to its row", () => {
+    const starting: EngineStatus = { ...engineWith(), state: { _tag: "starting" } };
+    expect(connectStepSaysProgress(starting)).toBe(false);
+    const downloading: EngineStatus = {
+      ...starting,
+      harnesses: {
+        "claude-code": {
+          ...noCopy,
+          task: { _tag: "downloading", receivedBytes: 1, totalBytes: 4 },
+        },
+        codex: noCopy,
+      },
+    };
+    expect(connectStepSaysProgress(downloading)).toBe(true);
+    const out: EngineStatus = { ...engineWith(), state: { _tag: "unavailable", reason: "down" } };
+    expect(connectStepSaysProgress(out)).toBe(true);
   });
 });
 

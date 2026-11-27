@@ -18,6 +18,7 @@ export {
   aiOnItsWay,
   aiOutage,
   type AiPlace,
+  connectStepSaysProgress,
   queuedSignIn,
 } from "./aiAccount.ts";
 export {
