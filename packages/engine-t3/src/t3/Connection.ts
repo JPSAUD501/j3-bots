@@ -31,7 +31,10 @@ import { baseUrl } from "./Supervisor.ts";
 
 const decodeTicket = HttpClientResponse.schemaBodyJson(AuthWebSocketTicketResult);
 
-/** The engine treats a client silent for 15 s as gone (**Read** at `db51b67`); ping well inside that. */
+/**
+ * The engine treats a client silent for 15 s as gone (**Read** at `db51b67`;
+ * not re-checked at `bc0f04d`); ping well inside that.
+ */
 const PING_INTERVAL = Duration.seconds(5);
 const PING_TIMEOUT = Duration.seconds(12);
 

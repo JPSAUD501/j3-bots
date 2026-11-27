@@ -200,7 +200,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   // engine sets for it. Any other run of a harness the engine makes gets
   // these, empty and J3 Bots' own, instead of the server user's own
   // `~/.claude` and `~/.codex`: the engine's check of the installed Codex
-  // (`codex --version`, **Read** at `59651c1`, `CodexInstallation.ts`), and a
+  // (`codex --version`, **Read** at `bc0f04d`, `CodexInstallation.ts`), and a
   // harness a bot runs in its shell.
   const defaults = harnessDefaultHomes(path, input.home);
   const environment = {

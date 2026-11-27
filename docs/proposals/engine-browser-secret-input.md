@@ -11,7 +11,7 @@ The engine knows both: it runs the page. This proposal is the small, general cha
 
 ## What T3 Code has now
 
-All **Read** at `59651c1`, in the contracts J3 Bots vendors (`packages/engine-t3/vendor/t3-contracts`):
+All **Read** at `bc0f04d`, in the contracts J3 Bots vendors (`packages/engine-t3/vendor/t3-contracts`):
 
 - The agent's `type` action takes `text` only, a plain string (`previewAutomation.ts`, `PreviewAutomationTypeInput`).
 - `request_secret` already returns a one-use `secretRef` that the agent "passes to a tool that accepts a secretRef" and never sees the value of (`orchestratorMcp.ts`). No browser action accepts one yet.

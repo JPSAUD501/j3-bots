@@ -640,8 +640,8 @@ it.effect("retries a held queue's resume whose reply was lost", () =>
 );
 
 // The engine starts a requeued steer on the model it was sent with, and moves
-// the session back to it (**Read** at 59651c1, `Orchestrator.ts`,
-// `queuedRunModelSelection`, L1045-1053).
+// the session back to it (**Read** at bc0f04d, `Orchestrator.ts`,
+// `queuedRunModelSelection`, L1077-1085).
 it.effect(
   "brings the session back to the bot's model after a requeued steer ran on an older one",
   () =>

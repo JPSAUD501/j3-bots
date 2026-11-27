@@ -488,7 +488,7 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  *   one at a time count 1, 2, 3 and so on.
  *
  * No script starts work on its own after its turn: the engine offers a
- * continuation only to agents it recognizes by name (**Read**, `db51b67`,
+ * continuation only to agents it recognizes by name (**Read**, `bc0f04d`,
  * `provider-acp-registry/src/server/adapter.ts`), and this agent claims no
  * other agent's name. Only the engine's own delegated task outlives a turn.
  */

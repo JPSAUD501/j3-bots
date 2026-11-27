@@ -5,7 +5,7 @@ import { engineInputLength } from "./input.ts";
 const href = "t3-citation://v1/e/t/m?text=hi&start=0&end=2&prefix=&suffix=";
 
 it("measures an assistant quote as the engine expands it", () => {
-  // What the engine's `expandAssistantCitationsForProvider` makes of it (db51b67).
+  // What the engine's `expandAssistantCitationsForProvider` makes of it (bc0f04d).
   const expanded = `See [assistant-quote-1]
 
 <assistant_citations>

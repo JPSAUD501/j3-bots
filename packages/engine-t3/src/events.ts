@@ -53,12 +53,12 @@ export const TurnCause = Schema.Union([
    * completion's message carries the run that delegated them
    * (`delegatedCompletion.parentRunId`), and a notice of one, such as its
    * question, names the task, whose `subagent` item is in that run (**Read**
-   * at `59651c1`, `DelegatedTaskQuestionReactor.ts`, L35-61). A harness's wake (a background
+   * at `bc0f04d`, `DelegatedTaskQuestionReactor.ts`, L35-61). A harness's wake (a background
    * command, a monitor, a subagent) carries no run id: its notice says what
    * kind of work reported and, for a single native subagent, may name the
    * child thread it ran in (`childThreadId`), never the run that started it.
    * Its turn has `null`, as does a turn another client started. **Read** at
-   * `db51b67`: `ProviderContinuationService.ts` L177-192 and L247-264,
+   * `bc0f04d`: `ProviderContinuationService.ts` L177-192 and L247-264,
    * `ProviderContinuationRequests.ts` L15-35, `notification.ts` L136-170.
    * The origin is the same in each of the turn's events, also after a steer.
    */
@@ -174,7 +174,7 @@ export type ToolCall = typeof ToolCall.Type;
  * end; the session is not archived or settled and waits on no request; and
  * the recovery is armed for that turn and reset, or not armed yet with the
  * reset less than a day past. A snooze only delays a continuation; it never
- * prevents one. **Read** at `db51b67`: `ProjectionStore.ts`
+ * prevents one. **Read** at `bc0f04d`: `ProjectionStore.ts`
  * (`getLimitRecoveryCandidates`), `UsageLimitRecoveryWorker.ts`
  * (`limitRecoveryCommand`, `MAX_OVERDUE_ARM_MS`).
  */
@@ -192,8 +192,8 @@ export const BackgroundWork = Schema.Struct({
   /**
    * The turns whose work is pending, in the order they ran: the run the
    * engine attributes each task or item to, the one that was executing when
-   * the work first appeared (**Read** at `db51b67`, `ProjectionStore.ts`,
-   * `attributePendingBackgroundTasks`, L936-954; a turn item's own `runId`).
+   * the work first appeared (**Read** at `bc0f04d`, `ProjectionStore.ts`,
+   * `attributePendingBackgroundTasks`, L955-972; a turn item's own `runId`).
    */
   turns: Schema.Array(TurnId),
   /** Pending work the engine attributes to no turn. */
@@ -368,8 +368,8 @@ export const SessionEvent = Schema.Union([
    *   cursor, and may repeat ones already applied (by `resultId`);
    * - `model` is the session's model as the engine holds it now: the model
    *   of the last turn it started, since it moves the session's selection to
-   *   each turn's as the turn starts (**Read** at `59651c1`, `Orchestrator.ts`,
-   *   `startNextQueuedRun`, L3191). `null` on an instance J3 Bots did not set
+   *   each turn's as the turn starts (**Read** at `bc0f04d`, `Orchestrator.ts`,
+   *   `startNextQueuedRun`, L3289). `null` on an instance J3 Bots did not set
    *   up;
    * - `queueHeld` says the session's queue is held now. If it is, this event
    *   stands for the hold, as a `queue-held` would, and its cursor is the
@@ -416,7 +416,7 @@ export const SessionEvent = Schema.Union([
      * J3 Bots has no provider for. It need not be the session's latest
      * model: the engine starts a waiting turn on the model it was queued
      * with, an unread steer it requeued included, and moves the session back
-     * to it (**Read** at `59651c1`, `Orchestrator.ts`, `requeueUnreadSteers`
+     * to it (**Read** at `bc0f04d`, `Orchestrator.ts`, `requeueUnreadSteers`
      * and `startNextQueuedRun`).
      */
     model: Schema.NullOr(ModelChoice),
@@ -448,7 +448,7 @@ export const SessionEvent = Schema.Union([
    * provider paths make it without proof the model read the message: Codex
    * acknowledges a steer when it is sent, never when it is consumed, and
    * Claude Code marks a steer taken when offering it to the running turn
-   * fails. **Read** at `db51b67`: `Orchestrator.ts` (`requeueUnreadSteers`,
+   * fails. **Read** at `bc0f04d`: `Orchestrator.ts` (`requeueUnreadSteers`,
    * `queued-message.promote-to-steer`), `CodexAdapterV2.ts` and
    * `ClaudeAdapterV2.ts` (`steerTurn`).
    */
@@ -461,12 +461,12 @@ export const SessionEvent = Schema.Union([
    * before the turn's `turn-finished`, and only while the turn runs; the
    * steer then settles as `steered`, or `steer-dropped` if a Stop cancelled
    * its record first. The engine records the steer as handed over before
-   * the provider has it (**Read** at `59651c1`, `Orchestrator.ts`,
-   * L6442-6470). On Claude Code the record then waits until Claude echoes
+   * the provider has it (**Read** at `bc0f04d`, `Orchestrator.ts`,
+   * L6660-6688). On Claude Code the record then waits until Claude echoes
    * the steer as it starts on it, or offering it failed, so a steer there is
    * taken only once its record has waited and moved on; Codex acknowledges
    * it when it is sent, so there the first record counts (`ClaudeAdapterV2.ts`
-   * L14061, L9366 and L14069; `CodexAdapterV2.ts`). A steer kept aside until
+   * L15191, L10171 and L15199; `CodexAdapterV2.ts`). A steer kept aside until
    * its target's provider turn starts is taken, if at all, once the engine
    * steered it in.
    */
@@ -494,13 +494,14 @@ export const SessionEvent = Schema.Union([
    * session runs as the task ends or asks, whichever turn delegated it, on Codex and,
    * since `0.1.11`, on Claude Code; only with no turn running does it start
    * a turn that names the turn that delegated it, which is a `background`
-   * turn with that `origin` (**Read** at `59651c1`, `Orchestrator.ts`,
-   * L7631-7673). Sent once per result, by `resultId`, once the turn it
+   * turn with that `origin` (**Read** at `bc0f04d`, `Orchestrator.ts`,
+   * L7890-7936). Sent once per result, by `resultId`, once the turn it
    * landed in has ended with it, after that turn's `turn-finished`: the turn
-   * reads it all the same. A report whose hand-over failed, which the
-   * engine runs as a turn of its own, is not sent: that turn is a
-   * `background` turn whose `origin` is the delegating turn (**Read** at
-   * `59651c1`, `EffectWorker.ts` L362-420).
+   * reads it all the same. A report whose hand-over failed, or that the
+   * running turn declined, which the engine runs as a queued turn of its own
+   * opened with the same message, is not sent: that turn is a `background`
+   * turn whose `origin` is the delegating turn (**Read** at `bc0f04d`,
+   * `EffectWorker.ts` L366-423).
    */
   Schema.TaggedStruct("delegated-result", { ...at, result: DelegatedResult }),
   /**
@@ -508,7 +509,7 @@ export const SessionEvent = Schema.Union([
    * its own: the engine records the failure with the attempt it is on, as an
    * error item still running while it retries, which completes once an
    * attempt succeeds and fails once it gives up, ending the turn as failed
-   * (**Read** at `59651c1`, T3 Code's own client, `session-logic.ts`,
+   * (**Read** at `bc0f04d`, T3 Code's own client, `session-logic.ts`,
    * `providerErrorPresentation`). Told when it changes, while the turn runs;
    * a turn's end ends it.
    */
@@ -517,7 +518,7 @@ export const SessionEvent = Schema.Union([
    * The engine's stop reached the session's latest turn, or the background
    * work that turn left, and its provider did not confirm it in time: the
    * engine marks the stop unresponsive, and its own client then offers Force
-   * stop (**Read** at `59651c1`: the `run_interrupt_request` item's
+   * stop (**Read** at `bc0f04d`: the `run_interrupt_request` item's
    * `unresponsiveAt`, and `threadExecution.ts`, `presentRunStop`). `turnId`
    * is that turn, null once no stop is ignored: the turn ended or the
    * provider answered. Told when it changes. `Engine.forceStop` ends it.
@@ -552,8 +553,8 @@ export const SessionEvent = Schema.Union([
    * it, so this can arrive after that request. An `open` call can be told
    * again, with the digest of other input: the engine may record a call
    * before its arguments and record it again with them once it runs, as an
-   * ACP agent reports it (**Read** at `db51b67`,
-   * `provider-acp/src/server/adapter.ts`, L4657-4658, L4711). A turn's end
+   * ACP agent reports it (**Read** at `bc0f04d`,
+   * `provider-acp/src/server/adapter.ts`, L5699-5700, L5852). A turn's end
    * closes every call of the turn still open, without a `closed` for each.
    */
   Schema.TaggedStruct("tool-call", {
@@ -629,7 +630,7 @@ export const SessionEvent = Schema.Union([
      * this turn, so the engine ran it in a fresh provider conversation that
      * starts from the engine's own summary of the old one. The session's
      * working context is no longer the one J3 Bots built. **Read** at
-     * `db51b67`, `ProviderTurnStartService.ts`: a failed native resume records
+     * `bc0f04d`, `ProviderTurnStartService.ts`: a failed native resume records
      * a `handoff` item at the run's start before the run's message.
      */
     contextRecovered: Schema.Boolean,
@@ -639,7 +640,7 @@ export const SessionEvent = Schema.Union([
    * disarmed it (the engine's armed recovery no longer resumes on its own), a
    * newer turn started in the session, or the session stopped qualifying for
    * it (archived, waiting on a request, or past the one-day limit). **Read**
-   * at `db51b67`: `Orchestrator.ts` (`holdStoppedThread`),
+   * at `bc0f04d`: `Orchestrator.ts` (`holdStoppedThread`),
    * `UsageLimitRecoveryWorker.ts`.
    */
   Schema.TaggedStruct("continuation-dropped", { ...at, turnId: TurnId }),
@@ -650,7 +651,7 @@ export const SessionEvent = Schema.Union([
    * the server answers it with `Engine.resumeQueue`, naming this cursor. A
    * hold the engine puts back in answer to that resume, before any turn
    * started, is not reported until its cause has passed: then it comes as a
-   * new `queue-held`. **Read** at `db51b67`: `Orchestrator.ts`
+   * new `queue-held`. **Read** at `bc0f04d`: `Orchestrator.ts`
    * (`startNextQueuedRun`, `queue.resume`); the hold is a field of each
    * waiting run.
    */

@@ -36,7 +36,7 @@ export const DECODE_OPTIONS = { onExcessProperty: "error" } as const;
 /**
  * The most a call's arguments may weigh, as UTF-8 JSON. The engine replaces a
  * tool input over 16,384 bytes with a one-line summary before any client sees
- * it (**Read** at `db51b67`, `WireProjection.ts`, `summarizeDynamicValue`),
+ * it (**Read** at `bc0f04d`, `WireProjection.ts`, `summarizeDynamicValue`),
  * and the server could then no longer match the call to the engine's record of
  * it. The margin covers the engine encoding the input differently.
  */

@@ -64,9 +64,12 @@ export type Delivery =
    * Add the message to the running turn `turnId`, so it can change course. If
    * that turn has completed or is completing, or its provider can take no steer
    * at all, the engine makes the message a turn of its own instead: see
-   * `DispatchDisposition`. It refuses (`DispatchRejected`) a steer into a turn
-   * that waits behind another, or that ended any way but completing. **Read**
-   * at `db51b67`, `resolveMessageDispatchIntent` and `dispatchSteerIntoRun`.
+   * `DispatchDisposition`. So it does with a message that reads as a slash
+   * command (`/name` first, no attachments), which a provider would run in
+   * place of the turn's task. It refuses (`DispatchRejected`) a steer into a
+   * turn that waits behind another, or that ended any way but completing.
+   * **Read** at `bc0f04d`, `CommandPolicy.ts`, `resolveMessageDispatch` and
+   * `resolveMessageDispatchIntent`, and `Orchestrator.ts`, `dispatchSteerIntoRun`.
    */
   | { readonly _tag: "steer"; readonly turnId: TurnId };
 
@@ -83,7 +86,7 @@ export type DispatchDisposition =
   /**
    * A `start` became turn `turnId`, which waits behind a turn that began before
    * the engine applied the start. It is delivered when `turnId` starts, and
-   * never if `stop` cancels it first. **Read** at `db51b67`.
+   * never if `stop` cancels it first. **Read** at `bc0f04d`.
    */
   | { readonly _tag: "queued"; readonly turnId: TurnId }
   /**
@@ -96,14 +99,14 @@ export type DispatchDisposition =
    * steers it in when the turn starts, or runs it as the follow-up turn if the
    * turn ends first), or its provider steers only by interrupting the turn and
    * restarting it with the message, which keeps `turnId` (one turn, several
-   * attempts). **Read** at `db51b67`.
+   * attempts). **Read** at `bc0f04d`.
    */
   | { readonly _tag: "steered"; readonly turnId: TurnId }
   /**
    * A `steer` became turn `turnId` of its own: the target turn had completed or
-   * was completing, or its provider can neither steer nor restart. It starts at once if
-   * the session is idle, or after the running turn otherwise. **Read** at
-   * `db51b67`.
+   * was completing, its provider can neither steer nor restart, or the message
+   * reads as a slash command. It starts at once if the session is idle, or
+   * after the running turn otherwise. **Read** at `bc0f04d`.
    */
   | { readonly _tag: "new-turn"; readonly turnId: TurnId };
 
@@ -142,7 +145,7 @@ export interface StagedAttachment {
   /**
    * Until when a dispatch can name it, first send or resend. The engine
    * removes an upload no message names after 24 hours, and a claimed one stays
-   * as the source of copies until then (**Read** at `db51b67`,
+   * as the source of copies until then (**Read** at `bc0f04d`,
    * `apps/server/src/attachmentStore.ts`); the adapter reports half of that.
    * Past it, stage the file again before the next send, first send or
    * recovery alike.
@@ -154,8 +157,9 @@ export interface StagedAttachment {
  * An answer to an approval or a question. A question is never dismissed: the
  * engine takes a dismissal only of a question that does not hold its turn,
  * and refuses it for every question a harness asks while its turn waits
- * (**Verified** on `0.1.11` with the scripted agent: "This question needs an
- * answer. Answer it or stop the turn."; **Read** at `59651c1`,
+ * (**Verified** on `0.1.11` with the scripted agent, and the code it rests on
+ * is unchanged at `bc0f04d`: "This question needs an answer. Answer it or
+ * stop the turn."; **Read** at `bc0f04d`,
  * `Orchestrator.ts`, `dispatchThreadUserInputDismiss`, which takes it only for
  * a request whose `responseCapability` is `message`, and the Claude Code,
  * Codex and ACP adapters, which give every question they wait on `live`).
@@ -309,7 +313,7 @@ export interface EngineOptions {
    * `promptSuggestionsEnabled`, which every provisioning writes and a change
    * while the engine runs updates. Codex follows a change at its next turn;
    * Claude Code when a session next starts its harness process (**Read** at
-   * `59651c1`, `ProviderSessionManager.ts`, `promptSuggestionsEnabled`, read
+   * `bc0f04d`, `ProviderSessionManager.ts`, `promptSuggestionsEnabled`, read
    * per Codex turn and per Claude Code query).
    */
   readonly suggestReplies: Stream.Stream<boolean>;
@@ -494,7 +498,7 @@ export class Engine extends Context.Service<
      * The workspace folder is left alone. Succeeds if the project is already
      * gone. The engine drops the project's settings overrides, its browser
      * access with them, and at its start any a failed removal left (**Read**
-     * at `59651c1`: `ProjectService.ts`, `clearProjectSettingsOverrides`;
+     * at `bc0f04d`: `ProjectService.ts`, `clearProjectSettingsOverrides`;
      * `ProjectSettingsOverrideSweep.ts`).
      */
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
@@ -564,7 +568,7 @@ export class Engine extends Context.Service<
      *
      * A change can replace the session's provider session: on Claude Code a
      * permission mode always does, which ends a turn running there (**Read**
-     * at `db51b67`, `Orchestrator.ts` L4715-4757, `ClaudeAdapterV2.ts` L577).
+     * at `bc0f04d`, `Orchestrator.ts` L4871-4913, `ClaudeAdapterV2.ts` L660).
      * So it is refused with `SessionBusy`, sending nothing, while the adapter
      * sees a turn preparing, starting or running in the session; a turn that
      * only waits in the queue does not count. Like the dispatch's busy check,
@@ -681,12 +685,12 @@ export class Engine extends Context.Service<
      * and holds the queue, then a cancel for each turn waiting in the engine's
      * queue. It also disarms a pending usage-limit continuation. The engine's
      * stop is always sent, also to a session with no running turn, since
-     * background work can outlive its turn (**Read** at `db51b67`,
+     * background work can outlive its turn (**Read** at `bc0f04d`,
      * `Orchestrator.ts`, `dispatchThreadStop`).
      *
      * Success acknowledges the commands; it does not mean they took effect.
      * The engine interrupts a provider turn asynchronously (**Read** at
-     * `db51b67`, `Orchestrator.ts`, `dispatchThreadStop`: the interrupt is an
+     * `bc0f04d`, `Orchestrator.ts`, `dispatchThreadStop`: the interrupt is an
      * effect run after the commit). The events say when they did: the running
      * turn's `turn-finished`, a `turn-finished` with `cancelled` for each
      * waiting turn, `steer-dropped` for each untaken steer,
@@ -726,7 +730,7 @@ export class Engine extends Context.Service<
      * (`stop-ignored`): the engine kills the session's own agent processes,
      * never one another session shares, then ends turn `turnId` as
      * interrupted, or settles the background work it left once it ended, and
-     * releases its provider session (**Read** at `59651c1`,
+     * releases its provider session (**Read** at `bc0f04d`,
      * `ThreadManagementService.ts`, `forceStopThread`). A turn waiting behind
      * it is not ended: that is the Stop's to cancel. What the agent already
      * did stays done, and the next turn starts a new provider session.
@@ -849,7 +853,7 @@ export class Engine extends Context.Service<
      * Code, Codex 0.165 and later), and may make none; a newer one replaces
      * it, whatever turn it follows. The
      * engine keeps them in memory only, so an engine restart loses them. It
-     * keeps none for a deleted session (**Read** at `59651c1`,
+     * keeps none for a deleted session (**Read** at `bc0f04d`,
      * `ProviderSessionManager.ts`, `subscribePromptSuggestion`;
      * `ClaudeAdapterV2.ts`, `prompt_suggestion`; `CodexAdapterV2.ts`,
      * `samplePromptSuggestion`).

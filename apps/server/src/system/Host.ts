@@ -134,7 +134,7 @@ const REACHABLE_WITHIN = "15 seconds";
 /**
  * Prints the user's `PATH`, then the machine's, a line each, as Windows
  * keeps them for a program started now, the way T3 Code's engine reads them
- * again before it looks for a harness (**Read** at `59651c1`,
+ * again before it looks for a harness (**Read** at `bc0f04d`,
  * `windowsEnvironmentValueCommand` in `packages/shared/src/shell.ts`). A
  * folder given as `%VARIABLE%` comes expanded (**Assumed**: .NET expands a
  * `REG_EXPAND_SZ` value as it reads it).

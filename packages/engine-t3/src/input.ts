@@ -12,11 +12,11 @@ import * as Schema from "effect/Schema";
 
 /**
  * The engine's limit on the text of one message, a start or a steer, as
- * {@link engineInputLength} measures it. **Read** at `db51b67`:
+ * {@link engineInputLength} measures it. **Read** at `bc0f04d`:
  * `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` in `packages/contracts/src/chatAttachment.ts`
  * (120,000 characters), checked on the text after expanding assistant quotes
- * in `apps/server/src/orchestration-v2/ProviderTurnStartService.ts:680` (a
- * start fails its turn) and `apps/server/src/orchestration-v2/Orchestrator.ts:6223`
+ * in `apps/server/src/orchestration-v2/ProviderTurnStartService.ts:775` (a
+ * start fails its turn) and `apps/server/src/orchestration-v2/Orchestrator.ts:6432`
  * (a steer is refused). The `message.dispatch` command's own schema puts no
  * limit on `text`.
  */
@@ -25,7 +25,7 @@ export const ENGINE_INPUT_LIMIT: number = PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
 // The engine rewrites an assistant-quote link (`[Assistant quote](t3-citation://v1/…)`)
 // before it measures, so a text holding one is measured as the engine expands
 // it. Adapted from T3 Code `packages/shared/src/assistantCitations.ts` at
-// `db51b67` (`expandAssistantCitationsForProvider` and the parsing it uses),
+// `bc0f04d` (`expandAssistantCitationsForProvider` and the parsing it uses),
 // Copyright (c) T3 Tools Inc., MIT license.
 const CITATION_PROTOCOL = "t3-citation:";
 const CITATION_HREF_PREFIX = `${CITATION_PROTOCOL}//v1/`;

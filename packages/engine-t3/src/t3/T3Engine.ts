@@ -253,7 +253,7 @@ const ShellThread = Schema.Struct({ id: ThreadId, projectId: ProjectId });
 /**
  * The engine's shell, live and archived threads alike, with every subagent:
  * a thread archived or idle can still hold a provider session (**Read** at
- * `59651c1`, `environmentHttp.ts`, `shellSnapshot`).
+ * `bc0f04d`, `environmentHttp.ts`, `shellSnapshot`).
  */
 const decodeShellThreads = HttpClientResponse.schemaBodyJson(
   Schema.Struct({ threads: Schema.Array(ShellThread), archivedThreads: Schema.Array(ShellThread) }),
@@ -264,7 +264,7 @@ const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatib
 /**
  * The engine error whose reply proves a command was refused, applying
  * nothing, and that the engine keeps the refusal for its key: a rejected
- * receipt found by a resend. **Read** at `59651c1`, `Orchestrator.ts`,
+ * receipt found by a resend. **Read** at `bc0f04d`, `Orchestrator.ts`,
  * `dispatchWithReceiptEffect`, `replayCommandReceipt`.
  */
 const PREVIOUSLY_REJECTED = "OrchestratorCommandPreviouslyRejectedError";
@@ -276,7 +276,7 @@ const PREVIOUSLY_REJECTED = "OrchestratorCommandPreviouslyRejectedError";
  * refuses a thread created in, or switched to, a mode above it, and a turn
  * that would run in one. The dispatch mode limit binds only the engine's
  * agent and MCP callers, never `/ws`; it is listed for the day it does.
- * **Read** at `59651c1`, `Orchestrator.ts`, `dispatchWithReceiptEffect`,
+ * **Read** at `bc0f04d`, `Orchestrator.ts`, `dispatchWithReceiptEffect`,
  * `refuseAboveRuntimeModeCeiling`, and `DispatchModeLimit.ts`.
  */
 const MODE_LIMITS: ReadonlySet<string> = new Set([
@@ -286,12 +286,12 @@ const MODE_LIMITS: ReadonlySet<string> = new Set([
 /**
  * Refused before the engine looks at the key: a staged file it cannot claim.
  * The server names only files staged and still usable, so this is its bug.
- * **Read** at `db51b67`, `ThreadMessageIntake.dispatchCommand`.
+ * **Read** at `bc0f04d`, `ThreadMessageIntake.dispatchCommand`.
  */
 const CLAIM_ERROR = "AttachmentClaimError";
 /**
  * A reply's cause keeps the engine error's class name and message, and nothing
- * else of it (**Read** at `db51b67`: `ws.ts`, the cause is a `Schema.Defect`).
+ * else of it (**Read** at `bc0f04d`: `ws.ts`, the cause is a `Schema.Defect`).
  */
 const decodeErrorName = Schema.decodeUnknownOption(Schema.Struct({ name: Schema.String }));
 const decodeUploadInput = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlInput);
@@ -894,7 +894,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * submission of a command it refused while planning with the same kind of
    * error as any other. A resend answers `{sequence}` if the key was applied,
    * and `OrchestratorCommandPreviouslyRejectedError` if it was refused.
-   * **Read** at `db51b67`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
+   * **Read** at `bc0f04d`, `dispatchWithReceiptEffect`, `replayCommandReceipt`.
    * A refusal for the mode the command would run in (`MODE_LIMITS`) leaves no
    * receipt and is answered as it is, so it is `mode-refused` at once. A reply
    * lost on the way is `EngineIndeterminate`, resolved by sending the same key
@@ -1141,7 +1141,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /**
    * Writes the operator's switch for suggested replies into the running
-   * engine's settings, which it reads live (**Read** at `59651c1`,
+   * engine's settings, which it reads live (**Read** at `bc0f04d`,
    * `ProviderSessionManager.ts`, `promptSuggestionsEnabled`). Provisioning
    * writes it before each start; it is written again each time the engine
    * becomes ready, since a change made while the engine was starting reaches
@@ -1293,7 +1293,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /**
    * The engine closes the profile's browser context, which closes its tabs,
-   * and deletes its folder (**Read** at `59651c1`, `ServerBrowserContexts.ts`,
+   * and deletes its folder (**Read** at `bc0f04d`, `ServerBrowserContexts.ts`,
    * `clearProfile`). A deletion that failed may have deleted part of it:
    * indeterminate, and clearing again finishes it.
    */
@@ -1419,7 +1419,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // run, as the engine does itself on a change of runtime mode: the next
     // turn starts a new one, whose tool credential the engine issues with
     // what the project allows then, and resumes the conversation natively
-    // (**Read** at `59651c1`, `prepareMcpSession`; `provider-session.detach`
+    // (**Read** at `bc0f04d`, `prepareMcpSession`; `provider-session.detach`
     // is **Verified**, below). One that has stopped starts again anyway.
     const reload = input.reloadTools === true && liveProviderSessions(mirror).length > 0;
     if (selection === undefined && mode === undefined && !reload) return;
@@ -1507,7 +1507,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   /**
    * The engine's stop, then a cancel per waiting run. Each command is answered
    * once the engine recorded it: the provider's interrupt runs after (**Read**
-   * at `db51b67`, `dispatchThreadStop`), and the events say when it took.
+   * at `bc0f04d`, `dispatchThreadStop`), and the events say when it took.
    *
    * The engine's stop is sent whatever the session looks like: the server
    * stops every session it recorded as a target, and the engine's stop
@@ -1587,7 +1587,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * Releases a held queue, keyed by the hold it answers. The engine refuses a
    * resume while the session waits on a usage limit, whose continuation runs
    * first; that counts as done, since the hold is reported again when a turn
-   * starts while it lasts. **Read** at `db51b67`, `Orchestrator.ts`,
+   * starts while it lasts. **Read** at `bc0f04d`, `Orchestrator.ts`,
    * `queue.resume`.
    */
   const resumeQueue = Effect.fn("Engine.resumeQueue")(function* (input: {
@@ -1781,7 +1781,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   /**
    * Sends an answer to an approval or a question, settled by its key's receipt
    * as a dispatch is (`sendByReceipt`). The engine replays a command id it
-   * already applied (**Read**, `db51b67`, `Orchestrator.ts`), so a retry with
+   * already applied (**Read**, `bc0f04d`, `Orchestrator.ts`), so a retry with
    * the same key succeeds even after the answer closed the request. A refusal
    * is final for the key, since the engine keeps its rejected receipt:
    * `RequestClosed` when the request is no longer pending, `AnswerRejected`
@@ -1840,13 +1840,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   });
 
   /**
-   * One secret submission per request at a time. The engine does not order
-   * two answers to one request: both can pass its pending check, and the
-   * second then finds the first's value stored and reports success too
-   * (**Read** at `db51b67`, `SecretRequests.answer`: the store ignores an
-   * existing value, and both record the same command id). J3 Bots is the only
-   * client of its engine, so serializing here makes a second submission see
-   * the request closed.
+   * One secret submission per request at a time, so a second submission sees
+   * the request closed. The engine also takes one answer at a time, across
+   * every request, and a later answer to the same request finds it answered
+   * (**Read** at `bc0f04d`, `SecretRequests.answer`, `answerLock`).
    */
   const secretLocks = new Map<string, { readonly lock: Semaphore.Semaphore; holders: number }>();
   const withSecretLock = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
@@ -2431,7 +2428,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /**
    * The engine's own refresh of one instance, bypassing what it cached, as
-   * its web interface's Refresh does (**Read** at `59651c1`,
+   * its web interface's Refresh does (**Read** at `bc0f04d`,
    * `server.refreshProviders` in `contracts/src/rpc.ts`). Its answer is not
    * read: what the check finds arrives on the config stream like any other.
    */
@@ -2497,7 +2494,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const engineScope = yield* Effect.scope;
 
   /**
-   * The engine's own update of a harness (**Read** at `59651c1`,
+   * The engine's own update of a harness (**Read** at `bc0f04d`,
    * `server.updateProvider`, `ProviderMaintenanceRunner.updateProvider`): it
    * waits for the sessions of that harness that are opening, keeps new ones
    * waiting, runs the maker's update command (`claude update`, `codex
@@ -2505,13 +2502,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * again, reporting each step as the instance's `updateState`. It answers
    * only once all that ends, which can take minutes, so it runs on its own
    * and this answers once it is asked. The request has no deadline of its
-   * own: the engine stops an update whose request is dropped, and a
-   * harness's native updater stopped mid-download leaves a truncated
-   * executable (**Read** at `59651c1`, `UPDATE_TIMEOUT_MINUTES` and
-   * `Effect.onInterrupt` in `providerMaintenanceRunner.ts`), while the
-   * engine's own 30 minutes bound the command; the request ends with the
-   * connection. A refusal to start, and a request lost on the way, for which
-   * the engine reports no state, are kept as the adapter's (`UpdateRequest`).
+   * own, and neither has the engine's update: an installer stopped mid-install
+   * leaves the harness half replaced, so the engine runs the update in its own
+   * scope, with no timeout, and only its shutdown stops it; a dropped request
+   * does not (**Read** at `bc0f04d`, `providerMaintenanceRunner.ts`, the
+   * update forked into the service's scope and its `Effect.onInterrupt`). The
+   * request ends with the connection. A refusal to start, and a request lost
+   * on the way, for which the engine reports no state, are kept as the
+   * adapter's (`UpdateRequest`).
    */
   const updateProvider = Effect.fn("Engine.updateProvider")(function* (providerId: ProviderId) {
     yield* ready;
@@ -2551,10 +2549,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * One instance, as provisioning writes it, upserted through the engine's
    * own settings. The engine saves them and answers; a watcher of its own
    * then closes the instance that changed, ending what ran on it, and builds
-   * it again from the new entry (**Read** at `59651c1`,
+   * it again from the new entry (**Read** at `bc0f04d`,
    * `ProviderInstanceRegistryHydration.ts`, `layerSettingsWatcher`, and
    * `ProviderInstanceRegistry.ts`, `makeReconcile`, which closes the old
-   * instance's scope before it builds the new one). So the answer does not
+   * instance's scope before it builds the new one). A change of the
+   * executable is one; a change of only the display name or accent colour
+   * keeps the instance (`runtimeEqual`). So the answer does not
    * say the engine runs the new executable yet: a check of the rebuilt
    * instance that reports `version` does, and the adapter waits for it, up
    * to the first check's budget. The entry's secret variables are marked

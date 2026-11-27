@@ -626,8 +626,8 @@ interface TurnRecord {
    * engine took it, as the engine starts a queued run on the selection it
    * was queued with; a turn the engine started on its own, as for a
    * delegated task's completion, takes the session's model as it starts
-   * (`null` until then). **Read** at `59651c1`, `Orchestrator.ts`,
-   * `queuedRunModelSelection` and `followsCurrentConversation`, L1026-1053.
+   * (`null` until then). **Read** at `bc0f04d`, `Orchestrator.ts`,
+   * `queuedRunModelSelection` and `followsCurrentConversation`, L1058-1085.
    */
   model: ModelChoice | null;
   startedAt: DateTime.Utc | null;
@@ -1240,7 +1240,7 @@ const make = Effect.gen(function* () {
 
   /**
    * A `start` the engine applies. J3 Bots' messages never release a held
-   * queue (**Read** at `db51b67`, `sentByUserFromClient`), so behind one it is
+   * queue (**Read** at `bc0f04d`, `sentByUserFromClient`), so behind one it is
    * `queued`, held with the rest.
    */
   const applyStart = (
@@ -1288,7 +1288,7 @@ const make = Effect.gen(function* () {
       // turn left, goes on, and the engine marks the stop unresponsive. With
       // neither, there is nothing to ignore. A stop sent again rewrites the
       // engine's request with no mark, until its own wait runs out again
-      // (**Read** at `59651c1`, `Orchestrator.ts`, `dispatchRunInterrupt`):
+      // (**Read** at `bc0f04d`, `Orchestrator.ts`, `dispatchRunInterrupt`):
       // the stop is no longer reported ignored. Here the first wait runs out
       // at once, and a later one never.
       const target = stopTarget(session);
@@ -1312,7 +1312,7 @@ const make = Effect.gen(function* () {
   /**
    * What the engine's stop and Force stop act on: the running turn, else, while
    * any turn's work goes on, the latest turn that started, also when the work
-   * is an earlier turn's (**Read** at `59651c1`, `Orchestrator.ts`,
+   * is an earlier turn's (**Read** at `bc0f04d`, `Orchestrator.ts`,
    * `dispatchRunInterrupt`).
    */
   const stopTarget = (session: SessionRecord) => {
@@ -1490,7 +1490,7 @@ const make = Effect.gen(function* () {
    * make a turn of its own in a session whose mode is above the ceiling: a
    * start, or a steer too late for its turn. That it refuses keeping nothing
    * for the key. A steer taken into a running turn makes none, and the
-   * ceiling lets it through (**Read** at `59651c1`, `DispatchModeLimit.ts`
+   * ceiling lets it through (**Read** at `bc0f04d`, `DispatchModeLimit.ts`
    * `runtimeModeCeilingRefusal`, which looks only at `run.created` and
    * `run-attempt.created`).
    */
@@ -1523,7 +1523,7 @@ const make = Effect.gen(function* () {
           };
         } else {
           // A turn waiting behind another, or one that ended any way but
-          // completing, cannot be steered (**Read** at `db51b67`,
+          // completing, cannot be steered (**Read** at `bc0f04d`,
           // `dispatchSteerIntoRun`): refused while planning, with a receipt.
           return yield* refuse(key, session.id);
         }

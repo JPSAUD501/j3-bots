@@ -24,12 +24,12 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
  * The scopes the adapter needs: read threads and projects, and operate them;
  * act on a bot's browser tab for a person who took control of it (without
  * `preview:operate` the engine silently drops a viewer's input; **Read** at
- * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77);
+ * `bc0f04d`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77);
  * write the engine's settings, for each bot's browser access
  * (`BrowserAccess.ts`); and manage providers, for the operator's update of
  * a harness (`server.updateProvider`) and to replace a provider instance
  * for the harness J3 Bots installed (`setHarnessExecutable`), both of which
- * need `providers:manage` (**Read** at `59651c1`,
+ * need `providers:manage` (**Read** at `bc0f04d`,
  * `apps/server/src/auth/RpcAuthorization.ts`). A stored token without one of
  * them is refused by `checkAccess`, and the supervisor mints a new one with
  * all of them.
@@ -59,7 +59,7 @@ const IssuedSession = Schema.Struct({
 /**
  * What `t3 auth session list --json` prints, as far as the adapter reads it: no
  * token, only each session's id and the label it was issued with (**Read** at
- * `59651c1`, `apps/server/src/cliAuthFormat.ts` `formatSessionList`).
+ * `bc0f04d`, `apps/server/src/cliAuthFormat.ts` `formatSessionList`).
  */
 const ListedSessions = Schema.Array(
   Schema.Struct({
@@ -255,11 +255,11 @@ export type Access = "granted" | "refused" | "unreachable";
  * Whether the engine accepts `token` with every scope the adapter needs. It
  * answers `GET /api/auth/session` for any caller, with `authenticated: false`
  * for a token it does not accept, so a refusal is definitive and a failed
- * request only says the engine was not reached. **Read** at `db51b67`,
+ * request only says the engine was not reached. **Read** at `bc0f04d`,
  * `packages/contracts/src/environmentHttp.ts` (`session`, `OptionalBearerHeaders`).
  * The answer's `scopes` lists only the scopes older clients know; what the
  * token is granted is its `permissions`, which the engine's own
- * `sessionGrantsScope` reads (**Read** at `59651c1`, `contracts/src/auth.ts`,
+ * `sessionGrantsScope` reads (**Read** at `bc0f04d`, `contracts/src/auth.ts`,
  * `authScopeResponse`, which lists `preview:operate` there alone; **Verified**:
  * a token issued with `settings:write` reports it only there).
  */

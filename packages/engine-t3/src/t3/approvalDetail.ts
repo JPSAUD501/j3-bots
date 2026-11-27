@@ -25,14 +25,14 @@ import { heldCallLabel } from "./toolNames.ts";
 // A file change's diff does not reach the adapter with the item. The engine
 // strips `diffStr`, `oldStr` and `newStr` from every `file_change` it sends on
 // a thread's stream, live or in a snapshot, unless the change failed (Read at
-// db51b67, `WireProjection.ts`, `projectTurnItemForWire`, used by `ws.ts` for
+// bc0f04d, `WireProjection.ts`, `projectTurnItemForWire`, used by `ws.ts` for
 // replays and snapshots and by `EventSink.ts` for live events). So an approval
 // whose held file change came without its diff is first a summary, and the
 // adapter fetches the item whole with `orchestration.getTurnItem`, which keeps
 // the diff (`projectTurnItemForDetail`, through `ThreadManagementService`). The
 // fetched item counts only for the version of the item it was fetched for.
 //
-// Read at db51b67: Claude Code's command item is not the command as it runs.
+// Read at bc0f04d: Claude Code's command item is not the command as it runs.
 // `commandInputFromClaudeTool` records the Bash tool's `command` trimmed, so a
 // trailing escaped space (`echo a\ `) is lost from it. Its approval prompt is
 // that same `command` untrimmed, taken first under the same non-blank test;
@@ -49,7 +49,7 @@ export type FileChangeItem = Extract<Item, { type: "file_change" }>;
 type RuntimeRequest = OrchestrationV2RuntimeRequest;
 export type Approval = Extract<EngineRequest, { _tag: "approval" }>;
 
-/** The engine's drivers for Codex and Claude Code, as its items name them. Read at db51b67. */
+/** The engine's drivers for Codex and Claude Code, as its items name them. Read at bc0f04d. */
 const CODEX = "codex";
 const CLAUDE = "claudeAgent";
 
@@ -99,7 +99,7 @@ const UNSHOWABLE_BUT_CRLF = /\r(?!\n)|\p{Bidi_Control}/u;
 
 /**
  * What the engine appends to a text it cut: at 32 KiB when it stores a file
- * change's diff, and at 256 KiB when `getTurnItem` returns it (Read at db51b67,
+ * change's diff, and at 256 KiB when `getTurnItem` returns it (Read at bc0f04d,
  * `WireProjection.ts`, `truncateDetail`, called by `boundFileChangeForStorage`
  * from `ProviderEventIngestor.ts` and by `projectTurnItemForDetail`). A diff
  * that ends with it is not the whole change. A diff that happens to end with
@@ -114,7 +114,7 @@ const trimmed = (text: string | null | undefined) => {
 
 /**
  * What a grant for the session allows from then on, by the provider that takes
- * it and the kind of action shown exactly. Read at db51b67:
+ * it and the kind of action shown exactly. Read at bc0f04d:
  *
  * - Codex: `CodexAdapterV2` keeps, per provider thread and runtime mode, the
  *   request kinds granted for the session. `acceptForSession` adds "command" or
@@ -179,7 +179,7 @@ interface ConnectorCall {
  * skills, which are not pre-approved (decision 0049). Claude Code's prompt
  * for an MCP tool is the tool's `command` argument when it has one, so the
  * card of `add_mcp_server` for a command server, or of a connector tool,
- * could show that alone, as a shell command; the card names the tool instead. **Read** at `59651c1`: the
+ * could show that alone, as a shell command; the card names the tool instead. **Read** at `bc0f04d`: the
  * approval and the call share the tool use's id as a strong native id
  * (`ClaudeAdapterV2.ts`, `buildApprovalRequestArtifacts` and
  * `buildToolCallArtifacts`), and the prompt prefers `command` (`canUseTool`).
@@ -254,7 +254,10 @@ export function fileChangeWithoutDiff(
   if (KINDS[approval.requestKind] !== "file-change") return undefined;
   const gated = gatedItem(approval, request, items);
   if (gated?.type !== "file_change" || gated.diffStr !== undefined) return undefined;
-  // A diff covers one file, so a change of several is never exact.
+  // The card shows a diff for one file only, so a change of several is never
+  // exact. Codex records one patch over every file of such a change (Read at
+  // bc0f04d, `CodexAdapterV2.ts`, `codexMultiFilePatch`), which the card does
+  // not show.
   return (gated.changes?.length ?? 0) > 1 ? undefined : gated;
 }
 
@@ -279,7 +282,7 @@ const commandOf = (approval: ApprovalItem, gated: GatedItem & { type: "command_e
  * of it. Codex records an update's unified diff, whose trailing line breaks end
  * its last line and whose lines may end in CRLF, as a file with CRLF line
  * endings has them. For any other change it records the file's contents as
- * they are (Read at db51b67, `CodexAdapterV2` and the `tool_call_restricted_granular`
+ * they are (Read at bc0f04d, `CodexAdapterV2` and the `tool_call_restricted_granular`
  * fixture), and Claude Code records its tool's output, so there a dropped
  * trailing line break is content the card leaves out: a file that ends in
  * none, one or two line breaks would look the same.
@@ -296,7 +299,7 @@ const isOperation = (operation: string): operation is NonNullable<ApprovalChange
 /**
  * A change's operation as the card names it, or `null` when the engine names
  * none or one the card does not know. Codex names `add`, `delete` and
- * `update`, a move being an update (Read at db51b67, `CodexAdapterV2.ts`,
+ * `update`, a move being an update (Read at bc0f04d, `CodexAdapterV2.ts`,
  * `buildFileChangeArtifacts`).
  */
 const operationOf = (operation: string | undefined): ApprovalChange["operation"] =>
@@ -334,7 +337,9 @@ const exactOf = (
             .join("\n"),
     );
     if (paths === undefined) return undefined;
-    // A diff covers one file, so with several changes it shows only part of them.
+    // The card shows a diff for one file only: with several changes, a diff
+    // the engine recorded may cover only part of them, and Codex's patch over
+    // all of them is not shown.
     const given = gated.diffStr ?? "";
     const diff = changes.length <= 1 ? verbatim(given) : undefined;
     const operation = operationOf(changes[0]?.operation);
@@ -360,7 +365,7 @@ const exactOf = (
  * the approval lists its options, it takes one only if they hold
  * `acceptForSession`; when it lists none, the engine's own client offers
  * "Always allow this session", and Codex and Claude Code take it (Read at
- * db51b67, `ComposerPendingApprovalActions.tsx`).
+ * bc0f04d, `ComposerPendingApprovalActions.tsx`).
  */
 const sessionGrantOf = (kind: Approval["kind"], approval: ApprovalItem): SessionGrant | null => {
   if (kind !== "command" && kind !== "file-change") return null;

@@ -11,7 +11,7 @@ import * as Probe from "./probe.ts";
 // the system's bare PATH, without what the shell profile adds (nvm, fnm,
 // ~/.local/bin, Homebrew). So the login shell is asked, as T3 Code's desktop
 // asks it (MIT; re-implemented from `apps/desktop/src/shell/DesktopShellEnvironment.ts`,
-// read at db51b671): an interactive login shell prints PATH between two
+// read at bc0f04d): an interactive login shell prints PATH between two
 // markers, whatever else its profile prints; on Windows, PowerShell with the
 // operator's profile and without it. Folders where the harnesses' own
 // installers put them are added after, for a profile that does not.

@@ -691,7 +691,7 @@ export const layer = Layer.effect(
      * it asked: once the call is sent, the engine may have the thread whatever
      * comes back. A refusal is the engine's answer for the key, read from its
      * receipt before anything else and under its dispatch lock (**Read** at
-     * `59651c1`, `Orchestrator.ts`, `dispatchWithReceiptEffect`): no thread
+     * `bc0f04d`, `Orchestrator.ts`, `dispatchWithReceiptEffect`): no thread
      * was made under it, and the request is forgotten. A model the engine no
      * longer offers is refused before anything is sent, so the request is
      * forgotten too when this call was the first to ask under the key.

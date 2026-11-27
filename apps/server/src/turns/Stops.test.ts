@@ -1106,8 +1106,8 @@ it.effect("settles a Stop whose session is lost after the engine refused a round
 );
 
 // A scheduled task's message, which the engine queues on its own and no
-// dispatch of the server's names (**Read** at `db51b67`,
-// `ScheduledTaskService.ts`, L1062-1090).
+// dispatch of the server's names (**Read** at `bc0f04d`,
+// `ScheduledTaskService.ts`, L1078-1106).
 it.effect("stops a run the engine queues on its own after the Stop's cancels", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
