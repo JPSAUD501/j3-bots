@@ -41,6 +41,7 @@ const status: EngineStatus = {
       // As Claude Code lists a gateway's model: not marked as added by anyone.
       { id: ModelId.make("finance-prod-large"), name: "Finance large" },
       { id: ModelId.make("claude-acme-internal"), name: "Acme" },
+      { id: ModelId.make("claude-sonnet-92841"), name: "Sonnet, our deployment" },
     ]),
     provider(CODEX, "codex", [
       { id: ModelId.make("gpt-5.1-codex-max"), name: "GPT 5.1 Codex Max" },
@@ -68,6 +69,7 @@ describe("the model an event names", () => {
     assert.strictEqual(custom(CLAUDE, "claude-unlisted"), "custom");
     assert.strictEqual(custom(CLAUDE, "finance-prod-large"), "custom");
     assert.strictEqual(custom(CLAUDE, "claude-acme-internal"), "custom");
+    assert.strictEqual(custom(CLAUDE, "claude-sonnet-92841"), "custom");
     assert.strictEqual(custom(GATEWAY, "gateway-large"), "custom");
     assert.strictEqual(
       modelOf(null, { providerId: CLAUDE, modelId: ModelId.make("claude-opus-5-5") }),

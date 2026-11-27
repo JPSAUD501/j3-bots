@@ -33,15 +33,18 @@ const CUSTOM = TelemetryModel.make("custom");
 /**
  * The shapes of the model ids Anthropic and OpenAI publish, such as
  * `claude-opus-4-5`, `claude-3-7-sonnet-20250219`, `gpt-5.1-codex-max` or
- * `o3-mini`. The engine does not mark every model someone else named: Claude
+ * `o3-mini`: versions of one or two digits, a date as `20YYMMDD`. A gateway
+ * model in that shape tells nothing a public name does not. The engine does
+ * not mark every model someone else named: Claude
  * Code lists a gateway's models as its own (**Read** at `bc0f04d`,
  * `ClaudeModelCatalog.ts`, `claudeReportedModels`), and a gateway can name a
  * model anything.
  */
 const PUBLISHED: Readonly<Record<"claude-code" | "codex", RegExp>> = {
-  "claude-code": /^claude-(?:\d+(?:-\d+)?-)?(?:opus|sonnet|haiku|fable)(?:-\d+){0,2}(?:-\d{8})?$/,
+  "claude-code":
+    /^claude-(?:\d{1,2}(?:-\d{1,2})?-)?(?:opus|sonnet|haiku|fable)(?:-\d{1,2}){0,2}(?:-20\d{6})?$/,
   codex:
-    /^(?:gpt-\d+(?:\.\d+)?(?:-(?:codex|mini|nano|pro|max|spark|sol|chat|latest))*|o\d+(?:-(?:mini|pro))?|codex-mini-latest)$/,
+    /^(?:gpt-\d{1,2}(?:\.\d{1,2})?(?:-(?:codex|mini|nano|pro|max|spark|sol|chat|latest))*|o\d{1,2}(?:-(?:mini|pro))?|codex-mini-latest)$/,
 };
 
 /**

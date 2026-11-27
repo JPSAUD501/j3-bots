@@ -16,7 +16,7 @@ Each event is one of a fixed list, and each of its details is one word from a fi
 | --- | --- | --- |
 | `server.started` | The server starts | Only what every event says (below) |
 | `install.active` | Once a day while the server runs | How many bots, active rooms, routines turned on and connectors you have, each as `0`, `1`, `2-3`, `4-10` or `11+` |
-| `client.connected` | A device connects, once a day per device | Only what every event says |
+| `client.connected` | A device connects, once a day per device (again after the server restarts) | Only what every event says |
 | `message.sent` | You send a message | In a bot's conversation or a room; whether it mentions, replies, quotes or carries files |
 | `turn.finished` | A bot's turn ends | The harness, the model by its public name, such as `claude-opus-4-5` (`custom` for any other, a gateway's included), the effort, what woke the bot, how the turn ended and why it failed, and how many seconds it took |
 | `bot.created`, `room.created` | A bot or a room is made | The harness, or the number of members as a rough count; whether from a template; whether you or a bot made it |

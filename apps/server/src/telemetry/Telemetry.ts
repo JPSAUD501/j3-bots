@@ -212,9 +212,10 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
         batch: encoded.map((each) => each.json),
       }),
       Effect.flatMap(http.execute),
+      // Read to its end whatever the status, so a body that stalls, a refusal's included, is
+      // the timeout's too and no socket outlives it.
+      Effect.tap((response) => response.arrayBuffer),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
-      // Read to its end, so a body that stalls is the timeout's too and no socket outlives it.
-      Effect.flatMap((response) => response.arrayBuffer),
       Effect.timeout(timing.sendTimeout),
     );
     yield* store.keepSent(

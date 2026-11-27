@@ -153,6 +153,8 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly changes: SettingsChanges;
     }) {
+      // Kept and applied together, whoever stops listening: a request cancelled between the two
+      // would leave a usage data switch turned off still sending.
       const change = Effect.gen(function* () {
         const saved = yield* receipts.once({
           commandId: input.commandId,
@@ -163,7 +165,7 @@ export const layer = Layer.effect(
         });
         yield* applied(input.changes);
         return saved;
-      });
+      }).pipe(Effect.uninterruptible);
       return yield* input.changes.updateChannel === undefined ? change : channelSteady(change);
     });
 
