@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import { engineEnvironment } from "./Command.ts";
 
-it("starts the engine with only what a process needs to run and reach the network", () => {
+it("starts the engine with only what a process needs to run and reach the network, and no T3 Code flag", () => {
   assert.deepStrictEqual(
     engineEnvironment(
       {
@@ -20,6 +20,7 @@ it("starts the engine with only what a process needs to run and reach the networ
         T3CODE_HOME: "/home/sam/.t3",
         NODE_OPTIONS: "--require /home/sam/hook.js",
         GITHUB_TOKEN: "token",
+        T3CODE_FEATURE_FLAGS: "secret_providers",
         UNSET: undefined,
       },
       "linux",
@@ -32,6 +33,8 @@ it("starts the engine with only what a process needs to run and reach the networ
       XDG_RUNTIME_DIR: "/run/user/1000",
       https_proxy: "http://proxy.lan:3128",
       NODE_EXTRA_CA_CERTS: "/etc/ssl/lan.pem",
+      // Present and empty, so the engine copies no flag from the login shell.
+      T3CODE_FEATURE_FLAGS: "",
     },
   );
 });
@@ -67,6 +70,7 @@ it("on Windows, passes what a program there needs to start, whatever the case of
       TEMP: "C:\\Users\\sam\\AppData\\Local\\Temp",
       "ProgramFiles(x86)": "C:\\Program Files (x86)",
       https_proxy: "http://proxy.lan:3128",
+      T3CODE_FEATURE_FLAGS: "",
     },
   );
 });

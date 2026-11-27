@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderId, type ProviderSignInStatus } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
+import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
@@ -38,6 +39,8 @@ it("runs each harness's own sign-in in J3 Bots' home for it, with only the varia
     LANG: "pt_BR.UTF-8",
     HTTPS_PROXY: "http://proxy.example:3128",
   };
+  // What the engine's environment sets of its own, whatever the operator's shell holds.
+  const engine = EngineLive.engineEnvironment({}, "linux");
   const shell = {
     ...kept,
     TERM: "xterm-256color",
@@ -61,6 +64,7 @@ it("runs each harness's own sign-in in J3 Bots' home for it, with only the varia
       args: ["auth", "login"],
       env: {
         ...kept,
+        ...engine,
         TERM: "xterm-256color",
         BROWSER: "firefox",
         DISPLAY: ":0",
@@ -86,7 +90,13 @@ it("runs each harness's own sign-in in J3 Bots' home for it, with only the varia
       browser: "/tmp/j3-sign-in-x/open-page",
       platform: "linux",
     }).env,
-    { ...kept, DISPLAY: ":0", BROWSER: "/tmp/j3-sign-in-x/open-page", CLAUDE_CONFIG_DIR: home },
+    {
+      ...kept,
+      ...engine,
+      DISPLAY: ":0",
+      BROWSER: "/tmp/j3-sign-in-x/open-page",
+      CLAUDE_CONFIG_DIR: home,
+    },
   );
 });
 
