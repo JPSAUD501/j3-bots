@@ -1469,9 +1469,9 @@ it.effect("moves dictation off the server's own model, keeping a provider chosen
         const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* migrate(migrationsThrough(66));
+          yield* migrate(migrationsThrough(68));
           yield* sql`UPDATE settings SET voice_place = ${place}`;
-          yield* migrate(migrationsThrough(67));
+          yield* migrate(migrationsThrough(69));
         }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
         return yield* Effect.gen(function* () {
           const voice = (yield* (yield* SettingsStore.SettingsStore).get).voice;

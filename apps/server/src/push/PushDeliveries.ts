@@ -22,6 +22,7 @@ import { Signals } from "../turns/Signals.ts";
 const SEND_WINDOW = Duration.hours(1);
 
 const Name = Schema.Struct({ name: Schema.String });
+const BotName = Schema.Struct({ name: Schema.String, title: Schema.String });
 
 const Registered = Schema.Struct({ device_id: DeviceId, language: Language });
 const decodeRegistered = Schema.decodeUnknownEffect(Registered);
@@ -61,8 +62,8 @@ export const layer = Layer.effect(
 
     const botName = SqlSchema.findOneOption({
       Request: Schema.String,
-      Result: Name,
-      execute: (id) => sql`SELECT name FROM bots WHERE id = ${id}`,
+      Result: BotName,
+      execute: (id) => sql`SELECT name, title FROM bots WHERE id = ${id}`,
     });
     const roomName = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -75,17 +76,18 @@ export const layer = Layer.effect(
       const { notification } = recipients;
       // The bot the notification is from, and the bot of a routine's step it names.
       const stepBotId = notification.routine?.stepBotId ?? null;
-      const botNames = new Map<string, string>();
+      const botNames = new Map<string, typeof BotName.Type>();
       for (const id of stepBotId === null
         ? [notification.botId]
         : [notification.botId, stepBotId]) {
         const found = yield* botName(id);
-        if (Option.isSome(found)) botNames.set(id, found.value.name);
+        if (Option.isSome(found)) botNames.set(id, found.value);
       }
       const { target } = notification;
       const room = target._tag === "room" ? yield* roomName(target.roomId) : Option.none();
       const names = {
-        botName: (id: BotId) => botNames.get(id) ?? null,
+        botName: (id: BotId) => botNames.get(id)?.name ?? null,
+        botTitle: (id: BotId) => botNames.get(id)?.title ?? "",
         roomName: () => Option.getOrNull(Option.map(room, ({ name }) => name)),
       };
       const now = yield* DateTime.now;

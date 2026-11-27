@@ -4,6 +4,8 @@ import type { AddingNone, Catalog } from "./i18n.ts";
 /** Brazilian Portuguese. Every key of `en.ts`, with its placeholders and no others. */
 const sentences = {
   "bot.unknown": "Um bot excluído",
+  "bot.nameAndTitle": "{name} · {title}",
+  "bot.primaryTitle": "Assistente principal",
   "room.unknown": "Uma sala excluída",
 
   "avatar.shape": "Forma",
@@ -58,6 +60,7 @@ const sentences = {
   "roster.newSection": "Nova seção",
   "roster.moveToSection": "Mover para seção",
   "roster.leaveSection": "Tirar de {section}",
+  "roster.giveTitle": "Dar um cargo",
   "roster.makePrimary": "Tornar bot principal",
   "roster.replacePrimary": "Substituir bot principal…",
   "roster.replacePrimary.title": "Tornar {name} seu bot principal?",
@@ -65,8 +68,8 @@ const sentences = {
     "Pedidos que não são de ninguém vão para {name}. {previous} continua no time como um bot comum.",
   "roster.replacePrimary.confirm": "Tornar {name} principal",
   "roster.replacePrimary.cancel": "Manter {previous}",
-  "roster.hide": "Ocultar",
-  "roster.unhide": "Mostrar",
+  "backstage.move": "Mover para os bastidores",
+  "backstage.bringBack": "Trazer para a lista",
   "roster.more": "Mais",
   "roster.openDetails": "Detalhes",
   "roster.changeFailed": "A mudança não foi salva. Tente de novo.",
@@ -80,13 +83,14 @@ const sentences = {
   "roster.section.delete.title": "Excluir “{section}”?",
   "roster.section.delete.body": "Os bots dela continuam, de volta à lista principal.",
   "roster.section.delete.cancel": "Manter",
-  "roster.hidden": "Conversas ocultas",
-  "roster.hidden.back": "Voltar para bots e salas",
-  "roster.hidden.empty": "Nenhuma conversa oculta.",
+  "backstage.title": "Nos bastidores",
+  "backstage.row": "Nos bastidores · {count}",
+  "backstage.back": "Voltar para bots e salas",
+  "backstage.empty": "Nada nos bastidores.",
   "roster.menu.back": "Voltar",
-  "roster.hidden.count.one": "{count} conversa oculta",
-  "roster.hidden.count.other": "{count} conversas ocultas",
-  "roster.hidden.unhideName": "Mostrar {name}",
+  "backstage.count.one": "{count} conversa nos bastidores",
+  "backstage.count.other": "{count} conversas nos bastidores",
+  "backstage.bringBackName": "Trazer {name} para a lista",
   "roster.section": "Seção {name}",
   "roster.section.count.one": "{count} bot",
   "roster.section.count.other": "{count} bots",
@@ -209,7 +213,7 @@ const sentences = {
   "recordSheet.what.screenAndVoice":
     "O J3 Bots grava a tela que você compartilhar quando o sistema perguntar, e a sua voz, até você parar. Este sistema não deixa apps lerem as suas teclas e cliques.",
   "recordSheet.where":
-    "Nada sai deste computador enquanto você grava. Depois, ela vai na sua mensagem para {name} como um arquivo, que sobe para o seu servidor do J3 Bots, e a IA de {name} olha para ela quando você enviar.",
+    "Nada sai deste computador enquanto você grava. Quando você enviar, a gravação vai para {name} com a sua mensagem, e a IA de {name} vê o conteúdo.",
   "recordSheet.passwords.hidden":
     "Quando você digita uma senha, fica só que você digitou uma. Pause para esconder qualquer outra coisa: nada é gravado enquanto está pausado.",
   "recordSheet.passwords.pause":
@@ -418,17 +422,16 @@ const sentences = {
   "ask.password": "Senha",
   "ask.totp": "Chave de código único (opcional)",
   "ask.totpHint":
-    "A chave de configuração ou o endereço otpauth:// que o site mostra quando você ativa a verificação em duas etapas.",
+    "A chave de configuração que o site mostra quando você ativa a verificação em duas etapas.",
   "ask.value": "Valor",
-  "ask.valueHint": "O token ou a chave, exatamente como o serviço fornece.",
+  "ask.valueHint": "Cole exatamente como o serviço fornece.",
   "ask.savedAsEach": "Salvo como {secret}.",
   "ask.setup": "Onde o serviço fornece",
   "ask.setup.values": "Onde o serviço fornece",
   "ask.everyBot": "Deixar todos os bots usarem",
   "ask.everyBot.values": "Deixar todos os bots usarem",
-  "ask.unseen": "Fica no seu servidor do J3 Bots. {name} usa sem nunca ver o que você digita aqui.",
-  "ask.unseen.values":
-    "Ficam no seu servidor do J3 Bots. {name} os usa sem nunca ver o que você digita aqui.",
+  "ask.unseen": "Fica guardado no J3 Bots. {name} usa sem nunca ver.",
+  "ask.unseen.values": "Ficam guardados no J3 Bots. {name} usa sem nunca ver.",
   "ask.save": "Salvar",
   "ask.decline": "Recusar",
   "ask.saved": "Salvo como {secret}. {name} foi avisado.",
@@ -448,12 +451,11 @@ const sentences = {
   "ask.valuesRequired": "Digite todos os valores.",
   "ask.totpInvalid": "Isso não é uma chave de código único.",
   "secrets.title": "Segredos",
-  "secrets.intro":
-    "Logins e chaves que seus bots usam sem nunca ver. Eles ficam no seu servidor do J3 Bots: o bot só fica sabendo o nome do segredo.",
+  "secrets.intro": "Logins e chaves que seus bots usam sem nunca ver.",
   "secrets.oldVault":
-    "Seus segredos estão num cofre antigo que espera a senha dele. Abra Configurações → Segredos no app web que este servidor serve e digite a senha lá.",
+    "Seus segredos esperam a senha de um cofre antigo. Digite-a em Configurações → Segredos, no J3 Bots pelo navegador.",
   "secrets.unreadable":
-    "Seus segredos não podem ser lidos: o arquivo de chave na pasta do cofre do servidor sumiu ou não é o deles. Coloque-o de volta a partir de um backup, ou recomece como diz o guia de operação.",
+    "Seus segredos não abrem: a chave deles sumiu. Restaure de um backup, ou recomece como diz o guia de operação.",
   "secrets.newer":
     "Uma versão mais nova do J3 Bots alterou seus segredos. Atualize o servidor para usá-los.",
   "secrets.damaged":
@@ -467,7 +469,7 @@ const sentences = {
   "secrets.kind.login": "Login",
   "secrets.kind.loginHint": "Um usuário e uma senha para um site",
   "secrets.kind.value": "Valor",
-  "secrets.kind.valueHint": "Um token ou uma chave, como uma chave de API",
+  "secrets.kind.valueHint": "Uma chave ou um código, como uma chave de API",
   "secrets.name": "Nome",
   "secrets.nameHint": "Os bots usam por este nome: letras minúsculas, números, - e _.",
   "secrets.nameInvalid":
@@ -547,18 +549,16 @@ const sentences = {
   "approval.summaryOnly.tool": "A chamada exata não foi informada, só um resumo",
   "approval.summaryOnly.other": "O pedido exato não foi informado, só um resumo",
   "approval.allowOnce": "Permitir uma vez",
-  "approval.allowSession": "Permitir nesta sessão",
+  "approval.allowSession": "Não perguntar de novo",
   "approval.deny": "Negar",
   "approval.grant.everyCommand":
-    "Ao escolher Permitir nesta sessão, todos os próximos pedidos de comando serão permitidos automaticamente",
+    "Com Não perguntar de novo, ele roda comandos sem perguntar até recomeçar",
   "approval.grant.everyFileChange":
-    "Ao escolher Permitir nesta sessão, todos os próximos pedidos de alteração de arquivo serão permitidos automaticamente",
-  "approval.granted.everyCommand":
-    "Os próximos pedidos de comando nesta sessão serão permitidos automaticamente",
-  "approval.granted.everyFileChange":
-    "Os próximos pedidos de alteração de arquivo nesta sessão serão permitidos automaticamente",
+    "Com Não perguntar de novo, ele altera arquivos sem perguntar até recomeçar",
+  "approval.granted.everyCommand": "Ele roda comandos sem perguntar até recomeçar",
+  "approval.granted.everyFileChange": "Ele altera arquivos sem perguntar até recomeçar",
   "approval.allowedOnce": "Permitido uma vez",
-  "approval.allowedSession": "Permitido nesta sessão",
+  "approval.allowedSession": "Permitido até recomeçar",
   "approval.denied": "Negado",
   "approval.expired": "Este pedido expirou antes de ser respondido.",
   "approval.refused":
@@ -620,15 +620,15 @@ const sentences = {
   "fill.refused.noTab": "O bot não tinha nenhuma página aberta.",
   "fill.refused.held": "Alguém tinha assumido o controle da página.",
   "fill.refused.loading": "A página ainda estava carregando.",
-  "fill.refused.insecure": "A página não é segura: http simples em outro computador.",
-  "fill.refused.insecureAt": "A página, {origin}, não é segura: http simples em outro computador.",
+  "fill.refused.insecure": "A página não é segura.",
+  "fill.refused.insecureAt": "{origin} não é segura.",
   "fill.refused.origin": "A página não é um dos sites do login.",
   "fill.refused.originAt": "A página, {origin}, não é um dos sites do login.",
   "fill.refused.navigated": "A página mudou durante o preenchimento.",
-  "fill.refused.before": "Um preenchimento já foi recusado nesta página neste turno.",
+  "fill.refused.before": "Um login já foi recusado nesta página agora há pouco.",
   "fill.refused.unavailable":
     "Não foi possível acessar o navegador ou seus segredos, ou o navegador não confirmou o que digitou.",
-  "fill.refused.stopped": "O turno do bot terminou antes de qualquer coisa ser digitada.",
+  "fill.refused.stopped": "O bot parou antes de qualquer coisa ser digitada.",
   "fill.refused.other": "O J3 Bots recusou.",
   "tool.connector.did": "Usou um conector",
   "tool.connector.doing": "Usando um conector",
@@ -679,19 +679,19 @@ const sentences = {
   "notice.sessionLost":
     "Perdeu o contexto de trabalho. Novas mensagens esperam até ele ter um novo.",
   "notice.sessionNotReady":
-    "Não deu para preparar o contexto de trabalho, e continua tentando; novas mensagens esperam. Se não resolver, edite o bot e confira o modelo.",
+    "Não deu para preparar o contexto de trabalho, e continua tentando; novas mensagens esperam. Se não resolver, confira o modelo nos detalhes dele.",
   "notice.permissionModeRefused":
-    "Não pode trabalhar em {mode}: uma política no computador que roda o J3 Bots permite menos. Novas mensagens esperam até você editar o bot e escolher um modo de permissão mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
+    "Não pode trabalhar em {mode}: isso não é permitido onde o J3 Bots roda. As mensagens esperam até você escolher um modo de permissão mais baixo nos detalhes dele.",
   "notice.permissionModeAllowed":
-    "Não pode trabalhar em {mode}: uma política no computador que roda o J3 Bots permite até {allowed}. Novas mensagens esperam até você editar o bot e escolher {allowed} ou um modo mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
+    "Não pode trabalhar em {mode}: onde o J3 Bots roda, só é permitido até {allowed}. As mensagens esperam até você escolher {allowed} ou menos nos detalhes dele.",
   "notice.memberModeRefused":
-    "{name} não pôde participar: uma política no computador que roda o J3 Bots recusou o modo de permissão escolhido. As mensagens para {name} esperam até você editar {name} e escolher um modo mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
+    "{name} não pôde participar: o modo de permissão dele não é permitido onde o J3 Bots roda. As mensagens para {name} esperam até você escolher um modo mais baixo nos detalhes dele.",
   "notice.settingsHeld":
     "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
   "notice.asksBeforeActingAuto":
-    "Pergunta antes de cada ação, apesar de trabalhar em {mode}: a IA dele não pode usar {mode} aqui, com esta conta ou este modelo. Responda às perguntas conforme chegarem, ou edite o bot e escolha outro modelo ou modo de permissão.",
+    "Pergunta antes de cada ação: a IA dele não pode usar {mode} com esta conta ou este modelo. Responda às perguntas conforme chegarem, ou escolha outro modelo ou modo de permissão nos detalhes dele.",
   "notice.asksBeforeActingFullAccess":
-    "Pergunta antes de agir, apesar de ter {mode}: a IA dele não tem permissão para deixar de perguntar no computador que roda o J3 Bots. Responda às perguntas conforme chegarem, ou peça a quem administra as configurações da IA lá para liberar.",
+    "Pergunta antes de agir, mesmo com {mode}: a IA dele não pode deixar de perguntar onde o J3 Bots roda. Responda às perguntas conforme chegarem.",
   "notice.observationFailed":
     "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
   "notice.handoffFailed": "A mensagem de {name} não chegou",
@@ -754,6 +754,12 @@ const sentences = {
   "teamLine.roomStartedGone": "{bot} criou uma sala",
   "teamLine.madeForRoom": "Criado por {bot} para {room}",
   "teamLine.madeForRoomGone": "Criado por {bot} para uma sala",
+  "teamLine.roomPaused":
+    "{room} pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
+  "teamLine.roomPausedGone":
+    "Uma sala pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
+  "teamLine.roomPausedUntold": "{room} pausou: os bots conversaram o quanto podem sozinhos",
+  "teamLine.roomPausedUntoldGone": "Uma sala pausou: os bots conversaram o quanto podem sozinhos",
 
   "routine.paused": "Pausada",
   "routine.waiting": "Esperando {connector} responder",
@@ -907,7 +913,7 @@ const sentences = {
   "details.noMemory": "{name} ainda não guardou nada na memória.",
   "details.model": "Modelo",
   "details.runsOn": "Roda em",
-  "details.modelUnavailable": "Indisponível no motor agora",
+  "details.modelUnavailable": "Indisponível agora",
   "details.permissionMode": "Modo de permissão",
   "details.stop": "Parar o que está fazendo",
   "details.forceStop": "Forçar parada",
@@ -925,11 +931,12 @@ const sentences = {
   "details.freshStart.done": "{name} recomeçou do zero.",
   "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
   "details.browser": "Navegador",
-  "details.browser.use": "Usar o navegador deste computador",
+  "details.browser.use": "Pode navegar na internet",
   "details.browser.hint":
-    "{name} age nos sites com as sessões em que você entrou nesse navegador. Ligar vale a partir do próximo turno de {name}; desligar vale na hora (um turno em andamento é parado).",
-  "details.browser.setup":
-    "Este computador precisa de uma configuração para o navegador funcionar. Rode `j3-bots doctor` nele para ver como.",
+    "Usa o navegador dos bots, o mesmo para todos. Quando um site pedir login, {name} te chama.",
+  "details.browser.offStops": "Desligar agora interrompe o que {name} está fazendo.",
+  "details.browser.setup": "O navegador precisa ser configurado antes.",
+  "details.browser.howToFix": "Como resolver",
   "details.browser.failed": "A configuração do navegador de {name} não foi salva. Tente de novo.",
   "details.delete": "Excluir {name}",
   "details.delete.title": "Excluir {name}?",
@@ -968,6 +975,7 @@ const sentences = {
   "room.archive.hint":
     "Arquivar interrompe o que os bots estão fazendo aqui. O que foi dito fica, e você pode desarquivar depois.",
   "room.unarchive": "Desarquivar {name}",
+  "room.staysArchived": "Sobraram poucos bots dela, então ela fica arquivada.",
   "room.archiveFailed": "{name} não foi arquivada. Tente de novo.",
   "room.unarchiveFailed": "{name} não foi desarquivada. Tente de novo.",
   "room.unarchiveNeedsMembers":
@@ -989,6 +997,8 @@ const sentences = {
     "Um bot aqui não está respondendo ao Parar. Forçar parada encerra o que ele está rodando para {name} agora.",
   "room.stopFailed": "O trabalho em {name} não foi parado. Tente de novo.",
   "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",
+  "room.readOnly": "Somente leitura · Só os bots conversam aqui",
+  "room.botsOnlyLine": "{count} · Só os bots conversam aqui",
 
   "roomForm.newTitle": "Nova sala",
   "roomForm.editTitle": "Editar {name}",
@@ -1033,10 +1043,9 @@ const sentences = {
   "settings.appearance.description": "Como o J3 Bots fica neste dispositivo, e o idioma dele.",
   "settings.theme": "Tema",
   "settings.providers": "Provedores",
-  "settings.providers.description":
-    "As assinaturas com que seus bots pensam, e o motor que os executa.",
+  "settings.providers.description": "As contas de IA com que seus bots pensam.",
   "settings.usage.description":
-    "O quanto cada provedor está perto do limite, e quais bots o usaram.",
+    "O quanto cada conta de IA está perto do limite, e quais bots a usaram.",
   "settings.connectors.description":
     "Serviços que seus bots podem usar, como o Notion ou o GitHub, e as skills que eles conhecem.",
   "settings.secrets.description":
@@ -1055,17 +1064,16 @@ const sentences = {
   "settings.dark": "Escuro",
 
   "firstRun.connecting.title": "Conectando ao J3 Bots",
-  "firstRun.connecting.body":
-    "Aguardando o servidor do J3 Bots. Esta página atualiza assim que ele responder.",
-  "firstRun.incompatible.title": "O motor está na versão errada",
+  "firstRun.connecting.body": "Aguardando o J3 Bots. Esta página atualiza assim que ele responder.",
+  "firstRun.incompatible.title": "Uma parte do J3 Bots está na versão errada",
   "firstRun.incompatible.body":
-    "O motor está na versão {running}, e esta versão do J3 Bots precisa da {pinned}.",
-  "firstRun.connect.copy": "Copiar o comando que conecta seus provedores",
+    "Ela está na versão {running}, e esta versão do J3 Bots precisa da {pinned}.",
+  "firstRun.connect.copy": "Copiar o comando que conecta suas contas de IA",
   "firstRun.connect.copied": "Copiado",
   "firstRun.connect.selected": "Comando selecionado. Copie manualmente.",
   "provider.ready": "Pronto",
   "provider.notConnected": "Não conectado",
-  "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
+  "provider.noModels": "Conectado, mas ainda não há nenhum modelo disponível",
   "provider.unavailable": "Indisponível agora",
   "provider.checking": "Verificando…",
   "provider.installing": "Instalando…",
@@ -1079,7 +1087,7 @@ const sentences = {
   "provider.disabled": "Desativado no servidor",
   "provider.failed.log":
     "O log do servidor diz o motivo: server/server.log, na pasta de dados do app J3 Bots.",
-  "provider.detail": "O motor diz: {detail}",
+  "provider.detail": "Detalhes: {detail}",
   "provider.version": "Versão {installed}",
   "provider.version.newer": "Versão {installed}. A {latest} já saiu.",
   "provider.version.newerOnly": "A {latest} já saiu.",
@@ -1089,8 +1097,7 @@ const sentences = {
   "provider.updateFinished": "A atualização terminou: versão {installed}",
   "provider.updateFinished.noVersion": "A atualização terminou",
   "provider.updateFailed": "A atualização não terminou",
-  "provider.updateUnverified":
-    "A atualização rodou, mas o motor não confirmou uma versão mais nova",
+  "provider.updateUnverified": "A atualização rodou, mas não deu para confirmar a versão nova",
   "provider.updateRefused": "Não deu para começar a atualização. Tente de novo daqui a pouco.",
   "provider.install.downloading": "Baixando… {received} de {total} MB",
   "provider.install.downloadingNoTotal": "Baixando… {received} MB",
@@ -1116,7 +1123,7 @@ const sentences = {
   "provider.install.failed.files":
     "O J3 Bots não conseguiu salvar os arquivos dele. Tente de novo.",
   "provider.install.failed.engine":
-    "O motor não conseguiu trocar para ela, então a cópia anterior continua rodando.",
+    "Não deu para trocar para ela, então a versão anterior continua rodando.",
   "provider.install.failed.unknown": "Não deu para instalar.",
   "provider.installed": "Versão {version} instalada {when}.",
   "provider.updateCancelled": "A última atualização foi cancelada.",
@@ -1125,7 +1132,7 @@ const sentences = {
     "O J3 Bots mantém atualizadas as cópias que instalou. Uma atualização espera os bots que a usam terminarem o que estão fazendo.",
   "settings.engine.suggestReplies": "Sugerir o que responder",
   "settings.engine.suggestReplies.body":
-    "Depois que um bot te responde, uma resposta que você talvez mande aparece clarinha na caixa de mensagem, pronta para usar. Cada sugestão é mais um pedido pequeno à sua conta de IA, então gasta um pouco do seu plano.",
+    "Depois que um bot responde, uma resposta que você talvez mande aparece clarinha na caixa de mensagem. Cada sugestão gasta um pouco do seu plano de IA.",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Bia",
   "firstRun.create.primary":
@@ -1270,16 +1277,17 @@ const sentences = {
   "providers.endpoint.connect": "Conectar",
   "providers.endpoint.connecting": "Conectando…",
   "providers.endpoint.applied": "Conectado: os bots acessam os modelos por {baseUrl}.",
-  "providers.endpoint.stored": "A conexão com {baseUrl} foi salva. O motor está iniciando com ela.",
+  "providers.endpoint.stored":
+    "A conexão com {baseUrl} foi salva. O J3 Bots está reiniciando com ela.",
   "providers.endpoint.workRunning.one":
-    "{count} bot tem trabalho em andamento, e conectar reinicia o motor, o que interrompe esse trabalho.",
+    "{count} bot tem trabalho em andamento, e conectar reinicia o J3 Bots, o que interrompe esse trabalho.",
   "providers.endpoint.workRunning.other":
-    "{count} bots têm trabalho em andamento, e conectar reinicia o motor, o que interrompe esse trabalho.",
+    "{count} bots têm trabalho em andamento, e conectar reinicia o J3 Bots, o que interrompe esse trabalho.",
   "providers.endpoint.restartAnyway": "Reiniciar mesmo assim",
   "providers.endpoint.refused":
-    "Os dados do motor recusaram a conexão, então ela não foi salva. O log do servidor diz por quê.",
+    "A conexão foi recusada, então não foi salva. O log do servidor diz por quê.",
   "providers.endpoint.refusedActive":
-    "Os dados do motor recusaram a conexão, então ela não foi salva, e os bots continuam usando {active}. O log do servidor diz por quê.",
+    "A conexão foi recusada, então não foi salva, e os bots continuam usando {active}. O log do servidor diz por quê.",
   "providers.endpoint.failed":
     "Não deu para falar com o servidor, então nada mudou. Tente de novo.",
   "onboarding.arrival.title": "{name} chegou",
@@ -1335,7 +1343,7 @@ const sentences = {
   "composer.file.nameTooLong": "O nome do arquivo é longo demais",
   "composer.file.refused": "O servidor recusou este arquivo",
   "composer.file.serverSetup":
-    "O servidor não guarda arquivos até que a configuração dele seja corrigida; o log dele diz como",
+    "O servidor não guarda arquivos até que a configuração dele seja corrigida",
   "composer.file.notPaired": "Este dispositivo saiu da conta",
   "composer.file.recordingTooLarge": "Maior que {size}, o máximo para uma gravação",
   "composer.file.noSpace": "O disco do servidor está sem espaço",
@@ -1530,8 +1538,7 @@ const sentences = {
   "pairing.rateLimited": "Códigos errados demais. O pareamento abre de novo às {time}.",
   "pairing.unreachable":
     "Não foi possível falar com o J3 Bots. Verifique se ele está rodando e se este dispositivo alcança a máquina.",
-  "pairing.incompatible":
-    "Esta página e o servidor do J3 Bots estão em versões diferentes. Recarregue a página.",
+  "pairing.incompatible": "Esta página está desatualizada. Recarregue.",
   "pairing.storageFailed":
     "Pareado, mas o navegador não guardou o acesso. Permita dados de site para esta página e pareie de novo.",
   "pairing.storageFailed.desktop":
@@ -1692,11 +1699,10 @@ const sentences = {
   "links.noRoom": "Esse link é de uma sala que este servidor não tem.",
 
   "gate.incompatible.title": "Esta página está desatualizada",
-  "gate.incompatible.body":
-    "O servidor do J3 Bots foi atualizado e fala uma versão mais nova. Recarregue para pegar a página certa.",
+  "gate.incompatible.body": "O J3 Bots foi atualizado. Recarregue para pegar a página nova.",
   "gate.incompatible.appTitle": "Este app não combina com o servidor",
   "gate.incompatible.appBody":
-    "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app ou o servidor para que combinem, ou troque para outro servidor.",
+    "O servidor em {address} roda uma versão do J3 Bots diferente da deste app. Atualize o app ou o servidor para que combinem, ou troque para outro servidor.",
   "gate.incompatible.serverBehindTitle": "O servidor precisa de uma atualização",
   "gate.incompatible.serverBehindBody":
     "O servidor em {address} roda o J3 Bots {version}, mais antigo que este app.",
@@ -1727,50 +1733,49 @@ const sentences = {
   "gate.retry": "Tentar de novo",
   "gate.restart": "Reiniciar o J3 Bots",
 
-  "engine.starting.title": "O motor está iniciando",
-  "engine.starting.body":
-    "O J3 Bots está iniciando o motor. Esta página atualiza quando ele estiver pronto.",
+  "engine.starting.title": "O J3 Bots está iniciando",
+  "engine.starting.body": "Esta página atualiza quando ele estiver pronto.",
   "engine.downloading.body":
-    "O J3 Bots baixa o motor na primeira vez que inicia, e de novo depois de uma atualização que precise de um novo. Esta página atualiza quando ele estiver pronto.",
-  "engine.downloading.progress": "Baixando o motor… {received} de {total} MB",
-  "engine.downloading.progressNoTotal": "Baixando o motor… {received} MB",
-  "engine.down.title": "O motor parou",
+    "O J3 Bots baixa o que precisa na primeira vez que inicia, e depois de algumas atualizações. Esta página atualiza quando ele estiver pronto.",
+  "engine.downloading.progress": "Baixando… {received} de {total} MB",
+  "engine.downloading.progressNoTotal": "Baixando… {received} MB",
+  "engine.down.title": "Seus bots pararam",
   "engine.down.body":
-    "O J3 Bots está reiniciando o motor. Se passar de um minuto, veja o log do J3 Bots na máquina onde ele roda.",
-  "engine.portInUse.title": "A porta do motor está ocupada",
+    "O J3 Bots está iniciando os bots de novo. Se passar de um minuto, veja o log do J3 Bots na máquina onde ele roda.",
+  "engine.portInUse.title": "Uma porta de que o J3 Bots precisa está ocupada",
   "engine.portInUse.body":
-    "Outro programa usa a porta de que o motor precisa. Pare esse programa, ou defina J3_ENGINE_PORT com uma porta livre, e reinicie o J3 Bots.",
-  "engine.installFailed.title": "O motor não pôde ser instalado",
-  "engine.installFailed.body":
-    "O J3 Bots não conseguiu instalar o motor e continua tentando sozinho.",
+    "Outro programa está usando essa porta. Pare esse programa, ou defina J3_ENGINE_PORT com uma porta livre, e reinicie o J3 Bots.",
+  "engine.installFailed.title": "O J3 Bots não terminou de instalar",
+  "engine.installFailed.body": "Ele continua tentando sozinho.",
   "engine.installFailed.body.download":
-    "O J3 Bots não conseguiu baixar o motor e continua tentando sozinho. Confira se a máquina tem internet.",
+    "O J3 Bots não conseguiu baixar o que precisa e continua tentando. Confira se a máquina tem internet.",
   "engine.installFailed.body.storage":
     "O disco onde o J3 Bots guarda os arquivos dele está cheio. Libere um pouco de espaço; o J3 Bots continua tentando sozinho.",
   "engine.installFailed.body.inUse":
     "Outro programa, como um antivírus, estava usando os arquivos dele. O J3 Bots continua tentando sozinho.",
   "engine.installFailed.body.permission":
-    "O J3 Bots não teve permissão para salvar os arquivos do motor. Ele continua tentando; se não der certo, reinicie o computador.",
+    "O J3 Bots não teve permissão para salvar os arquivos dele. Ele continua tentando; se não der certo, reinicie o computador.",
   "engine.installFailed.body.outsideHome":
-    "Um atalho na pasta do J3 Bots aponta para outro lugar, então o J3 Bots não salva o motor lá. Ele continua tentando; se continuar, peça ajuda.",
-  "engine.installFailed.body.unsupported":
-    "O motor não tem versão para este tipo de computador, então o J3 Bots não roda aqui.",
-  "engine.credentialRefused.title": "O motor recusou o J3 Bots",
-  "engine.credentialRefused.body":
-    "O motor não aceita a credencial do J3 Bots, nem uma nova. Reinicie o J3 Bots; se continuar, veja o log dele.",
+    "Um atalho na pasta do J3 Bots aponta para outro lugar, então o J3 Bots não salva os arquivos dele lá. Ele continua tentando; se continuar, peça ajuda.",
+  "engine.installFailed.body.unsupported": "O J3 Bots não roda neste tipo de computador.",
+  "engine.credentialRefused.title": "O J3 Bots não conseguiu iniciar seus bots",
+  "engine.credentialRefused.body": "Reinicie o J3 Bots. Se continuar, veja o log dele.",
 
   "empty.gone.title": "Esta conversa não existe mais",
   "empty.gone.body": "O bot ou a sala dela foi excluído.",
   "empty.gone.back": "Voltar para a lista",
 
   "newBot.title": "Novo bot",
-  "newBot.body": "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
+  "newBot.body":
+    "Dê um nome a ele e um cargo que diga, em poucas palavras, para que ele serve. Ele pergunta o resto, uma pergunta por vez.",
+  "newBot.titleField": "Cargo",
+  "newBot.titleField.placeholder": "Para que serve, como Posts do Instagram",
   "newBot.cancel": "Cancelar",
 
-  "visibility.hide": "Ocultar da lista",
-  "visibility.hide.hint":
-    "Vai para Conversas ocultas, que você abre quando quiser. Continua trabalhando e te notificando.",
-  "visibility.notice": "Esta conversa está oculta da sua lista.",
+  "backstage.keep": "Deixar nos bastidores",
+  "backstage.keep.hint":
+    "Fica fora da sua lista de conversas, em Nos bastidores, que você abre quando quiser. Continua trabalhando e avisando você.",
+  "backstage.notice": "Esta conversa está nos bastidores, fora da sua lista.",
 
   "roster.newFromTemplate": "Criar a partir de um modelo",
   "details.shareTemplate": "Compartilhar como modelo…",
@@ -1794,17 +1799,18 @@ const sentences = {
   "template.part.routine": "a rotina “{name}”",
   "template.close": "Fechar",
   "template.create.title": "Novo bot a partir de um modelo",
+  "template.create.title.label": "Um cargo para {name}: para que serve, em poucas palavras",
   "template.create.body":
     "Isto é tudo o que {name} vai ser e fazer. Nada é criado até você tocar em Criar.",
   "template.create.untrusted":
-    "Este arquivo veio de fora do J3 Bots. O que ele diz vai só para o bot novo, nunca para os seus outros bots, a sua memória ou os seus arquivos. Os seus outros bots veem o novo como qualquer colega, pelo nome, cargo e função.",
+    "Este arquivo veio de fora do J3 Bots. O que ele diz vai só para o bot novo, nunca para a sua memória ou os seus arquivos. Os seus outros bots veem o novo como colega, pelo nome, cargo e função.",
   "template.create.submit": "Criar {name}",
   "template.create.creating": "Criando…",
   "template.create.cancel": "Cancelar",
   "template.create.failed": "O bot não foi criado. Tente de novo.",
   "template.create.schedule":
     "Uma rotina deste modelo tem um horário que o J3 Bots não consegue seguir, então nada foi criado.",
-  "template.create.noModel": "Conecte um provedor antes de criar um bot.",
+  "template.create.noModel": "Conecte uma IA antes de criar um bot.",
   "template.create.offline": "Criar um bot exige conexão com o servidor.",
   "template.read.tooLarge": "Este arquivo é grande demais para ser um modelo.",
   "template.read.newer":
@@ -1819,7 +1825,8 @@ const sentences = {
   "template.routines.none": "Nenhuma rotina.",
   "template.routines.paused": "Cada uma começa pausada. Você liga nos detalhes de {name}.",
   "template.model": "Roda em",
-  "template.model.replaced": "{model} não está neste servidor, então {name} roda em {replacement}.",
+  "template.model.replaced":
+    "{model} não está disponível aqui, então {name} roda em {replacement}.",
   "template.permission": "Modo de permissão",
   "template.permission.capped":
     "O modelo pede {mode}. Um bot criado de um modelo começa com no máximo o modo de sempre, a não ser que você escolha outro.",
@@ -1841,14 +1848,15 @@ const sentences = {
   "editBot.name.required": "Um bot precisa de um nome.",
   "editBot.tooLong": "Use no máximo {max} caracteres.",
   "editBot.titleField": "Cargo",
-  "editBot.titleField.placeholder": "Como Pesquisa",
+  "editBot.titleField.placeholder": "Como Concorrentes das padarias",
+  "editBot.title.required": "Um bot precisa de um cargo: para que ele serve, em poucas palavras.",
   "editBot.job": "Função",
   "editBot.job.hint": "Para que {name} serve e quais são os limites dele, em palavras simples.",
   "editBot.model": "Modelo",
-  "editBot.model.notOffered": "{model} (o motor não oferece agora)",
+  "editBot.model.notOffered": "{model} (indisponível agora)",
   "editBot.model.someNotReady":
     "Provedores que não podem rodar um bot agora não aparecem. As Configurações mostram o motivo.",
-  "editBot.model.unavailable": "O motor não oferece mais este modelo. Escolha outro para salvar.",
+  "editBot.model.unavailable": "Este modelo não está mais disponível. Escolha outro para salvar.",
   "editBot.effort": "Esforço",
   "editBot.effort.hint":
     "Mais esforço demora mais e gasta mais do seu plano, em troca de um trabalho mais cuidadoso. No Padrão, a IA decide.",
@@ -1862,9 +1870,9 @@ const sentences = {
   "editBot.effort.level.xhigh": "Muito alto",
   "editBot.effort.level.max": "Máximo",
   "editBot.permissionMode": "Modo de permissão",
-  "editBot.nextTurn": "{name} usa as novas configurações a partir do próximo turno.",
+  "editBot.nextTurn": "{name} usa as novas configurações a partir da próxima tarefa.",
   "editBot.providerChangeStops":
-    "Mudar de provedor interrompe qualquer trabalho que {name} tenha em andamento. Depois, ele começa um novo contexto de trabalho, com um resumo da conversa.",
+    "Mudar de IA interrompe qualquer trabalho que {name} tenha em andamento. Depois, ele recomeça com um resumo da conversa.",
   "editBot.cancel": "Cancelar",
   "editBot.save": "Salvar alterações",
   "editBot.saving": "Salvando…",
@@ -1884,17 +1892,17 @@ const sentences = {
   "memory.loadNewer.loading": "Carregando…",
   "memory.reloadFailed": "Não deu para ler a versão mais nova, então sua edição continua aqui.",
   "memory.privateLocation":
-    "Nada foi salvo: a pasta desta memória aponta para fora dos dados privados do J3 Bots no servidor. Remova esse link para salvar de novo.",
+    "Nada foi salvo: a pasta desta memória aponta para fora dos dados do J3 Bots. Remova esse link para salvar de novo.",
   "memory.gone": "Este arquivo não existe mais, então sua edição não foi salva.",
   "memory.saveFailed": "Sua edição não foi salva. Tente de novo.",
   "memory.tooLong":
-    "Esta edição é longa demais para salvar: um arquivo de memória tem no máximo {max} caracteres, e alguns caracteres, como emojis, contam como dois. Encurte-a para salvar.",
+    "Longo demais para salvar: um arquivo de memória tem no máximo {max} caracteres, e um emoji conta como dois. Encurte para salvar.",
   "memory.failedClosed": "Sua edição em {file} não foi salva. Abra o arquivo para ver o motivo.",
 
   "settings.close": "Fechar configurações",
   "settings.botBrowser": "Navegador dos bots",
   "settings.botBrowser.hint":
-    "O navegador que os bots usam guarda as sessões em que você entrou. Sair encerra todas, para todos os bots.",
+    "O navegador dos bots continua conectado aos sites em que você entrou. Sair desconecta todos os bots.",
   "settings.botBrowser.signOut": "Sair de todos os sites",
   "settings.botBrowser.signOut.title": "Sair de todos os sites?",
   "settings.botBrowser.signOut.body":
@@ -1907,10 +1915,10 @@ const sentences = {
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
   "settings.usage": "Uso",
-  "usage.engineNotRunning": "O uso aparece enquanto o motor está rodando.",
-  "usage.noProviders": "Nenhum provedor pode rodar bots ainda.",
+  "usage.engineNotRunning": "O uso aparece quando o J3 Bots estiver pronto.",
+  "usage.noProviders": "Nenhuma IA pode rodar bots ainda.",
   "usage.noWindows": "Nenhum limite de uso informado.",
-  "usage.noWindowsAtAll": "Nenhum provedor informa limites de uso.",
+  "usage.noWindowsAtAll": "Nenhuma conta de IA informa limites de uso.",
   "usage.window.session": "Janela de 5 horas",
   "usage.window.weekly": "Semanal",
   "usage.window.monthly": "Mensal",
@@ -1922,19 +1930,19 @@ const sentences = {
   "usage.reset": "Renovou {when}; números novos na próxima verificação",
   "usage.noTurns.one": "Nenhum bot o usou na última hora.",
   "usage.noTurns.other": "Nenhum bot o usou nas últimas {count} horas.",
-  "usage.noTurnsShown": "Nenhum turno mostrado.",
-  "usage.turns.one": "{count} turno",
-  "usage.turns.other": "{count} turnos",
+  "usage.noTurnsShown": "Nenhuma tarefa mostrada.",
+  "usage.turns.one": "{count} tarefa",
+  "usage.turns.other": "{count} tarefas",
   "usage.deletedBot": "Um bot excluído",
   "usage.deletedRoutines": "Rotinas excluídas",
-  "usage.loadMore": "Carregar turnos anteriores",
+  "usage.loadMore": "Carregar tarefas anteriores",
   "usage.loadingMore": "Carregando…",
-  "usage.read.period.one": "Turnos da última hora, lidos {when}.",
-  "usage.read.period.other": "Turnos das últimas {count} horas, lidos {when}.",
-  "usage.read.latest": "Últimos {count} turnos, lidos {when}; o mais antigo {oldest}.",
+  "usage.read.period.one": "Tarefas da última hora, lidas {when}.",
+  "usage.read.period.other": "Tarefas das últimas {count} horas, lidas {when}.",
+  "usage.read.latest": "Últimas {count} tarefas, lidas {when}; a mais antiga {oldest}.",
   "usage.read.capped":
-    "Últimos {count} turnos, o máximo exibido, lidos {when}; o mais antigo {oldest}.",
-  "usage.readFailed": "Não foi possível ler os turnos.",
+    "Últimas {count} tarefas, o máximo exibido, lidas {when}; a mais antiga {oldest}.",
+  "usage.readFailed": "Não foi possível ler as tarefas.",
   "usage.retry": "Tentar de novo",
   "settings.you": "Você",
   "settings.name": "Como os bots chamam você",
@@ -2061,15 +2069,15 @@ const sentences = {
   "settings.browser": "Este navegador",
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":
-    "Este computador não tinha um chaveiro que o J3 Bots pudesse usar quando foi pareado, então o acesso deste dispositivo fica guardado sem criptografia. Quem puder ler seus arquivos aqui pode usá-lo. Pareie este dispositivo de novo depois de desbloquear o chaveiro do sistema para guardá-lo com criptografia.",
+    "O acesso deste dispositivo fica guardado sem criptografia, porque este computador não tinha um chaveiro que o J3 Bots pudesse usar. Quem puder ler seus arquivos aqui pode usá-lo. Desbloqueie o chaveiro e pareie de novo para resolver.",
   "settings.shortcut": "Atalho do acesso rápido",
   "settings.shortcut.change": "Mudar o atalho",
   "settings.shortcut.reset": "Usar {shortcut}",
   "settings.shortcut.recording": "Pressione o novo atalho, ou Esc para manter {shortcut}.",
   "settings.shortcut.needsModifier":
-    "Um atalho precisa de Shift, Alt ou Super junto com outro modificador (⇧ ou ⌥ junto com outro num Mac), com uma letra, um número ou uma tecla de função: um como Ctrl+C é de todos os outros apps.",
+    "Use duas teclas modificadoras, uma delas Shift, Alt ou Super (⇧ ou ⌥ num Mac), e uma letra, um número ou uma tecla de função. Um atalho como Ctrl+C é dos outros apps.",
   "settings.shortcut.registered":
-    "Pressione {shortcut} em qualquer lugar para abrir o acesso rápido: uma janela pequena para falar com o seu bot principal, pronta para você digitar. Pressione de novo para fechar.",
+    "Pressione {shortcut} em qualquer lugar para abrir o acesso rápido, uma janela pequena para falar com o seu bot principal. Pressione de novo para fechar.",
   "settings.shortcut.taken":
     "{shortcut} não funciona aqui: outro app ou o sistema já o usa. Escolha outro.",
   "settings.shortcut.refused":
@@ -2079,7 +2087,7 @@ const sentences = {
   "settings.shortcut.unavailable":
     "Este desktop não deixa apps usarem um atalho fora da própria janela, então {shortcut} só abre o acesso rápido com o J3 Bots em primeiro plano.",
   "settings.shortcut.requested":
-    "No Wayland, é o seu desktop que decide se o J3 Bots pode usar {shortcut}, e ele pode recusar sem avisar o J3 Bots. Se pressionar o atalho fora do J3 Bots não fizer nada, o seu desktop não permitiu; ele continua funcionando com o J3 Bots em primeiro plano.",
+    "O seu desktop decide se {shortcut} funciona fora do J3 Bots, e pode não avisar. Se nada acontecer lá fora, ele não permitiu; dentro do J3 Bots o atalho continua funcionando.",
   "settings.lookingAt": "Quando você abre o acesso rápido sobre outro app",
   "settings.lookingAt.title": "Incluir o título da janela",
   "settings.lookingAt.title.hint":
@@ -2171,7 +2179,7 @@ const sentences = {
   "diagnostics.sheet.lead":
     "Mande este arquivo para quem for te ajudar. Ele só tem o que ajuda a ver o que deu errado.",
   "diagnostics.sheet.inside": "O que vai nele",
-  "diagnostics.sheet.inside.logs": "Os registros do servidor e do motor dos últimos 7 dias",
+  "diagnostics.sheet.inside.logs": "Os registros do J3 Bots dos últimos 7 dias",
   "diagnostics.sheet.inside.failures": "O que falhou, e quando",
   "diagnostics.sheet.inside.setup":
     "Versões, configurações e quantos bots, salas e rotinas existem",
@@ -2246,7 +2254,7 @@ const sentences = {
   "serverUpdate.failure.healthCheck": "A nova versão não ficou pronta a tempo.",
   "serverUpdate.failure.download": "Não deu para baixar a versão.",
   "serverUpdate.failure.verification": "O download não conferiu com a assinatura do projeto.",
-  "serverUpdate.failure.engine": "Não deu para obter o motor da nova versão.",
+  "serverUpdate.failure.engine": "Não deu para baixar uma parte da nova versão.",
   "serverUpdate.failure.disk": "Faltou espaço no servidor.",
   "serverUpdate.failure.interrupted": "Um reinício da máquina do servidor interrompeu.",
   "serverUpdate.failure.unknown": "Algo deu errado.",
@@ -2285,7 +2293,7 @@ const sentences = {
     "Atualizando este app para a {version}. Ele fecha para terminar; depois é só abrir de novo.",
   "phoneUpdate.automatic": "Atualizar automaticamente",
   "phoneUpdate.automatic.hint":
-    "Instala cada versão nova assim que o app abre, depois de conferir com a assinatura do projeto. Desligado, o app pergunta antes de atualizar.",
+    "Instala cada versão nova assinada assim que o app abre. Desligado, o app pergunta antes de atualizar.",
   "phoneUpdate.cancelled":
     "A instalação foi cancelada. A {version} está baixada e conferida, pronta para instalar.",
   "phoneUpdate.waitingForStable":
@@ -2295,7 +2303,7 @@ const sentences = {
     "Se o servidor roda uma versão nightly, escolha Nightly para este app abaixo.",
   "phoneUpdate.permission.title": "Deixe o J3 Bots instalar a atualização",
   "phoneUpdate.permission.body":
-    "O Android pede uma vez. Na próxima tela, Instalar apps desconhecidos, ative “Permitir desta fonte” e volte: a instalação continua. O J3 Bots só instala as próprias atualizações, depois de conferir com a assinatura do projeto.",
+    "O Android pede uma vez. Na próxima tela, ative “Permitir desta fonte” e volte: a instalação continua. O J3 Bots só instala as próprias atualizações assinadas.",
   "phoneUpdate.permission.open": "Abrir configurações do Android",
   "phoneUpdate.play": "O Google Play instalou este app e o mantém atualizado.",
   "phoneUpdate.openPlay": "Abrir o Google Play",
@@ -2445,10 +2453,7 @@ const sentences = {
   "browser.showHere": "Mostrar aqui",
   "browser.failed": "Não foi possível abrir esta página.",
   "browser.retry": "Tentar de novo",
-  "browser.setupNeeded.sandbox":
-    "O navegador só inicia quando o computador do servidor permitir o uso da sandbox. Rode j3-bots doctor lá para ver como.",
-  "browser.setupNeeded.libraries":
-    "O navegador só inicia quando o computador do servidor tiver as bibliotecas de que precisa. Rode j3-bots doctor lá para ver como.",
+  "browser.setupNeeded": "O navegador só abre depois de configurado.",
   "browser.handBack.title": "Devolver o controle?",
   "browser.handBack.body": "O bot não consegue usar o navegador enquanto você está no controle.",
   "browser.handBack.confirm": "Devolver",
@@ -2530,11 +2535,11 @@ const sentences = {
   "connector.status.commandNotFound.next":
     "Instale-o lá, ou altere o comando para indicá-lo pelo caminho completo.",
   "connector.status.commandExited":
-    "O programa dele parou sozinho, ou não conseguiu iniciar. O J3 Bots o inicia de novo na próxima vez que um bot o usar, esperando mais a cada vez que ele para.",
+    "O programa dele parou sozinho, ou não conseguiu iniciar. O J3 Bots o inicia de novo na próxima vez que um bot o usar.",
   "connector.status.commandExited.next":
     "Confira o comando e as variáveis dele. Executá-lo você mesmo naquele computador mostra por que ele para.",
   "connector.status.commandRefused":
-    "O J3 Bots não inicia o comando dele como está salvo: uma verificação que ele faz antes de cada início o recusa.",
+    "O J3 Bots não inicia: o comando dele não passou numa verificação de segurança.",
   "connector.status.commandRefused.next":
     "Altere o comando e confirme de novo. Uma variável que decide qual código roda precisa do valor digitado, não de um segredo.",
   "connector.status.issuerChanged":
@@ -2725,7 +2730,7 @@ const sentences = {
   "connectorAsk.clientIdRequired": "Digite o ID do cliente do app.",
   "connectorAsk.clientSecretInvalid":
     "Confira o segredo do cliente: ele tem uma linha só, como o serviço mostra.",
-  "connectorAsk.unseen": "Fica no seu servidor do J3 Bots. {bot} nunca vê.",
+  "connectorAsk.unseen": "Fica guardado no J3 Bots. {bot} nunca vê.",
   "connectorAsk.allow": "Permitir",
   "connectorAsk.decline": "Recusar",
   "connectorAsk.refused": "Isso não foi. Confira e tente de novo.",

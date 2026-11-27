@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { roomStop } from "@j3-bots/client-runtime/presentation";
+import { roomStop, unarchivable } from "@j3-bots/client-runtime/presentation";
 import type { Bot, Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { Pressable, ScrollView, View } from "react-native";
@@ -16,7 +16,7 @@ import { useBots } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 import { useRoomPlacing } from "../screens/placing.ts";
 import { useRoomActions } from "./actions.ts";
-import { HiddenNotice } from "./HiddenNotice.tsx";
+import { BackstageNotice } from "./BackstageNotice.tsx";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
 
@@ -24,7 +24,7 @@ import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
  * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first; a
- * hidden room says so after it, with Show.
+ * room behind the scenes says so after it, with Bring back to the list.
  */
 export function RoomDetails({ room }: { readonly room: Room }) {
   const { t, plural } = useI18n();
@@ -59,11 +59,16 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         badge={archived ? t("room.archivedBadge") : null}
         lines={
           <ProfileLine>
-            {archived ? t("room.archivedLine") : plural("room.memberCount", members.length)}
+            {archived
+              ? t("room.archivedLine")
+              : room.botsOnly === true
+                ? t("room.botsOnlyLine", { count: plural("room.memberCount", members.length) })
+                : plural("room.memberCount", members.length)}
           </ProfileLine>
         }
       >
-        {!archived && (
+        {/* Its bots chose who talks in a room of bots only: the operator reads it. */}
+        {!archived && room.botsOnly !== true && (
           <Button
             variant="secondary"
             label={t("room.edit", { name })}
@@ -100,7 +105,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         />
       )}
 
-      {room.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(room)} />}
+      {room.hidden && <BackstageNotice name={name} onBringBack={() => placing.bringBack(room)} />}
 
       <Section open title={t("room.membersTitle")}>
         {members.length === 0 ? (
@@ -112,7 +117,9 @@ export function RoomDetails({ room }: { readonly room: Room }) {
 
       <Section open title={t("room.archiveSection")}>
         <View className="items-start gap-3">
-          {archived ? (
+          {archived && !unarchivable(room) ? (
+            <Quiet>{t("room.staysArchived")}</Quiet>
+          ) : archived ? (
             <PendingButton
               label={t("room.unarchive", { name })}
               onPress={() => actions.unarchive(room)}

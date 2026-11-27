@@ -9,7 +9,8 @@ import {
 } from "@j3-bots/client-runtime";
 import type { CloudVoiceKeys, VoiceSettings } from "@j3-bots/contracts";
 import { act, useEffect, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { useDictationSource } from "../live/dictation";
 import { fieldSelection, selectInField } from "./ChipField";
@@ -123,7 +124,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
   told = {
     values: [],
     sent: [],

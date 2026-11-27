@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -30,6 +31,14 @@ import { containedFile, INDEX, isBuilt } from "./built.ts";
 // is the file served. No second parser reads the target, so the file checked
 // is always the file sent, and a link inside the build never publishes a file
 // outside it.
+//
+// Text files (scripts, styles, pages, the manifest) are sent compressed to a
+// browser that takes it, Brotli or gzip, as `Accept-Encoding` asks: the
+// client's first load is about a third of its size gzipped. So every answer
+// says it varies by `Accept-Encoding`, and its validator is weak: the same
+// for each encoding a file is sent in, which a browser sends back and a 304
+// answers with the same headers. Nothing the client's files hold is secret,
+// so compression reveals nothing (BREACH).
 
 /** Vite names every file under `assets/` by its content hash, so it never changes. */
 const IMMUTABLE = "public, max-age=31536000, immutable";
@@ -115,6 +124,12 @@ const matchesEtag = (ifNoneMatch: string, etag: string) => {
 };
 
 /**
+ * `etag` as a weak validator: a file is the same in each encoding the
+ * compression sends it in, byte for byte only in one.
+ */
+const weak = (etag: string) => (etag.startsWith("W/") ? etag : `W/${etag}`);
+
+/**
  * Whether the browser's copy, described by the request's validators, is still
  * the file's. `If-None-Match` wins over `If-Modified-Since` (RFC 9110 §13.1.3).
  */
@@ -196,10 +211,13 @@ export const routes = (root: string) =>
             const file = yield* HttpServerResponse.file(target.file, { contentType: type }).pipe(
               Effect.orDie,
             );
+            const fileTag = file.headers["etag"];
             const response = HttpServerResponse.setHeaders(file, {
               "cache-control":
                 decoded.value.startsWith(ASSETS_PREFIX) && !html ? IMMUTABLE : REVALIDATE,
               "x-content-type-options": "nosniff",
+              vary: "Accept-Encoding",
+              ...(fileTag === undefined ? {} : { etag: weak(fileTag) }),
               ...(html ? htmlHeaders(decoded.value) : {}),
             });
             if (!stillFresh(request, response)) return response;
@@ -208,6 +226,7 @@ export const routes = (root: string) =>
               status: 304,
               headers: {
                 "cache-control": response.headers["cache-control"] ?? REVALIDATE,
+                vary: "Accept-Encoding",
                 ...(etag === undefined ? {} : { etag }),
                 ...(lastModified === undefined ? {} : { "last-modified": lastModified }),
               },
@@ -215,7 +234,7 @@ export const routes = (root: string) =>
           }
         }
       });
-      return HttpRouter.add("GET", "/*", handler);
+      return HttpRouter.add("GET", "/*", handler.pipe(HttpMiddleware.compression()));
     }),
   );
 

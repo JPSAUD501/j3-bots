@@ -174,6 +174,12 @@ export const WakePayload = Schema.Union([
    */
   Schema.TaggedStruct("delegated-result", { origin: TurnId, text: Schema.String }),
   /**
+   * A room of bots only this bot started paused at its round limit
+   * (decision 0103): a `system` wake for the bot's own conversation, which
+   * tells the operator where the room got to.
+   */
+  Schema.TaggedStruct("room-paused", { roomId: RoomId }),
+  /**
    * The bot was just created: its first turn opens its conversation. A bot
    * another bot's `create_bot` made waits for the turn that made it
    * (`madeIn`) to end, which may place it in a room instead (`start_room`).

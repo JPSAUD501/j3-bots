@@ -14,6 +14,7 @@ import {
   type RefObject,
 } from "react";
 import { useI18n } from "../app/context";
+import { DocsLink } from "../components/DocsLink";
 import { Button } from "../components/ui/button";
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
 import { textField } from "../components/ui/field";
@@ -24,7 +25,7 @@ import { useBrowserTabs } from "./context";
 import { addressOf, LEAVE_PAGE_KEY } from "./input";
 import { holds } from "./source";
 import { statusKey } from "./status";
-import { frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
+import { BROWSER_SETUP_DOCS, frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
 import { type TabView, useTabView } from "./useTabView";
 
 /** A help card the bot left for the operator in this browser: Done and Can't do it answer it. */
@@ -357,10 +358,8 @@ function StageState({ tabView }: { readonly tabView: TabView }) {
       return <StageNote>{t("browser.gone")}</StageNote>;
     case "setup-needed":
       return (
-        <StageNote>
-          {status.need === "sandbox"
-            ? t("browser.setupNeeded.sandbox")
-            : t("browser.setupNeeded.libraries")}
+        <StageNote link={{ label: t("details.browser.howToFix"), href: BROWSER_SETUP_DOCS }}>
+          {t("browser.setupNeeded")}
         </StageNote>
       );
     case "replaced":
@@ -381,14 +380,18 @@ function StageState({ tabView }: { readonly tabView: TabView }) {
 function StageNote({
   children,
   action,
+  link,
 }: {
   readonly children: ReactNode;
   readonly action?: { readonly label: string; readonly onPress: () => void };
+  /** A page that says more, opened outside the app. */
+  readonly link?: { readonly label: string; readonly href: string };
 }) {
   return (
     <div className="absolute inset-3 flex flex-col items-center justify-center gap-3 rounded-md bg-background/90 p-6 text-center">
       <p className="max-w-80 text-sm text-muted-foreground">{children}</p>
       {action !== undefined && <Button onClick={action.onPress}>{action.label}</Button>}
+      {link !== undefined && <DocsLink href={link.href}>{link.label}</DocsLink>}
     </div>
   );
 }

@@ -120,7 +120,7 @@ export function useBotEdit(options: {
     fieldProblem: (field) =>
       patch._tag !== "invalid" || !patch.fields.has(field)
         ? null
-        : field === "name" && name.trim() === ""
+        : (field === "name" ? name : (edits[field] ?? "")).trim() === ""
           ? "required"
           : "too-long",
     problem,

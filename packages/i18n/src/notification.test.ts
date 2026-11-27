@@ -10,13 +10,14 @@ import {
   type Notification,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { createI18n } from "./i18n.ts";
+import { createI18n } from "./catalogs.ts";
 import { notificationText, type NotificationNames } from "./notification.ts";
 
 const scout = BotId.make("scout");
 const launch = RoomId.make("launch");
 const names: NotificationNames = {
   botName: (id) => (id === scout ? "Scout" : null),
+  botTitle: () => "",
   roomName: (id) => (id === launch ? "Launch" : null),
 };
 
@@ -128,6 +129,20 @@ describe("notificationText", () => {
     expect(notificationText(bare, names, createI18n("pt-BR"))).toEqual({
       title: "Launch",
       body: "Scout: Precisa da sua aprovação",
+    });
+  });
+
+  it("names the bot with its title, from its conversation and from a room", () => {
+    const titled: NotificationNames = { ...names, botTitle: () => "Bakery competitors" };
+    const i18n = createI18n("en");
+    expect(notificationText(notification({ preview: "Prices fell" }), titled, i18n)).toEqual({
+      title: "Scout · Bakery competitors",
+      body: "Prices fell",
+    });
+    const inRoom = notification({ target: { _tag: "room", roomId: launch }, preview: "Done" });
+    expect(notificationText(inRoom, titled, i18n)).toEqual({
+      title: "Launch",
+      body: "Scout · Bakery competitors: Done",
     });
   });
 

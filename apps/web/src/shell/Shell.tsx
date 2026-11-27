@@ -30,6 +30,7 @@ import {
   rosterKeyText,
   rosterTarget,
   teammatesOf,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
@@ -55,20 +56,23 @@ import {
   QuietRoom,
 } from "../components/EmptyStates";
 import { PairConversation } from "../components/PairConversation";
+import { ReadOnlyMark } from "../components/ReadOnlyMark";
 import type { PairIntents } from "../components/PairHeader";
 import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
 import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
-import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
+import { SettingsButton, settingsPanel } from "../components/SettingsButton";
+import { SignOutDevice } from "../components/SignOutDevice";
 import { Button } from "../components/ui/button";
 import { recordScreenIn } from "../components/RecordOffer";
 import { Timeline } from "../components/Timeline";
 import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { tintOf } from "../lib/botTint";
-import { Onboarding } from "../onboarding/Onboarding";
+import { onboarding } from "../onboarding/deferred";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
+import { preloadWhenIdle } from "../lib/deferred";
 import { isCovered, useCovered } from "../lib/covered";
 import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useConversationView } from "./conversationView";
@@ -76,6 +80,11 @@ import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
+
+// Not part of the app's first load: the first run. The details and the
+// browser beside a conversation are: the shell moves focus into them, and hands
+// them Escape, as they open.
+const Onboarding = onboarding.Component;
 
 interface ShellNavigation {
   readonly selected: RosterItemKey | null;
@@ -130,6 +139,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const [appArea, setAppArea] = useState<HTMLDivElement | null>(null);
   const rosterRef = useRef<HTMLElement>(null);
   const [containerRef, layout] = useShellLayout();
+  // What the operator opens most once the app is up, fetched when the page is idle.
+  useEffect(() => preloadWhenIdle(settingsPanel.preload), []);
 
   const rosterItems = data.roster ?? [];
   const pairs = data.pairs ?? [];
@@ -398,10 +409,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
               // The first bot is the primary one: there is no other to choose.
-              return intents.createBot({ name, primary: true, avatar }).then((result) => {
-                if (result._tag === "failed") setOpeningFirstBot(false);
-                return result;
-              });
+              return intents
+                .createBot({ name, title: t("bot.primaryTitle"), primary: true, avatar })
+                .then((result) => {
+                  if (result._tag === "failed") setOpeningFirstBot(false);
+                  return result;
+                });
             }}
             onArrived={(botId) => navigation.select({ _tag: "bot", botId })}
             providerActions={intents.providerActions}
@@ -462,11 +475,14 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     // An archived room takes no messages: no composer, and a way to unarchive it.
     const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
+    // A room of bots only takes nothing of the operator's: they read it (decision 0103).
+    const botsOnly = item._tag === "room" && item.room.botsOnly === true;
+    const writes = archivedRoom === null && !botsOnly;
     const mentionable = mentionChoicesOf(target, rosterItems, data.conversationMentions);
     const addressing = addressingOf(target, draft, rosterItems, mentionable);
     // Reply and Quote add to the draft, where the server takes quotes and the composer shows.
     const drafting =
-      data.quotes && archivedRoom === null
+      data.quotes && writes
         ? {
             drafted: draft.quotes,
             quote: (quote: MessageQuote) => {
@@ -599,9 +615,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                       reveal: (entryId) => intents.revealEntry(target, entryId),
                       drafting,
                     }}
-                    recordScreen={
-                      archivedRoom === null ? recordScreenIn(intents.recordScreen, target) : null
-                    }
+                    recordScreen={writes ? recordScreenIn(intents.recordScreen, target) : null}
                     {...(browserBot === null
                       ? {}
                       : {
@@ -633,7 +647,9 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             tintOf(item._tag === "bot" ? item.bot.profile.avatar : null),
           )}
         >
-          {archivedRoom === null ? (
+          {archivedRoom === null && botsOnly ? (
+            <ReadOnlyMark label={t("room.readOnly")} />
+          ) : archivedRoom === null ? (
             <DraftComposer
               target={target}
               recipient={recipient}
@@ -649,13 +665,17 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">
               <p>{t("room.composerArchived", { name: archivedRoom.name })}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
-              >
-                {t("room.unarchive", { name: archivedRoom.name })}
-              </Button>
+              {unarchivable(archivedRoom) ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
+                >
+                  {t("room.unarchive", { name: archivedRoom.name })}
+                </Button>
+              ) : (
+                <p>{t("room.staysArchived")}</p>
+              )}
             </div>
           )}
         </div>

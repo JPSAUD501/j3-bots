@@ -8,7 +8,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Bot.** A persistent teammate. A bot has a profile, one conversation with the operator, a memory, a workspace folder, routines, and a model it runs on. A bot is not a chat session: it exists before the first message and after the thousandth.
 
-**Profile.** What makes a bot recognizable: its name, a short title ("Research", "Inbox"), an avatar (a shape and a color), and its **job**, a few sentences in plain language saying what the bot is for and where its limits are. The job is the only per-bot instruction text. Everything else a bot learns goes to memory.
+**Profile.** What makes a bot recognizable: its name, a person's, its **title**, two to four words saying what it is for ("Bakery competitors", "Instagram posts"), shown with the name wherever the bot appears, an avatar (a shape and a color), and its **job**, a few sentences in plain language saying what the bot is for and where its limits are. Every bot made since [0101](../decisions/0101-a-bot-is-its-name-and-its-title-and-a-helper-waits-behind-the-scenes.md) has a title; one from before shows its name alone until it gets one. The job is the only per-bot instruction text. Everything else a bot learns goes to memory.
 
 **Primary bot.** The one bot the operator treats as their default contact. New requests that belong to nobody go to it. It may create other bots, hand work to them, and check in on its own. J3 Bots works without one. Making another bot primary replaces the old one in the same change, so there are never two.
 
@@ -30,7 +30,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.
 
-**Room.** A group chat with the operator and two to six bots, all equal. A room has a name, members and its own message history. Every member reads every message there, the operator's and each bot's. A message that mentions members wakes only them; one that mentions nobody wakes every member but its author, each answering only if it has something to add; the operator's `@everyone` wakes every member and asks each to answer. The members woken answer at once. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its first member, with a kickoff that hands out the work.
+**Room.** A group chat with the operator and two to six bots, all equal. A room has a name, members and its own message history. Every member reads every message there, the operator's and each bot's. A message that mentions members wakes only them; one that mentions nobody wakes every member but its author, each answering only if it has something to add; the operator's `@everyone` wakes every member and asks each to answer. The members woken answer at once. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its first member, with a kickoff that hands out the work. A bot may instead start a **room of bots only**, which the operator reads and never writes in, as they read a teammate conversation; it pauses after a few rounds of its bots answering each other, and the bot that started it tells the operator.
 
 ## The roster
 
@@ -38,7 +38,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Pinned.** A bot or room the operator keeps at the top of the roster.
 
-**Hidden.** A bot or room kept out of the roster, among the hidden conversations. It keeps running and notifying, and search, the hidden conversations and everything that refers to it still reach it. The operator hides or shows anything; a bot may hide what it made, and the primary bot anything but itself, unless the operator chose otherwise: the operator's choice stands.
+**Behind the scenes** ("nos bastidores"). Where a bot or room goes to keep the operator's conversation list to the ones they talk to: out of the roster's list, under its "Behind the scenes" row. It keeps running and notifying, and search, that row and everything that refers to it still reach it. The operator moves anything there or back; a bot decides it for each bot and room it makes, and may move what it made, and the primary bot anything but itself, unless the operator chose otherwise: the operator's choice stands. The server and the protocol still call it `hidden`.
 
 **Section.** A named group of bots in the roster, which the operator creates, names, orders and folds away. A bot is in at most one section. Deleting a section never deletes its bots: they go back to the roster's main list.
 
@@ -111,7 +111,7 @@ From the bot's side, a connector is a set of tools named after it (`notion__sear
 
 **Approval.** A request from a bot to do one specific thing that its permission mode does not allow outright. Only the operator can grant one.
 
-**Browser.** The engine's headless browser on the host, which a bot may use to read and act on web pages. Each bot has a switch for it in its details, off by default. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing. Every bot whose switch is on uses the same browser profile, so it is signed in wherever the operator signed in there, and acts on those sites as the operator. Settings signs that profile out of every site at once.
+**Browser.** The engine's headless browser on the host, which a bot may use to read and act on web pages. Each bot has a switch for it in its details, on for a new bot ([decision 0109](../decisions/0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md)). Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing. Every bot whose switch is on uses the same browser profile, so it is signed in wherever the operator signed in there, and acts on those sites as the operator. Settings signs that profile out of every site at once.
 
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
 

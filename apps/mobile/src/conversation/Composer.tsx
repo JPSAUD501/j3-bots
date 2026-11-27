@@ -57,7 +57,11 @@ import { useTint } from "./tint.ts";
 
 /** What the composer offers after `@`: a bot, drawn by its face, or a room, by its mark. */
 export type MentionCandidate =
-  | (Extract<Mentionable, { readonly _tag: "bot" }> & { readonly avatar: Avatar })
+  | (Extract<Mentionable, { readonly _tag: "bot" }> & {
+      readonly avatar: Avatar;
+      /** What the bot is for, under its name; empty when it has none. */
+      readonly title: string;
+    })
   | (Extract<Mentionable, { readonly _tag: "room" }> & {
       readonly members: ReadonlyArray<{ readonly id: string; readonly avatar: Avatar }>;
     });
@@ -605,8 +609,9 @@ function fieldMentions(
 }
 
 /**
- * What the operator can mention, above the composer: bots, rooms or
- * `@everyone`, named for a screen reader by `label`. A tap picks.
+ * What the operator can mention, above the composer: bots, each by its name
+ * over its title, rooms or `@everyone`, named for a screen reader by `label`.
+ * A tap picks.
  */
 function MentionList({
   options,
@@ -663,9 +668,20 @@ function MentionList({
                 {candidate?._tag === "room" && (
                   <RoomAvatar members={candidate.members} size={24} ground="surface" />
                 )}
-                <Text numberOfLines={1} className="shrink text-base text-foreground">
-                  {option.name}
-                </Text>
+                {candidate?._tag === "bot" && candidate.title !== "" ? (
+                  <View className="min-w-0 shrink py-1">
+                    <Text numberOfLines={1} className="text-base text-foreground">
+                      {option.name}
+                    </Text>
+                    <Text numberOfLines={1} className="text-xs text-muted-foreground">
+                      {candidate.title}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text numberOfLines={1} className="shrink text-base text-foreground">
+                    {option.name}
+                  </Text>
+                )}
                 {option._tag === "room" && (
                   <Text className="ms-auto shrink-0 ps-2 text-xs text-muted-foreground">
                     {t("mention.room")}

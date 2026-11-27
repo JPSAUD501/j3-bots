@@ -46,6 +46,13 @@ const groundColor = {
   muted: "accent-muted",
 } as const satisfies Record<AvatarGround, string>;
 
+/**
+ * How much narrower than the list a row's text is: the row's inset from the
+ * list (`mx-2`) and its padding (`px-2`) on each side, its avatar, and the
+ * gap after it (`gap-3`). A bot's title wraps at that width (`useTitleLines`).
+ */
+export const ROW_TEXT_INSET = 2 * 8 + 2 * 8 + 40 + 12;
+
 /** Where each of the row's avatar's dots stands: along its lower start edge, clear of the primary bot's star at the other corner. */
 const DOTS = littleDots(40, MAX_SHOWN_LITTLE_ONES);
 
@@ -97,8 +104,10 @@ function LittleDots({
 }
 
 /**
- * One bot or room: avatar, name, time, and one line of status, in a row
- * `height` tall (`RosterSizes`), 64 px at the default font size. Rows that need the operator carry it in the line's words and color
+ * One bot or room: avatar, name and time, a bot's title in two lines at most,
+ * and one line of status, in a row `height` tall (`RosterSizes`), 64 px at
+ * the default font size for a room or a bot with no title. A title is never
+ * cut for the status line: the row is at least `height`, and grows with it. Rows that need the operator carry it in the line's words and color
  * and in the avatar's light. Unread shows once: as an idle bot's dark light,
  * or as a dot under the time; screen readers hear "Unread" either way. The
  * primary bot's avatar carries its mark, which screen readers hear in the
@@ -139,6 +148,8 @@ export function RosterRow({
   const line = rosterLine(item, ctx);
   const needs = needsOperator(item);
   const name = itemName(item);
+  // What a bot is for, under its name, before what it is doing.
+  const title = item._tag === "bot" ? item.bot.profile.title : "";
   const time = item.lastActivityAt === null ? null : activityTime(item.lastActivityAt, ctx);
   const unreadDot = item.unread && (item._tag === "room" || item.bot.state._tag !== "idle");
   // The row turns muted while pressed or selected: the avatar's light keeps its ring in that color.
@@ -170,6 +181,7 @@ export function RosterRow({
       accessibilityLabel={[
         name,
         primary ? t("roster.primary") : null,
+        title === "" ? null : title,
         time,
         line.text,
         split > 0 ? plural("littleOnes.label", split) : null,
@@ -206,7 +218,7 @@ export function RosterRow({
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}
       className={`${lifted ? "" : "mx-2"} flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
-      style={{ height }}
+      style={{ minHeight: height }}
     >
       <View ref={faceBox}>
         {arrival.staged && <RowLight avatar={face} height={height} arrival={arrival} />}
@@ -236,14 +248,22 @@ export function RosterRow({
         )}
       </View>
       <View className="min-w-0 flex-1 gap-0.5">
-        <Animated.View style={arrival.name} className="flex-row items-baseline gap-2">
-          <Text
-            numberOfLines={1}
-            className={`flex-1 text-base text-foreground ${needs ? "font-semibold" : "font-medium"}`}
-          >
-            {name}
-          </Text>
-          {time !== null && <Text className="text-2xs text-muted-foreground">{time}</Text>}
+        {/* A bot's title comes in with its name. */}
+        <Animated.View style={arrival.name} className="gap-0.5">
+          <View className="flex-row items-baseline gap-2">
+            <Text
+              numberOfLines={1}
+              className={`flex-1 text-base text-foreground ${needs ? "font-semibold" : "font-medium"}`}
+            >
+              {name}
+            </Text>
+            {time !== null && <Text className="text-2xs text-muted-foreground">{time}</Text>}
+          </View>
+          {title !== "" && (
+            <Text numberOfLines={2} className="text-xs text-muted-foreground">
+              {title}
+            </Text>
+          )}
         </Animated.View>
         <Animated.View style={arrival.line} className="flex-row items-center gap-2">
           <View className="min-w-0 flex-1">

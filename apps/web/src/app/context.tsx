@@ -9,27 +9,59 @@ import type {
   RosterItem,
 } from "@j3-bots/contracts";
 import { aiNameOf } from "@j3-bots/client-runtime/presentation";
-import { createContext, use, useEffect, useMemo, type ReactNode } from "react";
-import { createI18n, resolveLocale, type I18n } from "@j3-bots/i18n";
+import { createContext, use, useDeferredValue, useEffect, useMemo, type ReactNode } from "react";
+import { resolveLocale, type I18n } from "@j3-bots/i18n";
+import { loadI18n } from "@j3-bots/i18n/load";
 import { usePreferences } from "../preferences/preferences";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import { useClock } from "./clock";
 
-const I18nContext = createContext<I18n>(createI18n("en"));
+const I18nContext = createContext<I18n | null>(null);
 
-/** Interface text in the operator's language: their choice, or the browser's. */
+/**
+ * Each language's sentences, loaded once it is first read: the page fetches
+ * only the catalog of the language it shows.
+ */
+const loaded = new Map<Language, Promise<I18n>>();
+const i18nFor = (locale: Language): Promise<I18n> => {
+  const known = loaded.get(locale);
+  if (known !== undefined) return known;
+  const loading = loadI18n(locale);
+  loaded.set(locale, loading);
+  // One that failed is fetched again the next time it is read.
+  loading.catch(() => loaded.delete(locale));
+  return loading;
+};
+
+/**
+ * Interface text in the operator's language: their choice, or the browser's.
+ * Nothing shows before its sentences have loaded; when the operator picks
+ * another language, the page stays in the one it shows until the new one has.
+ */
 export function I18nProvider({ locale, children }: { locale?: Language; children: ReactNode }) {
   const { language } = usePreferences();
   const resolved =
     locale ?? (language === "system" ? resolveLocale(navigator.languages) : language);
-  const i18n = useMemo(() => createI18n(resolved), [resolved]);
+  const i18n = use(i18nFor(useDeferredValue(resolved)));
   useEffect(() => {
-    document.documentElement.lang = resolved;
-  }, [resolved]);
+    document.documentElement.lang = i18n.locale;
+  }, [i18n.locale]);
   return <I18nContext value={i18n}>{children}</I18nContext>;
 }
 
-export const useI18n = () => use(I18nContext);
+/**
+ * The sentences of a language already in hand, for a tree that cannot wait
+ * for one to load, such as a test's.
+ */
+export function I18nValue({ i18n, children }: { i18n: I18n; children: ReactNode }) {
+  return <I18nContext value={i18n}>{children}</I18nContext>;
+}
+
+export const useI18n = (): I18n => {
+  const i18n = use(I18nContext);
+  if (i18n === null) throw new Error("The interface's text is read outside an I18nProvider.");
+  return i18n;
+};
 
 const BotsContext = createContext<ReadonlyMap<BotId, Bot>>(new Map());
 const RoomsContext = createContext<ReadonlyMap<RoomId, Room>>(new Map());
@@ -79,7 +111,7 @@ export const useBots = (): ReadonlyMap<BotId, Bot> => use(BotsContext);
 export const useRooms = (): ReadonlyMap<RoomId, Room> => use(RoomsContext);
 
 export function usePresentation(): PresentationContext {
-  const i18n = use(I18nContext);
+  const i18n = useI18n();
   const { now, timeZone } = useClock();
   const bots = use(BotsContext);
   const rooms = use(RoomsContext);

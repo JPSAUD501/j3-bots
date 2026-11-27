@@ -2,7 +2,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { type Bot, type EngineStatus, PROFILE_LIMITS } from "@j3-bots/contracts";
 import { XIcon } from "lucide-react";
-import { useEffect, useId } from "react";
+import { type Ref, useEffect, useId, useRef } from "react";
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
 import type { ProfileField } from "@j3-bots/client-runtime/presentation";
 import { useBotEdit } from "@j3-bots/client-runtime/react";
@@ -11,7 +11,7 @@ import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarPicker } from "./avatar/AvatarPicker";
-import { HideSwitch } from "./Visibility";
+import { BackstageSwitch } from "./Visibility";
 import { PermissionModeChoices } from "./PermissionModeChoices";
 import { Button } from "./ui/button";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -33,6 +33,8 @@ export interface EditBotFormProps {
   readonly onUnsavedChange?: (unsaved: boolean) => void;
   /** The id of the form's heading, which names the dialog. */
   readonly titleId: string;
+  /** The title field, which the dialog may open at. */
+  readonly titleRef?: Ref<HTMLInputElement>;
 }
 
 /** A model choice as a `<select>` value. */
@@ -41,7 +43,7 @@ const keyOf = (choice: Bot["model"]) => JSON.stringify([choice.providerId, choic
 /**
  * Everything the operator changes about a bot itself: its name, title, look
  * and job, the model it runs on and the effort it puts in, how much it may do without asking, and
- * whether it is hidden. Save sends only what changed. While a save is under way the form shows what it sends
+ * whether it is behind the scenes. Save sends only what changed. While a save is under way the form shows what it sends
  * and takes no edit; a save that fails leaves the edits in place and says
  * why, beside the field when one field is the reason.
  */
@@ -54,6 +56,7 @@ export function EditBotForm({
   onClose,
   onUnsavedChange,
   titleId,
+  titleRef,
 }: EditBotFormProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -85,7 +88,7 @@ export function EditBotForm({
     return fieldProblem === null ? null : (
       <p id={errorIds[field]} className="text-xs text-blocked">
         {fieldProblem === "required"
-          ? t("editBot.name.required")
+          ? t(field === "title" ? "editBot.title.required" : "editBot.name.required")
           : t("editBot.tooLong", { max: PROFILE_LIMITS[field] })}
       </p>
     );
@@ -141,6 +144,7 @@ export function EditBotForm({
             {t("editBot.titleField")}
           </label>
           <input
+            ref={titleRef}
             id={ids.title}
             value={title}
             maxLength={PROFILE_LIMITS.title}
@@ -294,7 +298,7 @@ export function EditBotForm({
           </p>
         )}
 
-        <HideSwitch
+        <BackstageSwitch
           checked={form.hidden}
           readOnly={saving}
           onChange={(hidden) => form.edit({ hidden })}
@@ -323,9 +327,14 @@ export function EditBotForm({
   );
 }
 
-interface EditBotDialogProps extends Omit<EditBotFormProps, "bot" | "titleId" | "onUnsavedChange"> {
+interface EditBotDialogProps extends Omit<
+  EditBotFormProps,
+  "bot" | "titleId" | "onUnsavedChange" | "titleRef"
+> {
   /** The bot being edited; null closes the dialog. */
   readonly bot: Bot | null;
+  /** Opens at the title field, as Give a title does; otherwise where a dialog starts. */
+  readonly at: "title" | null;
   /**
    * Whether the form holds edits that are not saved, as it reports through
    * `onUnsavedChange`. Held by the owner, which keeps such a form open.
@@ -337,12 +346,14 @@ interface EditBotDialogProps extends Omit<EditBotFormProps, "bot" | "titleId" | 
 /** `EditBotForm` as a dialog: the whole screen on a phone, a sheet over the app on wider ones. */
 export function EditBotDialog({
   bot,
+  at,
   onClose,
   unsaved,
   onUnsavedChange,
   ...form
 }: EditBotDialogProps) {
   const titleId = useId();
+  const titleRef = useRef<HTMLInputElement>(null);
   const { held, closed } = useHeldWhileClosing(bot);
   return (
     <Dialog.Root
@@ -361,6 +372,7 @@ export function EditBotDialog({
         <Dialog.Popup
           aria-labelledby={titleId}
           className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-lg`}
+          {...(at === "title" ? { initialFocus: titleRef } : {})}
         >
           {/* Mounted afresh with each opening, so it starts from the bot as saved. */}
           {held !== null && (
@@ -370,6 +382,7 @@ export function EditBotDialog({
               onClose={onClose}
               onUnsavedChange={onUnsavedChange}
               titleId={titleId}
+              titleRef={titleRef}
               {...form}
             />
           )}

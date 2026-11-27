@@ -35,8 +35,8 @@ interface ConversationHeaderProps {
 }
 
 /**
- * Who this is: a bot's face and name on one line, or a room's members, its
- * name and, under it, who is in it. What a bot is doing is the conversation's
+ * Who this is: a bot's face, its name and, under it, its title, or a room's
+ * members, its name and, under it, who is in it. What a bot is doing is the conversation's
  * to show, in the turn under way and its cards; the header only says it to
  * screen readers, through `onAnnounce`, once at each change. The name opens
  * the details, where Stop is while there is work to stop.
@@ -102,6 +102,11 @@ export function ConversationHeader({
               className="size-3.5 shrink-0 text-muted-foreground @tablet:hidden"
             />
           </button>
+          {subject._tag === "bot" && subject.bot.profile.title !== "" && (
+            <span className="block max-w-full truncate text-2xs text-muted-foreground">
+              {subject.bot.profile.title}
+            </span>
+          )}
           {subject._tag === "room" && (
             <span className="block max-w-full truncate text-2xs text-muted-foreground">
               {t("room.members", { names: memberList(subject.room, ctx) })}

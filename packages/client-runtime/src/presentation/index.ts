@@ -89,6 +89,7 @@ export {
   withProfileEdit,
 } from "./botEdit.ts";
 export {
+  BROWSER_SETUP_DOCS,
   type DrawnRect,
   dragWheel,
   frontTab,
@@ -247,6 +248,7 @@ export {
   roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
+  unarchivable,
   withMember,
   withoutDeleted,
 } from "./roomForm.ts";
@@ -323,6 +325,7 @@ export {
   type TemplateStart,
   templateStart,
   type TemplateSubmission,
+  templateAsksTitle,
   templateSubmission,
 } from "./template.ts";
 export {

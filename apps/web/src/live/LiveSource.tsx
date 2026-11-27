@@ -95,25 +95,19 @@ import {
   WhereBotsLive,
 } from "../components/LocalMode";
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
-import { Onboarding } from "../onboarding/Onboarding";
+import { onboarding } from "../onboarding/deferred";
 import { writeClipboard } from "../lib/clipboard";
 import { cn } from "../lib/cn";
-import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
+import { deferred, preloadWhenIdle } from "../lib/deferred";
 import type { ConnectorsIntents } from "../components/connectors/screen";
-import { EditBotDialog } from "../components/EditBotDialog";
-import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
-import { NewBotDialog } from "../components/NewBotDialog";
-import { RoomDialog } from "../components/RoomDialog";
-import { RoutineRunsDialog } from "../components/RoutineRuns";
-import {
-  NewFromTemplateDialog,
-  ShareTemplateDialog,
-  type TemplateShare,
-} from "../components/TemplateDialogs";
+import type { TemplateShare } from "../components/TemplateDialogs";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
+// Part of the first load: its parent lets go of the runs it reads once it has
+// finished closing, which a dialog still on its way would never say.
+import { RoutineRunsDialog } from "../components/RoutineRuns";
 import { notificationAccess } from "../preferences/notifications";
 import type { PairView } from "../components/PairConversation";
 import type {
@@ -167,6 +161,41 @@ import { askLocalDevice, localMode, useLocalServer } from "./localServer";
 import { LinkedPairingCode } from "./pairingLink";
 import { signInUnencrypted } from "./platform";
 import { useSavesUnderWay } from "./savesUnderWay";
+
+// Not part of the app's first load: the first run, and dialogs that open only
+// when the operator asks, whose code is fetched the first time one opens; the
+// two opened most are fetched once the page is idle.
+const Onboarding = onboarding.Component;
+const ConnectorsDialog = deferred(
+  () => import("../components/connectors/ConnectorsDialog").then((m) => m.ConnectorsDialog),
+  (props) => props.opening !== null,
+).Component;
+const editBotDialog = deferred(
+  () => import("../components/EditBotDialog").then((m) => m.EditBotDialog),
+  (props) => props.bot !== null,
+);
+const EditBotDialog = editBotDialog.Component;
+const MemoryViewer = deferred(
+  () => import("../components/MemoryViewer").then((m) => m.MemoryViewer),
+  (props) => props.file !== null,
+).Component;
+const newBotDialog = deferred(
+  () => import("../components/NewBotDialog").then((m) => m.NewBotDialog),
+  (props) => props.open,
+);
+const NewBotDialog = newBotDialog.Component;
+const RoomDialog = deferred(
+  () => import("../components/RoomDialog").then((m) => m.RoomDialog),
+  (props) => props.mode !== null,
+).Component;
+const NewFromTemplateDialog = deferred(
+  () => import("../components/TemplateDialogs").then((m) => m.NewFromTemplateDialog),
+  (props) => props.opened !== null,
+).Component;
+const ShareTemplateDialog = deferred(
+  () => import("../components/TemplateDialogs").then((m) => m.ShareTemplateDialog),
+  (props) => props.share !== null,
+).Component;
 
 /**
  * What the room form is open for. A room is named by id and read from the
@@ -706,7 +735,7 @@ function useLocalHere(origin: URL) {
           return new Promise<never>(() => {});
         }
         // The first bot is the primary one: there is no other to choose.
-        return j3.createBot({ name, primary: true, avatar });
+        return j3.createBot({ name, title: t("bot.primaryTitle"), primary: true, avatar });
       })
       .then((result): IntentResult<BotId> => {
         if (result._tag === "done") return { _tag: "done", value: result.value.id };
@@ -921,6 +950,8 @@ function LiveShell({
   useTemplateDrop(openTemplate);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
+  // Where the bot editor opens: at its title, for a bot given one from its menu.
+  const [editingAt, setEditingAt] = useState<"title" | null>(null);
   const [roomForm, setRoomForm] = useState<RoomFormTarget | null>(null);
   // Whether New bot, the bot editor and the memory viewer hold what the
   // operator typed and has not saved yet, as they report.
@@ -1104,15 +1135,15 @@ function LiveShell({
     // purpose; the entry still shows as unread once the roster loads.
     const listed = j3.roster.get();
     const rows = listed._tag === "ready" ? listed.value : [];
-    const botName = (id: BotId) =>
-      rows.flatMap((row) =>
-        row._tag === "bot" && row.bot.id === id ? [row.bot.profile.name] : [],
-      )[0] ?? null;
+    const profileOf = (id: BotId) =>
+      rows.flatMap((row) => (row._tag === "bot" && row.bot.id === id ? [row.bot.profile] : []))[0];
+    const botName = (id: BotId) => profileOf(id)?.name ?? null;
+    const botTitle = (id: BotId) => profileOf(id)?.title ?? "";
     const roomName = (id: RoomId) =>
       rows.flatMap((row) =>
         row._tag === "room" && row.room.id === id ? [row.room.name] : [],
       )[0] ?? null;
-    const content = notificationText(notification, { botName, roomName }, i18n);
+    const content = notificationText(notification, { botName, botTitle, roomName }, i18n);
     if (content === null) return;
     // In the theme the system is in as it shows, since the system draws it.
     // The desktop app overrides the theme Electron reports, which may reach
@@ -1155,6 +1186,7 @@ function LiveShell({
     if (opening._tag === "open") openTarget(opening.target);
   });
   useEffect(() => onNotificationClick(openClicked), []);
+  useEffect(() => preloadWhenIdle(newBotDialog.preload, editBotDialog.preload), []);
   useEffect(() => {
     const waiting = waitingClick.current;
     if (waiting !== null && listedRoster._tag === "ready") openClicked(waiting);
@@ -1566,7 +1598,10 @@ function LiveShell({
         else say(t("room.deleteFailed", { name }));
       });
     },
-    editProfile: setEditingBot,
+    editProfile: (botId, at) => {
+      setEditingAt(at ?? null);
+      setEditingBot(botId);
+    },
     setBrowser: (bot, enabled) =>
       void j3.updateBot(bot.id, { browser: enabled }).then((result) => {
         if (result._tag !== "failed") return;
@@ -1756,6 +1791,7 @@ function LiveShell({
         bot={editingBotValue}
         engine={data.engine}
         save={editingBot === null ? undefined : botSaves.get(editingBot)}
+        at={editingAt}
         connected={data.connected}
         unsaved={botEditUnsaved}
         onUnsavedChange={setBotEditUnsaved}

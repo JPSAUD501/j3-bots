@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RosterItem } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
-import { Eye, EyeOff, Info, Pin, PinOff } from "lucide-react-native";
+import { Info, ListPlus, Pin, PinOff, Theater } from "lucide-react-native";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomPlacing } from "../screens/placing.ts";
@@ -18,9 +18,10 @@ export interface PressedRoom {
 
 /**
  * What the operator can do to a room from the roster, opened by a long press
- * on its row: pin or unpin it at the top of the list, hide it among the
- * hidden conversations, and open its details. A hidden room, which a search
- * finds, offers Show in place of Pin and Hide, as a hidden bot does.
+ * on its row: pin or unpin it at the top of the list, move it behind the
+ * scenes, and open its details. A room behind the scenes, which a search
+ * finds, offers Bring back to the list in place of Pin and Move behind the
+ * scenes, as a bot there does.
  * `onLeave` hears of a row about to leave the list by the operator's hand,
  * before the server has it, so it can go smoothly.
  */
@@ -42,17 +43,17 @@ export function RoomMenu({
   const { item } = pressed;
   const { room } = item;
   const entries: ReadonlyArray<MenuEntry> = room.hidden
-    ? [{ label: t("roster.unhide"), icon: Eye, onPress: () => placing.unhide(room) }]
+    ? [{ label: t("backstage.bringBack"), icon: ListPlus, onPress: () => placing.bringBack(room) }]
     : [
         room.pinned
           ? { label: t("roster.unpin"), icon: PinOff, onPress: () => placing.unpin(room) }
           : { label: t("roster.pin"), icon: Pin, onPress: () => placing.pin(room) },
         {
-          label: t("roster.hide"),
-          icon: EyeOff,
+          label: t("backstage.move"),
+          icon: Theater,
           onPress: () => {
             onLeave(item);
-            placing.hide(room);
+            placing.moveBackstage(room);
           },
         },
       ];

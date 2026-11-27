@@ -4,6 +4,14 @@ import type { BotId, Room } from "@j3-bots/contracts";
 
 /** How many bots a room holds, as the server checks. */
 export const ROOM_MEMBERS = { min: 2, max: 6 } as const;
+/**
+ * Whether the operator can unarchive the room. A room of bots only takes no
+ * members from them (decision 0103), so one that deleted bots left too small
+ * stays archived; any other room gets what it lacks in the form.
+ */
+export const unarchivable = (room: Room): boolean =>
+  room.botsOnly !== true || room.members.length >= ROOM_MEMBERS.min;
+
 /** The longest room name the server takes. */
 export const ROOM_NAME_MAX = 200;
 
