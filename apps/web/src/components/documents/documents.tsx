@@ -9,7 +9,15 @@ import {
 } from "@j3-bots/client-runtime/documents";
 import type { Attachment } from "@j3-bots/contracts";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { createContext, type ReactNode, use, useEffect, useEffectEvent, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  use,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useState,
+} from "react";
 import { openPdf } from "./pdf";
 import { decodeRead, ReadRequest } from "./readRequest";
 
@@ -61,6 +69,11 @@ interface DocumentCache {
   readonly load: (attachment: Attachment) => Promise<DocumentState>;
   /** Keeps a document read while something shows it; the answer lets it go. */
   readonly hold: (attachment: Attachment) => () => void;
+  /**
+   * Starts the cache's use; the answer ends it, closing every PDF it holds,
+   * and any that opens after.
+   */
+  readonly use: () => () => void;
 }
 
 // The most documents the page keeps read that nothing shows; the one shown
@@ -74,6 +87,7 @@ function documentCache(
   const kept = new Map<string, DocumentState>();
   const loading = new Map<string, Promise<DocumentState>>();
   const holds = new Map<string, number>();
+  let used = false;
   const trim = () => {
     let over = kept.size - KEPT;
     for (const [key, state] of kept) {
@@ -113,6 +127,10 @@ function documentCache(
       if (pending !== undefined) return pending;
       const next = read(attachment).then((state) => {
         loading.delete(attachment.id);
+        if (!used) {
+          if (state._tag === "pdf") state.close();
+          return state;
+        }
         // One that could not be fetched is asked for again the next time it shows.
         if (state._tag !== "unreachable") keep(attachment.id, state);
         return state;
@@ -128,6 +146,14 @@ function documentCache(
         if (left > 0) holds.set(key, left);
         else holds.delete(key);
         trim();
+      };
+    },
+    use: () => {
+      used = true;
+      return () => {
+        used = false;
+        for (const state of kept.values()) if (state._tag === "pdf") state.close();
+        kept.clear();
       };
     },
   };
@@ -149,7 +175,12 @@ export function DocumentsProvider({
   locale: string;
   children: ReactNode;
 }) {
-  const [cache] = useState(() => documentCache(fetch, locale));
+  // The first `fetch`, as the image cache keeps it: it reads from the server
+  // the provider is mounted for. A cache for each language, since a
+  // spreadsheet's numbers are read in it.
+  const [read] = useState(() => fetch);
+  const cache = useMemo(() => documentCache(read, locale), [read, locale]);
+  useEffect(() => cache.use(), [cache]);
   return <DocumentsContext value={cache}>{children}</DocumentsContext>;
 }
 
@@ -160,12 +191,16 @@ export function DocumentsProvider({
 export function useDocument(attachment: Attachment, wanted: boolean): DocumentState | null {
   const cache = use(DocumentsContext);
   const key = attachment.id;
-  const [state, setState] = useState<{ readonly key: string; readonly document: DocumentState }>(
-    () => ({
-      key,
-      document: cache?.peek(attachment) ?? { _tag: "loading" },
-    }),
-  );
+  // Read by this cache: one of another language may have closed it.
+  const [state, setState] = useState<{
+    readonly key: string;
+    readonly cache: DocumentCache | null;
+    readonly document: DocumentState;
+  }>(() => ({
+    key,
+    cache,
+    document: cache?.peek(attachment) ?? { _tag: "loading" },
+  }));
   const attachmentNow = useEffectEvent(() => attachment);
   useEffect(() => {
     if (cache === null || !wanted) return;
@@ -173,7 +208,7 @@ export function useDocument(attachment: Attachment, wanted: boolean): DocumentSt
     const shown = attachmentNow();
     const release = cache.hold(shown);
     void cache.load(shown).then((document) => {
-      if (current) setState({ key, document });
+      if (current) setState({ key, cache, document });
     });
     return () => {
       current = false;
@@ -181,7 +216,7 @@ export function useDocument(attachment: Attachment, wanted: boolean): DocumentSt
     };
   }, [cache, wanted, key]);
   if (cache === null || !wanted) return null;
-  return state.key === key ? state.document : { _tag: "loading" };
+  return state.key === key && state.cache === cache ? state.document : { _tag: "loading" };
 }
 
 /** The pages of a PDF that show, and whether it has more. */
