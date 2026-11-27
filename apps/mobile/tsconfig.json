@@ -16,7 +16,14 @@
           "globalDate": "off",
           "globalTimers": "off",
           "globalFetch": "off"
-        }
+        },
+        // A test may read a file of the native modules, which the app never does.
+        "overrides": [
+          {
+            "include": ["**/*.test.ts"],
+            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          }
+        ]
       }
     ]
   },

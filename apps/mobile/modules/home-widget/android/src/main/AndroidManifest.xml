@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- The home-screen widget: a bot or a routine, drawn from what the app last wrote (BotWidgetProvider.kt). -->
+    <receiver
+      android:name="dev.j3bots.homewidget.BotWidgetProvider"
+      android:exported="false"
+      android:label="@string/j3_widget_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/j3_widget_info" />
+    </receiver>
+    <!--
+      Picks what a widget shows as it is added, or again later: a translucent
+      window in which the app draws the choice (WidgetSetupActivity.kt).
+      Android opens it for the launcher, which needs it exported.
+    -->
+    <activity
+      android:name="dev.j3bots.homewidget.WidgetSetupActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+      android:theme="@style/J3WidgetSetup">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

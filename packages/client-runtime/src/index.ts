@@ -14,6 +14,7 @@ export {
   type Platform,
   type SecretsHandle,
   type ServerUpdateHandle,
+  type SendWithFilesResult,
   type ServerUpdateStart,
   type UsageHandle,
   type WorkStepsHandle,

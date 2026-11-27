@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { admitFiles, type FileProblem, normalizeMediaType } from "../files/limits.ts";
-import { type Draft, type DraftMention, heldFiles } from "../stores/Drafts.ts";
 
 /** A file another app shared, as the platform describes it. */
 export interface SharedFile {
@@ -17,15 +16,19 @@ export interface SharedFile {
 export interface Shared {
   readonly text: string | null;
   readonly url: string | null;
+  /**
+   * What the sharing app called the link, as a page's title: only what it
+   * handed over with the share. The page is never fetched to find one.
+   */
+  readonly title: string | null;
   readonly files: ReadonlyArray<SharedFile>;
 }
 
-/** What sharing does to the draft of the bot or room the operator picked. Nothing is sent. */
-export interface SharedDraft {
-  /** The draft's new text, with `mentions`: what `setText` takes. */
+/** The message a share becomes, sent to the bot the operator picked. */
+export interface SharedMessage {
+  /** Its text, empty when the share is files alone and no line was added. */
   readonly text: string;
-  readonly mentions: ReadonlyArray<DraftMention>;
-  /** The shared files the draft takes, in order: each to read and `attach`. */
+  /** The shared files the message takes, in order: each to read and upload. */
   readonly uploads: ReadonlyArray<SharedFile>;
   /**
    * The shared files it leaves out, in order, each with why: the reason the
@@ -34,33 +37,33 @@ export interface SharedDraft {
   readonly leftOut: ReadonlyArray<{ readonly file: SharedFile; readonly problem: FileProblem }>;
 }
 
-/** The shared text, then its URL on a line of its own unless the text already holds it. */
-const sharedText = ({ text, url }: Shared) => {
+/**
+ * The shared text, then the link: on a line of its own unless the text
+ * already holds it, under its title when the sharing app gave one the text
+ * does not already hold.
+ */
+const sharedText = ({ text, url, title }: Shared) => {
   const said = text?.trim() ?? "";
   const link = url?.trim() ?? "";
-  const parts = link === "" || said.includes(link) ? [said] : [said, link];
-  return parts.filter((part) => part !== "").join("\n");
+  if (link === "" || said.includes(link)) return said;
+  const named = title?.trim() ?? "";
+  const heading = named === "" || said.includes(named) || named === link ? "" : named;
+  return [said, heading, link].filter((part) => part !== "").join("\n");
 };
 
 /**
- * Puts what another app shared into `draft`, the draft of the bot or room
- * the operator picked, which may already hold writing and files. The shared
- * text follows what the draft holds, after a blank line, so nothing written
- * there is lost and the mentions picked in it stand where they were. It is
- * kept whole whatever its length: as with text typed into the composer, Send
- * says when the message is too long. The files are admitted against those the
- * draft already holds, by the rule `attach` applies to files picked in the
- * composer, with the media type the server will store: a file the draft
- * takes is to be uploaded, one it does not is left out with the reason.
+ * The message what another app shared becomes: the line the operator added
+ * above it first, then a blank line and the shared text and link. The text is
+ * kept whole whatever its length: as with text typed into the composer, the
+ * send says when the message is too long. The files are admitted by the rule
+ * `attach` applies to files picked in the composer, with the media type the
+ * server will store: a file the message takes is to be uploaded, one it does
+ * not is left out with the reason.
  */
-export const sharedDraft = (draft: Draft | undefined, shared: Shared): SharedDraft => {
-  const written = draft?.text ?? "";
-  const added = sharedText(shared);
-  const kept = written.trim() !== "";
-  const text = added === "" ? written : kept ? `${written.trimEnd()}\n\n${added}` : added;
-  const mentions = added === "" || kept ? (draft?.mentions ?? []) : [];
+export const sharedMessage = (shared: Shared, line: string): SharedMessage => {
+  const text = [line.trim(), sharedText(shared)].filter((part) => part !== "").join("\n\n");
   const problems = admitFiles(
-    heldFiles(draft),
+    [],
     shared.files.map((file) => ({
       name: file.name,
       mediaType: normalizeMediaType(file.mediaType),
@@ -68,11 +71,11 @@ export const sharedDraft = (draft: Draft | undefined, shared: Shared): SharedDra
     })),
   );
   const uploads: Array<SharedFile> = [];
-  const leftOut: Array<SharedDraft["leftOut"][number]> = [];
+  const leftOut: Array<SharedMessage["leftOut"][number]> = [];
   shared.files.forEach((file, index) => {
     const problem = problems[index] ?? null;
     if (problem === null) uploads.push(file);
     else leftOut.push({ file, problem });
   });
-  return { text, mentions, uploads, leftOut };
+  return { text, uploads, leftOut };
 };

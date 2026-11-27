@@ -79,5 +79,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0081](0081-one-secret-card-asks-for-every-value-at-once.md) | One secret card asks for every value a request needs, at once | Accepted |
 | [0082](0082-a-bots-effort-sits-beside-its-model-and-the-default-is-the-harnesss-own.md) | A bot's effort sits beside its model, and the default is the harness's own | Accepted |
 | [0083](0083-only-the-engine-notices-a-person-can-act-on-show.md) | Only the engine notices a person can act on show | Accepted |
+| [0091](0091-a-share-goes-straight-to-a-bot-and-a-widget-keeps-one-in-sight.md) | A share goes straight to a bot, and a widget keeps one in sight | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  One widget, of two kinds picked as it is added (WidgetSetupActivity).
+  Android draws it again every 30 minutes, the least it allows, from what the
+  app last wrote; nothing runs in the background for it.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:minWidth="40dp"
+  android:minHeight="40dp"
+  android:minResizeWidth="40dp"
+  android:minResizeHeight="40dp"
+  android:targetCellWidth="2"
+  android:targetCellHeight="2"
+  android:resizeMode="horizontal|vertical"
+  android:widgetCategory="home_screen"
+  android:updatePeriodMillis="1800000"
+  android:initialLayout="@layout/j3_widget_message"
+  android:description="@string/j3_widget_description"
+  android:configure="dev.j3bots.homewidget.WidgetSetupActivity"
+  android:widgetFeatures="reconfigurable" />

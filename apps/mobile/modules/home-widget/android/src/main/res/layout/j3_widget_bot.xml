@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- A bot: its face, its name, and, when there is room, what it is doing. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@android:id/background"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@drawable/j3_widget_background"
+  android:clipToOutline="true"
+  android:gravity="center"
+  android:orientation="vertical"
+  android:padding="8dp">
+  <include
+    layout="@layout/j3_widget_face"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1" />
+  <TextView
+    android:id="@+id/j3_widget_name"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:fontFamily="sans-serif-medium"
+    android:gravity="center"
+    android:maxLines="1"
+    android:textColor="@color/j3_widget_foreground"
+    android:textSize="14sp" />
+  <TextView
+    android:id="@+id/j3_widget_state"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:gravity="center"
+    android:maxLines="1"
+    android:textColor="@color/j3_widget_muted"
+    android:textSize="12sp" />
+</LinearLayout>

@@ -210,16 +210,20 @@ describe("sharedTemplate", () => {
 
   it("takes a share of one template file, by its name or its media type", () => {
     const named = file("Scout.J3BOT");
-    expect(sharedTemplate({ text: null, url: null, files: [named] })).toBe(named);
+    expect(sharedTemplate({ text: null, url: null, title: null, files: [named] })).toBe(named);
     const typed = file("download", "application/vnd.j3bots.bot+json");
-    expect(sharedTemplate({ text: null, url: null, files: [typed] })).toBe(typed);
+    expect(sharedTemplate({ text: null, url: null, title: null, files: [typed] })).toBe(typed);
   });
 
   it("leaves a share that holds anything more for a conversation", () => {
     const template = file("scout.j3bot");
-    expect(sharedTemplate({ text: "look", url: null, files: [template] })).toBeNull();
-    expect(sharedTemplate({ text: null, url: null, files: [template, template] })).toBeNull();
-    expect(sharedTemplate({ text: null, url: null, files: [file("notes.json")] })).toBeNull();
+    expect(sharedTemplate({ text: "look", url: null, title: null, files: [template] })).toBeNull();
+    expect(
+      sharedTemplate({ text: null, url: null, title: null, files: [template, template] }),
+    ).toBeNull();
+    expect(
+      sharedTemplate({ text: null, url: null, title: null, files: [file("notes.json")] }),
+    ).toBeNull();
   });
 });
 
