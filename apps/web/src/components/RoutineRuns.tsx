@@ -2,7 +2,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import type { Loaded, RoutineRuns as Runs } from "@j3-bots/client-runtime";
 import { routineLines, routineRunLines } from "@j3-bots/client-runtime/wording";
-import type { Routine, RoutineRun } from "@j3-bots/contracts";
+import { hasSeveralSteps, type Routine, type RoutineRun } from "@j3-bots/contracts";
 import {
   CircleCheckIcon,
   CircleDotIcon,
@@ -15,6 +15,7 @@ import {
 import { useId } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
+import { MiniRail, RoutineTrackRest } from "./RoutineTrack";
 import { Button } from "./ui/button";
 import { SkeletonRows } from "./ui/skeleton";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -27,7 +28,10 @@ const RUN_ICON: Record<RoutineRun["status"], readonly [LucideIcon, string]> = {
   skipped: [CircleSlashIcon, "text-muted-foreground"],
 };
 
-/** One run: what it did and when, why it failed or was skipped, and what it noted. */
+/**
+ * One run: what it did and when, why it failed or was skipped, and what it
+ * noted. A run of a routine with several steps shows its mini rail over it.
+ */
 function RunRow({ run }: { readonly run: RoutineRun }) {
   const ctx = usePresentation();
   const lines = routineRunLines(run, ctx);
@@ -36,6 +40,11 @@ function RunRow({ run }: { readonly run: RoutineRun }) {
     <li className="flex items-start gap-3 py-2.5">
       <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", tone)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {run.steps !== undefined && (
+          <div className="mt-0.5 mb-1">
+            <MiniRail run={run} />
+          </div>
+        )}
         <div className="flex items-baseline gap-3">
           <span className={cn("text-sm", lines.failed && "text-blocked")}>{lines.status}</span>
           <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -70,7 +79,7 @@ export interface RoutineRunListProps {
 /**
  * A routine's recent runs, newest first, under its schedule and when it runs
  * next: whether each reported back, had nothing to say, failed and why, or
- * was skipped.
+ * was skipped. A routine with several steps opens on its track at rest.
  */
 export function RoutineRunList({ routine, runs }: RoutineRunListProps) {
   const ctx = usePresentation();
@@ -87,6 +96,16 @@ export function RoutineRunList({ routine, runs }: RoutineRunListProps) {
           {lines.status !== null && (
             <span className="text-xs text-muted-foreground">{lines.status}</span>
           )}
+        </section>
+      )}
+      {routine !== null && hasSeveralSteps(routine.steps, routine.botId) && (
+        <section className="border-b border-border px-4 py-3">
+          <RoutineTrackRest
+            name={routine.name}
+            trigger={routine.trigger}
+            owner={routine.botId}
+            steps={routine.steps}
+          />
         </section>
       )}
       <section className="px-4 py-4">

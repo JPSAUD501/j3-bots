@@ -45,8 +45,8 @@ export class ProviderSetup extends Context.Service<
     /**
      * Starts the harness's sign-in, or follows the one under way. On a new
      * socket it follows the same one again, and never starts another.
-     * `openPage` opens the page it waits on, once, unless the harness opened
-     * it itself.
+     * `openPage` opens the page it waits on, once, as soon as the server
+     * has it: the operator never presses anything to see it.
      */
     readonly signIn: (
       harness: SignInHarness,
@@ -113,7 +113,7 @@ export const layer = Layer.effect(
         Effect.andThen(
           show(harness, status),
           Effect.sync(() => {
-            if (status._tag !== "waiting-for-browser" || status.opened || pageOpened) return;
+            if (status._tag !== "waiting-for-browser" || pageOpened) return;
             pageOpened = true;
             openPage(status.url);
           }),

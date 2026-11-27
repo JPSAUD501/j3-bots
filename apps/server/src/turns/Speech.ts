@@ -84,6 +84,7 @@ import { mediaTypeOf } from "./mediaTypes.ts";
 import { type RoomReader, roomReads } from "./roomReads.ts";
 import { routineSpeech } from "./routineSpeech.ts";
 import { saidInConversation } from "./saidInConversation.ts";
+import { finishStepTool } from "./finishStepTool.ts";
 import { type Once, routineTool } from "./routineTool.ts";
 import {
   ADMISSION_DEADLINE,
@@ -267,6 +268,7 @@ type PinnedTool =
   | "message_bot"
   | "read_room"
   | "set_routine"
+  | "finish_step"
   | "set_operator_name"
   | "ask_for_secret"
   | "fill_credential"
@@ -304,7 +306,8 @@ const keyOf = (call: Request) => ({
  * The turn tools (`docs/architecture/server.md`, Bot tools): `say` and `ask`,
  * which speak, `request_browser_help`, which asks the operator to do a step
  * in the bot's browser, `message_bot`, which reaches a teammate (Teammate messages),
- * `set_routine` (`routineTool.ts`) and `set_operator_name`. Each request is matched to the
+ * `set_routine` (`routineTool.ts`), `finish_step` (`finishStepTool.ts`) and
+ * `set_operator_name`. Each request is matched to the
  * engine's record of its call in the session's running admitted turn and
  * pinned to it, in the transaction that applies it, so a request acts once,
  * for the turn and the audience that made it.
@@ -337,6 +340,7 @@ export const layer = Layer.effect(
     const roomOf = liveRoom(sql);
     const spoken = routineSpeech(sql, ids, changes);
     const setRoutine = yield* routineTool;
+    const finishStep = yield* finishStepTool;
     const reads = roomReads(sql, entries, bots, settings);
     const botStates = yield* BotStates;
     const firstContact = inFirstContact(sql);
@@ -2071,6 +2075,8 @@ export const layer = Layer.effect(
           return yield* readRoom(found, call.input);
         case "set_routine":
           return yield* setRoutine(found, call.input, once("set_routine", found));
+        case "finish_step":
+          return yield* finishStep(found, call.input, once("finish_step", found));
         case "set_operator_name":
           return yield* setOperatorName(found, call.input);
         case "ask_for_secret":

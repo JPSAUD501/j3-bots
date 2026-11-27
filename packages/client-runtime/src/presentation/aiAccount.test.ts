@@ -16,11 +16,10 @@ import {
   aiAction,
   type AiFacts,
   aiNameOf,
+  aiOnItsWay,
   aiOutage,
   connectStepSaysProgress,
-  openAiAccount,
   queuedSignIn,
-  signInStepAt,
 } from "./aiAccount.ts";
 
 const provider = (
@@ -208,7 +207,7 @@ describe("where an AI account stands", () => {
       pinnedVersion: "0.1.11",
       providers: [],
     };
-    expect(aiAccountState("codex", facts(starting))).toEqual({ _tag: "preparing", progress: 0.25 });
+    expect(aiAccountState("codex", facts(starting))).toEqual({ _tag: "preparing" });
     expect(aiAccountState("codex", facts(starting, [], ["codex"]))).toEqual({
       _tag: "sign-in",
       failed: null,
@@ -224,21 +223,22 @@ describe("where an AI account stands", () => {
   });
 });
 
-describe("the account a screen opens on", () => {
-  it("asks which one while neither is connected nor signing in", () => {
-    const engine = engineWith(provider("claude-code", signedOut), provider("codex", signedOut));
-    expect(openAiAccount(aiAccountStates(facts(engine)))).toBeNull();
-  });
-
-  it("opens the one connected, before one that is only signing in", () => {
+describe("an account on its way, which the first run's Create follows", () => {
+  it("is one connected, signing in, or just signed in, and not one that still asks for a press", () => {
     const engine = engineWith(
       provider("claude-code", signedOut),
       provider("codex", { _tag: "ready" }),
     );
-    const signingIn = [["claude-code", { _tag: "starting" }]] as const;
-    expect(openAiAccount(aiAccountStates(facts(engine, signingIn)))).toBe("codex");
-    const neither = engineWith(provider("claude-code", signedOut), provider("codex", signedOut));
-    expect(openAiAccount(aiAccountStates(facts(neither, signingIn)))).toBe("claude-code");
+    const states = aiAccountStates(facts(engine, [["claude-code", { _tag: "starting" }]]));
+    expect(aiOnItsWay(states.codex, false)).toBe(true);
+    expect(aiOnItsWay(states["claude-code"], false)).toBe(true);
+    expect(aiOnItsWay({ _tag: "finishing" }, false)).toBe(true);
+    expect(aiOnItsWay({ _tag: "sign-in", failed: null }, false)).toBe(false);
+    expect(aiOnItsWay({ _tag: "getting", task: "downloading", progress: 0.4 }, false)).toBe(false);
+  });
+
+  it("is one whose sign-in, asked for early, waits for its download", () => {
+    expect(aiOnItsWay({ _tag: "getting", task: "downloading", progress: 0.4 }, true)).toBe(true);
   });
 });
 
@@ -277,7 +277,7 @@ describe("an account's one button", () => {
 
 describe("a sign-in asked for before it can start", () => {
   it("asks for the download nothing has started, waits through it and the check, then starts", () => {
-    expect(queuedSignIn({ _tag: "preparing", progress: null })).toBe("keep");
+    expect(queuedSignIn({ _tag: "preparing" })).toBe("keep");
     expect(queuedSignIn({ _tag: "missing", canGet: true, failed: null, page: null })).toBe(
       "download",
     );
@@ -295,18 +295,6 @@ describe("a sign-in asked for before it can start", () => {
   });
 });
 
-describe("the sign-in's three steps", () => {
-  it("moves from the page, to signing in, to coming back, and ends done", () => {
-    expect(signInStepAt({ _tag: "sign-in", failed: null })).toBeNull();
-    expect(signInStepAt({ _tag: "signing-in", step: "opening", page: null })).toBe("page");
-    expect(signInStepAt({ _tag: "signing-in", step: "browser", page: "https://example.com" })).toBe(
-      "sign-in",
-    );
-    expect(signInStepAt({ _tag: "finishing" })).toBe("back");
-    expect(signInStepAt({ _tag: "ready", limit: null })).toBe("done");
-  });
-});
-
 describe("what keeps J3 Bots from running any account", () => {
   it("is an engine that is out, not one still starting", () => {
     const base = engineWith();
@@ -320,12 +308,22 @@ describe("what keeps J3 Bots from running any account", () => {
 });
 
 describe("the first run's quiet line, on the connect step", () => {
-  it("stays while the step only asks which AI, and goes once the step says how far things are itself", () => {
+  it("says how far J3 Bots is while it only starts, and leaves an account's own download to its row", () => {
     const starting: EngineStatus = { ...engineWith(), state: { _tag: "starting" } };
-    expect(connectStepSaysProgress(starting, null)).toBe(false);
-    expect(connectStepSaysProgress(starting, "claude-code")).toBe(true);
+    expect(connectStepSaysProgress(starting)).toBe(false);
+    const downloading: EngineStatus = {
+      ...starting,
+      harnesses: {
+        "claude-code": {
+          ...noCopy,
+          task: { _tag: "downloading", receivedBytes: 1, totalBytes: 4 },
+        },
+        codex: noCopy,
+      },
+    };
+    expect(connectStepSaysProgress(downloading)).toBe(true);
     const out: EngineStatus = { ...engineWith(), state: { _tag: "unavailable", reason: "down" } };
-    expect(connectStepSaysProgress(out, null)).toBe(true);
+    expect(connectStepSaysProgress(out)).toBe(true);
   });
 });
 
