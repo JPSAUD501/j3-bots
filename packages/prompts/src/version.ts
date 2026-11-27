@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
 import {
+  APP_SHOWN_LINE,
   CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
   connectorSkillsDescription,
@@ -86,6 +87,14 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
         }),
       ),
       { type: "reactions", news: { ...news, room: null } },
+      {
+        type: "app-context",
+        connector: "Connector",
+        tool: "Tool",
+        at,
+        text: "text",
+        data: '{"key":"value"}',
+      },
       {
         type: "session-rotated",
         digest: [
@@ -487,6 +496,7 @@ const fingerprint = (): string => {
     ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
     connectorToolDescription("Connector", "text"),
+    APP_SHOWN_LINE,
     // Every line the catalog adds, cut short; the tool's own description is in `toolList`.
     connectorSkillsDescription("", [
       {

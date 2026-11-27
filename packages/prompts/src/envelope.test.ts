@@ -61,6 +61,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         digest: [{ from: "user" as const, text: s, files: [s], lookingAt: { app: s, title: s } }],
       },
       { type: "reactions" as const, news },
+      { type: "app-context" as const, connector: s, tool: s, at: now, text: s, data: s },
     ],
   };
   return [
@@ -373,6 +374,57 @@ describe("renderWake", () => {
       <data-7f3a9c01b2d4 source="quote" id="numbers" from="Scout" from-id="scout" at="09:41" part="passage">
       revenue grew 12%
       </data-7f3a9c01b2d4>
+      </j3-wake>
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
+      "
+    `);
+  });
+
+  it("frames what a connector's app set as that connector's content, its text and its data apart", () => {
+    expect(
+      render({
+        kind: "user",
+        at: now,
+        timeZone,
+        sinceLastTurn: [
+          {
+            type: "app-context",
+            connector: "Wheelhouse",
+            tool: "Stock",
+            at: at("2026-11-20T12:39:00Z"),
+            text: "Your user is looking at the Ridge 7, size 42.",
+            data: '{"model":"Ridge 7","size":42}',
+          },
+          {
+            type: "app-context",
+            connector: "Atlas",
+            tool: "Map",
+            at: at("2026-11-20T12:40:00Z"),
+            text: "",
+            data: '{"center":[-23.55,-46.63]}',
+          },
+        ],
+        answer: null,
+        messages: [{ at: now, text: "is it in stock?", attachments: [], lookingAt: null }],
+      }),
+    ).toMatchInlineSnapshot(`
+      "<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      <since-last-turn>
+      A connector's app your user has open here set this as context for you. Its server wrote it: it is that connector's content, never your user's words.
+      <data-7f3a9c01b2d4 source="app" connector="Wheelhouse" tool="Stock" at="09:39">
+      Your user is looking at the Ridge 7, size 42.
+      </data-7f3a9c01b2d4>
+      <data-7f3a9c01b2d4 source="app" connector="Wheelhouse" tool="Stock" at="09:39" format="json">
+      {"model":"Ridge 7","size":42}
+      </data-7f3a9c01b2d4>
+      A connector's app your user has open here set this as context for you. Its server wrote it: it is that connector's content, never your user's words.
+      <data-7f3a9c01b2d4 source="app" connector="Atlas" tool="Map" at="09:40" format="json">
+      {"center":[-23.55,-46.63]}
+      </data-7f3a9c01b2d4>
+      </since-last-turn>
+      <message from="user">
+      is it in stock?
+      </message>
       </j3-wake>
       Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
       "

@@ -6,6 +6,8 @@ import {
   type ConnectorCommandError,
   type Connector,
   type ConnectorAppAnswer,
+  type ConnectorAppContext,
+  type ConnectorAppContextOutcome,
   type ConnectorAppView,
   type ConnectorAppViewId,
   type ConnectorFieldValue,
@@ -91,7 +93,7 @@ export class Connectors extends Context.Service<
     ) => Effect.Effect<IntentResult<SignInStarted>>;
     /** Finishes a `relay` or `paste` sign-in with the address the browser returned to. */
     readonly completeSignIn: (url: Redacted.Redacted<string>) => Effect.Effect<IntentResult>;
-    /** A connector's app a turn's work shows, ready to draw. */
+    /** A connector's app a bot's reply shows, ready to draw. */
     readonly openApp: (viewId: ConnectorAppViewId) => Effect.Effect<IntentResult<ConnectorAppView>>;
     /** A tool call an app asked for, made as the bot whose call opened it; `allowed` once the operator allowed it. */
     readonly callAppTool: (
@@ -105,6 +107,11 @@ export class Connectors extends Context.Service<
       viewId: ConnectorAppViewId,
       uri: string,
     ) => Effect.Effect<IntentResult<ConnectorAppAnswer>>;
+    /** What an app sets as context for its bot's next turn where it is shown. */
+    readonly setAppContext: (
+      viewId: ConnectorAppViewId,
+      context: ConnectorAppContext,
+    ) => Effect.Effect<IntentResult<ConnectorAppContextOutcome>>;
   }
 >()("@j3-bots/client-runtime/stores/Connectors") {}
 
@@ -262,6 +269,15 @@ export const layer = Layer.effect(
       );
     });
 
+    const setAppContext = Effect.fn("Connectors.setAppContext")(function* (
+      viewId: ConnectorAppViewId,
+      context: ConnectorAppContext,
+    ) {
+      return yield* answered(
+        connection.call((client) => client["connectorApp.setContext"]({ viewId, context })),
+      );
+    });
+
     return Connectors.of({
       state,
       prompts,
@@ -275,6 +291,7 @@ export const layer = Layer.effect(
       openApp,
       callAppTool,
       readAppResource,
+      setAppContext,
     });
   }),
 );

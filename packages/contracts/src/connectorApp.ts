@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BotId, ConnectorId, Label } from "./base.ts";
+import { BotId, ConnectorId, Label, MAX_LABEL_LENGTH } from "./base.ts";
+import { ConnectorGlyph } from "./connector.ts";
 
 // A connector's app: the interface an MCP server gives one of its tools (the
 // MCP Apps extension, `io.modelcontextprotocol/ui`, at its 2026-01-26
-// version), which clients draw under the bot's work, in a frame isolated from
-// everything of J3 Bots' (decision 0048). docs/architecture/clients.md,
+// version), which clients draw in the bot's reply, in a frame isolated from
+// everything of J3 Bots' (decisions 0048 and 0093). docs/architecture/clients.md,
 // "Connector apps", says how a client draws one; docs/architecture/security.md,
 // "Connector apps", says what it can and cannot reach.
 
@@ -30,12 +32,8 @@ export const MAX_CONNECTOR_APP_DATA_BYTES = 2 * 1024 * 1024;
 /** The most origins an app may name in each list of its policy; any past these are not allowed. */
 export const MAX_CONNECTOR_APP_DOMAINS = 32;
 
-/** The most apps one turn's work shows; a turn that opens more shows the first ones. */
-export const MAX_CONNECTOR_APPS_PER_FOLD = 20;
-
-/** The shortest and tallest an app's frame is drawn inline, in CSS pixels. */
-export const MIN_CONNECTOR_APP_HEIGHT = 80;
-export const MAX_CONNECTOR_APP_HEIGHT = 1_600;
+/** The most apps one turn shows; a turn that opens more shows the first ones. */
+export const MAX_CONNECTOR_APPS_PER_TURN = 20;
 
 /** One app a tool call opened, as its turn's work keeps it. */
 export const ConnectorAppViewId = Schema.String.check(
@@ -160,13 +158,15 @@ export const ConnectorAppHtml = Schema.String.check(
 );
 
 /**
- * An app a turn's work shows, under its fold: which one, and the connector
- * and tool to name it by (the tool's title, else its name).
+ * An app a turn opened: which one, and the connector and tool to name it by
+ * (the tool's title, else its name), with the connector's glyph as it was
+ * then. A ref of a fold kept before 0.14.0 has no glyph, and reads as null.
  */
 export const ConnectorAppRef = Schema.Struct({
   viewId: ConnectorAppViewId,
   connectorId: ConnectorId,
   connector: Label,
+  glyph: Schema.NullOr(ConnectorGlyph).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   tool: Label,
 });
 export type ConnectorAppRef = typeof ConnectorAppRef.Type;
@@ -180,6 +180,12 @@ export const ConnectorAppTool = Schema.Struct({
   inputSchema: Schema.JsonObject,
 });
 export type ConnectorAppTool = typeof ConnectorAppTool.Type;
+
+/** What a tool's app is named by: the tool's title, else its name. */
+export const connectorAppToolLabel = (tool: ConnectorAppTool): string => {
+  const title = tool.title?.trim() ?? "";
+  return title.length > 0 && title.length <= MAX_LABEL_LENGTH ? title : tool.name;
+};
 
 /**
  * An app, ready to draw: its document and policy, the call that opened it,
@@ -198,6 +204,12 @@ export const ConnectorAppView = Schema.Struct({
   csp: ConnectorAppCsp,
   input: Schema.JsonObject,
   result: Schema.NullOr(Schema.Json),
+  /**
+   * Always `true` from a server that takes `connectorApp.setContext`: a
+   * client lets the app add to the bot's context (`ui/update-model-context`)
+   * only then, and refuses it, as before 0.14.0, against an older one.
+   */
+  modelContext: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ConnectorAppView = typeof ConnectorAppView.Type;
 
@@ -242,3 +254,33 @@ export const ConnectorAppResourceUri = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(2_048),
 );
+
+/** The most an app's context for its bot may weigh, its text and its data together, as UTF-8. */
+export const MAX_CONNECTOR_APP_CONTEXT_BYTES = 8 * 1024;
+
+/**
+ * What an app sets as context for its bot's next turn where it is shown
+ * (`ui/update-model-context`, decision 0093): the text of its text blocks,
+ * and its structured data. Both empty takes back what it set before. Within
+ * `MAX_CONNECTOR_APP_CONTEXT_BYTES` together, as the bot reads them.
+ */
+export const ConnectorAppContext = Schema.Struct({
+  text: Schema.String,
+  structured: Schema.NullOr(Schema.JsonObject),
+}).check(
+  Schema.makeFilter(
+    (context: { readonly text: string; readonly structured: Schema.JsonObject | null }) =>
+      fitsUtf8(
+        context.text + (context.structured === null ? "" : JSON.stringify(context.structured)),
+        MAX_CONNECTOR_APP_CONTEXT_BYTES,
+      ) || `a context of more than ${MAX_CONNECTOR_APP_CONTEXT_BYTES} bytes`,
+  ),
+);
+export type ConnectorAppContext = typeof ConnectorAppContext.Type;
+
+/** What came of an app's context: kept for the bot's next turn there, or why it was not. */
+export const ConnectorAppContextOutcome = Schema.Union([
+  Schema.TaggedStruct("kept", {}),
+  Schema.TaggedStruct("refused", { reason: ConnectorAppRefusal }),
+]);
+export type ConnectorAppContextOutcome = typeof ConnectorAppContextOutcome.Type;

@@ -113,6 +113,7 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     // A bot's message to a teammate shows in both conversations and notifies no one.
     case "handoff":
     case "work-fold":
+    case "connector-app":
     case "notice":
     case "routine-change":
     case "event-routine-change":

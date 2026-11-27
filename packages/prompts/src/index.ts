@@ -106,6 +106,7 @@ export {
 } from "./tools.ts";
 export {
   type CatalogSkill,
+  APP_SHOWN_LINE,
   CONNECTOR_UNAVAILABLE,
   type ConnectorData,
   type ConnectorResult,

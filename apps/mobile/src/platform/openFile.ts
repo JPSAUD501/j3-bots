@@ -80,6 +80,48 @@ export async function openAttachment(
 }
 
 /**
+ * Hands the files a connector's app offered, once the operator chose to save
+ * them, to the share sheet, one after the other, where they save them or
+ * send them to an app. Each is written first to a folder of its own in the
+ * app's cache, with the opens' files, under a name `connectorAppFileName`
+ * made safe; the app's own view runs nothing of them. Resolves false when
+ * one could not be written or shared.
+ */
+export async function shareAppFiles(
+  files: ReadonlyArray<{
+    readonly name: string;
+    readonly mediaType: string;
+    readonly bytes: Uint8Array;
+  }>,
+): Promise<boolean> {
+  if (files.length === 0) return true;
+  const root = opened();
+  if (!cleared) {
+    cleared = true;
+    forgetFolder(root);
+  }
+  started += 1;
+  const number = started;
+  const folder = new Directory(root, String(number));
+  try {
+    folder.create({ intermediates: true, idempotent: true });
+    deleteOlder(root, number);
+    for (const offered of files) {
+      const file = new File(folder, localFileName(offered.name));
+      file.create({ overwrite: true });
+      await file.write(offered.bytes);
+      await Sharing.shareAsync(file.uri, {
+        mimeType: offered.mediaType,
+        dialogTitle: offered.name,
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Deletes every file the app opened, as its server is forgotten or changed,
  * and keeps an open still under way from writing one. A file the cache
  * cannot delete is left to the system, which clears the cache as it needs:

@@ -12,6 +12,7 @@ import {
 } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import {
+  APP_SHOWN_LINE,
   DECODE_OPTIONS,
   FILL_NOTES,
   inputCapRefusal,
@@ -624,10 +625,15 @@ export const layer = Layer.effect(
           hooks: hooksFor(call.caller.botId, place),
         })
         .pipe(Effect.catchTag("ToolNotOffered", (error) => new Refused({ reason: error.message })));
-      if (Option.isSome(answer.app)) {
-        yield* apps.record({ place, botId: call.caller.botId, input, app: answer.app.value });
-      }
-      return answer;
+      if (Option.isNone(answer.app)) return answer;
+      const shown = yield* apps.record({
+        place,
+        botId: call.caller.botId,
+        input,
+        app: answer.app.value,
+      });
+      // The bot reads that its user sees the app, only once it is shown.
+      return shown ? { ...answer, text: `${answer.text}\n${APP_SHOWN_LINE}` } : answer;
     });
 
     const answer = (

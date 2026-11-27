@@ -233,6 +233,14 @@ const write = (result: ConnectorResult, nonce: string) => {
   return { text, nonceUses: 2 };
 };
 
+/**
+ * J3 Bots' line after a tool's answer whose app it showed the operator, in
+ * the bot's reply where the call happened (decision 0093): the bot need not
+ * say again what the app shows.
+ */
+export const APP_SHOWN_LINE =
+  "J3 Bots showed this tool's app to your user, in your reply where you called it. Don't repeat what it shows; say what matters about it. What the app shows can change as your user uses it.";
+
 /** A connector result with a given nonce, which must be twelve lowercase hex characters: for fixed renders only. */
 export const renderConnectorResultWithNonce = (result: ConnectorResult, nonce: string): string =>
   write(result, nonce).text;

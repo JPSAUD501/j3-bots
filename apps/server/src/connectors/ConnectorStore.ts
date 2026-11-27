@@ -234,6 +234,12 @@ export const layer = Layer.effect(
       execute: () => sql`SELECT connector_id, revoke FROM connector_removals`,
     });
 
+    /**
+     * Writes who may use the connector, once `connectors.all_bots` reads as
+     * `grant` does, and deletes what its apps set as context for a bot that no
+     * longer has it: an app's context is kept only while its bot has the
+     * connector (decision 0093), so a grant given back never carries one.
+     */
     const writeGrant = Effect.fn("ConnectorStore.writeGrant")(function* (
       id: ConnectorId,
       grant: ConnectorGrant,
@@ -246,6 +252,14 @@ export const layer = Layer.effect(
             SELECT ${id}, id FROM bots WHERE id = ${botId}
           `;
         }
+        yield* sql`
+          DELETE FROM connector_app_contexts WHERE view_id IN (
+            SELECT v.id FROM connector_app_views v
+            WHERE v.connector_id = ${id} AND NOT EXISTS (
+              SELECT 1 FROM connector_bots g WHERE g.connector_id = ${id} AND g.bot_id = v.bot_id
+            )
+          )
+        `;
       }
     });
 
@@ -318,6 +332,10 @@ export const layer = Layer.effect(
           INSERT INTO connector_removals (connector_id, revoke)
           VALUES (${id}, ${revoke})
           ON CONFLICT (connector_id) DO NOTHING
+        `;
+        yield* sql`
+          DELETE FROM connector_app_contexts
+          WHERE view_id IN (SELECT id FROM connector_app_views WHERE connector_id = ${id})
         `;
         yield* sql`DELETE FROM connectors WHERE id = ${id}`;
       },

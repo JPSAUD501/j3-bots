@@ -115,12 +115,15 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
       );
     });
 
+  // Each grant is a command of its own, so one given back after another is applied too.
+  let grants = 0;
   return {
     fake,
     grant: (bots) =>
       Effect.gen(function* () {
+        grants += 1;
         yield* service.setBots({
-          commandId: CommandId.make(`grant-${id}-${bots.join(",")}`),
+          commandId: CommandId.make(`grant-${id}-${grants}`),
           connectorId: id,
           grant: { _tag: "bots", ids: bots },
           by: { _tag: "operator" },

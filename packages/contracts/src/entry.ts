@@ -23,7 +23,7 @@ import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } fr
 import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
-import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
+import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_TURN } from "./connectorApp.ts";
 import {
   EVENT_STOP_REASONS,
   EventTrigger,
@@ -878,6 +878,21 @@ export const ConnectorInputEntry = Schema.TaggedStruct("connector-input", {
 });
 export type ConnectorInputEntry = typeof ConnectorInputEntry.Type;
 
+/**
+ * A connector's app a bot's tool call opened (decisions 0048 and 0093): part
+ * of the bot's reply, in the conversation or room the turn speaks to, where
+ * the call happened, the text the bot wrote after it below. The call keeps
+ * its step in the turn's work fold. A client draws it with
+ * `connectorApp.open`; a client that predates it shows the line for an entry
+ * it does not know. A routine's turn shows no app.
+ */
+export const ConnectorAppEntry = Schema.TaggedStruct("connector-app", {
+  ...entry,
+  author: BotAuthor,
+  app: ConnectorAppRef,
+});
+export type ConnectorAppEntry = typeof ConnectorAppEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -901,12 +916,14 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   stepCount: NonNegativeInt,
   /**
    * The connectors' apps the turn's tool calls opened, in the order they
-   * were called, at most `MAX_CONNECTOR_APPS_PER_FOLD`: a client draws each
-   * under the fold's line, open or not. Empty from a server, or a fold, that
-   * predates them.
+   * were called, at most `MAX_CONNECTOR_APPS_PER_TURN`, as a server from
+   * 0.9.0 to 0.13.x kept them: a client draws each just after the fold's
+   * line, as part of the reply. From 0.14.0 an app is an entry of its own
+   * (`ConnectorAppEntry`), in its place in the reply, and a fold's list
+   * stays empty; empty too from a server, or a fold, that predates apps.
    */
   apps: Schema.Array(ConnectorAppRef)
-    .check(Schema.isMaxLength(MAX_CONNECTOR_APPS_PER_FOLD))
+    .check(Schema.isMaxLength(MAX_CONNECTOR_APPS_PER_TURN))
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   /**
    * The turn's plan and little ones, as they stand or as the turn left them,
@@ -1290,6 +1307,7 @@ export const Entry = Schema.Union([
   ConnectorAuthEntry,
   ConnectorInputEntry,
   ConnectorAskEntry,
+  ConnectorAppEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -1349,6 +1367,7 @@ export const ReceivedEntry = Schema.Union([
   ConnectorAuthEntry,
   ConnectorInputEntry,
   ConnectorAskEntry,
+  ConnectorAppEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -1367,7 +1386,7 @@ export const PREVIEW_LENGTH = 200;
  * The text an entry leads with, which its preview carries: the message, the
  * first question, the action, what is asked for (a credential's label, a
  * browser step's note), the name of a secret asked for, the connector a card is
- * about, the routine's name; empty
+ * about, the tool whose app a bot showed, the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -1389,6 +1408,8 @@ export const entryText = (entry: Entry): string => {
     case "connector-input":
     case "connector-ask":
       return entry.name;
+    case "connector-app":
+      return entry.app.connector;
     case "routine-change":
     case "event-routine-change":
     case "routine-run":

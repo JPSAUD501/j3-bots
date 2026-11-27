@@ -1033,8 +1033,8 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     /**
-     * The catch-up notes and held messages its envelope carried go to the next
-     * one: the engine certainly never applied it. A digest is for the session
+     * The catch-up notes, held messages and apps' contexts its envelope
+     * carried go to the next one: the engine certainly never applied it. A digest is for the session
      * its dispatch was written into: once
      * that session is lost or retired, the rotation that replaces it writes
      * the digest for the next one (or, for a fresh start, none), so the one
@@ -1058,6 +1058,10 @@ export const layer = Layer.effect(
         WHERE consumed_dispatch_id = ${dispatchId} AND ${fromBeforeFreshStartSql(sql)}
       `;
       yield* sql`UPDATE catch_up_notes SET consumed_dispatch_id = NULL WHERE consumed_dispatch_id = ${dispatchId}`;
+      yield* sql`
+        UPDATE connector_app_contexts SET consumed_dispatch_id = NULL
+        WHERE consumed_dispatch_id = ${dispatchId}
+      `;
       // A message whose sender's work a Stop covered since waits no more,
       // unless the operator's Retry sent it.
       const stopped = yield* sql<{ readonly handoff_entry_id: string }>`

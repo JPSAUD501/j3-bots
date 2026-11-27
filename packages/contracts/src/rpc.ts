@@ -43,6 +43,8 @@ import {
 } from "./connector.ts";
 import {
   ConnectorAppAnswer,
+  ConnectorAppContext,
+  ConnectorAppContextOutcome,
   ConnectorAppResourceUri,
   ConnectorAppToolName,
   ConnectorAppView,
@@ -1423,12 +1425,12 @@ export const ConnectorRpcs = RpcGroup.make(
 );
 
 /**
- * A connector's app, which a turn's work shows (`WorkFoldEntry.apps`): its
- * document, and what the app asks of its connector while a client draws it
- * (decision 0048). Each request goes out as the bot whose call opened the
- * app, through that bot's own session with the connector, checked as the
- * bot's own calls are; a client asks the operator first when the view's
- * `calls` is `ask`.
+ * A connector's app, which a bot's reply shows (`ConnectorAppEntry`, and
+ * `WorkFoldEntry.apps` before 0.14.0): its document, and what the app asks
+ * of its connector while a client draws it (decisions 0048 and 0093). Each
+ * request goes out as the bot whose call opened the app, through that bot's
+ * own session with the connector, checked as the bot's own calls are; a
+ * client asks the operator first when a call answers `needs-allow`.
  */
 export const ConnectorAppRpcs = RpcGroup.make(
   /** The app, ready to draw. `NotFound("connector-app")` once its conversation's work is gone. */
@@ -1458,6 +1460,18 @@ export const ConnectorAppRpcs = RpcGroup.make(
   Rpc.make("connectorApp.readResource", {
     payload: { viewId: ConnectorAppViewId, uri: ConnectorAppResourceUri },
     success: ConnectorAppAnswer,
+    error: NotFound,
+  }),
+  /**
+   * What the app sets as context for its bot (`ui/update-model-context`):
+   * it replaces what the same app set before, and the bot reads it, framed
+   * as the connector's data, in its next turn where the app is shown. It
+   * wakes nobody. Refused `gone` once the bot no longer has the connector.
+   * Offered only against a view that carries `modelContext`.
+   */
+  Rpc.make("connectorApp.setContext", {
+    payload: { viewId: ConnectorAppViewId, context: ConnectorAppContext },
+    success: ConnectorAppContextOutcome,
     error: NotFound,
   }),
 );

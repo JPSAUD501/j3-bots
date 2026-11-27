@@ -13,8 +13,9 @@ import {
   type Connector,
   EffortLevel,
   type EngineStatus,
-  EntryId,
   type Entry,
+  EntryId,
+  EntryOrder,
   type EntryTarget,
   Invalid,
   LANGUAGES,
@@ -105,6 +106,8 @@ import {
   withLiveTurn,
   mentionOptions,
   type OnboardingStep,
+  readThrough,
+  rowOrder,
   type SettingsPage,
   withQuote,
 } from "@j3-bots/client-runtime/presentation";
@@ -233,7 +236,12 @@ import {
   samplePlan,
   unnamedLittleOne,
 } from "./sampleWork";
-import { sampleConnectorAppAccess } from "./sampleConnectorApps";
+import {
+  sampleAskingAppRef,
+  sampleConnectorAppAccess,
+  sampleConnectorAppRef,
+} from "./sampleConnectorApps";
+import { AppStageProvider, type StagedFrom } from "../components/AppStage";
 import {
   connectorsHolder,
   sampleConnectors,
@@ -350,6 +358,7 @@ export default function GalleryPage() {
                 <CardsSection />
                 <RoutineTracksSection />
                 <WorkSection />
+                <ConnectorAppsSection />
                 <PlanAndLittleOnesSection />
                 <NoticesSection />
                 <ComposerSection />
@@ -1295,6 +1304,9 @@ const revealIn =
     Promise.resolve(entries.some((entry) => entry.id === entryId) ? "shown" : "missing");
 const notSubmitting = () => false;
 
+/** The connector apps' samples quote nothing, and offer no Reply or Quote. */
+const appSampleQuotes = { reveal: revealIn([]), drafting: null };
+
 function BubblesSection() {
   const gallerySecrets = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
   const { bubbles, visualBubbles, escapingVisual, embeddingVisual } = variants;
@@ -1985,6 +1997,139 @@ const turnStates = (() => {
     },
   ] as const;
 })();
+
+/** A reply with a connector's app in it: the operator's question, the app, what Scout said after. */
+const appReplies = () => {
+  const scout = { _tag: "bot", botId: ids.scout } as const;
+  let order = 0;
+  const said = (author: Entry["author"], minutes: number, text: string): Entry => ({
+    _tag: "message",
+    id: EntryId.make(`app-reply-${++order}`),
+    order: EntryOrder.make(order),
+    author,
+    createdAt: minutesAgo(minutes),
+    text,
+    attachments: [],
+    mentions: { _tag: "bots", ids: [] },
+    delivery: { _tag: "delivered" },
+    commandId: null,
+    reactions: [],
+  });
+  const app = (ref: typeof sampleConnectorAppRef, minutes: number): Entry => ({
+    _tag: "connector-app",
+    id: EntryId.make(`app-reply-${++order}`),
+    order: EntryOrder.make(order),
+    author: scout,
+    createdAt: minutesAgo(minutes),
+    app: ref,
+  });
+  const asked = said({ _tag: "operator" }, 6, "Which of the three does the shop have in my size?");
+  const shown = [
+    asked,
+    app(sampleConnectorAppRef, 5),
+    said(scout, 5, "Only the Ridge 7 comes in M right now, and there are two."),
+  ];
+  const reply = said(scout, 1, "Held: the Ridge 7 in M waits for you until Saturday.");
+  const earlier = [
+    said({ _tag: "operator" }, 40, "Any news from the shop about the test ride?"),
+    said(scout, 39, "Saturday at ten works for them. I put it in your calendar."),
+    said({ _tag: "operator" }, 38, "Great, thanks."),
+  ];
+  return {
+    shown: buildTimeline(shown),
+    asking: buildTimeline([asked, app(sampleAskingAppRef, 5)]),
+    // Full screen once the operator asked to hold it: Scout's answer shows over the app.
+    withReply: buildTimeline([...shown, reply]),
+    fullscreen: {
+      viewId: sampleConnectorAppRef.viewId,
+      mode: "fullscreen",
+      since: readThrough(buildTimeline(shown).map(rowOrder)),
+    } satisfies StagedFrom,
+    scrolled: buildTimeline([...earlier, ...shown]),
+    pinned: { viewId: sampleConnectorAppRef.viewId, mode: "pip", since: null } satisfies StagedFrom,
+  };
+};
+
+/** A conversation in a frame, its area and its composer, with an app shown other than in the reply. */
+function StagedConversation({
+  rows,
+  staged,
+}: {
+  rows: ReturnType<typeof buildTimeline>;
+  staged: StagedFrom;
+}) {
+  const gallerySecrets = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <div ref={setArea} className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={setScroller} className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
+          <div className="px-3 py-4">
+            <AppStageProvider area={area} scroller={scroller} rows={rows} initial={staged}>
+              <Timeline
+                rows={rows}
+                room={null}
+                workSteps={workSteps}
+                submitting={notSubmitting}
+                intents={timelineIntents}
+                secrets={gallerySecrets}
+                onOpenPair={nothing}
+                onOpenRoom={nothing}
+                onOpenBot={nothing}
+                quotes={appSampleQuotes}
+              />
+            </AppStageProvider>
+          </div>
+        </div>
+      </div>
+      <div className="px-3 pt-1 pb-3">
+        <ComposerDemo initial="" recipient={team.bots.scout.profile.name} />
+      </div>
+    </div>
+  );
+}
+
+function ConnectorAppsSection() {
+  const [appReply] = useState(appReplies);
+  const gallerySecrets = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
+  const timeline = (rows: ReturnType<typeof buildTimeline>) => (
+    <div className="max-w-(--layout-text-column)">
+      <Timeline
+        rows={rows}
+        room={null}
+        workSteps={workSteps}
+        submitting={notSubmitting}
+        intents={timelineIntents}
+        secrets={gallerySecrets}
+        onOpenPair={nothing}
+        onOpenRoom={nothing}
+        onOpenBot={nothing}
+        quotes={appSampleQuotes}
+      />
+    </div>
+  );
+  return (
+    <Section title="Connector apps">
+      <Labeled label="In the bot's reply, where its call happened, and the reply going on below it">
+        {timeline(appReply.shown)}
+      </Labeled>
+      <Labeled label="An app asking to run one of its connector's tools: the operator allows it, under the frame, where the app cannot reach">
+        {timeline(appReply.asking)}
+      </Labeled>
+      <Frame
+        label="Full screen over the conversation, with its composer, and the bot's reply over the app"
+        width={640}
+        height={560}
+      >
+        <StagedConversation rows={appReply.withReply} staged={appReply.fullscreen} />
+      </Frame>
+      <Frame label="Pinned at the top while the conversation scrolls" width={640} height={460}>
+        <StagedConversation rows={appReply.scrolled} staged={appReply.pinned} />
+      </Frame>
+    </Section>
+  );
+}
 
 function WorkSection() {
   return (

@@ -304,6 +304,7 @@ export const handlers = J3Rpcs.toLayer(
       "connectorApp.open": ({ viewId }) => connectorApps.open(viewId),
       "connectorApp.callTool": (input) => connectorApps.callTool(input),
       "connectorApp.readResource": (input) => connectorApps.readResource(input),
+      "connectorApp.setContext": (input) => connectorApps.setContext(input),
       // A sign-in's address and the one it returns to carry its code and
       // `state`: neither is logged, and neither request has a receipt.
       "connector.beginSignIn": ({ connectorId, redirect }) =>

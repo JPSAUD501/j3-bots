@@ -2,6 +2,9 @@
 import {
   BotId,
   CommandId,
+  type ConnectorAppRef,
+  ConnectorAppViewId,
+  ConnectorId,
   EntryId,
   EntryOrder,
   type NoticeEntry,
@@ -14,10 +17,12 @@ import { at, handoff, message } from "../../test/fixtures.ts";
 import {
   arrivalCounts,
   arrivedRows,
+  botRepliesAfter,
   buildTimeline,
   cardPlace,
   readThrough,
   rowOrder,
+  type TimelineItem,
 } from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
@@ -52,6 +57,59 @@ describe("buildTimeline", () => {
     ]);
     expect(shape(items)).toEqual(["divider", "single", "single", "divider", "single"]);
     expect(items[3]?.kind === "divider" && items[3].at).toEqual(at("2026-11-20T10:30:00Z"));
+  });
+
+  it("shows a connector's app in the bot's reply where it was called, and an older fold's apps after its line", () => {
+    const app = (n: number): ConnectorAppRef => ({
+      viewId: ConnectorAppViewId.make(`app_${n}000000000000000`),
+      connectorId: ConnectorId.make("conn_wheelhouse0000000"),
+      connector: "Wheelhouse",
+      glyph: null,
+      tool: "Stock",
+    });
+    const items = buildTimeline([
+      message("2026-11-20T10:00:00Z"),
+      {
+        _tag: "connector-app",
+        id: EntryId.make("app-entry"),
+        order: EntryOrder.make(2),
+        author: scout,
+        createdAt: at("2026-11-20T10:00:20Z"),
+        app: app(1),
+      },
+      message("2026-11-20T10:00:30Z", scout),
+      message("2026-11-20T10:00:40Z", scout),
+      // A turn an older server kept its apps under.
+      {
+        _tag: "work-fold",
+        id: EntryId.make("fold"),
+        order: EntryOrder.make(5),
+        author: scout,
+        createdAt: at("2026-11-20T10:01:00Z"),
+        turnStartedAt: null,
+        stepCount: 2,
+        apps: [app(2), app(3)],
+        work: null,
+        status: { _tag: "running" },
+      },
+      message("2026-11-20T10:01:10Z", scout),
+    ]);
+    expect(shape(items)).toEqual([
+      "divider",
+      "single",
+      "app",
+      "first",
+      "last",
+      "work",
+      "app",
+      "app",
+      "single",
+    ]);
+    expect(items.flatMap((item) => (item.kind === "app" ? [item.app.viewId] : []))).toEqual([
+      "app_1000000000000000",
+      "app_2000000000000000",
+      "app_3000000000000000",
+    ]);
   });
 
   it("does not join messages across a line", () => {
@@ -294,6 +352,33 @@ describe("buildTimeline", () => {
         i.kind === "event" ? i.line._tag : i.kind === "card" ? i.entry._tag : i.kind,
       ),
     ).toEqual(["divider", "operator-named", "routine-paused", "notice"]);
+  });
+});
+
+describe("botRepliesAfter", () => {
+  const earlier = [
+    message("2026-11-20T10:00:00Z", scout, "Before"),
+    message("2026-11-20T10:01:00Z"),
+  ];
+  const since = readThrough(buildTimeline(earlier).map(rowOrder));
+  const first = message("2026-11-20T10:02:00Z", scout, "First");
+  const texts = (rows: ReadonlyArray<TimelineItem>) =>
+    botRepliesAfter(rows, since).map((reply) => reply.text);
+
+  it("finds what the bots said after it, and not what the operator said", () => {
+    const later = [
+      first,
+      message("2026-11-20T10:03:00Z"),
+      message("2026-11-20T10:04:00Z", wren, "Second"),
+    ];
+    expect(texts(buildTimeline([...earlier, ...later]))).toEqual(["First", "Second"]);
+  });
+
+  it("finds a reply wherever its row stands, above one still at work", () => {
+    const rows = buildTimeline([...earlier, first]);
+    const reply = rows.at(-1);
+    if (reply === undefined) throw new Error("The timeline shows the reply");
+    expect(texts([reply, ...rows.slice(0, -1)])).toEqual(["First"]);
   });
 });
 
