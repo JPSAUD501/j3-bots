@@ -19,13 +19,9 @@ import { Cell, type Readable } from "../Store.ts";
 
 /**
  * Where a harness's sign-in stands, as this client follows it: as the server
- * reports it, `idle` before any, or `unsupported` when the server cannot run
- * one, as a server from before 0.3.0 answers.
+ * reports it, or `idle` before any.
  */
-export type SignInView =
-  | { readonly _tag: "idle" }
-  | ProviderSignInStatus
-  | { readonly _tag: "unsupported" };
+export type SignInView = { readonly _tag: "idle" } | ProviderSignInStatus;
 
 /** What became of an endpoint connection; `failed` when the server gave no answer it could. */
 export type ConnectEndpointResult = ProviderConnectionOutcome | { readonly _tag: "failed" };
@@ -125,10 +121,8 @@ export const layer = Layer.effect(
       ).pipe(
         Effect.exit,
         Effect.flatMap((exit) => {
-          // Not paired any more, or a server that answers this RPC with a defect.
-          if (Exit.isFailure(exit)) {
-            return show(harness, Exit.hasDies(exit) ? { _tag: "unsupported" } : idle);
-          }
+          // Not paired any more, or the call failed: no sign-in is under way.
+          if (Exit.isFailure(exit)) return show(harness, idle);
           // A server that reported nothing has no sign-in under way.
           return exit.value ? Effect.void : show(harness, idle);
         }),
