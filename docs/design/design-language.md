@@ -237,8 +237,9 @@ While part of a bot's turn runs in parallel, the bot splits into **little ones**
 - **Its face.** At its line its eye is a little narrowed on its words, and it bobs on its own beat, each one out of step with the others. As it lands it looks up at the bot; when a brother goes home it looks up after it; the pointer over it, or a finger on it, makes it perk up.
 - **Failed.** Its body and rim lose their color (`littleFailed`, greys that keep the rim 3:1 against the canvases and the body 3:1 under the eye's white), its eye shuts into a droop and its sprout falls. Its words turn `muted-foreground`.
 - **Its details.** A hover or a press on the line shows a small card over it: the line in full, and "Couldn't finish" for one that failed; never how long it has worked, as nothing of a turn under way counts the time. On Android a tap opens it and a press anywhere closes it.
+- **After the reply.** Little ones a turn handed off stay under the bot's face once the turn is over, until each is home; the row keeps the face, with "Working" for its line, and folds into its own once the last is home ([decision 0095](../decisions/0095-little-ones-a-turn-handed-off-stay-until-they-are-home.md)).
 - **In a room** the same family stands under the face and name of each member whose turn there has a plan or little ones, above the line that says who is answering.
-- **In the roster** a bot that is split carries one dot for each little one at work by its avatar, four at most, along its lower edge on the side away from the primary bot's star (`littleDots`): the little ones' color, 9 px, in a band of what the row is on. Screen readers hear how many ("3 little ones working").
+- **In the roster** a bot that is split carries one dot for each little one at work by its avatar, its ended turns' included, four at most, along its lower edge on the side away from the primary bot's star (`littleDots`): the little ones' color, 9 px, in a band of what the row is on. Screen readers hear how many ("3 little ones working").
 
 The family moves from one model (`packages/client-runtime/src/presentation/littleOnes.ts`), as an avatar does from its own: [Motion](#motion) says how.
 
