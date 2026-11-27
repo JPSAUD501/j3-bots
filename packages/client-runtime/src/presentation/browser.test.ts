@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { dragWheel, pagePoint, siteOf } from "./browser.ts";
+import { addressOf, dragWheel, pagePoint, siteOf } from "./browser.ts";
 
 describe("siteOf", () => {
   it("names a page by its host, without www", () => {
@@ -44,5 +44,21 @@ describe("dragWheel", () => {
       x: 0,
       y: 320,
     });
+  });
+});
+
+describe("addressOf", () => {
+  it("takes a web address as typed, and a host alone as https", () => {
+    expect(addressOf("http://shop.example/a?b#c")).toBe("http://shop.example/a?b#c");
+    expect(addressOf(" shop.example ")).toBe("https://shop.example");
+    expect(addressOf("localhost:3000/cart")).toBe("https://localhost:3000/cart");
+  });
+
+  it("refuses any address that is not a web page's", () => {
+    expect(addressOf("javascript:alert(1)")).toBeNull();
+    expect(addressOf("file:///etc/passwd")).toBeNull();
+    expect(addressOf("data:text/html,hi")).toBeNull();
+    expect(addressOf("mailto:someone@shop.example")).toBeNull();
+    expect(addressOf("")).toBeNull();
   });
 });

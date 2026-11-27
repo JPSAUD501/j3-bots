@@ -287,21 +287,3 @@ export const viewQuality = (hint: LinkHint | null): number => {
     return SLOW_QUALITY;
   return hint.type === "cellular" ? CELLULAR_QUALITY : GOOD_QUALITY;
 };
-
-/**
- * The web address the operator means by what they typed in the address
- * field, or null when it is not one: an http or https address as typed, or a
- * host alone, with a port and a path or not, taken as https. Any other
- * scheme, as `javascript:` or `file:`, is not a web address.
- */
-export const addressOf = (typed: string): string | null => {
-  const text = typed.trim();
-  const address = text.includes("://")
-    ? text
-    : /^[^\s/:?#@]+(:\d{1,5})?([/?#]|$)/.test(text)
-      ? `https://${text}`
-      : null;
-  if (address === null || !URL.canParse(address)) return null;
-  const { protocol } = new URL(address);
-  return protocol === "http:" || protocol === "https:" ? address : null;
-};

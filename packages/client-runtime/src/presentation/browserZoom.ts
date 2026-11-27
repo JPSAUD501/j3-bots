@@ -100,8 +100,8 @@ export const readingScale = (view: Size, page: PageSize): number =>
   view.width > 0 ? clamp((READING_POINTS_PER_PIXEL * page.width) / view.width, 1, MAX_ZOOM) : 1;
 
 /**
- * The zoom that puts `point`, a point on the page in its CSS pixels, at the
- * middle of `view` at `scale`, kept over the view.
+ * The zoom that puts `point`, a point on the page in its CSS pixels, at
+ * `at` in `view` (its middle unless given) at `scale`, kept over the view.
  */
 export const zoomOn = (
   point: Point,
@@ -109,15 +109,12 @@ export const zoomOn = (
   page: PageSize,
   picture: Size,
   view: Size,
+  at: Point = { x: view.width / 2, y: view.height / 2 },
 ): Zoom => {
   const across = page.width > 0 ? point.x / page.width : 0;
   const down = page.height > 0 ? point.y / page.height : 0;
   return keptInView(
-    {
-      scale,
-      x: view.width / 2 - across * picture.width * scale,
-      y: view.height / 2 - down * picture.height * scale,
-    },
+    { scale, x: at.x - across * picture.width * scale, y: at.y - down * picture.height * scale },
     picture,
     view,
   );

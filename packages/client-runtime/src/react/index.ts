@@ -13,6 +13,7 @@ import type {
   PairSeq,
   Routine,
   RoutineId,
+  SharedBrowserTab,
 } from "@j3-bots/contracts";
 import {
   createContext,
@@ -183,6 +184,15 @@ export const useRoutineRuns = (routineId: RoutineId | null): Loaded<RoutineRuns>
 export const useBrowserTabs = (botId: BotId | null): Loaded<ReadonlyArray<BrowserTab>> | null =>
   useHeldState<Loaded<ReadonlyArray<BrowserTab>>>(
     useHeld(botId, same, (client, id) => client.openBrowserTabs(id)),
+  );
+
+/** Whether the server shares its tabs (`sharedBrowser`), so every tab is listed. */
+export const useSharedBrowser = (): boolean => useReadable(useJ3Client().sharedBrowser);
+
+/** Every tab, live, while mounted and `on`; null otherwise and while it loads. */
+export const useAllBrowserTabs = (on: boolean): Loaded<ReadonlyArray<SharedBrowserTab>> | null =>
+  useHeldState<Loaded<ReadonlyArray<SharedBrowserTab>>>(
+    useHeld(on ? "all" : null, same, (client) => client.openAllBrowserTabs()),
   );
 
 /**

@@ -21,6 +21,7 @@ import {
   type PageUseEvent,
   pageUseStep,
   sharedViewerTab,
+  shownTab,
   tabAfterClose,
   tabFaces,
   tabLine,
@@ -271,5 +272,35 @@ describe("what the person's use of a page sends", () => {
       "pointer",
       "release",
     ]);
+  });
+});
+
+describe("the tab a live view shows", () => {
+  const tab = (ref: string, onIt: ReadonlyArray<BotId> = []) =>
+    viewerTab({ ref: BrowserTabRef.make(ref), onIt });
+  const [a, b, c] = [tab("tab_a"), tab("tab_b", [lia]), tab("tab_c")];
+
+  it("opens on the tab of the bot the person came from, else the first", () => {
+    const opening = { shown: { ref: null, fresh: false }, before: null, after: [a, b, c] };
+    expect(shownTab({ ...opening, from: lia }).ref).toBe(b.ref);
+    expect(shownTab({ ...opening, from: ana }).ref).toBe(a.ref);
+  });
+
+  it("keeps its tab through changes, and moves to the one in its place once it closes", () => {
+    const shown = { ref: b.ref, fresh: false };
+    expect(shownTab({ shown, before: [a, b, c], after: [c, b], from: null }).ref).toBe(b.ref);
+    expect(shownTab({ shown, before: [a, b, c], after: [a, c], from: null }).ref).toBe(c.ref);
+  });
+
+  it("waits for a tab the person just opened, until the list holds it", () => {
+    const fresh = { ref: BrowserTabRef.make("tab_new"), fresh: true };
+    expect(shownTab({ shown: fresh, before: [a], after: [a], from: null })).toEqual(fresh);
+    const arrived = shownTab({ shown: fresh, before: [a], after: [a, tab("tab_new")], from: null });
+    expect(arrived).toEqual({ ref: fresh.ref, fresh: false });
+  });
+
+  it("opens on the first tab when the one it was opened on is not listed", () => {
+    const missing = { ref: BrowserTabRef.make("tab_gone"), fresh: false };
+    expect(shownTab({ shown: missing, before: null, after: [a, b], from: null }).ref).toBe(a.ref);
   });
 });

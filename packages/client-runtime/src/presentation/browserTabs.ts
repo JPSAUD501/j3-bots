@@ -291,6 +291,39 @@ export const tabAfterClose = (
   );
 };
 
+/**
+ * The tab a live view shows, as the list changes. `fresh` is a tab the
+ * person just opened, which the list may not hold yet: it is waited for.
+ */
+export interface ShownTab {
+  readonly ref: BrowserTabRef | null;
+  readonly fresh: boolean;
+}
+
+/**
+ * The tab to show once the list is `after`, having shown `shown` while it
+ * was `before`: the same tab while it is listed; once it is gone, the one
+ * that took its place; otherwise, as the view opens, the tab of the bot the
+ * person came from, else the first.
+ */
+export const shownTab = (input: {
+  readonly shown: ShownTab;
+  readonly before: ReadonlyArray<ViewerTab> | null;
+  readonly after: ReadonlyArray<ViewerTab> | null;
+  readonly from: BotId | null;
+}): ShownTab => {
+  const { shown, before, after, from } = input;
+  if (after === null) return shown;
+  const { ref } = shown;
+  if (ref !== null && after.some((tab) => tab.ref === ref)) return { ref, fresh: false };
+  if (ref !== null && shown.fresh) return shown;
+  const wasListed = ref !== null && before !== null && before.some((tab) => tab.ref === ref);
+  const next = wasListed
+    ? tabAfterClose(before, after, ref)
+    : ((from === null ? null : botsTab(after, from)) ?? after[0] ?? null);
+  return { ref: next?.ref ?? null, fresh: false };
+};
+
 /** Whether a bot waiting for the person is on a tab other than `shown`: the tabs button's amber dot. */
 export const needsYouElsewhere = (
   tabs: ReadonlyArray<ViewerTab>,

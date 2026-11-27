@@ -22,10 +22,15 @@ import { Kbd } from "../components/ui/kbd";
 import { cn } from "../lib/cn";
 import { BrowserSurface } from "./BrowserSurface";
 import { useBrowserTabs } from "./context";
-import { addressOf, LEAVE_PAGE_KEY } from "./input";
+import { LEAVE_PAGE_KEY } from "./input";
 import { holds } from "./source";
 import { statusKey } from "./status";
-import { BROWSER_SETUP_DOCS, frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
+import {
+  addressOf,
+  BROWSER_SETUP_DOCS,
+  frontTab,
+  siteOf,
+} from "@j3-bots/client-runtime/presentation";
 import { type TabView, useTabView } from "./useTabView";
 
 /** A help card the bot left for the operator in this browser: Done and Can't do it answer it. */

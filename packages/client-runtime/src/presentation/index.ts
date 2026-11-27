@@ -116,6 +116,7 @@ export {
   withProfileEdit,
 } from "./botEdit.ts";
 export {
+  addressOf,
   BROWSER_SETUP_DOCS,
   type DrawnRect,
   dragWheel,
@@ -136,6 +137,8 @@ export {
   holdEnd,
   listedTabs,
   needsYouElsewhere,
+  type ShownTab,
+  shownTab,
   neighborTab,
   nextLineChange,
   NO_PAGE_USE,

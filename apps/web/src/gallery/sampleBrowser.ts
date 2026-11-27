@@ -176,6 +176,7 @@ export function sampleBrowser(botIds: ReadonlyArray<BotId>): BrowserSource {
         if (controllerHere() === "bot") {
           sample.row = (sample.row + 1) % rowsOf.length;
           cursor.set({
+            botId: sample.tab.get().botId,
             action: sample.row === 2 ? "click" : "move",
             x: 400 + sample.row * 60,
             y: 234 + sample.row * 96,
