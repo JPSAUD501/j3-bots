@@ -19,7 +19,8 @@ const excerptOf = (message: MessageEntry): string => {
  * The reactions on a message as `botId`'s envelope tells them
  * (`docs/architecture/server.md`, Reactions), read when the envelope is
  * written so a change since is told as it ended. `null` when there is nothing
- * left to tell: the message is gone or J3 Bots' own, its room is no longer active, no one but
+ * left to tell: the message is gone or J3 Bots' own, its room is no longer active or the
+ * bot no longer in it, no one but
  * the bot reacts to it, or, for the wake the operator's reaction caused,
  * their reaction was taken off.
  */
@@ -46,7 +47,8 @@ export const reactionNews =
       let room: ReactionNews["room"] = null;
       if (target._tag === "room") {
         const live = yield* deps.roomOf(target.roomId);
-        if (Option.isNone(live)) return null;
+        // A bot no longer in the room hears nothing more of it.
+        if (Option.isNone(live) || !live.value.members.includes(input.botId)) return null;
         room = { id: live.value.id, name: live.value.name };
       }
       const reactions = message.reactions ?? [];

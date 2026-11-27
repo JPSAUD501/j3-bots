@@ -7,7 +7,7 @@ import {
   Invalid,
   type MessageEntry,
   NotFound,
-  type ReactionEmoji,
+  ReactionEmoji,
   type Reactor,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
@@ -29,6 +29,7 @@ import { TurnToolRefused } from "../tools/TurnTools.ts";
 import { type Audience, conversation } from "../turns/model.ts";
 import { onePassAtATime, passOutcome, reconcileWithoutEngine } from "../turns/reconciler.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
+import { Ledger } from "../turns/Ledger.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { reactionNotes } from "./notes.ts";
@@ -99,6 +100,7 @@ export const layer = Layer.effect(
     const transaction = transactional(sql);
     const entries = yield* Entries;
     const wakes = yield* Wakes;
+    const ledger = yield* Ledger;
     const signals = yield* Signals;
     const ids = yield* Ids;
     const notes = reactionNotes(sql, ids);
@@ -125,6 +127,15 @@ export const layer = Layer.effect(
       return Option.isNone(room) ? [] : room.value.members;
     });
 
+    /** The bot's pending wakes for the operator's reaction on a message of its. */
+    const wakesFor = (botId: BotId, entryId: EntryId) =>
+      sql<{ readonly id: string }>`
+        SELECT id FROM wakes
+        WHERE bot_id = ${botId} AND status = 'pending'
+          AND json_extract(payload_json, '$._tag') = 'reaction'
+          AND json_extract(payload_json, '$.entryId') = ${entryId}
+      `.pipe(Effect.map((rows) => rows.map((row) => row.id)));
+
     /**
      * Tells a change of `by`'s reaction to the other bots there: a wake, once
      * the change settles, for the author of a message the operator reacted
@@ -140,6 +151,8 @@ export const layer = Layer.effect(
       for (const botId of yield* botsOf(target)) {
         if (by._tag === "bot" && by.botId === botId) continue;
         if (by._tag === "operator" && botId === author) {
+          // A wake for an earlier settle not yet sent waits for this change to settle too.
+          yield* ledger.cancelWakes(yield* wakesFor(botId, message.id));
           yield* sql`
             INSERT INTO reaction_signals (bot_id, entry_id, due_at)
             VALUES (${botId}, ${message.id}, ${timeText(due)})
@@ -182,11 +195,13 @@ export const layer = Layer.effect(
       readonly entryId: string;
       readonly emoji: string;
     }) {
-      if (!isOneEmoji(input.emoji)) {
+      const decoded = Schema.decodeOption(ReactionEmoji)(input.emoji);
+      if (Option.isNone(decoded) || !isOneEmoji(decoded.value)) {
         return yield* new TurnToolRefused({
           reason: "Nothing was recorded: `emoji` takes exactly one emoji, such as 👍.",
         });
       }
+      const emoji = decoded.value;
       const found = yield* find(input.entryId);
       if (found._tag !== "message" || !sameTarget(found.target, input.target)) {
         return yield* new TurnToolRefused({
@@ -201,8 +216,6 @@ export const layer = Layer.effect(
         });
       }
       const by: Reactor = { _tag: "bot", botId: input.botId };
-      // Checked as one emoji above: the contract's looser bounds hold too.
-      const emoji = input.emoji as ReactionEmoji;
       const changed = yield* entries.react({
         target: input.target,
         entryId: message.id,
@@ -268,14 +281,7 @@ export const layer = Layer.effect(
           );
           if (!stands) return;
           if (yield* busy(botId)) return yield* notes.leave(botId, message.id);
-          const waiting = yield* sql`
-            SELECT 1 FROM wakes
-            WHERE bot_id = ${botId} AND status = 'pending'
-              AND json_extract(payload_json, '$._tag') = 'reaction'
-              AND json_extract(payload_json, '$.entryId') = ${message.id}
-            LIMIT 1
-          `;
-          if (waiting.length > 0) return;
+          if ((yield* wakesFor(botId, message.id)).length > 0) return;
           // The wake tells it: a note left while the bot was busy would tell it twice.
           yield* notes.takeBack(botId, message.id);
           const audience: Audience =

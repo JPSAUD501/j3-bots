@@ -10,13 +10,26 @@ import {
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  finish,
+  member,
+  operatorWrites,
+  roomEntries,
+  roomWith,
+  say,
+  to,
+} from "../testing/rooms.ts";
+import {
   admittedTurn,
+  command,
   conversation,
   createBot,
   engineSession,
@@ -26,6 +39,7 @@ import {
   received,
   sendToBot,
   turnEnded,
+  until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { REACTION_SETTLE, Reactions } from "./Reactions.ts";
@@ -117,6 +131,42 @@ it.effect("tells the bot once, as the reaction ended, in a quiet turn", () =>
     assert.strictEqual(told.length, 1);
     assert.include(told[0]?.text, 'emoji="❤️"');
     assert.notInclude(told[0]?.text, 'emoji="👍"');
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("waits for a change of mind made while its wake was held to settle in turn", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { bot, session, message } = yield* answered;
+    const reactions = yield* Reactions;
+    const before = (yield* received(session)).length;
+    // A teammate on the same AI meets its usage limit: the reaction's wake waits for the reset.
+    const bo = yield* createBot("Bo");
+    const boSession = yield* engineSession(bo.id);
+    yield* sendToBot(bo.id, "Translate the docs.");
+    const boTurn = yield* nextTurn(bo.id);
+    const resetsAt = DateTime.addDuration(yield* DateTime.now, Duration.seconds(6));
+    yield* control.finishTurn({
+      sessionId: boSession,
+      turnId: boTurn,
+      outcome: { _tag: "failed", failure: "usage-limit", retryAt: resetsAt },
+    });
+    yield* turnEnded(bo.id);
+
+    yield* reactions.react({ entryId: message.id, emoji: emoji("👎") });
+    yield* settled(bot.id);
+    assert.strictEqual((yield* received(session)).length, before);
+    // Changed while held, and the limit resets before the change settles: nothing goes.
+    yield* reactions.react({ entryId: message.id, emoji: emoji("👍") });
+    yield* TestClock.adjust(Duration.seconds(2));
+    yield* flushed(bot.id);
+    assert.strictEqual((yield* received(session)).length, before);
+
+    // Taken off before it settles: it never reaches the bot.
+    yield* reactions.react({ entryId: message.id, emoji: null });
+    yield* settled(bot.id);
+    assert.strictEqual((yield* received(session)).length, before);
+    assert.isTrue(Option.isNone(yield* admittedTurn(bot.id)));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -226,5 +276,87 @@ it.effect("records a bot's reaction as its whole reply, and never on its own mes
     yield* turnEnded(bot.id);
     yield* flushed(bot.id);
     assert.isTrue(Option.isNone(yield* admittedTurn(bot.id)));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps a bot weighing a reaction off its room's answering line and plan until it speaks",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const sql = yield* SqlClient.SqlClient;
+      const rooms = yield* Rooms;
+      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
+      const members = [ana, bo];
+      const room = yield* roomWith(ana, [bo]);
+      yield* operatorWrites(room.id, members, "Is the venue free on Friday?", to(ana));
+      const asked = yield* nextTurn(ana.bot.id);
+      yield* say(ana, asked, { text: "It is. Shall I book it?" });
+      yield* finish(ana, asked, members);
+      const offer = (yield* roomEntries(room.id)).findLast(
+        (entry): entry is MessageEntry =>
+          entry._tag === "message" &&
+          entry.author._tag === "bot" &&
+          entry.author.botId === ana.bot.id,
+      );
+      if (offer === undefined) throw new Error("Ana offered nothing");
+
+      yield* (yield* Reactions).react({ entryId: offer.id, emoji: emoji("👍") });
+      yield* settled(ana.bot.id);
+      const quiet = yield* nextTurn(ana.bot.id, asked);
+      yield* control.turnWork({
+        sessionId: ana.session,
+        turnId: quiet,
+        work: { plan: { steps: [{ text: "Read my notes", status: "running" }] }, littleOnes: [] },
+      });
+      yield* until(
+        sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM turns WHERE engine_turn_id = ${quiet} AND work_json IS NOT NULL
+      `.pipe(
+          Effect.orDie,
+          Effect.map(([row]) => (row?.n ?? 0) > 0),
+        ),
+      );
+      const shown = Effect.map(rooms.find(room.id), (found) =>
+        Option.match(found, {
+          onNone: () => ({ answering: [], working: [] }),
+          onSome: (one) =>
+            one.status === "active"
+              ? { answering: one.answering, working: one.memberWork.map((work) => work.botId) }
+              : { answering: [], working: [] },
+        }),
+      );
+      const quietly = yield* shown;
+      assert.notInclude(quietly.answering, ana.bot.id);
+      assert.notInclude(quietly.working, ana.bot.id);
+
+      yield* say(ana, quiet, { text: "Booking it now." });
+      const speaking = yield* shown;
+      assert.include(speaking.answering, ana.bot.id);
+      assert.include(speaking.working, ana.bot.id);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tells a room's reactions to its members only, never to a bot that left it", () =>
+  Effect.gen(function* () {
+    const [ana, bo, cy] = [yield* member("Ana"), yield* member("Bo"), yield* member("Cy")];
+    const members = [ana, bo, cy];
+    const room = yield* roomWith(ana, [bo, cy]);
+    const greeting = yield* operatorWrites(room.id, members, "Morning, all.", to(ana));
+    const greeted = yield* nextTurn(ana.bot.id);
+    yield* finish(ana, greeted, members);
+    yield* (yield* Reactions).react({ entryId: greeting, emoji: emoji("☕") });
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { members: [ana.bot.id, cy.bot.id] },
+    });
+
+    yield* sendToBot(bo.bot.id, "What is on today?");
+    yield* nextTurn(bo.bot.id);
+    assert.lengthOf(yield* envelopesWith(bo.session, "Morning, all."), 0);
+    yield* sendToBot(cy.bot.id, "What is on today?");
+    yield* nextTurn(cy.bot.id);
+    assert.lengthOf(yield* envelopesWith(cy.session, 'emoji="☕"'), 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
