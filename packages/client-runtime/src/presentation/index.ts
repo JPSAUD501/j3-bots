@@ -321,6 +321,7 @@ export {
   type TemplateStart,
   templateStart,
   type TemplateSubmission,
+  templateAsksTitle,
   templateSubmission,
 } from "./template.ts";
 export {

@@ -4,6 +4,7 @@ import type { TemplateDraft } from "@j3-bots/client-runtime";
 import {
   type TemplateRead,
   templateStart,
+  templateAsksTitle,
   templateSubmission,
 } from "@j3-bots/client-runtime/presentation";
 import {
@@ -254,7 +255,7 @@ export function TemplateForm({
   const [picked, setPicked] = useState<PermissionMode | null>(null);
   const [hidden, setHidden] = useState(false);
   // Asked only of a template shared from a bot with no title.
-  const asksTitle = template.profile.title === "";
+  const asksTitle = templateAsksTitle(template);
   const [title, setTitle] = useState("");
   const titleFieldId = useId();
   const [state, setState] = useState<"editing" | "creating" | Exclude<TemplateCreated, "done">>(

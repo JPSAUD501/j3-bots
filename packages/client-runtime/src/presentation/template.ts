@@ -236,13 +236,20 @@ export interface TemplateSubmission {
  * (decision 0101). Null while there is no model to make the bot on, or no
  * title to give it.
  */
+/**
+ * Whether a template's bot came without a title, so creating from it asks
+ * for one: a title of spaces alone counts as none.
+ */
+export const templateAsksTitle = (template: BotTemplate): boolean =>
+  template.profile.title.trim() === "";
+
 export const templateSubmission = (
   template: BotTemplate,
   start: TemplateStart,
   picked: PermissionMode | null,
   title: string,
 ): TemplateSubmission | null => {
-  const given = template.profile.title === "" ? title.trim() : template.profile.title;
+  const given = templateAsksTitle(template) ? title.trim() : template.profile.title;
   if (start.model._tag === "none" || given === "") return null;
   return {
     template:

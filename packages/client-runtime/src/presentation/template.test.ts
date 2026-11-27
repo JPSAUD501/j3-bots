@@ -18,6 +18,7 @@ import {
   readTemplateFile,
   sharedTemplate,
   templateFileName,
+  templateAsksTitle,
   templateStart,
   templateSubmission,
 } from "./template.ts";
@@ -302,6 +303,13 @@ describe("templateStart", () => {
     // A template's own title is the one the bot takes.
     expect(templateSubmission(template, start, null, "Other")?.template.profile.title).toBe(
       "Research",
+    );
+    // A title of spaces alone is none: the operator is asked, and their title is the one used.
+    const blank = { ...template, profile: { ...template.profile, title: "   " } };
+    expect(templateAsksTitle(blank)).toBe(true);
+    expect(templateSubmission(blank, start, null, "")).toBeNull();
+    expect(templateSubmission(blank, start, null, "Market research")?.template.profile.title).toBe(
+      "Market research",
     );
   });
 

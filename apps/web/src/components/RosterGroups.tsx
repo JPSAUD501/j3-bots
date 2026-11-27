@@ -112,6 +112,8 @@ function PinnedTile({ item, selected, render, ...props }: PinnedTileProps) {
           <span className={cn("truncate text-xs", item.unread ? "font-semibold" : "font-medium")}>
             {bot.profile.name}
           </span>
+          {/* The tile has room for the name alone; its title is still heard. */}
+          {bot.profile.title !== "" && <span className="sr-only">, {bot.profile.title}</span>}
           {item.unread && (
             <span className="size-1.5 shrink-0 rounded-pill bg-accent">
               <span className="sr-only">{t("roster.unread")}</span>

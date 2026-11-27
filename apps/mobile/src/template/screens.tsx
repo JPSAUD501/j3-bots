@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type BotTemplateResult, refusedWith, type TemplateDraft } from "@j3-bots/client-runtime";
-import { templateStart, templateSubmission } from "@j3-bots/client-runtime/presentation";
+import {
+  templateAsksTitle,
+  templateStart,
+  templateSubmission,
+} from "@j3-bots/client-runtime/presentation";
 import { useConnection, useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
 import {
   permissionModeText,
@@ -219,7 +223,7 @@ function TemplateForm({
   const [picked, setPicked] = useState<PermissionMode | null>(null);
   const [hidden, setHidden] = useState(false);
   // Asked only of a template shared from a bot with no title.
-  const asksTitle = template.profile.title === "";
+  const asksTitle = templateAsksTitle(template);
   const [title, setTitle] = useState("");
   const [state, setState] = useState<"editing" | "creating" | "schedule" | "failed">("editing");
   const mode = picked ?? start.permissionMode;

@@ -76,7 +76,9 @@ export function NewBotForm({
       : (picked ?? freeAvatar(bots.map((bot) => bot.profile.avatar)));
   const trimmed = name.trim();
   const trimmedTitle = title.trim();
-  const ready = trimmed !== "" && trimmedTitle !== "" && state._tag !== "creating";
+  // With a name, Create acts: it creates, or says the title is missing.
+  const pressable = trimmed !== "" && state._tag !== "creating";
+  const ready = pressable && trimmedTitle !== "";
   const unsaved = trimmed !== "" || trimmedTitle !== "";
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
@@ -88,7 +90,7 @@ export function NewBotForm({
       className={cn("flex flex-col gap-3", className)}
       onSubmit={(event) => {
         event.preventDefault();
-        if (trimmed !== "" && trimmedTitle === "") setTitleMissing(true);
+        if (pressable && trimmedTitle === "") setTitleMissing(true);
         if (!ready) return;
         setState({ _tag: "creating", avatar });
         // A created bot opens, which takes the form off the screen: until then it stays
@@ -164,7 +166,7 @@ export function NewBotForm({
       </p>
       <div className="flex flex-wrap justify-end gap-2">
         <Button onClick={onCancel}>{t("newBot.cancel")}</Button>
-        <Button type="submit" variant="primary" aria-disabled={!ready}>
+        <Button type="submit" variant="primary" aria-disabled={!pressable}>
           {t("firstRun.create.submit")}
         </Button>
       </div>

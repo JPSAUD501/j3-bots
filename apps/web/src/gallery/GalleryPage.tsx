@@ -173,6 +173,8 @@ import {
   PhoneAccessSetting,
 } from "../components/PhoneAccess";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
+import { NewBotForm } from "../components/NewBotForm";
+import { dialogTitle } from "../components/ui/dialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
 import { EventLine } from "../components/EventLine";
@@ -3582,6 +3584,8 @@ const shareActions = {
 
 function TemplatesSection() {
   const elsewhere = { ...scoutTemplate, model: { ...toCodex, modelId: ModelId.make("gpt-6") } };
+  const untitled = { ...scoutTemplate, profile: { ...scoutTemplate.profile, title: "" } };
+  const { t } = useI18n();
   return (
     <Section title="Templates: sharing a bot and creating one from a file">
       <div className="flex flex-wrap gap-4">
@@ -3643,6 +3647,33 @@ function TemplatesSection() {
             />
           )}
         </TemplateFrame>
+        <TemplateFrame label="Create: a template from a bot with no title asks for one before Create">
+          {(titleId) => (
+            <TemplateForm
+              template={untitled}
+              engine={twoProviders}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+        <Frame
+          label="New bot: a name and a title, both required; type a name and press Create to see the title asked for"
+          width={448}
+          height={640}
+        >
+          <div className="flex h-full flex-col gap-3 bg-popover p-5">
+            <h2 className={dialogTitle}>{t("newBot.title")}</h2>
+            <p className="text-sm text-muted-foreground">{t("newBot.body")}</p>
+            <NewBotForm
+              bots={Object.values(team.bots)}
+              onCreate={() => new Promise(() => {})}
+              onCancel={nothing}
+            />
+          </div>
+        </Frame>
       </div>
     </Section>
   );
