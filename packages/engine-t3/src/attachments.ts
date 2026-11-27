@@ -34,7 +34,6 @@ export type AttachmentLimitViolation =
   | { readonly _tag: "too-many"; readonly limit: number }
   /** `index` is the file's position in the list. */
   | { readonly _tag: "empty"; readonly index: number }
-  | { readonly _tag: "file-too-large"; readonly index: number; readonly limit: number }
   /** An image the model sees inline (GIF, JPEG, PNG or WebP). */
   | { readonly _tag: "image-too-large"; readonly index: number; readonly limit: number }
   /** The inline images together. */
@@ -48,24 +47,37 @@ export const isInlineImage = (mediaType: string): boolean =>
   INLINE_IMAGE_MEDIA_TYPES.has(mediaType.toLowerCase());
 
 /**
+ * Whether the engine takes the file as an attachment of a message: an image
+ * the model sees inline, whose own limits `attachmentLimitViolation` checks,
+ * or any other file of at most 50 MiB. The engine refuses to stage a larger
+ * one, so such a file (a screen recording) goes to the bot only through its
+ * workspace, and the message names it there.
+ */
+export const engineCarries = (file: AttachmentFacts): boolean =>
+  isInlineImage(file.mediaType) || file.size <= MAX_FILE_BYTES;
+
+/**
  * The first engine limit the files break, or `undefined` when the engine will
  * take them. The server checks a message's files with it before it commits the
- * dispatch, so a dispatch the engine would refuse is never written.
+ * dispatch, so a dispatch the engine would refuse is never written. A file the
+ * engine does not carry (`engineCarries`) is never staged, so no limit of the
+ * engine's counts it.
  */
 export const attachmentLimitViolation = (
   attachments: ReadonlyArray<AttachmentFacts>,
 ): AttachmentLimitViolation | undefined => {
-  if (attachments.length > MAX_ATTACHMENTS) return { _tag: "too-many", limit: MAX_ATTACHMENTS };
+  const carried = attachments.flatMap((file, index) =>
+    engineCarries(file) ? [{ ...file, index }] : [],
+  );
+  if (carried.length > MAX_ATTACHMENTS) return { _tag: "too-many", limit: MAX_ATTACHMENTS };
   let imageBytes = 0;
-  for (const [index, { mediaType, size }] of attachments.entries()) {
+  for (const { mediaType, size, index } of carried) {
     if (size < 1) return { _tag: "empty", index };
     if (isInlineImage(mediaType)) {
       if (size > MAX_INLINE_IMAGE_BYTES) {
         return { _tag: "image-too-large", index, limit: MAX_INLINE_IMAGE_BYTES };
       }
       imageBytes += size;
-    } else if (size > MAX_FILE_BYTES) {
-      return { _tag: "file-too-large", index, limit: MAX_FILE_BYTES };
     }
   }
   return imageBytes > MAX_INLINE_IMAGE_BYTES_TOTAL

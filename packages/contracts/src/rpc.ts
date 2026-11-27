@@ -140,8 +140,9 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 //
 // A client offers sections, a bot's `sectionId` and `entries.markUnread` only
 // once a roster snapshot carries `sections`, and `@` in a bot's conversation
-// only once it carries `conversationMentions`, and Reply and Quote only once it
-// carries `quotes` (docs/architecture/clients.md, "Protocol compatibility").
+// only once it carries `conversationMentions`, Reply and Quote only once it
+// carries `quotes`, and to record the screen only once it carries
+// `screenRecordings` (docs/architecture/clients.md, "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
 const after = { after: Schema.NullOr(Sequence) };
@@ -195,6 +196,12 @@ export const RosterRpcs = RpcGroup.make(
          * a client offers Reply and Quote only then.
          */
         quotes: Schema.optionalKey(Schema.Literal(true)),
+        /**
+         * Always `true` from a server that takes screen recordings at
+         * `HTTP_PATHS.recordingUploads`; a client offers to record the
+         * screen only then.
+         */
+        screenRecordings: Schema.optionalKey(Schema.Literal(true)),
       }),
       Schema.TaggedStruct("changed", {
         upsert: Schema.Array(RosterItem),

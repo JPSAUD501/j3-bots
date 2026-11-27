@@ -13,6 +13,11 @@ import {
   PairResult,
   PROTOCOL_VERSION,
   RateLimited,
+  RECORDING_CHUNK_SIZE,
+  RecordingOffset,
+  RecordingUpload,
+  RecordingUploadId,
+  RecordingUploadStart,
   ServerInfo,
   type ServerOrigin,
   SocketTicketGrant,
@@ -24,12 +29,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../package.json" with { type: "json" };
 import { Attachments } from "./attachments/Attachments.ts";
+import { PieceCutOff, RecordingUploads } from "./attachments/RecordingUploads.ts";
 import { WorkImages } from "./attachments/WorkImages.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
@@ -190,6 +197,123 @@ const download = HttpRouter.add(
   }),
 );
 
+/** A recording upload's id, as its routes' paths name it. */
+const RecordingParams = Schema.Struct({ id: RecordingUploadId });
+
+/** What begins a recording upload is a name and a size: well under this. */
+const RECORDING_START_LIMIT = 4 * 1024;
+
+const decodeRecordingStart = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(RecordingUploadStart),
+);
+const decodeOffset = Schema.decodeUnknownOption(
+  Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+);
+
+/** `Conflict("no-space")` is the server's disk, 507; any other conflict, 409. */
+const conflictResponse = (error: Conflict) =>
+  respond(Conflict, error, error.reason === "no-space" ? 507 : 409);
+
+const notFound = HttpServerResponse.empty({ status: 404 });
+
+const beginRecording = HttpRouter.add(
+  "POST",
+  HTTP_PATHS.recordingUploads,
+  Effect.gen(function* () {
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const invalid = respond(Invalid, new Invalid({ reason: "attachment" }), 400);
+    const start = yield* readText(request, RECORDING_START_LIMIT).pipe(
+      Effect.flatMap(decodeRecordingStart),
+      Effect.option,
+    );
+    if (Option.isNone(start)) return yield* invalid;
+    const uploads = yield* RecordingUploads;
+    return yield* uploads.begin(start.value).pipe(
+      Effect.flatMap((upload) => respond(RecordingUpload, upload, 200)),
+      Effect.catchTags({
+        Invalid: () => invalid,
+        TooLarge: () => Effect.succeed(tooLarge),
+        Conflict: conflictResponse,
+      }),
+    );
+  }),
+);
+
+const recordingStatus = HttpRouter.add(
+  "GET",
+  `${HTTP_PATHS.recordingUploads}/:id`,
+  Effect.gen(function* () {
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const params = yield* HttpRouter.schemaPathParams(RecordingParams).pipe(Effect.option);
+    if (Option.isNone(params)) return notFound;
+    const uploads = yield* RecordingUploads;
+    return yield* uploads.status(params.value.id).pipe(
+      Effect.flatMap((upload) => respond(RecordingUpload, upload, 200)),
+      Effect.catchTag("NotFound", () => Effect.succeed(notFound)),
+    );
+  }),
+);
+
+const recordingPiece = HttpRouter.add(
+  "PUT",
+  `${HTTP_PATHS.recordingUploads}/:id`,
+  Effect.gen(function* () {
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const invalid = respond(Invalid, new Invalid({ reason: "attachment" }), 400);
+    const params = yield* HttpRouter.schemaPathParams(RecordingParams).pipe(Effect.option);
+    if (Option.isNone(params)) return notFound;
+    const offset = decodeOffset(
+      new URL(request.url, "http://localhost").searchParams.get("offset"),
+    );
+    if (Option.isNone(offset)) return yield* invalid;
+    // A piece that says it is over the limit is refused before it is read.
+    const declared = request.headers["content-length"];
+    if (
+      declared !== undefined &&
+      /^\d+$/.test(declared) &&
+      Number(declared) > RECORDING_CHUNK_SIZE
+    ) {
+      return tooLarge;
+    }
+    const uploads = yield* RecordingUploads;
+    return yield* uploads
+      .append({
+        id: params.value.id,
+        offset: offset.value,
+        bytes: request.stream.pipe(Stream.mapError(() => new PieceCutOff())),
+      })
+      .pipe(
+        Effect.flatMap((upload) => respond(RecordingUpload, upload, 200)),
+        Effect.catchTags({
+          NotFound: () => Effect.succeed(notFound),
+          RecordingOffset: (error) => respond(RecordingOffset, error, 409),
+          TooLarge: () => Effect.succeed(tooLarge),
+          Invalid: () => invalid,
+          Conflict: conflictResponse,
+          // The piece stopped arriving: what arrived of it is kept.
+          PieceCutOff: () => invalid,
+        }),
+      );
+  }),
+);
+
+const cancelRecording = HttpRouter.add(
+  "DELETE",
+  `${HTTP_PATHS.recordingUploads}/:id`,
+  Effect.gen(function* () {
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const params = yield* HttpRouter.schemaPathParams(RecordingParams).pipe(Effect.option);
+    if (Option.isNone(params)) return notFound;
+    const uploads = yield* RecordingUploads;
+    return yield* uploads.cancel(params.value.id).pipe(
+      Effect.as(HttpServerResponse.empty({ status: 204 })),
+      Effect.catchTag("NotFound", () => Effect.succeed(notFound)),
+    );
+  }),
+);
+
 /**
  * An image a step of a bot's work looked at, read from the bot's workspace as
  * it is now, typed by what its bytes hold. A page that opens its address on
@@ -223,7 +347,7 @@ const isDesktopOrigin = (origin: string | undefined) =>
 
 const cors = HttpMiddleware.cors({
   allowedOrigins: isDesktopOrigin,
-  allowedMethods: ["GET", "POST"],
+  allowedMethods: ["GET", "POST", "PUT", "DELETE"],
   // Effect's HTTP client, which clients use, adds the trace context headers.
   allowedHeaders: ["authorization", "content-type", "traceparent", "b3"],
   maxAge: 600,
@@ -320,6 +444,10 @@ export const routes = Layer.mergeAll(
   pair,
   upload,
   download,
+  beginRecording,
+  recordingStatus,
+  recordingPiece,
+  cancelRecording,
   workImage,
   Webhook.route,
   EventWebhook.route,

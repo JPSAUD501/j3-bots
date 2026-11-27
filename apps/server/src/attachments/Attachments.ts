@@ -20,13 +20,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as Digest from "effect/crypto/Digest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { sha256 } from "../hash.ts";
 import { Ids } from "../Ids.ts";
-import { Layout } from "../Layout.ts";
+import { Layout, type PrivateLocationExposed } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 
@@ -64,25 +67,43 @@ export interface NewFile {
 }
 
 /**
+ * A file the server wrote itself under the attachments folder, to store as an
+ * attachment of the operator's: a screen recording, uploaded in pieces.
+ */
+export interface PlacedFile {
+  /** The attachment's id, which the caller chose and may have kept. */
+  readonly id: AttachmentId;
+  readonly name: string;
+  readonly mediaType: string;
+  /** Absolute, under the attachments folder, so it moves into the store by a rename. */
+  readonly from: string;
+}
+
+/**
+ * The name and media type the store keeps for a file: those the engine's
+ * upload takes once normalized, with a name of at most
+ * `MAX_ATTACHMENT_NAME_LENGTH`; `undefined` for metadata it refuses.
+ */
+export const storedMetadata = (file: { readonly name: string; readonly mediaType: string }) => {
+  const metadata = normalizeAttachmentMetadata(file);
+  return metadata !== undefined && metadata.name.length <= MAX_ATTACHMENT_NAME_LENGTH
+    ? metadata
+    : undefined;
+};
+
+/**
  * Whether the store takes a file of this name, media type and size: not
- * empty, at most `MAX_ATTACHMENT_SIZE`, and metadata the engine's upload
- * takes once normalized, with a name of at most `MAX_ATTACHMENT_NAME_LENGTH`.
- * A caller storing several files together checks them all first, so a file
- * the store would refuse never leaves the others' bytes written.
+ * empty, at most `MAX_ATTACHMENT_SIZE`, and metadata it keeps
+ * (`storedMetadata`). A caller storing several files together checks them
+ * all first, so a file the store would refuse never leaves the others' bytes
+ * written.
  */
 export const isStorable = (file: {
   readonly name: string;
   readonly mediaType: string;
   readonly size: number;
-}): boolean => {
-  const metadata = normalizeAttachmentMetadata(file);
-  return (
-    file.size > 0 &&
-    file.size <= MAX_ATTACHMENT_SIZE &&
-    metadata !== undefined &&
-    metadata.name.length <= MAX_ATTACHMENT_NAME_LENGTH
-  );
-};
+}): boolean =>
+  file.size > 0 && file.size <= MAX_ATTACHMENT_SIZE && storedMetadata(file) !== undefined;
 
 /**
  * Stores one file, in the transaction of the caller of `withStore`. Fails with
@@ -111,6 +132,18 @@ export class Attachments extends Context.Service<
      * storing nothing, when the attachments folder has left private state.
      */
     readonly store: (file: NewFile) => Effect.Effect<Attachment, Invalid | Conflict>;
+    /**
+     * Stores a file the server wrote under the attachments folder as an
+     * operator's attachment, in a transaction of its own, reading it a piece
+     * at a time for its digest and moving it into place by a rename, so a
+     * file of gigabytes is never held in memory or written twice. Once
+     * stored, the file at `from` is gone: moved, or removed when the store
+     * held its bytes already. Fails, leaving it, with `Invalid("attachment")`
+     * for an empty file or metadata the store does not keep, and with
+     * `Conflict("private-location")` when the attachments folder has left
+     * private state. Nothing else may write `from` meanwhile.
+     */
+    readonly storeFile: (file: PlacedFile) => Effect.Effect<Attachment, Invalid | Conflict>;
     /**
      * Holds the store's file lock while `use` runs, for a caller that stores
      * files together with records of its own: `use` opens one transaction,
@@ -179,62 +212,93 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     /**
+     * Puts a blob's bytes in place unless they are there, with `place`
+     * writing them at the target; runs under the file lock. Each blob whose
+     * bytes it places is added to `written`. Succeeds with where they are
+     * and whether this placed them.
+     */
+    const placeBlob = Effect.fn("Attachments.placeBlob")(function* (
+      written: Array<BlobFile>,
+      sha: string,
+      place: (target: string) => Effect.Effect<void, PrivateLocationExposed | PlatformError>,
+    ) {
+      const storagePath = `${sha.slice(0, 2)}/${sha}`;
+      const target = path.join(layout.attachments, storagePath);
+      if (yield* fs.exists(target).pipe(Effect.orDie)) return { storagePath, placed: false };
+      // One step an interruption waits out: a rename the file system
+      // finishes after the caller gave up is still counted for removal.
+      yield* Effect.uninterruptible(
+        place(target).pipe(
+          Effect.andThen(
+            Effect.sync(() => written.push({ sha256: sha, storage_path: storagePath })),
+          ),
+        ),
+      ).pipe(
+        Effect.catchTags({
+          // Logged here; the caller learns only that nothing was stored.
+          PrivateLocationExposed: (exposed) =>
+            Effect.logWarning(exposed.message).pipe(
+              Effect.andThen(Effect.fail(new Conflict({ reason: "private-location" }))),
+            ),
+          PlatformError: Effect.die,
+        }),
+      );
+      return { storagePath, placed: true };
+    });
+
+    /** The rows of an attachment over a blob, in the caller's transaction. */
+    const insertRows = Effect.fn("Attachments.insertRows")(function* (row: {
+      readonly id: AttachmentId;
+      readonly sha: string;
+      readonly size: number;
+      readonly storagePath: string;
+      readonly metadata: { readonly name: string; readonly mediaType: string };
+      readonly bot: BotId | undefined;
+    }) {
+      const at = timeText(yield* DateTime.now);
+      yield* sql`
+          INSERT INTO blobs (sha256, size, storage_path, created_at)
+          VALUES (${row.sha}, ${row.size}, ${row.storagePath}, ${at})
+          ON CONFLICT (sha256) DO NOTHING
+        `;
+      yield* sql`
+          INSERT INTO attachments (id, sha256, name, media_type, source, bot_id, created_at)
+          VALUES (
+            ${row.id}, ${row.sha}, ${row.metadata.name}, ${row.metadata.mediaType},
+            ${row.bot === undefined ? "operator" : "bot"}, ${row.bot ?? null}, ${at}
+          )
+        `;
+      return yield* decodeAttachment({
+        id: row.id,
+        name: row.metadata.name,
+        mediaType: row.metadata.mediaType,
+        size: row.size,
+      });
+    }, Effect.orDie);
+
+    /**
      * Writes the blob's bytes unless they are there, and the rows; runs under
      * the file lock. Each blob whose bytes it writes is added to `written`.
      */
     const put = (written: Array<BlobFile>): PutFile =>
       Effect.fn("Attachments.put")(function* (file: NewFile) {
-        const metadata = normalizeAttachmentMetadata(file);
+        const metadata = storedMetadata(file);
         if (metadata === undefined || !isStorable({ ...file, size: file.bytes.length })) {
           return yield* new Invalid({ reason: "attachment" });
         }
         const sha = yield* digest.digestHex(Digest.sha256, file.bytes);
-        const storagePath = `${sha.slice(0, 2)}/${sha}`;
-        const target = path.join(layout.attachments, storagePath);
         const id = AttachmentId.make(yield* ids.make("att"));
-        const at = timeText(yield* DateTime.now);
-        if (!(yield* fs.exists(target).pipe(Effect.orDie))) {
-          // One step an interruption waits out: a rename the file system
-          // finishes after the caller gave up is still counted for removal.
-          yield* Effect.uninterruptible(
-            layout
-              .writeFile(target, file.bytes)
-              .pipe(
-                Effect.andThen(
-                  Effect.sync(() => written.push({ sha256: sha, storage_path: storagePath })),
-                ),
-              ),
-          ).pipe(
-            Effect.catchTags({
-              // Logged here; the caller learns only that nothing was stored.
-              PrivateLocationExposed: (exposed) =>
-                Effect.logWarning(exposed.message).pipe(
-                  Effect.andThen(Effect.fail(new Conflict({ reason: "private-location" }))),
-                ),
-              PlatformError: Effect.die,
-            }),
-          );
-        }
-        yield* Effect.gen(function* () {
-          yield* sql`
-          INSERT INTO blobs (sha256, size, storage_path, created_at)
-          VALUES (${sha}, ${file.bytes.length}, ${storagePath}, ${at})
-          ON CONFLICT (sha256) DO NOTHING
-        `;
-          yield* sql`
-          INSERT INTO attachments (id, sha256, name, media_type, source, bot_id, created_at)
-          VALUES (
-            ${id}, ${sha}, ${metadata.name}, ${metadata.mediaType},
-            ${file.bot === undefined ? "operator" : "bot"}, ${file.bot ?? null}, ${at}
-          )
-        `;
-        }).pipe(Effect.orDie);
-        return yield* decodeAttachment({
+        const { storagePath } = yield* placeBlob(written, sha, (target) =>
+          layout.writeFile(target, file.bytes),
+        );
+        return yield* insertRows({
           id,
-          name: metadata.name,
-          mediaType: metadata.mediaType,
+          sha,
           size: file.bytes.length,
-        }).pipe(Effect.orDie);
+          storagePath,
+          metadata,
+          bot: file.bot,
+        });
       });
 
     /**
@@ -253,18 +317,73 @@ export const layer = Layer.effect(
       Effect.catchCause((cause) => Effect.logWarning("A blob's bytes were not removed", cause)),
     );
 
-    const withStore = <A, E, R>(use: (put: PutFile) => Effect.Effect<A, E, R>) =>
+    /** Holds the file lock while `use` places blobs, then removes those no row came to refer to. */
+    const withBlobs = <A, E, R>(use: (written: Array<BlobFile>) => Effect.Effect<A, E, R>) =>
       blobFiles.withPermits(1)(
         Effect.suspend(() => {
           const written: Array<BlobFile> = [];
           // Bytes written for a transaction that rolled back have no blob row.
-          return use(put(written)).pipe(
+          return use(written).pipe(
             Effect.ensuring(Effect.forEach(written, removeUnreferenced, { discard: true })),
           );
         }),
       );
 
+    const withStore = <A, E, R>(use: (put: PutFile) => Effect.Effect<A, E, R>) =>
+      withBlobs((written) => use(put(written)));
+
     const store = (file: NewFile) => withStore((putFile) => transaction(putFile(file)));
+
+    const storeFile = Effect.fn("Attachments.storeFile")(function* (file: PlacedFile) {
+      const metadata = storedMetadata(file);
+      if (metadata === undefined) return yield* new Invalid({ reason: "attachment" });
+      // Read before the lock is taken: a recording takes a while to read.
+      const hash = sha256();
+      let size = 0;
+      yield* fs.stream(file.from).pipe(
+        Stream.runForEach((chunk) =>
+          Effect.sync(() => {
+            size += chunk.byteLength;
+            hash.update(chunk);
+          }),
+        ),
+        Effect.orDie,
+      );
+      if (size === 0) return yield* new Invalid({ reason: "attachment" });
+      const sha = hash.hex();
+      const stored = yield* withBlobs((written) =>
+        transaction(
+          Effect.gen(function* () {
+            const { storagePath, placed } = yield* placeBlob(written, sha, (target) =>
+              layout.writable(path.dirname(target)).pipe(
+                Effect.tap((folder) => fs.makeDirectory(folder, { recursive: true })),
+                Effect.andThen(fs.rename(file.from, target)),
+              ),
+            );
+            const attachment = yield* insertRows({
+              id: file.id,
+              sha,
+              size,
+              storagePath,
+              metadata,
+              bot: undefined,
+            });
+            return { attachment, placed };
+          }),
+        ),
+      );
+      // The store held these bytes already.
+      if (!stored.placed) {
+        yield* fs
+          .remove(file.from, { force: true })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("A file already in the store was not removed", cause),
+            ),
+          );
+      }
+      return stored.attachment;
+    });
 
     const open = Effect.fn("Attachments.open")(function* (id: AttachmentId) {
       const row = yield* rowById(id).pipe(Effect.orDie);
@@ -342,6 +461,6 @@ export const layer = Layer.effect(
       for (const blob of orphans) yield* sql.afterCommit(removeBytes(blob));
     }, Effect.orDie);
 
-    return Attachments.of({ store, withStore, open, botFiles, ofTarget, purge });
+    return Attachments.of({ store, storeFile, withStore, open, botFiles, ofTarget, purge });
   }),
 ).pipe(Layer.provide(Digest.layerWebCrypto));

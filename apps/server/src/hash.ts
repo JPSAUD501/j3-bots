@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a harness of hundreds of MB needs an incremental hash; Effect has none.
+// @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a harness or a screen recording of hundreds of MB needs an incremental hash; Effect has none.
 import * as NodeCrypto from "node:crypto";
 
-/** An incremental SHA-256, for a download read in chunks. */
+/** An incremental SHA-256, for a file read in chunks. */
 export interface Sha256 {
   readonly update: (chunk: Uint8Array) => void;
   /** The lowercase hex digest of everything given so far; the hash cannot be used after. */

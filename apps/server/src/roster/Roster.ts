@@ -33,6 +33,8 @@ export type RosterFrame =
       readonly conversationMentions: true;
       /** `message.send` takes `quotes`, so clients offer Reply and Quote. */
       readonly quotes: true;
+      /** The server takes screen recordings (`HTTP_PATHS.recordingUploads`), so clients offer one. */
+      readonly screenRecordings: true;
     }
   | {
       readonly _tag: "changed";
@@ -229,6 +231,7 @@ export const layer = Layer.effect(
             sections: sectionsNow,
             conversationMentions: true,
             quotes: true,
+            screenRecordings: true,
           }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter(

@@ -6,6 +6,7 @@ import {
   type DispatchInput,
   Engine,
   EngineAttachmentId,
+  engineCarries,
   type PermissionModeRefused,
   SessionId,
   TurnId,
@@ -14,7 +15,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -162,7 +162,6 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const attachments = yield* Attachments;
     const layout = yield* Layout;
-    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const targets = stopTargets(sql);
     const { admitsStart } = admission(sql, yield* SettingsStore);
@@ -448,7 +447,9 @@ export const layer = Layer.effect(
      * Copies an operator's file into the bot's `files/inbox/`, replacing
      * whatever is at its place. `files/` is the bot's, links included, so the
      * copy goes through the home's containment check like every private
-     * write: it never follows a link out of private state.
+     * write: it never follows a link out of private state. It is copied a
+     * piece at a time, so a screen recording of gigabytes never sits in
+     * memory.
      */
     const copyToWorkspace = Effect.fn("Sender.copyToWorkspace")(function* (
       botId: BotId,
@@ -456,7 +457,7 @@ export const layer = Layer.effect(
       source: string,
     ) {
       const target = path.join(layout.workspace(botId), inboxPath(attachment));
-      yield* layout.writeFile(target, yield* fs.readFile(source));
+      yield* layout.writeFile(target, { copyOf: source });
     });
 
     /**
@@ -489,7 +490,8 @@ export const layer = Layer.effect(
      * expired. Before the first send, each is copied into the bot's workspace
      * where its envelope names it, once the durable row shows the dispatch is
      * still to be sent: a member that left the room while an earlier file
-     * staged, or a dispatch settled meanwhile, is given nothing more. A resend
+     * staged, or a dispatch settled meanwhile, is given nothing more. A file
+     * the engine does not carry (`engineCarries`) is copied and not staged. A resend
      * carries the same envelope, which the engine applies at most once, so it
      * copies nothing: what the bot made of its inbox since is its own.
      */
@@ -514,6 +516,9 @@ export const layer = Layer.effect(
           );
           if (!copied) return { _tag: "failed" } satisfies Staging;
         }
+        // One the engine does not carry, a screen recording, reaches the bot
+        // only in its workspace, where the envelope names it.
+        if (!engineCarries(attachment)) continue;
         let stagedId = file.engine_attachment_id;
         if (
           stagedId === null ||
