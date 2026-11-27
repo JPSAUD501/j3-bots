@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  AttachmentId,
   BotId,
   CommandId,
   DeviceId,
@@ -2737,6 +2736,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             revision: "earlier",
             pairing: Option.getOrThrow(first.credential).deviceId,
             text: "all of them",
+            mentions: [],
             files,
           }),
         )
@@ -3010,37 +3010,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }),
   );
 
-  it.effect("places the files of a draft kept before drafts placed them after its text", () =>
-    Effect.gen(function* () {
-      const device = TestPlatform.makeDevice();
-      const target: EntryTarget = { _tag: "conversation", botId: BotId.make("reader") };
-      const key = targetKey(target);
-      const file = {
-        id: AttachmentId.make("notes"),
-        name: "notes.txt",
-        mediaType: "text/plain",
-        size: 5,
-      };
-
-      const credential = yield* Effect.gen(function* () {
-        yield* pairAndConnect;
-        const pairing = yield* (yield* Connection).deviceId;
-        const older = JSON.stringify({ revision: "older", pairing, text: "notes", files: [file] });
-        yield* device.storage.commit([{ table: "drafts", key, value: older }]).pipe(Effect.orDie);
-        return yield* savedCredential;
-      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
-
-      yield* Effect.gen(function* () {
-        const shown = (yield* Drafts).state.get().get(key);
-        assert.strictEqual(shown?.text, `notes${FILE_MARK}`);
-        assert.deepStrictEqual(
-          shown?.files.map((one) => one.key),
-          ["notes"],
-        );
-      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
-    }),
-  );
-
   it.effect("keeps the mentions picked in a draft through a reload", () =>
     Effect.gen(function* () {
       const device = TestPlatform.makeDevice();
@@ -3062,16 +3031,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* Effect.gen(function* () {
         const drafts = yield* Drafts;
         assert.deepStrictEqual(drafts.state.get().get(key)?.mentions, first.mentions);
-        // A draft kept before drafts held mentions reads as holding none.
-        const pairing = yield* (yield* Connection).deviceId;
-        const older = JSON.stringify({ revision: "older", pairing, text: "@Ana", files: [] });
-        yield* device.storage.commit([{ table: "drafts", key, value: older }]).pipe(Effect.orDie);
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-
-      yield* Effect.gen(function* () {
-        const shown = (yield* Drafts).state.get().get(key);
-        assert.strictEqual(shown?.text, "@Ana");
-        assert.deepStrictEqual(shown?.mentions, []);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -3670,6 +3629,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             revision: "earlier",
             pairing: Option.getOrThrow(credential).deviceId,
             text: "",
+            mentions: [],
             files: images,
           }),
         )
