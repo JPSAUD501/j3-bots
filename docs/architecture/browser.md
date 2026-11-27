@@ -36,7 +36,7 @@ A tool call crosses the network once. The server decides which tab and whether t
 | Fake host | A host in memory, for tests of what drives one. | `makeFakePageHost` in `@j3-bots/browser/testing` | Core (here) |
 | Browser service | The tab registry, placement on hosts and parking, leases, the person's hold, the `browser_*` tools, the host socket, the viewers' media socket, and the login fill and browser help on these tabs ([Server: the bot's browser](server.md#the-bots-browser)). The engine adapter's browser code is gone but what keeps the engine's browser off ([Engine: the bot's browser](engine.md#the-bots-browser)). | `apps/server/src/browser`, `browserTools.ts` in `packages/prompts` | Server host (built) |
 | Server host | Chrome for Testing in new headless mode, pinned per platform and downloaded on first use; one context with no profile on disk, which takes sign-ins as cookies and storage the server writes. | `apps/server/src/browser/server` | Server host (built) |
-| Sign-ins | The sealed jar, its sync with every host, moving today's sign-ins out of the engine's profile, Settings → Browser. | `apps/server`, clients | Sign-ins |
+| Sign-ins | The sealed jar, its sync with every host, moving today's sign-ins out of the engine's profile, Settings → Browser. | `SignIns` and `bringIn` in `apps/server/src/browser/signins`, `oldEngineBrowser` in `packages/engine-t3`, `readProfileSignIns` and the CDP cookie mapping in `packages/browser`, Settings → Browser in the clients | Sign-ins (here) |
 | Desktop host | The in-app browser: views, the side panel, the pop-out window, private tabs, hidden tabs that keep painting. | `apps/desktop` | Desktop host |
 | Viewers | Watching and using a tab from the web and the phone. | `apps/web`, `apps/mobile` | Viewers |
 
@@ -46,6 +46,15 @@ A tool call crosses the network once. The server decides which tab and whether t
 - **Clients never reach a host.** They watch and use tabs through the server, by the tab's ref.
 - **A host never speaks raw CDP to the server.** One call is one piece of page work.
 - **The server owns every ref.** A host mints one only for a tab it opens by itself, such as a pop-up or the person's new tab, with at least 128 bits of randomness.
+
+## Sign-ins
+
+The person's sign-ins are one jar on the server, which every host's store agrees with ([Server: sign-ins](server.md#sign-ins)):
+
+- **Hosts only read and write.** A host implements `cookies.read`, `cookies.write`, `storage.read` and `storage.write`, and reports what its pages change (`cookies.changed`, `storage.changed`) when it can. What to take, what wins and what to send each host is the server's.
+- **A host names its store.** `cookieStore`, in its hello, stays the same for as long as the store keeps its cookies, and changes once it is cleared. With it, a host that comes back is agreed three ways, from what both held when they last agreed; without it, the host is treated as new.
+- **Cookies cross the protocol in one shape**, `BrowserCookie`. `cookieOfCdp` and `cdpParamOf` in `packages/browser` map it to and from the DevTools protocol's `Storage.getCookies` and `Storage.setCookies`, for a host that reads raw CDP. A cookie for its host alone has no leading dot on its domain, and one set without SameSite stays without it.
+- **The move from the engine's profile** reads it with `readProfileSignIns`, in `packages/browser`: a private copy of the profile, opened by the Chromium that wrote it, with every request answered by an empty page in the process.
 
 ## The driver
 

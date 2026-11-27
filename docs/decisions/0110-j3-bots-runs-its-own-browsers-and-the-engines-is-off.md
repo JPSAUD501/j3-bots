@@ -44,10 +44,13 @@ The owner wants a browser that is well made and works with real sites, for bots 
 
 ### Sign-ins
 
-- **One jar, on the server.** It holds cookies, `localStorage` and the `IndexedDB` of the sites that need it. It is sealed under the vault's data key, as secrets are.
-- **Every host shares it.** Each desktop sends its changes as they happen and receives the others'. The server's browser starts from the jar each time, with no profile on disk.
+- **One jar, on the server.** It holds cookies, `localStorage` and the `IndexedDB` of the sites that need it. It is sealed under a key derived from the vault's data key, so it opens with the secrets and with nothing else, and names no site on disk.
+- **Every host shares it.** Each desktop sends its changes as they happen and receives the others'. The server's browser starts from the jar each time, with no profile on disk. A host that comes back is agreed with the jar from what both held when they last agreed, so neither side's changes meanwhile are lost.
 - **Session cookies are kept.** A host that restarts or closes when idle is no reason to sign out.
+- **Signing out wins.** The person signs out of one site or of all, everywhere at once. A host that was away is signed out before anything it holds is taken back, and a cookie removed is not brought back by one that still held it.
+- **Today's sign-ins move once.** The engine's profile is read once, on the server, and what it holds goes into the jar. The profile is then deleted.
 - **The desktop encrypts its cookies** on disk, with Electron's `EnableCookieEncryption` fuse.
+- Which sites need their `IndexedDB` is learned later. Until then, only those whose databases came from the engine's profile keep them.
 - Importing sign-ins from the person's own Chrome or Firefox comes later.
 
 ### What comes from T3 Code
