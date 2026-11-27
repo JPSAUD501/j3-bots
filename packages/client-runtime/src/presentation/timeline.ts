@@ -228,23 +228,24 @@ export function rowOrder(row: TimelineItem): EntryOrder | null {
 }
 
 /**
- * What the bots said after the row keyed `since`, oldest first: after every
- * row when it is null, and nothing once that row is gone. A connector's app
- * shown full screen shows the latest over it (decision 0093).
+ * What the bots said after the entry ordered `since`, oldest first, wherever
+ * their rows stand: everything they said when it is null. A connector's app
+ * shown full screen counts from the highest order the conversation had as it
+ * went (`readThrough`), and shows the latest over it (decision 0093), so a
+ * reply that lands above a row still at work, or after one that went, counts.
  */
 export function botRepliesAfter(
   rows: ReadonlyArray<TimelineItem>,
-  since: string | null,
+  since: EntryOrder | null,
 ): ReadonlyArray<MessageEntry> {
-  const start = since === null ? 0 : rows.findIndex((row) => row.key === since) + 1;
-  if (start === 0 && since !== null) return [];
-  return rows
-    .slice(start)
-    .flatMap((row) =>
-      row.kind === "message" && row.message._tag === "message" && row.message.author._tag === "bot"
-        ? [row.message]
-        : [],
-    );
+  return rows.flatMap((row) =>
+    row.kind === "message" &&
+    row.message._tag === "message" &&
+    row.message.author._tag === "bot" &&
+    (since === null || row.message.order > since)
+      ? [row.message]
+      : [],
+  );
 }
 
 /**

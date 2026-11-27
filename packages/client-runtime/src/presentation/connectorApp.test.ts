@@ -79,7 +79,7 @@ const hosted = (
     readonly allowed: boolean;
   }> = [];
   const asked: Array<string> = [];
-  const heights: Array<number> = [];
+  const heights: Array<readonly [number, ConnectorAppDisplayMode]> = [];
   const contexts: Array<ConnectorAppContext> = [];
   const modes: Array<ReadonlyArray<ConnectorAppDisplayMode>> = [];
   const answer: ConnectorAppAnswer = { _tag: "answer", result: { content: [] } };
@@ -108,7 +108,7 @@ const hosted = (
     },
     setDisplayMode: (mode) => mode,
     onModes: (shown) => modes.push(shown),
-    onHeight: (height) => heights.push(height),
+    onHeight: (height, mode) => heights.push([height, mode]),
     ...overrides,
   });
   /** Once the host answered each of `ids`. */
@@ -414,7 +414,15 @@ describe("connectorAppHost", () => {
     first.host.receive(notification("ui/notifications/size-changed", { height: 99_999 }));
     first.host.receive(notification("ui/notifications/size-changed", { height: 10 }));
     first.host.receive(notification("ui/notifications/size-changed", { height: 412.4 }));
-    assert.deepStrictEqual(first.heights, [MAX_CONNECTOR_APP_INLINE_HEIGHT, 80, 413]);
+    assert.deepStrictEqual(first.heights, [
+      [MAX_CONNECTOR_APP_INLINE_HEIGHT, "inline"],
+      [80, "inline"],
+      [413, "inline"],
+    ]);
+    // Full screen, laid out wider, it reports another height: not its height in the reply.
+    first.host.placeChanged({ ...place, display: { mode: "fullscreen", width: 900, height: 700 } });
+    first.host.receive(notification("ui/notifications/size-changed", { height: 250 }));
+    assert.deepStrictEqual(first.heights.at(-1), [250, "fullscreen"]);
     void first.host.teardown("scrolled away");
     // Drawn again, as the operator scrolls back: at the size it last had.
     assert.strictEqual(connectorAppStartHeight(viewId), 413);

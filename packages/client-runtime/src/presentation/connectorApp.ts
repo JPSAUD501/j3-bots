@@ -131,10 +131,24 @@ const withoutServer = (csp: ConnectorAppCsp, server: URL): ConnectorAppCsp => {
 const attributeValue = (text: string): string =>
   text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
+/**
+ * The longest message, as JSON, that Android's bridge takes from an app: the
+ * most files one `ui/download-file` may offer (16 MiB) as base64, with room
+ * for the request around them. Android's side drops a longer one unread.
+ */
+const CONNECTOR_APP_BRIDGE_MAX_LENGTH = 24 * 1024 * 1024;
+
+/** The extension's code for a request the host turned down. */
+const DENIED = -32000;
+
+/** Why the host did not pass on a request: it, or its answer, is larger than an app may pass. */
+const TOO_LARGE = "The request or its answer is too large to pass on.";
+
 // Passes on what the app's frame sends, from that frame's window alone, to
-// the WebView's bridge as JSON; and gives the app what the app's side hands
-// `deliver`, as the web client would post it.
-const RELAY = `(function(){var f=document.getElementById("app"),b=window[${JSON.stringify(CONNECTOR_APP_BRIDGE)}];window.addEventListener("message",function(e){if(e.source!==f.contentWindow||!b)return;var t;try{t=JSON.stringify(e.data);}catch(x){return;}if(typeof t==="string")b.postMessage(t);});window.deliver=function(t){f.contentWindow.postMessage(JSON.parse(t),"*");};})();`;
+// the WebView's bridge as JSON; a request too long for the bridge is answered
+// here, as the host answers one too large, so the app does not wait on it.
+// Gives the app what the app's side hands `deliver`, as the web client would post it.
+const RELAY = `(function(){var f=document.getElementById("app"),b=window[${JSON.stringify(CONNECTOR_APP_BRIDGE)}];window.addEventListener("message",function(e){if(e.source!==f.contentWindow||!b)return;var t;try{t=JSON.stringify(e.data);}catch(x){return;}if(typeof t!=="string")return;if(t.length>${CONNECTOR_APP_BRIDGE_MAX_LENGTH}){var d=e.data;if(d&&d.id!==undefined&&typeof d.method==="string")f.contentWindow.postMessage({jsonrpc:"2.0",id:d.id,error:{code:${DENIED},message:${JSON.stringify(TOO_LARGE)}}},"*");return;}b.postMessage(t);});window.deliver=function(t){f.contentWindow.postMessage(JSON.parse(t),"*");};})();`;
 
 /**
  * The page a WebView loads to show `document`, as `connectorAppDocument`
@@ -285,11 +299,10 @@ export type HostMessage =
       readonly params: Schema.Json;
     };
 
-/** JSON-RPC's own codes, and the extension's for a request the host turned down. */
+/** JSON-RPC's own codes; `DENIED`, the extension's for a request the host turned down, is above. */
 const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
-const DENIED = -32000;
 
 /** How an app is shown now, and the room its frame has there. */
 export type ConnectorAppDisplay =
@@ -384,8 +397,12 @@ export interface ConnectorAppHostOptions {
   readonly setDisplayMode: (mode: ConnectorAppDisplayMode) => ConnectorAppDisplayMode;
   /** The modes the app can be shown in here, once it said which it has: the client offers those. */
   readonly onModes: (modes: ReadonlyArray<ConnectorAppDisplayMode>) => void;
-  /** The height the app reports for its content, fitted to what the frame is drawn at in the reply. */
-  readonly onHeight: (height: number) => void;
+  /**
+   * The height the app reports for its content, within bounds, and the mode
+   * it was told it is shown in as it did: one reported full screen or pinned
+   * is not its height in the reply.
+   */
+  readonly onHeight: (height: number, mode: ConnectorAppDisplayMode) => void;
 }
 
 /** The host's side of one drawn app. */
@@ -418,7 +435,7 @@ const REFUSAL_MESSAGE: Readonly<Record<ConnectorAppRefusal, string>> = {
   gone: "The connector was removed, or the bot no longer has it.",
   "not-for-apps": "The connector does not let apps call that tool.",
   unavailable: "The connector is not connected, or did not answer.",
-  "too-large": "The request or its answer is too large to pass on.",
+  "too-large": TOO_LARGE,
   "needs-allow": "The operator did not allow this call.",
 };
 
@@ -796,8 +813,10 @@ export const connectorAppHost = (options: ConnectorAppHostOptions): ConnectorApp
         const size = decodeSize(params);
         if (Option.isSome(size) && size.value.height !== undefined && size.value.height > 0) {
           const height = clampConnectorAppHeight(size.value.height);
-          lastHeights.set(view.viewId, height);
-          options.onHeight(height);
+          const { mode } = place.display;
+          // It opens again at the height it had in the reply.
+          if (mode === "inline") lastHeights.set(view.viewId, height);
+          options.onHeight(height, mode);
         }
         return;
       }

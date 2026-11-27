@@ -22,6 +22,7 @@ import {
   cardPlace,
   readThrough,
   rowOrder,
+  type TimelineItem,
 } from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
@@ -355,21 +356,29 @@ describe("buildTimeline", () => {
 });
 
 describe("botRepliesAfter", () => {
-  const rows = buildTimeline([
+  const earlier = [
     message("2026-11-20T10:00:00Z", scout, "Before"),
     message("2026-11-20T10:01:00Z"),
-    message("2026-11-20T10:02:00Z", scout, "First"),
-    message("2026-11-20T10:03:00Z", wren, "Second"),
-  ]);
-  const texts = (since: string | null) => botRepliesAfter(rows, since).map((reply) => reply.text);
+  ];
+  const since = readThrough(buildTimeline(earlier).map(rowOrder));
+  const first = message("2026-11-20T10:02:00Z", scout, "First");
+  const texts = (rows: ReadonlyArray<TimelineItem>) =>
+    botRepliesAfter(rows, since).map((reply) => reply.text);
 
-  it("finds what the bots said after a row, and not what the operator said", () => {
-    const since = rows.find((row) => row.kind === "message" && row.message.text === "Before");
-    expect(texts(since?.key ?? null)).toEqual(["First", "Second"]);
+  it("finds what the bots said after it, and not what the operator said", () => {
+    const later = [
+      first,
+      message("2026-11-20T10:03:00Z"),
+      message("2026-11-20T10:04:00Z", wren, "Second"),
+    ];
+    expect(texts(buildTimeline([...earlier, ...later]))).toEqual(["First", "Second"]);
   });
 
-  it("finds nothing once the row it counts from is gone", () => {
-    expect(texts("gone")).toEqual([]);
+  it("finds a reply wherever its row stands, above one still at work", () => {
+    const rows = buildTimeline([...earlier, first]);
+    const reply = rows.at(-1);
+    if (reply === undefined) throw new Error("The timeline shows the reply");
+    expect(texts([reply, ...rows.slice(0, -1)])).toEqual(["First"]);
   });
 });
 
