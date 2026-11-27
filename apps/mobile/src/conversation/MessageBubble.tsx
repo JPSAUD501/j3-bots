@@ -341,8 +341,9 @@ export function MessageBubble({
       );
     });
   };
+  // Where the operator reacts to nothing and quotes nothing, a long press opens nothing.
   const body =
-    reactable === null ? (
+    reactable === null || (!reacting.offered && actions.length === 0) ? (
       said
     ) : (
       <Pressable

@@ -58,11 +58,16 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         badge={archived ? t("room.archivedBadge") : null}
         lines={
           <ProfileLine>
-            {archived ? t("room.archivedLine") : plural("room.memberCount", members.length)}
+            {archived
+              ? t("room.archivedLine")
+              : room.botsOnly === true
+                ? t("room.botsOnlyLine", { count: plural("room.memberCount", members.length) })
+                : plural("room.memberCount", members.length)}
           </ProfileLine>
         }
       >
-        {!archived && (
+        {/* Its bots chose who talks in a room of bots only: the operator reads it. */}
+        {!archived && room.botsOnly !== true && (
           <Button
             variant="secondary"
             label={t("room.edit", { name })}

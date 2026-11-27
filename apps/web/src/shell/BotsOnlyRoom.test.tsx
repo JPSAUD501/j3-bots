@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment happy-dom
 import { AiSessionProvider } from "@j3-bots/client-runtime/react";
-import type { RosterItemKey } from "@j3-bots/client-runtime/presentation";
+import type { RosterItemKey } from "@j3-bots/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
