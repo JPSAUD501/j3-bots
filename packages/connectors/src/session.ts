@@ -62,6 +62,7 @@ import {
   makeGuardedFetch,
   type UrlPolicy,
 } from "./guard.ts";
+import { type SessionSkills, SKILLS_EXTENSION, skillsOf } from "./skills.ts";
 import {
   CALL_TAG,
   DetailedTask,
@@ -253,6 +254,8 @@ export interface ServerInfo {
     readonly prompts: boolean;
     /** Whether it may run a call as a task (the Tasks extension). */
     readonly tasks: boolean;
+    /** Whether it serves skills (the Skills extension). */
+    readonly skills: boolean;
   };
 }
 
@@ -302,6 +305,8 @@ export interface McpSession {
     uri: string,
     maxBytes: number,
   ) => Effect.Effect<Schema.Json | null, ConnectorFailure>;
+  /** The skills its server serves, when it declared the Skills extension. */
+  readonly skills: SessionSkills;
 }
 
 /** Headers the transport sets itself, or that would change how a request is framed: never taken from the store. */
@@ -710,8 +715,9 @@ const cut = (text: string, max: number): { readonly text: string; readonly cut: 
 
 /**
  * The client a session speaks through, with what J3 Bots offers a server:
- * elicitation, in both modes, tasks, and showing a tool's app as an HTML
- * document of the MCP Apps extension (decision 0048). Never sampling or roots.
+ * elicitation, in both modes, tasks, showing a tool's app as an HTML
+ * document of the MCP Apps extension (decision 0048), and loading the skills
+ * it serves (decision 0089). Never sampling or roots.
  */
 export const makeClient = (
   setup: ClientSetup,
@@ -729,6 +735,7 @@ export const makeClient = (
       extensions: {
         [TASKS_EXTENSION]: {},
         [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        [SKILLS_EXTENSION]: {},
       },
     },
     versionNegotiation: {
@@ -957,6 +964,7 @@ export const sessionOf = (
       resources: capabilities?.resources !== undefined,
       prompts: capabilities?.prompts !== undefined,
       tasks: capabilities?.extensions?.[TASKS_EXTENSION] !== undefined,
+      skills: capabilities?.extensions?.[SKILLS_EXTENSION] !== undefined,
     },
   };
 
@@ -1312,6 +1320,18 @@ export const sessionOf = (
     },
   );
 
+  const skills = skillsOf(client, {
+    send: (deadline, budget, send) =>
+      request(deadline, send, { budget: { limit: budget, left: budget } }).pipe(
+        Effect.map((answer) => ({ value: answer.value, scrub: scrub(answer.sent) })),
+      ),
+    listDeadline: limits.listDeadline,
+    readDeadline: limits.callDeadline,
+    maxCatalogBytes: limits.maxCatalogBytes,
+    maxResultCharacters: limits.maxResultCharacters,
+    timeout: sdkTimeout,
+  });
+
   return {
     info,
     listTools,
@@ -1321,5 +1341,6 @@ export const sessionOf = (
     readResource,
     readAppResource,
     getPrompt,
+    skills,
   };
 };

@@ -20,6 +20,7 @@ import {
   type SessionLimits,
   scrubberOf,
 } from "./session.ts";
+import { SKILLS_EXTENSION } from "./skills.ts";
 import { TASKS_EXTENSION } from "./tasks.ts";
 import { type FakeOptions, fakeMcpServer } from "./testing/fakeMcpServer.ts";
 
@@ -282,6 +283,7 @@ describe("openSession", () => {
         extensions: {
           [TASKS_EXTENSION]: {},
           [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+          [SKILLS_EXTENSION]: {},
         },
       });
       const [tool] = yield* session.listTools;
