@@ -75,6 +75,7 @@ import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import * as QuickAccess from "./quickAccess.ts";
+import * as Recorder from "./recording/recorder.ts";
 import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
@@ -92,8 +93,12 @@ const SCHEME = schemeOf(APP_ORIGIN);
 /** Links to the app, taken from as early as the system hands them over. */
 const links = AppLinks.start(SCHEME);
 
-/** What a page may ask for: showing notifications and writing to the clipboard. */
-const PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write"]);
+/**
+ * What a page may ask for: showing notifications, writing to the clipboard,
+ * and the microphone and screens a screen recording takes, which the
+ * recorder allows only as it says (`allowsMedia`).
+ */
+const PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write", "media"]);
 
 // Before `ready`, as Electron requires. `standard` and `secure` make the page
 // a secure context with a real origin, so Web Locks, BroadcastChannel and
@@ -572,11 +577,16 @@ const program = Effect.gen(function* () {
 
   // The app's page only, never a frame in it: a bot's visual and a
   // connector's app are on the app's scheme, though sandboxed.
-  session.defaultSession.setPermissionRequestHandler((_contents, permission, grant, details) =>
+  // Media only as the recorder allows it, once it runs.
+  let allowsMedia: (contents: WebContents, mediaTypes: ReadonlyArray<string>) => boolean = () =>
+    false;
+  session.defaultSession.setPermissionRequestHandler((contents, permission, grant, details) =>
     grant(
       PERMISSIONS.has(permission) &&
         details.isMainFrame &&
-        isAppUrl(details.requestingUrl, APP_ORIGIN),
+        isAppUrl(details.requestingUrl, APP_ORIGIN) &&
+        (permission !== "media" ||
+          allowsMedia(contents, "mediaTypes" in details ? (details.mediaTypes ?? []) : [])),
     ),
   );
   session.defaultSession.setPermissionCheckHandler(
@@ -695,10 +705,20 @@ const program = Effect.gen(function* () {
   yield* SignInRelay.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
   const sendCommand = commandSender(window);
+  const reader = yield* readerHere({
+    platform: process.platform,
+    wayland,
+    env: process.env,
+    homeDirectory: app.getPath("home"),
+    hostname: computer.hostname,
+    locale: app.getLocale(),
+    ownProcess: process.pid,
+  });
+  const preload = path.join(app.getAppPath(), "dist", "preload.cjs");
   const quickAccess = yield* QuickAccess.serve({
     main: window,
     appOrigin: APP_ORIGIN,
-    preload: path.join(app.getAppPath(), "dist", "preload.cjs"),
+    preload,
     fromApp,
     transparent,
     wayland,
@@ -710,17 +730,22 @@ const program = Effect.gen(function* () {
       forward();
       sendCommand({ _tag: "open", target, pairing });
     },
-    reader: yield* readerHere({
-      platform: process.platform,
-      wayland,
-      env: process.env,
-      homeDirectory: app.getPath("home"),
-      hostname: computer.hostname,
-      locale: app.getLocale(),
-      ownProcess: process.pid,
-    }),
+    reader,
   });
   unloadQuickAccess = quickAccess.unload;
+  const recorder = yield* Recorder.serve({
+    main: window,
+    appOrigin: APP_ORIGIN,
+    preload,
+    fromApp,
+    transparent,
+    wayland,
+    reader,
+    bringMain: forward,
+    sendCommand,
+    folder: path.join(app.getPath("userData"), "recordings"),
+  });
+  allowsMedia = recorder.allowsMedia;
   yield* Menus.serve({
     window,
     appearance,

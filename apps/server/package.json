@@ -24,6 +24,10 @@
       "types": "./src/transfer/report.ts",
       "import": "./src/transfer/report.ts"
     },
+    "./free-space": {
+      "types": "./src/system/freeSpace.ts",
+      "import": "./src/system/freeSpace.ts"
+    },
     "./windows-acl": {
       "types": "./src/home/windowsAcl.ts",
       "import": "./src/home/windowsAcl.ts"

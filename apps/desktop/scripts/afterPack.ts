@@ -8,12 +8,31 @@ import { checkServerRuntime, isPlatform, platformBuild } from "../../../scripts/
 // electron-builder runs this for each package once its files are laid out,
 // before it signs and packs them (electron-builder.yml, `afterPack`).
 // electron-builder only warns when a folder `extraResources` names is
-// missing, so this is what fails a build whose package would lack local mode:
+// missing, so this is what fails a build whose package would lack the input
+// hook screen recordings need, or local mode:
 // a package for a platform the server runtime is built for carries that
 // runtime, of the app's own version; any other carries none.
 
 export default function afterPack(context: AfterPackContext): void {
   const platform = `${context.electronPlatformName}-${Arch[context.arch]}`;
+  // The input hook screen recordings read keys and clicks through
+  // (decision 0098), unpacked beside the asar, since a native module loads
+  // only from a real file.
+  const hook = NodePath.join(
+    context.packager.getResourcesDir(context.appOutDir),
+    "app.asar.unpacked",
+    "dist",
+    "native",
+    "uiohook",
+    "uiohook-napi",
+    "prebuilds",
+    platform,
+    "uiohook-napi.node",
+  );
+  if (!NodeFS.existsSync(hook)) {
+    throw new Error(`The ${platform} package lacks the input hook screen recordings need.`);
+  }
+  console.log(`  • input hook      ${platform}`);
   const runtime = NodePath.join(
     context.packager.getResourcesDir(context.appOutDir),
     "server-runtime",
