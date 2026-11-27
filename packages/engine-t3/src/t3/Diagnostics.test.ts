@@ -94,7 +94,7 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
         ["server.trace.ndjson.1", "2026-11-25T10:00:00Z"],
         ["server.trace.ndjson", "2026-11-27T11:00:00Z"],
       ] as const) {
-        const time = new Date(at);
+        const time = DateTime.toDateUtc(DateTime.makeUnsafe(at));
         yield* fs.utimes(path.join(logs, file), time, time);
       }
       const lines = yield* Stream.runCollect(

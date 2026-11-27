@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
@@ -29,9 +30,11 @@ it.layer(TestDatabase.layer)("j3-bots diagnostics", (it) => {
       // This home, and a user with no service installed.
       const run = (args: ReadonlyArray<string>) =>
         Command.runWith(diagnosticsCommand, { version: "0.14.0" })(args).pipe(
-          Effect.provide(AdminClient.layer),
           Effect.provide(
-            ConfigProvider.layer(ConfigProvider.fromEnvRecord({ HOME: home, J3_HOME: home })),
+            Layer.merge(
+              AdminClient.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnvRecord({ HOME: home, J3_HOME: home })),
+            ),
           ),
         );
 

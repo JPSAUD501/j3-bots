@@ -148,8 +148,8 @@ export const engineLogNewestFirst = (
         path.join(folder, index === 0 ? TRACE_FILE : `${TRACE_FILE}.${index}`),
       );
       /** The file's lines, newest first, or none once the file is too old, too large or missing. */
-      const linesOf = (file: string) =>
-        Effect.gen(function* () {
+      const linesOf = Effect.fn("linesOf")(
+        function* (file: string) {
           const info = yield* fs.stat(file);
           const written = Option.getOrUndefined(info.mtime);
           if (written !== undefined && written.getTime() < since.epochMilliseconds) {
@@ -169,7 +169,9 @@ export const engineLogNewestFirst = (
               ),
             );
           return { lines, older: false };
-        }).pipe(Effect.orElseSucceed(() => ({ lines: [], older: false })));
+        },
+        Effect.orElseSucceed(() => ({ lines: [], older: false })),
+      );
       return Stream.fromIterable(files).pipe(
         Stream.mapEffect(linesOf),
         Stream.takeUntil((read) => read.older),
