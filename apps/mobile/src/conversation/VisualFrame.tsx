@@ -13,6 +13,7 @@ import {
   type ViewProps,
   type ViewStyle,
 } from "react-native";
+import { useShownPalette } from "../themes/look.ts";
 
 type NativeVisualProps = ViewProps & {
   readonly document: string;
@@ -43,13 +44,13 @@ const NativeVisualView =
 export const canShowVisuals = NativeVisualView !== null;
 
 /**
- * A bot's page, wrapped by `visualDocument` in the app's current theme and
- * drawn in the isolated view, inside `visualShell`'s sandboxed frame: rebuilt
- * when the theme changes. Of what the page sends, only its height comes out
- * (`readVisualReport`), clamped, and the shell's word that the frame shows
- * something else, which the visual navigated it to: it fails then, as its
- * page's doing. So does a page the document's guard could not watch, which
- * is never drawn.
+ * A bot's page, wrapped by `visualDocument` in the app's current appearance
+ * and the colors of the theme shown, and drawn in the isolated view, inside
+ * `visualShell`'s sandboxed frame: rebuilt when either changes. Of what the
+ * page sends, only its height comes out (`readVisualReport`), clamped, and
+ * the shell's word that the frame shows something else, which the visual
+ * navigated it to: it fails then, as its page's doing. So does a page the
+ * document's guard could not watch, which is never drawn.
  */
 export function VisualFrame({
   html,
@@ -67,10 +68,12 @@ export function VisualFrame({
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const appearance = useColorScheme() === "dark" ? "dark" : "light";
+  // In the colors of the theme this phone shows.
+  const palette = useShownPalette(appearance);
   const page = useMemo(() => {
-    const document = visualDocument(html, appearance);
+    const document = visualDocument(html, appearance, palette);
     return document === null ? null : visualShell(document);
-  }, [html, appearance]);
+  }, [html, appearance, palette]);
   const refused = page === null;
   const refuse = useEffectEvent(() => onFailed("page"));
   useEffect(() => {

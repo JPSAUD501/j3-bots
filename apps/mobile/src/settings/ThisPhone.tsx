@@ -19,6 +19,7 @@ import {
 } from "../preferences.ts";
 import { useSay } from "../toast.tsx";
 import { Button } from "../ui.tsx";
+import { ThemesSection } from "./Themes.tsx";
 
 /** The server this phone talks to, and leaving it for another. */
 export function ServerSection() {
@@ -36,7 +37,7 @@ export function ServerSection() {
   );
 }
 
-/** The theme and the language, kept on this phone only. */
+/** Light or dark, the theme and the language, kept on this phone only. */
 export function AppearanceSection() {
   const { t } = useI18n();
   const { appearance, language } = usePreferences();
@@ -60,6 +61,7 @@ export function AppearanceSection() {
           onChange={setAppearance}
         />
       </Section>
+      <ThemesSection />
       <Section open title={t("settings.language")}>
         <View accessibilityRole="radiogroup" className="gap-1">
           {languages.map(({ value, label }) => (

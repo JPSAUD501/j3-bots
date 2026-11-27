@@ -114,6 +114,9 @@ import { Reactions } from "./Reactions.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
+import { ThemeBackdrop } from "../themes/ThemeBackdrop.tsx";
+import { useShownPalette } from "../themes/look.ts";
+import { useShownThemes } from "../themes/ThemeRuntime.tsx";
 import { AppStage, type PlaceBase, STAGE_MODES, useAppStageState } from "./AppStage.tsx";
 import { ConnectorAppBlock, StagedConnectorApp } from "./ConnectorAppCard.tsx";
 import { type TurnBot, WorkFold } from "./WorkFold.tsx";
@@ -425,9 +428,12 @@ export function ConversationView({
   const opened = useReadable(session.state);
   const server = opened._tag === "open" ? opened.origin : null;
   const appearance = useColorScheme() === "dark" ? "dark" : "light";
+  const palette = useShownPalette(appearance);
+  const themes = useShownThemes();
   const base = useMemo<PlaceBase>(
     () => ({
       appearance,
+      palette,
       locale: ctx.i18n.locale,
       timeZone: ctx.timeZone,
       platform: "mobile",
@@ -435,7 +441,7 @@ export function ConversationView({
       hover: false,
       modes: STAGE_MODES,
     }),
-    [appearance, ctx.i18n.locale, ctx.timeZone],
+    [appearance, palette, ctx.i18n.locale, ctx.timeZone],
   );
   const stage = useAppStageState({ rows, server, base });
   const fullscreen = stage.staged?.mode === "fullscreen";
@@ -492,6 +498,8 @@ export function ConversationView({
             setColumn(Math.min(event.nativeEvent.layout.width, layout.textColumn))
           }
         >
+          {/* The theme's picture, behind the timeline. */}
+          <ThemeBackdrop choice={themes?.shown ?? null} />
           <OpenMention value={openMention}>
             <AppStage value={stage}>
               <ConversationVisualsContext value={visuals}>

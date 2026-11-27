@@ -3,14 +3,15 @@ import type { J3Client } from "@j3-bots/client-runtime";
 import { appLink, appScheme } from "../links.ts";
 import { iconFace } from "../platform/faceImages.ts";
 import type { Session } from "../session.ts";
+import { shownPalettes, subscribeLook } from "../themes/look.ts";
 import { lastSharedTo } from "./lastShared.ts";
 import { type ShortcutBot, shareSheet } from "./native.ts";
 import { shareBots } from "./order.ts";
 
 // Direct Share: the bots Android offers at the top of its share menu, each
-// opening the share sheet with that bot picked. They follow the roster while
-// the app runs, in the share sheet's order, and go when the phone is no
-// longer paired.
+// opening the share sheet with that bot picked. They follow the roster and
+// the theme while the app runs, in the share sheet's order, and go when the
+// phone is no longer paired.
 
 /** An icon's side in px: Android's largest launcher icon, 108 dp at four pixels per dp. */
 const ICON_SIZE = 432;
@@ -22,10 +23,11 @@ const SETTLE = 1000;
 const shortcutsOf = (client: J3Client, scheme: string): ReadonlyArray<ShortcutBot> | null => {
   const roster = client.roster.get();
   if (roster._tag !== "ready") return null;
+  const plate = shownPalettes().light.muted;
   return shareBots(roster.value, lastSharedTo()).map((item) => ({
     id: item.bot.id,
     name: item.bot.profile.name,
-    icon: iconFace(item.bot.profile.avatar, item.bot.id, ICON_SIZE),
+    icon: iconFace(item.bot.profile.avatar, item.bot.id, plate, ICON_SIZE),
     link: appLink(scheme, { _tag: "bot", botId: item.bot.id }),
   }));
 };
@@ -73,11 +75,14 @@ export const keepShareTargets = (session: Session): void => {
         if (bots !== null) apply(bots);
       }, SETTLE);
     };
-    const stop = client.roster.subscribe(update);
+    // Their icons sit on the theme's colors.
+    const stopRoster = client.roster.subscribe(update);
+    const stopLook = subscribeLook(update);
     followed = {
       client,
       stop: () => {
-        stop();
+        stopRoster();
+        stopLook();
         if (timer !== null) clearTimeout(timer);
       },
     };

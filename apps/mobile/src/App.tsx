@@ -20,6 +20,7 @@ import { PairingScreen } from "./screens/Pairing.tsx";
 import { session } from "./platform/platform.ts";
 import { i18nFor, usePreferences } from "./preferences.ts";
 import type { SessionState } from "./session.ts";
+import { ThemeRuntime } from "./themes/ThemeRuntime.tsx";
 import { useColor } from "./theme.ts";
 import { Mismatch } from "./update/Mismatch.tsx";
 import { UpdatePromptModal } from "./update/UpdatePrompt.tsx";
@@ -151,10 +152,12 @@ function Root() {
     case "main":
       return (
         <J3ClientProvider key={shown.server.origin} client={shown.client}>
-          <AvatarConnection>
-            <Main />
-          </AvatarConnection>
-          <UpdatePromptModal blocked={false} />
+          <ThemeRuntime>
+            <AvatarConnection>
+              <Main />
+            </AvatarConnection>
+            <UpdatePromptModal blocked={false} />
+          </ThemeRuntime>
         </J3ClientProvider>
       );
   }
