@@ -24,10 +24,14 @@ interface BundleInputs {
 /**
  * Records every module and asset that reached the output, after the bundler
  * has shaken out what nothing uses, into `<BUNDLE_INPUTS_FOLDER>/<name>-<n>.json`,
- * one file per output written. Works in Vite and in tsdown, both on Rolldown.
+ * one file per output written, a worker's build among them. Works in Vite and
+ * in tsdown, both on Rolldown.
  */
+// How many outputs each name has written, across every instance of the
+// plugin: a web worker's build has its own, and its outputs count on.
+const written = new Map<string, number>();
+
 export function bundleInputs(name: string): Plugin {
-  let outputs = 0;
   return {
     name: "j3-bots:bundle-inputs",
     generateBundle(_, bundle) {
@@ -44,7 +48,8 @@ export function bundleInputs(name: string): Plugin {
         modules: [...modules].sort(),
         assets: [...assets].sort(),
       };
-      outputs += 1;
+      const outputs = (written.get(name) ?? 0) + 1;
+      written.set(name, outputs);
       NodeFS.mkdirSync(folder, { recursive: true });
       NodeFS.writeFileSync(
         NodePath.join(folder, `${name}-${outputs}.json`),

@@ -13,6 +13,10 @@
       "types": "./src/presentation/index.ts",
       "import": "./src/presentation/index.ts"
     },
+    "./documents": {
+      "types": "./src/documents/index.ts",
+      "import": "./src/documents/index.ts"
+    },
     "./wording": {
       "types": "./src/wording/index.ts",
       "import": "./src/wording/index.ts"
@@ -34,7 +38,8 @@
     "@j3-bots/contracts": "workspace:*",
     "@j3-bots/design-tokens": "workspace:*",
     "@j3-bots/i18n": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "fflate": "0.8.3"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -88,7 +88,10 @@ export const inlineScriptSources = async (html: string): Promise<ReadonlyArray<s
 /**
  * The page's content security policy. Scripts come only from the build and
  * the inline scripts it ships, and the page may connect only to itself and to
- * the server the operator named, over HTTP and its WebSocket.
+ * the server the operator named, over HTTP and its WebSocket. WebAssembly may
+ * be compiled, which no script can do with text (`'wasm-unsafe-eval'` allows
+ * no `eval`): the PDF viewer's worker decodes JBIG2 and JPEG 2000 pictures
+ * with the build's own WebAssembly.
  */
 export const contentSecurityPolicy = (
   server: ServerOrigin | null,
@@ -102,7 +105,7 @@ export const contentSecurityPolicy = (
   }
   return [
     "default-src 'none'",
-    `script-src 'self' ${scriptSources.join(" ")}`.trim(),
+    `script-src 'self' 'wasm-unsafe-eval' ${scriptSources.join(" ")}`.trim(),
     // React and the UI kit set style attributes.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data:",

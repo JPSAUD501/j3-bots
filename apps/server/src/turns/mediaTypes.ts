@@ -4,6 +4,7 @@
 const BY_EXTENSION: { readonly [extension: string]: string } = {
   avif: "image/avif",
   csv: "text/csv",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   gif: "image/gif",
   htm: "text/html",
   html: "text/html",
@@ -15,11 +16,14 @@ const BY_EXTENSION: { readonly [extension: string]: string } = {
   mp4: "video/mp4",
   pdf: "application/pdf",
   png: "image/png",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   svg: "image/svg+xml",
+  tsv: "text/tab-separated-values",
   txt: "text/plain",
   wav: "audio/wav",
   webm: "video/webm",
   webp: "image/webp",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   zip: "application/zip",
 };
 

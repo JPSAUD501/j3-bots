@@ -145,7 +145,7 @@ const SayInput = toolInput({
   attachments: Schema.optionalKey(
     described(
       Schema.Array(text(1, 1_024)).check(Schema.isMaxLength(10)),
-      "Files to attach: paths in your workspace, usually under files/. A GIF, JPEG, PNG or WebP shows as a photo.",
+      "Files to attach: paths in your workspace, usually under files/. A GIF, JPEG, PNG or WebP shows as a photo; a PDF, text, Markdown, CSV, Excel (.xlsx), Word (.docx) or PowerPoint (.pptx) file opens in a viewer in the app.",
     ),
   ),
   visual: Schema.optionalKey(

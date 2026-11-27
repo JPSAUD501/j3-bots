@@ -11,6 +11,8 @@ export type FileIcon = "image" | "text" | "archive" | "code" | "other";
 export function fileIcon(mediaType: string): FileIcon {
   if (mediaType.startsWith("image/")) return "image";
   if (mediaType === "application/pdf" || mediaType.startsWith("text/")) return "text";
+  // Word, Excel and PowerPoint, whose types name "openxml" but which are no code.
+  if (mediaType.startsWith("application/vnd.openxmlformats-officedocument.")) return "text";
   if (/zip|tar|gzip|compressed/.test(mediaType)) return "archive";
   if (/json|javascript|typescript|xml|yaml/.test(mediaType)) return "code";
   return "other";
