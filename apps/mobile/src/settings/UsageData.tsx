@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { SettingsSaves } from "@j3-bots/client-runtime";
-import { sentAsJson, USAGE_DATA_DOCS, usageDataSwitch } from "@j3-bots/client-runtime/presentation";
-import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/react";
+import {
+  sentAsJson,
+  USAGE_DATA_DOCS,
+  type UsageDataSwitch,
+} from "@j3-bots/client-runtime/presentation";
+import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { SentTelemetryEvent } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
@@ -10,29 +13,31 @@ import { useCallback, useEffect, useState } from "react";
 import { Linking, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "../components/Icon.tsx";
-import { Problem, Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
+import { Problem, Quiet, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
 
-// The server's switch for anonymous usage data (decision 0099), on the About
-// page: one sentence of what it is, where to read more, and the events the
-// server sent, exactly as they left, on a screen of their own.
+// The server's switch for anonymous usage data (decision 0099), in the About
+// page's privacy area: one sentence of what it is, where to read more, and
+// the events the server sent, exactly as they left, on a screen of their own.
 
-/** The switch, for a server that offers usage data; nothing for one that does not. */
-export function UsageDataSection({ connected }: { readonly connected: boolean }) {
+/** The switch, as `view` has it, for a server that offers usage data. */
+export function UsageDataRow({
+  view,
+  connected,
+}: {
+  readonly view: UsageDataSwitch;
+  readonly connected: boolean;
+}) {
   const { t } = useI18n();
   const client = useJ3Client();
   const navigation = useNavigation<Navigation>();
-  const settings = useSettings();
-  const save: SettingsSaves["usage-data"] = useReadable(client.settingsSaves["usage-data"]);
-  const view = usageDataSwitch(settings._tag === "ready" ? settings.value : null, save);
-  if (view === null) return null;
   const readOnly = view.saving || view.heldOff || !connected;
   return (
-    <Section open title={t("usageData.title")}>
+    <>
       <View className="gap-1">
         <SwitchRow
           label={t("usageData.switch")}
@@ -64,7 +69,7 @@ export function UsageDataSection({ connected }: { readonly connected: boolean })
           onPress={() => navigation.push("usageDataSent")}
         />
       </View>
-    </Section>
+    </>
   );
 }
 

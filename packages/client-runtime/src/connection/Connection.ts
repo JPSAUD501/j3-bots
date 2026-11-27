@@ -8,6 +8,7 @@ import {
   PairingCode,
   PROTOCOL_VERSION,
   type PairRequest,
+  type ServerInfo,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -321,6 +322,14 @@ export class Connection extends Context.Service<
       path: string,
       query: Readonly<Record<string, string>>,
     ) => Effect.Effect<string, NotPaired | ServerHttp.ServerUnreachable>;
+    /**
+     * What the server said of itself when this window last reached it, as it
+     * opened a socket: null before, while this device is not paired, and
+     * against a server of another protocol. It names what the server offers
+     * beside the protocol, as the diagnostics zip, which a client offers only
+     * then.
+     */
+    readonly server: Readable<ServerInfo | null>;
     /** This device's id, as the server knows it. Fails with `NotPaired` without a credential. */
     readonly deviceId: Effect.Effect<DeviceId, NotPaired>;
     /**
@@ -346,6 +355,7 @@ export const layer = Layer.effect(
     const slot = yield* SubscriptionRef.make<Slot>({ _tag: "closed" });
     const credential = yield* SubscriptionRef.make<Credential>({ _tag: "loading" });
     const pairing = new Cell<DeviceId | null>(null);
+    const server = new Cell<ServerInfo | null>(null);
     /**
      * Changes the credential this window holds, and the pairing it follows
      * with it, in one step: nothing reads one changed and the other not.
@@ -480,12 +490,14 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const info = yield* http.serverInfo;
         if (info.protocolVersion !== PROTOCOL_VERSION) {
+          server.set(null);
           return {
             _tag: "incompatible",
             serverProtocol: info.protocolVersion,
             serverVersion: info.version,
           } as const;
         }
+        server.set(info);
         const grant = yield* http.socketTicket(paired.token);
         return yield* holdSocket(http.socketUrl(grant.ticket), paired.deviceId);
       }).pipe(
@@ -541,6 +553,8 @@ export const layer = Layer.effect(
         const current = yield* SubscriptionRef.get(credential);
         if (current._tag !== "paired") {
           state.set({ _tag: "unpaired", reason: current._tag === "none" ? current.reason : "new" });
+          // Nothing of the server is offered to a device it no longer knows.
+          server.set(null);
           yield* SubscriptionRef.set(slot, { _tag: "unpaired" });
           yield* firstChange(credential, (next) => next !== current);
           if ((yield* SubscriptionRef.get(credential))._tag === "paired") {
@@ -778,6 +792,7 @@ export const layer = Layer.effect(
     return Connection.of({
       state,
       pairing,
+      server,
       pair,
       adopt,
       forget,

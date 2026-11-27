@@ -2079,7 +2079,26 @@ export const en = {
   "desktop.tray.phoneOn": "Phone access on",
   "settings.about": "About and updates",
 
-  "usageData.title": "Usage data",
+  "diagnostics.hint": "A file that says how the server runs, for whoever helps you with a problem.",
+  "diagnostics.download": "Download diagnostics",
+  "diagnostics.sheet.title": "Download diagnostics",
+  "diagnostics.sheet.lead":
+    "Send this file to whoever helps you. It holds only what helps them see what went wrong.",
+  "diagnostics.sheet.inside": "What’s in it",
+  "diagnostics.sheet.inside.logs": "The server’s and the engine’s logs from the last 7 days",
+  "diagnostics.sheet.inside.failures": "What failed, and when",
+  "diagnostics.sheet.inside.setup":
+    "Versions, settings, and how many bots, rooms and routines there are",
+  "diagnostics.sheet.inside.usageData": "Whether usage data is on, and what it last sent",
+  "diagnostics.sheet.never": "Never in it",
+  "diagnostics.sheet.never.messages": "Your messages",
+  "diagnostics.sheet.never.names": "Names of bots, rooms or people",
+  "diagnostics.sheet.never.secrets": "Passwords, keys or other secrets",
+  "diagnostics.sheet.cancel": "Cancel",
+  "diagnostics.sheet.save": "Save",
+  "diagnostics.sheet.share": "Share",
+  "diagnostics.sheet.preparing": "Preparing…",
+  "diagnostics.sheet.failed": "Couldn’t get the file from the server. Try again.",
   "usageData.switch": "Share anonymous usage data",
   "usageData.body":
     "Tells the people who make J3 Bots which features get used and what goes wrong. Never what you or your bots write, names, files or addresses.",
@@ -2165,6 +2184,7 @@ export const en = {
 
   "about.server": "The server",
   "about.thisApp": "This app",
+  "about.privacy": "Privacy",
   "phoneUpdate.unchecked": "Not checked for updates yet.",
   "phoneUpdate.available": "J3 Bots {version} is available for this app.",
   "phoneUpdate.available.hint":

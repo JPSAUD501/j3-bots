@@ -7,7 +7,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
+import * as Diagnostics from "../diagnostics/Diagnostics.ts";
 import { type FeedStatus, ReleaseFeed } from "../releases/ReleaseFeed.ts";
+import * as BridgeKey from "../tools/BridgeKey.ts";
 import type { UpdateHost } from "../update/host.ts";
 import type { UpdateUnitPlan } from "../update/launch.ts";
 import { UpdateLauncher } from "../update/UpdateLauncher.ts";
@@ -59,15 +61,24 @@ export const launcherLayer = (host: UpdateHost, launched: Array<UpdateUnitPlan>)
   );
 
 /**
- * Updates as a test that is not about them sees them: the feed offers
- * nothing, and the server was started by hand. Its runs need the domain's
+ * Update runs and the diagnostics zip on a machine `launcher` describes: the
+ * zip says how the server is installed from how it would update, and takes
+ * out the value of the bridges' key. The runs need the domain's
  * configuration and running work.
+ */
+export const runsOn = <E, R>(launcher: Layer.Layer<UpdateLauncher, E, R>) =>
+  Layer.merge(UpdateRuns.layer, Diagnostics.layer).pipe(
+    Layer.provide(launcher),
+    Layer.provide(BridgeKey.layer),
+  );
+
+/**
+ * Updates as a test that is not about them sees them: the feed offers
+ * nothing, and the server was started by hand.
  */
 export const layer = Layer.merge(
   feedLayer(Effect.succeed(feedStatus(Option.none()))),
-  UpdateRuns.layer.pipe(
-    Layer.provide(
-      launcherLayer({ _tag: "cannot", reason: "started-by-hand", command: "j3-bots update" }, []),
-    ),
+  runsOn(
+    launcherLayer({ _tag: "cannot", reason: "started-by-hand", command: "j3-bots update" }, []),
   ),
 );

@@ -2114,7 +2114,28 @@ const sentences = {
   "desktop.tray.phoneOn": "Uso pelo celular ligado",
   "settings.about": "Sobre e atualizações",
 
-  "usageData.title": "Dados de uso",
+  "diagnostics.hint":
+    "Um arquivo que diz como o servidor funciona, para quem for te ajudar com um problema.",
+  "diagnostics.download": "Baixar diagnóstico",
+  "diagnostics.sheet.title": "Baixar diagnóstico",
+  "diagnostics.sheet.lead":
+    "Mande este arquivo para quem for te ajudar. Ele só tem o que ajuda a ver o que deu errado.",
+  "diagnostics.sheet.inside": "O que vai nele",
+  "diagnostics.sheet.inside.logs": "Os registros do servidor e do motor dos últimos 7 dias",
+  "diagnostics.sheet.inside.failures": "O que falhou, e quando",
+  "diagnostics.sheet.inside.setup":
+    "Versões, configurações e quantos bots, salas e rotinas existem",
+  "diagnostics.sheet.inside.usageData":
+    "Se os dados de uso estão ligados, e o que foi enviado por último",
+  "diagnostics.sheet.never": "Nunca vai nele",
+  "diagnostics.sheet.never.messages": "Suas mensagens",
+  "diagnostics.sheet.never.names": "Nomes de bots, salas ou pessoas",
+  "diagnostics.sheet.never.secrets": "Senhas, chaves ou outros segredos",
+  "diagnostics.sheet.cancel": "Cancelar",
+  "diagnostics.sheet.save": "Salvar",
+  "diagnostics.sheet.share": "Compartilhar",
+  "diagnostics.sheet.preparing": "Preparando…",
+  "diagnostics.sheet.failed": "Não deu para pegar o arquivo do servidor. Tente de novo.",
   "usageData.switch": "Compartilhar dados de uso anônimos",
   "usageData.body":
     "Conta para quem faz o J3 Bots quais recursos são usados e o que dá errado. Nunca o que você ou seus bots escrevem, nomes, arquivos ou endereços.",
@@ -2202,6 +2223,7 @@ const sentences = {
 
   "about.server": "O servidor",
   "about.thisApp": "Este app",
+  "about.privacy": "Privacidade",
   "phoneUpdate.unchecked": "Ainda não procurou atualizações.",
   "phoneUpdate.available": "O J3 Bots {version} está disponível para este app.",
   "phoneUpdate.available.hint":

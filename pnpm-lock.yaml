@@ -465,6 +465,9 @@ importers:
       effect:
         specifier: 4.1.5
         version: 4.1.5
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       lean-qr:
         specifier: 2.7.4
         version: 2.7.4

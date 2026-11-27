@@ -119,7 +119,7 @@ import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
-import { UsageDataSection } from "./UsageData";
+import { PrivacySection } from "./Privacy";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
 
@@ -143,6 +143,7 @@ type SettingsIntents = Pick<
   | "update"
   | "serverUpdate"
   | "updatePrompt"
+  | "diagnostics"
   | "whatsNew"
   | "usageData"
   | "shortcut"
@@ -205,8 +206,8 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 /**
  * Settings' pages this window has something for: where the bots live only in
  * the desktop app, About only where an update can be followed from here or
- * the server offers its usage data switch, and voice only from a server that
- * dictates, since this window has no recognizer of its own.
+ * the server offers its usage data switch or its diagnostics, and voice only
+ * from a server that dictates, since this window has no recognizer of its own.
  */
 const pagesFor = (
   intents: SettingsIntents,
@@ -224,6 +225,7 @@ const pagesFor = (
             return (
               intents.serverUpdate !== undefined ||
               intents.update !== undefined ||
+              intents.diagnostics !== undefined ||
               data.settings?.telemetry !== undefined
             );
           default:
@@ -607,11 +609,12 @@ function PageBody({
             local={intents.local}
             onUpdate={intents.updatePrompt?.reopen}
           />
-          <UsageDataSection
+          <PrivacySection
             settings={data.settings}
             save={data.settingsSaves["usage-data"]}
             connected={data.connected}
             intents={intents}
+            diagnostics={intents.diagnostics}
           />
         </>
       );

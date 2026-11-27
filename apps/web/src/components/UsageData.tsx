@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { SettingsSaves } from "@j3-bots/client-runtime";
-import { sentAsJson, USAGE_DATA_DOCS, usageDataSwitch } from "@j3-bots/client-runtime/presentation";
-import type { SentTelemetryEvent, Settings } from "@j3-bots/contracts";
+import {
+  sentAsJson,
+  USAGE_DATA_DOCS,
+  type UsageDataSwitch,
+} from "@j3-bots/client-runtime/presentation";
+import type { SentTelemetryEvent } from "@j3-bots/contracts";
 import { ExternalLinkIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { useI18n } from "../app/context";
@@ -13,9 +16,9 @@ import { Button } from "./ui/button";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { SkeletonRows } from "./ui/skeleton";
 
-// The server's switch for anonymous usage data (decision 0099), on the About
-// page: one sentence of what it is, where to read more, and the events the
-// server sent, exactly as they left.
+// The server's switch for anonymous usage data (decision 0099), in the About
+// page's privacy area: one sentence of what it is, where to read more, and
+// the events the server sent, exactly as they left.
 
 /** What was sent, as a read of it stands. */
 export type SentRead =
@@ -23,21 +26,18 @@ export type SentRead =
   | { readonly _tag: "read"; readonly events: ReadonlyArray<SentTelemetryEvent> }
   | { readonly _tag: "failed" };
 
-export function UsageDataSection({
-  settings,
-  save,
+/** The switch, as `view` has it, for a server that offers usage data. */
+export function UsageDataRow({
+  view,
   connected,
   intents,
 }: {
-  settings: Settings | null;
-  save: SettingsSaves["usage-data"];
+  view: UsageDataSwitch;
   connected: boolean;
   intents: Pick<ShellIntents, "updateSettings" | "usageData">;
 }) {
   const { t } = useI18n();
-  const view = usageDataSwitch(settings, save);
   const [sent, setSent] = useState<SentRead | null>(null);
-  if (view === null) return null;
   const readOnly = view.saving || view.heldOff || !connected;
   const read = () => {
     setSent({ _tag: "reading" });
@@ -46,8 +46,7 @@ export function UsageDataSection({
       .then((events) => setSent(events === null ? { _tag: "failed" } : { _tag: "read", events }));
   };
   return (
-    <section className="flex flex-col gap-3">
-      <h4 className="text-xs font-medium">{t("usageData.title")}</h4>
+    <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
         <SwitchRow
           label={t("usageData.switch")}
@@ -78,7 +77,7 @@ export function UsageDataSection({
         </Button>
       </div>
       <SentDialog sent={sent} onRetry={read} onClose={() => setSent(null)} />
-    </section>
+    </div>
   );
 }
 
