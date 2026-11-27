@@ -53,6 +53,40 @@ export const MAX_MESSAGE_LENGTH = 100_000;
 
 export const MessageText = Schema.String.check(Schema.isMaxLength(MAX_MESSAGE_LENGTH));
 
+/** The most characters of an app's name `LookingAt` holds. */
+export const MAX_LOOKING_AT_APP_LENGTH = 100;
+/** The most characters of a window's title `LookingAt` holds. */
+export const MAX_LOOKING_AT_TITLE_LENGTH = 300;
+
+/** A line break, a tab or any other control character, which one line of `LookingAt` cannot hold. */
+const NOT_ONE_LINE = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
+/** One line of `LookingAt`: trimmed, not empty, at most `max` characters. */
+const lookingAtLine = (max: number) =>
+  Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(max),
+    Schema.makeFilter((line: string) =>
+      line !== line.trim() || NOT_ONE_LINE.test(line)
+        ? "One line, trimmed, with no control character."
+        : true,
+    ),
+  );
+
+/**
+ * The window the operator was in when they opened quick access, as its chip
+ * showed it when they sent the message: the app's name, and the window's
+ * title unless they turned titles off. The operator's computer reads both
+ * from the other app, which writes them as it likes (a web page names its
+ * own tab), so they are information about the message, never words of the
+ * operator's.
+ */
+export const LookingAt = Schema.Struct({
+  app: lookingAtLine(MAX_LOOKING_AT_APP_LENGTH),
+  title: Schema.optionalKey(lookingAtLine(MAX_LOOKING_AT_TITLE_LENGTH)),
+});
+export type LookingAt = typeof LookingAt.Type;
+
 /**
  * Whom a room message is for. In a conversation it is always `bots` with no
  * ids. Every member reads every room message in its next turn; the mentions
@@ -128,6 +162,12 @@ export const MessageEntry = Schema.TaggedStruct("message", {
    * message.
    */
   visual: Schema.optionalKey(Visual),
+  /**
+   * The window the operator was looking at as they wrote it from quick
+   * access, which the message went with. Absent from every other message,
+   * and from a server that predates it.
+   */
+  lookingAt: Schema.optionalKey(LookingAt),
 });
 export type MessageEntry = typeof MessageEntry.Type;
 

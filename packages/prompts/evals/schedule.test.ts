@@ -19,7 +19,9 @@ const wake = (now: string, zone: string): Wake => ({
   sinceLastTurn: [],
   kind: "user",
   answer: null,
-  messages: [{ at: DateTime.makeUnsafe(now), text: "Set it up.", attachments: [] }],
+  messages: [
+    { at: DateTime.makeUnsafe(now), text: "Set it up.", attachments: [], lookingAt: null },
+  ],
 });
 
 const decodeInput = Schema.decodeUnknownSync(tools.set_routine.input, DECODE_OPTIONS);

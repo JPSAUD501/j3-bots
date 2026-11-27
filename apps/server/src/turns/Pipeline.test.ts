@@ -562,6 +562,38 @@ it.effect("keeps where the operator placed each file, and refuses places that do
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "keeps the window the operator wrote from, and gives it to the bot after the message",
+  () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const pipeline = yield* Pipeline;
+
+      const sent = yield* pipeline.sendMessage({
+        commandId: command(),
+        target: { _tag: "conversation", botId: bot.id },
+        text: "Can you review this one?",
+        attachments: [],
+        lookingAt: { app: "Firefox", title: "Pull request #346" },
+      });
+      const [entry] = yield* conversation(bot.id);
+      assert.strictEqual(entry?.id, sent);
+      assert.deepStrictEqual(entry?._tag === "message" && entry.lookingAt, {
+        app: "Firefox",
+        title: "Pull request #346",
+      });
+
+      yield* finishRunning(bot.id);
+      yield* flushed(bot.id);
+      const [dispatch] = yield* received(session);
+      const text = dispatch?.text ?? "";
+      // The title stands after the operator's words, in a data block of its own.
+      assert.isAbove(text.indexOf("Pull request #346"), text.indexOf("</message>"));
+      assert.match(text, /<data-[0-9a-f]{12} source="window" app="Firefox">\nPull request #346\n/);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** Records `user` wakes for the bot's messages, past `message.send`'s checks. */
 const recordMessages = (botId: BotId, entryIds: ReadonlyArray<EntryId>) =>
   Effect.gen(function* () {

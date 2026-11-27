@@ -57,7 +57,7 @@ export const userWake = (text: string, when: DateTime.Utc = at): Wake => ({
   at: when,
   kind: "user",
   answer: null,
-  messages: [{ at: when, text, attachments: [] }],
+  messages: [{ at: when, text, attachments: [], lookingAt: null }],
 });
 
 /**
