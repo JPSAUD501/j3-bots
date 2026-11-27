@@ -22,7 +22,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { BrowserBridge, type ViewerOutput } from "../src/Browser.ts";
+import { BrowserBridge, type EngineBrowserTab, type ViewerOutput } from "../src/Browser.ts";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
 import { EngineUnavailable } from "../src/errors.ts";
 import { isBackgroundWorkPending, type SessionEvent } from "../src/events.ts";
@@ -324,6 +324,9 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
   return { sessionId, projectId, queue, start: first.cursor };
 });
 
+/** The test page's title, which a tab shows once its browser has loaded the page. */
+const PAGE_TITLE = "Conformance page";
+
 /**
  * A page for the engine's browser, on a loopback port: one text field across
  * its top left corner, which reports each change of its text back here.
@@ -354,7 +357,7 @@ const testPage = Effect.acquireRelease(
       // `ServerBrowser.ts` L3300-3314 and L3369-3371). This case is about the
       // stream, not that still.
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(
-        `<!doctype html><title>Conformance page</title>
+        `<!doctype html><title>${PAGE_TITLE}</title>
 <input id="field" style="position:absolute;left:0;top:0;width:600px;height:200px;font-size:40px">
 <p id="clock" style="position:absolute;left:0;top:220px"></p>
 <script>
@@ -1021,7 +1024,10 @@ describe("Engine conformance, real engine only", () => {
         const bench = yield* Bench;
         const browser = yield* BrowserBridge;
         const page = yield* testPage;
-        const { sessionId, queue } = yield* openWatched("browser");
+        const { sessionId, projectId, queue } = yield* openWatched("browser-tab");
+        // A bot's browser is off until its switch is on; the session starts
+        // its provider session after this, so it has the tools from its turn.
+        yield* engine.setBrowserAccess({ projectId, enabled: true });
         const tabs = yield* browser
           .tabs(Effect.succeed([sessionId]))
           .pipe(Stream.toQueue({ capacity: "unbounded" }));
@@ -1037,11 +1043,17 @@ describe("Engine conformance, real engine only", () => {
         const failed = until(queue, "host-speech", (event) =>
           event.text.startsWith("Browser failed"),
         ).pipe(Effect.flatMap((event) => Effect.die(new Error(event.text))));
+        // The page's title is known only once the tab's browser runs and has
+        // loaded it, which on a new engine home first downloads the browser
+        // (about 130 MB). The engine opens a viewer's socket only then.
+        const loaded = (tab: EngineBrowserTab) =>
+          tab.sessionId === sessionId &&
+          tab.url === page.url &&
+          tab.title === PAGE_TITLE &&
+          !tab.loading;
         const shown = Effect.gen(function* () {
           let found = yield* Queue.take(tabs);
-          while (!found.some((tab) => tab.sessionId === sessionId && tab.url === page.url)) {
-            found = yield* Queue.take(tabs);
-          }
+          while (!found.some(loaded)) found = yield* Queue.take(tabs);
           return found;
         });
         const listed = yield* Effect.raceFirst(shown, failed);
