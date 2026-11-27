@@ -74,6 +74,7 @@ import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { RenderedPrompt } from "../components/PromptPicker";
 import type { RoomPlacement } from "../components/RosterMenu";
 import type { TimelineIntents } from "../components/Timeline";
+import type { WhatsNewIntents } from "../components/WhatsNew";
 import type { SecretsIntents } from "../components/secrets/parts";
 
 /** One conversation or room as the shell shows it. */
@@ -353,6 +354,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly serverUpdate?: RemoteServerUpdate;
   /** The way back to the update prompt: what waits behind it, and opening it again. */
   readonly updatePrompt?: UpdatePromptIntents;
+  /** What each release lets people do, up to the server's, and its mark after an update. */
+  readonly whatsNew: WhatsNewIntents;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
   readonly shortcut?: DesktopShortcut;
   /** In the desktop app, what quick access reads of the window in front. Absent in a browser. */

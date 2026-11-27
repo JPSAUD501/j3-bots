@@ -203,6 +203,13 @@ export {
   type UpdatePrompt,
 } from "./update/UpdatePrompt.ts";
 export {
+  makeWhatsNew,
+  releaseName,
+  type WhatsNew,
+  type WhatsNewView,
+  whatsNewStore,
+} from "./whatsNew/WhatsNew.ts";
+export {
   Browser,
   type BrowserControl,
   type BrowserCursor,

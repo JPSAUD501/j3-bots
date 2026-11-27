@@ -83,6 +83,7 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleTrackCommand } from "./sampleRoutineTrack";
+import { whatsNewViews } from "./updates";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -928,6 +929,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
     providerActions: sampleProviderActions,
+    whatsNew: { view: whatsNewViews.opened, open: () => {} },
     secrets: { ...secrets, copy: copySample },
     refreshDevices: nothing,
     loadMoreTurns: nothing,

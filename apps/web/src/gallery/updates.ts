@@ -10,9 +10,11 @@ import type {
   UpdatePromptEntry,
   UpdateResult,
   UpdateRun,
+  WhatsNewView,
 } from "@j3-bots/client-runtime";
 import { DeviceId, type ReceivedUpdateStatus } from "@j3-bots/contracts";
 import { releasePage, type UpdatePhase, type UpdateStatus } from "@j3-bots/desktop-bridge";
+import { WHATS_NEW } from "@j3-bots/i18n/whats-new";
 import * as DateTime from "effect/DateTime";
 import type { UpdatePromptView } from "../components/UpdatePrompt";
 import type { DesktopUpdate, RemoteServerUpdate } from "../shell/data";
@@ -321,3 +323,9 @@ export const promptViews = {
 
 /** The prompt's quiet entry point after "Later". */
 export const laterEntry: UpdatePromptEntry = { _tag: "offer", version: NEXT };
+
+/** What's new after the server updated to 0.14.0, before it is opened, and after. */
+export const whatsNewViews = {
+  marked: { releases: WHATS_NEW, mark: "0.14.0" },
+  opened: { releases: WHATS_NEW, mark: null },
+} satisfies Record<string, WhatsNewView>;

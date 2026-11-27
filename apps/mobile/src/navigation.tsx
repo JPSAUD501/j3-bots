@@ -50,6 +50,7 @@ import { RoomFormScreen } from "./screens/RoomForm.tsx";
 import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
 import { SettingsPageScreen } from "./settings/SettingsPage.tsx";
+import { WhatsNewScreen } from "./update/WhatsNew.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
 import { BrowserScreen } from "./browser/BrowserScreen.tsx";
@@ -100,6 +101,7 @@ export type Screens = {
   newBot: undefined;
   settings: undefined;
   settingsPage: { readonly page: SettingsPage };
+  whatsNew: undefined;
   hidden: undefined;
   secrets: undefined;
   secret: { readonly id: SecretId };
@@ -283,6 +285,11 @@ export function Main() {
                   options={({ route }) => ({
                     title: settingsPageWords(route.params.page, i18n).title,
                   })}
+                />
+                <Stack.Screen
+                  name="whatsNew"
+                  component={WhatsNewScreen}
+                  options={{ title: t("whatsNew.title") }}
                 />
                 {/* The secrets' screens set their own titles. */}
                 <Stack.Screen name="secrets" component={SecretsScreen} />

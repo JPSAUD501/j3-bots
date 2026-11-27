@@ -2095,6 +2095,12 @@ export const en = {
   "updateNotice.open": "Opens the update.",
   "updateNotice.openSettings": "Opens the updates in Settings.",
   "updateNotice.ok": "OK",
+  "whatsNew.title": "What’s new",
+  "whatsNew.description": "What you can do now, after each update of J3 Bots.",
+  "whatsNew.mark": "New in {version}",
+  "whatsNew.release": "J3 Bots {version}",
+  "whatsNew.open": "Opens what’s new.",
+  "whatsNew.close": "Close",
   "updatePrompt.title": "J3 Bots {version} is here",
   "updatePrompt.titleApp": "J3 Bots {version} is ready for this app",
   "updatePrompt.plan.serverThenApp":

@@ -130,6 +130,23 @@ jobs:
             exit 1
           fi
 
+      # The apps show what a release lets people do, from entries that ship
+      # with them, one file per release, which CI's tests check are listed.
+      # A release candidate shows the entries of the release it leads to.
+      - name: Check the release's "What's new"
+        if: inputs.nightly-version == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          entries="packages/i18n/src/whatsNew/v${VERSION%%-*}.ts"
+          if ! gh api "repos/$GH_REPO/contents/$entries?ref=$GITHUB_SHA" --silent; then
+            echo "::error::$entries is not on the tagged commit. Write the release's \"What's new\" there before tagging: docs/operations/releasing.md, Cutting a release."
+            exit 1
+          fi
+
       # The draft's notes give the certificate's digest, and a re-run keeps a
       # draft that exists, so the digest must be right before it is written.
       - name: Check the certificate's digest

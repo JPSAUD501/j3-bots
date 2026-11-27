@@ -37,6 +37,7 @@ import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
+import { WhatsNewRow } from "../update/WhatsNew.tsx";
 
 const pageIcons: Record<SettingsPage, LucideIcon> = {
   you: UserRound,
@@ -56,8 +57,8 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
  * on its own screen. Coming to it reads the settings and the devices again,
  * for what another device changed. A page that waits on the operator carries
  * a dot: the engine or no provider able to run a bot, a connector that needs
- * them, or a server update on offer. On a wide screen it keeps to the
- * conversation's text column.
+ * them, or a server update on offer. What's new ends the list. On a wide
+ * screen it keeps to the conversation's text column.
  */
 export function SettingsScreen() {
   const client = useJ3Client();
@@ -108,6 +109,7 @@ export function SettingsScreen() {
           ))}
         </View>
       ))}
+      <WhatsNewRow />
     </ScrollView>
   );
 }

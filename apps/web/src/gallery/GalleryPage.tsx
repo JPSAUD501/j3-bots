@@ -78,6 +78,7 @@ import {
 } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { PlusIcon, SettingsIcon } from "lucide-react";
+import { WhatsNewPage } from "../components/WhatsNew";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   isHidden,
@@ -258,6 +259,7 @@ import {
   serverStatuses,
   serverUpdate,
   serverViews,
+  whatsNewViews,
 } from "./updates";
 
 const team = sampleTeam(SAMPLE_NOW);
@@ -5433,6 +5435,19 @@ function UpdatesGallerySection() {
           />
         </div>
       </Labeled>
+      <Labeled label="The roster's footer after the server updated: What's new is marked">
+        <div className="w-72 rounded-md border border-border">
+          <SettingsButton
+            data={source.data}
+            intents={{ ...source.intents, whatsNew: { view: whatsNewViews.marked, open: nothing } }}
+          />
+        </div>
+      </Labeled>
+      <Frame label="What's new, opened" width={576} height={640}>
+        <div className="h-full overflow-y-auto bg-surface">
+          <WhatsNewPage releases={whatsNewViews.opened.releases} />
+        </div>
+      </Frame>
       <Labeled label="The connection line while an update restarts the server">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           <ConnectionBanner
