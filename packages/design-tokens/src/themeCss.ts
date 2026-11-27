@@ -44,9 +44,12 @@ export const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
  * Why `css` cannot be a theme's, or null. Theme CSS never loads a file: a
  * remote image or font would tell a third party when the app is open, and
  * what is on screen through selectors. So it refuses `@import`, `url()`
- * except `data:` and `#id`, `image-set()` and `src()`; and backslashes,
- * since an escape can spell any of those past a text check. The background
- * image comes through `var(--theme-background-image)`, which J3 Bots fills.
+ * except `#id`, `image-set()` and `src()`; and backslashes, since an escape
+ * can spell any of those past a text check. Nor does anything in it move on
+ * its own, which would repaint the app frame after frame: no `@keyframes` or
+ * `animation`, and no `data:` image, which may be an animated one. The
+ * background image comes through `var(--theme-background-image)`, which J3
+ * Bots fills with a still image.
  */
 export function themeCssProblem(css: string): string | null {
   if (css.length > THEME_CSS_MAX_LENGTH) {
@@ -57,10 +60,13 @@ export function themeCssProblem(css: string): string | null {
   if (/\b(?:image-set|src)\s*\(/i.test(css)) {
     return "`css` cannot use image-set() or src(): theme CSS loads no file.";
   }
+  if (/@(?:-[a-z]+-)?keyframes\b|(?:^|[\s;{])animation(?:-[a-z-]+)?\s*:/i.test(css)) {
+    return "`css` cannot animate: no @keyframes or animation, since nothing in a theme moves on its own.";
+  }
   for (const match of css.matchAll(/url\s*\(\s*(["']?)\s*([^"')\s]*)/gi)) {
     const address = match[2] ?? "";
-    if (!/^(?:data:|#)/i.test(address)) {
-      return `\`css\` cannot load \`${address || "a file"}\`: url() takes only data: or #id. Use var(${THEME_BACKGROUND_VARIABLE}) for the theme's background image.`;
+    if (!address.startsWith("#")) {
+      return `\`css\` cannot load \`${address || "a file"}\`: url() takes only #id. Use var(${THEME_BACKGROUND_VARIABLE}) for the theme's background image, and gradients for patterns.`;
     }
   }
   return null;

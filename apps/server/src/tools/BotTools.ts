@@ -57,6 +57,7 @@ import {
   Themes,
   type ThemeRefused,
 } from "../themes/Themes.ts";
+import { isAnimated } from "../themes/stillImage.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
@@ -271,6 +272,11 @@ export const layer = Layer.effect(
       if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp") {
         return yield* new Refused({
           reason: THEME_NOTES.background("is not a JPEG, PNG or WebP image."),
+        });
+      }
+      if (isAnimated(read.bytes, mediaType)) {
+        return yield* new Refused({
+          reason: THEME_NOTES.background("is animated, and a theme's background stays still."),
         });
       }
       return { _tag: "set", image: { bytes: read.bytes, mediaType } } satisfies BackgroundChange;

@@ -167,15 +167,24 @@ describe("theme CSS", () => {
     ["body { background: url(//example.test/p.png); }", /cannot load/],
     ["body { background: image-set('a.png' 1x); }", /image-set/],
     ["body { background: u\\72l(https://example.test/p.png); }", /backslash/],
+    ['body { background: url("data:image/gif;base64,R0lGOD"); }', /cannot load/],
   ])("refuses what would load a file: %s", (css, reason) => {
     expect(themeCssProblem(css)).toMatch(reason);
   });
 
-  it("takes local images and the theme's own background", () => {
+  it.each([
+    "@keyframes glow { to { opacity: 0.5; } }",
+    '[data-slot="bubble"] { animation: glow 2s infinite; }',
+    '[data-slot="bubble"]{animation-name:glow}',
+  ])("refuses what would move on its own: %s", (css) => {
+    expect(themeCssProblem(css)).toMatch(/cannot animate/);
+  });
+
+  it("takes the theme's own background, references in the page, and transitions", () => {
     expect(
       themeCssProblem(
         '[data-slot="conversation"] { background: var(--theme-background-image) center / cover; }' +
-          ' [data-slot="bubble"] { mask: url(#round); background: url("data:image/png;base64,AAAA"); }',
+          ' [data-slot="bubble"] { mask: url(#round); transition: background-color 150ms; }',
       ),
     ).toBeNull();
   });
