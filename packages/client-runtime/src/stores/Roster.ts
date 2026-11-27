@@ -111,6 +111,15 @@ export class Roster extends Context.Service<
      * themes only then: the last session's word may be an older server's.
      */
     readonly themesOn: (client: J3RpcClient) => Effect.Effect<boolean>;
+    /**
+     * Whether the server runs J3 Bots' own browsers and shares its tabs
+     * (`sharedBrowser`, decision 0110), as its latest roster snapshot says.
+     * Only then does a client show every tab, open and close them, and take
+     * a touch on the page as using it.
+     */
+    readonly sharedBrowser: Readable<boolean>;
+    /** `themesOn` for `sharedBrowser`: whether the server behind `client` shares its tabs. */
+    readonly sharedBrowserOn: (client: J3RpcClient) => Effect.Effect<boolean>;
     /** Pins, hides, makes primary or moves the bot between sections. */
     readonly placeBot: (botId: BotId, placement: BotPlacement) => Effect.Effect<IntentResult<Bot>>;
     /**
@@ -168,10 +177,13 @@ export const layer = Layer.effect(
     const screenRecordings = new Cell(false);
     const recordingTranscripts = new Cell(false);
     const themes = new Cell(false);
-    // The session whose snapshot came last, with what it said of themes.
-    const snapshotOf = new Cell<{ readonly client: J3RpcClient; readonly themes: boolean } | null>(
-      null,
-    );
+    const sharedBrowser = new Cell(false);
+    // The session whose snapshot came last, with what it said of what the server serves.
+    const snapshotOf = new Cell<{
+      readonly client: J3RpcClient;
+      readonly themes: boolean;
+      readonly sharedBrowser: boolean;
+    } | null>(null);
 
     yield* connection
       .eachSession((client) =>
@@ -198,7 +210,12 @@ export const layer = Layer.effect(
                     screenRecordings.set(frame.screenRecordings === true);
                     recordingTranscripts.set(frame.recordingTranscripts === true);
                     themes.set(frame.themes === true);
-                    snapshotOf.set({ client, themes: frame.themes === true });
+                    sharedBrowser.set(frame.sharedBrowser === true);
+                    snapshotOf.set({
+                      client,
+                      themes: frame.themes === true,
+                      sharedBrowser: frame.sharedBrowser === true,
+                    });
                     return state.set(ready(frame.items));
                   }
                   if (frame.sections !== undefined) sections.set(frame.sections);
@@ -315,6 +332,11 @@ export const layer = Layer.effect(
       themesOn: Effect.fn("Roster.themesOn")(function* (client: J3RpcClient) {
         const last = yield* waitFor(snapshotOf, (now) => now?.client === client);
         return last?.themes === true;
+      }),
+      sharedBrowser,
+      sharedBrowserOn: Effect.fn("Roster.sharedBrowserOn")(function* (client: J3RpcClient) {
+        const last = yield* waitFor(snapshotOf, (now) => now?.client === client);
+        return last?.sharedBrowser === true;
       }),
       stop,
       stopRoom,
