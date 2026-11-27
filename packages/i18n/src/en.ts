@@ -140,6 +140,7 @@ export const en = {
   "summary.connectorSignIn": "{name} needs you to sign in",
   "summary.connectorAsks": "{name} asks you something",
   "summary.connectorAsked": "{name} asked you something",
+  "summary.app": "Showed an app from {name}",
   "summary.workFold": "Did some work",
   "summary.workStopped": "Stopped",
   "summary.workFailed": "Failed",

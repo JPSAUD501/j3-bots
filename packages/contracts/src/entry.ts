@@ -1409,7 +1409,7 @@ export const entryText = (entry: Entry): string => {
     case "connector-ask":
       return entry.name;
     case "connector-app":
-      return entry.app.tool;
+      return entry.app.connector;
     case "routine-change":
     case "event-routine-change":
     case "routine-run":

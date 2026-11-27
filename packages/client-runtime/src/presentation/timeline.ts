@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  ConnectorAppRef,
   Entry,
   EntryId,
   EntryOrder,
@@ -54,6 +55,17 @@ export type TimelineItem =
       /** Null for a turn under way that has done no work yet. */
       readonly fold: WorkFoldEntry | null;
       readonly live: boolean;
+    }
+  /**
+   * A connector's app, part of the bot's reply where its call happened
+   * (decision 0093). An app an older server kept in a turn's work fold
+   * (`WorkFoldEntry.apps`) comes right after that fold's row.
+   */
+  | {
+      readonly kind: "app";
+      readonly key: string;
+      readonly app: ConnectorAppRef;
+      readonly order: EntryOrder;
     }
   /**
    * An entry, or a notice, of a kind added after this build: one line saying
@@ -130,7 +142,7 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
     const divider: TimelineItem | null =
       gap > DIVIDER_GAP ? { kind: "divider", key: `divider-${key}`, at: entry.createdAt } : null;
     const card = entry._tag === "message" || entry._tag === "outgoing" ? null : known(entry);
-    if (card !== null && card._tag !== "work-fold") {
+    if (card !== null && card._tag !== "work-fold" && card._tag !== "connector-app") {
       placeOther(items, key, card, divider);
       continue;
     }
@@ -147,7 +159,14 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
       items.push({ kind: "message", key, message: entry, position: joins ? "last" : "single" });
     } else if (card === null)
       items.push({ kind: "unknown", key, id: entry.id, order: entry.order });
-    else items.push({ kind: "work", key, fold: card, live: false });
+    else if (card._tag === "connector-app")
+      items.push({ kind: "app", key, app: card.app, order: card.order });
+    else {
+      items.push({ kind: "work", key, fold: card, live: false });
+      for (const app of card.apps) {
+        items.push({ kind: "app", key: `${key}-${app.viewId}`, app, order: card.order });
+      }
+    }
   }
   return items;
 }
@@ -194,6 +213,7 @@ export function rowOrder(row: TimelineItem): EntryOrder | null {
       return latestOfLine(row.line).order;
     case "work":
       return row.fold?.order ?? null;
+    case "app":
     case "unknown":
       return row.order;
   }

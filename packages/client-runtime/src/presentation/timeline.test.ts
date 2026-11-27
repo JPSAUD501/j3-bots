@@ -2,6 +2,9 @@
 import {
   BotId,
   CommandId,
+  type ConnectorAppRef,
+  ConnectorAppViewId,
+  ConnectorId,
   EntryId,
   EntryOrder,
   type NoticeEntry,
@@ -52,6 +55,59 @@ describe("buildTimeline", () => {
     ]);
     expect(shape(items)).toEqual(["divider", "single", "single", "divider", "single"]);
     expect(items[3]?.kind === "divider" && items[3].at).toEqual(at("2026-11-20T10:30:00Z"));
+  });
+
+  it("shows a connector's app in the bot's reply where it was called, and an older fold's apps after its line", () => {
+    const app = (n: number): ConnectorAppRef => ({
+      viewId: ConnectorAppViewId.make(`app_${n}000000000000000`),
+      connectorId: ConnectorId.make("conn_wheelhouse0000000"),
+      connector: "Wheelhouse",
+      glyph: null,
+      tool: "Stock",
+    });
+    const items = buildTimeline([
+      message("2026-11-20T10:00:00Z"),
+      {
+        _tag: "connector-app",
+        id: EntryId.make("app-entry"),
+        order: EntryOrder.make(2),
+        author: scout,
+        createdAt: at("2026-11-20T10:00:20Z"),
+        app: app(1),
+      },
+      message("2026-11-20T10:00:30Z", scout),
+      message("2026-11-20T10:00:40Z", scout),
+      // A turn an older server kept its apps under.
+      {
+        _tag: "work-fold",
+        id: EntryId.make("fold"),
+        order: EntryOrder.make(5),
+        author: scout,
+        createdAt: at("2026-11-20T10:01:00Z"),
+        turnStartedAt: null,
+        stepCount: 2,
+        apps: [app(2), app(3)],
+        work: null,
+        status: { _tag: "running" },
+      },
+      message("2026-11-20T10:01:10Z", scout),
+    ]);
+    expect(shape(items)).toEqual([
+      "divider",
+      "single",
+      "app",
+      "first",
+      "last",
+      "work",
+      "app",
+      "app",
+      "single",
+    ]);
+    expect(items.flatMap((item) => (item.kind === "app" ? [item.app.viewId] : []))).toEqual([
+      "app_1000000000000000",
+      "app_2000000000000000",
+      "app_3000000000000000",
+    ]);
   });
 
   it("does not join messages across a line", () => {

@@ -146,6 +146,8 @@ function previewSummary(
       return t(current ? "summary.needsConnectorYes" : "summary.askedConnectorYes", { name: text });
     case "work-fold":
       return workDoneText(preview.step, preview.ending, ctx.i18n);
+    case "connector-app":
+      return t("summary.app", { name: text });
     case "notice":
       if (preview.notice === null) return t("summary.notice");
       return preview.notice._tag === "unknown"

@@ -5,6 +5,8 @@ import type {
   Bot,
   Connector,
   ConnectorAppAnswer,
+  ConnectorAppContext,
+  ConnectorAppContextOutcome,
   ConnectorAppView,
   ConnectorAppViewId,
   ConnectorGrant,
@@ -257,7 +259,7 @@ export interface ConnectorsClient {
     redirect: SignInRedirect,
   ) => Promise<Actions.IntentResult<SignInStarted>>;
   readonly completeSignIn: (url: Redacted.Redacted<string>) => Promise<Actions.IntentResult>;
-  /** A connector's app a turn's work shows, and what it asks of its connector while drawn. */
+  /** A connector's app a bot's reply shows, and what it asks of its connector while drawn. */
   readonly app: {
     readonly open: (viewId: ConnectorAppViewId) => Promise<Actions.IntentResult<ConnectorAppView>>;
     /** `allowed` once the operator allowed the tool in the app's card. */
@@ -271,6 +273,10 @@ export interface ConnectorsClient {
       viewId: ConnectorAppViewId,
       uri: string,
     ) => Promise<Actions.IntentResult<ConnectorAppAnswer>>;
+    readonly setContext: (
+      viewId: ConnectorAppViewId,
+      context: ConnectorAppContext,
+    ) => Promise<Actions.IntentResult<ConnectorAppContextOutcome>>;
   };
 }
 
@@ -1072,6 +1078,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
           run.promise(services.connectors.callAppTool(viewId, name, args, allowed)),
         readResource: (viewId, uri) =>
           run.promise(services.connectors.readAppResource(viewId, uri)),
+        setContext: (viewId, context) =>
+          run.promise(services.connectors.setAppContext(viewId, context)),
       },
     },
     skills: {

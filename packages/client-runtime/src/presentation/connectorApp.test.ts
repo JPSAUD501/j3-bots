@@ -5,20 +5,28 @@ import {
   type ConnectorAppAnswer,
   type ConnectorAppView,
   ConnectorAppViewId,
+  type ConnectorAppContext,
+  type ConnectorAppContextOutcome,
   ConnectorId,
-  MAX_CONNECTOR_APP_HEIGHT,
+  MAX_CONNECTOR_APP_CONTEXT_BYTES,
 } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import type * as Schema from "effect/Schema";
 import {
   CONNECTOR_APP_FRAME_SANDBOX,
+  CONNECTOR_APP_DEFAULT_HEIGHT,
   type ConnectorAppAsk,
+  type ConnectorAppDisplayMode,
+  type ConnectorAppDownload,
   type ConnectorAppHostOptions,
   type ConnectorAppPlace,
   type HostMessage,
+  MAX_CONNECTOR_APP_INLINE_HEIGHT,
   connectorAppDocument,
+  connectorAppFileName,
   connectorAppHost,
   connectorAppShell,
+  connectorAppStartHeight,
   fromOwnFrame,
 } from "./connectorApp.ts";
 
@@ -41,6 +49,7 @@ const view: ConnectorAppView = {
   },
   input: { model: "Ridge 7" },
   result: { content: [{ type: "text", text: "2 in stock" }] },
+  modelContext: true,
 };
 
 const SERVER = new URL("https://bots.example.com");
@@ -52,13 +61,15 @@ const place: ConnectorAppPlace = {
   platform: "web",
   touch: false,
   hover: true,
-  width: 480,
+  display: { mode: "inline", width: 480 },
+  modes: ["inline", "fullscreen", "pip"],
 };
 
 /** A host over `view` with `changes`, recording what it sends the app and what it asks of the client. */
 const hosted = (
   overrides: Partial<ConnectorAppHostOptions> = {},
   changes: Partial<ConnectorAppView> = {},
+  base: ConnectorAppView = view,
 ) => {
   const sent: Array<HostMessage> = [];
   const waiting = new Map<HostMessage["id"], () => void>();
@@ -69,9 +80,11 @@ const hosted = (
   }> = [];
   const asked: Array<string> = [];
   const heights: Array<number> = [];
+  const contexts: Array<ConnectorAppContext> = [];
+  const modes: Array<ReadonlyArray<ConnectorAppDisplayMode>> = [];
   const answer: ConnectorAppAnswer = { _tag: "answer", result: { content: [] } };
   const host = connectorAppHost({
-    view: { ...view, ...changes },
+    view: { ...base, ...changes },
     place,
     send: (message) => {
       sent.push(message);
@@ -88,6 +101,13 @@ const hosted = (
     },
     proposeMessage: () => Promise.resolve(false),
     openLink: () => Promise.resolve(false),
+    download: () => Promise.resolve(false),
+    setContext: (context) => {
+      contexts.push(context);
+      return Promise.resolve<ConnectorAppContextOutcome>({ _tag: "kept" });
+    },
+    setDisplayMode: (mode) => mode,
+    onModes: (shown) => modes.push(shown),
     onHeight: (height) => heights.push(height),
     ...overrides,
   });
@@ -100,7 +120,7 @@ const hosted = (
           : Promise.resolve(),
       ),
     );
-  return { host, sent, calls, asked, heights, answered };
+  return { host, sent, calls, asked, heights, contexts, modes, answered };
 };
 
 const request = (id: number, method: string, params: Schema.JsonObject = {}) => ({
@@ -114,6 +134,16 @@ const notification = (method: string, params: Schema.JsonObject = {}) => ({
   method,
   params,
 });
+
+/** The fields of a notification the host sent. */
+const paramsOf = (message: HostMessage | undefined): Readonly<Record<string, unknown>> => {
+  if (message === undefined || !("method" in message)) throw new Error("Not a notification");
+  const { params } = message;
+  if (typeof params !== "object" || params === null || Array.isArray(params)) {
+    throw new Error("Its params are not an object");
+  }
+  return { ...params };
+};
 
 /** The answer to request `id`, among what the host sent. */
 const answerTo = (sent: ReadonlyArray<HostMessage>, id: number) =>
@@ -205,7 +235,15 @@ describe("connectorAppHost", () => {
       "result.hostContext.theme": "dark",
       "result.hostContext.locale": "pt-BR",
       "result.hostContext.displayMode": "inline",
-      "result.hostContext.containerDimensions": { width: 480, maxHeight: MAX_CONNECTOR_APP_HEIGHT },
+      "result.hostContext.containerDimensions": {
+        width: 480,
+        maxHeight: MAX_CONNECTOR_APP_INLINE_HEIGHT,
+      },
+      "result.hostContext.availableDisplayModes": ["inline", "fullscreen", "pip"],
+      "result.hostContext.timeZone": "America/Sao_Paulo",
+      "result.hostContext.platform": "web",
+      "result.hostContext.deviceCapabilities": { touch: false, hover: true },
+      "result.hostContext.safeAreaInsets": { top: 0, right: 0, bottom: 0, left: 0 },
       "result.hostContext.toolInfo.tool.name": "stock",
       "result.hostCapabilities.sandbox.permissions": {},
       "result.hostCapabilities.sandbox.csp.frameDomains": [],
@@ -216,15 +254,25 @@ describe("connectorAppHost", () => {
     assert.strictEqual(sent.length, 1);
 
     host.receive(notification("ui/notifications/initialized"));
+    // Once ready: the light theme it was not told of, as the fields that changed, then the call.
     assert.deepStrictEqual(
       sent.slice(1).map((message) => ("method" in message ? message.method : null)),
-      ["ui/notifications/tool-input", "ui/notifications/tool-result"],
+      [
+        "ui/notifications/host-context-changed",
+        "ui/notifications/tool-input",
+        "ui/notifications/tool-result",
+      ],
     );
-    host.placeChanged({ ...place, width: 300 });
-    assert.deepNestedInclude(sent.at(-1), {
-      method: "ui/notifications/host-context-changed",
-      "params.containerDimensions.width": 300,
+    assert.sameMembers(Object.keys(paramsOf(sent[1])), ["theme", "styles"]);
+    // Then each change: a narrower frame.
+    host.placeChanged({ ...place, appearance: "light", display: { mode: "inline", width: 300 } });
+    assert.deepStrictEqual(paramsOf(sent.at(-1)), {
+      containerDimensions: { width: 300, maxHeight: MAX_CONNECTOR_APP_INLINE_HEIGHT },
     });
+    // Nothing changed, nothing sent.
+    const count = sent.length;
+    host.placeChanged({ ...place, appearance: "light", display: { mode: "inline", width: 300 } });
+    assert.strictEqual(sent.length, count);
   });
 
   it("says the call was cancelled when J3 Bots kept no answer for the app", () => {
@@ -359,26 +407,165 @@ describe("connectorAppHost", () => {
     assert.deepNestedInclude(answerTo(sent, 1), { "error.code": -32000 });
   });
 
-  it("refuses what J3 Bots does not offer an app, and keeps its height within the frame's", () => {
-    const { host, sent, heights } = hosted();
-    host.receive(request(1, "ui/update-model-context", { content: [] }));
-    host.receive(request(2, "ui/download-file", {}));
-    host.receive(request(3, "ui/request-display-mode", { mode: "fullscreen" }));
-    assert.deepNestedInclude(answerTo(sent, 1), { "error.code": -32000 });
-    assert.deepNestedInclude(answerTo(sent, 2), { "error.code": -32601 });
-    assert.deepNestedInclude(answerTo(sent, 3), { "result.mode": "inline" });
-    host.receive(notification("ui/notifications/size-changed", { height: 99_999 }));
-    host.receive(notification("ui/notifications/size-changed", { height: 10 }));
-    assert.deepStrictEqual(heights, [MAX_CONNECTOR_APP_HEIGHT, 80]);
+  it("fits the height an app reports into the reply, and starts it there when it is drawn again", () => {
+    const viewId = ConnectorAppViewId.make("app_heightsremembered00");
+    assert.strictEqual(connectorAppStartHeight(viewId), CONNECTOR_APP_DEFAULT_HEIGHT);
+    const first = hosted({}, { viewId });
+    first.host.receive(notification("ui/notifications/size-changed", { height: 99_999 }));
+    first.host.receive(notification("ui/notifications/size-changed", { height: 10 }));
+    first.host.receive(notification("ui/notifications/size-changed", { height: 412.4 }));
+    assert.deepStrictEqual(first.heights, [MAX_CONNECTOR_APP_INLINE_HEIGHT, 80, 413]);
+    void first.host.teardown("scrolled away");
+    // Drawn again, as the operator scrolls back: at the size it last had.
+    assert.strictEqual(connectorAppStartHeight(viewId), 413);
   });
 
-  it("tells a ready app it is going away, then answers nothing more", () => {
+  it("shows an app in a mode only the client and the app both have, and says which it is shown in", () => {
+    const set: Array<ConnectorAppDisplayMode> = [];
+    const { host, sent, modes } = hosted({
+      setDisplayMode: (mode) => {
+        set.push(mode);
+        return mode;
+      },
+    });
+    host.receive(
+      request(1, "ui/initialize", {
+        appCapabilities: { availableDisplayModes: ["inline", "fullscreen", "tv"] },
+      }),
+    );
+    host.receive(notification("ui/notifications/initialized"));
+    assert.deepStrictEqual(modes, [["inline", "fullscreen"]]);
+
+    host.receive(request(2, "ui/request-display-mode", { mode: "pip" }));
+    host.receive(request(3, "ui/request-display-mode", { mode: "fullscreen" }));
+    host.receive(request(4, "ui/request-display-mode", { mode: "tv" }));
+    assert.deepNestedInclude(answerTo(sent, 2), { "result.mode": "inline" });
+    assert.deepNestedInclude(answerTo(sent, 3), { "result.mode": "fullscreen" });
+    assert.deepNestedInclude(answerTo(sent, 4), { "error.code": -32602 });
+    assert.deepStrictEqual(set, ["fullscreen"]);
+
+    // The client shows it so, and tells it: the mode and the room it has there.
+    host.placeChanged({ ...place, display: { mode: "fullscreen", width: 900, height: 700 } });
+    assert.deepStrictEqual(paramsOf(sent.at(-1)), {
+      displayMode: "fullscreen",
+      containerDimensions: { width: 900, height: 700 },
+    });
+    // A client with room for no other mode, as on a narrow window: the app can only be inline.
+    host.placeChanged({ ...place, modes: ["inline"] });
+    assert.deepStrictEqual(modes.at(-1), ["inline"]);
+    host.receive(request(5, "ui/request-display-mode", { mode: "fullscreen" }));
+    assert.deepNestedInclude(answerTo(sent, 5), { "result.mode": "inline" });
+    assert.deepStrictEqual(set, ["fullscreen"]);
+  });
+
+  it("keeps an app's context for its bot, its text and its data, bounded and only where the server offers it", async () => {
+    const { host, sent, contexts, answered } = hosted();
+    host.receive(request(1, "ui/initialize", {}));
+    assert.deepNestedInclude(answerTo(sent, 1), {
+      "result.hostCapabilities.updateModelContext": { text: {}, structuredContent: {} },
+    });
+    host.receive(
+      request(2, "ui/update-model-context", {
+        content: [
+          { type: "text", text: "Picked the Ridge 7" },
+          { type: "text", text: "in red." },
+        ],
+        structuredContent: { model: "Ridge 7", color: "red" },
+      }),
+    );
+    host.receive(
+      request(3, "ui/update-model-context", {
+        content: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
+      }),
+    );
+    host.receive(
+      request(4, "ui/update-model-context", {
+        content: [{ type: "text", text: "x".repeat(MAX_CONNECTOR_APP_CONTEXT_BYTES + 1) }],
+      }),
+    );
+    await answered(2, 3, 4);
+    assert.deepStrictEqual(contexts, [
+      { text: "Picked the Ridge 7\n\nin red.", structured: { model: "Ridge 7", color: "red" } },
+    ]);
+    assert.deepNestedInclude(answerTo(sent, 2), { result: {} });
+    assert.deepNestedInclude(answerTo(sent, 3), { "error.code": -32602 });
+    assert.deepNestedInclude(answerTo(sent, 4), { "error.code": -32000 });
+
+    // A server from before 0.14.0 keeps no context: the app is told so.
+    const { modelContext: _, ...fromOlder } = view;
+    const older = hosted({}, {}, fromOlder);
+    older.host.receive(request(1, "ui/initialize", {}));
+    older.host.receive(request(2, "ui/update-model-context", { content: [] }));
+    await older.answered(2);
+    assert.notNestedProperty(answerTo(older.sent, 1), "result.hostCapabilities.updateModelContext");
+    assert.deepNestedInclude(answerTo(older.sent, 2), { "error.code": -32000 });
+    assert.deepStrictEqual(older.contexts, []);
+  });
+
+  it("offers the operator an app's files under safe names, and saves nothing they put aside", async () => {
+    const offered: Array<ReadonlyArray<ConnectorAppDownload>> = [];
+    const { host, sent, answered } = hosted({
+      download: (files) => {
+        offered.push(files);
+        return Promise.resolve(false);
+      },
+    });
+    host.receive(
+      request(1, "ui/download-file", {
+        contents: [
+          {
+            type: "resource",
+            resource: { uri: "file:///../../etc/stock%20list.csv", mimeType: "text/csv", text: "a,b" },
+          },
+          { type: "resource", resource: { uri: "ui://x/logo.png", blob: "aGk=" } },
+          { type: "resource_link", uri: "https://wheelhouse.example/q4.pdf", name: "Q4 report" },
+        ],
+      }),
+    );
+    host.receive(
+      request(2, "ui/download-file", {
+        contents: [{ type: "resource_link", uri: "javascript:alert(1)", name: "x" }],
+      }),
+    );
+    await answered(1, 2);
+    assert.strictEqual(offered.length, 1);
+    assert.deepStrictEqual(
+      offered[0]?.map((file) =>
+        file._tag === "file"
+          ? [file.name, file.mediaType, new TextDecoder().decode(file.bytes)]
+          : [file.name, file.url.href],
+      ),
+      [
+        ["stock list.csv", "text/csv", "a,b"],
+        ["logo.png", "application/octet-stream", "hi"],
+        ["Q4 report", "https://wheelhouse.example/q4.pdf"],
+      ],
+    );
+    assert.deepNestedInclude(answerTo(sent, 1), { "error.code": -32000 });
+    assert.deepNestedInclude(answerTo(sent, 2), { "error.code": -32602 });
+    assert.strictEqual(connectorAppFileName("..\\..\\"), "download");
+  });
+
+  it("answers a method it does not know as unknown", () => {
+    const { host, sent } = hosted();
+    host.receive(request(1, "sampling/createMessage", {}));
+    assert.deepNestedInclude(answerTo(sent, 1), { "error.code": -32601 });
+  });
+
+  it("tells a ready app it is going away, waits for its answer, then answers nothing more", async () => {
     const { host, sent } = hosted();
     host.receive(notification("ui/notifications/initialized"));
-    host.teardown("gone");
+    let settled = false;
+    const gone = host.teardown("gone").then(() => {
+      settled = true;
+    });
     assert.deepInclude(sent.at(-1), { method: "ui/resource-teardown" });
     const count = sent.length;
     host.receive(request(9, "ping"));
+    await Promise.resolve();
+    assert.isFalse(settled);
+    host.receive({ jsonrpc: "2.0", id: "j3-teardown", result: {} });
+    await gone;
     assert.strictEqual(sent.length, count);
   });
 });

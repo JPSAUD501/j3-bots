@@ -137,6 +137,7 @@ const sentences = {
   "summary.connectorSignIn": "{name} precisa que você entre",
   "summary.connectorAsks": "{name} pede uma resposta sua",
   "summary.connectorAsked": "{name} pediu uma resposta sua",
+  "summary.app": "Mostrou um app de {name}",
   "summary.workFold": "Trabalhou um pouco",
   "summary.workStopped": "Parou",
   "summary.workFailed": "Falhou",

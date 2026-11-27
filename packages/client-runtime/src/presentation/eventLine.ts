@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type BotId,
+  type ConnectorAppEntry,
   type Entry,
   type EventRoutineChangeEntry,
   type EntryId,
@@ -60,7 +61,7 @@ export type EventLine =
   | { readonly _tag: "team"; readonly entry: NoticeOf<"room-started" | "made-for-room"> };
 
 /** Every entry that is neither a message nor a turn's work. */
-export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry>;
+export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry | ConnectorAppEntry>;
 
 /**
  * A routine with several steps that a bot made or changed (decision 0080):
