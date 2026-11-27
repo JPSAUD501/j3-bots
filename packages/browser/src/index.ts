@@ -18,6 +18,13 @@ export {
   pageHostHandlers,
   remotePageHost,
 } from "./PageHost.ts";
+export { type CdpCookieParam, cdpParamOf, cookieOfCdp } from "./cookies.ts";
+export {
+  type ProfileOrigin,
+  type ProfileSignIns,
+  ProfileUnreadable,
+  readProfileSignIns,
+} from "./profile.ts";
 export {
   HOST_SOCKET_PING,
   HOST_SOCKET_SILENCE,

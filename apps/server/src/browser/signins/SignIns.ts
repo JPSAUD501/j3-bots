@@ -114,8 +114,11 @@ export class SignIns extends Context.Service<
      * cannot be read, and so neither can the jar be sealed.
      */
     readonly signOut: Effect.Effect<void, Conflict>;
-    /** Whether the sign-ins of before 0.16 are still to be brought in. */
-    readonly toBringIn: Effect.Effect<boolean>;
+    /**
+     * Whether the sign-ins of before 0.16 are still to be brought in (`due`),
+     * were (`done`), or cannot be now, since the jar cannot be read.
+     */
+    readonly toBringIn: Effect.Effect<"due" | "done" | "unavailable">;
     /**
      * Brings in the sign-ins of before 0.16, once: what the jar does not
      * hold is added, and nothing it holds is replaced.
@@ -728,7 +731,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     }),
   );
 
-  const toBringIn = Effect.sync(() => jar._tag === "open" && !jar.contents.migrated);
+  const toBringIn = Effect.sync(() =>
+    jar._tag !== "open" ? "unavailable" : jar.contents.migrated ? "done" : "due",
+  );
 
   const bringIn = (input: {
     readonly cookies: ReadonlyArray<BrowserCookie>;

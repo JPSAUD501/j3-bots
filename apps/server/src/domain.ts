@@ -54,6 +54,7 @@ import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as CredentialFills from "./secrets/Fill.ts";
 import * as SecretAsks from "./secrets/SecretAsks.ts";
 import * as Secrets from "./secrets/Secrets.ts";
+import * as BrowserBringIn from "./browser/signins/bringIn.ts";
 import * as BrowserSignIns from "./browser/signins/SignIns.ts";
 import * as Host from "./system/Host.ts";
 import * as Voice from "./voice/Voice.ts";
@@ -154,7 +155,8 @@ export const layer = Layer.mergeAll(
   Layer.provideMerge(OAuthSignIns.layer),
   Layer.provideMerge(ConnectorAuth.layer.pipe(Layer.provide(OAuthSignIns.connectorsLayer))),
   Layer.provideMerge(Reactions.layer),
-  Layer.provideMerge(BrowserSignIns.layer),
+  // The shared sign-ins, and the one move of the engine's browser's into them.
+  Layer.provideMerge(BrowserBringIn.layer.pipe(Layer.provideMerge(BrowserSignIns.layer))),
   Layer.provideMerge(
     Layer.mergeAll(
       Ledger.layer,
