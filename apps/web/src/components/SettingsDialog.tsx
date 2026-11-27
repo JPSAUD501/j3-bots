@@ -1533,7 +1533,7 @@ function AppearanceSection() {
     <Section>
       <div className="flex flex-col gap-1.5">
         <span id={appearanceId} className="text-xs">
-          {t("settings.theme")}
+          {t("settings.mode")}
         </span>
         <Segmented
           value={appearance}

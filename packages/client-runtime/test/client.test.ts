@@ -79,6 +79,7 @@ import { Devices } from "../src/stores/Devices.ts";
 import { type DraftFile, Drafts, type WindowContext } from "../src/stores/Drafts.ts";
 import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
+import { Themes } from "../src/stores/Themes.ts";
 import { Settings } from "../src/stores/Settings.ts";
 import { UsageData } from "../src/stores/UsageData.ts";
 import { USAGE_PAGE, Usage } from "../src/stores/Usage.ts";
@@ -125,8 +126,8 @@ class Taps extends Context.Service<
     readonly silentReacts: { count: number };
     /**
      * Whether the roster answers as a server from before conversation
-     * mentions, quotes and screen recordings does, its snapshot without
-     * `conversationMentions`, `quotes` and `screenRecordings`.
+     * mentions, quotes, screen recordings and themes does, its snapshot
+     * without `conversationMentions`, `quotes`, `screenRecordings` and `themes`.
      */
     readonly olderRoster: { value: boolean };
   }
@@ -258,6 +259,7 @@ const tapped = Layer.mergeAll(
               conversationMentions: _,
               quotes: _quotes,
               screenRecordings: _recordings,
+              themes: _themes,
               ...older
             } = frame;
             return older;
@@ -1599,7 +1601,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   );
 
   it.effect(
-    "offers `@` in a bot's conversation, Reply and Quote, and recording the screen, only once the server says it takes them",
+    "offers `@` in a bot's conversation, Reply and Quote, recording the screen and themes, only once the server says it takes them",
     () =>
       Effect.gen(function* () {
         const { olderRoster } = yield* Taps;
@@ -1611,12 +1613,18 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         assert.isFalse(roster.quotes.get());
         assert.isFalse(roster.screenRecordings.get());
 
+        assert.isFalse(roster.themes.get());
+        // Nothing is asked of a server that keeps no themes.
+        assert.strictEqual((yield* Themes).state.get()._tag, "loading");
+
         // The server is updated: the snapshot of the next connection says it takes them.
         olderRoster.value = false;
         yield* (yield* TestPlatform.TestNetwork).dropSockets;
         yield* waitFor(roster.conversationMentions, (takes) => takes);
         yield* waitFor(roster.quotes, (takes) => takes);
         yield* waitFor(roster.screenRecordings, (takes) => takes);
+        const library = yield* waitFor((yield* Themes).state, (state) => state._tag === "ready");
+        assert.deepStrictEqual(library._tag === "ready" ? library.value.themes : null, []);
       }).pipe(Effect.provide(client())),
   );
 

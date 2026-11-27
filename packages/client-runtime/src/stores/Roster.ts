@@ -87,6 +87,12 @@ export class Roster extends Context.Service<
      * a client offer to record the screen.
      */
     readonly screenRecordings: Readable<boolean>;
+    /**
+     * Whether the server keeps themes (decision 0104), as its latest roster
+     * snapshot says. Only then does a client offer saved themes, the
+     * server's default and Create from colours.
+     */
+    readonly themes: Readable<boolean>;
     /** Pins, hides, makes primary or moves the bot between sections. */
     readonly placeBot: (botId: BotId, placement: BotPlacement) => Effect.Effect<IntentResult<Bot>>;
     /**
@@ -141,6 +147,7 @@ export const layer = Layer.effect(
     const conversationMentions = new Cell(false);
     const quotes = new Cell(false);
     const screenRecordings = new Cell(false);
+    const themes = new Cell(false);
 
     yield* connection
       .eachSession((client) =>
@@ -164,6 +171,7 @@ export const layer = Layer.effect(
                     conversationMentions.set(frame.conversationMentions === true);
                     quotes.set(frame.quotes === true);
                     screenRecordings.set(frame.screenRecordings === true);
+                    themes.set(frame.themes === true);
                     return state.set(ready(frame.items));
                   }
                   if (frame.sections !== undefined) sections.set(frame.sections);
@@ -274,6 +282,7 @@ export const layer = Layer.effect(
       conversationMentions,
       quotes,
       screenRecordings,
+      themes,
       stop,
       stopRoom,
       forceStop,

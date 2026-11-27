@@ -31,14 +31,14 @@ export const BUILT_IN_THEMES: Readonly<Record<BuiltInThemeId, ThemeDefinition>> 
   palco: {
     name: "Palco",
     description:
-      "Monochrome, pure black in the dark. Colour belongs to the bots and to what needs you.",
+      "Monochrome, pure black in the dark. Color belongs to the bots and to what needs you.",
     canvas: { light: "#ffffff", dark: "#000000" },
     accent: { light: "#101012", dark: "#f5f5f6" },
     variants: { light: stockRoles("light"), dark: stockRoles("dark") },
   },
   grafite: {
     name: "Graphite",
-    description: "Bluish grey instead of pure black: softer for long hours with the app open.",
+    description: "Bluish gray instead of pure black. Softer for long hours with the app open.",
     canvas: { light: "#f4f6f9", dark: "#15171c" },
     accent: { light: "#3d6fd9", dark: "#8fb4ff" },
   },
@@ -56,13 +56,13 @@ export const BUILT_IN_THEMES: Readonly<Record<BuiltInThemeId, ThemeDefinition>> 
   },
   brasa: {
     name: "Ember",
-    description: "Warm brown with a copper accent. Cosy, best at night.",
+    description: "Warm brown with a copper accent. Cozy, best at night.",
     canvas: { light: "#fbf6f2", dark: "#1a120e" },
     accent: { light: "#c4561b", dark: "#f08a4b" },
   },
   lavanda: {
     name: "Lavender",
-    description: "Greyish purple with a lilac accent. Soft, with character.",
+    description: "Grayish purple with a lilac accent. Soft, with character.",
     canvas: { light: "#f8f6fc", dark: "#14111c" },
     accent: { light: "#7552d6", dark: "#b69cff" },
   },

@@ -26,6 +26,11 @@ import type {
   SkillName,
   SkillScope,
   SkillText,
+  SavedTheme,
+  ThemeBackground,
+  ThemeDefinition,
+  ThemeId,
+  ThemeLibrary,
   BotFile,
   BotId,
   BrowserInput,
@@ -111,6 +116,7 @@ import type { Readable } from "./Store.ts";
 import * as Browser from "./stores/Browser.ts";
 import * as Connectors from "./stores/Connectors.ts";
 import * as Skills from "./stores/Skills.ts";
+import * as Themes from "./stores/Themes.ts";
 import * as Conversations from "./stores/Conversations.ts";
 import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
@@ -147,6 +153,8 @@ export type Platform =
 
 /** Every service of the client runtime, for applications that use Effect directly. */
 export const layer = SignOut.layer.pipe(
+  // Above the roster, whose snapshot says whether the server keeps themes.
+  Layer.provideMerge(Themes.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Roster.layer,
@@ -306,6 +314,20 @@ export interface SkillsClient {
     text: SkillText,
   ) => Promise<Actions.IntentResult<Skill>>;
   readonly remove: (scope: SkillScope, name: SkillName) => Promise<Actions.IntentResult>;
+}
+
+/** The themes the server keeps and its default; see `Themes`. */
+export interface ThemesClient {
+  readonly supported: Readable<boolean>;
+  readonly state: Readable<Synced<ThemeLibrary>>;
+  readonly save: (
+    definition: ThemeDefinition,
+    themeId?: ThemeId,
+  ) => Promise<Actions.IntentResult<SavedTheme>>;
+  readonly remove: (themeId: ThemeId) => Promise<Actions.IntentResult>;
+  readonly setDefault: (themeId: ThemeId) => Promise<Actions.IntentResult>;
+  /** A saved theme's background image, at the revision the library names. */
+  readonly background: (themeId: ThemeId, background: ThemeBackground) => Promise<DownloadResult>;
 }
 
 /** Server state held open until `release`. */
@@ -717,6 +739,7 @@ export interface J3Client {
   readonly harnessLocations: () => Promise<ReadonlyArray<HarnessLocation> | null>;
   readonly connectors: ConnectorsClient;
   readonly skills: SkillsClient;
+  readonly themes: ThemesClient;
   /** Connects the providers to an endpoint, restarting the engine. */
   readonly connectEndpoint: (
     request: ProviderConnectionRequest,
@@ -815,6 +838,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         secrets: yield* Secrets.Secrets,
         connectors: yield* Connectors.Connectors,
         skills: yield* Skills.Skills,
+        themes: yield* Themes.Themes,
         voice: yield* Voice.Voice,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
@@ -1162,6 +1186,15 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         setContext: (viewId, context) =>
           run.promise(services.connectors.setAppContext(viewId, context)),
       },
+    },
+    themes: {
+      supported: services.themes.supported,
+      state: services.themes.state,
+      save: (definition, themeId) => run.promise(services.themes.save(definition, themeId)),
+      remove: (themeId) => run.promise(services.themes.remove(themeId)),
+      setDefault: (themeId) => run.promise(services.themes.setDefault(themeId)),
+      background: (themeId, background) =>
+        run.promise(downloaded(services.files.themeBackground(themeId, background))),
     },
     skills: {
       state: services.skills.state,

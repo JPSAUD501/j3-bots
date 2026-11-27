@@ -52,9 +52,9 @@ export function AppearanceSection() {
   ];
   return (
     <>
-      <Section open title={t("settings.theme")}>
+      <Section open title={t("settings.mode")}>
         <Segmented
-          label={t("settings.theme")}
+          label={t("settings.mode")}
           value={appearance}
           options={appearances}
           onChange={setAppearance}

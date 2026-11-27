@@ -488,3 +488,11 @@ export {
   trackWindow,
   type YouStationState,
 } from "./routineTrack.ts";
+export {
+  isStockTheme,
+  shownTheme,
+  type ThemeChoice,
+  themeChoices,
+  type ThemeOrigin,
+  themePalettes,
+} from "./themes.ts";
