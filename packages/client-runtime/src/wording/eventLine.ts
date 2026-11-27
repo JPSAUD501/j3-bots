@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, HandoffState, RoutineChangeEntry } from "@j3-bots/contracts";
+import type { BotId, HandoffState } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
-import type { EventLine, RoutineChanges, TeammateRun } from "../presentation/eventLine.ts";
+import type {
+  EventLine,
+  RoutineChange,
+  RoutineChanges,
+  TeammateRun,
+} from "../presentation/eventLine.ts";
 import { teamNoticeLine } from "./pairs.ts";
-import { scheduleInWords } from "./schedule.ts";
+import { eventInWords, eventStopText, scheduleInWords } from "./schedule.ts";
 import type { PresentationContext } from "./status.ts";
 
 /** The glyph a line leads with when no bot's face does. */
@@ -97,10 +102,13 @@ export function handoffMarks(message: TeammateMessageMarks, i18n: I18n): Readonl
  * itself when there are none. Null for one deleted, which runs no more.
  */
 export function routineChangeDetail(
-  change: RoutineChangeEntry,
+  change: RoutineChange,
   ctx: PresentationContext,
 ): string | null {
   if (change.change === "deleted") return null;
+  if (change._tag === "event-routine-change") {
+    return eventInWords(change.trigger, change.connector, ctx.i18n);
+  }
   const { trigger } = change;
   return scheduleInWords(trigger, ctx) ?? (trigger._tag === "schedule" ? trigger.cron : null);
 }
@@ -237,6 +245,31 @@ function linePieces(line: EventLine, ctx: PresentationContext): Omit<EventLineWo
         lead: { _tag: "icon", icon: "paused" },
         runs: runsOf(parts, { name: line.entry.notice.name }),
         status: null,
+      };
+    }
+    case "event-routine": {
+      const { entry } = line;
+      if (entry.change !== "stopped") {
+        // A change this client does not know: the routine changed, in some way.
+        const parts = i18n.parts<"eventLine.routineUpdated", Slot<"name">>(
+          "eventLine.routineUpdated",
+          { name: NAME },
+        );
+        return {
+          lead: { _tag: "icon", icon: "routine" },
+          runs: runsOf(parts, { name: entry.name }),
+          status: null,
+        };
+      }
+      const parts = i18n.parts<"eventLine.routineStopped", Slot<"name">>(
+        "eventLine.routineStopped",
+        { name: NAME },
+      );
+      const reason = eventStopText(entry.stopped ?? "unknown", entry.connector, i18n);
+      return {
+        lead: { _tag: "icon", icon: "paused" },
+        runs: runsOf(parts, { name: entry.name }),
+        status: reason === null ? null : { text: reason, tone: "blocked" },
       };
     }
     case "operator-named": {

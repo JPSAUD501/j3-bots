@@ -27,6 +27,7 @@ import {
   type BrowserHelpEntry,
   type CredentialFill,
   type ConnectorAskEntry,
+  type EventRoutineChangeEntry,
   type ConnectorAuthEntry,
   type ConnectorInputEntry,
   CuratedKey,
@@ -1171,12 +1172,44 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
   ];
 
+  // A routine on a connector's event: set by the bot, then stopped by J3 Bots, for each reason.
+  const eventChange = (
+    name: string,
+    kind: EventRoutineChangeEntry["change"],
+    stopped?: EventRoutineChangeEntry["stopped"],
+  ): EventRoutineChangeEntry => ({
+    _tag: "event-routine-change",
+    ...base(name),
+    ...(kind === "stopped" ? { author: { _tag: "system" } } : {}),
+    routineId: RoutineId.make(`variant-${name}`),
+    name: "Invoices from Ana",
+    change: kind,
+    trigger: {
+      _tag: "event",
+      connectorId: ConnectorId.make("conn_samplemail0000000"),
+      name: "message_received",
+      arguments: { from: "ana@example.com" },
+      summary: "a new email from Ana arrives",
+    },
+    connector: "Mail",
+    ...(stopped === undefined ? {} : { stopped }),
+  });
+  const eventRoutineChanges: ReadonlyArray<EventRoutineChangeEntry> = [
+    eventChange("erc-created", "created"),
+    eventChange("erc-revoked", "stopped", "access-revoked"),
+    eventChange("erc-event-gone", "stopped", "event-gone"),
+    eventChange("erc-connector-gone", "stopped", "connector-gone"),
+    eventChange("erc-refused", "stopped", "refused"),
+  ];
+
   // Each entry's own line, as the timeline places it, then a line that tells several routines.
   const eventLines: ReadonlyArray<EventLine> = [
-    ...[...handoffs, ...routineChanges, ...noticeEvents].flatMap((entry) => {
-      const place = placeOf(entry);
-      return place._tag === "line" ? [place.line] : [];
-    }),
+    ...[...handoffs, ...routineChanges, ...eventRoutineChanges, ...noticeEvents].flatMap(
+      (entry) => {
+        const place = placeOf(entry);
+        return place._tag === "line" ? [place.line] : [];
+      },
+    ),
     {
       _tag: "routines",
       changes: [

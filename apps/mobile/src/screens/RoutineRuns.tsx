@@ -112,7 +112,13 @@ export function RoutineRunsScreen({
               {lines.schedule}
             </Text>
             {lines.status !== null && (
-              <Text className="text-sm text-muted-foreground">{lines.status}</Text>
+              <Text
+                className={
+                  lines.status.blocked ? "text-sm text-blocked" : "text-sm text-muted-foreground"
+                }
+              >
+                {lines.status.text}
+              </Text>
             )}
           </View>
         </Section>

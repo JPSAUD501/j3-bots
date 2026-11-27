@@ -85,7 +85,14 @@ export function RoutineRunList({ routine, runs }: RoutineRunListProps) {
         <section className="flex flex-col gap-0.5 border-b border-border px-4 py-4">
           <span className={cn("text-sm", lines.expression && "font-mono")}>{lines.schedule}</span>
           {lines.status !== null && (
-            <span className="text-xs text-muted-foreground">{lines.status}</span>
+            <span
+              className={cn(
+                "text-xs",
+                lines.status.blocked ? "text-blocked" : "text-muted-foreground",
+              )}
+            >
+              {lines.status.text}
+            </span>
           )}
         </section>
       )}

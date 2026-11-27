@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { keepsUtcClock, type RoutineTrigger } from "@j3-bots/contracts";
+import {
+  type EventStopReason,
+  type EventTrigger,
+  keepsUtcClock,
+  type OwnTrigger,
+} from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import * as DateTime from "effect/DateTime";
 import {
@@ -19,7 +24,7 @@ import type { TimeContext } from "./time.ts";
  * when it is not the operator's. Returns null for a schedule that has no
  * plain sentence; the interface then shows the expression itself.
  */
-export function scheduleInWords(trigger: RoutineTrigger, ctx: TimeContext): string | null {
+export function scheduleInWords(trigger: OwnTrigger, ctx: TimeContext): string | null {
   const { i18n } = ctx;
   switch (trigger._tag) {
     case "webhook":
@@ -32,6 +37,43 @@ export function scheduleInWords(trigger: RoutineTrigger, ctx: TimeContext): stri
         i18n,
         trigger.timeZone === ctx.timeZone ? null : zoneName(trigger.timeZone, ctx),
       );
+  }
+}
+
+/**
+ * A connector's event as a routine's trigger, in words: "When Mail says a new
+ * email from Ana arrives", with the bot's own words for the event.
+ * `connector` is the connector's name, null once it is removed.
+ */
+export function eventInWords(trigger: EventTrigger, connector: string | null, i18n: I18n): string {
+  return connector === null
+    ? i18n.t("schedule.eventRemoved", { summary: trigger.summary })
+    : i18n.t("schedule.event", { connector, summary: trigger.summary });
+}
+
+/**
+ * Why J3 Bots stopped listening for a routine's event, as a phrase that
+ * follows "Stopped:": "Mail no longer allows it". Null for a reason this
+ * client does not know. `connector` is the connector's name, null once it is
+ * removed.
+ */
+export function eventStopText(
+  reason: EventStopReason | "unknown",
+  connector: string | null,
+  i18n: I18n,
+): string | null {
+  const named = connector ?? i18n.t("routine.theConnector");
+  switch (reason) {
+    case "access-revoked":
+      return i18n.t("routine.stopped.accessRevoked", { connector: named });
+    case "event-gone":
+      return i18n.t("routine.stopped.eventGone", { connector: named });
+    case "connector-gone":
+      return i18n.t("routine.stopped.connectorGone");
+    case "refused":
+      return i18n.t("routine.stopped.refused", { connector: named });
+    case "unknown":
+      return null;
   }
 }
 
