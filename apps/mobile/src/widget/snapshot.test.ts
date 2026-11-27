@@ -251,7 +251,6 @@ describe("snapshotKey", () => {
       _tag: "thinking",
       since: DateTime.makeUnsafe(0),
       stalled: false,
-      quietSince: null,
       typing: false,
       retrying: false,
     };
