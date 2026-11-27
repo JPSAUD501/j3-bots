@@ -930,11 +930,11 @@ export const en = {
   "details.freshStart.done": "{name} started fresh.",
   "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
   "details.browser": "Browser",
-  "details.browser.use": "Use this computer’s browser",
+  "details.browser.use": "Can browse the web",
   "details.browser.hint":
-    "{name} acts on sites with the sessions you’re signed in to in that browser. Turning it on applies from {name}’s next turn; turning it off takes effect now (a running turn is stopped).",
-  "details.browser.setup":
-    "This computer needs setting up before the browser can run. Run `j3-bots doctor` on it to see how.",
+    "Uses a browser of its own. When a site asks to sign in, {name} calls you.",
+  "details.browser.setup": "The browser needs setting up first.",
+  "details.browser.howToFix": "How to fix it",
   "details.browser.failed": "{name}’s browser setting wasn’t saved. Try again.",
   "details.delete": "Delete {name}",
   "details.delete.title": "Delete {name}?",
@@ -2429,10 +2429,7 @@ export const en = {
   "browser.showHere": "Show it here",
   "browser.failed": "Couldn’t open this page.",
   "browser.retry": "Try again",
-  "browser.setupNeeded.sandbox":
-    "The browser can’t start until the server’s computer lets it use its sandbox. Run j3-bots doctor there to see how.",
-  "browser.setupNeeded.libraries":
-    "The browser can’t start until the server’s computer has the libraries it needs. Run j3-bots doctor there to see how.",
+  "browser.setupNeeded": "The browser can’t open until it’s set up.",
   "browser.handBack.title": "Give control back?",
   "browser.handBack.body": "The bot can’t use the browser while you have control.",
   "browser.handBack.confirm": "Give it back",

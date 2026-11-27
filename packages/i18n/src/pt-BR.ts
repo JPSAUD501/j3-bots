@@ -929,11 +929,10 @@ const sentences = {
   "details.freshStart.done": "{name} recomeçou do zero.",
   "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
   "details.browser": "Navegador",
-  "details.browser.use": "Usar o navegador deste computador",
-  "details.browser.hint":
-    "{name} age nos sites com as sessões em que você entrou nesse navegador. Ligar vale a partir do próximo turno de {name}; desligar vale na hora (um turno em andamento é parado).",
-  "details.browser.setup":
-    "Este computador precisa de uma configuração para o navegador funcionar. Rode `j3-bots doctor` nele para ver como.",
+  "details.browser.use": "Pode navegar na internet",
+  "details.browser.hint": "Usa um navegador próprio. Quando um site pedir login, {name} te chama.",
+  "details.browser.setup": "O navegador precisa ser configurado antes.",
+  "details.browser.howToFix": "Como resolver",
   "details.browser.failed": "A configuração do navegador de {name} não foi salva. Tente de novo.",
   "details.delete": "Excluir {name}",
   "details.delete.title": "Excluir {name}?",
@@ -2473,10 +2472,7 @@ const sentences = {
   "browser.showHere": "Mostrar aqui",
   "browser.failed": "Não foi possível abrir esta página.",
   "browser.retry": "Tentar de novo",
-  "browser.setupNeeded.sandbox":
-    "O navegador só inicia quando o computador do servidor permitir o uso da sandbox. Rode j3-bots doctor lá para ver como.",
-  "browser.setupNeeded.libraries":
-    "O navegador só inicia quando o computador do servidor tiver as bibliotecas de que precisa. Rode j3-bots doctor lá para ver como.",
+  "browser.setupNeeded": "O navegador só abre depois de configurado.",
   "browser.handBack.title": "Devolver o controle?",
   "browser.handBack.body": "O bot não consegue usar o navegador enquanto você está no controle.",
   "browser.handBack.confirm": "Devolver",

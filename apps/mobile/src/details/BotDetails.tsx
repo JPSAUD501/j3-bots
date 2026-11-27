@@ -2,6 +2,7 @@
 import { loadedList } from "@j3-bots/client-runtime";
 import {
   asksYou,
+  BROWSER_SETUP_DOCS,
   botStop,
   connectorsOf,
   type Teammate,
@@ -54,6 +55,7 @@ import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
+import { DocsLink } from "../components/DocsLink.tsx";
 import { DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useConfirm } from "../confirm.tsx";
 import { PressScale } from "../press.tsx";
@@ -462,7 +464,10 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
         <Text className="text-base text-foreground">{t("details.browser.use")}</Text>
         <Text className="text-sm text-muted-foreground">{t("details.browser.hint", { name })}</Text>
         {bot.browser && needsSetup && (
-          <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>
+          <View className="items-start">
+            <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>
+            <DocsLink href={BROWSER_SETUP_DOCS} label={t("details.browser.howToFix")} />
+          </View>
         )}
       </View>
       <Switch
