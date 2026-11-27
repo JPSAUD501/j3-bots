@@ -1,91 +1,137 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { VoiceModelId, type VoiceStatus } from "@j3-bots/contracts";
-import { dictationPath, levelOf, placeHeard } from "./dictation.ts";
+import type { VoiceSettings } from "@j3-bots/contracts";
+import { dictationPath, followTyping, levelOf, placeHeard } from "./dictation.ts";
 
-const available: VoiceStatus = {
-  _tag: "available",
-  model: {
-    id: VoiceModelId.make("m"),
-    name: "M",
-    size: 1,
-    languages: ["en"],
-    live: true,
-    errorPercent: {},
-    secondsPer30s: null,
-    recommended: true,
-    installed: true,
-  },
-  installing: null,
+const voice: VoiceSettings = {
+  place: "automatic",
+  provider: "openai",
+  language: "auto",
+  words: [],
+  removeFillers: true,
+  cleanUp: false,
+  model: null,
+  openRouterModel: null,
 };
+const keys = { openai: true, xai: false, openrouter: false };
 
 describe("dictationPath", () => {
-  it("uses the phone's own recognizer on Automatic when it has the language, else the server", () => {
-    const automatic = { place: "automatic", status: available, secureContext: true } as const;
+  it("uses the phone's own recognizer on Automatic when it has the language, else the provider", () => {
+    const automatic = { voice, keys, secureContext: true } as const;
     expect(dictationPath({ ...automatic, device: "ready" })).toEqual({ _tag: "device" });
     expect(dictationPath({ ...automatic, device: "missing-language" })).toEqual({ _tag: "server" });
     expect(dictationPath({ ...automatic, device: "none" })).toEqual({ _tag: "server" });
   });
 
-  it("offers only what an older server allows: the device's own recognizer, or no microphone", () => {
-    const older = { place: null, status: null, secureContext: true } as const;
-    expect(dictationPath({ ...older, device: "ready" })).toEqual({ _tag: "device" });
-    expect(dictationPath({ ...older, device: "missing-language" })).toEqual({ _tag: "none" });
-    expect(dictationPath({ ...older, device: "none" })).toEqual({ _tag: "none" });
+  it("sends the phone's voice to the provider too when the place is that provider", () => {
+    expect(
+      dictationPath({
+        voice: { ...voice, place: "openai" },
+        keys,
+        device: "ready",
+        secureContext: true,
+      }),
+    ).toEqual({ _tag: "server" });
+  });
+
+  it("offers only the device's own recognizer facing a server before cloud dictation", () => {
+    const { provider: _, ...older } = voice;
+    for (const settings of [null, older]) {
+      const base = { voice: settings, keys: null, secureContext: true } as const;
+      expect(dictationPath({ ...base, device: "ready" })).toEqual({ _tag: "device" });
+      expect(dictationPath({ ...base, device: "none" })).toEqual({ _tag: "none" });
+    }
   });
 
   it("explains a page over plain http, where a browser gives no microphone", () => {
-    expect(
-      dictationPath({ place: "server", device: "none", status: available, secureContext: false }),
-    ).toEqual({ _tag: "blocked", block: "insecure-page" });
+    expect(dictationPath({ voice, keys, device: "none", secureContext: false })).toEqual({
+      _tag: "blocked",
+      block: "insecure-page",
+    });
   });
 
-  it("says why when the choice cannot be served", () => {
-    const base = { secureContext: true, status: available } as const;
-    expect(dictationPath({ ...base, place: "device", device: "none" })).toEqual({
-      _tag: "blocked",
-      block: "no-device-recognizer",
-    });
-    const unsupported = { _tag: "unavailable", reason: "platform" } as const;
-    expect(
-      dictationPath({ ...base, place: "server", device: "none", status: unsupported }),
-    ).toEqual({ _tag: "blocked", block: "server-unsupported" });
-    // A cloud provider does not need a model the server runs.
-    expect(
-      dictationPath({ ...base, place: "openai", device: "none", status: unsupported }),
-    ).toEqual({ _tag: "server" });
+  it("asks for set-up until a provider, its key and OpenRouter's model are there", () => {
+    const base = { keys, device: "none", secureContext: true } as const;
+    const setup = { _tag: "blocked", block: "setup" } as const;
+    expect(dictationPath({ ...base, voice: { ...voice, provider: null } })).toEqual(setup);
+    expect(dictationPath({ ...base, voice: { ...voice, provider: "xai" } })).toEqual(setup);
+    const openRouter = { ...voice, provider: "openrouter" } as const;
+    const withKey = { ...keys, openrouter: true };
+    expect(dictationPath({ ...base, keys: withKey, voice: openRouter })).toEqual(setup);
     expect(
       dictationPath({
         ...base,
-        place: "openai",
-        device: "none",
-        status: { _tag: "unavailable", reason: "engine" },
+        keys: withKey,
+        voice: { ...openRouter, openRouterModel: "openai/whisper" },
       }),
-    ).toEqual({ _tag: "blocked", block: "server-unavailable" });
+    ).toEqual({ _tag: "server" });
+    // While the keys are not known yet, the server says if one is missing.
+    expect(dictationPath({ ...base, keys: null, voice: { ...voice, provider: "xai" } })).toEqual({
+      _tag: "server",
+    });
+  });
+
+  it("says a device without its own recognizer cannot dictate when the choice is to stay on it", () => {
+    expect(
+      dictationPath({
+        voice: { ...voice, place: "device" },
+        keys,
+        device: "none",
+        secureContext: true,
+      }),
+    ).toEqual({ _tag: "blocked", block: "no-device-recognizer" });
+  });
+});
+
+describe("followTyping", () => {
+  const at = { start: 6, end: 6 };
+  it("moves with what is typed before the words' place, and stays for what is typed after", () => {
+    expect(followTyping(at, "Hello world", "Oh, Hello world")).toEqual({ start: 10, end: 10 });
+    expect(followTyping(at, "Hello world", "Hello world!")).toEqual(at);
+    // Typed right at the place: the words come after what was typed.
+    expect(followTyping(at, "Hello world", "Hello big world")).toEqual({ start: 10, end: 10 });
+  });
+
+  it("goes to the end of an edit that ran over the words' place", () => {
+    expect(followTyping({ start: 6, end: 11 }, "Hello world", "Hello there")).toEqual({
+      start: 11,
+      end: 11,
+    });
+    expect(followTyping(at, "Hello world", "Hi")).toEqual({ start: 2, end: 2 });
+  });
+
+  it("places the operator's edit at their caret, when it starts with the letter after the place", () => {
+    const place = { start: 7, end: 7 };
+    // "cool " typed at the place, before "cats": a bare diff reads it as typed after the "c".
+    expect(followTyping(place, "I like cats", "I like cool cats", 12)).toEqual({
+      start: 12,
+      end: 12,
+    });
+    // Typed further on, after the words' place: it stays.
+    expect(followTyping(place, "I like cats", "I like cats now", 15)).toEqual(place);
   });
 });
 
 describe("placeHeard", () => {
-  it("puts the words at the caret, spaced from the words around them, settled before open", () => {
+  it("puts the words at the caret, spaced from the words around them", () => {
     const draft = { text: "Ask Wren about tomorrow", start: 14, end: 14 };
-    const placed = placeHeard(draft, { committed: "the photo", tentative: "for" });
+    const placed = placeHeard(draft, "the photo for");
     expect(placed.text).toBe("Ask Wren about the photo for tomorrow");
-    expect(placed.text.slice(placed.from, placed.committed)).toBe("the photo");
-    expect(placed.text.slice(placed.committed, placed.tentative)).toBe(" for");
+    expect(placed.text.slice(placed.from, placed.end)).toBe("the photo for");
   });
 
   it("replaces the selection, and takes no space before punctuation", () => {
-    const placed = placeHeard(
-      { text: "Hello there.", start: 6, end: 11 },
-      { committed: "world", tentative: "" },
-    );
+    const placed = placeHeard({ text: "Hello there.", start: 6, end: 11 }, "world");
     expect(placed.text).toBe("Hello world.");
-    expect(placed.tentative).toBe(11);
+    expect(placed.end).toBe(11);
   });
 
   it("leaves the draft as it was while nothing was heard", () => {
-    const placed = placeHeard({ text: "Hi ", start: 3, end: 3 }, { committed: "", tentative: "" });
-    expect(placed).toEqual({ text: "Hi ", from: 3, committed: 3, tentative: 3 });
+    expect(placeHeard({ text: "Hi ", start: 3, end: 3 }, "")).toEqual({
+      text: "Hi ",
+      from: 3,
+      end: 3,
+    });
   });
 });
 

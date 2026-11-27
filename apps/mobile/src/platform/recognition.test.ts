@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { hear, heardWords, nothingHeard, recognizerLocale } from "./recognition.ts";
+import { hear, heardText, nothingHeard, recognizerLocale } from "./recognition.ts";
 
 describe("recognizerLocale", () => {
   it("hears the phone's own language, in the locale the phone is set to", () => {
@@ -17,17 +17,14 @@ describe("recognizerLocale", () => {
   });
 });
 
-describe("heardWords", () => {
-  it("settles every finished utterance and leaves the one still heard open", () => {
+describe("heardText", () => {
+  it("keeps every finished utterance and the one still heard, once each", () => {
     let heard = hear(nothingHeard, "hello there", true);
     heard = hear(heard, "how", false);
-    assert.deepStrictEqual(heardWords(heard), { committed: "hello there", tentative: "how" });
+    assert.strictEqual(heardText(heard), "hello there how");
     heard = hear(heard, "how are you ", false);
     heard = hear(heard, "how are you", true);
     heard = hear(heard, "", true);
-    assert.deepStrictEqual(heardWords(heard), {
-      committed: "hello there how are you",
-      tentative: "",
-    });
+    assert.strictEqual(heardText(heard), "hello there how are you");
   });
 });

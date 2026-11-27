@@ -7,6 +7,9 @@ import {
   Settings,
   type SettingsChange,
   type TimeZone,
+  cloudProviderOf,
+  type VoiceSettings,
+  type VoiceSettingsChange,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +28,22 @@ import { TelemetrySwitch } from "../telemetry/TelemetrySwitch.ts";
 
 /** The changes `settings.update` may ask for. */
 export type SettingsChanges = SettingsChange;
+
+/**
+ * Dictation's settings after `change`, field by field. A place that is a
+ * provider is the provider chosen: choosing one as the place chooses it, and
+ * choosing another provider, or none, while the place is one moves the place
+ * along, to automatic when none is left.
+ */
+const voiceAfter = (saved: VoiceSettings, change: VoiceSettingsChange): VoiceSettings => {
+  const next = { ...saved, ...change };
+  const placed = cloudProviderOf(next.place);
+  if (change.place !== undefined && placed !== null) return { ...next, provider: placed };
+  if (change.provider !== undefined && placed !== null) {
+    return { ...next, place: change.provider ?? "automatic" };
+  }
+  return next;
+};
 
 /**
  * The operator's settings. The operator's name and time zone are part of every
@@ -112,6 +131,8 @@ export const layer = Layer.effect(
       ) {
         return yield* new Invalid({ reason: "time-zone" });
       }
+      // The engine's local model is not this server's to dictate with.
+      if (changes.voice?.place === "server") return yield* new Invalid({ reason: "voice-place" });
       const saved = yield* store.get;
       const next: Settings = {
         operatorName:
@@ -124,7 +145,7 @@ export const layer = Layer.effect(
         autoUpdateHarnesses: changes.autoUpdateHarnesses ?? saved.autoUpdateHarnesses,
         suggestReplies: changes.suggestReplies ?? saved.suggestReplies,
         // Field by field too, so a device that changes one leaves the rest.
-        voice: { ...(saved.voice ?? DEFAULT_VOICE_SETTINGS), ...changes.voice },
+        voice: voiceAfter(saved.voice ?? DEFAULT_VOICE_SETTINGS, changes.voice ?? {}),
         ...(saved.telemetry === undefined
           ? {}
           : {

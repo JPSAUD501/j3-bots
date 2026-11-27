@@ -71,6 +71,7 @@ import Migration0065 from "./migrations/0065_telemetry.ts";
 import Migration0066 from "./migrations/0066_bot_maker.ts";
 import Migration0067 from "./migrations/0067_bots_only_rooms.ts";
 import Migration0068 from "./migrations/0068_query_indexes.ts";
+import Migration0069 from "./migrations/0069_voice_provider.ts";
 import Migration0070 from "./migrations/0070_themes.ts";
 
 /**
@@ -144,6 +145,7 @@ const migrations = SqliteMigrator.fromRecord({
   "66_bot_maker": Migration0066,
   "67_bots_only_rooms": Migration0067,
   "68_query_indexes": Migration0068,
+  "69_voice_provider": Migration0069,
   "70_themes": Migration0070,
 });
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { CommandId, TimeZone } from "@j3-bots/contracts";
+import { CommandId, Invalid, TimeZone } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -39,21 +39,58 @@ it.effect("saves the dictation preferences a device changed, and keeps the rest"
       commandId: CommandId.make("voice-words"),
       changes: { voice: { language: "pt", words: ["Wren", "J3 Bots"] } },
     });
-    // A device that only turns the tidy-up on leaves the language and the words.
+    // A device that only chooses the provider leaves the language and the words.
     yield* settings.update({
-      commandId: CommandId.make("voice-tidy"),
-      changes: { voice: { cleanUp: true } },
+      commandId: CommandId.make("voice-provider"),
+      changes: { voice: { provider: "xai" } },
     });
 
     assert.deepStrictEqual((yield* settings.get).voice, {
       place: "automatic",
+      provider: "xai",
       language: "pt",
       words: ["Wren", "J3 Bots"],
       removeFillers: true,
-      cleanUp: true,
+      cleanUp: false,
       model: null,
       openRouterModel: null,
     });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a place that is a provider the provider chosen", () =>
+  Effect.gen(function* () {
+    const settings = yield* SettingsService;
+    const voiceAfter = (
+      id: string,
+      voice:
+        | { readonly place?: "openai" | "automatic" }
+        | {
+            readonly provider: "xai" | null;
+          },
+    ) =>
+      settings
+        .update({ commandId: CommandId.make(id), changes: { voice } })
+        .pipe(Effect.map((saved) => [saved.voice?.place, saved.voice?.provider]));
+
+    // Always OpenAI, on a phone too: OpenAI is the provider.
+    assert.deepStrictEqual(yield* voiceAfter("always", { place: "openai" }), ["openai", "openai"]);
+    // Another provider chosen meanwhile is the one it always uses.
+    assert.deepStrictEqual(yield* voiceAfter("other", { provider: "xai" }), ["xai", "xai"]);
+    // No provider left: the phone's own recognizer, where it has one.
+    assert.deepStrictEqual(yield* voiceAfter("none", { provider: null }), ["automatic", null]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses dictation on the server's own model, which it does not run", () =>
+  Effect.gen(function* () {
+    const settings = yield* SettingsService;
+    const refused = yield* settings
+      .update({ commandId: CommandId.make("server"), changes: { voice: { place: "server" } } })
+      .pipe(Effect.flip);
+
+    assert.deepStrictEqual(refused, new Invalid({ reason: "voice-place" }));
+    assert.strictEqual((yield* settings.get).voice?.place, "automatic");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

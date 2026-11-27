@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { cloudProviderOf, type VoicePlace, type VoiceStatus } from "@j3-bots/contracts";
-import type { HeardWords } from "../stores/Voice.ts";
+import { type CloudVoiceKeys, type VoiceSettings, voiceProviderOf } from "@j3-bots/contracts";
 
-// Where a dictation runs and how its words land in the composer (decision
-// 0096). Words go where the caret was: settled ones in the text's own color,
-// the ones still open to change lighter, until the operator stops.
+// Where a dictation runs and how its words land in the composer (decisions
+// 0096 and 0107). Words go where the caret was when the operator started,
+// moved along with what they typed meanwhile.
 
 /**
  * Whether this device has a speech recognizer of its own for the language,
@@ -26,54 +25,104 @@ export type DictationBlock =
   | "insecure-page"
   /** The operator chose this device's own recognizer, and it has none, or not the language. */
   | "no-device-recognizer"
-  /** The server cannot run a speech model on its system. */
-  | "server-unsupported"
-  /** The server's engine is not running now. */
-  | "server-unavailable";
+  /**
+   * No service is chosen to write down what the operator says, its key is
+   * not saved, or OpenRouter has no model chosen: the microphone opens
+   * Settings → Voice.
+   */
+  | "setup";
 
 /** Where this device's dictation runs, or why it cannot. */
 export type DictationPath =
   /** The device's own recognizer. */
   | { readonly _tag: "device" }
-  /** The server, with its local model or the cloud provider the operator chose. */
+  /** The server, which sends the recording to the cloud provider chosen. */
   | { readonly _tag: "server" }
   /** It cannot dictate here; the microphone says why. */
   | { readonly _tag: "blocked"; readonly block: DictationBlock }
-  /** No microphone at all: a server older than dictation, and no recognizer of the device's own. */
+  /**
+   * No microphone at all: a server before dictation through a cloud
+   * provider (`VoiceSettings.provider` absent), and no recognizer of the
+   * device's own.
+   */
   | { readonly _tag: "none" };
 
 /**
  * Where dictation runs on this device.
  *
- * - `place`: the operator's choice, null from a server older than dictation
- *   through it, which only the device's own recognizer can then serve.
- * - `status`: the server's own, while known.
+ * - `voice`: the operator's choice, null from a server before dictation.
+ * - `keys`: which providers have a key saved, while known.
  * - `secureContext`: whether the page may use the microphone at all; always
  *   true in an app.
  */
 export const dictationPath = (input: {
-  readonly place: VoicePlace | null;
+  readonly voice: VoiceSettings | null;
   readonly device: DeviceRecognizer;
-  readonly status: VoiceStatus | null;
+  readonly keys: CloudVoiceKeys | null;
   readonly secureContext: boolean;
 }): DictationPath => {
-  const { place, device, status } = input;
-  if (place === null) return device === "ready" ? { _tag: "device" } : { _tag: "none" };
-  if (place === "device") {
-    return device === "ready"
-      ? { _tag: "device" }
-      : { _tag: "blocked", block: "no-device-recognizer" };
-  }
-  if (place === "automatic" && device === "ready") return { _tag: "device" };
+  const { voice, device, keys } = input;
+  const own = device === "ready" ? ({ _tag: "device" } as const) : null;
+  // A server older than cloud dictation: only the device's own recognizer.
+  if (voice === null || voice.provider === undefined) return own ?? { _tag: "none" };
+  if (voice.place === "device") return own ?? { _tag: "blocked", block: "no-device-recognizer" };
+  if (voice.place === "automatic" && own !== null) return own;
   if (!input.secureContext) return { _tag: "blocked", block: "insecure-page" };
-  if (status?._tag === "unavailable") {
-    // A cloud provider needs the engine, not a model it can run.
-    if (status.reason === "platform" && cloudProviderOf(place) === null) {
-      return { _tag: "blocked", block: "server-unsupported" };
-    }
-    if (status.reason !== "platform") return { _tag: "blocked", block: "server-unavailable" };
+  const provider = voiceProviderOf(voice);
+  if (
+    provider === null ||
+    keys?.[provider] === false ||
+    (provider === "openrouter" && voice.openRouterModel === null)
+  ) {
+    return { _tag: "blocked", block: "setup" };
   }
   return { _tag: "server" };
+};
+
+/**
+ * Where words dictated into `before`, at `start` to `end`, go once it became
+ * `after`, as the operator typed meanwhile: moved along with the text before
+ * them, and to the end of an edit that ran over them. `caret`, where the
+ * caret stands in `after` once the operator's own edit is in, places that
+ * edit: without it, typing the letter that follows the words' place would
+ * read as typed after it.
+ */
+export const followTyping = (
+  at: { readonly start: number; readonly end: number },
+  before: string,
+  after: string,
+  caret?: number,
+): { readonly start: number; readonly end: number } => {
+  if (before === after) return at;
+  const shortest = Math.min(before.length, after.length);
+  const same = (limit: number, alike: (index: number) => boolean) => {
+    let count = 0;
+    while (count < limit && alike(count)) count += 1;
+    return count;
+  };
+  const fromStart = (index: number) => before[index] === after[index];
+  const fromEnd = (index: number) =>
+    before[before.length - 1 - index] === after[after.length - 1 - index];
+  let head: number;
+  let tail: number;
+  if (caret === undefined) {
+    head = same(shortest, fromStart);
+    tail = same(shortest - head, fromEnd);
+  } else {
+    // The edit ends at the caret: what follows it is as it was.
+    tail = same(
+      Math.min(shortest, after.length - Math.min(Math.max(caret, 0), after.length)),
+      fromEnd,
+    );
+    head = same(shortest - tail, fromStart);
+  }
+  // The edit replaced `before`'s [head, before.length - tail) with after's [head, after.length - tail).
+  const changedEnd = before.length - tail;
+  const shift = after.length - before.length;
+  if (changedEnd <= at.start) return { start: at.start + shift, end: at.end + shift };
+  if (head >= at.end) return at;
+  const end = after.length - tail;
+  return { start: end, end };
 };
 
 /** Characters a word does not take a space before. */
@@ -86,25 +135,17 @@ const spaced = (before: string, after: string): boolean =>
   before !== "" && after !== "" && !OPENING.test(before) && !CLOSING.test(after);
 
 /**
- * The text with what was heard where the caret was (`start` to `end`, which
- * it replaces), spaced from the words around it. The heard words run from
- * `from`: the settled ones to `committed`, then the ones still open to
- * change to `tentative`, where the caret goes.
+ * The text with `words` where the caret was (`start` to `end`, which they
+ * replace), spaced from the words around them. They run from `from` to
+ * `end`, where the caret goes.
  */
 export const placeHeard = (
   draft: { readonly text: string; readonly start: number; readonly end: number },
-  heard: HeardWords,
-): {
-  readonly text: string;
-  readonly from: number;
-  readonly committed: number;
-  readonly tentative: number;
-} => {
+  words: string,
+): { readonly text: string; readonly from: number; readonly end: number } => {
   const before = draft.text.slice(0, draft.start);
   const after = draft.text.slice(draft.end);
-  const settled = heard.committed.trim();
-  const open = heard.tentative.trim();
-  const spoken = spaced(settled, open) ? `${settled} ${open}` : settled + open;
+  const spoken = words.trim();
   const from = before.length + (spaced(before, spoken) ? 1 : 0);
   return {
     text:
@@ -113,8 +154,7 @@ export const placeHeard = (
       (spaced(spoken, after) ? " " : "") +
       after,
     from,
-    committed: from + settled.length,
-    tentative: from + spoken.length,
+    end: from + spoken.length,
   };
 };
 

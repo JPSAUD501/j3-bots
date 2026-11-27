@@ -114,14 +114,13 @@ export {
 export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";
 export {
+  CLOUD_PROVIDER_KEY_PAGES,
   CLOUD_PROVIDER_NAMES,
   dictationBlockWords,
+  dictationFailureNeedsSetup,
   dictationFailureWords,
-  dictationStateWords,
+  elapsedWords,
   languageName,
-  sizeWords,
-  voiceModelWords,
-  voicePlaceWords,
 } from "./voice.ts";
 export { activityTime, dividerTime, type TimeContext, timeInSentence } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";

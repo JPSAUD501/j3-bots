@@ -232,6 +232,12 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
      */
     "quotes",
     /**
+     * Dictation on the server's own speech model (`VoicePlace` `server`),
+     * which this server does not run. Only a client of protocol 11 before
+     * 0.15.0 sends it; it reads the reason as a save that failed.
+     */
+    "voice-place",
+    /**
      * The theme cannot be one: `@j3-bots/design-tokens` refused its
      * definition. Only `theme.save`, new in 0.15.0, answers it.
      */

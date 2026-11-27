@@ -27,7 +27,7 @@ The quick access window also showed scrollbars, horizontal and vertical, where e
 
 ### Nothing under the field
 
-- **The rule, for every composer** (web, desktop, quick access, Android): nothing sits under the field. A status, a hint or a progress goes in the field's box: as a short line at its top, in the controls' row, or as the field's placeholder. A control may change its look. Each one says what it shows in an accessible label, or through a polite live region when it changes. None of them blocks typing unless the field already takes no edit, as during dictation or a send.
+- **The rule, for every composer** (web, desktop, quick access, Android): nothing sits under the field. A status, a hint or a progress goes in the field's box: as a short line at its top, in the controls' row, or as the field's placeholder. A control may change its look. Each one says what it shows in an accessible label, or through a polite live region when it changes. None of them blocks typing unless the field already takes no edit, as during a send.
 - **The lines that moved.** These each moved to a line at the top of the field's box, above the quote chips: the dictation status and why dictation stopped (with the phone's button to its settings), files dropped before the draft could take them, a prompt's text that was cut, a draft not saved on this device, a file that could not be sent, and a failed send. A problem is announced as an alert, and the rest politely. What sits above the composer (a draft that could not be read, one replaced from another device, the mention and prompt lists) stays there.
 - **Other work on the composer follows the rule.** What it adds goes in that line, in the controls, or in the placeholder.
 

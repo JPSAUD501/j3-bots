@@ -177,7 +177,6 @@ export {
   type Dictation,
   type DictationFailure,
   type DictationState,
-  type HeardWords,
   isOver as dictationIsOver,
   Voice,
 } from "./stores/Voice.ts";

@@ -1,51 +1,93 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from "vite-plus/test";
-import { type DictationState, nextState } from "./Voice.ts";
+import { assert, it } from "@effect/vitest";
+import type { VoiceServerFrame } from "@j3-bots/contracts";
+import * as Effect from "effect/Effect";
+import * as Socket from "effect/socket/Socket";
+import { type DictationState, openDictation } from "./Voice.ts";
 
-describe("nextState", () => {
-  it("follows a dictation from the download to its words, and keeps them while it finishes", () => {
-    const frames = [
-      { type: "installing", received: 0, total: 751 },
-      { type: "installing", received: 400, total: 751 },
-      { type: "listening", live: true },
-      { type: "words", committed: "", tentative: "olá" },
-      { type: "words", committed: "olá", tentative: "Wren" },
-    ] as const;
-    const seen: Array<DictationState> = [];
-    let state: DictationState = { _tag: "connecting" };
-    for (const frame of frames) {
-      state = nextState(state, frame);
-      seen.push(state);
+type Listener = (event: Socket.WebSocketEvent) => void;
+
+/** A voice socket that is open at once, records what the client sends, and answers as told. */
+const fakeSocket = () => {
+  const listeners = new Map<string, Set<Listener>>();
+  const sent: Array<string | number> = [];
+  const socket: Socket.WebSocketLike = {
+    readyState: 1,
+    addEventListener: (type, listener) => {
+      const set = listeners.get(type) ?? new Set();
+      set.add(listener);
+      listeners.set(type, set);
+    },
+    removeEventListener: (type, listener) => {
+      listeners.get(type)?.delete(listener);
+    },
+    close: () => {},
+    // Text frames as sent; a piece of audio as its first byte, which names it here.
+    send: (data) => sent.push(typeof data === "string" ? data : (data[0] ?? -1)),
+  };
+  const answer = (frame: VoiceServerFrame) => {
+    for (const listener of listeners.get("message") ?? []) {
+      listener({ type: "message", data: JSON.stringify(frame) });
     }
-    expect(seen[1]).toEqual({ _tag: "installing", received: 400, total: 751 });
-    expect(state).toEqual({ _tag: "listening", live: true, committed: "olá", tentative: "Wren" });
+  };
+  return { socket, sent, answer };
+};
 
-    // The operator stopped: the last words still come, then the AI's tidy-up, then the text.
-    let finishing: DictationState = { _tag: "finishing", committed: "olá", tentative: "Wren" };
-    finishing = nextState(finishing, { type: "words", committed: "olá Wren", tentative: "" });
-    expect(finishing).toEqual({ _tag: "finishing", committed: "olá Wren", tentative: "" });
-    const tidying = nextState(finishing, { type: "tidying" });
-    expect(tidying).toEqual({ _tag: "tidying", committed: "olá Wren", tentative: "" });
-    expect(nextState(tidying, { type: "done", text: "Olá, Wren." })).toEqual({
-      _tag: "done",
-      text: "Olá, Wren.",
-    });
-  });
-
-  it("ends on the server's reason, and on unknown for one this client does not know", () => {
-    const listening: DictationState = {
-      _tag: "listening",
-      live: false,
-      committed: "",
-      tentative: "",
-    };
-    expect(nextState(listening, { type: "failed", reason: "busy" })).toEqual({
-      _tag: "failed",
-      reason: "busy",
-    });
-    expect(nextState(listening, { type: "failed", reason: "unknown" })).toEqual({
-      _tag: "failed",
-      reason: "unknown",
-    });
-  });
+/** Lets the dictation's own fiber take what just happened. */
+const settle = Effect.gen(function* () {
+  for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
 });
+
+/** A dictation over `fake`, and a piece of audio named by `name`. */
+const dictation = (fake: ReturnType<typeof fakeSocket>) =>
+  openDictation(Effect.succeed("ws://server.test/voice"), "1 second", false).pipe(
+    Effect.provideService(Socket.WebSocketConstructor, () => fake.socket),
+  );
+const piece = (name: number) => new Uint8Array([name, 0, 0, 0]);
+const START = JSON.stringify({ type: "start" });
+const FINISH = JSON.stringify({ type: "finish" });
+
+it.effect("sends what was recorded while the socket opened first, once the server listens", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = fakeSocket();
+      const handle = yield* dictation(fake);
+      yield* settle;
+      yield* handle.audio(piece(1));
+      yield* handle.audio(piece(2));
+      assert.deepStrictEqual(fake.sent, [START]);
+
+      fake.answer({ type: "listening", live: false });
+      yield* settle;
+      yield* handle.audio(piece(3));
+      yield* handle.finish;
+      assert.deepStrictEqual(fake.sent, [START, 1, 2, 3, FINISH]);
+      assert.strictEqual(handle.state.get()._tag, "finishing");
+    }),
+  ),
+);
+
+it.effect("a Stop before the server listens still sends what was held, then finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = fakeSocket();
+      const handle = yield* dictation(fake);
+      yield* settle;
+      yield* handle.audio(piece(1));
+      yield* handle.finish;
+      // Recorded after Stop: not the operator's words.
+      yield* handle.audio(piece(2));
+      assert.strictEqual(handle.state.get()._tag, "finishing");
+
+      fake.answer({ type: "listening", live: false });
+      yield* settle;
+      assert.deepStrictEqual(fake.sent, [START, 1, FINISH]);
+      assert.strictEqual(handle.state.get()._tag, "finishing");
+
+      fake.answer({ type: "done", text: "Book the venue" });
+      yield* settle;
+      const done: DictationState = { _tag: "done", text: "Book the venue" };
+      assert.deepStrictEqual(handle.state.get(), done);
+    }),
+  ),
+);

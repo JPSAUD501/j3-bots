@@ -62,7 +62,12 @@ export interface ComposerSource {
  * them, dictation included; `say` tells the operator when a message could
  * not be kept.
  */
-export function useComposerSource(j3: J3Client, say: (text: string) => void): ComposerSource {
+export function useComposerSource(
+  j3: J3Client,
+  say: (text: string) => void,
+  /** Opens Settings → Voice, where it is at hand. */
+  openVoiceSettings?: () => void,
+): ComposerSource {
   const { t } = useI18n();
   const drafts = useReadable(j3.drafts);
   const offers = useReadable(j3.draftOffers);
@@ -78,6 +83,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
     settings: settings._tag === "ready" ? settings.value.voice : null,
     microphone: openMicrophone,
     app: desktop === null ? "browser" : "desktop",
+    setUp: openVoiceSettings,
   });
   const send: ComposerSource["send"] = (target, addressing, context) =>
     j3.sendDraft(target, addressing, context).then((result) => {

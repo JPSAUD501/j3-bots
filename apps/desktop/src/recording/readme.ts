@@ -2,10 +2,11 @@
 import type { RecordingTranscript } from "@j3-bots/desktop-bridge";
 import type { RecordedScreen } from "./screens.ts";
 
-// The two files that explain a recording to whoever opens its zip, a bot's
-// AI first: `manifest.json`, what was recorded and how, and `README.md`,
-// how to read the rest; and `transcript.json`, what the operator said, when
-// it was written down. Written in English, as the files' own names are.
+// The files that explain a recording to whoever opens its zip, a bot's AI
+// first: `manifest.json`, what was recorded and how, and `README.md`, what
+// each file is; and `transcript.json`, what the operator said, when their
+// dictation service wrote it down (decision 0107). Written in English, as
+// the files' own names are.
 
 export interface RecordingFacts {
   readonly appVersion: string;
@@ -42,11 +43,7 @@ export const transcriptText = (transcript: RecordingTranscript) =>
     {
       format: "j3-bots-screen-recording-transcript",
       version: 1,
-      segments: transcript.segments.map((segment) =>
-        segment.words === null
-          ? { t: segment.t, until: segment.until, text: segment.text }
-          : segment,
-      ),
+      segments: transcript.segments,
     },
     null,
     2,
@@ -94,7 +91,7 @@ const duration = (ms: number) => {
 
 const TRANSCRIPT_SECTION = `## Transcript
 
-\`${TRANSCRIPT_FILE}\` holds \`segments\`, in order, each what was said from \`t\` to \`until\` (the same clock as the events), at most 30 seconds long and cut where the voice was quietest. Stretches where nothing was said are left out: without any segment, the recognizer heard nothing said. A segment's \`words\` each have a \`t\`: when the speech recognizer had heard that word, so it was said up to about a second before; a word it settled only at the segment's end has the segment's \`until\`. A segment without \`words\` was written down by a recognizer that gives only the text, so its time is the segment's. Speech recognition gets some words wrong, names most of all: when a word matters, listen to the voice at that time.
+\`${TRANSCRIPT_FILE}\` holds \`segments\`, in order: each is what was said from \`t\` to \`until\` (the same clock as the events), at most 30 seconds long. Stretches where nothing was said are left out, so a transcript with no segment means nothing was said. Speech recognition gets some words wrong, names most of all: when a word matters, listen to the voice at that time.
 
 `;
 
@@ -107,13 +104,13 @@ export const readmeOf = (facts: RecordingFacts): string => {
     .join("\n");
   const voice = facts.voice
     ? facts.transcript
-      ? `- \`${VOICE_FILE}\`: the operator's voice (Opus).\n- \`${TRANSCRIPT_FILE}\`: what they said, written down by speech recognition, with times (below).`
-      : `- \`${VOICE_FILE}\`: the operator's voice (Opus). There is no transcript: listen to it, or transcribe it with a tool you have.`
+      ? `- \`${VOICE_FILE}\`: the operator's voice, as audio.\n- \`${TRANSCRIPT_FILE}\`: what they said, as text with times (below).`
+      : `- \`${VOICE_FILE}\`: the operator's voice, as audio. It has no transcript: what they said is only in the audio.`
     : "- No voice was recorded.";
   const input =
     facts.input === "everything"
       ? `- \`${EVENTS_FILE}\`: one JSON event per line: clicks, typed text, keys and shortcuts, scrolls, the window in front, pauses.`
-      : `- \`${EVENTS_FILE}\`: J3 Bots could not read keys and clicks on this computer (Linux on Wayland lets no app read them; macOS only once the operator allows J3 Bots under Accessibility), so it holds no clicks, typed text, keys or scrolls: only the window in front, where this system says it, pauses and the stop. Follow the video.`;
+      : `- \`${EVENTS_FILE}\`: what happened, one JSON event per line. This computer did not let J3 Bots read keys and clicks, so it holds only the window in front (where the system says it), pauses and the stop. Follow the video.`;
   const passwords =
     facts.passwords === "hidden"
       ? "When the system said a password was being typed, or could not say, no character is kept."
@@ -129,8 +126,9 @@ Recorded with J3 Bots ${facts.appVersion} on ${facts.os.platform}, starting ${fa
 ${screens}
 ${voice}
 ${input}
-- \`frames/\`: a small JPEG of the screen at each click and each change of window (${facts.frames} in all), named by time and screen, so you can follow what happened without a video tool. An event's \`frame\` may be missing when the screen could not be read just then, or the recording was paused by the time it was taken.
+- \`frames/\`: a small picture of the screen at each click and each change of window (${facts.frames} in all), named by time and screen. An event's \`frame\` may be missing when the screen could not be read just then, or the recording was paused by the time it was taken.
 - \`${MANIFEST_FILE}\`: the same facts as data: screens, sizes, scale, start time, time zone, system, version.
+- \`${README_FILE}\`: this file.
 
 ## Time
 
@@ -146,18 +144,7 @@ ${facts.transcript ? TRANSCRIPT_SECTION : ""}## Events
 - \`window\`: the app and window title in front, when it changed, with a \`frame\`.
 - \`start\`, \`pause\`, \`resume\`, \`stop\`.
 
-## Useful commands
-
-\`\`\`sh
-# What is in a video
-ffprobe -hide_banner screen-1.mp4
-# The screen at an event at t = 83250 ms
-ffmpeg -ss 83.25 -i screen-1.mp4 -frames:v 1 at-83250.jpg
-# One picture every 10 seconds
-ffmpeg -i screen-1.mp4 -vf fps=1/10 every-10s-%04d.jpg
-# The voice as 16 kHz WAV, for a speech-to-text tool
-ffmpeg -i ${VOICE_FILE} -ar 16000 -ac 1 voice.wav
-\`\`\`
+## Where things are on screen
 
 A point \`(x, y)\` of screen \`n\` in desktop coordinates is at \`((x - desktop.x) × scale, (y - desktop.y) × scale)\` in \`screen-n.mp4\`, with \`desktop\` and \`scale\` from \`${MANIFEST_FILE}\`. The recording's own floating control may show in the video on Linux, where the system cannot leave it out.
 `;
