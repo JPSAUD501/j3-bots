@@ -350,34 +350,37 @@ export const layer = Layer.effect(
           }),
           Effect.as(outcome),
         );
-      // Its trust is the connector's: none once the bot no longer has it.
-      if (!(yield* connectors.granted({ botId: view.bot_id, connectorId: view.connector_id }))) {
-        return yield* outcome({ _tag: "refused", reason: "gone" });
-      }
       const { text, structured } = input.context;
-      if (text.trim() === "" && structured === null) {
-        yield* sql`DELETE FROM connector_app_contexts WHERE view_id = ${view.id}`.pipe(
-          Effect.orDie,
-        );
-        return yield* outcome({ _tag: "kept" });
-      }
-      const room = Option.flatMap(yield* shownIn(view.id).pipe(Effect.orDie), (row) =>
-        Option.fromNullishOr(row.room_id),
-      );
-      const { audience, roomId } = audienceColumns(
-        Option.isSome(room) ? { _tag: "room", roomId: room.value } : { _tag: "conversation" },
-      );
       const data = structured === null ? null : yield* encodeObject(structured).pipe(Effect.orDie);
-      const at = timeText(yield* DateTime.now);
-      yield* sql`
-        INSERT INTO connector_app_contexts (
-          view_id, bot_id, audience, audience_room_id, text, structured_json, updated_at
-        ) VALUES (${view.id}, ${view.bot_id}, ${audience}, ${roomId}, ${text}, ${data}, ${at})
-        ON CONFLICT (view_id) DO UPDATE SET
-          text = excluded.text, structured_json = excluded.structured_json,
-          updated_at = excluded.updated_at, consumed_dispatch_id = NULL
-      `.pipe(Effect.orDie);
-      return yield* outcome({ _tag: "kept" });
+      // Its trust is the connector's: none once the bot no longer has it. The
+      // grant is read and the context written in one transaction, so a grant
+      // taken away meanwhile, which deletes the bot's contexts, comes after both.
+      const kept = yield* Effect.gen(function* () {
+        if (!(yield* connectors.granted({ botId: view.bot_id, connectorId: view.connector_id }))) {
+          return false;
+        }
+        if (text.trim() === "" && structured === null) {
+          yield* sql`DELETE FROM connector_app_contexts WHERE view_id = ${view.id}`;
+          return true;
+        }
+        const room = Option.flatMap(yield* shownIn(view.id), (row) =>
+          Option.fromNullishOr(row.room_id),
+        );
+        const { audience, roomId } = audienceColumns(
+          Option.isSome(room) ? { _tag: "room", roomId: room.value } : { _tag: "conversation" },
+        );
+        const at = timeText(yield* DateTime.now);
+        yield* sql`
+          INSERT INTO connector_app_contexts (
+            view_id, bot_id, audience, audience_room_id, text, structured_json, updated_at
+          ) VALUES (${view.id}, ${view.bot_id}, ${audience}, ${roomId}, ${text}, ${data}, ${at})
+          ON CONFLICT (view_id) DO UPDATE SET
+            text = excluded.text, structured_json = excluded.structured_json,
+            updated_at = excluded.updated_at, consumed_dispatch_id = NULL
+        `;
+        return true;
+      }).pipe(sql.withTransaction, Effect.orDie);
+      return yield* outcome(kept ? { _tag: "kept" } : { _tag: "refused", reason: "gone" });
     });
 
     return ConnectorApps.of({ record, open, callTool, readResource, setContext });

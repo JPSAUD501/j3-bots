@@ -1348,25 +1348,6 @@ export const layer = Layer.effect(
       })(botId).pipe(Effect.orDie);
 
     /**
-     * Deletes what apps set as context for the bot through a connector it no
-     * longer has, removed or no longer granted to it: an app's context is
-     * kept only while its bot has the connector (decision 0093), as the
-     * grant reads in `connectors` and `connector_bots`.
-     */
-    const dropUngrantedContexts = (botId: BotId) =>
-      sql`
-        DELETE FROM connector_app_contexts
-        WHERE bot_id = ${botId} AND view_id IN (
-          SELECT v.id FROM connector_app_views v LEFT JOIN connectors k ON k.id = v.connector_id
-          WHERE v.bot_id = ${botId} AND (
-            k.id IS NULL OR (k.all_bots = 0 AND NOT EXISTS (
-              SELECT 1 FROM connector_bots g WHERE g.connector_id = k.id AND g.bot_id = ${botId}
-            ))
-          )
-        )
-      `.pipe(Effect.orDie);
-
-    /**
      * What connectors' apps shown to `audience` set as context for the bot
      * since its last turn there, oldest first: each app's latest
      * (`docs/architecture/server.md`, Connector apps).
@@ -1417,7 +1398,6 @@ export const layer = Layer.effect(
           source: { _tag: "held", id: message.id },
         });
       }
-      yield* dropUngrantedContexts(botId);
       for (const context of yield* appContextsOf(botId, audience)) {
         unseen.push({
           item: {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   type ConnectorAppAnswer,
   type ConnectorAppEntry,
   type Entry,
@@ -37,6 +38,7 @@ import { BotTools } from "../tools/BotTools.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { ToolLists } from "../tools/ToolLists.ts";
 import { ConnectorApps } from "./ConnectorApps.ts";
+import { Connectors } from "./Connectors.ts";
 
 const domain = TestDomain.layer.pipe(Layer.provide(reachFakes));
 
@@ -424,14 +426,14 @@ it.effect(
 );
 
 it.effect(
-  "takes back an app's context when it sets an empty one, and keeps none once the bot loses the connector",
+  "takes back an app's context when it sets an empty one, and keeps none once the bot loses the connector, even when it gets it back",
   () =>
     Effect.gen(function* () {
       const connector = yield* shop();
       const ana = yield* working("Ana");
       yield* connector.grant([ana.bot.id]);
       yield* callInTurn(ana, "wheelhouse__stock", { model: "Ridge 7" }, "call-1");
-      const { viewId } = yield* onlyApp(ana.bot.id);
+      const { viewId, connectorId } = yield* onlyApp(ana.bot.id);
       const apps = yield* ConnectorApps;
 
       yield* apps.setContext({ viewId, context: { text: "Picked size M.", structured: null } });
@@ -439,13 +441,42 @@ it.effect(
         yield* apps.setContext({ viewId, context: { text: "", structured: null } }),
         { _tag: "kept" },
       );
-      // What it set last, unread when the operator takes the connector away, goes with it.
+      // What it set last, unread when the operator takes the connector away,
+      // goes with it, and giving the connector back does not bring it back.
       yield* apps.setContext({ viewId, context: { text: "Picked size S.", structured: null } });
       yield* connector.grant([]);
       assert.deepStrictEqual(
         yield* apps.setContext({ viewId, context: { text: "Picked size L.", structured: null } }),
         { _tag: "refused", reason: "gone" },
       );
+      yield* connector.grant([ana.bot.id]);
+      assert.isTrue(yield* (yield* Connectors).granted({ botId: ana.bot.id, connectorId }));
+      const first = yield* finishRunning(ana.bot.id);
+      yield* sendToBot(ana.bot.id, "Hold it for me.");
+      yield* finishRunning(ana.bot.id, first);
+
+      for (const { text } of yield* received(ana.session)) {
+        assert.notInclude(text, "Picked size");
+      }
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
+);
+
+it.effect(
+  "keeps no app's context for its bot once its connector is removed",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* shop();
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
+      yield* callInTurn(ana, "wheelhouse__stock", { model: "Ridge 7" }, "call-1");
+      const { viewId, connectorId } = yield* onlyApp(ana.bot.id);
+
+      yield* (yield* ConnectorApps).setContext({
+        viewId,
+        context: { text: "Picked size S.", structured: null },
+      });
+      yield* (yield* Connectors).remove({ commandId: CommandId.make("remove-shop"), connectorId });
       const first = yield* finishRunning(ana.bot.id);
       yield* sendToBot(ana.bot.id, "Hold it for me.");
       yield* finishRunning(ana.bot.id, first);
