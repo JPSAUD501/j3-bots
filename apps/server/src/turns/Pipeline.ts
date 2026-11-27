@@ -6,6 +6,7 @@ import {
   BotId,
   type CommandId,
   Conflict,
+  type ConversationMention,
   EntryId,
   type EntryTarget,
   Invalid,
@@ -23,6 +24,7 @@ import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
   AskAnswer,
   CatchUpItem,
+  MentionRef,
   OperatorMessage,
   ReactionNews,
   RoomEntry,
@@ -68,6 +70,7 @@ import {
   operatorZone,
   ROOM_ENTRIES_READ,
   roomName,
+  widestMention,
   widestRoomHeader,
   widestTeammate,
 } from "./envelopes.ts";
@@ -317,6 +320,8 @@ export class Pipeline extends Context.Service<
       /** Where the operator placed each file in `text`; left out, they follow it. */
       readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly mentions?: Mentions;
+      /** The bots and rooms the message names in a bot's conversation. */
+      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       /** The window the operator was looking at, from quick access. */
       readonly lookingAt?: LookingAt;
     }) => Effect.Effect<EntryId, NotFound | Conflict | Invalid>;
@@ -375,16 +380,38 @@ export const layer = Layer.effect(
 
     // ---- Operator commands ------------------------------------------------
 
+    /**
+     * In a bot's conversation, mentions of the operator's other bots and of
+     * the active rooms that bot is a member of, each once, and no room
+     * mention (decision 0092). In a room, mentions of its members only, as
+     * before.
+     */
     const checkMentions = Effect.fn("Pipeline.checkMentions")(function* (
       target: EntryTarget,
       mentions: Mentions | undefined,
+      conversationMentions: ReadonlyArray<ConversationMention>,
     ) {
       if (target._tag === "conversation") {
         if (mentions !== undefined && (mentions._tag !== "bots" || mentions.ids.length > 0)) {
           return yield* new Invalid({ reason: "mentions" });
         }
+        const keys = conversationMentions.map((mention) =>
+          mention._tag === "bot" ? `bot:${mention.botId}` : `room:${mention.roomId}`,
+        );
+        if (new Set(keys).size !== keys.length) return yield* new Invalid({ reason: "mentions" });
+        for (const mention of conversationMentions) {
+          const mentionable =
+            mention._tag === "bot"
+              ? mention.botId !== target.botId && Option.isSome(yield* bots.find(mention.botId))
+              : Option.exists(
+                  yield* rooms.find(mention.roomId),
+                  (room) => room.status === "active" && room.members.includes(target.botId),
+                );
+          if (!mentionable) return yield* new Invalid({ reason: "mentions" });
+        }
         return;
       }
+      if (conversationMentions.length > 0) return yield* new Invalid({ reason: "mentions" });
       const room = yield* rooms.find(target.roomId);
       if (Option.isNone(room)) return yield* new NotFound({ resource: "room" });
       if (room.value.status === "archived") return yield* new Conflict({ reason: "room-archived" });
@@ -538,9 +565,11 @@ export const layer = Layer.effect(
       readonly attachments: ReadonlyArray<AttachmentId>;
       readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly mentions?: Mentions;
+      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       readonly lookingAt?: LookingAt;
     }) {
       const { commandId, ...payload } = input;
+      const named = input.conversationMentions ?? [];
       return yield* receipts.once({
         commandId,
         method: "message.send",
@@ -552,7 +581,7 @@ export const layer = Layer.effect(
               return yield* new NotFound({ resource: "bot" });
             }
           }
-          const room = yield* checkMentions(input.target, input.mentions);
+          const room = yield* checkMentions(input.target, input.mentions, named);
           const files = yield* filesOf(input.attachments);
           const offsets = input.attachmentOffsets;
           if (offsets !== undefined && !attachmentOffsetsFit(input.text, files.length, offsets)) {
@@ -569,7 +598,16 @@ export const layer = Layer.effect(
           const message = operatorMessage(at, input.text, files, placed, input.lookingAt);
           const alone: Wake | null =
             room === undefined
-              ? userWake(base, [], [{ _tag: "message", message }])
+              ? userWake(
+                  base,
+                  [],
+                  [
+                    {
+                      _tag: "message",
+                      message: { ...message, mentions: named.map(widestMention) },
+                    },
+                  ],
+                )
               : {
                   ...base,
                   sinceLastTurn: [],
@@ -615,6 +653,7 @@ export const layer = Layer.effect(
               ...(placed === undefined ? {} : { attachmentOffsets: placed }),
               ...(input.lookingAt === undefined ? {} : { lookingAt: input.lookingAt }),
               mentions: input.mentions ?? { _tag: "bots", ids: [] },
+              ...(named.length === 0 ? {} : { conversationMentions: named }),
               delivery:
                 behind?.unsent === true
                   ? { _tag: "pending", behindOpening: true }
@@ -1132,10 +1171,45 @@ export const layer = Layer.effect(
 
     // ---- Envelopes ----------------------------------------------------------
 
+    /**
+     * What a message in a bot's conversation mentions, as it stands now: each
+     * bot by its name, and each room by its name with whether the bot is a
+     * member of it, active, now.
+     */
+    const mentionRef = Effect.fn("Pipeline.mentionRef")(function* (
+      botId: BotId,
+      mention: ConversationMention,
+    ) {
+      if (mention._tag === "bot") {
+        return { kind: "bot", ...(yield* teammateRef(mention.botId)) } satisfies MentionRef;
+      }
+      return Option.match(yield* rooms.find(mention.roomId), {
+        onNone: (): MentionRef => ({
+          kind: "room",
+          id: mention.roomId,
+          name: "A former room",
+          member: false,
+        }),
+        onSome: (room): MentionRef => ({
+          kind: "room",
+          id: room.id,
+          name: room.name,
+          member: room.status === "active" && room.members.includes(botId),
+        }),
+      });
+    });
+
     const operatorMessageOf = Effect.fn("Pipeline.operatorMessageOf")(function* (entryId: EntryId) {
       const found = yield* entries.find(entryId);
       if (Option.isNone(found) || found.value.entry._tag !== "message") return null;
       const message: MessageEntry = found.value.entry;
+      const { target } = found.value;
+      const mentions =
+        target._tag === "conversation"
+          ? yield* Effect.forEach(message.conversationMentions ?? [], (mention) =>
+              mentionRef(target.botId, mention),
+            )
+          : [];
       return {
         id: message.id,
         ...operatorMessage(
@@ -1145,6 +1219,7 @@ export const layer = Layer.effect(
           message.attachmentOffsets,
           message.lookingAt,
         ),
+        ...(mentions.length === 0 ? {} : { mentions }),
       } satisfies OperatorMessage;
     });
 

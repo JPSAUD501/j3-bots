@@ -58,6 +58,7 @@ import {
   EntryTarget,
   LookingAt,
   MAX_SECRET_ASK_VALUES,
+  ConversationMentions,
   Mentions,
   MessageText,
   PREVIEW_LENGTH,
@@ -135,7 +136,8 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 // stored, so they have no receipt (see there).
 //
 // A client offers sections, a bot's `sectionId` and `entries.markUnread` only
-// once a roster snapshot carries `sections` (docs/architecture/clients.md,
+// once a roster snapshot carries `sections`, and `@` in a bot's conversation
+// only once it carries `conversationMentions` (docs/architecture/clients.md,
 // "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
@@ -179,6 +181,12 @@ export const RosterRpcs = RpcGroup.make(
       Schema.TaggedStruct("snapshot", {
         items: Schema.Array(RosterItem),
         sections: Schema.optionalKey(Schema.Array(Section)),
+        /**
+         * Always `true` from a server that takes `message.send`'s
+         * `conversationMentions`; a client offers `@` in a bot's
+         * conversation only then.
+         */
+        conversationMentions: Schema.optionalKey(Schema.Literal(true)),
       }),
       Schema.TaggedStruct("changed", {
         upsert: Schema.Array(RosterItem),
@@ -259,7 +267,10 @@ export const EntryRpcs = RpcGroup.make(
    * Returns the new message entry. `attachments` are uploaded first with
    * `POST /attachments`. `mentions` only applies in a room, and names
    * members only; leaving it out wakes every member, as `bots` with no ids
-   * does. Fails with `Invalid("attachment")`, writing nothing, when
+   * does. `conversationMentions` only applies in a bot's conversation, and
+   * names the operator's other bots and the active rooms that bot is a
+   * member of; it wakes nobody but that bot. A mention that breaks either
+   * rule fails with `Invalid("mentions")`, writing nothing. Fails with `Invalid("attachment")`, writing nothing, when
    * the files break a limit of the engine that runs the bot: an empty file, an
    * inline image (`INLINE_IMAGE_MEDIA_TYPES`) over `MAX_INLINE_IMAGE_SIZE`, or
    * inline images over `MAX_INLINE_IMAGES_SIZE` together. Fails with
@@ -280,6 +291,11 @@ export const EntryRpcs = RpcGroup.make(
        */
       attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
       mentions: Schema.optionalKey(Mentions),
+      /**
+       * Offered only once the roster snapshot carries
+       * `conversationMentions`: a server that predates them ignores it.
+       */
+      conversationMentions: Schema.optionalKey(ConversationMentions),
       /**
        * The window the operator was looking at, from quick access: the
        * message keeps it, and its bot reads it beside the message, marked as

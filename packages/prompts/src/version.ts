@@ -112,6 +112,12 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
         text: "text text",
         attachments: [{ name: "a.png", path: "files/a.png", mediaType: "x", offset: 4 }],
         lookingAt: { app: "App", title: "Title" },
+        // Every way a mention reads: a teammate, and a room the bot is or is not in.
+        mentions: [
+          { kind: "bot", ...teammate },
+          { kind: "room", id: Schema.decodeSync(RoomId)("room"), name: "Room", member: true },
+          { kind: "room", id: Schema.decodeSync(RoomId)("room"), name: "Room", member: false },
+        ],
       },
     ],
   },

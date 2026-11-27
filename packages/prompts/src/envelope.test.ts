@@ -78,6 +78,10 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
           text: s,
           attachments: [{ name: s, path: s, mediaType: s, offset: null }],
           lookingAt: { app: s, title: s },
+          mentions: [
+            { kind: "bot", ...teammate },
+            { kind: "room", id: Schema.decodeSync(RoomId)("launch"), name: s, member: true },
+          ],
         },
         { at: now, text: s, attachments: [], lookingAt: null },
       ],
@@ -245,6 +249,53 @@ describe("renderWake", () => {
       what changed since friday?
       <attachment n="1" name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
       </message>
+      </j3-wake>
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
+      "
+    `);
+  });
+
+  it("names what a message in the bot's conversation mentions, after it", () => {
+    expect(
+      render({
+        kind: "user",
+        at: now,
+        timeZone,
+        sinceLastTurn: [],
+        answer: null,
+        messages: [
+          {
+            at: now,
+            text: "@ML Preços how much is the headset? and tell @Launch it slipped",
+            attachments: [],
+            lookingAt: null,
+            mentions: [
+              { kind: "bot", id: botId("prices"), name: "ML Preços", title: "" },
+              {
+                kind: "room",
+                id: Schema.decodeSync(RoomId)("launch"),
+                name: "Launch",
+                member: true,
+              },
+              {
+                kind: "room",
+                id: Schema.decodeSync(RoomId)("ops"),
+                name: "Ops",
+                member: false,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchInlineSnapshot(`
+      "<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      <message from="user">
+      @ML Preços how much is the headset? and tell @Launch it slipped
+      </message>
+      The message above mentions these. A mention reaches no one: none of them has seen it. Act on your user's words: a question or a word for a teammate goes to it with \`message_bot\`, and you tell your user what comes back; news for a room you are a member of goes there with \`message_bot\` and the room's id; what happened in one is a \`read_room\`. Never say one of them saw what you did not send.
+      <mention kind="bot" id="prices" name="ML Preços"/>
+      <mention kind="room" id="launch" name="Launch" member="true"/>
+      <mention kind="room" id="ops" name="Ops" member="false"/>
       </j3-wake>
       Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
       "

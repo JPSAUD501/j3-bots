@@ -63,6 +63,20 @@ export interface LookingAtRef {
   readonly title: string | null;
 }
 
+/**
+ * A bot or a room the operator's message mentions in the bot's own
+ * conversation, as it stands when the envelope is written: a teammate, or a
+ * room with whether the bot is a member of it now. A mention reaches neither.
+ */
+export type MentionRef =
+  | ({ readonly kind: "bot" } & TeammateRef)
+  | {
+      readonly kind: "room";
+      readonly id: RoomId;
+      readonly name: string;
+      readonly member: boolean;
+    };
+
 export interface OperatorMessage {
   /**
    * The message's id, which `react` names it by. Left out only where there
@@ -74,6 +88,8 @@ export interface OperatorMessage {
   readonly attachments: ReadonlyArray<AttachmentRef>;
   /** `null` for a message written anywhere but quick access, or sent without its window. */
   readonly lookingAt: LookingAtRef | null;
+  /** The bots and rooms it mentions, in the order named. Left out when it mentions none. */
+  readonly mentions?: ReadonlyArray<MentionRef>;
 }
 
 /** The operator's response to a card the bot raised with `ask`. */
@@ -965,6 +981,7 @@ const writeOperatorMessage = (
   text: string,
   attachments: ReadonlyArray<AttachmentRef>,
   lookingAt: LookingAtRef | null,
+  mentions: ReadonlyArray<MentionRef> = [],
 ): void => {
   w.open("message", [["from", "user"], ...attrs]);
   const placed = attachments.flatMap((file) =>
@@ -973,7 +990,44 @@ const writeOperatorMessage = (
   w.line(placedText(w, trimEnd(text), placed));
   for (const file of attachments) if (file.offset === null) w.line(attachmentTag(w, file));
   w.close("message");
+  writeMentions(w, mentions);
   if (lookingAt !== null) writeLookingAt(w, lookingAt);
+};
+
+/**
+ * The line that introduces what a message in the bot's conversation mentions
+ * (`MentionRef`), and says how to act on it. It is here rather than in the
+ * base prompt: a bot reads it only with a message that mentions something.
+ */
+export const MENTIONS_LINE =
+  "The message above mentions these. A mention reaches no one: none of them has seen it. Act on your user's words: a question or a word for a teammate goes to it with `message_bot`, and you tell your user what comes back; news for a room you are a member of goes there with `message_bot` and the room's id; what happened in one is a `read_room`. Never say one of them saw what you did not send.";
+
+/**
+ * What the operator's message mentions, after it: a line of J3 Bots' own,
+ * then one element for each, with the id the bot's tools take. Names are
+ * attributes, escaped, so none can pass for the operator's words.
+ */
+const writeMentions = (w: EnvelopeWriter, mentions: ReadonlyArray<MentionRef>): void => {
+  if (mentions.length === 0) return;
+  w.line(MENTIONS_LINE);
+  for (const mention of mentions) {
+    w.empty(
+      "mention",
+      mention.kind === "bot"
+        ? [
+            ["kind", "bot"],
+            ["id", mention.id],
+            ["name", mention.name],
+            ["title", titleOf(mention)],
+          ]
+        : [
+            ["kind", "room"],
+            ["id", mention.id],
+            ["name", mention.name],
+            ["member", mention.member ? "true" : "false"],
+          ],
+    );
+  }
 };
 
 /** The line that introduces the window a message was written over (`LookingAtRef`). */
@@ -1037,6 +1091,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           message.text,
           message.attachments,
           message.lookingAt,
+          message.mentions,
         );
       }
       return;
