@@ -38,7 +38,7 @@ class HomeWidgetModule : Module() {
       val store = WidgetStore(context)
       val ids = BotWidgetProvider.ids(context)
       store.keepOnly(ids.toSet())
-      ids.mapNotNull { id ->
+      ids.asList().mapNotNull { id ->
         store.target(id)?.let { target ->
           val kind = target.optString("kind")
           val botId = target.optString("botId")
