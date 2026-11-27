@@ -1732,12 +1732,26 @@ export const layer = Layer.effect(
           const roomed = yield* roomPlan(chosen);
           if (roomed._tag !== "plan") return roomed.result;
           const { plan, room } = roomed;
+          // A reaction taken off since its wake was written has nothing left
+          // to tell: its wake goes, and the bot's other reactions keep theirs.
+          const [head] = plan.wakes;
+          if (
+            head?.payload_json._tag === "reaction" &&
+            (yield* newsOf({
+              botId: plan.botId,
+              entryId: head.payload_json.entryId,
+              forWake: true,
+            })) === null
+          ) {
+            yield* ledger.cancelWakes(plan.wakes.map((wake) => wake.id));
+            return null;
+          }
           yield* reactionsRide(plan);
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId), room);
           yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;
           if (wake === null) {
-            // Their messages are gone, or the reaction was taken off: nothing to deliver.
+            // Their messages are gone: nothing to deliver.
             yield* ledger.cancelWakes(fitted.wakes.map((row) => row.id));
             return null;
           }
