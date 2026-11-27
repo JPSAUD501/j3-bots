@@ -340,6 +340,7 @@ export function Roster({
 
   return (
     <nav
+      data-slot="roster"
       ref={ref}
       aria-label={t("roster.label")}
       tabIndex={-1}

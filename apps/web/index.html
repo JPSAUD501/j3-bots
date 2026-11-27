@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>J3 Bots</title>
     <script>
-      // Sets the theme before the first paint, so a dark page never flashes light.
-      // Reads what src/preferences/preferences.ts writes; keep the key in step with it.
+      // Sets the appearance and the theme before the first paint, so a dark page never
+      // flashes light. Reads what src/preferences/preferences.ts and src/themes/look.ts
+      // write; keep the keys in step with them.
       (() => {
         let appearance = "system";
         try {
@@ -16,6 +17,17 @@
           appearance === "dark" ||
           (appearance !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.classList.add(dark ? "dark" : "light");
+        // The theme shown last, as src/themes/look.ts keeps it.
+        try {
+          const look = JSON.parse(localStorage.getItem("j3:theme-look") ?? "null");
+          if (typeof look?.css === "string" && typeof look.id === "string") {
+            const style = document.createElement("style");
+            style.id = "j3-theme";
+            style.textContent = look.css;
+            document.head.append(style);
+            document.documentElement.dataset.theme = look.id;
+          }
+        } catch {}
       })();
     </script>
   </head>

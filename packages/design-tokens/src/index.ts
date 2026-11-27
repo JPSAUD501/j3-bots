@@ -12,4 +12,4 @@ export * from "./themeCss.ts";
 export * from "./tokens.ts";
 export * from "./visual.ts";
 export { nativeThemeVariables } from "./uniwind.ts";
-export { renderThemeColorsCss } from "./web.ts";
+export { renderThemeColorsCss, themeColorVariables } from "./web.ts";

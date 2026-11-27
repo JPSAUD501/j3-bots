@@ -73,6 +73,7 @@ import {
   resolveAvatar,
   shadows,
   springs,
+  themeColorVariables,
   typeScale,
   type Spring,
   type Themed,
@@ -81,7 +82,15 @@ import {
 import * as DateTime from "effect/DateTime";
 import { PlusIcon, SettingsIcon } from "lucide-react";
 import { WhatsNewPage } from "../components/WhatsNew";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   isHidden,
   turnsNotRead,
@@ -111,8 +120,12 @@ import {
   readThrough,
   rowOrder,
   type SettingsPage,
+  type ThemeChoice,
+  themeChoices,
+  themePalettes,
   withQuote,
 } from "@j3-bots/client-runtime/presentation";
+import { themeName } from "@j3-bots/client-runtime/wording";
 import { Dialog } from "@base-ui/react/dialog";
 import {
   AiSessionProvider,
@@ -265,6 +278,9 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
+import { sampleThemeLibrary, sampleThemesIntents } from "./sampleThemes";
+import { ThemeForm, ThemeSettings } from "../components/ThemeSettings";
+import { ShownThemesProvider } from "../themes/ThemeRuntime";
 import { sampleSentEvents } from "./usageData";
 import { SentPanel } from "../components/UsageData";
 import { useSampleSecrets } from "./sampleSecrets";
@@ -387,6 +403,7 @@ export default function GalleryPage() {
                 <TemplatesSection />
                 <RoomsSection />
                 <SettingsPagesSection />
+                <ThemesSection />
                 <EngineSettingsSection />
                 <SecretsGallerySection />
                 <UsageGallerySection />
@@ -4355,6 +4372,147 @@ const longNames = {
  * pages, or the first page; on a phone's width, the list, or `page` alone.
  * The pages move as in the app; the sample team's settings fill them.
  */
+/** The sample server's themes, read only: what the gallery's theme frames show. */
+const galleryThemeIntents = sampleThemesIntents({ get: () => sampleThemeLibrary, set: nothing });
+const galleryThemeChoices = themeChoices(sampleThemeLibrary);
+
+/** Gives what is under it the sample's themes, with `shown` as this device's, drawing none on the page. */
+function ThemesFor({ shown, children }: { shown: string; children: ReactNode }) {
+  const value = useMemo(
+    () => ({
+      themes: { supported: true, library: sampleThemeLibrary, known: true },
+      intents: galleryThemeIntents,
+      shown: galleryThemeChoices.find((choice) => choice.id === shown) ?? null,
+    }),
+    [shown],
+  );
+  return <ShownThemesProvider value={value}>{children}</ShownThemesProvider>;
+}
+
+/** A conversation's pieces in a built-in theme's own colors, whatever the page shows. */
+function ThemedSample({ choice, appearance }: { choice: ThemeChoice; appearance: keyof Themed }) {
+  const i18n = useI18n();
+  const style: CSSProperties & Readonly<Record<`--${string}`, string>> = {
+    ...themeColorVariables(themePalettes(choice.definition)[appearance], appearance),
+  };
+  return (
+    <div
+      style={style}
+      className="flex flex-col gap-2 rounded-lg border border-border bg-background p-3 text-foreground"
+    >
+      <p className="text-xs text-muted-foreground">{themeName(choice, i18n)}</p>
+      <MessageBubble
+        message={variants.bubbles.operator}
+        position="single"
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+      />
+      <MessageBubble
+        message={variants.bubbles.handOff}
+        position="single"
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" size="sm">
+          Send
+        </Button>
+        <Button size="sm">Later</Button>
+        <Switch checked readOnly={false} aria-label="On" />
+      </div>
+    </div>
+  );
+}
+
+function ThemesSection() {
+  const builtIns = galleryThemeChoices.filter((choice) => choice.origin._tag === "built-in");
+  return (
+    <Section title="Themes">
+      {(theme) => (
+        <>
+          <div className="flex flex-wrap gap-4">
+            <Frame
+              padded
+              label="The picker: Palco in use, new devices start with it"
+              width={560}
+              height={640}
+            >
+              <ThemesFor shown="palco">
+                <ThemeSettings appearance={theme} />
+              </ThemesFor>
+            </Frame>
+            <Frame
+              padded
+              label="A theme Scout made, in use: who made it, and Delete"
+              width={560}
+              height={640}
+            >
+              <ThemesFor shown="low-tide">
+                <ThemeSettings appearance={theme} />
+              </ThemesFor>
+            </Frame>
+            <Frame
+              padded
+              label="Create from colors: the theme in light and dark as it changes"
+              width={448}
+              height={600}
+            >
+              <ThemeForm
+                editing={{ _tag: "new" }}
+                save={galleryThemeIntents.save}
+                onDone={nothing}
+              />
+            </Frame>
+          </div>
+          <Labeled label="Each built-in in its own colors: the operator's message, a bot's, buttons and a switch">
+            <div className="grid gap-3 @wide:grid-cols-2">
+              {builtIns.map((choice) => (
+                <ThemedSample key={choice.id} choice={choice} appearance={theme} />
+              ))}
+            </div>
+          </Labeled>
+          <Labeled label="A bot's offer of a theme it saved: Apply theme, with the theme's colors">
+            <div className="max-w-(--layout-text-column)">
+              <ThemesFor shown="palco">
+                <MessageBubble
+                  message={variants.themeOffer}
+                  position="single"
+                  onOpenAttachment={nothing}
+                  onRetry={nothing}
+                />
+              </ThemesFor>
+            </div>
+          </Labeled>
+          <Labeled label="Once it shows on this device: a quiet line says so">
+            <div className="max-w-(--layout-text-column)">
+              <ThemesFor shown="low-tide">
+                <MessageBubble
+                  message={variants.themeOffer}
+                  position="single"
+                  onOpenAttachment={nothing}
+                  onRetry={nothing}
+                />
+              </ThemesFor>
+            </div>
+          </Labeled>
+          <Labeled label="A theme deleted since: no button, a line saying so">
+            <div className="max-w-(--layout-text-column)">
+              <ThemesFor shown="palco">
+                <MessageBubble
+                  message={variants.goneThemeOffer}
+                  position="single"
+                  onOpenAttachment={nothing}
+                  onRetry={nothing}
+                />
+              </ThemesFor>
+            </div>
+          </Labeled>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function SettingsFrame({
   label,
   wide,

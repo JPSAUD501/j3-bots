@@ -17,6 +17,7 @@ import type {
   SettingsSaves,
   SignInView,
   SecretsView,
+  ThemesClient,
   UpdatePromptEntry,
   UpdateResult,
   VoiceClient,
@@ -52,6 +53,7 @@ import type {
   Settings,
   SignInHarness,
   TeammatePair,
+  ThemeLibrary,
   UpdateChannel,
   WorkStep,
 } from "@j3-bots/contracts";
@@ -86,6 +88,23 @@ export type VoiceSettingsIntents = Pick<
   VoiceClient,
   "openStatus" | "openCloudKeys" | "models" | "cloudModels" | "setCloudKey"
 >;
+
+/** The themes the server keeps (decision 0104), as the shell reads them. */
+export interface ThemesView {
+  /** The server keeps themes: only then are saved themes, the form and the default offered. */
+  readonly supported: boolean;
+  /** Null until it loads, and from a server without themes. */
+  readonly library: ThemeLibrary | null;
+  /**
+   * Whether every theme there is to know is known: the roster has said if the
+   * server keeps themes, and its library has loaded if it does. Until then a
+   * device that picked a saved theme keeps the look it showed.
+   */
+  readonly known: boolean;
+}
+
+/** What the shell changes in the server's themes, and how it gets a theme's picture. */
+export type ThemesIntents = Pick<ThemesClient, "save" | "remove" | "setDefault" | "background">;
 
 /** One conversation or room as the shell shows it. */
 export interface ConversationView {
@@ -159,6 +178,7 @@ export interface ShellData {
   readonly memory: (botId: BotId) => ReadonlyArray<MemoryFile> | null;
   /** The server's settings; null until they load. */
   readonly settings: Settings | null;
+  readonly themes: ThemesView;
   /** Each section of Settings' latest save, under way or how it ended. */
   readonly settingsSaves: SettingsSaves;
   /** Settings is open. */
@@ -293,6 +313,7 @@ export interface ShellIntents extends TimelineIntents {
    * from a server older than dictation through it.
    */
   readonly voice?: VoiceSettingsIntents | undefined;
+  readonly themes: ThemesIntents;
   /**
    * In the desktop app, opens its screen recorder for the conversation or room
    * `target`, whose draft the recording joins (decision 0098). Absent in a

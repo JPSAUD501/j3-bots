@@ -162,19 +162,36 @@ ${lines([
 /**
  * A theme's colors as the stylesheet a page adds over the generated one: the
  * same custom properties as `:root`/`.light` and `.dark` declare, from the
- * theme's two palettes. Everything else (type, space, motion, shadows) stays
- * the generated sheet's.
+ * theme's two palettes, on `root`, a selector of the page's root more
+ * specific than `:root` (such as `:root[data-theme]`), so they win whichever
+ * sheet loads last. Everything else (type, space, motion, shadows) stays the
+ * generated sheet's.
  */
 export function renderThemeColorsCss(
   palettes: Readonly<Record<"light" | "dark", Palette>>,
+  root: string,
 ): string {
-  return `:root,
-.light {
+  return `${root},
+${root}.light {
 ${lines(colorEntries(palettes.light, "light", ""))}
 }
 
-.dark {
+${root}.dark {
 ${lines(colorEntries(palettes.dark, "dark", ""))}
 }
 `;
+}
+
+/**
+ * A palette's colors as the custom properties the generated sheet declares,
+ * for an element's own style: what is drawn inside it takes the palette's
+ * colors, as a preview of a theme in a list of themes does.
+ */
+export function themeColorVariables(
+  palette: Palette,
+  appearance: "light" | "dark",
+): Readonly<Record<`--${string}`, string>> {
+  return Object.fromEntries(
+    colorEntries(palette, appearance, "").map(([name, value]) => [`--${name}`, value]),
+  );
 }

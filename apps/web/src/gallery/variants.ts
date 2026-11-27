@@ -45,6 +45,7 @@ import {
   type Secret,
   type SecretAskEntry,
   type SecretRequestEntry,
+  ThemeId,
   type WorkFoldEntry,
   type WorkStep,
 } from "@j3-bots/contracts";
@@ -331,6 +332,20 @@ export function galleryVariants(now: DateTime.Utc) {
     scout,
     "That sounds like a lot of clicking. Want to show me once? Record your screen while you do it, and talk me through it as you go.",
     { offer: { kind: "record-screen" } },
+  );
+
+  /** A bot's offer of a theme it saved (decision 0104), and of one deleted since. */
+  const themeOffer = message(
+    "offer-theme",
+    scout,
+    "I made you a theme, Low tide: sea-glass greens for long evenings of reading. Want to try it?",
+    { offer: { kind: "apply-theme", themeId: ThemeId.make("low-tide") } },
+  );
+  const goneThemeOffer = message(
+    "offer-theme-gone",
+    scout,
+    "Here is Ember night, warmer than the last one.",
+    { offer: { kind: "apply-theme", themeId: ThemeId.make("ember-night") } },
   );
 
   const option = (
@@ -1385,6 +1400,8 @@ export function galleryVariants(now: DateTime.Utc) {
     escapingVisual,
     embeddingVisual,
     recordOffer,
+    themeOffer,
+    goneThemeOffer,
     reactions,
     quotes,
     questions,

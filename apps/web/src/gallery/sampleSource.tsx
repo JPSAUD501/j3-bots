@@ -52,6 +52,7 @@ import {
   type RosterItem,
   type Section,
   type TeammateMessage,
+  type ThemeLibrary,
 } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
@@ -85,6 +86,7 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleTrackCommand } from "./sampleRoutineTrack";
+import { sampleThemeLibrary, sampleThemesIntents } from "./sampleThemes";
 import { whatsNewViews } from "./updates";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
@@ -99,6 +101,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly skills: ReadonlyArray<Skill>;
   /** The connectors screen, and what opened it; null while it is closed. */
   readonly connectorsOpening: ConnectorsPlace | null;
+  readonly themes: ThemeLibrary;
 }
 
 /** Provider actions as the gallery takes them: done at once, changing nothing. */
@@ -963,6 +966,10 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     whatsNew: { view: whatsNewViews.opened, open: () => {} },
     secrets: { ...secrets, copy: copySample },
     voice: sampleVoice,
+    themes: sampleThemesIntents({
+      get: () => get().themes,
+      set: (themes) => update((s) => ({ ...s, themes })),
+    }),
     refreshDevices: nothing,
     loadMoreTurns: nothing,
     retryTurns: nothing,
@@ -1012,6 +1019,7 @@ function toData(state: State, secrets: SecretsView): ShellData {
     memory: (botId) => state.memory[botId] ?? [],
     connectors: state.connectors,
     settings: state.settings,
+    themes: { supported: true, library: state.themes, known: true },
     settingsSaves: state.settingsSaves,
     settingsOpen: state.settingsOpen,
     settingsPage: state.settingsPage,
@@ -1056,6 +1064,7 @@ export function useSampleSource({
       connectors: sampleConnectors,
       skills: sampleSkills,
       connectorsOpening: null,
+      themes: sampleThemeLibrary,
     };
     const started = firstRun ? withoutBots(team) : team;
     return createStore(engine === undefined ? started : { ...started, engine });

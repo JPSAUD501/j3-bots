@@ -119,6 +119,7 @@ import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
+import { ThemeSettings } from "./ThemeSettings";
 import { PrivacySection } from "./Privacy";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
@@ -278,6 +279,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
         <Dialog.Portal>
           <Dialog.Backdrop className={dialogBackdrop} />
           <Dialog.Popup
+            data-slot="settings"
             aria-labelledby={titleId}
             className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-3xl`}
           >
@@ -1542,6 +1544,7 @@ function AppearanceSection() {
           labelledBy={appearanceId}
         />
       </div>
+      <ThemeSettings />
       <div className="flex flex-col gap-1">
         <label htmlFor={languageId} className="text-xs">
           {t("settings.language")}

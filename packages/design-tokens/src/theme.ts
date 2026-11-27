@@ -26,7 +26,7 @@ import {
   perceivedDistance,
   toOklch,
 } from "./color.ts";
-import { botColors, type BotColor } from "./names.ts";
+import { botColors } from "./names.ts";
 import { themeCssProblem } from "./themeCss.ts";
 import {
   type ColorRole,

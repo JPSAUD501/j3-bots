@@ -10,8 +10,9 @@ export const THEME_CSS_MAX_LENGTH = 8_000;
 
 /**
  * The selectors theme CSS may rely on. Every other class name is a utility
- * that changes between releases. A web test fails when one of these leaves
- * the source, so a theme written against them keeps working.
+ * that changes between releases. A web test fails when a `data-slot` of
+ * these leaves the source, so a theme written against them keeps working;
+ * a dialog is found by its ARIA role, which every dialog has.
  */
 export const THEME_CSS_HOOKS = [
   { selector: '[data-slot="roster"]', styles: "the list of bots and rooms" },
@@ -30,7 +31,7 @@ export const THEME_CSS_HOOKS = [
   { selector: '[data-slot="composer"]', styles: "the box where the person writes" },
   { selector: '[data-slot="details"]', styles: "a bot's or room's details" },
   { selector: '[data-slot="settings"]', styles: "the settings window" },
-  { selector: '[data-slot="dialog"]', styles: "a dialog" },
+  { selector: '[role="dialog"]', styles: "a dialog" },
   { selector: '[data-slot="menu-popup"]', styles: "a menu" },
   { selector: '[data-slot="button"]', styles: "a button" },
   { selector: '[data-slot="switch"]', styles: "a switch" },

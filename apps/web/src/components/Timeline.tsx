@@ -278,7 +278,7 @@ export function Timeline({
   return (
     <OpenMention value={openMention}>
       <OpenQuote value={goToQuote}>
-        <div ref={own} className="flex flex-col">
+        <div ref={own} data-slot="timeline" className="flex flex-col">
           {rows.map((item) => {
             const arriving = arrived?.has(item.key) === true;
             // What is not a message settles in as it mounts; a message moves itself.
