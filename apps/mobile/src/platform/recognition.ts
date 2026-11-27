@@ -1,23 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
- * Where the platform's speech recognizer turns speech into text: on this
- * device, or through its speech service online, which may send the audio
- * to the service's provider.
- */
-export type RecognitionPlace = "device" | "online";
+import type { HeardWords } from "@j3-bots/client-runtime";
+import type { VoiceLanguage } from "@j3-bots/contracts";
+
+// The phone's own recognizer, run on the phone only (decision 0096): which of
+// its installed languages hears the operator, and what it has heard.
+
+/** A language tag's language, lowercased: `pt` of `pt-BR`. */
+const languageOf = (tag: string): string => tag.toLowerCase().split(/[-_]/)[0] ?? "";
+
+const sameTag = (a: string, b: string): boolean =>
+  a.toLowerCase().replaceAll("_", "-") === b.toLowerCase().replaceAll("_", "-");
 
 /**
- * Recognition runs on the device when the on-device recognizer has the model
- * for `language` installed; a language that would first need a download is
- * recognized online.
+ * The installed locale the phone's recognizer hears `language` with, or null
+ * when none of them is that language. Automatic is the phone's own first
+ * language. Among the installed locales of the language, the one the phone
+ * is set to wins, as `pt-BR` over `pt-PT` on a phone in Brazilian Portuguese.
  */
-export const recognitionPlace = (
-  language: string | undefined,
+export const recognizerLocale = (
+  language: VoiceLanguage,
+  phone: ReadonlyArray<string>,
   installed: ReadonlyArray<string>,
-): RecognitionPlace => {
-  if (language === undefined) return "online";
-  const wanted = language.toLowerCase();
-  return installed.some((tag) => tag.toLowerCase() === wanted) ? "device" : "online";
+): string | null => {
+  const first = phone[0];
+  const wanted = language === "auto" ? (first === undefined ? null : languageOf(first)) : language;
+  if (wanted === null) return null;
+  const same = installed.filter((tag) => languageOf(tag) === wanted);
+  return same.find((tag) => phone.some((own) => sameTag(own, tag))) ?? same[0] ?? null;
 };
 
 /**
@@ -39,6 +48,8 @@ export const hear = (heard: Heard, transcript: string, isFinal: boolean): Heard 
   return { final: said === "" ? heard.final : [...heard.final, said], interim: "" };
 };
 
-/** The text of what has been heard, as it goes into the draft. */
-export const heardText = (heard: Heard): string =>
-  (heard.interim === "" ? heard.final : [...heard.final, heard.interim]).join(" ");
+/** What has been heard as words: the finished utterances settled, the one still heard open. */
+export const heardWords = (heard: Heard): HeardWords => ({
+  committed: heard.final.join(" "),
+  tentative: heard.interim,
+});

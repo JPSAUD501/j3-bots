@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -13,10 +12,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.TextPaint
-import android.text.TextUtils
 import android.text.TextWatcher
-import android.text.style.AbsoluteSizeSpan
 import android.text.style.ForegroundColorSpan
 import android.util.Base64
 import android.util.LruCache
@@ -32,7 +28,6 @@ import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import java.util.concurrent.Executors
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val MARK = '￼'
@@ -46,9 +41,8 @@ private val decoder = Executors.newSingleThreadExecutor()
  * edits it as any Android text, and a file's chip deletes as the one
  * character it stands on. It tells each edit with the whole text, the chips'
  * order and an event count; a value from React that answers an older edit
- * than the field has made is not shown over it. A status, as dictation's
- * "Listening…", is drawn where the text goes, after what the field holds, and
- * never changes its height.
+ * than the field has made is not shown over it. While dictation places words,
+ * the ones it may still change are drawn in the placeholder's color.
  */
 @SuppressLint("ViewConstructor")
 class ChipFieldView(context: Context, appContext: AppContext) :
@@ -67,8 +61,6 @@ class ChipFieldView(context: Context, appContext: AppContext) :
   var pendingChips: List<ChipLook>? = null
   var pendingLook: FieldLook? = null
   var placeholder: String = ""
-  var status: String? = null
-  var statusNote: String? = null
   var editable: Boolean = true
   var label: String? = null
 
@@ -100,11 +92,6 @@ class ChipFieldView(context: Context, appContext: AppContext) :
       if (!applying && isAttachedToWindow) {
         onSelectionChange(mapOf("start" to selStart, "end" to selEnd))
       }
-    }
-
-    override fun onDraw(canvas: Canvas) {
-      super.onDraw(canvas)
-      drawStatus(this, canvas)
     }
 
     private var downX = 0f
@@ -275,7 +262,7 @@ class ChipFieldView(context: Context, appContext: AppContext) :
       field.keyListener = if (editable) editKeys else null
     }
     field.contentDescription = label
-    field.hint = if (status == null) placeholder else null
+    field.hint = placeholder
     field.invalidate()
     reportHeight()
   }
@@ -319,6 +306,7 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     val (text, keys) = read(current)
     if (text != value.text || keys != value.keys) setValue(value)
     showMentions(value.mentions)
+    showOpen(value.open)
   }
 
   private fun setValue(value: FieldValue) {
@@ -380,6 +368,37 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     reportHeight()
   }
 
+  /**
+   * Draws the words dictation may still change lighter, and the rest in the
+   * text's own color. The text is left as it is.
+   */
+  private fun showOpen(open: OpenWords?) {
+    val text = field.text ?: return
+    val wanted = open?.takeIf { it.start in 0 until it.end && it.end <= text.length }
+    val shown = text.getSpans(0, text.length, OpenWordsSpan::class.java)
+    val same = if (wanted == null) {
+      shown.isEmpty()
+    } else {
+      shown.size == 1 && text.getSpanStart(shown[0]) == wanted.start &&
+        text.getSpanEnd(shown[0]) == wanted.end
+    }
+    if (same) return
+    applying = true
+    try {
+      for (span in shown) text.removeSpan(span)
+      if (wanted != null) {
+        text.setSpan(
+          OpenWordsSpan(argb(fieldLook.mutedColor)),
+          wanted.start,
+          wanted.end,
+          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+      }
+    } finally {
+      applying = false
+    }
+  }
+
   fun focusField() {
     field.requestFocus()
     if (editable) {
@@ -436,62 +455,14 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     }
   }
 
-  /**
-   * The status where the text goes: alone, it stands where the placeholder
-   * would; after text or chips, it follows them on their last line, as far as
-   * it fits there. Its note follows it, quieter and smaller.
-   */
-  private fun drawStatus(view: EditText, canvas: Canvas) {
-    val primary = status ?: return
-    val layout = view.layout ?: return
-    val text = view.text ?: return
-    val last = max(layout.lineCount - 1, 0)
-    val empty = text.isEmpty()
-    val startX = if (empty) 0f else layout.getLineRight(last) + 6 * density
-    val room = layout.width - startX
-    if (room < 32 * density) return
-    val line = SpannableStringBuilder(primary)
-    statusNote?.let { note ->
-      val from = line.length
-      line.append("  ").append(note)
-      line.setSpan(
-        AbsoluteSizeSpan((view.textSize * 0.72f).roundToInt()),
-        from,
-        line.length,
-        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-      )
-      line.setSpan(
-        ForegroundColorSpan(withAlpha(argb(fieldLook.mutedColor), 190)),
-        from,
-        line.length,
-        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-      )
-    }
-    val paint = TextPaint(view.paint).apply { color = argb(fieldLook.mutedColor) }
-    val shown = TextUtils.ellipsize(line, paint, room, TextUtils.TruncateAt.END)
-    val baseline = layout.getLineBaseline(last).toFloat()
-    canvas.save()
-    canvas.translate(
-      view.totalPaddingLeft.toFloat() - view.scrollX + startX,
-      view.totalPaddingTop.toFloat() - view.scrollY,
-    )
-    val drawn = android.text.StaticLayout.Builder
-      .obtain(shown, 0, shown.length, paint, room.roundToInt())
-      .setMaxLines(1)
-      .setIncludePad(false)
-      .build()
-    canvas.translate(0f, baseline - drawn.getLineBaseline(0))
-    drawn.draw(canvas)
-    canvas.restore()
-  }
-
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
     main.removeCallbacksAndMessages(null)
   }
 }
 
-private fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
+/** Words dictation may still change: the text's own, in the placeholder's color until they settle. */
+private class OpenWordsSpan(color: Int) : ForegroundColorSpan(color)
 
 /** `path`'s image, decoded at about `size` pixels on its shorter side; null when it cannot be read. */
 private fun decodeThumbnail(path: String, size: Int): Bitmap? {

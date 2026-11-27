@@ -6,7 +6,6 @@ import {
   followFieldEdit,
   insertMention,
   markCount,
-  placedMessage,
   type Mentionable,
   mentionOptions,
   mentionQuery,
@@ -45,13 +44,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import {
-  ChipField,
-  type FieldEdit,
-  type FieldHandle,
-  type FieldMention,
-  type FieldStatus,
-} from "./ChipField.tsx";
+import { ChipField, type FieldEdit, type FieldHandle, type FieldMention } from "./ChipField.tsx";
 import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
 import { useFileOpener } from "./FileOpener.tsx";
 import { AnimatedView } from "./animated.ts";
@@ -102,12 +95,11 @@ export interface ComposerHandle {
  * above the composer, and what its server writes becomes the draft, which the
  * operator reads and sends as their own. While the field has focus the composer's border
  * takes the conversation's tint (`tint`, the bot's avatar; none in a room).
- * While the draft has no words, the trailing button dictates where the
- * platform has a speech recognizer, beside Send when files wait to go: what is
- * heard becomes the draft's words as it is heard, where the caret was, and
- * waits there for Send; while it listens, the field says so where the text
- * goes, and sizes nothing. Typing
- * stops it, and so does the conversation leaving the operator's view. A
+ * Beside Send, the microphone dictates where this phone can (`useDictation`):
+ * what is heard lands where the caret was as it is heard, the words still
+ * open to change lighter, and waits there for Send. While it runs the draft
+ * takes no other change and nothing sends; Back cancels it and puts the draft
+ * back as it was. A
  * reply the AI suggests shows in place of the placeholder while the draft is
  * empty and nothing is offered above it, with Use beside it, which puts it in
  * the draft, with the caret after it, to send or change; typing hides it.
@@ -153,9 +145,7 @@ export function Composer({
 
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
-  const { empty, uploading, sendable, problem } = draftReadiness(text, files);
-  // No words yet, though files may stand there: what dictation can fill.
-  const wordless = placedMessage(text).text === "";
+  const { uploading, sendable, problem } = draftReadiness(text, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;
   const uploaded = useMemo(
@@ -166,32 +156,18 @@ export function Composer({
     [files],
   );
   const images = useImageFiles(client, uploaded);
-  // Dictation starts only on a draft with no words, so what is heard is all of
-  // them: it goes where the caret was when the first of it was heard, between
-  // the draft's files, a space apart from a file on either side.
-  const dictatedInto = useRef<{ readonly text: string; readonly at: number } | null>(null);
+  // The field's selection as the operator last left it: what an edit replaces.
+  const selection = useRef<readonly [number, number]>([text.length, text.length]);
   const dictation = useDictation({
-    onHeard: (heard) => {
-      const held = client.drafts.get().get(targetKey(target))?.text ?? "";
-      const into = (dictatedInto.current ??= {
-        text: held,
-        at: Math.min(selection.current[0], held.length),
-      });
-      const before = into.text.slice(0, into.at);
-      const after = into.text.slice(into.at);
-      const lead = heard !== "" && before !== "" && !/\s$/.test(before) ? " " : "";
-      const tail = heard !== "" && after !== "" && !/^\s/.test(after) ? " " : "";
-      client.setDraftText(target, before + lead + heard + tail + after);
-    },
+    target,
+    selection: () => selection.current,
     frozen,
     inView,
   });
-  const listening = dictation?.state._tag === "listening";
-  const dictationIdle = dictation === null || dictation.state._tag === "idle";
-  useEffect(() => {
-    if (dictationIdle) dictatedInto.current = null;
-  }, [dictationIdle]);
-  const ready = !frozen && sendable;
+  // While dictation runs, the draft takes no other change and nothing sends.
+  const dictating = dictation !== null && dictation.phase._tag !== "idle";
+  const busy = frozen || dictating;
+  const ready = !busy && sendable;
   const tint = useTint(tintOf);
   const [focused, setFocused] = useState(false);
   // Once the draft is handed over and the field is clear, the composer settles back with a pop.
@@ -209,14 +185,14 @@ export function Composer({
   // Files picked while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
 
-  // The field's selection as the operator last left it: what an edit replaces.
-  const selection = useRef<readonly [number, number]>([text.length, text.length]);
   // Where the caret is while the field has focus, collapsed; null otherwise.
   const [caret, setCaret] = useState<number | null>(null);
-  // Where the caret goes once the text a pick or an attach wrote has reached the field.
+  // Where the caret goes once the text a pick, an attach or dictation wrote has reached the field.
   const placeCaret = useRef<{
     readonly reached: (text: string) => boolean;
     readonly at: number;
+    /** Where a selection it makes ends, when it is not a caret. */
+    readonly end?: number;
     /** The field takes the focus back, as after a picker, which takes it away. */
     readonly focus: boolean;
   } | null>(null);
@@ -226,7 +202,6 @@ export function Composer({
   const edit = (change: FieldEdit) => {
     setNotTaken(false);
     setCut(false);
-    dictation?.abort();
     dictation?.dismiss();
     const [start, end] = selection.current;
     const followed = followFieldEdit(
@@ -245,7 +220,7 @@ export function Composer({
     client.setDraftText(target, change.text, followed, change.order);
   };
 
-  const choices = frozen ? undefined : mentionable;
+  const choices = busy ? undefined : mentionable;
   const query =
     choices === undefined || caret === null ? null : mentionQuery(text, caret, mentions);
   const options =
@@ -266,7 +241,7 @@ export function Composer({
     client.setDraftText(target, next.text, next.mentions);
   };
   const prompt = usePromptPicker({
-    botId: frozen || target._tag !== "conversation" ? null : target.botId,
+    botId: busy || target._tag !== "conversation" ? null : target.botId,
     text,
     focused,
     onWritten: (written, wasCut) => {
@@ -283,8 +258,7 @@ export function Composer({
     suggestion !== null &&
     text === "" &&
     files.length === 0 &&
-    !frozen &&
-    !listening &&
+    !busy &&
     options.length === 0 &&
     prompt.options.length === 0 &&
     prompt.chosen === null
@@ -295,17 +269,24 @@ export function Composer({
     placeCaret.current = { reached: (shown) => shown === taken, at: taken.length, focus: true };
     client.setDraftText(target, taken, []);
   };
-  const moveCaret = (at: number) => {
-    field.current?.select(at, at);
-    selection.current = [at, at];
-    setCaret(focused ? at : null);
+  const moveCaret = (at: number, end = at) => {
+    field.current?.select(at, end);
+    selection.current = [at, end];
+    setCaret(focused && at === end ? at : null);
   };
+  // The caret follows the words dictation writes, or goes back where it was.
+  const placed = dictation?.placed ?? null;
+  useLayoutEffect(() => {
+    if (placed === null) return;
+    const [at, end] = placed.selection;
+    placeCaret.current = { reached: (shown) => shown === placed.text, at, end, focus: false };
+  }, [placed]);
   useLayoutEffect(() => {
     const pending = placeCaret.current;
     if (pending === null || !pending.reached(text)) return;
     placeCaret.current = null;
     if (pending.focus) field.current?.focus();
-    moveCaret(pending.at);
+    moveCaret(pending.at, pending.end);
   });
 
   const attach = (picked: ReadonlyArray<PickedFile>) => {
@@ -375,13 +356,6 @@ export function Composer({
     const file = files.find((held) => held.key === key);
     if (file?._tag === "ready") opener.open(file.attachment);
   };
-  const status: FieldStatus | null =
-    dictation?.state._tag === "listening"
-      ? {
-          text: t("composer.dictation.listening"),
-          note: dictation.state.place === "device" ? null : t("composer.dictation.onlineNote"),
-        }
-      : null;
 
   return (
     <View className="gap-1.5 px-3 pt-1 pb-2">
@@ -434,9 +408,9 @@ export function Composer({
           depth="round"
           accessibilityRole="button"
           accessibilityLabel={t("composer.attach")}
-          accessibilityState={{ disabled: frozen }}
+          accessibilityState={{ disabled: busy }}
           ref={attachButton}
-          onPress={frozen ? undefined : openPicker}
+          onPress={busy ? undefined : openPicker}
           frame={composerButtonFrame}
           hitSlop={composerButtonSlop}
           className="size-8 items-center justify-center rounded-full active:bg-muted"
@@ -449,9 +423,11 @@ export function Composer({
           files={files}
           images={images}
           mentions={fieldMentions(text, mentions, mentionable)}
-          placeholder={offered ?? label}
-          status={status}
-          editable={!frozen}
+          placeholder={
+            offered ?? (dictation?.listening === true ? t("dictation.listening") : label)
+          }
+          open={dictation?.placed?.open ?? null}
+          editable={!busy}
           label={label}
           onEdit={edit}
           onSelection={(next) => {
@@ -465,7 +441,7 @@ export function Composer({
           }}
           onPressFile={openFile}
           onRemoveFile={(key) => {
-            if (!frozen) client.detachFile(target, key);
+            if (!busy) client.detachFile(target, key);
           }}
         />
         {offered !== null && (
@@ -483,18 +459,13 @@ export function Composer({
             </PressScale>
           </Animated.View>
         )}
-        {/* With files and no words, both: dictating about the files, or sending them. */}
-        {dictation !== null && (wordless || listening) && !draft.sending && (
-          <DictationButton dictation={dictation} unavailable={frozen} />
-        )}
-        {(dictation === null || draft.sending || !(empty || listening)) && (
-          <SendButton
-            state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
-            tint={tint.color}
-            hint={uploading ? t("composer.stillUploading") : undefined}
-            onSend={onSend}
-          />
-        )}
+        {dictation !== null && <DictationButton dictation={dictation} unavailable={frozen} />}
+        <SendButton
+          state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
+          tint={tint.color}
+          hint={uploading ? t("composer.stillUploading") : undefined}
+          onSend={onSend}
+        />
       </AnimatedView>
       <Menu
         anchor={attachAt}

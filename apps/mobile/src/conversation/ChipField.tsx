@@ -48,12 +48,6 @@ export interface FieldMention {
       };
 }
 
-/** A status the field shows where the text goes, as dictation's, and a quieter note after it. */
-export interface FieldStatus {
-  readonly text: string;
-  readonly note: string | null;
-}
-
 interface FieldProps {
   readonly ref: Ref<FieldHandle>;
   /** The draft's text, with a mark where each file stands. */
@@ -65,7 +59,8 @@ interface FieldProps {
   /** The picked mentions that count, drawn as chips where the field can. */
   readonly mentions: ReadonlyArray<FieldMention>;
   readonly placeholder: string;
-  readonly status: FieldStatus | null;
+  /** The words dictation may still change, `[start, end)`, drawn lighter where the field can. */
+  readonly open: readonly [number, number] | null;
   readonly editable: boolean;
   readonly label: string;
   readonly onEdit: (edit: FieldEdit) => void;
@@ -82,7 +77,8 @@ interface FieldProps {
  * draft is a chip where the operator placed it, showing its image or a page,
  * its name and a way out, deleted as one character, and each picked mention
  * a chip over its text: a bot's face on a tint of its color, or a room's mark
- * on a neutral fill. Elsewhere, where the app has no
+ * on a neutral fill. Words dictation may still change are drawn lighter.
+ * Elsewhere, where the app has no
  * such field, the text without its marks, its files following it.
  */
 export function ChipField(props: FieldProps) {
@@ -115,6 +111,7 @@ interface NativeFieldProps extends ViewProps {
       readonly fill: number;
     }>;
     readonly eventCount: number;
+    readonly open: { readonly start: number; readonly end: number } | null;
   };
   readonly chips: ReadonlyArray<{
     readonly key: string;
@@ -137,8 +134,6 @@ interface NativeFieldProps extends ViewProps {
     readonly paddingVertical: number;
   };
   readonly placeholder: string;
-  readonly status: string | null;
-  readonly statusNote: string | null;
   readonly editable: boolean;
   readonly label: string;
   readonly onChangeText: (event: NativeSyntheticEvent<NativeChange>) => void;
@@ -182,7 +177,7 @@ function AndroidField({
   images,
   mentions,
   placeholder,
-  status,
+  open,
   editable,
   label,
   onEdit,
@@ -244,6 +239,7 @@ function AndroidField({
               }),
         })),
         eventCount,
+        open: open === null ? null : { start: open[0], end: open[1] },
       }}
       chips={files.map((file) => ({
         key: file.key,
@@ -254,8 +250,6 @@ function AndroidField({
       }))}
       look={look}
       placeholder={placeholder}
-      status={status?.text ?? null}
-      statusNote={status?.note ?? null}
       editable={editable}
       label={label}
       onChangeText={({ nativeEvent }) => {

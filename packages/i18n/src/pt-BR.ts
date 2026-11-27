@@ -1288,17 +1288,11 @@ const sentences = {
   "composer.unread.retry": "Tentar de novo",
   "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
-  "composer.dictation.stop": "Parar o ditado",
-  "composer.dictation.listening": "Ouvindo…",
-  "composer.dictation.listeningOnline":
-    "Ouvindo… O serviço de voz deste aparelho pode reconhecer isto online.",
-  "composer.dictation.onlineNote": "pode ser reconhecido online",
   "composer.dictation.denied": "O ditado precisa do microfone.",
-  "composer.dictation.settings": "Configurações",
+  "composer.dictation.settings": "Abrir as configurações do celular",
   "composer.dictation.noSpeech": "Nada foi ouvido. Tente de novo.",
-  "composer.dictation.network": "O ditado precisa de conexão neste aparelho.",
-  "composer.dictation.language": "O ditado não está disponível no idioma deste aparelho.",
-  "composer.dictation.failed": "O ditado parou. Tente de novo.",
+  "composer.dictation.blocked":
+    "O ditado precisa do microfone. Permita para o J3 Bots nas configurações do celular.",
 
   "dictation.start": "Ditar",
   "dictation.stop": "Parar o ditado",
@@ -1387,6 +1381,17 @@ const sentences = {
   "voice.cloud.model.pick": "Escolha um modelo",
   "voice.cloud.model.none": "O OpenRouter não oferece modelo para isso agora.",
   "voice.unavailable": "Nem seu servidor nem este aparelho conseguem ditar.",
+
+  "dictation.start.shortcut": "Ditar ({shortcut})",
+  "dictation.stop.shortcut": "Parar o ditado ({shortcut})",
+  "dictation.microphoneFailed":
+    "O microfone não ligou. Feche outros apps que estejam usando ele e tente de novo.",
+  "voice.models.failed":
+    "Não dá para listar os modelos de fala do seu servidor agora. Tente de novo mais tarde.",
+  "voice.cloud.key.failed": "A chave não foi salva. Tente de novo.",
+  "voice.cloud.key.removeFailed": "A chave não foi removida. Tente de novo.",
+  "voice.cloud.model.failed":
+    "Não dá para listar os modelos do OpenRouter agora. Tente de novo mais tarde.",
 
   "share.title": "Enviar para",
   "share.files.one": "{count} arquivo",

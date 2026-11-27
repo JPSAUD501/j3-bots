@@ -1274,17 +1274,11 @@ export const en = {
   "composer.unread.retry": "Try again",
   "composer.notSaved": "Not saved yet",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
-  "composer.dictation.stop": "Stop dictation",
-  "composer.dictation.listening": "Listening…",
-  "composer.dictation.listeningOnline":
-    "Listening… This device’s speech service may recognize this online.",
-  "composer.dictation.onlineNote": "may be recognized online",
   "composer.dictation.denied": "Dictation needs the microphone.",
-  "composer.dictation.settings": "Settings",
+  "composer.dictation.settings": "Open the phone’s settings",
   "composer.dictation.noSpeech": "Nothing was heard. Try again.",
-  "composer.dictation.network": "Dictation needs a connection on this device.",
-  "composer.dictation.language": "Dictation isn’t available in this device’s language.",
-  "composer.dictation.failed": "Dictation stopped. Try again.",
+  "composer.dictation.blocked":
+    "Dictation needs the microphone. Allow it for J3 Bots in the phone’s settings.",
 
   "dictation.start": "Dictate",
   "dictation.stop": "Stop dictation",
@@ -1372,6 +1366,15 @@ export const en = {
   "voice.cloud.model.pick": "Choose a model",
   "voice.cloud.model.none": "OpenRouter offers no model for this right now.",
   "voice.unavailable": "Neither your server nor this device can dictate.",
+
+  "dictation.start.shortcut": "Dictate ({shortcut})",
+  "dictation.stop.shortcut": "Stop dictation ({shortcut})",
+  "dictation.microphoneFailed":
+    "The microphone couldn’t start. Close any other app using it, then try again.",
+  "voice.models.failed": "Your server’s speech models can’t be listed right now. Try again later.",
+  "voice.cloud.key.failed": "The key wasn’t saved. Try again.",
+  "voice.cloud.key.removeFailed": "The key wasn’t removed. Try again.",
+  "voice.cloud.model.failed": "OpenRouter’s models can’t be listed right now. Try again later.",
 
   "share.title": "Send to",
   "share.files.one": "{count} file",
