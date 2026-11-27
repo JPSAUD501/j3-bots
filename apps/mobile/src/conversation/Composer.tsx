@@ -19,7 +19,16 @@ import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wor
 import type { Attachment, Avatar, EntryTarget, SuggestedReply } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { ArrowUp, File, Images, Plus, Users } from "lucide-react-native";
-import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentRef,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AccessibilityInfo, ScrollView, View } from "react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 import { Text } from "../text.tsx";
@@ -50,6 +59,7 @@ import { composerButtonFrame, composerButtonSlop } from "./composerButton.ts";
 import { appear } from "../motion.ts";
 import { PressScale } from "../press.tsx";
 import { PromptForm, PromptList, usePromptPicker } from "./PromptPicker.tsx";
+import { DraftQuotes } from "./QuoteCards.tsx";
 import { useTint } from "./tint.ts";
 
 /** What the composer offers after `@`: a bot, drawn by its face, or a room, by its mark. */
@@ -67,6 +77,12 @@ export interface MentionChoices {
   readonly candidates: ReadonlyArray<MentionCandidate>;
   /** Whether `@everyone` is offered, as it is in a room. */
   readonly everyone: boolean;
+}
+
+/** What the conversation asks of its composer. */
+export interface ComposerHandle {
+  /** Takes the operator to the field, as after Reply. */
+  readonly focus: () => void;
 }
 
 /**
@@ -95,7 +111,8 @@ export interface MentionChoices {
  * reply the AI suggests shows in place of the placeholder while the draft is
  * empty and nothing is offered above it, with Use beside it, which puts it in
  * the draft, with the caret after it, to send or change; typing hides it.
- * Mount one per conversation.
+ * What the draft quotes stands over the field (`DraftQuotes`), each with an ×
+ * that takes it out. Mount one per conversation.
  */
 export function Composer({
   target,
@@ -105,6 +122,7 @@ export function Composer({
   inView,
   tint: tintOf = null,
   suggestion = null,
+  ref,
 }: {
   readonly target: EntryTarget;
   /** Who the message goes to: a bot's or a room's name. */
@@ -118,6 +136,7 @@ export function Composer({
   readonly tint?: Avatar | null;
   /** In a bot's conversation, the reply the AI guessed the operator may send next, or null. */
   readonly suggestion?: SuggestedReply | null;
+  readonly ref?: Ref<ComposerHandle>;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -130,6 +149,7 @@ export function Composer({
   const attachButton = useRef<ComponentRef<typeof View>>(null);
   const [attachAt, setAttachAt] = useState<MenuAnchor | null>(null);
   const opener = useFileOpener();
+  useImperativeHandle(ref, () => ({ focus: () => field.current?.focus() }), []);
 
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
@@ -400,6 +420,11 @@ export function Composer({
           }}
         />
       )}
+      <DraftQuotes
+        quotes={draft.quotes}
+        frozen={frozen}
+        onRemove={(index) => client.unquoteInDraft(target, index)}
+      />
       <AnimatedView
         // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
         style={[settled, focused ? { borderColor: tint.color } : undefined]}

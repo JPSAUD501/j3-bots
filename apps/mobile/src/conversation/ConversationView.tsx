@@ -94,7 +94,12 @@ import { useBots, usePresentation, useRooms } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
 import { Card } from "./Card.tsx";
-import { Composer, type MentionCandidate, type MentionChoices } from "./Composer.tsx";
+import {
+  Composer,
+  type ComposerHandle,
+  type MentionCandidate,
+  type MentionChoices,
+} from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
 import { OpenMention } from "./MentionChip.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
@@ -103,6 +108,7 @@ import { AnsweringLine } from "./AnsweringLine.tsx";
 import { RoomWork } from "./RoomWork.tsx";
 import { EventLine } from "./EventLine.tsx";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
+import { createHighlights, Quotes } from "./Quotes.tsx";
 import { Reactions } from "./Reactions.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
@@ -312,7 +318,7 @@ export function ConversationView({
   /** A run of teammate messages opens their conversation at the run's first message with that teammate. */
   const openPair = (pair: TeammateRunPair) =>
     navigation.push("pair", { botIds: pair.botIds, at: pair.first });
-  const { state, loadOlder, markRead } = useConversation(target);
+  const { state, loadOlder, reveal, markRead } = useConversation(target);
   // In a bot's conversation, its turn under way shows in the timeline, once.
   const bot = item._tag === "bot" ? item.bot : null;
   const turn = useMemo(() => (bot === null ? null : liveTurn(bot)), [bot]);
@@ -414,6 +420,35 @@ export function ConversationView({
   };
 
   const archived = room !== null && room.status === "archived";
+  // Reply and Quote part, once the server takes quotes, where the conversation takes messages.
+  const quotesTaken = useReadable(client.quotes);
+  const composerView = useRef<ComposerHandle>(null);
+  const focusComposer = useCallback(() => composerView.current?.focus(), []);
+  // The message a quote's card leads to: read back to, then scrolled to and highlighted once the
+  // conversation draws it.
+  const [lit] = useState(createHighlights);
+  // Each tap is a jump of its own, so the same message is shown again when asked again.
+  const [jump, setJump] = useState<{ readonly entryId: EntryId } | null>(null);
+  const jumped = useRef(jump);
+  const goToQuoted = useCallback(
+    async (entryId: EntryId) => {
+      const revealed = await reveal(entryId);
+      if (revealed === "shown") setJump({ entryId });
+      return revealed;
+    },
+    [reveal],
+  );
+  useEffect(() => {
+    if (jump === null || jumped.current === jump) return;
+    const index = rows.findIndex(
+      (row) =>
+        row.kind === "message" && row.message._tag === "message" && row.message.id === jump.entryId,
+    );
+    if (index === -1) return;
+    jumped.current = jump;
+    void list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: !reduced });
+    lit.flash(jump.entryId);
+  }, [jump, rows, reduced, lit]);
   const quiet = state?.phase === "ready" && state.items.length === 0;
 
   return (
@@ -439,90 +474,99 @@ export function ConversationView({
           <OpenMention value={openMention}>
             <ConversationVisualsContext value={visuals}>
               <EntryWidths value={widths}>
-                {/* One quick bar, picker and list of who reacted for the conversation's messages. */}
-                <Reactions>
-                  {quiet ? (
-                    item._tag === "bot" ? (
-                      <Quiet bot={item.bot} bottom={composerHeight} />
+                {/* What quoting and reacting to the conversation's messages open: one passage sheet, and
+                one quick bar, picker and list of who reacted. */}
+                <Quotes
+                  target={target}
+                  offered={quotesTaken && !archived}
+                  onQuoted={focusComposer}
+                  goTo={goToQuoted}
+                  highlights={lit}
+                >
+                  <Reactions>
+                    {quiet ? (
+                      item._tag === "bot" ? (
+                        <Quiet bot={item.bot} bottom={composerHeight} />
+                      ) : (
+                        <QuietRoom room={item.room} bottom={composerHeight} />
+                      )
                     ) : (
-                      <QuietRoom room={item.room} bottom={composerHeight} />
-                    )
-                  ) : (
-                    <KeyboardAwareLegendList
-                      ref={list}
-                      data={rows}
-                      keyExtractor={(row) => row.key}
-                      getItemType={(row) => row.kind}
-                      estimatedItemSize={64}
-                      // Rows keep state of their own, such as an open fold: a row is never reused for another.
-                      recycleItems={false}
-                      renderItem={({ item: row }) => (
-                        <View
-                          className="w-full self-center"
-                          style={{ maxWidth: layout.textColumn }}
-                        >
-                          <Row
-                            row={row}
-                            room={room}
-                            turnBot={turnBot}
-                            arriving={arrived.has(row.key)}
-                            openingHold={openingHold}
-                            onOpen={onOpen}
-                            onOpenRoutine={openRoutine}
-                            onOpenBrowser={openBrowser}
-                            onOpenPair={openPair}
-                          />
-                        </View>
-                      )}
-                      extraData={{ room, widths, arrived, openingHold, turnBot }}
-                      onScroll={({
-                        nativeEvent: { contentOffset, contentSize, layoutMeasurement },
-                      }) => {
-                        visuals.scrolled();
-                        end.follow(
-                          contentSize.height - layoutMeasurement.height - contentOffset.y,
-                          layoutMeasurement.height,
-                        );
-                      }}
-                      scrollEventThrottle={64}
-                      alignItemsAtEnd
-                      initialScrollAtEnd
-                      maintainScrollAtEnd
-                      maintainVisibleContentPosition
-                      onStartReached={() => {
-                        if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
-                      }}
-                      // In a room, who is answering now, after everything said there.
-                      ListFooterComponent={
-                        room === null ? null : (
+                      <KeyboardAwareLegendList
+                        ref={list}
+                        data={rows}
+                        keyExtractor={(row) => row.key}
+                        getItemType={(row) => row.kind}
+                        estimatedItemSize={64}
+                        // Rows keep state of their own, such as an open fold: a row is never reused for another.
+                        recycleItems={false}
+                        renderItem={({ item: row }) => (
                           <View
                             className="w-full self-center"
                             style={{ maxWidth: layout.textColumn }}
                           >
-                            <RoomWork room={room} />
-                            <AnsweringLine room={room} />
+                            <Row
+                              row={row}
+                              room={room}
+                              turnBot={turnBot}
+                              arriving={arrived.has(row.key)}
+                              openingHold={openingHold}
+                              onOpen={onOpen}
+                              onOpenRoutine={openRoutine}
+                              onOpenBrowser={openBrowser}
+                              onOpenPair={openPair}
+                            />
                           </View>
-                        )
-                      }
-                      ListHeaderComponent={
-                        state?.loadingOlder === true ? (
-                          <Text className="py-3 text-center text-xs text-muted-foreground">
-                            {t("timeline.loadingOlder")}
-                          </Text>
-                        ) : null
-                      }
-                      viewabilityConfigCallbackPairs={pairs}
-                      contentInsetEndAdjustment={contentInsetEndAdjustment}
-                      keyboardOffset={insets.bottom}
-                      keyboardDismissMode="interactive"
-                      keyboardShouldPersistTaps="handled"
-                      contentContainerStyle={{
-                        paddingTop: 4,
-                        paddingBottom: toCard ? 8 + PILL_ROOM : 8,
-                      }}
-                    />
-                  )}
-                </Reactions>
+                        )}
+                        extraData={{ room, widths, arrived, openingHold, turnBot }}
+                        onScroll={({
+                          nativeEvent: { contentOffset, contentSize, layoutMeasurement },
+                        }) => {
+                          visuals.scrolled();
+                          end.follow(
+                            contentSize.height - layoutMeasurement.height - contentOffset.y,
+                            layoutMeasurement.height,
+                          );
+                        }}
+                        scrollEventThrottle={64}
+                        alignItemsAtEnd
+                        initialScrollAtEnd
+                        maintainScrollAtEnd
+                        maintainVisibleContentPosition
+                        onStartReached={() => {
+                          if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
+                        }}
+                        // In a room, who is answering now, after everything said there.
+                        ListFooterComponent={
+                          room === null ? null : (
+                            <View
+                              className="w-full self-center"
+                              style={{ maxWidth: layout.textColumn }}
+                            >
+                              <RoomWork room={room} />
+                              <AnsweringLine room={room} />
+                            </View>
+                          )
+                        }
+                        ListHeaderComponent={
+                          state?.loadingOlder === true ? (
+                            <Text className="py-3 text-center text-xs text-muted-foreground">
+                              {t("timeline.loadingOlder")}
+                            </Text>
+                          ) : null
+                        }
+                        viewabilityConfigCallbackPairs={pairs}
+                        contentInsetEndAdjustment={contentInsetEndAdjustment}
+                        keyboardOffset={insets.bottom}
+                        keyboardDismissMode="interactive"
+                        keyboardShouldPersistTaps="handled"
+                        contentContainerStyle={{
+                          paddingTop: 4,
+                          paddingBottom: toCard ? 8 + PILL_ROOM : 8,
+                        }}
+                      />
+                    )}
+                  </Reactions>
+                </Quotes>
               </EntryWidths>
             </ConversationVisualsContext>
           </OpenMention>
@@ -563,6 +607,7 @@ export function ConversationView({
                   <ArchivedLine room={room} />
                 ) : (
                   <Composer
+                    ref={composerView}
                     target={target}
                     recipient={item._tag === "bot" ? item.bot.profile.name : item.room.name}
                     {...(mentionable === undefined ? {} : { mentionable })}

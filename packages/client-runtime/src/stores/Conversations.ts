@@ -365,10 +365,10 @@ export type CardAnswer =
 /** Each value travels redacted from the input to the socket and is kept nowhere. */
 export type SecretAnswer = SecretRequestAnswer;
 
-/** One open conversation or room. */
 /** How reading back to an entry ended. See `Conversation.reveal`. */
 export type Revealed = "shown" | "missing" | "unreachable";
 
+/** One open conversation or room. */
 export interface Conversation {
   readonly target: EntryTarget;
   readonly state: Readable<ConversationState>;

@@ -17,3 +17,13 @@ export const feelLongPress = (): void => {
     ? performAndroidHapticsAsync(AndroidHaptics.Long_Press)
     : impactAsync(ImpactFeedbackStyle.Medium));
 };
+
+/**
+ * The light tick a swiped message gives as it goes far enough that letting go
+ * replies to it: on Android the system's segment tick, on iOS a light impact.
+ */
+export const feelSwipeReply = (): void => {
+  void (Platform.OS === "android"
+    ? performAndroidHapticsAsync(AndroidHaptics.Segment_Tick)
+    : impactAsync(ImpactFeedbackStyle.Light));
+};
