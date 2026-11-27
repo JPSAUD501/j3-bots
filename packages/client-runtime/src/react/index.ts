@@ -312,3 +312,9 @@ export {
 } from "./connectorSignIn.ts";
 export { useTurnAnnouncement } from "./turn.ts";
 export { type Answer, useAnswer } from "./answer.ts";
+export {
+  type QuickMessageState,
+  type QuickSend,
+  type QuickSendResult,
+  useQuickMessage,
+} from "./quickMessage.ts";

@@ -5,6 +5,14 @@
  * Built from the catalog in `@j3-bots/i18n`, free of any interface library.
  */
 export { resendLabel } from "./addressee.ts";
+export {
+  CARD_ROOMS,
+  type CardLines,
+  cardLines,
+  type CardRoom,
+  type CardStatus,
+  cardStatus,
+} from "./card.ts";
 export { type AnsweringLine, answeringLine } from "./answering.ts";
 export {
   connectFailureText,

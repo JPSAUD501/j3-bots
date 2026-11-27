@@ -9,7 +9,7 @@ import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime
 import type { Avatar, RosterItem } from "@j3-bots/contracts";
 import { littleColors, littleDots, resolveAvatar } from "@j3-bots/design-tokens";
 import { type ComponentRef, type Ref, useRef, useState } from "react";
-import { View } from "react-native";
+import { type GestureResponderEvent, View } from "react-native";
 import Animated, { ZoomOut } from "react-native-reanimated";
 import { useUniwind } from "uniwind";
 import { feelLongPress } from "../platform/haptics.ts";
@@ -29,6 +29,7 @@ import {
   roomAvatarMembers,
 } from "./avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "./avatar/mood.tsx";
+import { useBotCardPress } from "./BotCard.tsx";
 import { arrivalClip, RowLight, useRowArrival } from "./RowArrival.tsx";
 
 export const toneClass = {
@@ -102,7 +103,7 @@ function LittleDots({
  * or as a dot under the time; screen readers hear "Unread" either way. The
  * primary bot's avatar carries its mark, which screen readers hear in the
  * row's name. A long press, with the system's long-press tick, opens what
- * `onMenu` shows, by the row.
+ * `onMenu` shows, by the row; on a bot's face, its card (decision 0102).
  */
 export function RosterRow({
   item,
@@ -147,6 +148,12 @@ export function RosterRow({
   const split = item._tag === "bot" ? littleOnesAtWork(item.bot.state) : 0;
   const primary = item._tag === "bot" && item.bot.primary;
   const row = useRef<ComponentRef<typeof View>>(null);
+  const faceBox = useRef<ComponentRef<typeof View>>(null);
+  // A row the operator can press: its bot's face opens the bot's card.
+  const card = useBotCardPress(
+    item._tag === "bot" && onMenu !== undefined ? item.bot.id : null,
+    name,
+  );
   const arrival = useRowArrival(entrance);
   // A room's light is its first member's color.
   const face =
@@ -174,19 +181,34 @@ export function RosterRow({
       {...(onMenu === undefined
         ? {}
         : {
-            onLongPress: () => {
+            onLongPress: ({ nativeEvent: { pageX, pageY } }: GestureResponderEvent) => {
               feelLongPress();
-              row.current?.measureInWindow((x, y, width, height) =>
-                onMenu({ x, y, width, height }),
-              );
+              const menu = () =>
+                row.current?.measureInWindow((x, y, width, height) =>
+                  onMenu({ x, y, width, height }),
+                );
+              const face = faceBox.current;
+              if (card === null || face === null) return menu();
+              face.measureInWindow((x, y, width, height) => {
+                const onFace =
+                  pageX >= x && pageX <= x + width && pageY >= y && pageY <= y + height;
+                if (onFace) card.open();
+                else menu();
+              });
             },
+          })}
+      {...(card === null
+        ? {}
+        : {
+            accessibilityActions: card.props.accessibilityActions,
+            onAccessibilityAction: card.props.onAccessibilityAction,
           })}
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}
       className={`${lifted ? "" : "mx-2"} flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
       style={{ height }}
     >
-      <View>
+      <View ref={faceBox}>
         {arrival.staged && <RowLight avatar={face} height={height} arrival={arrival} />}
         <View style={arrival.staged ? arrivalClip(height) : undefined}>
           {item._tag === "bot" ? (

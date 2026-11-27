@@ -3,6 +3,7 @@ import type { Bot, BotId, EntryId, EntryPreview, PairBotIds, RoomId } from "@j3-
 import { ArrowUpRightIcon, XIcon } from "lucide-react";
 import {
   type ReactNode,
+  type Ref,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -18,6 +19,7 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import { RosterProvider, useI18n, usePresentation } from "../app/context";
 import { AvatarConnection, LiveBotAvatar } from "../components/avatar/mood";
+import { type BotCardIntents, BotCardProvider, useBotCard } from "../components/BotCard";
 import { focusAtEnd } from "../components/Composer";
 import { DraftComposer } from "../components/DraftComposer";
 import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
@@ -89,6 +91,8 @@ interface QuickAccessProps {
   readonly lastEntry: EntryPreview | null;
   readonly data: QuickAccessData;
   readonly intents: QuickAccessIntents;
+  /** What the bot's card does from here: what needs the whole window opens the main one. */
+  readonly card: BotCardIntents;
   /**
    * The window is not see-through: the card fills it, square. Otherwise the
    * window leaves room around the card for its rounded corners and its shadow.
@@ -146,6 +150,7 @@ export function QuickAccess({
   lastEntry,
   data,
   intents,
+  card,
   solid,
   shown,
   asked,
@@ -318,187 +323,218 @@ export function QuickAccess({
     : ({ text: t("connection.reconnecting"), tone: "secondary" } as const);
   return (
     <RosterProvider roster={data.roster ?? []} engine={data.engine}>
-      <AvatarConnection connected={data.connected}>
-        <div
-          role="region"
-          aria-label={t("quickAccess.label", { name })}
-          inert={!shown}
-          data-shown={shown}
-          // Under reduced motion its way out is a fade of the whole of it, which ends here.
-          onAnimationEnd={(event) => {
-            if (event.target !== event.currentTarget || shown) return;
-            motion.current?.jump({ card: 0, face: 0 });
-            onLeft();
-          }}
-          // A file dropped anywhere on it is attached; one dropped beside the card goes nowhere.
-          onDragOver={(event) => {
-            if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-          }}
-          onDrop={(event) => {
-            if (event.defaultPrevented || event.dataTransfer.files.length === 0) return;
-            event.preventDefault();
-            if (event.target instanceof Node && cardRef.current?.contains(event.target) === true) {
-              intents.attachFiles(target, [...event.dataTransfer.files]);
-            }
-          }}
-          className={cn(
-            "quick-access crossfade fixed inset-0 text-foreground",
-            // Room around the card for its rounded corners and its shadow.
-            !solid && "px-7 pt-4 pb-9",
-            tintOf(bot.profile.avatar),
-          )}
-        >
-          <section
-            ref={cardRef}
+      <BotCardProvider intents={card}>
+        <AvatarConnection connected={data.connected}>
+          <div
+            role="region"
+            aria-label={t("quickAccess.label", { name })}
+            inert={!shown}
+            data-shown={shown}
+            // Under reduced motion its way out is a fade of the whole of it, which ends here.
+            onAnimationEnd={(event) => {
+              if (event.target !== event.currentTarget || shown) return;
+              motion.current?.jump({ card: 0, face: 0 });
+              onLeft();
+            }}
+            // A file dropped anywhere on it is attached; one dropped beside the card goes nowhere.
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+            }}
+            onDrop={(event) => {
+              if (event.defaultPrevented || event.dataTransfer.files.length === 0) return;
+              event.preventDefault();
+              if (
+                event.target instanceof Node &&
+                cardRef.current?.contains(event.target) === true
+              ) {
+                intents.attachFiles(target, [...event.dataTransfer.files]);
+              }
+            }}
             className={cn(
-              "flex h-full flex-col overflow-hidden bg-surface [contain:layout_paint]",
-              !solid && "rounded-[20px] border border-border shadow-overlay",
+              "quick-access crossfade fixed inset-0 text-foreground",
+              // Room around the card for its rounded corners and its shadow.
+              !solid && "px-7 pt-4 pb-9",
+              tintOf(bot.profile.avatar),
             )}
           >
-            {/* The header is the window's handle: the system drags the window by it. */}
-            <header className="flex min-h-14 shrink-0 items-center gap-2.5 border-b border-border ps-3 pe-1.5 [-webkit-app-region:drag]">
-              <span ref={faceRef} className="inline-flex [-webkit-app-region:no-drag]">
-                <LiveBotAvatar bot={bot} lastEntry={lastEntry} size={FACE} />
-              </span>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <h1 className="truncate text-sm font-medium">{name}</h1>
-                {presence !== null && (
-                  <SwapText
-                    text={presence.text}
-                    className={cn("text-xs", toneClass[presence.tone])}
-                  />
-                )}
-              </div>
-              <span className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
-                <Button
-                  variant="ghost-muted"
-                  size="icon-sm"
-                  onClick={onOpenConversation}
-                  aria-label={t("quickAccess.openConversation")}
-                  title={t("quickAccess.openConversation")}
-                >
-                  <ArrowUpRightIcon />
-                </Button>
-                <Button
-                  variant="ghost-muted"
-                  size="icon-sm"
-                  onClick={onClose}
-                  aria-label={t("quickAccess.close")}
-                  title={t("quickAccess.close")}
-                  aria-keyshortcuts="Escape"
-                >
-                  <XIcon />
-                </Button>
-              </span>
-            </header>
-            <div ref={setConversation} className="flex min-h-0 flex-1 flex-col">
-              {view.phase === "ready" && view.items.length === 0 ? (
-                <p className="flex flex-1 items-center justify-center px-6 text-center text-sm text-pretty text-muted-foreground">
-                  {held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
-                </p>
-              ) : (
-                // Reversed, so the view stays pinned to the newest entry as entries arrive.
-                <div className="relative flex min-h-0 flex-1 flex-col">
-                  <div
-                    ref={setTimeline}
-                    className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
+            <section
+              ref={cardRef}
+              className={cn(
+                "flex h-full flex-col overflow-hidden bg-surface [contain:layout_paint]",
+                !solid && "rounded-[20px] border border-border shadow-overlay",
+              )}
+            >
+              {/* The header is the window's handle: the system drags the window by it. */}
+              <header className="flex min-h-14 shrink-0 items-center gap-2.5 border-b border-border ps-3 pe-1.5 [-webkit-app-region:drag]">
+                <QuickFace faceRef={faceRef} bot={bot} lastEntry={lastEntry} />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <h1 className="truncate text-sm font-medium">{name}</h1>
+                  {presence !== null && (
+                    <SwapText
+                      text={presence.text}
+                      className={cn("text-xs", toneClass[presence.tone])}
+                    />
+                  )}
+                </div>
+                <span className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-sm"
+                    onClick={onOpenConversation}
+                    aria-label={t("quickAccess.openConversation")}
+                    title={t("quickAccess.openConversation")}
                   >
-                    <div className={cn("w-full px-3 py-3", toCard && "pb-14")}>
-                      {view.hasOlder && (
-                        <div className="flex justify-center pb-2">
-                          <Button
-                            variant="ghost-muted"
-                            size="sm"
-                            aria-disabled={view.loadingOlder}
-                            onClick={() => {
-                              if (!view.loadingOlder) intents.loadOlder(target);
-                            }}
-                          >
-                            {view.loadingOlder
-                              ? t("timeline.loadingOlder")
-                              : t("timeline.loadOlder")}
-                          </Button>
-                        </div>
-                      )}
-                      <Timeline
-                        rows={rows}
-                        room={null}
-                        workSteps={data.workSteps}
-                        submitting={data.submitting}
-                        openingHold={held}
-                        intents={intents}
-                        secrets={{ view: data.secrets, intents: intents.secrets }}
-                        arrived={arrived}
-                        flyFrom={composerRef}
-                        turnBot={{ bot, lastEntry }}
-                        onOpenPair={onOpenPair}
-                        onOpenRoom={onOpenRoom}
-                        onOpenBot={onOpenBot}
-                        quotes={{
-                          reveal: (entryId) => intents.revealEntry(target, entryId),
-                          drafting: data.quotes
-                            ? {
-                                drafted: data.draft(target).quotes,
-                                quote: (quote) => {
-                                  if (intents.quoteInDraft(target, quote) === "added") {
-                                    focusAtEnd(composerRef.current);
-                                  }
-                                },
-                              }
-                            : null,
-                        }}
-                        recordScreen={recordScreenIn(intents.recordScreen, target)}
-                      />
+                    <ArrowUpRightIcon />
+                  </Button>
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-sm"
+                    onClick={onClose}
+                    aria-label={t("quickAccess.close")}
+                    title={t("quickAccess.close")}
+                    aria-keyshortcuts="Escape"
+                  >
+                    <XIcon />
+                  </Button>
+                </span>
+              </header>
+              <div ref={setConversation} className="flex min-h-0 flex-1 flex-col">
+                {view.phase === "ready" && view.items.length === 0 ? (
+                  <p className="flex flex-1 items-center justify-center px-6 text-center text-sm text-pretty text-muted-foreground">
+                    {held === null
+                      ? quietConversationText(bot, ctx)
+                      : heldHelloText(name, held, ctx)}
+                  </p>
+                ) : (
+                  // Reversed, so the view stays pinned to the newest entry as entries arrive.
+                  <div className="relative flex min-h-0 flex-1 flex-col">
+                    <div
+                      ref={setTimeline}
+                      className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
+                    >
+                      <div className={cn("w-full px-3 py-3", toCard && "pb-14")}>
+                        {view.hasOlder && (
+                          <div className="flex justify-center pb-2">
+                            <Button
+                              variant="ghost-muted"
+                              size="sm"
+                              aria-disabled={view.loadingOlder}
+                              onClick={() => {
+                                if (!view.loadingOlder) intents.loadOlder(target);
+                              }}
+                            >
+                              {view.loadingOlder
+                                ? t("timeline.loadingOlder")
+                                : t("timeline.loadOlder")}
+                            </Button>
+                          </div>
+                        )}
+                        <Timeline
+                          rows={rows}
+                          room={null}
+                          workSteps={data.workSteps}
+                          submitting={data.submitting}
+                          openingHold={held}
+                          intents={intents}
+                          secrets={{ view: data.secrets, intents: intents.secrets }}
+                          arrived={arrived}
+                          flyFrom={composerRef}
+                          turnBot={{ bot, lastEntry }}
+                          onOpenPair={onOpenPair}
+                          onOpenRoom={onOpenRoom}
+                          onOpenBot={onOpenBot}
+                          quotes={{
+                            reveal: (entryId) => intents.revealEntry(target, entryId),
+                            drafting: data.quotes
+                              ? {
+                                  drafted: data.draft(target).quotes,
+                                  quote: (quote) => {
+                                    if (intents.quoteInDraft(target, quote) === "added") {
+                                      focusAtEnd(composerRef.current);
+                                    }
+                                  },
+                                }
+                              : null,
+                          }}
+                          recordScreen={recordScreenIn(intents.recordScreen, target)}
+                        />
+                      </div>
                     </div>
+                    <ToLatest
+                      end={end}
+                      onPress={() => scrollToEnd(timeline)}
+                      waiting={
+                        waitingOn === null
+                          ? null
+                          : {
+                              place: waitingPlace,
+                              onPress: () => {
+                                const card = timeline?.querySelector<HTMLElement>(
+                                  `[data-entry-id="${CSS.escape(waitingOn)}"]`,
+                                );
+                                card?.scrollIntoView({ block: "center" });
+                                card?.focus({ preventScroll: true });
+                              },
+                            }
+                      }
+                    />
                   </div>
-                  <ToLatest
-                    end={end}
-                    onPress={() => scrollToEnd(timeline)}
-                    waiting={
-                      waitingOn === null
-                        ? null
-                        : {
-                            place: waitingPlace,
-                            onPress: () => {
-                              const card = timeline?.querySelector<HTMLElement>(
-                                `[data-entry-id="${CSS.escape(waitingOn)}"]`,
-                              );
-                              card?.scrollIntoView({ block: "center" });
-                              card?.focus({ preventScroll: true });
-                            },
-                          }
-                    }
+                )}
+                <div className="px-2.5 pt-1 pb-2.5">
+                  {seenWindow !== null && (
+                    <WindowChips
+                      view={seenWindow.view}
+                      intents={seenWindow.intents}
+                      botName={name}
+                      {...(seenWindow.initialPreview === undefined
+                        ? {}
+                        : { initialPreview: seenWindow.initialPreview })}
+                    />
+                  )}
+                  <DraftComposer
+                    target={target}
+                    recipient={name}
+                    data={data}
+                    // Put away, it hears nothing: a dictation under way is cancelled.
+                    intents={shown ? intents : { ...intents, dictation: undefined }}
+                    addressing={addressing}
+                    mentionable={mentionable}
+                    suggestion={offeredReply(bot.suggestedReply, view.items)}
+                    inputRef={composerRef}
                   />
                 </div>
-              )}
-              <div className="px-2.5 pt-1 pb-2.5">
-                {seenWindow !== null && (
-                  <WindowChips
-                    view={seenWindow.view}
-                    intents={seenWindow.intents}
-                    botName={name}
-                    {...(seenWindow.initialPreview === undefined
-                      ? {}
-                      : { initialPreview: seenWindow.initialPreview })}
-                  />
-                )}
-                <DraftComposer
-                  target={target}
-                  recipient={name}
-                  data={data}
-                  // Put away, it hears nothing: a dictation under way is cancelled.
-                  intents={shown ? intents : { ...intents, dictation: undefined }}
-                  addressing={addressing}
-                  mentionable={mentionable}
-                  suggestion={offeredReply(bot.suggestedReply, view.items)}
-                  inputRef={composerRef}
-                />
               </div>
-            </div>
-            {overlay}
-          </section>
-        </div>
-      </AvatarConnection>
+              {overlay}
+            </section>
+          </div>
+        </AvatarConnection>
+      </BotCardProvider>
     </RosterProvider>
+  );
+}
+
+/**
+ * The header's face, which opens the bot's card: the name beside it is the
+ * window's handle, so the face alone does.
+ */
+function QuickFace({
+  faceRef,
+  bot,
+  lastEntry,
+}: {
+  readonly faceRef: Ref<HTMLSpanElement>;
+  readonly bot: Bot;
+  readonly lastEntry: EntryPreview | null;
+}) {
+  const card = useBotCard(bot.id);
+  return (
+    <span
+      ref={faceRef}
+      data-card-anchor=""
+      {...card.hover}
+      className="inline-flex [-webkit-app-region:no-drag]"
+    >
+      <LiveBotAvatar bot={bot} lastEntry={lastEntry} size={FACE} />
+    </span>
   );
 }

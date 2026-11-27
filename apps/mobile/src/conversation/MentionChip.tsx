@@ -8,6 +8,7 @@ import {
   RoomAvatar,
   roomAvatarMembers,
 } from "../components/avatar/BotAvatar.tsx";
+import { useBotCardPress } from "../components/BotCard.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots, useRooms } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
@@ -82,7 +83,8 @@ export const OpenMention = createContext<((named: ConversationMention) => void) 
 
 /**
  * A chip set in a line of text, centered on it, which opens what it names
- * (`name`, as the roster calls it now) when something can open it.
+ * (`name`, as the roster calls it now) when something can open it, and a
+ * bot's card on a long press.
  */
 function InlineMention({
   named,
@@ -95,15 +97,18 @@ function InlineMention({
 }) {
   const open = useContext(OpenMention);
   const { t } = useI18n();
+  // A bot's mention opens its card on a long press (decision 0102).
+  const card = useBotCardPress(named._tag === "bot" ? named.botId : null, name);
   return (
     <View style={{ transform: inlineChip.transform }} className="mx-px">
-      {open === null ? (
+      {open === null && card === null ? (
         children
       ) : (
         <PressScale
-          accessibilityRole="button"
-          accessibilityLabel={t("mention.open", { name })}
-          onPress={() => open(named)}
+          accessibilityRole={open === null ? undefined : "button"}
+          accessibilityLabel={open === null ? name : t("mention.open", { name })}
+          {...(open === null ? {} : { onPress: () => open(named) })}
+          {...card?.props}
         >
           {children}
         </PressScale>

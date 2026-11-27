@@ -146,7 +146,7 @@ export function sampleTeam(now: DateTime.Utc) {
     color: string,
     state: BotState,
     extra: Partial<
-      Pick<Bot, "pinned" | "hidden" | "primary" | "permissionMode" | "sectionId">
+      Pick<Bot, "pinned" | "hidden" | "primary" | "permissionMode" | "sectionId" | "madeBy">
     > = {},
   ): Bot {
     return {
@@ -174,6 +174,7 @@ export function sampleTeam(now: DateTime.Utc) {
       opening: false,
       suggestedReply: null,
       createdAt: ago(60 * 24 * 30),
+      ...(extra.madeBy === undefined ? {} : { madeBy: extra.madeBy }),
     };
   }
 
@@ -202,7 +203,12 @@ export function sampleTeam(now: DateTime.Utc) {
         tool: "browser",
         littleOnes: 0,
       },
-      { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
+      {
+        primary: true,
+        pinned: true,
+        permissionMode: "auto-accept-edits",
+        madeBy: { by: "operator", botId: null },
+      },
     ),
     juniper: bot(ids.juniper, "Juniper", "Inbox", "ears", "cobalt", {
       _tag: "waiting",
@@ -217,7 +223,16 @@ export function sampleTeam(now: DateTime.Utc) {
       since: ago(4),
     }),
     // Idle with a reply not yet read: the roster shows Wren as done.
-    wren: bot(ids.wren, "Wren", "Writing", "horns", "orchid", { _tag: "idle" }, { pinned: true }),
+    // Scout made Wren, at the operator's request.
+    wren: bot(
+      ids.wren,
+      "Wren",
+      "Writing",
+      "horns",
+      "orchid",
+      { _tag: "idle" },
+      { pinned: true, madeBy: { by: "bot", botId: ids.scout } },
+    ),
     ledger: bot(ids.ledger, "Ledger", "Receipts", "ghost", "honey", {
       _tag: "blocked",
       failure: "usage-limit",
