@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  Attachment,
-  Bot,
-  BotFile,
-  BrowserHostStatus,
-  Connector,
-  ConnectorId,
-  MemoryFile,
-  MemoryPath,
-  PairBotIds,
-  Room,
-  Routine,
-  RoutineId,
+import {
+  hasSeveralSteps,
+  type Attachment,
+  type Bot,
+  type BotFile,
+  type BrowserHostStatus,
+  type Connector,
+  type ConnectorId,
+  type MemoryFile,
+  type MemoryPath,
+  type PairBotIds,
+  type Room,
+  type Routine,
+  type RoutineId,
+  type RoutineStep,
 } from "@j3-bots/contracts";
 import {
   ArchiveIcon,
@@ -35,10 +37,12 @@ import {
 } from "lucide-react";
 import { useState, type ReactElement, type ReactNode, type RefObject } from "react";
 import {
+  asksYou,
   botStop,
   connectorsOf,
   roomStop,
   type Teammate,
+  trackCast,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -56,6 +60,7 @@ import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { FaceOf } from "./avatar/TeamAvatars";
 import { FileCard } from "./FileCard";
+import { RoutineSentence } from "./RoutineTrack";
 import { Button } from "./ui/button";
 import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
@@ -562,6 +567,8 @@ function RoutineRow({
   const ctx = usePresentation();
   const { pluralParts, t } = ctx.i18n;
   const lines = routineLines(routine, ctx);
+  // A routine with several steps reads back as its sentence, with who does it.
+  const steps = hasSeveralSteps(routine.steps, routine.botId) ? routine.steps : null;
   const Icon = !routine.enabled
     ? CirclePauseIcon
     : routine.trigger._tag === "webhook"
@@ -578,10 +585,28 @@ function RoutineRow({
           )}
         />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium">{routine.name}</span>
-          <span className={cn("text-xs text-muted-foreground", lines.expression && "font-mono")}>
-            {lines.schedule}
-          </span>
+          {steps === null ? (
+            <>
+              <span className="truncate text-sm font-medium">{routine.name}</span>
+              <span
+                className={cn("text-xs text-muted-foreground", lines.expression && "font-mono")}
+              >
+                {lines.schedule}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-sm font-medium">{routine.name}</span>
+                <RoutineCast steps={steps} />
+              </span>
+              <RoutineSentence
+                trigger={routine.trigger}
+                steps={steps}
+                className="line-clamp-2 text-xs text-muted-foreground"
+              />
+            </>
+          )}
           {lines.status && <span className="text-2xs text-muted-foreground">{lines.status}</span>}
           {lines.lastRun && (
             // Only what went wrong is drawn in the blocked color; the run count stays quiet.
@@ -605,6 +630,18 @@ function RoutineRow({
         <Switch checked={routine.enabled} onCheckedChange={onToggle} aria-label={routine.name} />
       </span>
     </li>
+  );
+}
+
+/** Who does a routine's steps, as small faces, and an amber dot when it stops for the operator's yes. */
+function RoutineCast({ steps }: { steps: ReadonlyArray<RoutineStep> }) {
+  return (
+    <span aria-hidden className="flex shrink-0 items-center gap-0.5">
+      {trackCast(steps).map((botId) => (
+        <FaceOf key={botId} botId={botId} size={16} />
+      ))}
+      {asksYou(steps) && <span className="ms-0.5 size-1.5 rounded-pill bg-waiting" />}
+    </span>
   );
 }
 
