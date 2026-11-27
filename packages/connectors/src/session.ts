@@ -608,18 +608,27 @@ export const request = <A>(
   context: { readonly budget?: Budget; readonly hooks?: CallHooks } = {},
 ): Effect.Effect<Sent<A>, ConnectorFailure> => requestWith(deadline, send, context, failureOf);
 
-/** {@link request}, its failure read by `caught`; with no deadline when `deadline` is null. */
+/**
+ * {@link request}, its failure read by `caught`; with no deadline when
+ * `deadline` is null. The credentials it is signed with are added to
+ * `context.sent` as they are, when given, for a caller that reads its answer
+ * before it ends.
+ */
 const requestWith = <A, E>(
   deadline: Duration.Duration | null,
   send: (signal: AbortSignal) => Promise<A>,
-  context: { readonly budget?: Budget; readonly hooks?: CallHooks },
+  context: {
+    readonly budget?: Budget;
+    readonly hooks?: CallHooks;
+    readonly sent?: Array<CallCredentials>;
+  },
   caught: (error: unknown) => E,
 ): Effect.Effect<Sent<A>, E | TimedOut> => {
   const sent = Effect.tryPromise({
     try: (signal) => {
       const flight: InFlight = {
         signal,
-        sent: [],
+        sent: context.sent ?? [],
         budget: context.budget,
         hooks: context.hooks,
       };
@@ -1538,6 +1547,8 @@ const eventsOf = (
 
   const stream: McpEvents["stream"] = Effect.fn("McpSession.eventStream")(function* (input, frame) {
     const queue = yield* Queue.unbounded<StreamFrame, Cause.Done>();
+    /** What the stream's request was signed with, for as long as it stays open. */
+    const signedWith: Array<CallCredentials> = [];
     /** How many of its notifications arrived, and the heartbeat it was granted. */
     let heard = 0;
     let heartbeatMs = input.heartbeatMs;
@@ -1560,20 +1571,19 @@ const eventsOf = (
             if (one._tag === "active" && one.heartbeatMs !== null && one.heartbeatMs > 0) {
               heartbeatMs = one.heartbeatMs;
             }
-            // Cleaned of what signed the stream's request, which was signed
-            // after the stream was asked for, and of what signed the session's
-            // latest requests, as each event arrives.
+            // Cleaned of what signed the stream's request, however long it
+            // stays open, and of what signed the session's latest requests.
             Queue.offerUnsafe(
               queue,
               one._tag === "event"
-                ? { ...one, occurrence: scrubbed(one.occurrence, scrub([])) }
+                ? { ...one, occurrence: scrubbed(one.occurrence, scrub(signedWith)) }
                 : one,
             );
           },
           cancel,
           paramHeaders(input.type, input.arguments),
         ),
-      {},
+      { sent: signedWith },
       eventFailureOf,
     ).pipe(Effect.ensuring(Queue.end(queue)));
     const delivered = Stream.fromQueue(queue).pipe(

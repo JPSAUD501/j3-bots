@@ -17,7 +17,12 @@ import {
   webhookBodyOf,
 } from "./events.ts";
 import type { UrlPolicy } from "./guard.ts";
-import { DEFAULT_SESSION_LIMITS, type McpEvents, openSession } from "./session.ts";
+import {
+  type ConnectorCredentials,
+  DEFAULT_SESSION_LIMITS,
+  type McpEvents,
+  openSession,
+} from "./session.ts";
 import { type EventsFakeOptions, sdkHttpServer } from "./testing/sdkHttpServer.ts";
 
 /**
@@ -31,9 +36,26 @@ const POLICY: UrlPolicy = {
   privateNetwork: "refuse",
   redirects: "recheck",
 };
-const NO_CREDENTIALS = {
+const NO_CREDENTIALS: ConnectorCredentials = {
   current: Effect.succeed({ bearer: Option.none(), headers: [], hidden: [], carried: [] }),
   rejected: () => Effect.void,
+};
+
+/** A sign-in whose token changes with each request, as one renewed often would. */
+const rotating = (): ConnectorCredentials => {
+  let renewed = 0;
+  return {
+    current: Effect.sync(() => {
+      renewed += 1;
+      return {
+        bearer: Option.some(Redacted.make(`token-${renewed}-of-the-mail-sign-in`)),
+        headers: [],
+        hidden: [],
+        carried: [],
+      };
+    }),
+    rejected: () => Effect.void,
+  };
 };
 
 const RECEIVED: Schema.JsonObject = {
@@ -50,7 +72,10 @@ const RECEIVED: Schema.JsonObject = {
   payloadSchema: { type: "object", properties: { subject: { type: "string" } } },
 };
 
-const serve = (options: Partial<EventsFakeOptions> = {}) =>
+const serve = (
+  options: Partial<EventsFakeOptions> = {},
+  credentials: ConnectorCredentials = NO_CREDENTIALS,
+) =>
   Effect.gen(function* () {
     const fake = yield* sdkHttpServer({
       revision: "2026-07-28",
@@ -59,7 +84,7 @@ const serve = (options: Partial<EventsFakeOptions> = {}) =>
     const session = yield* openSession({
       url: new URL(fake.url),
       policy: POLICY,
-      credentials: NO_CREDENTIALS,
+      credentials,
       limits: DEFAULT_SESSION_LIMITS,
       client: { name: "j3-bots-test", version: "0.0.0" },
       cache: new InMemoryResponseCacheStore(),
@@ -163,9 +188,10 @@ describe("poll", () => {
         const polled = fake.requests.filter((r) => r.method === "events/poll");
         assert.strictEqual(polled[0]?.headers["mcp-name"], "message.received");
         assert.strictEqual(polled[0]?.headers["mcp-param-folder"], "Inbox");
-        // The extension's requests carry the envelope the SDK frames its own with.
+        // The extension's requests carry the envelope the SDK frames its own
+        // with: the SDK names the method in a header only from the envelope.
         const listing = fake.requests.find((r) => r.method === "events/list");
-        assert.strictEqual(listing?.headers["mcp-protocol-version"], "2026-07-28");
+        assert.strictEqual(listing?.headers["mcp-method"], "events/list");
       }).pipe(Effect.scoped),
   );
 
@@ -272,6 +298,35 @@ describe("stream", () => {
           data: { subject: "two" },
         });
         assert.deepStrictEqual(control.cursorsAsked, [null, "c1"]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "cleans an event of the token its stream was opened with, after the session's token changed",
+    () =>
+      Effect.gen(function* () {
+        const { fake, events, control, type } = yield* serve({}, rotating());
+        const opened = yield* streaming(events, {
+          type,
+          arguments: ARGS,
+          cursor: null,
+          maxAgeMs: 60_000,
+          heartbeatMs: 30_000,
+        });
+        const signed = fake.requests.find((r) => r.method === "events/stream")?.headers
+          .authorization;
+        const token = signed?.slice("Bearer ".length) ?? "";
+        assert.include(token, "of-the-mail-sign-in");
+        // Five requests signed since, each with a token of its own.
+        for (let request = 0; request < 5; request++) yield* events.list;
+        yield* Effect.promise(() =>
+          control.emit("message.received", { subject: `Your token is ${token}` }),
+        );
+        yield* until(() => opened.frames.some((frame) => frame._tag === "event"));
+        const event = opened.frames.find((frame) => frame._tag === "event");
+        const data = event?._tag === "event" ? JSON.stringify(event.occurrence.data) : "";
+        assert.include(data, "Your token is");
+        assert.notInclude(data, token);
       }).pipe(Effect.scoped),
   );
 
