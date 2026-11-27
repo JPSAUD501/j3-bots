@@ -13,8 +13,6 @@ import {
   QuickAccessPictureRequest,
   QuickAccessReport,
 } from "@j3-bots/desktop-bridge";
-import { colors } from "@j3-bots/design-tokens";
-import { hexColor } from "@j3-bots/design-tokens/raster";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -26,7 +24,6 @@ import {
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
-  nativeTheme,
   screen,
 } from "electron";
 import {
@@ -38,6 +35,7 @@ import {
   shortcutStep,
   withPlace,
 } from "./quickAccessPlace.ts";
+import type { Appearance } from "./appearance.ts";
 import type { FrontWindow, WindowReader } from "./lookingAt/index.ts";
 import { DesktopSettings } from "./settings.ts";
 
@@ -96,6 +94,8 @@ interface Options {
   readonly openInMain: (target: Destination, pairing: DeviceId) => void;
   /** How the window in front is read here. */
   readonly reader: WindowReader;
+  /** The colors the app's windows fill with, its card's among them. */
+  readonly appearance: Appearance;
 }
 
 /** What opens quick access: the global shortcut, or the tray's menu. */
@@ -112,10 +112,6 @@ interface QuickAccess {
   readonly unload: Effect.Effect<void>;
 }
 
-/** The card's color in the theme the app is in, which a window that is not see-through fills with. */
-const cardColor = () =>
-  hexColor(colors.surface[nativeTheme.shouldUseDarkColors ? "dark" : "light"]);
-
 /** Keeps the quick access window, hidden until asked for, while the scope lasts. */
 export const serve = Effect.fn("desktop.quickAccess")(function* ({
   main,
@@ -127,6 +123,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
   showMain,
   openInMain,
   reader,
+  appearance,
 }: Options) {
   const settings = yield* DesktopSettings;
   const context = yield* Effect.context<never>();
@@ -151,7 +148,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         frame: false,
         transparent,
         // What shows before the page paints, and through it where it is see-through.
-        backgroundColor: solid ? cardColor() : "#00000000",
+        backgroundColor: solid ? appearance.cardBackground() : "#00000000",
         hasShadow: false,
         resizable: false,
         maximizable: false,
@@ -380,10 +377,9 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         if (details.isMainFrame && !details.isSameDocument) pageGone();
       });
 
-      const repaint = () => {
-        if (solid && !window.isDestroyed()) window.setBackgroundColor(cardColor());
-      };
-      nativeTheme.on("updated", repaint);
+      const stopRepainting = appearance.onColors(() => {
+        if (solid && !window.isDestroyed()) window.setBackgroundColor(appearance.cardBackground());
+      });
 
       // It goes with the app's window: once that one has closed, nothing keeps the app open.
       const mainClosed = () => {
@@ -512,7 +508,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
           ipcMain.removeHandler(IPC_CHANNELS.lookingAt);
           ipcMain.removeHandler(IPC_CHANNELS.setLookingAt);
           ipcMain.removeHandler(IPC_CHANNELS.askScreenAccess);
-          nativeTheme.off("updated", repaint);
+          stopRepainting();
           screen.off("display-metrics-changed", displaysChanged);
           screen.off("display-removed", displaysChanged);
           if (!main.isDestroyed()) {

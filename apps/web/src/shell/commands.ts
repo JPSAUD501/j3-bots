@@ -8,7 +8,14 @@
  * `focus`: the cursor in the open conversation's composer, or on the roster
  * with none open. The others are the shell's keyboard shortcuts.
  */
-export type ShellAction = "focus" | "composer" | "next" | "previous" | "stop" | "closeDetails";
+export type ShellAction =
+  | "focus"
+  | "composer"
+  | "next"
+  | "previous"
+  | "stop"
+  | "closeDetails"
+  | "settings";
 
 const handlers = new Set<(action: ShellAction) => void>();
 

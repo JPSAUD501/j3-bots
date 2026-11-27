@@ -14,6 +14,7 @@ import { cn } from "../lib/cn";
 import { usePreferences } from "../preferences/preferences";
 import { Button } from "./ui/button";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
+import { useShownPalette } from "../themes/ThemeRuntime";
 
 // A bot's visual: a page it built, drawn in a frame that shares nothing with
 // the client. docs/architecture/security.md, "Visuals", says how the frame is
@@ -68,7 +69,8 @@ interface VisualFrameProps {
  * document, which a visual may not hold.
  */
 function VisualFrame({ visual, appearance, fill }: VisualFrameProps) {
-  const html = visualDocument(visual.html, appearance);
+  const palette = useShownPalette(appearance);
+  const html = visualDocument(visual.html, appearance, palette);
   return html === null ? (
     <VisualFailed fill={fill} />
   ) : (

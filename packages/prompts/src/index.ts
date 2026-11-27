@@ -98,6 +98,7 @@ export {
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
   SECRET_ASK_VALUES_SHOWN,
+  THEME_NOTES,
   type ToolDefinition,
   readSteps,
   type RoutineStepDraft,
@@ -140,4 +141,5 @@ export {
 } from "./roomRead.ts";
 export { sharedSkills } from "./skills.ts";
 export { defuseTags } from "./text.ts";
+export { THEME_GUIDE } from "./themeGuide.ts";
 export { PROMPT_VERSION } from "./version.ts";

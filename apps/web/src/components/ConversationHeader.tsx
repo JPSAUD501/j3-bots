@@ -63,7 +63,10 @@ export function ConversationHeader({
   useTurnAnnouncement(subject._tag === "bot" ? subject.bot : null, folds, offline, ctx, onAnnounce);
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border px-2 @tablet:px-3">
+    <header
+      data-slot="conversation-header"
+      className="flex h-14 shrink-0 items-center gap-1 border-b border-border px-2 @tablet:px-3"
+    >
       <Button
         variant="ghost"
         size="icon"

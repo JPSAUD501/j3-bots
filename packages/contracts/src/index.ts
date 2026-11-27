@@ -26,6 +26,7 @@ export * from "./settings.ts";
 export * from "./skill.ts";
 export * from "./telemetry.ts";
 export * from "./template.ts";
+export * from "./theme.ts";
 export * from "./visual.ts";
 export * from "./voice.ts";
 export * from "./work.ts";

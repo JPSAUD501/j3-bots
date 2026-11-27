@@ -16,6 +16,31 @@ export interface Themed {
 
 const themed = (light: string, dark: string): Themed => ({ light, dark });
 
+/**
+ * The tone each state's surface is mixed from, and how much of it goes over
+ * the canvas: a theme mixes it over its own canvas (theme.ts), so the
+ * surface follows the canvas and keeps the state's hue.
+ */
+export const STATE_SURFACE_TONES = {
+  "waiting-surface": {
+    light: { tone: "oklch(0.9 0.12 85)", share: 0.25 },
+    dark: { tone: "oklch(0.7 0.15 70)", share: 0.3 },
+  },
+  "blocked-surface": {
+    light: { tone: "oklch(0.9 0.06 20)", share: 0.25 },
+    dark: { tone: "oklch(0.8 0.2 25)", share: 0.25 },
+  },
+} as const;
+
+const stateSurface = (role: keyof typeof STATE_SURFACE_TONES, canvas: Themed): Themed => {
+  const { light, dark } = STATE_SURFACE_TONES[role];
+  return themed(
+    mixOklab(light.tone, canvas.light, light.share),
+    mixOklab(dark.tone, canvas.dark, dark.share),
+  );
+};
+
+const background = themed("#ffffff", "#000000");
 const sidebar = themed("#f6f6f7", "#09090a");
 const muted = themed("#f0f0f2", "#19191c");
 
@@ -25,7 +50,7 @@ const muted = themed("#f0f0f2", "#19191c");
  * primary action are the text color.
  */
 export const colors = {
-  background: themed("#ffffff", "#000000"),
+  background,
   /** Cards, popovers, dialogs, sheets, the composer. */
   surface: themed("#ffffff", "#101012"),
   sidebar,
@@ -54,10 +79,10 @@ export const colors = {
   "accent-foreground": themed("#ffffff", "#0a0a0b"),
   /** A bot needs the operator: a question or an approval. */
   waiting: themed("oklch(0.52 0.12 65)", "oklch(0.82 0.15 80)"),
-  "waiting-surface": themed("oklch(0.975 0.03 85)", "oklch(0.21 0.045 70)"),
+  "waiting-surface": stateSurface("waiting-surface", background),
   /** A turn cannot continue, and destructive actions. */
   blocked: themed("oklch(0.53 0.2 27)", "oklch(0.71 0.17 25)"),
-  "blocked-surface": themed("oklch(0.975 0.015 20)", "oklch(0.2 0.05 25)"),
+  "blocked-surface": stateSurface("blocked-surface", background),
   success: themed("oklch(0.52 0.12 160)", "oklch(0.78 0.14 160)"),
   /**
    * The track of a switch that is on. Darker than `success` in dark, where the
@@ -118,6 +143,18 @@ export const shadows = {
 } as const satisfies Record<string, Themed>;
 
 export type ColorRole = keyof typeof colors;
+
+const COLOR_ROLES = Object.keys(colors) as ReadonlyArray<ColorRole>;
+
+/** Every color role of one appearance: the stock tokens', or a theme's (theme.ts). */
+export type Palette = Readonly<Record<ColorRole, string>>;
+
+/** Every color role of one appearance as the stock tokens give it: Palco's palette. */
+export const stockPalette = (appearance: keyof Themed): Record<ColorRole, string> => {
+  const palette: Partial<Record<ColorRole, string>> = {};
+  for (const role of COLOR_ROLES) palette[role] = colors[role][appearance];
+  return palette as Record<ColorRole, string>;
+};
 
 /**
  * The three faces J3 Bots bundles (`fonts/`, under the SIL Open Font License),

@@ -63,6 +63,7 @@ import {
   type UpdateResult,
 } from "@j3-bots/client-runtime";
 import { providerActionsOf } from "./providerActions";
+import { themesIntents, useThemesView } from "./themes";
 import {
   type ConnectorsPlace,
   notificationOpening,
@@ -912,6 +913,7 @@ function LiveShell({
   const voiceSave = useReadable(j3.settingsSaves.voice);
   const usageDataSave = useReadable(j3.settingsSaves["usage-data"]);
   const devices = useDevices();
+  const themes = useThemesView(j3);
   const conversation = useConversation(target);
   // The teammate conversation the address names, and every pair the roster lists.
   const shownPair: PairBotIds | null =
@@ -1313,6 +1315,7 @@ function LiveShell({
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     connectors,
     settings: settings._tag === "ready" ? settings.value : null,
+    themes,
     settingsSaves: {
       profile: profileSave,
       notifications: notificationsSave,
@@ -1649,6 +1652,7 @@ function LiveShell({
       microphone: openMicrophone,
       app: desktopApp === null ? "browser" : "desktop",
     },
+    themes: themesIntents(j3),
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

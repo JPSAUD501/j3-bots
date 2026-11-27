@@ -40,6 +40,8 @@ export type RosterFrame =
       readonly screenRecordings: true;
       /** The voice socket takes `start`'s `transcript`, so the desktop app writes down a recording's voice. */
       readonly recordingTranscripts: true;
+      /** The server keeps themes (`ThemeRpcs`) and takes `say`'s theme offer, so clients offer them. */
+      readonly themes: true;
     }
   | {
       readonly _tag: "changed";
@@ -257,6 +259,7 @@ export const layer = Layer.effect(
             quoteComments: true,
             screenRecordings: true,
             recordingTranscripts: true,
+            themes: true,
           }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter(

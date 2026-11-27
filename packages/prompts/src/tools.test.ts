@@ -176,6 +176,19 @@ describe("j3 tools", () => {
     expect(accepts("set_routine", { action: "update", id: "r1", steps: [gather] })).toBe(true);
   });
 
+  it("offers a theme by its id, and saves one only under an id no built-in has", () => {
+    expect(accepts("say", { text: "Here it is.", offer: { apply_theme: "dusk" } })).toBe(true);
+    expect(accepts("say", { text: "Here it is.", offer: { apply_theme: "Dusk!" } })).toBe(false);
+    const theme = { id: "dusk", name: "Dusk", canvas: "#1a1426", accent: "#e0a030" };
+    expect(accepts("theme_save", theme)).toBe(true);
+    expect(accepts("theme_save", { ...theme, canvas: { light: "#fbf8ff", dark: "#1a1426" } })).toBe(
+      true,
+    );
+    const builtIn = decode("theme_save", { ...theme, id: "oceano" });
+    expect(String(builtIn)).toContain("built-in");
+    expect(accepts("theme_save", { ...theme, canvas: "midnight" })).toBe(false);
+  });
+
   it("refuses a call the engine would record only as a summary, by its encoded size", () => {
     const routine = (instruction: string) => ({
       action: "create",

@@ -64,6 +64,7 @@ Three regions, the same on every surface.
 | Put the cursor in the composer | `/` |
 | Stop the bot that is working, or whose background work holds a change of its settings | `Ctrl+.` (`⌘.` on macOS) |
 | Close the details pane, or the bot's browser, before anything else | `Escape` |
+| Open Settings, which no theme's CSS can hide | `Ctrl+,` (`⌘,` on macOS) |
 | Take the keyboard off the bot's page, to Done | `F6` |
 | Move through the roster | `↓` from the search field, then `↑`, `↓`, `Home`, `End` |
 

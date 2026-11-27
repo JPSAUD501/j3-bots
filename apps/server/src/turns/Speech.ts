@@ -9,6 +9,7 @@ import {
   MAX_ATTACHMENT_SIZE,
   MAX_VISUAL_BYTES,
   type MessageEntry,
+  type MessageOffer,
   pairBotIds,
   ROOM_QUIET_ROUND,
   RoomId,
@@ -58,6 +59,7 @@ import { Entries } from "../entries/Entries.ts";
 import { messageIn, quoteOf } from "../entries/quotes.ts";
 import { Reactions } from "../reactions/Reactions.ts";
 import { Ids } from "../Ids.ts";
+import { Themes } from "../themes/Themes.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
@@ -362,6 +364,7 @@ export const layer = Layer.effect(
     const browserTabs = yield* BrowserTabs;
     const secrets = yield* Secrets;
     const ids = yield* Ids;
+    const themes = yield* Themes;
     const stoppedWork = workStoppedOf(sql);
     const turnStops = yield* Stops;
     const chains = hopCounts(sql);
@@ -1081,6 +1084,22 @@ export const layer = Layer.effect(
       return [quote];
     });
 
+    /**
+     * The button a bot's message offers: the screen recorder, or a theme
+     * (decision 0104), which must be a built-in or a saved theme. Anything
+     * else refuses the call, with nothing sent.
+     */
+    const offerOf = Effect.fn("Speech.offerOf")(function* (offer: ToolInput<"say">["offer"]) {
+      if (offer === undefined) return undefined;
+      if (offer === "record-screen") return { kind: "record-screen" } satisfies MessageOffer;
+      if (!(yield* themes.exists(offer.apply_theme))) {
+        return yield* new TurnToolRefused({
+          reason: `Nothing was sent: there is no theme ${offer.apply_theme}. Save it with \`theme_save\` first, or offer one \`theme_read\` lists.`,
+        });
+      }
+      return { kind: "apply-theme", themeId: offer.apply_theme } satisfies MessageOffer;
+    });
+
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
       // `to: "dm"` speaks to the operator in private, also from a room turn.
       const audience = input.to === "dm" ? conversation : found.audience;
@@ -1115,6 +1134,7 @@ export const layer = Layer.effect(
                 }
                 const target = yield* requireTarget(found.botId, audience);
                 const quotes = yield* replyOf(target, input.reply_to);
+                const offer = yield* offerOf(input.offer);
                 yield* quiet.spoke(found.sessionId, found.turnId);
                 const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
                 const mention = Option.isSome(room)
@@ -1142,7 +1162,7 @@ export const layer = Layer.effect(
                     delivery: { _tag: "delivered" },
                     commandId: null,
                     ...(shown === null ? {} : { visual: shown }),
-                    ...(input.offer === undefined ? {} : { offer: { kind: input.offer } }),
+                    ...(offer === undefined ? {} : { offer }),
                   },
                 });
                 if (files.length > 0) {

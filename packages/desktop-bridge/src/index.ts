@@ -640,12 +640,27 @@ export type Theme = typeof Theme.Type;
 export const Appearance = Schema.Literals(["system", "light", "dark"]);
 export type Appearance = typeof Appearance.Type;
 
+const WindowColor = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/));
+
+/** What a window fills with before its page paints: the page's canvas, and quick access's card. */
+export const WindowColors = Schema.Struct({ background: WindowColor, surface: WindowColor });
+export type WindowColors = typeof WindowColors.Type;
+
+/** The theme's window colors in each appearance (decision 0104). */
+export const ThemeWindowColors = Schema.Struct({ light: WindowColors, dark: WindowColors });
+export type ThemeWindowColors = typeof ThemeWindowColors.Type;
+
 /**
  * The appearance the operator chose, as the page reports it when it starts
  * and each time it changes: the app's window, its title bar and its menus
- * follow it, from the first paint of the next launch.
+ * follow it, from the first paint of the next launch. `colors` are the
+ * theme's the windows fill with, null for the stock ones; a page from before
+ * themes says nothing of them, which is the stock theme it shows.
  */
-export const AppearanceReport = Schema.Struct({ appearance: Appearance });
+export const AppearanceReport = Schema.Struct({
+  appearance: Appearance,
+  colors: Schema.optionalKey(Schema.NullOr(ThemeWindowColors)),
+});
 export type AppearanceReport = typeof AppearanceReport.Type;
 
 /** A bot or room that needs the operator, as the tray lists it. */
@@ -693,8 +708,8 @@ export type Destination = typeof Destination.Type;
 /**
  * Something the app asks the page to do, from its menus, its tray or quick
  * access. `focus`: the composer of the open conversation, or the roster.
- * `composer`, `next`, `previous`, `stop` and `closeDetails`: the shell's
- * keyboard shortcuts, by name. `open`: a place the operator chose in the
+ * `composer`, `next`, `previous`, `stop`, `closeDetails` and `settings`:
+ * the shell's keyboard shortcuts, by name. `open`: a place the operator chose in the
  * tray or in quick access, under the pairing whose roster listed it.
  * `record`: the sheet that starts a screen recording, on that conversation
  * or room, asked for from quick access or a bot's offer (`RecordingOpen`).
@@ -706,6 +721,7 @@ export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("previous", {}),
   Schema.TaggedStruct("stop", {}),
   Schema.TaggedStruct("closeDetails", {}),
+  Schema.TaggedStruct("settings", {}),
   Schema.TaggedStruct("open", { target: Destination, pairing: DeviceId }),
   Schema.TaggedStruct("record", { target: EntryTarget, pairing: DeviceId }),
 ]);

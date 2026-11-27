@@ -204,6 +204,9 @@ const sentences = {
   "message.offer.recordScreen": "Gravar a tela",
   "message.offer.recordScreen.elsewhere":
     "Para gravar a tela, abra o app J3 Bots no seu computador.",
+  "message.offer.applyTheme": "Aplicar tema",
+  "message.offer.applyTheme.inUse": "Em uso neste aparelho",
+  "message.offer.applyTheme.gone": "Este tema foi apagado.",
 
   "recordSheet.title": "Gravar a tela",
   "recordSheet.what.everything":
@@ -1049,7 +1052,6 @@ const sentences = {
   "settings.notifications.description":
     "Quando o J3 Bots avisa que um bot precisa de você, e quanto o aviso diz.",
   "settings.appearance.description": "Como o J3 Bots fica neste dispositivo, e o idioma dele.",
-  "settings.theme": "Tema",
   "settings.providers": "Provedores",
   "settings.providers.description": "As contas de IA com que seus bots pensam.",
   "settings.usage.description":
@@ -1070,6 +1072,60 @@ const sentences = {
   "settings.system.short": "Sistema",
   "settings.light": "Claro",
   "settings.dark": "Escuro",
+  "settings.mode": "Claro ou escuro",
+
+  "settings.themes": "Tema",
+  "settings.themes.inUse": "Em uso",
+  "settings.themes.use": "Usar {name}",
+  "settings.themes.byYou": "Feito por você",
+  "settings.themes.byBot": "Feito por {name}",
+  "settings.themes.byRemovedBot": "Feito por um bot",
+  "settings.themes.startsNew": "Aparelhos novos começam com ele",
+  "settings.themes.makeStart": "Começar aparelhos novos com ele",
+  "settings.themes.delete": "Apagar {name}",
+  "settings.themes.delete.title": "Apagar {name}?",
+  "settings.themes.delete.body":
+    "Os aparelhos que o mostram voltam ao tema com que os aparelhos novos começam. Isso não pode ser desfeito.",
+  "settings.themes.delete.confirm": "Apagar",
+  "settings.themes.failed": "Não deu certo. Confira a conexão e tente de novo.",
+  "settings.themes.styledElsewhere":
+    "Alguns temas também mudam formas e espaçamentos, o que aparece só no computador. Aqui eles mostram as cores.",
+  "settings.themes.preview.bot": "O relatório está pronto. Quer que eu envie?",
+  "settings.themes.preview.you": "Sim, pode enviar.",
+  "settings.themes.create": "Criar a partir de cores",
+  "settings.themes.create.title": "Um tema com as suas cores",
+  "settings.themes.create.name": "Nome",
+  "settings.themes.create.namePlaceholder": "Meu tema",
+  "settings.themes.create.canvas": "Fundo",
+  "settings.themes.create.canvas.hint": "Onde tudo fica. O claro e o escuro saem dele.",
+  "settings.themes.create.accent": "Destaque",
+  "settings.themes.create.accent.hint": "Suas mensagens, os botões principais e o que é novo.",
+  "settings.themes.create.hex": "Código da cor, como #3d6fd9",
+  "settings.themes.create.adjusted":
+    "Algumas cores foram ajustadas um pouco, para toda palavra continuar fácil de ler.",
+  "settings.themes.create.refused": "Essas cores não formam um tema legível. Tente outras.",
+  "settings.themes.create.save": "Salvar tema",
+  "settings.themes.create.cancel": "Cancelar",
+  "settings.themes.edit": "Mudar as cores",
+
+  "theme.palco.name": "Palco",
+  "theme.palco.description":
+    "Monocromático, preto puro no escuro. A cor fica só para os bots e o que precisa de você.",
+  "theme.grafite.name": "Grafite",
+  "theme.grafite.description":
+    "Cinza azulado em vez de preto puro. Mais macio para quem fica horas com o app aberto.",
+  "theme.oceano.name": "Oceano",
+  "theme.oceano.description":
+    "Azul-petróleo profundo com destaque ciano. Calmo, com cara de mar à noite.",
+  "theme.floresta.name": "Floresta",
+  "theme.floresta.description": "Verde musgo escuro com destaque menta. Natural e tranquilo.",
+  "theme.brasa.name": "Brasa",
+  "theme.brasa.description": "Marrom quente com destaque cobre. Aconchegante, ótimo à noite.",
+  "theme.lavanda.name": "Lavanda",
+  "theme.lavanda.description": "Roxo acinzentado com destaque lilás. Suave e com personalidade.",
+  "theme.papel.name": "Papel",
+  "theme.papel.description":
+    "Creme quente com tinta azul-marinho. Feito para ler: parece um caderno.",
 
   "firstRun.connecting.title": "Conectando ao J3 Bots",
   "firstRun.connecting.body": "Aguardando o J3 Bots. Esta página atualiza assim que ele responder.",
@@ -2154,6 +2210,7 @@ const sentences = {
   "desktop.menu.previous": "Bot ou sala anterior",
   "desktop.menu.stop": "Parar",
   "desktop.menu.closeDetails": "Fechar detalhes",
+  "desktop.menu.settings": "Configurações",
   "desktop.menu.view": "Exibir",
   "desktop.menu.reload": "Recarregar",
   "desktop.menu.devTools": "Ferramentas de desenvolvedor",

@@ -337,6 +337,7 @@ describe("the settings file", () => {
     mode: "remote",
     server: SERVER,
     localDevice: null,
+    windowColors: null,
     startWithSystem: false,
     phoneAccess: false,
     updateChannel: "stable",
@@ -351,6 +352,7 @@ describe("the settings file", () => {
     mode: null,
     server: null,
     localDevice: null,
+    windowColors: null,
     startWithSystem: false,
     phoneAccess: false,
     updateChannel: "stable",
@@ -418,6 +420,26 @@ describe("the settings file", () => {
     assert.isTrue(
       Settings.decodeSettings(JSON.stringify({ startWithSystem: true })).settings.startWithSystem,
     );
+    // The theme's window colors are kept whole, or dropped: a window never fills with half a theme.
+    const windowColors = {
+      light: { background: "#f2f4ef", surface: "#fbfcfa" },
+      dark: { background: "#0f1a19", surface: "#16231f" },
+    };
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ windowColors })).settings.windowColors,
+      windowColors,
+    );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(
+        JSON.stringify({
+          windowColors: { light: windowColors.light, dark: { background: "red" } },
+        }),
+      ),
+      {
+        settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["windowColors"],
+      },
+    );
     assert.deepStrictEqual(
       Settings.decodeSettings(
         JSON.stringify({ mode: "remote", server: SERVER, phoneAccess: "on" }),
@@ -479,6 +501,7 @@ describe("the settings file", () => {
         mode: "remote",
         server: origin("https://192.0.2.10:3737"),
         localDevice: null,
+        windowColors: null,
         window: null,
         shortcut: null,
         appearance: "system",

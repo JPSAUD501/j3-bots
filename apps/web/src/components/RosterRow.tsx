@@ -250,6 +250,7 @@ export function RosterRow({
     className:
       "group/row pressable pressable-row flex min-h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 py-2 text-start hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:min-h-(--layout-row-touch)",
     type: render ? undefined : "button",
+    "data-slot": "roster-row",
     "data-selected": selected ? "" : undefined,
     "aria-current": selected ? "page" : undefined,
     // Which bot or room the row is, so focus can come back to it.

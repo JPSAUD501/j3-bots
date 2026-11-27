@@ -16,9 +16,15 @@ import {
   Profile,
   RoomName,
   RoutineInstruction,
+  SavedThemeId,
   SkillName,
+  THEME_DESCRIPTION_LENGTH,
+  ThemeColors,
+  ThemeId,
+  ThemeName,
+  ThemeSeed,
 } from "@j3-bots/contracts";
-import { visualVariables } from "@j3-bots/design-tokens";
+import { THEME_CSS_MAX_LENGTH, visualVariables } from "@j3-bots/design-tokens";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -180,8 +186,16 @@ const SayInput = toolInput({
   ),
   offer: Schema.optionalKey(
     described(
-      Schema.Literal("record-screen"),
-      "Rarely, not by default: a Record your screen button under this message, for when your user describes a task they do on their computer that you would understand better by watching it. Their recording comes as a .zip file; its README.md says how to read it.",
+      Schema.Union([
+        Schema.Literal("record-screen"),
+        Schema.Struct({
+          apply_theme: described(
+            ThemeId,
+            "The id of a built-in theme, or of one saved with `theme_save`.",
+          ),
+        }),
+      ]),
+      '`"record-screen"`, rarely, not by default: a Record your screen button under this message, for when your user describes a task they do on their computer that you would understand better by watching it. Their recording comes as a .zip file; its README.md says how to read it. `{ "apply_theme": id }`: an Apply theme button, which shows that theme on the device your user presses it on.',
     ),
   ),
   done: Schema.optionalKey(
@@ -1047,6 +1061,56 @@ const InstallSkillInput = toolInput({
 
 const RemoveSkillInput = toolInput({ name: SkillNameInput, scope: SkillScopeInput });
 
+const ThemeReadInput = toolInput({
+  theme: Schema.optionalKey(
+    described(
+      ThemeId,
+      "A built-in or saved theme's id, to read its definition too, as a start for a new one.",
+    ),
+  ),
+});
+
+const ThemeRoleColors = (scope: string) =>
+  described(ThemeColors, `Colors by role name, ${scope}, as \`theme_read\` lists the roles.`);
+
+const ThemeSaveInput = toolInput({
+  id: described(
+    SavedThemeId,
+    "Lowercase letters, digits and hyphens, at most 48, never used by a theme before. A saved theme never changes, since your user may have applied it: another look is a new theme, under a new id.",
+  ),
+  name: described(ThemeName, "What your user sees it called."),
+  description: Schema.optionalKey(
+    described(text(1, THEME_DESCRIPTION_LENGTH), "A few words on its look, shown under its name."),
+  ),
+  canvas: described(
+    ThemeSeed,
+    "The ground color, #rrggbb: one for both appearances, or `{ light, dark }`.",
+  ),
+  accent: described(
+    ThemeSeed,
+    "The color of what your user acts on and of their bubbles, #rrggbb: one, or `{ light, dark }`.",
+  ),
+  colors: Schema.optionalKey(ThemeRoleColors("in both appearances")),
+  variants: Schema.optionalKey(
+    Schema.Struct({
+      light: Schema.optionalKey(ThemeRoleColors("in the light appearance only")),
+      dark: Schema.optionalKey(ThemeRoleColors("in the dark appearance only")),
+    }),
+  ),
+  css: Schema.optionalKey(
+    described(
+      text(1, THEME_CSS_MAX_LENGTH),
+      "Styles for the web and the desktop app, against the selectors `theme_read` lists.",
+    ),
+  ),
+  background: Schema.optionalKey(
+    described(
+      text(1, 500),
+      "An image in your workspace, such as files/dusk.jpg, shown behind the conversation.",
+    ),
+  ),
+});
+
 /** One `j3` tool: its name, its description as prompt text, and the schema its arguments decode with. */
 export interface ToolDefinition<S extends Schema.Top = Schema.Top> {
   readonly name: string;
@@ -1432,6 +1496,24 @@ export const tools = {
     RemoveSkillInput,
     { asks: true },
   ),
+  theme_read: define(
+    "theme_read",
+    [
+      "Read how to make a theme for J3 Bots: the guide to its colors, roles, rules and stable CSS selectors, the built-in themes, the saved ones and who made them, and which one the devices show by default.",
+      "Call it before `theme_save`, when your user asks for a theme or for J3 Bots in other colors.",
+    ],
+    ThemeReadInput,
+  ),
+  theme_save: define(
+    "theme_save",
+    [
+      "Save a new theme for J3 Bots when your user asks for one. A saved theme never changes: to change one, save another under a new id and offer that.",
+      "J3 Bots checks its colors can be read, moves those that fall short and tells you what moved, or refuses it with the reason.",
+      "Saving applies it nowhere: then offer it with `say`'s `offer: { apply_theme: id }`, and your user picks it on the device they want it on. Never say it is applied.",
+      "Returns what was saved and what moved.",
+    ],
+    ThemeSaveInput,
+  ),
   list_connector_resources: define(
     "list_connector_resources",
     [
@@ -1529,6 +1611,18 @@ export const MANAGEMENT_NOTES = {
   /** A skill saved or installed. */
   skillSaved: "Your harness offers it by its description from your next turn.",
   skillRemoved: "Removed.",
+} as const;
+
+/** What `theme_save` answers beyond the theme, and why it refused one. */
+export const THEME_NOTES = {
+  saved:
+    "Saved, and shown nowhere yet. Offer it with `say`'s `offer: { apply_theme: id }`; your user presses Apply theme on the device they want it on. Tell them in a sentence what moved, if anything did.",
+  taken: (id: string) =>
+    `${id} is, or was, a theme's id, and a saved theme never changes, since your user may have applied it. Save the new look under a new id and offer that. Nothing changed.`,
+  refused: (reason: string) => `That theme cannot be saved: ${reason} Nothing changed.`,
+  background: (problem: string) => `The background image ${problem} Nothing changed.`,
+  limit: (most: number) =>
+    `J3 Bots holds at most ${most} saved themes. Ask your user to delete one in Settings → Appearance first. Nothing changed.`,
 } as const;
 
 /** Why a server or skill tool did nothing, in words the bot reads. */

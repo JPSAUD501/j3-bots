@@ -117,6 +117,7 @@ import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
+import { ThemeSettings } from "./ThemeSettings";
 import { PrivacySection } from "./Privacy";
 import { lineField } from "./ui/field";
 
@@ -1424,7 +1425,7 @@ function AppearanceSection() {
     <Section>
       <div className="flex flex-col gap-1.5">
         <span id={appearanceId} className="text-xs">
-          {t("settings.theme")}
+          {t("settings.mode")}
         </span>
         <Segmented
           value={appearance}
@@ -1433,6 +1434,7 @@ function AppearanceSection() {
           labelledBy={appearanceId}
         />
       </div>
+      <ThemeSettings />
       <div className="flex flex-col gap-1">
         <label htmlFor={languageId} className="text-xs">
           {t("settings.language")}

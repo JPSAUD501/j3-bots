@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { J3Client } from "@j3-bots/client-runtime";
 import { showsImage } from "@j3-bots/client-runtime/presentation";
-import type { Attachment, AttachmentId, WorkImageId } from "@j3-bots/contracts";
+import type {
+  Attachment,
+  AttachmentId,
+  ThemeBackground,
+  ThemeId,
+  WorkImageId,
+} from "@j3-bots/contracts";
 import { Directory, File, Paths } from "expo-file-system";
 import { useEffect, useEffectEvent, useState } from "react";
 
@@ -10,15 +16,50 @@ const folder = () => new Directory(Paths.cache, "images");
 
 /**
  * An image the app draws: a file's, which shows as an image only when its
- * type and size let it (`showsImage`), or one a step of a bot's work looked at.
+ * type and size let it (`showsImage`), one a step of a bot's work looked at,
+ * or the one a theme shows behind the conversation, at its revision.
  */
 export type ImageSource =
   | { readonly _tag: "file"; readonly attachment: Attachment }
-  | { readonly _tag: "work"; readonly id: WorkImageId };
+  | { readonly _tag: "work"; readonly id: WorkImageId }
+  | { readonly _tag: "theme"; readonly id: ThemeId; readonly background: ThemeBackground };
 
 /** The name its copy is kept under, which also tells one source from another. */
-const keyOf = (source: ImageSource) =>
-  source._tag === "file" ? source.attachment.id : `work-${source.id}`;
+const keyOf = (source: ImageSource) => {
+  switch (source._tag) {
+    case "file":
+      return source.attachment.id;
+    case "work":
+      return `work-${source.id}`;
+    case "theme":
+      // A revision is the server's word: only what a file name takes is kept of it.
+      return `theme-${source.id}-${source.background.revision.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  }
+};
+
+/** The type a source's copy is kept as, where it is known before its bytes arrive. */
+const knownType = (source: ImageSource): string | null => {
+  switch (source._tag) {
+    case "file":
+      return source.attachment.mediaType;
+    case "theme":
+      return source.background.mediaType;
+    case "work":
+      return null;
+  }
+};
+
+/** The bytes of `source`, through the runtime. */
+const fetchImage = (client: J3Client, source: ImageSource) => {
+  switch (source._tag) {
+    case "file":
+      return client.download(source.attachment);
+    case "work":
+      return client.workImage(source.id);
+    case "theme":
+      return client.themes.background(source.id, source.background);
+  }
+};
 
 /** Each image this run has asked for, by its source: its file's address, or null when it cannot be had. */
 const asked = new Map<string, Promise<string | null>>();
@@ -33,13 +74,13 @@ const extensions: Readonly<Record<string, string>> = {
 };
 
 /**
- * The address of a local copy of an image, for a chip, a card, a step or the
- * viewer to draw: its bytes come through the runtime, with this device's
- * credential, once per run, and are kept in the app's cache, where the
- * system may clear them. Null for a file that does not show as an image
- * (`showsImage`), or an image whose bytes cannot be had. One a bot looked at
- * is fetched again in each run: the server reads it from the bot's workspace
- * as it is then.
+ * The address of a local copy of an image, for a chip, a card, a step, the
+ * viewer or the conversation's backdrop to draw: its bytes come through the
+ * runtime, with this device's credential, once per run, and are kept in the
+ * app's cache, where the system may clear them. Null for a file that does not
+ * show as an image (`showsImage`), or an image whose bytes cannot be had. One
+ * a bot looked at is fetched again in each run: the server reads it from the
+ * bot's workspace as it is then.
  */
 function imageFile(client: J3Client, source: ImageSource): Promise<string | null> {
   if (source._tag === "file" && !showsImage(source.attachment)) return Promise.resolve(null);
@@ -48,22 +89,18 @@ function imageFile(client: J3Client, source: ImageSource): Promise<string | null
   if (known !== undefined) return known;
   const started = generation;
   const loaded = (async () => {
-    if (source._tag === "file") {
-      const kept = new File(folder(), `${key}.${extensions[source.attachment.mediaType] ?? "img"}`);
+    const type = knownType(source);
+    if (type !== null) {
+      const kept = new File(folder(), `${key}.${extensions[type] ?? "img"}`);
       if (kept.exists) return kept.uri;
     }
-    const result =
-      source._tag === "file"
-        ? await client.download(source.attachment)
-        : await client.workImage(source.id);
+    const result = await fetchImage(client, source);
     if (result._tag === "failed" || started !== generation) return null;
-    const extension = extensions[result.value.mediaType];
     // Only the image types the app draws without running anything are kept.
-    if (source._tag === "work" && extension === undefined) return null;
-    const file = new File(
-      folder(),
-      `${key}.${source._tag === "file" ? (extensions[source.attachment.mediaType] ?? "img") : extension}`,
-    );
+    const extension =
+      type === null ? extensions[result.value.mediaType] : (extensions[type] ?? "img");
+    if (extension === undefined) return null;
+    const file = new File(folder(), `${key}.${extension}`);
     try {
       folder().create({ intermediates: true, idempotent: true });
       file.create({ overwrite: true });

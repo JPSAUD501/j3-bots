@@ -12,6 +12,7 @@ import type {
   SecretId,
   SkillName,
   SkillScope,
+  ThemeId,
 } from "@j3-bots/contracts";
 import { rosterKeyText, type SettingsPage } from "@j3-bots/client-runtime/presentation";
 import { settingsPageWords } from "@j3-bots/client-runtime/wording";
@@ -50,6 +51,7 @@ import { RoomFormScreen } from "./screens/RoomForm.tsx";
 import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
 import { SettingsPageScreen } from "./settings/SettingsPage.tsx";
+import { ThemeFormScreen } from "./settings/Themes.tsx";
 import { UsageDataSentScreen } from "./settings/UsageData.tsx";
 import { WhatsNewScreen } from "./update/WhatsNew.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
@@ -74,6 +76,7 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * bot or room by its roster key, so it shows the roster's current name.
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
+ * A theme's form opens from Settings → Appearance.
  * The operator's secrets open from Settings and from a connector that cannot
  * read them, then one secret, then its form.
  * The connectors' screens open from Settings, a bot's details and a card:
@@ -105,6 +108,8 @@ export type Screens = {
   newBot: undefined;
   settings: undefined;
   settingsPage: { readonly page: SettingsPage };
+  /** A new theme from two colors with `themeId` null; otherwise the one whose colors change. */
+  themeForm: { readonly themeId: ThemeId | null };
   whatsNew: undefined;
   usageDataSent: undefined;
   backstage: undefined;
@@ -310,6 +315,7 @@ export function Main() {
                 <Stack.Screen name="secrets" component={SecretsScreen} />
                 <Stack.Screen name="secret" component={SecretScreen} />
                 <Stack.Screen name="secretForm" options={sheet} component={SecretFormScreen} />
+                <Stack.Screen name="themeForm" options={sheet} component={ThemeFormScreen} />
                 {/* The connectors' screens set their own titles. */}
                 <Stack.Screen name="connectors" component={ConnectorsScreen} />
                 <Stack.Screen name="connector" component={ConnectorScreen} />

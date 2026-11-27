@@ -474,6 +474,7 @@ export function Composer({
   ];
   return (
     <form
+      data-slot="composer"
       className="flex flex-col gap-1.5"
       onSubmit={(event) => {
         event.preventDefault();

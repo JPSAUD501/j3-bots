@@ -6,6 +6,7 @@ import {
   DesktopMode,
   MovedAway,
   ServerOrigin,
+  ThemeWindowColors,
 } from "@j3-bots/desktop-bridge";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -55,7 +56,8 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * server the page runs on (the one the operator named, or the one on this
  * computer), the device this computer was signed in as on its own server,
  * the window's place, the global shortcut the operator chose (`null` for the
- * default), the appearance the page last reported, which the window takes
+ * default), the appearance the page last reported and its theme's window
+ * colors (`windowColors`, null for the stock ones), which the windows take
  * before the page paints, whether the app starts with the system, off
  * until the operator turns it on, whether phones on the network may reach
  * the server on this computer (`phoneAccess`), off until the operator turns
@@ -79,6 +81,7 @@ export const Settings = Schema.Struct({
   window: Schema.NullOr(WindowState),
   shortcut: Schema.NullOr(Accelerator),
   appearance: Appearance,
+  windowColors: Schema.NullOr(ThemeWindowColors),
   startWithSystem: Schema.Boolean,
   phoneAccess: Schema.Boolean,
   updateChannel: UpdateChannel,
@@ -98,6 +101,7 @@ const EMPTY: Settings = {
   window: null,
   shortcut: null,
   appearance: "system",
+  windowColors: null,
   startWithSystem: false,
   phoneAccess: false,
   updateChannel: "stable",
@@ -118,6 +122,7 @@ const decodeLocalDevice = Schema.decodeUnknownOption(LocalDevice);
 const decodeWindow = Schema.decodeUnknownOption(WindowState);
 const decodeShortcut = Schema.decodeUnknownOption(Accelerator);
 const decodeAppearance = Schema.decodeUnknownOption(Appearance);
+const decodeWindowColors = Schema.decodeUnknownOption(ThemeWindowColors);
 const decodeFlag = Schema.decodeUnknownOption(Schema.Boolean);
 const decodeChannel = Schema.decodeUnknownOption(UpdateChannel);
 const decodeMoved = Schema.decodeUnknownOption(MovedAway);
@@ -143,6 +148,7 @@ export const decodeSettings = (
     window,
     shortcut,
     appearance,
+    windowColors,
     startWithSystem,
     phoneAccess,
     updateChannel,
@@ -164,6 +170,7 @@ export const decodeSettings = (
   const keptWindow = decodeWindow(window);
   const keptShortcut = decodeShortcut(shortcut);
   const keptAppearance = decodeAppearance(appearance);
+  const keptWindowColors = decodeWindowColors(windowColors);
   const keptStartWithSystem = decodeFlag(startWithSystem);
   const keptPhoneAccess = decodeFlag(phoneAccess);
   const keptChannel = decodeChannel(updateChannel);
@@ -184,6 +191,9 @@ export const decodeSettings = (
     dropped.push("shortcut");
   }
   if (appearance !== undefined && Option.isNone(keptAppearance)) dropped.push("appearance");
+  if (windowColors !== undefined && windowColors !== null && Option.isNone(keptWindowColors)) {
+    dropped.push("windowColors");
+  }
   if (startWithSystem !== undefined && Option.isNone(keptStartWithSystem)) {
     dropped.push("startWithSystem");
   }
@@ -207,6 +217,7 @@ export const decodeSettings = (
       window: Option.getOrNull(keptWindow),
       shortcut: Option.getOrNull(keptShortcut),
       appearance: Option.getOrElse(keptAppearance, () => EMPTY.appearance),
+      windowColors: Option.getOrNull(keptWindowColors),
       startWithSystem: Option.getOrElse(keptStartWithSystem, () => EMPTY.startWithSystem),
       phoneAccess: Option.getOrElse(keptPhoneAccess, () => EMPTY.phoneAccess),
       updateChannel: Option.getOrElse(keptChannel, () => EMPTY.updateChannel),

@@ -23,6 +23,8 @@ The report lists each window's first load raw and gzipped against its budget, an
 
 **Over budget.** First ask whether the window needs the new code before it shows anything. A dialog, a page of Settings, a viewer or anything else opened from the app once it is up is a `deferred` component (`apps/web/src/lib/deferred.tsx`), which keeps it out of the first load. If the window does need it, run `--update` and say in the pull request what grew and why.
 
+**Only what a window uses.** `contracts`, `client-runtime` and `design-tokens` declare in their `package.json` that importing them does nothing but define (`"sideEffects"`; design-tokens' stylesheets are the exception). So a window that imports one name through a package's index loads the module that defines it, not every module the index lists. Without it, everything an index reaches went into the code all three windows share: the recorder's first load carried the conversations' store and the themes the app draws, 56 KiB it never ran. Keep it true: a module in those packages declares at its top level and runs nothing there that another module counts on, as the bundler drops a module none of whose names a window uses.
+
 ## The wire budget
 
 What the RPC socket sends a client, in bytes of JSON as the socket writes them, as it connects to a home in long use and through one ordinary turn. The test that holds it is `apps/server/src/rpc/wireBudget.test.ts`, part of `vp run test`. It seeds:

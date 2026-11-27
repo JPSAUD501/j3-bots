@@ -189,6 +189,15 @@ Either way, the room then works the same:
 - **Fresh start**: stops any work the bot has running and resets its working context, with nothing of the recent conversation carried over, and drops the notes that would have told it what its routines reported. The conversation history, memory, routines and files stay. Each routine keeps what its recent runs said, which is the routine's own state: a run reads it to tell what is new and not report the same thing again. Moving a bot to another provider stops its work the same way, and its new working context does carry a digest of the recent conversation.
 - **Delete**: removes the bot, its conversation, memory and routines after an explicit confirmation. Files in its workspace are kept unless the operator chooses otherwise.
 
+### Changing how J3 Bots looks
+
+- **Settings → Appearance** shows every theme as a small conversation in its colors, the one this device shows marked. Picking one changes this device at once, with no reload; the server's other devices keep theirs. Light, dark or the system's stays its own choice, on top of the theme.
+- **New devices start with** the theme the operator chose for the server; Palco until they choose.
+- **Create from colors** takes a name, a background and an accent, and shows the theme in light and dark as they change. Where a color would be hard to read, it is moved a little, and the form says so; colors no change can make readable are refused with the reason.
+- **A bot can make one.** Asked for a theme, or for J3 Bots in other colors, a bot saves one and offers it under its message: Apply theme, with the theme's two colors. Nothing changes until the operator presses it, on the device they want it on, and a theme they applied never changes under them: asked for something different, the bot makes another and offers that. Settings says which bot made a theme, and any saved theme can be deleted there; a device that showed it goes back to the server's default.
+- **Some themes change more on a computer.** A theme may carry styles, which show on a computer, in the browser or the desktop app. A phone or a tablet, the Android app included, shows its colors and says so. Settings always shows without those styles, and `Ctrl+,` (`⌘,` on a Mac) opens it, so a theme can never hide the way back.
+- **A picture behind the conversation** sits under a veil of the theme's background, as thick as it needs to be for every word on it to stay readable.
+
 ### Sharing a bot, and starting from one
 
 The operator has a bot that does its job well and wants someone else to have it, or a copy to start from.

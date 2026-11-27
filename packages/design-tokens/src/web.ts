@@ -7,6 +7,8 @@ import {
   type Entry,
 } from "./themeEntries.ts";
 import { eases, lift, press, springs } from "./springs.ts";
+import { pictureVeil } from "./theme.ts";
+import { THEME_VEIL_VARIABLE } from "./themeCss.ts";
 import {
   displayTracking,
   fontFaces,
@@ -14,7 +16,9 @@ import {
   layout,
   motion,
   shadows,
+  type Palette,
   spacingUnit,
+  stockPalette,
 } from "./tokens.ts";
 
 const rem = (px: number) => `${px / 16}rem`;
@@ -69,7 +73,7 @@ const springEntries = (): ReadonlyArray<Entry> =>
  * one class takes either set.
  */
 export function renderWebCss(): string {
-  const colorUtilities = colorEntries("light", "").map(([name]): Entry => [
+  const colorUtilities = colorEntries(stockPalette("light"), "light", "").map(([name]): Entry => [
     `color-${name}`,
     `var(--${name})`,
   ]);
@@ -81,12 +85,12 @@ ${fontFaceRules()}
 :root,
 .light {
   color-scheme: light;
-${lines([...colorEntries("light", ""), ...shadowEntries("light")])}
+${lines([...colorEntries(stockPalette("light"), "light", ""), ...shadowEntries("light")])}
 }
 
 .dark {
   color-scheme: dark;
-${lines([...colorEntries("dark", ""), ...shadowEntries("dark")])}
+${lines([...colorEntries(stockPalette("dark"), "dark", ""), ...shadowEntries("dark")])}
 }
 
 :root {
@@ -155,4 +159,46 @@ ${lines([
 ])}
 }
 `;
+}
+
+/**
+ * A theme's colors as the stylesheet a page adds over the generated one: the
+ * same custom properties as `:root`/`.light` and `.dark` declare, from the
+ * theme's two palettes, on `root`, a selector of the page's root more
+ * specific than `:root` (such as `:root[data-theme]`), so they win whichever
+ * sheet loads last, and with them the veil over the theme's picture
+ * (`pictureVeil`). Everything else (type, space, motion, shadows) stays the
+ * generated sheet's.
+ */
+export function renderThemeColorsCss(
+  palettes: Readonly<Record<"light" | "dark", Palette>>,
+  root: string,
+): string {
+  const veil = (appearance: "light" | "dark"): Entry => [
+    THEME_VEIL_VARIABLE.slice(2),
+    `${Math.round(pictureVeil(palettes[appearance], appearance) * 100)}%`,
+  ];
+  return `${root},
+${root}.light {
+${lines([...colorEntries(palettes.light, "light", ""), veil("light")])}
+}
+
+${root}.dark {
+${lines([...colorEntries(palettes.dark, "dark", ""), veil("dark")])}
+}
+`;
+}
+
+/**
+ * A palette's colors as the custom properties the generated sheet declares,
+ * for an element's own style: what is drawn inside it takes the palette's
+ * colors, as a preview of a theme in a list of themes does.
+ */
+export function themeColorVariables(
+  palette: Palette,
+  appearance: "light" | "dark",
+): Readonly<Record<`--${string}`, string>> {
+  return Object.fromEntries(
+    colorEntries(palette, appearance, "").map(([name, value]) => [`--${name}`, value]),
+  );
 }

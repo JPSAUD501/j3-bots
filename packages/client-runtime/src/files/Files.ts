@@ -11,12 +11,15 @@ import {
   MAX_ATTACHMENT_SIZE,
   MAX_DIAGNOSTICS_SIZE,
   MAX_INLINE_IMAGE_SIZE,
+  MAX_THEME_BACKGROUND_SIZE,
   NotAuthenticated,
   RECORDING_CHUNK_SIZE,
   RecordingOffset,
   RecordingUpload,
   type RecordingUploadId,
   RecordingUploadStart,
+  type ThemeBackground,
+  type ThemeId,
   type WorkImageId,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -162,6 +165,14 @@ export class Files extends Context.Service<
      */
     readonly workImage: (
       id: WorkImageId,
+    ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
+    /**
+     * A saved theme's background image, at the revision the library names:
+     * `not-found` once the theme has another image, or none.
+     */
+    readonly themeBackground: (
+      themeId: ThemeId,
+      background: ThemeBackground,
     ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
     /**
      * The server's diagnostics zip, made as it is asked for, saying `client`
@@ -516,6 +527,16 @@ export const layer = Layer.effect(
       );
     });
 
+    const themeBackground = Effect.fn("Files.themeBackground")(function* (
+      themeId: ThemeId,
+      background: ThemeBackground,
+    ) {
+      return yield* get(
+        `${HTTP_PATHS.themeBackgrounds}/${encodeURIComponent(themeId)}?revision=${encodeURIComponent(background.revision)}`,
+        MAX_THEME_BACKGROUND_SIZE,
+      );
+    });
+
     // Made as it is sent: it is given the time the largest the server makes takes.
     const diagnostics = Effect.fn("Files.diagnostics")(function* (client: DiagnosticsClient) {
       const body = yield* encodeDiagnosticsRequest({ client }).pipe(Effect.orDie);
@@ -527,6 +548,13 @@ export const layer = Layer.effect(
       );
     });
 
-    return Files.of({ upload, uploadRecording, download, workImage, diagnostics });
+    return Files.of({
+      upload,
+      uploadRecording,
+      download,
+      workImage,
+      themeBackground,
+      diagnostics,
+    });
   }),
 );

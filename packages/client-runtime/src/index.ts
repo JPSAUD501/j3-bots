@@ -3,6 +3,7 @@ export {
   type BrowserViewHandle,
   type ConnectorsClient,
   type SkillsClient,
+  type ThemesClient,
   type ConversationHandle,
   createJ3Client,
   type DictationHandle,

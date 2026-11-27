@@ -46,6 +46,7 @@ import { ConnectorTile } from "./connectors/parts";
 import { MessageText } from "./MessageText";
 import { VisualTheme } from "./VisualCard";
 import { Button } from "./ui/button";
+import { useShownPalette } from "../themes/ThemeRuntime";
 
 // A connector's app: the interface a connector's server gave the tool a bot
 // called, part of the bot's reply where the call happened (decision 0093),
@@ -455,9 +456,11 @@ function AppStageFrame({
   // The app is told of a new mode only once its frame is laid out in it, with the room it has there.
   const size = useFrameSize(box, mode === "inline" || stageBox !== null ? mode : null);
 
+  const palette = useShownPalette(theme);
   const place = useMemo<ConnectorAppPlace>(
     () => ({
       appearance: theme,
+      ...(palette === undefined ? {} : { palette }),
       locale,
       timeZone,
       platform: access.platform,
@@ -466,7 +469,7 @@ function AppStageFrame({
       display: displayOf(size),
       modes: stage.modes,
     }),
-    [theme, locale, timeZone, access.platform, size, stage.modes],
+    [theme, palette, locale, timeZone, access.platform, size, stage.modes],
   );
   const placeNow = useEffectEvent(() => place);
   const setMode = useEffectEvent((next: ConnectorAppDisplayMode) => stage.show(view.viewId, next));

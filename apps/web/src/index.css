@@ -1844,3 +1844,23 @@ html[data-recorder="solid"] body {
 html[data-recorder="solid"] #root {
   height: 100%;
 }
+
+/*
+ * A theme's background image (decision 0104), behind the conversation, under
+ * a veil of the canvas so every word on it stays readable: `--theme-veil`,
+ * which the theme's colors give, at least 84% and more where a picture's
+ * whitest or blackest would take a word under its contrast. It is drawn once,
+ * and never moves with scrolling. A theme's own CSS comes after this layer.
+ */
+@layer components {
+  :root[data-theme-background] [data-slot="conversation"] {
+    background-image:
+      linear-gradient(
+        color-mix(in oklab, var(--background) var(--theme-veil, 84%), transparent),
+        color-mix(in oklab, var(--background) var(--theme-veil, 84%), transparent)
+      ),
+      var(--theme-background-image);
+    background-position: center;
+    background-size: cover;
+  }
+}
