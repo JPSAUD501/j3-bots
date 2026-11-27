@@ -9,6 +9,7 @@ import {
   EntryTarget,
   Label,
   Language,
+  LookingAt,
   PairBotIds,
   PairingCode,
   PairingLinkTarget,
@@ -718,14 +719,99 @@ export type QuickAccessReport = typeof QuickAccessReport.Type;
 const Opening = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 /**
+ * Whether the app may take a picture of a window, here and now.
+ * `available`: it may. `needs-permission`: macOS lets it only once the
+ * operator allows Screen Recording. `none`: this desktop does not let it,
+ * or the window cannot be pictured.
+ */
+export const PictureReach = Schema.Literals(["available", "needs-permission", "none"]);
+export type PictureReach = typeof PictureReach.Type;
+
+/**
+ * The window that was in front when the global shortcut opened quick
+ * access, as the app could read it: the app's name and, unless the
+ * operator turned titles off, the window's title (`lookingAt`); whether a
+ * picture of it can be taken; and whether the operator asked for one on
+ * every message (`pictureByDefault`).
+ */
+export const SeenWindow = Schema.Struct({
+  lookingAt: LookingAt,
+  picture: PictureReach,
+  pictureByDefault: Schema.Boolean,
+});
+export type SeenWindow = typeof SeenWindow.Type;
+
+/** The page asks for a picture of the window that was in front as showing `opening` opened. */
+export const QuickAccessPictureRequest = Schema.Struct({ opening: Opening });
+export type QuickAccessPictureRequest = typeof QuickAccessPictureRequest.Type;
+
+/** The largest side, in pixels, of a picture of a window: a model reads it whole, and it stays small. */
+export const MAX_PICTURE_SIDE = 1600;
+
+const PictureSide = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_PICTURE_SIDE }));
+
+/**
+ * A picture of the window, as the app took it: a JPEG of at most
+ * `MAX_PICTURE_SIDE` on its longest side, `taken` only when the page asked.
+ * `needs-permission`: macOS refused it until the operator allows Screen
+ * Recording. `failed`: there was no picture to take, as of a window that
+ * closed, or of another showing than the latest.
+ */
+export const QuickAccessPicture = Schema.Union([
+  Schema.TaggedStruct("taken", {
+    bytes: Schema.Uint8Array,
+    mediaType: Schema.Literal("image/jpeg"),
+    width: PictureSide,
+    height: PictureSide,
+  }),
+  Schema.TaggedStruct("needs-permission", {}),
+  Schema.TaggedStruct("failed", {}),
+]);
+export type QuickAccessPicture = typeof QuickAccessPicture.Type;
+
+/**
+ * Whether the system lets the app read other apps' windows. `not-needed`:
+ * it asks for no permission (Windows, Linux). `granted` or `needed`: macOS's
+ * Screen Recording, which reading a window's title or taking its picture
+ * needs, was allowed or not yet.
+ */
+export const ScreenAccess = Schema.Literals(["not-needed", "granted", "needed"]);
+export type ScreenAccess = typeof ScreenAccess.Type;
+
+/**
+ * What quick access reads of the window in front, on this computer.
+ * `reach`: `window`, its app, title and picture; `none`, nothing, on a
+ * desktop that lets no app read another's window (Wayland). `title`: the
+ * window's title goes with its app, on until the operator turns it off.
+ * `pictureByDefault`: a picture of it goes with every message, off until
+ * the operator turns it on.
+ */
+export const LookingAtSettings = Schema.Struct({
+  reach: Schema.Literals(["window", "none"]),
+  title: Schema.Boolean,
+  pictureByDefault: Schema.Boolean,
+  screen: ScreenAccess,
+});
+export type LookingAtSettings = typeof LookingAtSettings.Type;
+
+export const LookingAtChange = Schema.Struct({
+  title: Schema.optionalKey(Schema.Boolean),
+  pictureByDefault: Schema.optionalKey(Schema.Boolean),
+});
+export type LookingAtChange = typeof LookingAtChange.Type;
+
+/**
  * What the app tells the quick access window's page. `open`: the window was
  * just shown, or brought back to hand, so the page comes in and puts the
  * cursor in its composer; `opening` numbers that showing. `leave`: the page
- * goes out, then asks for the window to be hidden.
+ * goes out, then asks for the window to be hidden. `seen`: the window that
+ * was in front as showing `opening` opened, once the app has read it; never
+ * when it read nothing.
  */
 export const QuickAccessCue = Schema.Union([
   Schema.TaggedStruct("open", { opening: Opening }),
   Schema.TaggedStruct("leave", {}),
+  Schema.TaggedStruct("seen", { opening: Opening, window: SeenWindow }),
 ]);
 export type QuickAccessCue = typeof QuickAccessCue.Type;
 
@@ -897,6 +983,10 @@ export const HostedBridge = Schema.Struct({
   onQuickAccessCue: Callable,
   hideQuickAccess: Callable,
   openFromQuickAccess: Callable,
+  quickAccessPicture: Callable,
+  lookingAt: Callable,
+  setLookingAt: Callable,
+  askScreenAccess: Callable,
   shortcutStatus: Callable,
   setShortcut: Callable,
   useThisComputer: Callable,

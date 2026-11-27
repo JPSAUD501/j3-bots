@@ -3,10 +3,14 @@ import type { DeviceId } from "@j3-bots/contracts";
 import {
   type Destination,
   IPC_CHANNELS,
+  LookingAtChange,
+  LookingAtSettings,
   QUICK_ACCESS_PATH,
   QuickAccessCue,
   QuickAccessHide,
   QuickAccessOpen,
+  QuickAccessPicture,
+  QuickAccessPictureRequest,
   QuickAccessReport,
 } from "@j3-bots/desktop-bridge";
 import { colors } from "@j3-bots/design-tokens";
@@ -34,6 +38,7 @@ import {
   shortcutStep,
   withPlace,
 } from "./quickAccessPlace.ts";
+import type { FrontWindow, WindowReader } from "./lookingAt/index.ts";
 import { DesktopSettings } from "./settings.ts";
 
 // Quick access: a small window on the primary bot's conversation, which the
@@ -45,14 +50,27 @@ import { DesktopSettings } from "./settings.ts";
 // following the server, so the shortcut only has to show it.
 //
 // Its page is the web client's own, at `/quick`, under the preload script and
-// the navigation rules of the main window. Three things only that page may
-// ask: say whether it has a bot to show, hide the window, and open the main
-// window at the bot's conversation.
+// the navigation rules of the main window. Four things only that page may
+// ask: say whether it has a bot to show, hide the window, open the main
+// window at the bot's conversation, and take a picture of the window that
+// was in front.
+//
+// The global shortcut, pressed over another app, reads that app's window
+// (`WindowReader`) as quick access opens: its app's name and, unless the
+// operator turned it off, its title, which the page shows as it opens. A
+// picture of it is taken only when the page asks, which it does only when
+// the operator wants one. Nothing is read from the tray's menu, over one of
+// the app's own windows, or where the system gives an app no other's window;
+// what was read goes with the showing it was read for.
 
 const decodeReport = Schema.decodeUnknownOption(QuickAccessReport);
 const decodeOpen = Schema.decodeUnknownOption(QuickAccessOpen);
 const decodeHide = Schema.decodeUnknownOption(QuickAccessHide);
+const decodePictureRequest = Schema.decodeUnknownOption(QuickAccessPictureRequest);
+const decodeLookingAtChange = Schema.decodeUnknownOption(LookingAtChange);
 const encodeCue = Schema.encodeSync(QuickAccessCue);
+const encodePicture = Schema.encodeSync(QuickAccessPicture);
+const encodeLookingAt = Schema.encodeSync(LookingAtSettings);
 
 /** How long the page has to go out before the window is hidden under it. */
 const LEAVE_WITHIN = Duration.millis(600);
@@ -76,11 +94,16 @@ interface Options {
   readonly showMain: () => void;
   /** Shows the main window at `target`, under the pairing that listed it. */
   readonly openInMain: (target: Destination, pairing: DeviceId) => void;
+  /** How the window in front is read here. */
+  readonly reader: WindowReader;
 }
+
+/** What opens quick access: the global shortcut, or the tray's menu. */
+export type Opener = "shortcut" | "menu";
 
 interface QuickAccess {
   /** What the global shortcut does: opens quick access, or closes it while the cursor is in it. */
-  readonly toggle: () => void;
+  readonly toggle: (from: Opener) => void;
   /**
    * Takes its page off the window, with everything that page held open, as
    * the storage it shares with the main window's: done once that is so. The
@@ -103,6 +126,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
   wayland,
   showMain,
   openInMain,
+  reader,
 }: Options) {
   const settings = yield* DesktopSettings;
   const context = yield* Effect.context<never>();
@@ -154,7 +178,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
       let settling: Fiber.Fiber<void> | null = null;
       let gone = false;
 
-      const fromQuickAccess = (event: IpcMainEvent) =>
+      const fromQuickAccess = (event: IpcMainEvent | IpcMainInvokeEvent) =>
         !window.isDestroyed() &&
         event.sender === window.webContents &&
         fromApp(event) &&
@@ -174,7 +198,12 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
       const opened = () => {
         opening += 1;
         cue({ _tag: "open", opening });
+        return opening;
       };
+      /** The window read as the latest showing opened, while it shows: what its picture is of. */
+      let seen: { readonly opening: number; readonly front: FrontWindow } | null = null;
+      /** A showing waits for the window in front to be read before it takes the keys. */
+      let reading = false;
       const stay = () => {
         cancel(leaving);
         leaving = null;
@@ -183,6 +212,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         stay();
         if (window.isDestroyed() || !window.isVisible()) return;
         const focused = window.isFocused();
+        seen = null;
         window.hide();
         // However it was put away, its page goes out with it, and comes in afresh next time.
         cue({ _tag: "leave" });
@@ -204,7 +234,67 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         place(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()));
         window.show();
         window.focus();
-        opened();
+        return opened();
+      };
+
+      /** Tells the page showing `shown` what was read of the window in front, if it still shows. */
+      const tell = (shown: number, front: FrontWindow | null, pictureByDefault: boolean) => {
+        if (front === null || shown !== opening || window.isDestroyed() || !window.isVisible()) {
+          return;
+        }
+        seen = { opening: shown, front };
+        cue({
+          _tag: "seen",
+          opening: shown,
+          window: { lookingAt: front.lookingAt, picture: front.picture, pictureByDefault },
+        });
+      };
+      /**
+       * Shows quick access with `show`, which answers the showing's number.
+       * From the global shortcut over another app, it reads that app's
+       * window too: first, where the reader must ask before quick access
+       * takes the keys, for at most as long as it says.
+       */
+      const showOver = (from: Opener, show: () => number) => {
+        if (
+          from !== "shortcut" ||
+          reader.reach === "none" ||
+          BrowserWindow.getFocusedWindow() !== null
+        ) {
+          show();
+          return;
+        }
+        const { windowTitle, windowPicture } = runSync(settings.get);
+        const read = runFork(
+          reader
+            .front({ withTitle: windowTitle })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Reading the window in front failed", cause).pipe(
+                  Effect.as(null),
+                ),
+              ),
+            ),
+        );
+        const told = (shown: number) =>
+          Fiber.join(read).pipe(Effect.map((front) => tell(shown, front, windowPicture)));
+        if (Duration.isZero(reader.beforeFocus)) {
+          runFork(told(show()));
+          return;
+        }
+        reading = true;
+        runFork(
+          Fiber.await(read).pipe(
+            Effect.timeoutOption(reader.beforeFocus),
+            Effect.andThen(
+              Effect.sync(() => {
+                reading = false;
+                return window.isDestroyed() ? null : show();
+              }),
+            ),
+            Effect.flatMap((shown) => (shown === null ? Effect.void : told(shown))),
+          ),
+        );
       };
 
       // Where the operator drags it is kept for the display it was dragged on,
@@ -318,9 +408,58 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         hide();
         openInMain(decoded.value.target, decoded.value.pairing);
       });
+      ipcMain.handle(IPC_CHANNELS.quickAccessPicture, (event, request: unknown) => {
+        const decoded = decodePictureRequest(request);
+        const failed = encodePicture({ _tag: "failed" });
+        if (!fromQuickAccess(event) || Option.isNone(decoded)) return failed;
+        // Only of the window read for the showing that asks, while it shows.
+        if (seen === null || seen.opening !== decoded.value.opening) return failed;
+        if (seen.front.picture === "none") return failed;
+        return runPromise(seen.front.takePicture.pipe(Effect.map(encodePicture)));
+      });
 
-      const toggle = () => {
+      // What quick access reads, which the settings of either page show and change.
+      const lookingAtNow = Effect.gen(function* () {
+        const current = yield* settings.get;
+        return encodeLookingAt({
+          reach: reader.reach,
+          title: current.windowTitle,
+          pictureByDefault: current.windowPicture,
+          screen: yield* reader.screen,
+        });
+      });
+      ipcMain.handle(IPC_CHANNELS.lookingAt, (event) =>
+        fromApp(event) ? runPromise(lookingAtNow) : null,
+      );
+      ipcMain.handle(IPC_CHANNELS.setLookingAt, (event, request: unknown) => {
+        const decoded = decodeLookingAtChange(request);
+        if (!fromApp(event) || Option.isNone(decoded)) return null;
+        const { title, pictureByDefault } = decoded.value;
+        return runPromise(
+          settings
+            .update((current) => ({
+              ...current,
+              windowTitle: title ?? current.windowTitle,
+              windowPicture: pictureByDefault ?? current.windowPicture,
+            }))
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Saving what quick access reads failed", error),
+              ),
+              Effect.andThen(lookingAtNow),
+            ),
+        );
+      });
+      ipcMain.handle(IPC_CHANNELS.askScreenAccess, (event) =>
+        fromApp(event)
+          ? runPromise(reader.askScreenAccess.pipe(Effect.andThen(lookingAtNow)))
+          : null,
+      );
+
+      const toggle = (from: Opener) => {
         if (window.isDestroyed()) return showMain();
+        // The window in front is still being read for the showing it opens.
+        if (reading) return;
         const step = shortcutStep({
           available,
           visible: window.isVisible(),
@@ -331,11 +470,13 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
           case "show-main":
             return showMain();
           case "open":
-            return open();
+            return showOver(from, open);
           case "return":
-            stay();
-            window.focus();
-            return opened();
+            return showOver(from, () => {
+              stay();
+              window.focus();
+              return opened();
+            });
           case "leave":
             cue({ _tag: "leave" });
             leaving = after(LEAVE_WITHIN, hide);
@@ -360,6 +501,10 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
           ipcMain.removeAllListeners(IPC_CHANNELS.quickAccess);
           ipcMain.removeAllListeners(IPC_CHANNELS.quickAccessHide);
           ipcMain.removeAllListeners(IPC_CHANNELS.quickAccessOpenMain);
+          ipcMain.removeHandler(IPC_CHANNELS.quickAccessPicture);
+          ipcMain.removeHandler(IPC_CHANNELS.lookingAt);
+          ipcMain.removeHandler(IPC_CHANNELS.setLookingAt);
+          ipcMain.removeHandler(IPC_CHANNELS.askScreenAccess);
           nativeTheme.off("updated", repaint);
           screen.off("display-metrics-changed", displaysChanged);
           screen.off("display-removed", displaysChanged);

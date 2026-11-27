@@ -67,6 +67,7 @@ import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import * as LinkHandler from "./linkHandler.ts";
 import * as LocalHost from "./localServer/localHost.ts";
+import { readerHere } from "./lookingAt/index.ts";
 import * as PhoneAccessControl from "./localServer/phoneAccess.ts";
 import { quitGate } from "./localServer/quitGate.ts";
 import { thisComputer } from "./localServer/thisComputer.ts";
@@ -709,6 +710,15 @@ const program = Effect.gen(function* () {
       forward();
       sendCommand({ _tag: "open", target, pairing });
     },
+    reader: yield* readerHere({
+      platform: process.platform,
+      wayland,
+      env: process.env,
+      homeDirectory: app.getPath("home"),
+      hostname: computer.hostname,
+      locale: app.getLocale(),
+      ownProcess: process.pid,
+    }),
   });
   unloadQuickAccess = quickAccess.unload;
   yield* Menus.serve({
