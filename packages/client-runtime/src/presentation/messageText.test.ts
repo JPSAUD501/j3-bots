@@ -1,7 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { type MentionName, parseMessageText } from "./messageText.ts";
+import { type Block, type Inline, type MentionName, parseMessageText } from "./messageText.ts";
+
+/** What a part shows, without where it stands in the text: the subject of most tests here. */
+const shown = (inline: Inline) => {
+  if (inline.kind === "file") return inline;
+  const { at: _at, ...rest } = inline;
+  return rest;
+};
+const shownBlocks = (blocks: ReadonlyArray<Block>) =>
+  blocks.map((block) => {
+    if (block.kind === "code") {
+      const { at: _at, ...rest } = block;
+      return rest;
+    }
+    return { kind: block.kind, inlines: block.inlines.map(shown) };
+  });
 
 const bot = (name: string, id: string) =>
   ({ name, of: { _tag: "bot", botId: BotId.make(id) } }) satisfies MentionName;
@@ -13,14 +28,14 @@ const everyone = { name: "everyone", of: null } satisfies MentionName;
 
 const inlinesOf = (text: string, mentionable: ReadonlyArray<MentionName> = []) => {
   const [block] = parseMessageText(text, mentionable);
-  return block?.kind === "paragraph" ? block.inlines : [];
+  return block?.kind === "paragraph" ? block.inlines.map(shown) : [];
 };
 
 const mention = ({ name, of }: MentionName) => ({ kind: "mention", name, of }) as const;
 
 describe("parseMessageText", () => {
   it("splits paragraphs and fenced code", () => {
-    expect(parseMessageText("First.\n\n```ts\nconst a = 1;\n```\nAfter")).toEqual([
+    expect(shownBlocks(parseMessageText("First.\n\n```ts\nconst a = 1;\n```\nAfter"))).toEqual([
       { kind: "paragraph", inlines: [{ kind: "text", text: "First." }] },
       { kind: "code", language: "ts", text: "const a = 1;" },
       { kind: "paragraph", inlines: [{ kind: "text", text: "After" }] },
@@ -105,7 +120,7 @@ describe("parseMessageText", () => {
 
 describe("parseMessageText with files placed in the text", () => {
   it("shows no file in the text of a message that placed none", () => {
-    expect(parseMessageText("Here are the notes.")).toEqual([
+    expect(shownBlocks(parseMessageText("Here are the notes."))).toEqual([
       { kind: "paragraph", inlines: [{ kind: "text", text: "Here are the notes." }] },
     ]);
   });
@@ -116,24 +131,39 @@ describe("parseMessageText with files placed in the text", () => {
     expect(block).toEqual({
       kind: "paragraph",
       inlines: [
-        { kind: "text", text: "see " },
+        { kind: "text", text: "see ", at: 0 },
         { kind: "file", index: 0 },
-        { kind: "code", text: "a" },
-        { kind: "text", text: " " },
+        { kind: "code", text: "a", at: 5 },
+        { kind: "text", text: " ", at: 7 },
         { kind: "file", index: 1 },
-        { kind: "link", href: "https://x.dev", text: "https://x.dev" },
-        { kind: "text", text: " " },
-        mention(ana),
+        { kind: "link", href: "https://x.dev", text: "https://x.dev", at: 8 },
+        { kind: "text", text: " ", at: 21 },
+        { ...mention(ana), at: 22 },
         { kind: "file", index: 2 },
-        { kind: "text", text: " end" },
+        { kind: "text", text: " end", at: 26 },
         { kind: "file", index: 3 },
       ],
     });
   });
 
+  it("says where each part it shows stands in the text, so a selection maps back to it", () => {
+    const text = "Hi @Ana,\n\nrun `pnpm i` then see https://x.dev/a.\n```sh\nls -la\n```\nok";
+    for (const block of parseMessageText(text, [ana])) {
+      if (block.kind === "code") {
+        expect(text.slice(block.at, block.at + block.text.length)).toBe(block.text);
+        continue;
+      }
+      for (const inline of block.inlines) {
+        if (inline.kind === "file") continue;
+        const written = inline.kind === "mention" ? `@${inline.name}` : inline.text;
+        expect(text.slice(inline.at, inline.at + written.length)).toBe(written);
+      }
+    }
+  });
+
   it("keeps a file placed at a code block before it, and one inside it after it", () => {
     const text = "Look:\n```\ncode\n```";
-    expect(parseMessageText(text, [], [6, 12])).toEqual([
+    expect(shownBlocks(parseMessageText(text, [], [6, 12]))).toEqual([
       { kind: "paragraph", inlines: [{ kind: "text", text: "Look:" }] },
       { kind: "paragraph", inlines: [{ kind: "file", index: 0 }] },
       { kind: "code", language: null, text: "code" },

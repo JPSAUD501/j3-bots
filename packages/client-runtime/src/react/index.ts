@@ -95,7 +95,7 @@ export const useCardAction = (entryId: EntryId): ActionState | undefined =>
 /** Every action in flight or just accepted, by key. */
 export const useActions = () => useReadable(useJ3Client().actions);
 
-const emptyDraft: Draft = { text: "", mentions: [], files: [], sending: false };
+const emptyDraft: Draft = { text: "", mentions: [], quotes: [], files: [], sending: false };
 
 /** What the operator has written to `target` and not sent, kept on the device. */
 export const useDraft = (target: EntryTarget): Draft => {

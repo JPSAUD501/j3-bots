@@ -12,6 +12,8 @@ import {
   type EntryOrder,
   EntryTarget,
   LookingAt,
+  MAX_QUOTES,
+  MessageQuote,
   type ConversationMention,
   ConversationMentions,
   Mentions,
@@ -48,6 +50,7 @@ import { RpcClientError } from "effect/rpc/RpcClientError";
 import { Connection, type J3RpcClient, NotPaired } from "../connection/Connection.ts";
 import { InvalidMessage, messageProblem } from "../files/limits.ts";
 import type { OwnAppClient } from "../presentation/connectorAsk.ts";
+import { quoteRequestOf } from "../presentation/quotes.ts";
 import {
   Actions,
   cardAction,
@@ -121,6 +124,8 @@ export interface OutgoingMessage {
   readonly mentions: Mentions | null;
   /** The bots and rooms it mentions in a bot's conversation; left out when it mentions none. */
   readonly conversationMentions?: ReadonlyArray<ConversationMention>;
+  /** The messages it quotes, as the sent message shows them; left out when it quotes none. */
+  readonly quotes?: ReadonlyArray<MessageQuote>;
   /**
    * The name each bot or room it mentions had when the operator picked it,
    * so the message can say what it meant after that one left or was renamed.
@@ -205,6 +210,8 @@ const StoredMessage = Schema.TaggedStruct("message", {
   mentions: Schema.NullOr(Mentions),
   /** Missing from a message that mentions no bot or room in a bot's conversation. */
   conversationMentions: Schema.optionalKey(ConversationMentions),
+  /** Missing from a message that quotes none. */
+  quotes: Schema.optionalKey(Schema.Array(MessageQuote).check(Schema.isMaxLength(MAX_QUOTES))),
   labels: Schema.Array(MentionLabel),
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
@@ -457,6 +464,8 @@ export class Conversations extends Context.Service<
       readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       /** The names the bots and rooms mentioned had when picked. */
       readonly labels?: ReadonlyArray<MentionLabel>;
+      /** The messages it quotes, at most `MAX_QUOTES`, a reply first. */
+      readonly quotes?: ReadonlyArray<MessageQuote>;
       /** Heard once the message is the outbox's, on the device or in memory. */
       readonly onKept?: () => void;
     }) => Effect.Effect<IntentResult<EntryId>, InvalidMessage>;
@@ -480,6 +489,7 @@ export class Conversations extends Context.Service<
         readonly mentions?: Mentions;
         readonly conversationMentions?: ReadonlyArray<ConversationMention>;
         readonly labels?: ReadonlyArray<MentionLabel>;
+        readonly quotes?: ReadonlyArray<MessageQuote>;
       },
       claim?: {
         /** The pairing `alongside` belongs to: with another, it fails with `NotPaired`. */
@@ -893,6 +903,7 @@ export const layer = Layer.effect(
         ...(record.conversationMentions === undefined
           ? {}
           : { conversationMentions: record.conversationMentions }),
+        ...(record.quotes === undefined ? {} : { quotes: record.quotes }),
         labels: record.labels,
         createdAt: record.createdAt,
         status:
@@ -1208,6 +1219,9 @@ export const layer = Layer.effect(
         due.message.conversationMentions.length === 0
           ? {}
           : { conversationMentions: due.message.conversationMentions }),
+        ...(due.message.quotes === undefined || due.message.quotes.length === 0
+          ? {}
+          : { quotes: due.message.quotes.map(quoteRequestOf) }),
       }).pipe(
         Effect.exit,
         Effect.flatMap((exit) => {
@@ -1464,6 +1478,7 @@ export const layer = Layer.effect(
       readonly mentions?: Mentions;
       readonly conversationMentions?: ReadonlyArray<ConversationMention>;
       readonly labels?: ReadonlyArray<MentionLabel>;
+      readonly quotes?: ReadonlyArray<MessageQuote>;
     }) {
       const attachments = input.attachments ?? [];
       const problem = messageProblem(input.text, attachments);
@@ -1482,6 +1497,9 @@ export const layer = Layer.effect(
         ...(input.conversationMentions === undefined || input.conversationMentions.length === 0
           ? {}
           : { conversationMentions: input.conversationMentions }),
+        ...(input.quotes === undefined || input.quotes.length === 0
+          ? {}
+          : { quotes: input.quotes.slice(0, MAX_QUOTES) }),
         labels: input.labels ?? [],
         createdAt: yield* DateTime.now,
         status: { _tag: "sending" },
