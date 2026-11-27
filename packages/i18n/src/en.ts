@@ -1868,10 +1868,10 @@ export const en = {
   "picker.noMatch": "No model matches “{query}”.",
   "picker.noModels": "This account lists no model yet.",
   "picker.account.limited": "At its plan’s limit for now. Bots on it wait until it resets.",
-  "picker.account.signedOut": "Not connected. Connect it in Settings → AI to use it.",
-  "picker.account.off": "Turned off. Turn it on in Settings → AI to use it.",
+  "picker.account.signedOut": "Not connected. Connect it in Settings → Providers to use it.",
+  "picker.account.off": "Turned off. Turn it on in Settings → Providers to use it.",
   "picker.account.checking": "Checking this account…",
-  "picker.account.unavailable": "Can’t be used right now. Settings → AI says why.",
+  "picker.account.unavailable": "Can’t be used right now. Settings → Providers says why.",
   "picker.speed": "Speed",
   "picker.speed.standard": "Standard",
   "picker.speed.fast": "Fast",
@@ -1880,7 +1880,7 @@ export const en = {
   "botAccount.gone":
     "The AI account {name} ran on was removed. Choose another so {name} can work again.",
   "botAccount.off":
-    "{account} is turned off, so {name} waits. Turn it on in Settings → AI, or choose another AI.",
+    "{account} is turned off, so {name} waits. Turn it on in Settings → Providers, or choose another AI.",
   "botAccount.choose": "Choose another AI",
   "accounts.add": "Add account",
   "accounts.add.claude-code": "Another Claude account",

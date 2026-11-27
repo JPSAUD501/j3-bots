@@ -13,7 +13,7 @@ import type { AccountChanges } from "../stores/EngineStatus.ts";
 import type { SignInAccount } from "../stores/ProviderSetup.ts";
 import type { AiAccount } from "./aiAccount.ts";
 
-// Settings → AI on a server that lets the operator set each AI account up
+// Settings → Providers on a server that lets the operator set each AI account up
 // (decision 0108): every Claude Code and Codex account, its switch, its name,
 // and under Advanced the executable, the launch arguments and the folder it
 // keeps the sign-in in.

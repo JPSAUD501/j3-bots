@@ -22,7 +22,7 @@ import { lineField } from "./ui/field";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { Switch } from "./ui/switch";
 
-// Settings → AI on a server that lets the operator set each AI account up
+// Settings → Providers on a server that lets the operator set each AI account up
 // (decision 0108): every Claude Code and Codex account, one row each, with
 // the sign-in that row has always had, its switch, and under Advanced its
 // name, the program it runs, its launch options and where it keeps its

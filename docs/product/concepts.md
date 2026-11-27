@@ -68,9 +68,13 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Engine.** The T3 Code server that J3 Bots runs and drives. It owns model processes, subscriptions, tool execution and approvals.
 
-**Model.** What the bot runs on: a provider instance and a model slug from the engine, such as Claude Code with a specific Claude model. Chosen per bot and changeable.
+**AI account.** One sign-in to Claude Code or Codex, which the engine runs as a provider instance in a home of its own. The first of each harness is the one the first run connects; the operator can add more, as a second plan, turn one off, or remove one they added ([0108](../decisions/0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md)). The interface says "AI account", or the account's name, never "provider instance".
 
-**Effort.** How much the bot's AI thinks before it acts: Default, which leaves it to the AI, or one of the levels the bot's model offers, such as Low, Medium or High. More effort is slower and uses more of the operator's plan. Chosen per bot, beside its model, by the operator only. The interface says "Effort" in English and "Esforço" in Portuguese ([0082](../decisions/0082-a-bots-effort-sits-beside-its-model-and-the-default-is-the-harnesss-own.md)).
+**Model.** What the bot runs on: an AI account and a model slug from the engine, such as a Claude account with a specific Claude model. Chosen per bot and changeable.
+
+**Effort.** How much the bot's AI thinks before it acts: Default, which leaves it to the AI, or one of the levels the bot's model offers, such as Low, Medium or High. More effort is slower and uses more of the operator's plan. Chosen per bot, beside its model, by the operator, or by the bot that makes or changes it when the operator asked for it ([0108](../decisions/0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md)). The interface says "Effort" in English and "Esforço" in Portuguese ([0082](../decisions/0082-a-bots-effort-sits-beside-its-model-and-the-default-is-the-harnesss-own.md)).
+
+**Fast mode.** A quicker way of running a bot's model, which uses more of the operator's plan: Standard or Fast, for a model whose AI offers it. Chosen per bot, beside effort, by whoever may choose its effort. The interface calls the choice "Speed".
 
 ## Where the bots live
 

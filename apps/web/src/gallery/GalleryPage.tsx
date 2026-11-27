@@ -4003,7 +4003,7 @@ function PickerFrame({
   );
 }
 
-/** The Work account in Settings → AI, its Advanced open with `edits` typed. */
+/** The Work account in Settings → Providers, its Advanced open with `edits` typed. */
 function AccountFrame({ label, edits }: { label: string; edits: { readonly binaryPath: string } }) {
   const ai = useWebAiConnect({
     engine: withAccounts,
@@ -4064,18 +4064,18 @@ function ChoosingAiSection() {
         />
         <Frame
           padded
-          label="Settings, AI: each account set up, Work turned off, and Add account; open Advanced to see an account's program and sign-in folder"
+          label="Settings, Providers: each account set up, Work turned off, and Add account; open Advanced to see an account's program and sign-in folder"
           width={420}
           height={760}
         >
           <EngineSection engine={withAccounts} stale={false} actions={providerActions} />
         </Frame>
         <AccountFrame
-          label="Settings, AI: Advanced, a program path that is not a full path"
+          label="Settings, Providers: Advanced, a program path that is not a full path"
           edits={{ binaryPath: "claude" }}
         />
         <AccountFrame
-          label="Settings, AI: Advanced, another program, which restarts the account; press Remove account to see it asked first"
+          label="Settings, Providers: Advanced, another program, which restarts the account; press Remove account to see it asked first"
           edits={{ binaryPath: "/opt/claude-work/bin/claude" }}
         />
         <Labeled label="Conversation: a bot whose account is turned off, and one whose account was removed">

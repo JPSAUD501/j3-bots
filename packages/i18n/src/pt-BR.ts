@@ -1896,10 +1896,10 @@ const sentences = {
   "picker.noMatch": "Nenhum modelo corresponde a “{query}”.",
   "picker.noModels": "Esta conta ainda não lista nenhum modelo.",
   "picker.account.limited": "No limite do plano por enquanto. Os bots nela esperam até renovar.",
-  "picker.account.signedOut": "Não conectada. Conecte em Configurações → IA para usar.",
-  "picker.account.off": "Desligada. Ligue em Configurações → IA para usar.",
+  "picker.account.signedOut": "Não conectada. Conecte em Configurações → Provedores para usar.",
+  "picker.account.off": "Desligada. Ligue em Configurações → Provedores para usar.",
   "picker.account.checking": "Verificando esta conta…",
-  "picker.account.unavailable": "Não pode ser usada agora. Configurações → IA diz por quê.",
+  "picker.account.unavailable": "Não pode ser usada agora. Configurações → Provedores diz por quê.",
   "picker.speed": "Velocidade",
   "picker.speed.standard": "Padrão",
   "picker.speed.fast": "Rápida",
@@ -1908,7 +1908,7 @@ const sentences = {
   "botAccount.gone":
     "A conta de IA em que {name} rodava foi removida. Escolha outra para {name} voltar a trabalhar.",
   "botAccount.off":
-    "O {account} está desligado, então {name} está esperando. Ligue em Configurações → IA ou escolha outra IA.",
+    "O {account} está desligado, então {name} está esperando. Ligue em Configurações → Provedores ou escolha outra IA.",
   "botAccount.choose": "Escolher outra IA",
   "accounts.add": "Adicionar conta",
   "accounts.add.claude-code": "Outra conta do Claude",
