@@ -13,7 +13,9 @@ import { SkeletonRows } from "./ui/skeleton";
  * Settings' Browser page: the sites the person is signed in to in J3 Bots'
  * browser, which their bots use too, each with its own Sign out, then
  * signing out of all of them, which asks first since it ends every one at
- * once. A server older than the list shows none, only signing out of all.
+ * once. A server older than the list shows none, only signing out of all;
+ * sign-ins locked with the secrets can be signed out of only once the
+ * secrets can be read.
  */
 export function BrowserSection({
   signIns,
@@ -35,7 +37,10 @@ export function BrowserSection({
           onSignOutSite={onSignOutSite}
         />
       )}
-      <SignOutAll connected={connected} onSignOut={onSignOut} />
+      <SignOutAll
+        connected={connected && !(signIns?._tag === "ready" && signIns.value.status === "locked")}
+        onSignOut={onSignOut}
+      />
     </>
   );
 }
@@ -69,8 +74,14 @@ function SitesSection({
     <Section title={t("settings.siteSignIns.sites")}>
       {signIns === null ? (
         <SkeletonRows />
-      ) : signIns.status === "unreadable" ? (
-        <p className="text-xs text-muted-foreground">{t("settings.siteSignIns.unreadable")}</p>
+      ) : signIns.status !== "ready" ? (
+        <p className="text-xs text-muted-foreground">
+          {t(
+            signIns.status === "locked"
+              ? "settings.siteSignIns.locked"
+              : "settings.siteSignIns.unreadable",
+          )}
+        </p>
       ) : signIns.sites.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t("settings.siteSignIns.none")}</p>
       ) : (

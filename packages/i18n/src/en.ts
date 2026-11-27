@@ -2000,7 +2000,9 @@ export const en = {
   "settings.siteSignIns.none":
     "You haven’t signed in to any site yet. Sign in to one in a browser tab, and your bots can use it too.",
   "settings.siteSignIns.unreadable":
-    "Your sign-ins can’t be opened right now, so the browser isn’t sharing them. If the secrets’ key changed, sign out of all sites to start over.",
+    "Your sign-ins can’t be opened, so the browser isn’t sharing them. If the secrets’ key changed or the file was damaged, sign out of all sites to start over.",
+  "settings.siteSignIns.locked":
+    "Your sign-ins stay locked until J3 Bots can read your secrets again, so the browser isn’t sharing them. Secrets says what’s wrong.",
   "settings.siteSignIns.signOutSite": "Sign out",
   "settings.siteSignIns.signOutSite.label": "Sign out of {site}",
   "settings.siteSignIns.signOutSite.failed": "Didn’t sign out of {site}. Try again.",

@@ -16,7 +16,8 @@ import { Button } from "../ui.tsx";
  * browser, which their bots use too, followed while the page is in front,
  * each with its own Sign out; then signing out of all of them, which asks
  * first since it ends every one at once. A server older than the list shows
- * none, only signing out of all.
+ * none, only signing out of all; sign-ins locked with the secrets can be
+ * signed out of only once the secrets can be read.
  */
 export function BrowserSection({ connected }: { readonly connected: boolean }) {
   const signIns = useSignIns(useIsFocused());
@@ -28,7 +29,9 @@ export function BrowserSection({ connected }: { readonly connected: boolean }) {
           connected={connected}
         />
       )}
-      <SignOutAll connected={connected} />
+      <SignOutAll
+        connected={connected && !(signIns?._tag === "ready" && signIns.value.status === "locked")}
+      />
     </>
   );
 }
@@ -61,8 +64,14 @@ function SitesSection({
     <Section open title={t("settings.siteSignIns.sites")}>
       {signIns === null ? (
         <SkeletonRows />
-      ) : signIns.status === "unreadable" ? (
-        <Quiet>{t("settings.siteSignIns.unreadable")}</Quiet>
+      ) : signIns.status !== "ready" ? (
+        <Quiet>
+          {t(
+            signIns.status === "locked"
+              ? "settings.siteSignIns.locked"
+              : "settings.siteSignIns.unreadable",
+          )}
+        </Quiet>
       ) : signIns.sites.length === 0 ? (
         <Quiet>{t("settings.siteSignIns.none")}</Quiet>
       ) : (

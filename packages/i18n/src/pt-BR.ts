@@ -2028,7 +2028,9 @@ const sentences = {
   "settings.siteSignIns.none":
     "Você ainda não entrou em nenhum site. Entre num site numa aba do navegador, e seus bots também vão poder usá-lo.",
   "settings.siteSignIns.unreadable":
-    "Não dá para abrir seus logins agora, então o navegador não está compartilhando nenhum. Se a chave dos segredos mudou, saia de todos os sites para começar de novo.",
+    "Não dá para abrir seus logins, então o navegador não está compartilhando nenhum. Se a chave dos segredos mudou ou o arquivo se danificou, saia de todos os sites para começar de novo.",
+  "settings.siteSignIns.locked":
+    "Seus logins ficam trancados até o J3 Bots conseguir ler seus segredos de novo, então o navegador não está compartilhando nenhum. Em Segredos você vê o que houve.",
   "settings.siteSignIns.signOutSite": "Sair",
   "settings.siteSignIns.signOutSite.label": "Sair de {site}",
   "settings.siteSignIns.signOutSite.failed": "Não saiu de {site}. Tente de novo.",
