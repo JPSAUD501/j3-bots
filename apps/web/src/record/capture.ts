@@ -8,12 +8,16 @@ import {
   type ScreenNumber,
 } from "@j3-bots/desktop-bridge";
 import type { Desktop } from "../live/desktop";
+import { PCM_CAPTURE } from "../live/pcmCapture";
+import worklet from "../live/pcmCapture.worklet.ts?worker&url";
 
 // What the recorder's floating control does with a recording's streams
 // (decision 0098): each screen through the browser's own H.264 encoder into
 // fragmented MP4, the voice into Opus, a piece a second each, handed to the
-// app in order as they are written; and a still of a screen whenever the app
-// asks for one, at a click or a window change.
+// app in order as they are written; the voice again at the voice socket's
+// rate, through dictation's own worklet, for the transcript the main window
+// writes down after Stop; and a still of a screen whenever the app asks for
+// one, at a click or a window change.
 
 /** Frames a second each screen is drawn at: enough to follow a pointer, light on the disk. */
 const FRAMES_PER_SECOND = 5;
@@ -72,6 +76,81 @@ export interface Capture {
 export type CaptureStart =
   | { readonly _tag: "started"; readonly capture: Capture }
   | { readonly _tag: "failed"; readonly reason: RecorderFailure["reason"] };
+
+/** The voice at the voice socket's rate, as it is recorded. */
+interface SpeechTap {
+  /** Hands the app what it holds, and keeps what follows: the encoders run. */
+  readonly run: () => void;
+  readonly pause: () => void;
+  readonly resume: () => void;
+  /** Stops it, handing the app what it still holds unless it is thrown away. */
+  readonly stop: (keep: boolean) => void;
+}
+
+/** How many of the worklet's tenth-of-a-second pieces go to the app at once. */
+const SPEECH_PIECES = 10;
+
+/**
+ * Taps `voice` with dictation's worklet (`pcmCapture.worklet.ts`): mono
+ * 32-bit float PCM at the voice socket's rate, handed to the app a second at
+ * a time while it runs and is not paused, so it keeps the voice's own clock.
+ * Null when the tap cannot open: the recording goes on, and its zip goes
+ * without a transcript.
+ */
+const tapSpeech = async (
+  voice: MediaStream,
+  hand: (bytes: Uint8Array) => void,
+): Promise<SpeechTap | null> => {
+  const context = new AudioContext();
+  let taking = false;
+  let held: Array<Float32Array> = [];
+  const flush = () => {
+    if (held.length === 0) return;
+    const bytes = new Uint8Array(held.reduce((sum, piece) => sum + piece.byteLength, 0));
+    let at = 0;
+    for (const piece of held) {
+      bytes.set(new Uint8Array(piece.buffer, piece.byteOffset, piece.byteLength), at);
+      at += piece.byteLength;
+    }
+    held = [];
+    hand(bytes);
+  };
+  try {
+    await context.audioWorklet.addModule(worklet);
+    const node = new AudioWorkletNode(context, PCM_CAPTURE, { channelCount: 1 });
+    node.port.addEventListener("message", (event: MessageEvent<unknown>) => {
+      if (!taking || !(event.data instanceof Float32Array)) return;
+      held.push(event.data);
+      if (held.length >= SPEECH_PIECES) flush();
+    });
+    node.port.start();
+    context.createMediaStreamSource(voice).connect(node);
+    // The worklet writes no output: connected, the graph runs, and nothing is heard.
+    node.connect(context.destination);
+    await context.resume();
+  } catch {
+    void context.close();
+    return null;
+  }
+  return {
+    run: () => {
+      taking = true;
+    },
+    pause: () => {
+      taking = false;
+      flush();
+    },
+    resume: () => {
+      taking = true;
+    },
+    stop: (keep) => {
+      taking = false;
+      if (keep) flush();
+      held = [];
+      void context.close();
+    },
+  };
+};
 
 const stopAll = (streams: ReadonlyArray<MediaStream>) => {
   for (const stream of streams) for (const track of stream.getTracks()) track.stop();
@@ -145,9 +224,11 @@ export async function startCapture(job: RecorderJob, app: Recorder): Promise<Cap
   }
 
   let failed = false;
+  let speech: SpeechTap | null = null;
   const fail = () => {
     if (failed) return;
     failed = true;
+    speech?.stop(false);
     stopAll(opened);
     app.failed("encoder");
   };
@@ -190,6 +271,12 @@ export async function startCapture(job: RecorderJob, app: Recorder): Promise<Cap
         app.chunk({ stream: { _tag: "voice" }, bytes }),
       );
     }
+    speech =
+      voice === null
+        ? null
+        : await tapSpeech(voice, (bytes) => {
+            if (!failed) app.chunk({ stream: { _tag: "speech" }, bytes });
+          });
     await Promise.all(
       encoders.map(
         ({ recorder }) =>
@@ -200,10 +287,13 @@ export async function startCapture(job: RecorderJob, app: Recorder): Promise<Cap
       ),
     );
   } catch {
+    speech?.stop(false);
     stopAll(opened);
     return { _tag: "failed", reason: "encoder" };
   }
 
+  // The voice's copy keeps the encoders' clock: from their start, paused with them.
+  speech?.run();
   app.started({
     screens: screens.map((one) => ({
       screen: one.asked.screen,
@@ -222,10 +312,12 @@ export async function startCapture(job: RecorderJob, app: Recorder): Promise<Cap
       voice,
       pause: () => {
         each((recorder) => recorder.pause());
+        speech?.pause();
         app.control("pause");
       },
       resume: () => {
         each((recorder) => recorder.resume());
+        speech?.resume();
         app.control("resume");
       },
       finish: async (how) => {
@@ -238,10 +330,12 @@ export async function startCapture(job: RecorderJob, app: Recorder): Promise<Cap
         );
         each((recorder) => recorder.stop());
         if (how === "discard") {
+          speech?.stop(false);
           stopAll(opened);
           app.control("discard");
           return;
         }
+        speech?.stop(true);
         // A recorder hands over its last piece before it says it stopped.
         await Promise.all(stopped);
         await Promise.all(encoders.map((encoder) => encoder.handed));

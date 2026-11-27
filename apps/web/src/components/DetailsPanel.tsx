@@ -36,7 +36,16 @@ import {
   WebhookIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ReactElement, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from "react";
 import {
   asksYou,
   botStop,
@@ -62,13 +71,14 @@ import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { FaceOf } from "./avatar/TeamAvatars";
 import { FileCard } from "./FileCard";
+import { useBotCard } from "./BotCard";
 import { RoutineSentence } from "./RoutineTrack";
 import { Button } from "./ui/button";
 import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import { Switch } from "./ui/switch";
-import { HiddenNotice } from "./Visibility";
+import { BackstageNotice } from "./Visibility";
 
 interface PanelFrameProps {
   readonly title: string;
@@ -162,9 +172,17 @@ function Badge({ children }: { children: ReactNode }) {
   );
 }
 
-function DetailsSection({ title, children }: { title: string; children: ReactNode }) {
+function DetailsSection({
+  title,
+  children,
+  ref,
+}: {
+  title: string;
+  children: ReactNode;
+  ref?: Ref<HTMLElement>;
+}) {
   return (
-    <section className="px-5 pt-5">
+    <section ref={ref} className="scroll-mt-2 px-5 pt-5">
       <h3 className="mb-1.5 text-xs font-medium text-muted-foreground">{title}</h3>
       {children}
     </section>
@@ -231,7 +249,7 @@ export interface BotDetailsIntents {
   readonly stop: () => void;
   /** Stop, for an AI that ignores it (`botStop` is `force`), as the shortcut then does. */
   readonly forceStop: () => void;
-  /** Puts a hidden bot back in the roster's list. */
+  /** Brings a bot behind the scenes back to the roster's list. */
   readonly show: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
@@ -253,6 +271,12 @@ interface BotDetailsProps {
   readonly connectors: ReadonlyArray<Connector> | null;
   /** The teammates it wrote or heard from, latest first (`teammatesOf`), deleted ones included. */
   readonly teammates: ReadonlyArray<Teammate>;
+  /**
+   * Its card asked for its routines (decision 0102): they come into view,
+   * and `onAtRoutines` says the request is met, so it is met once.
+   */
+  readonly atRoutines?: boolean;
+  readonly onAtRoutines?: () => void;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   /** Whether the browser can run on the server's computer; null until the engine has said. */
@@ -267,8 +291,8 @@ interface BotDetailsProps {
 
 /**
  * Answers: what is this bot, and what runs without me. While it has work to
- * stop, Stop comes first under its profile; while it is hidden, a line says
- * so after that, with Show.
+ * stop, Stop comes first under its profile; while it is behind the scenes, a
+ * line says so after that, with Bring back to the list.
  */
 export function BotDetails({
   bot,
@@ -277,6 +301,8 @@ export function BotDetails({
   memory,
   connectors,
   teammates,
+  atRoutines = false,
+  onAtRoutines,
   modelName,
   browserHost,
   intents,
@@ -285,6 +311,13 @@ export function BotDetails({
   headingRef,
   headingId,
 }: BotDetailsProps) {
+  const routinesRef = useRef<HTMLElement>(null);
+  const reachedRoutines = useEffectEvent(() => onAtRoutines?.());
+  useEffect(() => {
+    if (!atRoutines) return;
+    routinesRef.current?.scrollIntoView({ block: "start" });
+    reachedRoutines();
+  }, [atRoutines]);
   const i18n = useI18n();
   const { t } = i18n;
   const { name, title, job } = bot.profile;
@@ -347,9 +380,9 @@ export function BotDetails({
           </button>
         </StopPlace>
       )}
-      {bot.hidden && <HiddenNotice name={name} onShow={intents.show} />}
+      {bot.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
 
-      <DetailsSection title={t("details.routines")}>
+      <DetailsSection title={t("details.routines")} ref={routinesRef}>
         {routines === null ? (
           <SkeletonRows />
         ) : routines.length === 0 ? (
@@ -658,24 +691,60 @@ function RoutineCast({ steps }: { steps: ReadonlyArray<RoutineStep> }) {
   );
 }
 
-/** A teammate: its face and name, and the latest message between the two, which the row opens. */
+/** A room's member: its face, its name over its title, which open its card under a resting pointer. */
+function MemberRow({ bot }: { bot: Bot }) {
+  const card = useBotCard(bot.id, "left");
+  return (
+    <li data-card-anchor="" className="flex min-h-12 items-center gap-3 py-1.5">
+      <span {...card.hover} className="flex">
+        <LiveBotAvatar bot={bot} size={32} />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span {...card.hover} className="truncate text-sm font-medium">
+          {bot.profile.name}
+        </span>
+        {bot.profile.title !== "" && (
+          <span className="truncate text-xs text-muted-foreground">{bot.profile.title}</span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * A teammate: its face, its name over its title, and the latest message
+ * between the two, which the row opens.
+ */
 function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => void }) {
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
   const { pair } = teammate;
+  // A teammate deleted since has no card.
+  const card = useBotCard(peer === undefined ? null : peer.id, "left");
   return (
     <li>
-      <button type="button" onClick={onOpen} className={cn(rowButton, "items-center")}>
-        <FaceOf botId={teammate.peer} size={32} />
+      <button
+        {...card.focus}
+        type="button"
+        data-card-anchor=""
+        onClick={onOpen}
+        className={cn(rowButton, "items-center")}
+      >
+        <span {...card.hover} className="flex">
+          <FaceOf botId={teammate.peer} size={32} />
+        </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-medium">
+            <span {...card.hover} className="truncate text-sm font-medium">
               {peer?.profile.name ?? ctx.i18n.t("bot.unknown")}
             </span>
             <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
               {activityTime(pair.lastMessage.createdAt, ctx)}
             </span>
           </span>
+          {peer !== undefined && peer.profile.title !== "" && (
+            <span className="line-clamp-2 text-xs text-muted-foreground">{peer.profile.title}</span>
+          )}
           <span className="truncate text-xs text-muted-foreground">{pairLine(pair, ctx)}</span>
         </span>
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -732,7 +801,7 @@ export interface RoomDetailsIntents {
   readonly stop: () => void;
   /** Stop, for a member's AI that ignores the room's Stop (`roomStop` is `force`). */
   readonly forceStop: () => void;
-  /** Puts a hidden room back in the roster's list. */
+  /** Brings a room behind the scenes back to the roster's list. */
   readonly show: () => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: () => Promise<void>;
@@ -745,7 +814,7 @@ export interface RoomDetailsIntents {
  * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first;
- * while it is hidden, a line says so after that, with Show.
+ * while it is behind the scenes, a line says so after that, with Bring back to the list.
  */
 export function RoomDetails({
   room,
@@ -833,24 +902,14 @@ export function RoomDetails({
           </Confirm>
         </StopPlace>
       )}
-      {room.hidden && <HiddenNotice name={name} onShow={intents.show} />}
+      {room.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
       <DetailsSection title={t("room.membersTitle")}>
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>
         ) : (
           <ul className="flex flex-col [--avatar-cutout:var(--background)]">
             {members.map((bot) => (
-              <li key={bot.id} className="flex min-h-12 items-center gap-3 py-1.5">
-                <LiveBotAvatar bot={bot} size={32} />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm font-medium">{bot.profile.name}</span>
-                  {bot.profile.title !== "" && (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {bot.profile.title}
-                    </span>
-                  )}
-                </span>
-              </li>
+              <MemberRow key={bot.id} bot={bot} />
             ))}
           </ul>
         )}

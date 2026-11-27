@@ -2,8 +2,9 @@
 import type { GroupPosition } from "@j3-bots/client-runtime/presentation";
 import type { BotId } from "@j3-bots/contracts";
 import type { ReactNode } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
+import { useBotCardPress } from "../components/BotCard.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 
@@ -15,10 +16,12 @@ export const speakerGutter = FACE + 8;
 
 /**
  * A bot's message where several bots speak, in a room or a teammate
- * conversation: the bot's name over the first bubble of its group, its still
- * face at the bottom left of the last, and the message beside it. A bot
+ * conversation: the bot's name, and its title after it, over the first bubble
+ * of its group, as on a team's chat; its still face at the bottom left of the
+ * last, and the message beside it. A bot
  * deleted since keeps its place, as "A deleted bot" by a plain disc. The face
- * carries who spoke, never what the bot is doing now.
+ * carries who spoke, never what the bot is doing now. A long press on the
+ * name or the face opens the bot's card (decision 0102).
  */
 export function Speaker({
   botId,
@@ -32,6 +35,7 @@ export function Speaker({
 }) {
   const { t } = usePresentation().i18n;
   const bot = useBots().get(botId);
+  const card = useBotCardPress(bot === undefined ? null : botId, bot?.profile.name ?? "");
   const startsGroup = position === "single" || position === "first";
   const endsGroup = position === "single" || position === "last";
   return (
@@ -39,10 +43,14 @@ export function Speaker({
       {startsGroup && (
         <Text
           numberOfLines={1}
-          className="pb-1 text-xs font-medium text-foreground"
+          className="self-start pb-1 text-xs text-foreground"
           style={{ paddingStart: speakerGutter }}
+          {...card?.props}
         >
-          {bot?.profile.name ?? t("bot.unknown")}
+          <Text className="font-medium">{bot?.profile.name ?? t("bot.unknown")}</Text>
+          {bot !== undefined && bot.profile.title !== "" && (
+            <Text className="text-muted-foreground"> · {bot.profile.title}</Text>
+          )}
         </Text>
       )}
       <View className="flex-row items-end gap-2">
@@ -51,7 +59,16 @@ export function Speaker({
             (bot === undefined ? (
               <View className="rounded-pill bg-muted" style={{ width: FACE, height: FACE }} />
             ) : (
-              <BotAvatar avatar={bot.profile.avatar} seed={bot.id} state="idle" size={FACE} still />
+              // A screen reader reaches the card from the name, which it reads first.
+              <Pressable accessible={false} onLongPress={card?.props.onLongPress}>
+                <BotAvatar
+                  avatar={bot.profile.avatar}
+                  seed={bot.id}
+                  state="idle"
+                  size={FACE}
+                  still
+                />
+              </Pressable>
             ))}
         </View>
         {/* As wide as the row, so a visual stretches across it; bubbles keep to the face. */}

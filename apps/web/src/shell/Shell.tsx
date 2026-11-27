@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  BotId,
   BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
@@ -43,6 +44,7 @@ import { focusAtEnd } from "../components/Composer";
 import { DraftComposer } from "../components/DraftComposer";
 import { AppStageProvider } from "../components/AppStage";
 import { ConversationHeader } from "../components/ConversationHeader";
+import { type BotCardIntents, BotCardProvider } from "../components/BotCard";
 import { connectPlaceOf } from "../components/AiConnect";
 import {
   Connecting,
@@ -159,6 +161,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   // press of Create, through the bot's arrival, until the new bot is in the roster and open, so
   // the home never shows in between.
   const [openingFirstBot, setOpeningFirstBot] = useState(false);
+  // The bot whose card asked for its routines, until its details have brought them into view.
+  const [routinesFor, setRoutinesFor] = useState<BotId | null>(null);
   if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   // Beside the conversation, or over it: a bot's browser, or else the details.
   const browserTarget = item?._tag === "bot" ? navigation.browser : null;
@@ -409,10 +413,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
               // The first bot is the primary one: there is no other to choose.
-              return intents.createBot({ name, primary: true, avatar }).then((result) => {
-                if (result._tag === "failed") setOpeningFirstBot(false);
-                return result;
-              });
+              return intents
+                .createBot({ name, title: t("bot.primaryTitle"), primary: true, avatar })
+                .then((result) => {
+                  if (result._tag === "failed") setOpeningFirstBot(false);
+                  return result;
+                });
             }}
             onArrived={(botId) => navigation.select({ _tag: "bot", botId })}
             providerActions={intents.providerActions}
@@ -711,6 +717,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             files={data.files(bot.id)}
             connectors={data.connectors}
             teammates={teammatesOf(bot.id, pairs)}
+            atRoutines={routinesFor === bot.id}
+            onAtRoutines={() => setRoutinesFor(null)}
             modelName={botModelName(data.engine, bot)}
             stopShortcut={shortcuts.stop}
             browserHost={data.engine?.browser ?? null}
@@ -763,26 +771,46 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     }
   }
 
+  const openBotDetails = (botId: BotId) => {
+    navigation.select({ _tag: "bot", botId });
+    navigation.setDetailsOpen(true);
+    setRoutinesFor(null);
+  };
+  const cardIntents: BotCardIntents = {
+    talk: (botId) => navigation.select({ _tag: "bot", botId }),
+    startRoom: (botId) => intents.startRoomWith([botId]),
+    openRoutines: (botId) => {
+      openBotDetails(botId);
+      setRoutinesFor(botId);
+    },
+    openDetails: openBotDetails,
+    send: intents.sendQuickMessage,
+    routines: data.routines,
+    showing: intents.setCardBot,
+  };
+
   return (
     <RosterProvider roster={rosterItems} engine={data.engine}>
-      <BrowserProvider source={browser}>
-        <AvatarConnection connected={data.connected}>
-          <AppShell
-            roster={roster}
-            conversation={conversation}
-            details={details}
-            asideKind={aside === "browser" ? "browser" : "details"}
-            detailsHeadingId={detailsHeadingId}
-            detailsHeadingRef={detailsHeadingRef}
-            returnFocusRef={titleRef}
-            active={active}
-            layout={layout}
-            containerRef={containerRef}
-            conversationRef={setConversationRegion}
-            onCloseDetails={closeAside}
-          />
-        </AvatarConnection>
-      </BrowserProvider>
+      <BotCardProvider intents={cardIntents}>
+        <BrowserProvider source={browser}>
+          <AvatarConnection connected={data.connected}>
+            <AppShell
+              roster={roster}
+              conversation={conversation}
+              details={details}
+              asideKind={aside === "browser" ? "browser" : "details"}
+              detailsHeadingId={detailsHeadingId}
+              detailsHeadingRef={detailsHeadingRef}
+              returnFocusRef={titleRef}
+              active={active}
+              layout={layout}
+              containerRef={containerRef}
+              conversationRef={setConversationRegion}
+              onCloseDetails={closeAside}
+            />
+          </AvatarConnection>
+        </BrowserProvider>
+      </BotCardProvider>
       <span className="sr-only" aria-live="polite">
         {announcement !== null && <span key={announcement.id}>{announcement.text}</span>}
       </span>

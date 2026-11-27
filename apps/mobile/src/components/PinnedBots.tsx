@@ -135,6 +135,8 @@ export function PinnedBot({
       accessibilityLabel={[
         bot.profile.name,
         bot.primary ? t("roster.primary") : null,
+        // The tile has room for the name alone; its title is still heard.
+        bot.profile.title === "" ? null : bot.profile.title,
         line.text,
         item.unread ? t("roster.unread") : null,
       ]

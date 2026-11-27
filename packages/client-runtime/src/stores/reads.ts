@@ -11,6 +11,10 @@ import { loading, markStale, ready, type Synced } from "./synced.ts";
 /** Server state about one object, which may have been deleted. */
 export type Loaded<A> = Synced<A> | { readonly _tag: "not-found" };
 
+/** A read's list once loaded, or null while it loads (or before it is asked); one that is gone is empty. */
+export const loadedList = <A>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
+  loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
+
 const stale = <A>(loaded: Loaded<A>): Loaded<A> =>
   loaded._tag === "not-found" ? loaded : markStale(loaded);
 

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { RecordingTranscript } from "@j3-bots/desktop-bridge";
 import type { RecordedScreen } from "./screens.ts";
 
 // The two files that explain a recording to whoever opens its zip, a bot's
 // AI first: `manifest.json`, what was recorded and how, and `README.md`,
-// how to read the rest. Written in English, as the files' own names are.
+// how to read the rest; and `transcript.json`, what the operator said, when
+// it was written down. Written in English, as the files' own names are.
 
 export interface RecordingFacts {
   readonly appVersion: string;
@@ -28,11 +30,27 @@ export interface RecordingFacts {
 export const screenFile = (screen: number) => `screen-${screen}.mp4`;
 export const VOICE_FILE = "voice.webm";
 export const EVENTS_FILE = "events.jsonl";
-const TRANSCRIPT_FILE = "transcript.json";
+export const TRANSCRIPT_FILE = "transcript.json";
 export const MANIFEST_FILE = "manifest.json";
 export const README_FILE = "README.md";
 
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
+
+/** `transcript.json`'s text. */
+export const transcriptText = (transcript: RecordingTranscript) =>
+  `${JSON.stringify(
+    {
+      format: "j3-bots-screen-recording-transcript",
+      version: 1,
+      segments: transcript.segments.map((segment) =>
+        segment.words === null
+          ? { t: segment.t, until: segment.until, text: segment.text }
+          : segment,
+      ),
+    },
+    null,
+    2,
+  )}\n`;
 
 /** `manifest.json`'s text. */
 export const manifestText = (facts: RecordingFacts) =>
@@ -74,6 +92,12 @@ const duration = (ms: number) => {
       : `${rest} s`;
 };
 
+const TRANSCRIPT_SECTION = `## Transcript
+
+\`${TRANSCRIPT_FILE}\` holds \`segments\`, in order, each what was said from \`t\` to \`until\` (the same clock as the events), at most 30 seconds long and cut where the voice was quietest. Stretches where nothing was said are left out: without any segment, the recognizer heard nothing said. A segment's \`words\` each have a \`t\`: when the speech recognizer had heard that word, so it was said up to about a second before; a word it settled only at the segment's end has the segment's \`until\`. A segment without \`words\` was written down by a recognizer that gives only the text, so its time is the segment's. Speech recognition gets some words wrong, names most of all: when a word matters, listen to the voice at that time.
+
+`;
+
 export const readmeOf = (facts: RecordingFacts): string => {
   const screens = facts.screens
     .map(
@@ -83,7 +107,7 @@ export const readmeOf = (facts: RecordingFacts): string => {
     .join("\n");
   const voice = facts.voice
     ? facts.transcript
-      ? `- \`${VOICE_FILE}\`: the operator's voice (Opus). \`${TRANSCRIPT_FILE}\` has what they said, word by word, with times.`
+      ? `- \`${VOICE_FILE}\`: the operator's voice (Opus).\n- \`${TRANSCRIPT_FILE}\`: what they said, written down by speech recognition, with times (below).`
       : `- \`${VOICE_FILE}\`: the operator's voice (Opus). There is no transcript: listen to it, or transcribe it with a tool you have.`
     : "- No voice was recorded.";
   const input =
@@ -112,7 +136,7 @@ ${input}
 
 Every time is milliseconds since the recording started, with paused time left out: the videos' and the voice's own clock. An event at \`t\` shows in each video at second \`t / 1000\`. A \`pause\` and the \`resume\` after it share their \`t\`: whatever happened in between was hidden on purpose and is in no file.
 
-## Events
+${facts.transcript ? TRANSCRIPT_SECTION : ""}## Events
 
 - \`click\`: \`button\`, \`clicks\` (2 for a double click), \`screen\`, \`x\` and \`y\` in that screen's video pixels, \`nx\` and \`ny\` from 0 to 1 across the screen, and \`frame\`, the picture taken then.
 - \`text\`: characters typed together, from \`t\` to \`until\`, with Backspace already applied. They are read from the keys pressed as on a US keyboard: letters, digits and spaces are right, punctuation may differ on other layouts. The video shows what was really typed.

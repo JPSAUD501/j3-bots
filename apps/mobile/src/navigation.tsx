@@ -30,7 +30,7 @@ import {
   type NativeStackNavigationProp,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useState } from "react";
+import { type ReactElement, useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
@@ -42,7 +42,7 @@ import { PresentationProvider } from "./presentation.tsx";
 import { ConversationScreen } from "./screens/Conversation.tsx";
 import { DetailsScreen } from "./screens/Details.tsx";
 import { EditBotScreen } from "./screens/EditBot.tsx";
-import { HiddenScreen } from "./screens/Hidden.tsx";
+import { BackstageScreen } from "./screens/Backstage.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
 import { PairScreen } from "./screens/Pair.tsx";
@@ -60,6 +60,7 @@ import { SecretFormScreen } from "./secrets/SecretFormScreen.tsx";
 import { SecretScreen } from "./secrets/SecretScreen.tsx";
 import { SecretsScreen } from "./secrets/SecretsScreen.tsx";
 import { Toasts } from "./toast.tsx";
+import { BotCardProvider } from "./components/BotCard.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
 import { FlightHost } from "./onboarding/handoff.tsx";
 
@@ -67,7 +68,7 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * One route per screen. On a phone they stack: the roster, a bot's or room's
  * conversation, its details, a teammate conversation, and over those the
  * forms, a memory file and a routine's runs;
- * Settings and the hidden conversations open from the roster. From the
+ * Settings and the bots and rooms behind the scenes open from the roster. From the
  * tablet width up the roster's route shows the conversation `item` names
  * beside the roster, and the conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
@@ -82,7 +83,8 @@ export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
   /** `arriving` while the first bot travels in from the first run: the screen fades in, holding still. */
   conversation: { readonly item: RosterItemKey; readonly arriving?: true | undefined };
-  details: { readonly item: RosterItemKey };
+  /** `at` opens a bot's details at its routines, as its card's Routines does. */
+  details: { readonly item: RosterItemKey; readonly at?: "routines" };
   /**
    * The teammate conversation of two bots, read-only, opened at its latest
    * message or, with `at`, at the message one of whose cards that entry is.
@@ -90,7 +92,8 @@ export type Screens = {
   pair: { readonly botIds: PairBotIds; readonly at?: EntryId };
   shareTemplate: { readonly botId: BotId };
   newFromTemplate: undefined;
-  editBot: { readonly botId: BotId };
+  /** The bot's form, opened at its title with `at`, as Give a title does. */
+  editBot: { readonly botId: BotId; readonly at?: "title" };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
   /**
@@ -104,7 +107,7 @@ export type Screens = {
   settingsPage: { readonly page: SettingsPage };
   whatsNew: undefined;
   usageDataSent: undefined;
-  hidden: undefined;
+  backstage: undefined;
   secrets: undefined;
   secret: { readonly id: SecretId };
   /** A new secret with `id` null; otherwise the one to change. */
@@ -217,6 +220,11 @@ const screenOptions = {
 
 const sheet = { animation: "slide_from_bottom" } as const satisfies NativeStackNavigationOptions;
 
+/** Each screen holds its own bot card, which opens from where the operator is. */
+function withBotCard({ children }: { readonly children: ReactElement }) {
+  return <BotCardProvider>{children}</BotCardProvider>;
+}
+
 /** What a paired device shows. */
 export function Main() {
   const i18n = useI18n();
@@ -230,7 +238,7 @@ export function Main() {
         <Toasts>
           <FileOpenerProvider>
             <NavigationContainer ref={navigation} onReady={() => setReady(true)} theme={theme}>
-              <Stack.Navigator screenOptions={screenOptions}>
+              <Stack.Navigator screenOptions={screenOptions} screenLayout={withBotCard}>
                 {/* The roster and the conversation draw their own headers, which hold more than a title. */}
                 <Stack.Screen
                   name="roster"
@@ -249,7 +257,7 @@ export function Main() {
                 {/* Draws its own header: both bots' faces, their names and its menu. */}
                 <Stack.Screen name="pair" component={PairScreen} options={{ headerShown: false }} />
                 {/* Sets its own title. */}
-                <Stack.Screen name="hidden" component={HiddenScreen} />
+                <Stack.Screen name="backstage" component={BackstageScreen} />
                 {/* The browser draws its own bar: the page's site and who acts on it. */}
                 <Stack.Screen
                   name="browser"

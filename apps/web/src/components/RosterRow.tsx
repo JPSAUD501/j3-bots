@@ -27,6 +27,7 @@ import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime
 import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { PrimaryBadge } from "./avatar/PrimaryBadge";
+import { useBotCard } from "./BotCard";
 import { SwapText } from "./SwapText";
 
 export const toneClass: Record<LineTone, string> = {
@@ -138,7 +139,9 @@ function LittleDots({ count, color }: { readonly count: number; readonly color: 
 }
 
 /**
- * One bot or room in the roster: avatar, name, time, and one line of status.
+ * One bot or room in the roster: avatar, name and time, a bot's title, and
+ * one line of status. The title takes two lines at most; the status line is
+ * cut first.
  * Rows that need the operator carry their state in the line's words and color
  * and in the avatar's light. Hover fills the row more lightly than the open
  * conversation's, so the two never read as one. Renders a button unless `render` gives a link.
@@ -158,6 +161,8 @@ export function RosterRow({
   const line = rosterLine(item, ctx);
   const needs = needsOperator(item);
   const name = item._tag === "bot" ? item.bot.profile.name : item.room.name;
+  // A bot's title says what it is for: under its name, before what it is doing.
+  const title = item._tag === "bot" ? item.bot.profile.title : "";
   // An idle bot's avatar already says it with its dark light; other rows mark it with a dot.
   const unreadDot = item.unread && (item._tag === "room" || item.bot.state._tag !== "idle");
   const makesWay = withMenu
@@ -167,9 +172,14 @@ export function RosterRow({
   const face = item._tag === "bot" ? item.bot.profile.avatar : memberAvatars[0]?.avatar;
   const spot = face === undefined ? "var(--foreground)" : `var(--bot-${resolveAvatar(face).color})`;
   const { arrival, avatarEntrance, onAnimationEnd } = useArrival(entrance);
+  // A bot's face and name open its card, beside the roster (decision 0102).
+  const card = useBotCard(item._tag === "bot" ? item.bot.id : null, "right");
   const content = (
     <>
-      <span className="row-stage relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
+      <span
+        {...card.hover}
+        className="row-stage relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]"
+      >
         {(arrival === "lit" || arrival === "landed") && (
           <span aria-hidden className="row-light">
             <span className="row-beam" />
@@ -202,7 +212,10 @@ export function RosterRow({
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="row-name flex items-baseline gap-2">
-          <span className={cn("truncate text-sm", needs ? "font-semibold" : "font-medium")}>
+          <span
+            {...card.hover}
+            className={cn("truncate text-sm", needs ? "font-semibold" : "font-medium")}
+          >
             {name}
           </span>
           {item.lastActivityAt && (
@@ -216,6 +229,9 @@ export function RosterRow({
             </span>
           )}
         </span>
+        {title !== "" && (
+          <span className="row-title line-clamp-2 text-xs text-muted-foreground">{title}</span>
+        )}
         <span className="row-line flex items-center gap-2">
           <SwapText text={line.text} className={cn("text-xs", toneClass[line.tone])} />
           {item.unread &&
@@ -232,12 +248,14 @@ export function RosterRow({
   );
   const own: ComponentProps<"button"> & DataAttributes = {
     className:
-      "group/row pressable pressable-row flex h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 text-start hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:h-(--layout-row-touch)",
+      "group/row pressable pressable-row flex min-h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 py-2 text-start hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:min-h-(--layout-row-touch)",
     type: render ? undefined : "button",
     "data-selected": selected ? "" : undefined,
     "aria-current": selected ? "page" : undefined,
     // Which bot or room the row is, so focus can come back to it.
     "data-roster-row": rosterKeyText(rosterKeyOf(item)),
+    "data-card-anchor": "",
+    ...card.focus,
     ...(arrival === null
       ? {}
       : { "data-arrival": arrival, style: arrivalStyle(spot), onAnimationEnd }),

@@ -132,11 +132,17 @@ export type RecorderStarted = typeof RecorderStarted.Type;
 /** The most bytes one piece an encoder wrote may carry across the bridge. */
 export const MAX_RECORDER_CHUNK = 64 * 1024 * 1024;
 
-/** What an encoder wrote next: a screen's video, or the voice. Pieces of one stream arrive in order. */
+/**
+ * What an encoder wrote next: a screen's video, the voice, or the voice again
+ * as mono 32-bit float PCM at the voice socket's rate (`speech`), kept beside
+ * the zip only until the voice is written down for its transcript. Pieces of
+ * one stream arrive in order.
+ */
 export const RecorderChunk = Schema.Struct({
   stream: Schema.Union([
     Schema.TaggedStruct("screen", { screen: ScreenNumber }),
     Schema.TaggedStruct("voice", {}),
+    Schema.TaggedStruct("speech", {}),
   ]),
   bytes: Schema.Uint8Array.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_RECORDER_CHUNK)),
 });
@@ -191,9 +197,11 @@ export type RecordingId = typeof RecordingId.Type;
  * A recording for the page: `ready`, the zip of `size` bytes to put in the
  * draft of `target` under `pairing`, started at `startedAt`; `interrupted`
  * when the app stopped before the operator did, and it was put together
- * from what was written. `failed`: it could not record, and nothing was kept.
- * `discarded`: the operator threw it away. Either way the app's window is
- * back.
+ * from what was written; `speech`, the bytes of its voice still to be
+ * written down for its transcript (`RecordingTranscriptKeep`), or null when
+ * there is none or it is settled. `failed`: it could not record, and nothing
+ * was kept. `discarded`: the operator threw it away. Either way the app's
+ * window is back.
  */
 export const RecordingDelivery = Schema.Union([
   Schema.TaggedStruct("ready", {
@@ -203,6 +211,7 @@ export const RecordingDelivery = Schema.Union([
     size: Schema.Int.check(Schema.isGreaterThan(0)),
     startedAt: Schema.DateTimeUtcFromString,
     interrupted: Schema.Boolean,
+    speech: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   }),
   Schema.TaggedStruct("failed", {
     target: EntryTarget,
@@ -226,6 +235,46 @@ export const RecordingRead = Schema.Struct({
   }),
 );
 export type RecordingRead = typeof RecordingRead.Type;
+
+const Ms = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const Said = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100_000));
+
+/**
+ * A word, and when the recognizer had heard it, in ms into the recording. As
+ * long as its segment's text may be: a language written without spaces, or a
+ * recognizer repeating itself over noise, gives long ones.
+ */
+export const TranscriptWord = Schema.Struct({ t: Ms, text: Said });
+
+/**
+ * What was said from `t` to `until`, in ms; `words` null where the
+ * recognizer gave the text only at the end.
+ */
+export const TranscriptSegment = Schema.Struct({
+  t: Ms,
+  until: Ms,
+  text: Said,
+  words: Schema.NullOr(Schema.Array(TranscriptWord).check(Schema.isMaxLength(20_000))),
+}).check(
+  Schema.makeFilter(({ t, until }) => until >= t, { title: "a stretch that ends after it starts" }),
+);
+
+/** A recording's transcript, written down through the server's speech recognition. */
+export const RecordingTranscript = Schema.Struct({
+  segments: Schema.Array(TranscriptSegment).check(Schema.isMaxLength(100_000)),
+});
+export type RecordingTranscript = typeof RecordingTranscript.Type;
+
+/**
+ * Puts the transcript in a ready recording's zip, or, with `null`, settles
+ * that it goes without one; either way its voice kept for it is deleted.
+ * Answers the zip's size then, or `null` once the recording is gone.
+ */
+export const RecordingTranscriptKeep = Schema.Struct({
+  id: RecordingId,
+  transcript: Schema.NullOr(RecordingTranscript),
+});
+export type RecordingTranscriptKeep = typeof RecordingTranscriptKeep.Type;
 
 /** The page no longer needs the recording: the app deletes it. */
 export const RecordingRelease = Schema.Struct({ id: RecordingId });

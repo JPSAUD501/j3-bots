@@ -682,7 +682,12 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     };
     const members: Array<string> = [];
     for (const name of TEAM.slice(0, Number(turn.args.get("count") ?? "4"))) {
-      const created = await callBotTool(turn, "create_bot", { name, job: `${name} owns a part.` });
+      const created = await callBotTool(turn, "create_bot", {
+        name,
+        title: `${name}'s part`,
+        job: `${name} owns a part.`,
+        listed: true,
+      });
       const id = Option.map(decodeCreated(created.text), (value) => value.id);
       if (created.failed || Option.isNone(id)) return refused(created.text);
       members.push(id.value);
@@ -690,6 +695,7 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     const started = await callBotTool(turn, "start_room", {
       name: "Support",
       members,
+      listed: true,
       kickoff: "Each of you takes one part, in the order you are named. [[script:room-answer]]",
     });
     if (started.failed) return refused(started.text);

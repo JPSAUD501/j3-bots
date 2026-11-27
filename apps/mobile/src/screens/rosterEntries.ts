@@ -33,12 +33,14 @@ const pin = {
 export interface RosterSizes {
   /** A bot's or room's row: its name over its status line. */
   readonly row: number;
+  /** A line of a bot's title, which goes between its name and its status line (`rowHeight`). */
+  readonly titleLine: number;
   /** A section's header: its name, with room above to set it apart. */
   readonly section: number;
   /** The line an open section with no bots shows. */
   readonly empty: number;
-  /** The row that opens the hidden bots and rooms, at the end of the list. */
-  readonly hidden: number;
+  /** The row that opens the bots and rooms behind the scenes, at the end of the list. */
+  readonly backstage: number;
   /** A pinned bot: its avatar, the gap under it and one line of name. */
   readonly pinCell: number;
 }
@@ -46,10 +48,11 @@ export interface RosterSizes {
 export const rosterSizes = (lines: TextLines): RosterSizes => ({
   // The name, 2 px, the status line, and at least 9 px above and below.
   row: Math.max(layout.rowHeight.touch, lines.base + 2 + lines.sm + 2 * 9),
+  titleLine: lines.xs,
   // The name sits 8 px off the bottom, with at least 18 px above it.
   section: Math.max(48, lines.sm + 26),
   empty: Math.max(40, lines.sm + 2 * 9),
-  hidden: Math.max(56, lines.base + 2 * 17),
+  backstage: Math.max(56, lines.base + 2 * 17),
   pinCell: PIN_AVATAR + 8 + lines.sm,
 });
 
@@ -115,10 +118,10 @@ export type RosterEntry =
       readonly height: number;
       readonly pair: TeammatePair;
     }
-  /** The way to the hidden bots and rooms, listed while any is. */
+  /** The way to the bots and rooms behind the scenes, listed while any is. */
   | {
-      readonly kind: "hidden";
-      readonly key: "hidden";
+      readonly kind: "backstage";
+      readonly key: "backstage";
       readonly height: number;
       readonly items: ReadonlyArray<RosterItem>;
     };
@@ -137,12 +140,28 @@ export const pinnedHeight = (count: number, columns: number, cell: number): numb
 /** The pinned band's geometry, for the band to draw itself by. */
 export const PIN_BAND = pin;
 
+/**
+ * How many lines a bot's title takes in its row at the list's width: one or
+ * two, as `useTitleLines` reads them.
+ */
+export type TitleLines = (title: string) => number;
+
+/**
+ * How tall a bot's or room's row is: a bot's title, in as many lines as it
+ * takes, goes between its name and its status line; a room, or a bot from
+ * before titles, has none.
+ */
+const rowHeight = (sizes: RosterSizes, titleLines: TitleLines, item: RosterItem): number => {
+  const title = item._tag === "bot" ? item.bot.profile.title : "";
+  return title === "" ? sizes.row : sizes.row + 2 + titleLines(title) * sizes.titleLine;
+};
+
 const row =
-  (sizes: RosterSizes) =>
+  (sizes: RosterSizes, titleLines: TitleLines) =>
   (item: RosterItem): RosterEntry => ({
     kind: "row",
     key: rosterKeyText(rosterKeyOf(item)),
-    height: sizes.row,
+    height: rowHeight(sizes, titleLines, item),
     item,
   });
 
@@ -172,6 +191,7 @@ const sectionEntries = (
   { section, items }: ArrangedRoster["sections"][number],
   folded: boolean,
   sizes: RosterSizes,
+  titleLines: TitleLines,
 ): ReadonlyArray<RosterEntry> => {
   const header: RosterEntry = {
     kind: "section",
@@ -186,14 +206,15 @@ const sectionEntries = (
   if (items.length === 0) {
     return [header, { kind: "empty", key: `empty:${section.id}`, height: sizes.empty }];
   }
-  return [header, ...items.map(row(sizes))];
+  return [header, ...items.map(row(sizes, titleLines))];
 };
 
 /**
  * What the roster lists in a list `width` px wide: the pinned bots' band,
  * the rows in no section, each section in the operator's order, the pairs
- * of bots that wrote each other (`betweenBots`), and the way to the hidden
- * bots and rooms last. `folded` are the sections folded on this phone.
+ * of bots that wrote each other (`betweenBots`), and the way to the bots
+ * and rooms behind the scenes last. `folded` are the sections folded on this
+ * phone.
  */
 export const rosterEntries = (
   arranged: ArrangedRoster,
@@ -201,6 +222,7 @@ export const rosterEntries = (
   width: number,
   folded: ReadonlySet<SectionId>,
   sizes: RosterSizes,
+  titleLines: TitleLines,
 ): ReadonlyArray<RosterEntry> => {
   const columns = pinColumns(width);
   const pinned: RosterEntry = {
@@ -211,18 +233,18 @@ export const rosterEntries = (
     columns,
     cell: sizes.pinCell,
   };
-  const hidden: ReadonlyArray<RosterEntry> =
+  const backstage: ReadonlyArray<RosterEntry> =
     arranged.hidden.length === 0
       ? []
-      : [{ kind: "hidden", key: "hidden", height: sizes.hidden, items: arranged.hidden }];
+      : [{ kind: "backstage", key: "backstage", height: sizes.backstage, items: arranged.hidden }];
   return [
     pinned,
-    ...arranged.main.map(row(sizes)),
+    ...arranged.main.map(row(sizes, titleLines)),
     ...arranged.sections.flatMap((each) =>
-      sectionEntries(each, folded.has(each.section.id), sizes),
+      sectionEntries(each, folded.has(each.section.id), sizes, titleLines),
     ),
     ...betweenEntries(pairs, sizes),
-    ...hidden,
+    ...backstage,
   ];
 };
 
@@ -234,4 +256,8 @@ export const foundEntries = (
   found: ReadonlyArray<RosterItem>,
   pairs: ReadonlyArray<TeammatePair>,
   sizes: RosterSizes,
-): ReadonlyArray<RosterEntry> => [...found.map(row(sizes)), ...betweenEntries(pairs, sizes)];
+  titleLines: TitleLines,
+): ReadonlyArray<RosterEntry> => [
+  ...found.map(row(sizes, titleLines)),
+  ...betweenEntries(pairs, sizes),
+];

@@ -133,6 +133,12 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       nightly-version: ${{ needs.plan.outputs.version }}
+    # A called workflow's jobs see the secrets of the environments they name
+    # only when the caller passes its secrets on: without this, `android-sign`
+    # found the android-signing environment's four secrets empty on every
+    # nightly, while the same job signed every tag's release. Only
+    # `android-sign` and `sign` read any, as on a tag.
+    secrets: inherit
 
   # Deletes every nightly but the newest seven published, and their tags, and
   # the drafts that runs which failed left. It runs no code from the

@@ -57,6 +57,17 @@ describe("j3 tools", () => {
     expect(accepts("list_teammates", { all: true })).toBe(false);
   });
 
+  it("makes a bot only with a title and a place, in the list or behind the scenes", () => {
+    const bot = { name: "Lia", title: "Bakery competitors", listed: true };
+    expect(accepts("create_bot", bot)).toBe(true);
+    expect(accepts("create_bot", { name: "Lia", listed: true })).toBe(false);
+    expect(accepts("create_bot", { ...bot, title: "  " })).toBe(false);
+    expect(accepts("create_bot", { name: "Lia", title: "Bakery competitors" })).toBe(false);
+    const room = { name: "Launch", members: ["bot_1"], kickoff: "Let's start." };
+    expect(accepts("start_room", { ...room, listed: false })).toBe(true);
+    expect(accepts("start_room", room)).toBe(false);
+  });
+
   it("fills memory defaults on decode", () => {
     const remembered = decode("remember", { fact: "Ana prefers short answers." });
     expect(remembered._tag === "Success" && remembered.value).toEqual({

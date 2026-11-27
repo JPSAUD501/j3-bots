@@ -35,14 +35,14 @@ const RoomsContext = createContext<ReadonlyMap<RoomId, Room>>(new Map());
 const timeZoneOf = (saved: string | null): string =>
   (saved === null ? null : knownTimeZone(saved)) ?? deviceTimeZone();
 
-/** Every bot by id, hidden ones too: an old message names its speaker however the roster shows it now. */
+/** Every bot by id, those behind the scenes too: an old message names its speaker however the roster shows it now. */
 const botsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<BotId, Bot> =>
   new Map(
     roster.flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [])),
   );
 
 /**
- * Every room by id, archived and hidden ones too, so a notice or a mention
+ * Every room by id, archived ones and those behind the scenes too, so a notice or a mention
  * names the room as it is called now.
  */
 const roomsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<RoomId, Room> =>
@@ -121,13 +121,13 @@ export const usePresentation = (): PresentationContext => {
   return context;
 };
 
-/** Every bot the operator has, by id, hidden ones included. */
+/** Every bot the operator has, by id, those behind the scenes included. */
 export const useBots = (): ReadonlyMap<BotId, Bot> => use(BotsContext);
 
-/** Every room the operator has, by id, archived and hidden ones included. */
+/** Every room the operator has, by id, archived ones and those behind the scenes included. */
 export const useRooms = (): ReadonlyMap<RoomId, Room> => use(RoomsContext);
 
-/** Every bot the operator has, hidden ones included, in the roster's order. */
+/** Every bot the operator has, those behind the scenes included, in the roster's order. */
 export const useBotList = (): ReadonlyArray<Bot> => {
   const bots = useBots();
   return useMemo(() => [...bots.values()], [bots]);

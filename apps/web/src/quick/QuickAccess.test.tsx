@@ -8,7 +8,7 @@ import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ids } from "../gallery/sample";
 import { Toast } from "../components/Toast";
-import { useSampleSource } from "../gallery/sampleSource";
+import { sampleCardIntents, useSampleSource } from "../gallery/sampleSource";
 import { QuickAccess } from "./QuickAccess";
 
 declare global {
@@ -74,6 +74,7 @@ function Harness({
             told.attached.push({ target, names: files.map((file) => file.name) }),
           setShown: (target) => told.onScreen.push(target),
         }}
+        card={sampleCardIntents(source)}
         solid={false}
         shown={shown}
         asked={asked}

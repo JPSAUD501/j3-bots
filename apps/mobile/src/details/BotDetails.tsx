@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Loaded } from "@j3-bots/client-runtime";
+import { loadedList } from "@j3-bots/client-runtime";
 import {
   asksYou,
   botStop,
@@ -48,7 +48,7 @@ import {
   ShieldCheck,
   Webhook,
 } from "lucide-react-native";
-import { type ReactElement, useMemo } from "react";
+import { type ComponentRef, type ReactElement, useMemo, useRef } from "react";
 import { ScrollView, useWindowDimensions, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -58,9 +58,11 @@ import { DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.t
 import { useConfirm } from "../confirm.tsx";
 import { PressScale } from "../press.tsx";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
+import { useBotCardPress } from "../components/BotCard.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
+import { useReducedMotion } from "../motion.ts";
 import { useSay } from "../toast.tsx";
 import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
@@ -68,24 +70,27 @@ import { RoutineSentence } from "../conversation/RoutineTrack.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useShareBotTemplate } from "../template/share.ts";
 import { useBotPlacing } from "../screens/placing.ts";
-import { HiddenNotice } from "./HiddenNotice.tsx";
+import { BackstageNotice } from "./BackstageNotice.tsx";
 import { useBotActions } from "./actions.ts";
 import { useOpenConnectors } from "../connectors/intents.ts";
 import { ConnectorTile, StatusWord } from "../connectors/parts.tsx";
 import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
 
-/** A read's list once loaded, or null while it loads; a bot that is gone has none. */
-const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
-  loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
-
 /**
  * Answers: what is this bot, and what runs without me. Its profile, Stop
- * while it has work to stop, that it is hidden while it is, its routines
+ * while it has work to stop, that it is behind the scenes while it is, its routines
  * with a switch to pause each, the files it sent, its memory, its
  * connectors, the teammates it wrote with, the model it runs on, a fresh
  * start, and, last and apart, deleting it.
  */
-export function BotDetails({ bot }: { readonly bot: Bot }) {
+export function BotDetails({
+  bot,
+  at,
+}: {
+  readonly bot: Bot;
+  /** Where it opens: at its routines, as the bot's card's Routines asks. */
+  readonly at?: "routines" | undefined;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const confirm = useConfirm();
@@ -112,8 +117,13 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const skeleton = (count: number) => <SkeletonRows count={count} />;
   const stop = botStop(bot);
   const stopFocus = useFocusAfterStop(stop !== "hidden");
+  const reduced = useReducedMotion();
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  // Asked to open at its routines, it goes there once, as their section is laid out.
+  const reached = useRef(at !== "routines");
   return (
     <ScrollView
+      ref={scroll}
       className="flex-1 bg-background"
       contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
@@ -152,25 +162,33 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         />
       )}
 
-      {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}
+      {bot.hidden && <BackstageNotice name={name} onBringBack={() => placing.bringBack(bot)} />}
 
-      <Section open title={t("details.routines")}>
-        {routines === null ? (
-          skeleton(2)
-        ) : routines.length === 0 ? (
-          <Quiet>{t("details.noRoutines", { name })}</Quiet>
-        ) : (
-          routines.map((routine) => (
-            <RoutineRow
-              key={routine.id}
-              routine={routine}
-              onOpen={() =>
-                navigation.navigate("routineRuns", { botId: bot.id, routineId: routine.id })
-              }
-            />
-          ))
-        )}
-      </Section>
+      <View
+        onLayout={(event) => {
+          if (reached.current) return;
+          reached.current = true;
+          scroll.current?.scrollTo({ y: event.nativeEvent.layout.y, animated: !reduced });
+        }}
+      >
+        <Section open title={t("details.routines")}>
+          {routines === null ? (
+            skeleton(2)
+          ) : routines.length === 0 ? (
+            <Quiet>{t("details.noRoutines", { name })}</Quiet>
+          ) : (
+            routines.map((routine) => (
+              <RoutineRow
+                key={routine.id}
+                routine={routine}
+                onOpen={() =>
+                  navigation.navigate("routineRuns", { botId: bot.id, routineId: routine.id })
+                }
+              />
+            ))
+          )}
+        </Section>
+      </View>
 
       <Section open title={t("details.files")}>
         {files === null ? (
@@ -464,9 +482,10 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
 }
 
 /**
- * A teammate the bot wrote with: its face and name, then the latest message
- * between them after who wrote it, and when. It opens their conversation.
- * A deleted teammate is named so, its face left blank.
+ * A teammate the bot wrote with: its face, its name over its title, then the
+ * latest message between them after who wrote it, and when. It opens their
+ * conversation, and a long press the teammate's card. A deleted teammate is
+ * named so, its face left blank.
  */
 function TeammateRow({
   teammate,
@@ -478,14 +497,18 @@ function TeammateRow({
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
   const name = peer?.profile.name ?? ctx.i18n.t("bot.unknown");
+  const title = peer?.profile.title ?? "";
+  // A long press opens the teammate's card (decision 0102); a deleted one has none.
+  const card = useBotCardPress(peer === undefined ? null : peer.id, name);
   const line = pairLine(teammate.pair, ctx);
   const time = activityTime(teammate.pair.lastMessage.createdAt, ctx);
   return (
     <PressScale
       depth="row"
       accessibilityRole="button"
-      accessibilityLabel={[name, time, line].join(", ")}
+      accessibilityLabel={[name, title, time, line].filter((part) => part !== "").join(", ")}
       onPress={onOpen}
+      {...card?.props}
       className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
     >
       {peer === undefined ? (
@@ -500,6 +523,11 @@ function TeammateRow({
           </Text>
           <Text className="text-xs text-muted-foreground">{time}</Text>
         </View>
+        {title !== "" && (
+          <Text numberOfLines={2} className="text-xs text-muted-foreground">
+            {title}
+          </Text>
+        )}
         <Text numberOfLines={1} className="text-sm text-muted-foreground">
           {line}
         </Text>

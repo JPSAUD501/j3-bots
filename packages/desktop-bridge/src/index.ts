@@ -672,7 +672,8 @@ export type TrayReport = typeof TrayReport.Type;
  * A place in the main window: a bot's conversation or a room, as the tray
  * opens one, or what a conversation leads to and quick access hands over: a
  * bot's browser on a tab (`front`: the one it uses), a teammate conversation
- * at one of its messages, a routine's runs, a connector's sign-in.
+ * at one of its messages, a routine's runs, a connector's sign-in; and what a
+ * bot's card there leads to: its details, or a new room with it.
  */
 export const Destination = Schema.Union([
   EntryTarget,
@@ -684,6 +685,8 @@ export const Destination = Schema.Union([
   Schema.TaggedStruct("pair", { botIds: PairBotIds, at: Schema.NullOr(EntryId) }),
   Schema.TaggedStruct("routine", { botId: BotId, routineId: RoutineId }),
   Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
+  Schema.TaggedStruct("details", { botId: BotId }),
+  Schema.TaggedStruct("new-room", { members: Schema.Array(BotId) }),
 ]);
 export type Destination = typeof Destination.Type;
 
@@ -1017,6 +1020,8 @@ export const HostedBridge = Schema.Struct({
   openRecorder: Callable,
   onRecording: Callable,
   readRecording: Callable,
+  readRecordingSpeech: Callable,
+  keepTranscript: Callable,
   releaseRecording: Callable,
   recorderJob: Callable,
   recorderStarted: Callable,

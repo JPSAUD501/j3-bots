@@ -136,6 +136,8 @@ const bridge: DesktopBridge = {
     };
   },
   readRecording: (request) => ipcRenderer.invoke(IPC_CHANNELS.readRecording, request),
+  readRecordingSpeech: (request) => ipcRenderer.invoke(IPC_CHANNELS.readRecordingSpeech, request),
+  keepTranscript: (request) => ipcRenderer.invoke(IPC_CHANNELS.keepTranscript, request),
   releaseRecording: (request) => ipcRenderer.send(IPC_CHANNELS.releaseRecording, request),
   recorderJob: () => ipcRenderer.invoke(IPC_CHANNELS.recorderJob),
   recorderStarted: (report) => ipcRenderer.send(IPC_CHANNELS.recorderStarted, report),
