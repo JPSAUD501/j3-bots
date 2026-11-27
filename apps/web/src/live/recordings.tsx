@@ -32,7 +32,7 @@ const attached = new Set<RecordingId>();
  * Screen recording in the main window (decision 0098), where the desktop app
  * records and the server takes recordings: the intent that opens the sheet
  * on a conversation or room, the sheet itself, and each recording that ends,
- * put in its draft as a file. A recording for another pairing than this
+ * put in its draft as a file, its voice written down first. A recording for another pairing than this
  * page's waits in the app for that one.
  */
 export function useScreenRecordings({
@@ -69,13 +69,23 @@ export function useScreenRecordings({
       case "ready": {
         if (delivery.pairing !== pairing || attached.has(delivery.id) || app === null) return;
         attached.add(delivery.id);
-        const { id, target } = delivery;
+        const { id, target, speech } = delivery;
         void j3
           .attachRecording(target, {
             name: t("recording.fileName", { date: fileDate(delivery.startedAt) }),
             size: delivery.size,
             read: (start, end) => app.recording.read(id, start, end),
             release: () => app.recording.release(id),
+            // The voice is written down before the zip uploads, while its chip shows how far.
+            ...(speech === null
+              ? {}
+              : {
+                  speech: {
+                    size: speech,
+                    read: (start, end) => app.recording.readSpeech(id, start, end),
+                    keep: (transcript) => app.recording.keepTranscript(id, transcript),
+                  },
+                }),
           })
           .then(
             (taken) => taken,

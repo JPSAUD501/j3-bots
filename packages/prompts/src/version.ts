@@ -164,6 +164,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       id: Schema.decodeSync(RoomId)("room"),
       name: "Room",
       members: [teammate],
+      botsOnly: false,
     },
     reason: "user",
     closing: true,
@@ -190,6 +191,22 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       },
     ],
   },
+  // A room of bots only, closing: its own lines (decision 0103).
+  {
+    ...base,
+    kind: "room",
+    room: {
+      id: Schema.decodeSync(RoomId)("room"),
+      name: "Room",
+      members: [teammate],
+      botsOnly: true,
+    },
+    reason: "member",
+    closing: true,
+    newcomer: false,
+    omitted: 0,
+    entries: [{ author: teammate, id: entryId, at, text: "text", mentions: [], files: [] }],
+  },
   ...(["kickoff", "addressed", "everyone", "member"] as const).map((reason): Wake => ({
     ...base,
     kind: "room",
@@ -197,6 +214,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       id: Schema.decodeSync(RoomId)("room"),
       name: "Room",
       members: [teammate],
+      botsOnly: false,
     },
     reason,
     closing: false,
@@ -294,6 +312,11 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   { ...base, kind: "system", event: { name: "undelivered" } },
   { ...base, kind: "system", event: { name: "reaction", news } },
   { ...base, kind: "system", event: { name: "delegated-result", text: "text" } },
+  {
+    ...base,
+    kind: "system",
+    event: { name: "room-paused", room: { id: Schema.decodeSync(RoomId)("room"), name: "Room" } },
+  },
   ...(["done", "declined", "tab-closed", "timed-out", "handed-back"] as const).map(
     (outcome): Wake => ({
       ...base,

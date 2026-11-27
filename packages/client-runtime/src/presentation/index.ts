@@ -249,6 +249,7 @@ export {
   roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
+  unarchivable,
   withMember,
   withoutDeleted,
 } from "./roomForm.ts";
@@ -323,6 +324,7 @@ export {
   type TemplateStart,
   templateStart,
   type TemplateSubmission,
+  templateAsksTitle,
   templateSubmission,
 } from "./template.ts";
 export {

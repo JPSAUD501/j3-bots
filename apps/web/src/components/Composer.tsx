@@ -2,6 +2,7 @@
 import type { Attachment, Avatar, MessageQuote, SuggestedReply } from "@j3-bots/contracts";
 import {
   ArrowUpIcon,
+  AudioLinesIcon,
   MonitorDotIcon,
   PaperclipIcon,
   PlusIcon,
@@ -92,7 +93,11 @@ const sendButton = cn(
 
 /** What the composer offers after `@`: a bot, drawn by its face, or a room, by its mark. */
 export type MentionCandidate =
-  | (Extract<Mentionable, { readonly _tag: "bot" }> & { readonly avatar: Avatar })
+  | (Extract<Mentionable, { readonly _tag: "bot" }> & {
+      readonly avatar: Avatar;
+      /** What the bot is for, under its name; empty when it has none. */
+      readonly title: string;
+    })
   | (Extract<Mentionable, { readonly _tag: "room" }> & {
       readonly members: ReadonlyArray<RoomAvatarMember>;
     });
@@ -819,7 +824,9 @@ export function Composer({
 /**
  * A file in the draft, where it stands in the text: its image or its kind,
  * its name, how its upload goes or that it cannot go, and a way out. Once
- * uploaded, a click opens it.
+ * uploaded, a click opens it. A screen recording whose voice is being
+ * written down first shows the voice instead of its kind, and how far that
+ * has come.
  */
 function DraftFileChip({
   file,
@@ -843,6 +850,7 @@ function DraftFileChip({
   const ready = file._tag === "ready" ? file.attachment : null;
   const image = useAttachmentImage(ready);
   const mediaType = file._tag === "ready" ? file.attachment.mediaType : file.mediaType;
+  const transcribing = file._tag === "uploading" ? file.transcribing : undefined;
   return (
     <span
       title={detail}
@@ -870,7 +878,11 @@ function DraftFileChip({
           <img src={image.url} alt="" className="size-5 shrink-0 rounded-sm object-cover" />
         ) : (
           <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
-            <FileKindIcon mediaType={mediaType} />
+            {transcribing === undefined ? (
+              <FileKindIcon mediaType={mediaType} />
+            ) : (
+              <AudioLinesIcon className="size-4" aria-hidden />
+            )}
           </span>
         )}
         <span className="truncate font-medium">{name}</span>
@@ -895,7 +907,9 @@ function DraftFileChip({
         <span
           aria-hidden
           className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-(--tint) transition-transform duration-(--duration-fast)"
-          style={{ transform: `scaleX(${file.size === 0 ? 0 : file.sent / file.size})` }}
+          style={{
+            transform: `scaleX(${transcribing ?? (file.size === 0 ? 0 : file.sent / file.size)})`,
+          }}
         />
       )}
     </span>
@@ -1147,7 +1161,16 @@ export function MentionList({
                   />
                 )}
                 {candidate?._tag === "room" && <RoomAvatar members={candidate.members} size={20} />}
-                <span className="min-w-0 truncate">{option.name}</span>
+                {candidate?._tag === "bot" && candidate.title !== "" ? (
+                  <span className="flex min-w-0 flex-col py-1 leading-tight">
+                    <span className="truncate">{option.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {candidate.title}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="min-w-0 truncate">{option.name}</span>
+                )}
                 {option._tag === "room" && (
                   <span className="ms-auto shrink-0 text-xs text-muted-foreground">
                     {t("mention.room")}

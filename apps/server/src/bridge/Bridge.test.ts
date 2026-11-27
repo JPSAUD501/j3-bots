@@ -225,7 +225,7 @@ it.layer(endpoint)("j3 bridge", (it) => {
         { jsonrpc: "2.0", id: 2, method: "tools/list" },
         call(3, "remember", { fact: "Standups are at nine" }),
         call(4, "say", { text: "Done." }),
-        call(5, "create_bot", { name: "Scout" }),
+        call(5, "create_bot", { name: "Scout", title: "Repository watch", listed: true }),
       ]);
 
       assert.deepStrictEqual(
@@ -253,7 +253,12 @@ it.layer(endpoint)("j3 bridge", (it) => {
       });
       const session = yield* engineSession(primary.id);
       yield* sendToBot(primary.id, "Make me a bot that watches the repository.");
-      const args = { name: "Scout", job: "Watches the repository." };
+      const args = {
+        name: "Scout",
+        title: "Repository watch",
+        job: "Watches the repository.",
+        listed: true,
+      };
       yield* (yield* TestEngineControl).toolCall({
         sessionId: session,
         turnId: yield* nextTurn(primary.id),

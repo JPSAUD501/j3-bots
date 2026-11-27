@@ -132,6 +132,8 @@ export function TextField(props: {
   readonly readOnly?: boolean;
   readonly multiline?: boolean;
   readonly autoCapitalize?: "none" | "sentences" | "words";
+  /** Takes the focus, and raises the keyboard, as the screen opens. */
+  readonly autoFocus?: boolean;
   readonly onBlur?: () => void;
 }) {
   const placeholderColor = useColor("accent-muted-foreground");
@@ -146,6 +148,7 @@ export function TextField(props: {
         value={props.value}
         onChangeText={props.onChange}
         onBlur={props.onBlur}
+        autoFocus={props.autoFocus === true}
         editable={props.readOnly !== true}
         placeholder={props.placeholder}
         placeholderTextColor={placeholderColor}

@@ -300,14 +300,16 @@ export function MessageBubble({
         </Animated.View>
       </View>
     );
-  // Where a long press reacts, the words are selected in the bubble drawn again over the bar's
-  // scrim, so selecting and reacting never answer the same press.
+  // Where the operator reacts to nothing and quotes nothing, a long press opens nothing, and
+  // selects the words in place. Where it opens the quick bar, the words are selected in the
+  // bubble drawn again over the bar's scrim, so selecting and reacting never answer the same press.
+  const pressable = reactable !== null && (reacting.offered || actions.length > 0);
   const said = (
     <>
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard id={message.id} visual={message.visual} />
       )}
-      {words(reactable === null, motion.words, wordsView)}
+      {words(!pressable, motion.words, wordsView)}
       {/* Files placed in the text stand there; others follow it. */}
       {placed === null &&
         message.attachments.map((attachment) => (
@@ -325,7 +327,7 @@ export function MessageBubble({
     </>
   );
   const openBar = () => {
-    if (reactable === null) return;
+    if (!pressable) return;
     feelLongPress();
     messageView.current?.measureInWindow((x, y, width, height) => {
       const open = (preview: ReactionTarget["preview"]) =>
@@ -343,26 +345,25 @@ export function MessageBubble({
       );
     });
   };
-  const body =
-    reactable === null ? (
-      said
-    ) : (
-      <Pressable
-        ref={messageView}
-        accessibilityActions={[
-          { name: "longpress", label: t("reaction.add") },
-          ...(reply === null ? [] : [{ name: "reply", label: t("quote.reply") }]),
-        ]}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === "longpress") openBar();
-          if (event.nativeEvent.actionName === "reply") reply?.();
-        }}
-        onLongPress={openBar}
-        className={`gap-1 self-stretch ${fromOperator ? "items-end" : "items-start"}`}
-      >
-        <FileLongPress value={openBar}>{said}</FileLongPress>
-      </Pressable>
-    );
+  const body = !pressable ? (
+    said
+  ) : (
+    <Pressable
+      ref={messageView}
+      accessibilityActions={[
+        { name: "longpress", label: t("reaction.add") },
+        ...(reply === null ? [] : [{ name: "reply", label: t("quote.reply") }]),
+      ]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "longpress") openBar();
+        if (event.nativeEvent.actionName === "reply") reply?.();
+      }}
+      onLongPress={openBar}
+      className={`gap-1 self-stretch ${fromOperator ? "items-end" : "items-start"}`}
+    >
+      <FileLongPress value={openBar}>{said}</FileLongPress>
+    </Pressable>
+  );
   const pills = reactable !== null && (
     <ReactionPills
       entryId={reactable.entryId}

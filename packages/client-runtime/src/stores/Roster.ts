@@ -93,6 +93,12 @@ export class Roster extends Context.Service<
      * a client offer to record the screen.
      */
     readonly screenRecordings: Readable<boolean>;
+    /**
+     * Whether the server writes down a screen recording's voice through its
+     * speech recognition (`recordingTranscripts`), as its latest roster
+     * snapshot says. Only then does the desktop app ask it to.
+     */
+    readonly recordingTranscripts: Readable<boolean>;
     /** Pins, hides, makes primary or moves the bot between sections. */
     readonly placeBot: (botId: BotId, placement: BotPlacement) => Effect.Effect<IntentResult<Bot>>;
     /**
@@ -148,6 +154,7 @@ export const layer = Layer.effect(
     const quotes = new Cell(false);
     const quoteComments = new Cell(false);
     const screenRecordings = new Cell(false);
+    const recordingTranscripts = new Cell(false);
 
     yield* connection
       .eachSession((client) =>
@@ -172,6 +179,7 @@ export const layer = Layer.effect(
                     quotes.set(frame.quotes === true);
                     quoteComments.set(frame.quoteComments === true);
                     screenRecordings.set(frame.screenRecordings === true);
+                    recordingTranscripts.set(frame.recordingTranscripts === true);
                     return state.set(ready(frame.items));
                   }
                   if (frame.sections !== undefined) sections.set(frame.sections);
@@ -283,6 +291,7 @@ export const layer = Layer.effect(
       quotes,
       quoteComments,
       screenRecordings,
+      recordingTranscripts,
       stop,
       stopRoom,
       forceStop,

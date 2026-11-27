@@ -654,7 +654,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           ]),
         ),
       })),
-    createBot: ({ name, primary, hidden, avatar }) => {
+    createBot: ({ name, title, primary, hidden, avatar }) => {
       // As on a server: with no model to give the bot, it is refused.
       if (!hasDefaultModel(get().engine)) {
         return Promise.resolve({
@@ -674,7 +674,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           id: botId,
           profile: {
             name,
-            title: "",
+            title,
             avatar: avatar ?? freeAvatar(taken),
             job: "",
           },

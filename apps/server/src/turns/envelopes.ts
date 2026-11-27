@@ -135,6 +135,9 @@ export const widestRoomHeader = (roomId: RoomId): RoomWake["room"] => {
     id: roomId,
     name: WIDEST_ROOM_NAME,
     members: Array.from({ length: MAX_ROOM_MEMBERS }, () => member),
+    // Only the operator's message is checked at the widest, and a room of
+    // bots only takes none (decision 0103).
+    botsOnly: false,
   };
 };
 

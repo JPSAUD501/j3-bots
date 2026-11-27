@@ -37,6 +37,8 @@ export type RosterFrame =
       readonly quoteComments: true;
       /** The server takes screen recordings (`HTTP_PATHS.recordingUploads`), so clients offer one. */
       readonly screenRecordings: true;
+      /** The voice socket takes `start`'s `transcript`, so the desktop app writes down a recording's voice. */
+      readonly recordingTranscripts: true;
     }
   | {
       readonly _tag: "changed";
@@ -235,6 +237,7 @@ export const layer = Layer.effect(
             quotes: true,
             quoteComments: true,
             screenRecordings: true,
+            recordingTranscripts: true,
           }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter(

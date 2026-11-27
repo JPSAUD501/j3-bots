@@ -169,6 +169,104 @@ describe("the recordings on disk", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "put the transcript in the zip once the voice is written down, and drop the voice kept for it",
+    () =>
+      Effect.gen(function* () {
+        const { folder, store } = yield* recorded;
+        const speech = new Uint8Array(new Float32Array([0, 0.25, -0.25, 0.5]).buffer);
+        yield* store.append(ID, "speech", speech);
+        yield* store.appendLines(ID, [{ t: 61_500, type: "stop" }]);
+        const ready = yield* store.finish(ID, 61_500, false);
+        assert.strictEqual(ready.speech, 16);
+        assert.deepStrictEqual(Option.getOrThrow(yield* store.readSpeech(ID, 0, 16)), speech);
+
+        const kept = Option.getOrThrow(
+          yield* store.keepTranscript(ID, {
+            segments: [
+              {
+                t: 0,
+                until: 24_050,
+                text: "Open the invoices.",
+                words: [
+                  { t: 1000, text: "Open" },
+                  { t: 1500, text: "the" },
+                  { t: 2500, text: "invoices." },
+                ],
+              },
+              { t: 24_050, until: 50_000, text: "Then send it.", words: null },
+            ],
+          }),
+        );
+        assert.isNull(kept.speech);
+        assert.isAbove(kept.size, ready.size);
+        const files = unzipSync(yield* readWhole(store, kept.size, 1000));
+        assert.deepStrictEqual(Object.keys(files), [
+          "README.md",
+          "manifest.json",
+          "screen-1.mp4",
+          "screen-2.mp4",
+          "voice.webm",
+          "transcript.json",
+          "events.jsonl",
+          "frames/000001200-s1.jpg",
+        ]);
+        assert.deepStrictEqual(files["screen-1.mp4"], join(HEADER, FRAGMENT));
+        assert.deepStrictEqual(JSON.parse(decoder.decode(files["transcript.json"])), {
+          format: "j3-bots-screen-recording-transcript",
+          version: 1,
+          segments: [
+            {
+              t: 0,
+              until: 24_050,
+              text: "Open the invoices.",
+              words: [
+                { t: 1000, text: "Open" },
+                { t: 1500, text: "the" },
+                { t: 2500, text: "invoices." },
+              ],
+            },
+            { t: 24_050, until: 50_000, text: "Then send it." },
+          ],
+        });
+        assert.deepInclude(JSON.parse(decoder.decode(files["manifest.json"])), {
+          durationMs: 61_500,
+          transcript: "transcript.json",
+        });
+        const readme = decoder.decode(files["README.md"]);
+        assert.include(readme, "`transcript.json`: what they said");
+        assert.include(readme, "## Transcript");
+        // The voice kept for it is gone, and the next start offers the zip as it is now.
+        assert.isTrue(Option.isNone(yield* store.readSpeech(ID, 0, 16)));
+        assert.deepStrictEqual(yield* (yield* makeStore(folder)).recover(), [kept]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("go without a transcript when the voice is not written down, and say so", () =>
+    Effect.gen(function* () {
+      const { store } = yield* recorded;
+      yield* store.append(ID, "speech", new Uint8Array(16));
+      yield* store.appendLines(ID, [{ t: 61_500, type: "stop" }]);
+      const ready = yield* store.finish(ID, 61_500, false);
+
+      const kept = Option.getOrThrow(yield* store.keepTranscript(ID, null));
+      assert.strictEqual(kept.size, ready.size);
+      assert.isNull(kept.speech);
+      // Settled: a transcript that comes later is not added.
+      const later = Option.getOrThrow(
+        yield* store.keepTranscript(ID, {
+          segments: [{ t: 0, until: 1000, text: "Hello.", words: null }],
+        }),
+      );
+      assert.strictEqual(later.size, ready.size);
+      const files = unzipSync(yield* readWhole(store, kept.size, 1000));
+      assert.notProperty(files, "transcript.json");
+      assert.deepInclude(JSON.parse(decoder.decode(files["manifest.json"])), { transcript: null });
+      assert.include(decoder.decode(files["README.md"]), "There is no transcript");
+      assert.isTrue(Option.isNone(yield* store.readSpeech(ID, 0, 16)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("drop a video that never got its header whole", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

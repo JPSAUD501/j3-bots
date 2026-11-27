@@ -100,7 +100,8 @@ interface MessageBubbleProps {
   readonly openingHold?: OpeningHold | null;
   /**
    * Sets the operator's reaction on the message, or takes it off. Without it,
-   * or on a message from a server that has no reactions, it offers none.
+   * where the operator takes no part, its reactions only show; on a message
+   * from a server that has no reactions, there are none.
    */
   readonly onReact?: OnReact;
   /** The reaction bar shown open from the start, as the gallery does. */
@@ -145,8 +146,8 @@ export function MessageBubble({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const bots = useBots();
-  const speakerName =
-    speaker === null ? null : (bots.get(speaker)?.profile.name ?? t("bot.unknown"));
+  const speakerProfile = speaker === null ? null : (bots.get(speaker)?.profile ?? null);
+  const speakerName = speaker === null ? null : (speakerProfile?.name ?? t("bot.unknown"));
   const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
   const time = clockTime(message.createdAt, ctx);
@@ -157,10 +158,9 @@ export function MessageBubble({
       ? message.attachmentOffsets
       : null;
   // A message on the server that carries its reactions takes them; one still on this device none.
-  const reacting =
-    message._tag === "message" && canReact(message) && onReact !== undefined
-      ? { reactions: message.reactions ?? [], onReact }
-      : null;
+  const reactions =
+    message._tag === "message" && canReact(message) ? (message.reactions ?? []) : null;
+  const reacting = reactions !== null && onReact !== undefined ? { reactions, onReact } : null;
   const quotes = message.quotes ?? [];
   // Only a bot offers, and only what this version knows.
   const recording =
@@ -235,7 +235,12 @@ export function MessageBubble({
       )}
     >
       {speaker !== null && speakerName !== null && (
-        <SpeakerName position={position} name={speakerName} botId={speaker} />
+        <SpeakerName
+          position={position}
+          name={speakerName}
+          title={speakerProfile?.title ?? ""}
+          botId={speaker}
+        />
       )}
       {speaker !== null && (
         <SpeakerFace position={position} botId={speaker}>
@@ -328,7 +333,13 @@ export function MessageBubble({
         )}
       </div>
       {recording !== null && <RecordOffer recording={recording} />}
-      {reacting !== null && <ReactionPills {...reacting} fromOperator={fromOperator} />}
+      {reactions !== null && (
+        <ReactionPills
+          reactions={reactions}
+          fromOperator={fromOperator}
+          {...(onReact === undefined ? {} : { onReact })}
+        />
+      )}
       {fromOperator && message.lookingAt !== undefined && (
         // The window the operator wrote it over, from quick access, which went with it.
         <p className="flex max-w-(--layout-bubble-width) min-w-0 items-center gap-1 pe-1 text-2xs text-muted-foreground">

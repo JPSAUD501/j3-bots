@@ -297,7 +297,7 @@ function linePieces(line: EventLine, ctx: PresentationContext): Omit<EventLineWo
       }
       return {
         lead:
-          ctx.botName(notice.botId) === null
+          notice.botId === null || ctx.botName(notice.botId) === null
             ? { _tag: "icon", icon: "room" }
             : { _tag: "bot", botId: notice.botId },
         runs,

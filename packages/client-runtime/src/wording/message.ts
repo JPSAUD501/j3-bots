@@ -237,6 +237,11 @@ export function draftFileDetail(
   const { t, locale } = i18n;
   switch (file._tag) {
     case "uploading":
+      if (file.transcribing !== undefined) {
+        return t("composer.file.transcribing", {
+          percent: new Intl.NumberFormat(locale, { style: "percent" }).format(file.transcribing),
+        });
+      }
       return progress
         ? t("composer.file.uploading", {
             percent: new Intl.NumberFormat(locale, { style: "percent" }).format(

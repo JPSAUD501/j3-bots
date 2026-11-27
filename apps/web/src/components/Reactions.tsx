@@ -37,8 +37,9 @@ const emojiButton = cn(
 /**
  * The reactions on a message, one pill for each emoji: who reacted shows on
  * hover or focus. A pill holding the operator's reaction is marked, and takes
- * it off; another sets that emoji as theirs. A pill that arrives while the
- * message is on screen pops in.
+ * it off; another sets that emoji as theirs. Without `onReact`, where the
+ * operator takes no part, as in a room of bots only, the pills only show. A
+ * pill that arrives while the message is on screen pops in.
  */
 export function ReactionPills({
   reactions,
@@ -46,7 +47,7 @@ export function ReactionPills({
   fromOperator,
 }: {
   readonly reactions: ReadonlyArray<Reaction>;
-  readonly onReact: OnReact;
+  readonly onReact?: OnReact;
   /** On the operator's side the pills line up at the end, under their bubble. */
   readonly fromOperator: boolean;
 }) {
@@ -68,7 +69,9 @@ export function ReactionPills({
           key={pill.emoji}
           pill={pill}
           arrives={shown}
-          onClick={() => onReact(reactionAfterPick(reactions, pill.emoji))}
+          {...(onReact === undefined
+            ? {}
+            : { onClick: () => onReact(reactionAfterPick(reactions, pill.emoji)) })}
         />
       ))}
     </div>
@@ -83,7 +86,8 @@ function Pill({
   readonly pill: ReactionPill;
   /** True once the message has shown: a pill mounting after that is one that just arrived. */
   readonly arrives: RefObject<boolean>;
-  readonly onClick: () => void;
+  /** Without it the pill only shows who reacted. */
+  readonly onClick?: () => void;
 }) {
   const { t, plural, locale } = useI18n();
   const bots = useBots();
@@ -117,12 +121,15 @@ function Pill({
             : plural("reaction.pill", pill.count, { emoji: pill.emoji })
         }
         aria-description={names}
-        onClick={onClick}
+        {...(onClick === undefined ? { "aria-disabled": true } : { onClick })}
         className={cn(
-          "pressable inline-flex h-6 cursor-pointer items-center gap-1 rounded-pill border px-2 text-xs font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent pointer-coarse:h-8 pointer-coarse:px-2.5",
+          "inline-flex h-6 items-center gap-1 rounded-pill border px-2 text-xs font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent pointer-coarse:h-8 pointer-coarse:px-2.5",
+          onClick !== undefined && "pressable cursor-pointer",
           pill.mine
-            ? "border-accent/60 bg-accent/12 text-foreground hover:bg-accent/20"
-            : "border-transparent bg-muted text-muted-foreground hover:bg-muted-strong hover:text-foreground",
+            ? "border-accent/60 bg-accent/12 text-foreground"
+            : "border-transparent bg-muted text-muted-foreground",
+          onClick !== undefined &&
+            (pill.mine ? "hover:bg-accent/20" : "hover:bg-muted-strong hover:text-foreground"),
         )}
       >
         <span aria-hidden className="text-sm leading-none">

@@ -6,7 +6,7 @@ import type { RosterItem } from "@j3-bots/contracts";
 /**
  * The bots a share can go to, in the order the share sheet and Direct Share
  * offer them: the one last shared to first, then the roster's order, which
- * puts pinned bots first. Hidden bots and rooms are not offered.
+ * puts pinned bots first. Bots and rooms behind the scenes are not offered.
  */
 export const shareBots = (
   items: ReadonlyArray<RosterItem>,

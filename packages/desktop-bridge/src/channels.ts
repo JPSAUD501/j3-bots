@@ -169,6 +169,13 @@ export const IPC_CHANNELS = {
   recording: "j3bots:recording",
   /** `RecordingRead`, answered with the bytes or `null`. */
   readRecording: "j3bots:read-recording",
+  /**
+   * `RecordingRead` of a recording's voice as it is kept for its transcript
+   * (`RecorderChunk` `speech`), answered with the bytes or `null`.
+   */
+  readRecordingSpeech: "j3bots:read-recording-speech",
+  /** `RecordingTranscriptKeep`, answered with the zip's size or `null`. */
+  keepTranscript: "j3bots:keep-transcript",
   /** `RecordingRelease`. Not answered. */
   releaseRecording: "j3bots:release-recording",
   /** From the recorder's page only: answers `RecorderJob`, or `null` when nothing is to be recorded. */
@@ -300,6 +307,10 @@ export interface DesktopBridge {
   readonly onRecording: (listener: (delivery: unknown) => void) => () => void;
   /** Bytes of a recording (a `RecordingRead`). */
   readonly readRecording: (request: unknown) => Promise<unknown>;
+  /** Bytes of a recording's voice kept for its transcript (a `RecordingRead`). */
+  readonly readRecordingSpeech: (request: unknown) => Promise<unknown>;
+  /** Puts a transcript in a recording, or settles it goes without (a `RecordingTranscriptKeep`). */
+  readonly keepTranscript: (request: unknown) => Promise<unknown>;
   /** Lets the app delete a recording (a `RecordingRelease`). */
   readonly releaseRecording: (request: unknown) => void;
   readonly recorderJob: () => Promise<unknown>;

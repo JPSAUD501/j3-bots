@@ -1254,6 +1254,11 @@ export function galleryVariants(now: DateTime.Utc) {
       botId: ids.scout,
       roomId: ids.newsletter,
     }),
+    notice("notice-room-paused", {
+      _tag: "room-paused",
+      botId: ids.scout,
+      roomId: ids.newsletter,
+    }),
   ];
 
   const handoff = (
