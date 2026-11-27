@@ -10,6 +10,7 @@ import {
   type MessageDelivery,
   type ModelChoice,
   type Notice,
+  type PermissionMode,
   PositiveInt,
   type ProviderId,
   type ProviderStatus,
@@ -50,13 +51,18 @@ export const command = () => CommandId.make(`command-${++commands}`);
  * A bot just created, on `model` or the default one: its `first-run` wake is
  * pending, its first turn not begun.
  */
-export const createNewBot = (name: string, model?: ModelChoice) =>
+export const createNewBot = (name: string, model?: ModelChoice, permissionMode?: PermissionMode) =>
   Effect.gen(function* () {
     const bots = yield* Bots;
     yield* TestClock.adjust("1 second");
     return yield* bots.create({
       commandId: command(),
-      draft: model === undefined ? { name, job: "" } : { name, job: "", model },
+      draft: {
+        name,
+        job: "",
+        ...(model === undefined ? {} : { model }),
+        ...(permissionMode === undefined ? {} : { permissionMode }),
+      },
     });
   });
 
@@ -107,10 +113,10 @@ const openings = new Set<IdempotencyKey>();
  * without a word: what most tests begin with, an empty conversation and an
  * idle session.
  */
-export const createBot = (name: string, model?: ModelChoice) =>
+export const createBot = (name: string, model?: ModelChoice, permissionMode?: PermissionMode) =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
-    const bot = yield* createNewBot(name, model);
+    const bot = yield* createNewBot(name, model, permissionMode);
     const session = yield* engineSession(bot.id);
     const turnId = yield* nextTurn(bot.id);
     const [opening, ...more] = yield* control.dispatches(session);

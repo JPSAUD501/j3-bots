@@ -347,8 +347,9 @@ export type DelegatedResult = typeof DelegatedResult.Type;
  * - `asks-before-acting`: the bot's AI fell back to asking before each action
  *   in a turn whose permission mode is Auto or Full access, because its own
  *   settings, account or model do not allow that mode. **Read** at `bc0f04d`:
- *   `ClaudeAdapterV2.ts`, `announceAutoFallback` and the bypass downgrade
- *   notice, each once per provider session.
+ *   `ClaudeAdapterV2.ts`, `announceAutoFallback`, once per provider session,
+ *   and the bypass downgrade notice, once per engine thread while the engine
+ *   runs; each again after the engine restarts.
  */
 export const EngineNotice = Schema.Union([AsksBeforeActing]);
 export type EngineNotice = typeof EngineNotice.Type;
@@ -393,8 +394,9 @@ export const SessionEvent = Schema.Union([
    *   requeued shows as its follow-up turn, with the dispatch as its cause;
    * - `delegatedResults` is at least every `delegated-result` after the
    *   cursor, and may repeat ones already applied (by `resultId`);
-   * - `notices` is at least every `engine-notice` after the cursor, and may
-   *   repeat ones already applied;
+   * - `notices` is every `engine-notice` of its open turns, which may repeat
+   *   ones already applied. One of a turn that ended in the gap is not
+   *   listed: what it explained is over;
    * - `model` is the session's model as the engine holds it now: the model
    *   of the last turn it started, since it moves the session's selection to
    *   each turn's as the turn starts (**Read** at `bc0f04d`, `Orchestrator.ts`,

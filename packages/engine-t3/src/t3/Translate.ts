@@ -2595,7 +2595,8 @@ export const replacement = (
       }
     }
     for (const item of itemsOf(mirror, run)) {
-      const notice = turnNoticeOf(item, providers);
+      // What a notice explains is over once its turn ended.
+      const notice = ended ? undefined : turnNoticeOf(item, providers);
       if (notice !== undefined) notices.push(notice);
       if (!history) continue;
       const speech = speechOf(item);

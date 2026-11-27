@@ -49,22 +49,20 @@ export const isSystemNotice = (item: Item): item is SystemNotice => item.type ==
 /** A notice without a level predates levels, and is a warning (the engine's contract). */
 const levelOf = (notice: SystemNotice): NoticeLevel => notice.level ?? "warning";
 
-/**
- * The notice's own words: its title and its message, the title alone when the
- * message only repeats it, redacted, scrubbed and cut (`detailsOf`). Null when
- * it has none.
- */
-const wordsOf = (notice: SystemNotice, redact: (text: string) => string): string | null => {
-  const title = notice.title?.trim() ?? "";
-  const message = notice.message.trim();
-  const text =
-    title === "" || message.startsWith(title)
-      ? message
-      : message === ""
-        ? title
-        : `${title}: ${message}`;
-  return text === "" ? null : detailsOf(text, redact);
+/** `text` trimmed, redacted, scrubbed and cut (`detailsOf`), or null when empty. */
+const scrubbed = (text: string, redact: (text: string) => string): string | null => {
+  const trimmed = text.trim();
+  return trimmed === "" ? null : detailsOf(trimmed, redact);
 };
+
+/**
+ * The notice's headline, for the log: its title, or its message when it has
+ * none. The message is left out of the log beside a title: it can quote what
+ * the operator wrote, as a steer Stop reached unread does, and the log keeps
+ * identifiers, not message text.
+ */
+const headlineOf = (notice: SystemNotice, redact: (text: string) => string): string | null =>
+  scrubbed(notice.title ?? "", redact) ?? scrubbed(notice.message, redact);
 
 const CLAUDE = driverOf("claude-code");
 
@@ -85,7 +83,7 @@ export const engineNoticeOf = (
       ? "full-access"
       : undefined;
   if (permissionMode === undefined) return undefined;
-  const details = wordsOf(notice, redact);
+  const details = scrubbed(notice.message, redact);
   return {
     _tag: "asks-before-acting",
     permissionMode,
@@ -108,7 +106,7 @@ export const logNotice = (
   session: string,
   redact: (text: string) => string,
 ): Effect.Effect<void> =>
-  LOG[levelOf(notice)](`The engine noted: ${wordsOf(notice, redact) ?? "(nothing said)"}`).pipe(
+  LOG[levelOf(notice)](`The engine noted: ${headlineOf(notice, redact) ?? "(nothing said)"}`).pipe(
     Effect.annotateLogs({
       session,
       turn: notice.runId ?? "none",

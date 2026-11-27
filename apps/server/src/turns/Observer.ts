@@ -206,7 +206,7 @@ const changesWork = (event: SessionEvent): boolean => {
   }
 };
 
-/** What tells one engine notice from another of its session (`engine_notices.kind`). */
+/** What tells one engine notice from another of its bot (`engine_notices.kind`). */
 const noticeKind = (notice: EngineNotice): string => {
   switch (notice._tag) {
     case "asks-before-acting":
@@ -1228,14 +1228,18 @@ export const layer = Layer.effect(
     /**
      * What the engine said that the operator should see (decision 0083): a
      * notice in the bot's own conversation, where its approval cards are,
-     * once per kind of notice in the working session.
+     * once for each model the bot has, whichever of its sessions said it: a
+     * routine's run says it again in each side session. A notice of a
+     * permission mode the bot no longer has is over.
      */
     const engineNotice = Effect.fn("Observer.engineNotice")(function* (
       session: Watched,
       notice: EngineNotice,
     ) {
       const fresh = yield* sql`
-        INSERT INTO engine_notices (session_id, kind) VALUES (${session.id}, ${noticeKind(notice)})
+        INSERT INTO engine_notices (bot_id, kind, provider_id, model_id)
+        SELECT id, ${noticeKind(notice)}, provider_id, model_id FROM bots
+        WHERE id = ${session.bot_id} AND permission_mode = ${notice.permissionMode}
         ON CONFLICT DO NOTHING RETURNING kind
       `;
       if (fresh.length > 0) yield* notify(session.bot_id, conversation, notice, null);

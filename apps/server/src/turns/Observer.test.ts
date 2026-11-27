@@ -1105,11 +1105,11 @@ it.effect(
 );
 
 it.effect(
-  "tells the conversation once per kind that the AI asks before acting, however often the engine says it",
+  "tells the conversation once that the AI asks before acting, however often the engine says it, and not for a mode the bot left",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
-      const bot = yield* createBot("Ana");
+      const bot = yield* createBot("Ana", undefined, "full-access");
       const session = yield* engineSession(bot.id);
       yield* sendToBot(bot.id, "Deploy the site.");
       const turnId = yield* nextTurn(bot.id);
@@ -1118,6 +1118,7 @@ it.effect(
         permissionMode: "full-access",
         details: "Full access is running with approval checks.",
       } as const;
+      // Said of a turn that asked for Auto before the operator chose Full access.
       const auto = { _tag: "asks-before-acting", permissionMode: "auto" } as const;
 
       yield* control.engineNotice({ sessionId: session, turnId, notice: fullAccess });
@@ -1130,7 +1131,7 @@ it.effect(
       const shown = (yield* conversation(bot.id)).flatMap((entry) =>
         entry._tag === "notice" && entry.notice._tag === "asks-before-acting" ? [entry.notice] : [],
       );
-      assert.deepStrictEqual(shown, [fullAccess, auto]);
+      assert.deepStrictEqual(shown, [fullAccess]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

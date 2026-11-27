@@ -2359,11 +2359,10 @@ describe("the engine's notices", () => {
     assert.deepStrictEqual(noticesOf(diff(mirror, view, at, noProviders)), []);
   });
 
-  it("lists a turn's notice in a replacement, for a subscriber that missed it", () => {
+  it("lists a running turn's notice in a replacement, and not once the turn ended", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
     applyEvent(mirror, bypassDowngrade);
-    applyEvent(mirror, run("completed", 1));
 
     const { event, view } = replacement(mirror, true, at, new Map(), noProviders);
     assert.deepStrictEqual(
@@ -2371,6 +2370,9 @@ describe("the engine's notices", () => {
       [{ turnId: TurnId.make("run-1"), kind: "asks-before-acting" }],
     );
     assert.deepStrictEqual(noticesOf(diff(mirror, view, at, noProviders)), []);
+
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(replacement(mirror, true, at, new Map(), noProviders).event.notices, []);
   });
 
   it("is fresh for the log only the first time the session's stream records it", () => {
