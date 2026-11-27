@@ -54,7 +54,10 @@ export const EVENT_HOOK_PATH = `${WEBHOOK_PATH}/events`;
 /** How long a webhook subscription is asked to last; it is renewed before it ends. */
 const WEBHOOK_TTL = Duration.hours(1);
 
-/** How long before a webhook subscription would end it is renewed. */
+/**
+ * How long before a webhook subscription would end it is renewed: this, or
+ * half of what is left of a shorter one.
+ */
 const RENEW_AHEAD = Duration.minutes(5);
 
 /** The heartbeat asked of a stream: a stream silent for three of them is open again. */
@@ -98,6 +101,13 @@ const PENDING_KEPT = 100;
 /** How many events one run takes at most; the rest wait for the next. */
 const RUN_EVENTS = 20;
 
+/**
+ * The most characters of payload one run carries, all its events together,
+ * so its envelope stays well within what the engine takes. A run always
+ * takes the oldest event; the next ones wait while they would pass it.
+ */
+const RUN_EVENT_CHARACTERS = 48_000;
+
 /** The most characters of one event's payload a run carries. */
 const EVENT_DATA_CHARACTERS = 16_000;
 
@@ -106,7 +116,7 @@ const TOKEN_BYTES = 32;
 
 /** What answers a delivery to an event webhook's address, as the route sends it. */
 export type DeliveryAnswer =
-  /** No routine listens there now: the server is told not to post again. */
+  /** No routine listens there now: the delivery is refused for good. */
   | { readonly _tag: "gone" }
   /** The signature does not hold, or the delivery is too old. */
   | { readonly _tag: "refused" }
@@ -253,6 +263,39 @@ const waitUntil = (now: DateTime.Utc, at: DateTime.Utc): Duration.Duration =>
     ),
   );
 
+/** When a webhook subscription that ends at `ends` is renewed. */
+const renewalOf = (now: DateTime.Utc, ends: DateTime.Utc): DateTime.Utc => {
+  const left = DateTime.toEpochMillis(ends) - DateTime.toEpochMillis(now);
+  const ahead = Math.min(Duration.toMillis(RENEW_AHEAD), left / 2);
+  return DateTime.subtractDuration(ends, Duration.millis(Math.max(0, ahead)));
+};
+
+/** An event waiting for a run, as `drain` reads it: none when this server cannot read it. */
+interface Waiting {
+  readonly id: number;
+  readonly item: Option.Option<EventItem>;
+}
+
+/**
+ * The oldest waiting events whose payloads fit one run together, always the
+ * first that can be read. One that cannot be read takes no room: the run is
+ * told some were missed.
+ */
+const fitting = (waiting: ReadonlyArray<Waiting>): ReadonlyArray<Waiting> => {
+  let total = 0;
+  let readable = 0;
+  const taken: Array<Waiting> = [];
+  for (const one of waiting) {
+    if (Option.isSome(one.item)) {
+      total += one.item.value.data.length;
+      if (readable > 0 && total > RUN_EVENT_CHARACTERS) break;
+      readable++;
+    }
+    taken.push(one);
+  }
+  return taken;
+};
+
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
 const encodeItem = Schema.encodeEffect(EventItemJson);
@@ -278,6 +321,8 @@ export const layer = Layer.effect(
     const fibers = yield* FiberMap.make<RoutineId>();
     /** The trigger each running listener listens for, by routine. */
     const running = new Map<RoutineId, string>();
+    /** The listeners to start again at the next look, their server having ended their subscription. */
+    const restarts = new Set<RoutineId>();
 
     /** Where a webhook is posted: only at a public HTTPS origin, which servers on the internet reach. */
     const webhookOrigin = Option.filter(publicOrigin, (origin) => origin.startsWith("https://"));
@@ -316,6 +361,10 @@ export const layer = Layer.effect(
       `,
     });
 
+    /** Whether the listener's bot may still use its connector. */
+    const granted = (listener: Listener) =>
+      connectors.granted({ botId: listener.botId, connectorId: listener.trigger.connectorId });
+
     /** The listener's row while it still listens for its trigger: a change since makes it stale. */
     const current = (listener: Listener) =>
       listenerRow({ routineId: listener.routineId, key: listener.key }).pipe(Effect.orDie);
@@ -344,7 +393,9 @@ export const layer = Layer.effect(
      * Takes what arrived for a listener, in one transaction: each event once,
      * by its id, kept to wait for a run; where the listener now stands; and
      * whether some may have been missed. A listener whose routine changed
-     * since takes nothing.
+     * since takes nothing, and one whose bot may no longer use the connector
+     * stops: a stream or a webhook made before the operator took it away
+     * wakes the bot with nothing.
      */
     const accept = Effect.fn("RoutineEvents.accept")(function* (
       listener: Listener,
@@ -354,6 +405,7 @@ export const layer = Layer.effect(
         readonly missed: boolean;
       },
     ) {
+      if (!(yield* granted(listener))) return yield* stop(listener, "connector-gone");
       const taken = yield* transaction(
         Effect.gen(function* () {
           const row = yield* current(listener);
@@ -470,6 +522,12 @@ export const layer = Layer.effect(
       yield* nudge;
     });
 
+    /** Has the next look start a running listener again, from where it stands. */
+    const restart = (listener: Listener) =>
+      Effect.sync(() => {
+        if (running.get(listener.routineId) === listener.key) restarts.add(listener.routineId);
+      }).pipe(Effect.andThen(nudge));
+
     /** The position a listener asks from: where it stood, or now, and no further back than `MAX_AGE`. */
     const positionOf = (listener: Listener) =>
       Effect.map(current(listener), (row) => ({
@@ -519,10 +577,17 @@ export const layer = Layer.effect(
       }
     });
 
-    /** Holds the event's stream open, taking each frame as it arrives, until it ends. */
+    /**
+     * Holds the event's stream open, taking each frame as it arrives, until
+     * it ends. A stream that never opened, when the event is also polled,
+     * gives way to polls: something between J3 Bots and the server (a proxy
+     * that holds a response until it ends) may keep it from ever arriving.
+     */
     const push = Effect.fn("RoutineEvents.push")(function* (listener: Listener, type: EventType) {
       const position = yield* positionOf(listener);
+      let opened = false;
       const frame = (received: StreamFrame): Effect.Effect<void> => {
+        opened = true;
         switch (received._tag) {
           case "active":
             return setState(listener, "listening").pipe(
@@ -556,6 +621,9 @@ export const layer = Layer.effect(
         ),
       );
       if (outcome._tag === "done") yield* Effect.sleep(REOPEN_AFTER);
+      if (outcome._tag === "unavailable" && !opened && type.delivery.includes("poll")) {
+        return { _tag: "avoid", mode: "push" } satisfies Next;
+      }
       return nextOf(outcome, "push");
     });
 
@@ -637,7 +705,7 @@ export const layer = Layer.effect(
             answer.refreshBefore === null
               ? DateTime.addDuration(now, WEBHOOK_TTL)
               : DateTime.makeUnsafe(answer.refreshBefore);
-          yield* Effect.sleep(waitUntil(now, DateTime.subtractDuration(ends, RENEW_AHEAD)));
+          yield* Effect.sleep(waitUntil(now, renewalOf(now, ends)));
         }
       }).pipe(Effect.onInterrupt(() => unsubscribe));
     });
@@ -724,10 +792,21 @@ export const layer = Layer.effect(
       const wanted = new Map<RoutineId, Listener>();
       for (const row of yield* listenerRows(undefined).pipe(Effect.orDie)) {
         const listener = listenerOf(row);
-        if (Option.isSome(listener)) wanted.set(row.routine_id, listener.value);
+        if (Option.isNone(listener)) continue;
+        // A connector removed or taken from the bot stops its routines now,
+        // not when a listener next asks it.
+        if (!(yield* granted(listener.value))) yield* stop(listener.value, "connector-gone");
+        else wanted.set(row.routine_id, listener.value);
       }
+      // Taken now: one asked for while this look goes on waits for the next.
+      const restarting = new Set(restarts);
+      restarts.clear();
       for (const [routineId, key] of running) {
-        if (wanted.get(routineId)?.key === key && (yield* FiberMap.has(fibers, routineId)))
+        if (
+          !restarting.has(routineId) &&
+          wanted.get(routineId)?.key === key &&
+          (yield* FiberMap.has(fibers, routineId))
+        )
           continue;
         running.delete(routineId);
         yield* FiberMap.remove(fibers, routineId);
@@ -754,7 +833,8 @@ export const layer = Layer.effect(
 
     /**
      * Starts a run of each routine with events waiting whose previous run
-     * has ended: the oldest waiting, up to `RUN_EVENTS`, together. When a
+     * has ended: the oldest waiting, up to `RUN_EVENTS` and as many as fit
+     * `RUN_EVENT_CHARACTERS`, together. When a
      * routine is past its runs per minute, when it may run again.
      */
     const drain = Effect.gen(function* () {
@@ -777,12 +857,15 @@ export const layer = Layer.effect(
               SELECT id, occurrence_json FROM routine_event_pending
               WHERE routine_id = ${routineId} ORDER BY id LIMIT ${RUN_EVENTS}
             `;
-            if (pending.length === 0) return Option.none<DateTime.Utc>();
-            const items = pending.flatMap((row) => Option.toArray(decodeItem(row.occurrence_json)));
+            const taken = fitting(
+              pending.map((row) => ({ id: row.id, item: decodeItem(row.occurrence_json) })),
+            );
+            if (taken.length === 0) return Option.none<DateTime.Utc>();
+            const items = taken.flatMap((one) => Option.toArray(one.item));
             const body = yield* encodeRun({
               events: items,
               // An event this server cannot read counts as one missed.
-              missed: routine.missed === 1 || items.length < pending.length,
+              missed: routine.missed === 1 || items.length < taken.length,
             });
             const started = yield* runs.events(
               { id: routineId, botId: BotId.make(routine.bot_id) },
@@ -798,7 +881,7 @@ export const layer = Layer.effect(
                   DELETE FROM routine_event_pending
                   WHERE ${sql.in(
                     "id",
-                    pending.map((row) => row.id),
+                    taken.map((one) => one.id),
                   )}
                 `;
                 yield* sql`UPDATE routine_event_listeners SET missed = 0 WHERE routine_id = ${routineId}`;
@@ -856,12 +939,12 @@ export const layer = Layer.effect(
           });
           break;
         case "terminated": {
-          // The server ended the subscription: the listener stops, or listens anew on a change.
-          const reason = Option.getOrElse(
-            stopOf(body.value.reason),
-            (): EventStopReason => "event-gone",
-          );
-          yield* stop(listener.value, reason);
+          // The server ended the subscription: the listener stops for a
+          // refusal that names why, and otherwise lists the event again and
+          // listens anew, as a stream that ends so does.
+          const reason = stopOf(body.value.reason);
+          if (Option.isSome(reason)) yield* stop(listener.value, reason.value);
+          else yield* restart(listener.value);
           break;
         }
       }
@@ -871,6 +954,11 @@ export const layer = Layer.effect(
     const changed = yield* changes.subscribe;
     yield* Stream.fromSubscription(changed).pipe(
       Stream.filter((scope) => scope._tag === "routines"),
+      Stream.runForEach(() => nudge),
+      Effect.forkScoped,
+    );
+    // A bot gains or loses a connector, or one is removed.
+    yield* connectors.toolsChanged.pipe(
       Stream.runForEach(() => nudge),
       Effect.forkScoped,
     );

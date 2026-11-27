@@ -19,6 +19,7 @@ it("hands a tagged call its progress as it arrives, before the answer behind it,
   const transport = fakeTransport(seen);
   tapTransport(
     transport,
+    () => ({}),
     (_tag, deliver) => deliver(),
     (step) => seen.push(`call: ${step.message ?? ""}`),
   );

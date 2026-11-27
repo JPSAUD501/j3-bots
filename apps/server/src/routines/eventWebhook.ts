@@ -26,7 +26,7 @@ const empty = (status: number) => HttpServerResponse.empty({ status });
  * verification, 204 to a delivery taken, 401 to one whose signature does not
  * hold or that is more than five minutes off, 400 to a body that is not the
  * extension's, 413 past its 256 KiB, and 410 at an address no routine
- * listens at, which tells the server to stop posting there.
+ * listens at, which refuses the delivery for good.
  */
 export const route = HttpRouter.add(
   "POST",

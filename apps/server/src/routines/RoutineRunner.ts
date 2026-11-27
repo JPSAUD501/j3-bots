@@ -140,7 +140,7 @@ const envelopeTrigger = (trigger: RoutineTrigger, connector: string | null): Env
  * What a run on a connector's event was started for, from its trigger data;
  * data this server cannot read says only that events may have been missed.
  */
-const eventsOf = (data: string | null): RoutineEvents =>
+const eventsOf = (data: string): RoutineEvents =>
   Option.match(decodeEventRun(data), {
     onNone: () => ({ occurrences: [], missed: true }),
     onSome: (run) => ({ occurrences: run.events, missed: run.missed }),
@@ -363,8 +363,8 @@ export const layer = Layer.effect(
         },
         runId: attempt.run_id,
         // A run on an event carries the events, framed each on its own, in
-        // place of a webhook's body.
-        ...(attempt.trigger_json._tag === "event"
+        // place of a webhook's body. One the operator started carries none.
+        ...(attempt.trigger_json._tag === "event" && attempt.trigger_data !== null
           ? { triggerData: null, events: eventsOf(attempt.trigger_data) }
           : { triggerData: attempt.trigger_data, events: null }),
         dueAt: dueToTell(due, now, timeZone),

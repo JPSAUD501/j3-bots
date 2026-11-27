@@ -366,7 +366,7 @@ it.effect("rolls a refused call back whole, so a retry under its id acts once", 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it("refuses an event trigger missing what its event requires, or giving what it leaves out", () => {
+it("refuses event arguments too long to keep, missing what the event requires, or giving what it leaves out", () => {
   const schema = {
     type: "object",
     properties: { from: { type: "string" }, constructor: { type: "string" } },
@@ -384,4 +384,9 @@ it("refuses an event trigger missing what its event requires, or giving what it 
   assert.isUndefined(eventArgumentsProblem(schema, { from: "a", constructor: "b" }));
   // A schema that leaves its properties open takes any argument.
   assert.isUndefined(eventArgumentsProblem({ type: "object" }, { label: "c" }));
+  // Arguments a routine could not keep are refused with a reason, not saved.
+  assert.strictEqual(
+    eventArgumentsProblem({ type: "object" }, { label: "c".repeat(5_000) }),
+    "Its arguments must fit in 4096 bytes as JSON; give only what the event needs.",
+  );
 });

@@ -809,6 +809,18 @@ const cut = (text: string, max: number): { readonly text: string; readonly cut: 
 };
 
 /**
+ * The SDK's client, which also gives the per-request `_meta` envelope
+ * (2026-07-28) it frames its own requests with, so the extensions' requests
+ * the tap sends carry the same one, the first of them too. None on a
+ * connection of an older revision.
+ */
+class SessionClient extends Client {
+  envelope(): Readonly<Record<string, unknown>> {
+    return this._outboundMetaEnvelope() ?? {};
+  }
+}
+
+/**
  * The client a session speaks through, with what J3 Bots offers a server:
  * elicitation, in both modes, tasks, events (decision 0088), and showing a
  * tool's app as an HTML document of the MCP Apps extension (decision 0048).
@@ -818,13 +830,13 @@ export const makeClient = (
   setup: ClientSetup,
   limits: SessionLimits,
   fork: (effect: Effect.Effect<void>) => void,
-): Client => {
+): SessionClient => {
   const changed = (kind: ListKind) => ({
     autoRefresh: false,
     debounceMs: 0,
     onChanged: () => fork(setup.onListChanged(kind)),
   });
-  return new Client(setup.client, {
+  return new SessionClient(setup.client, {
     capabilities: {
       elicitation: { form: {}, url: {} },
       extensions: {
@@ -983,7 +995,7 @@ type Calls = Set<InFlight>;
  * with; `cancel`, how an event stream is ended on this transport.
  */
 export const sessionOf = (
-  client: Client,
+  client: SessionClient,
   transport: Transport,
   limits: SessionLimits,
   context: Context.Context<never>,
@@ -997,6 +1009,7 @@ export const sessionOf = (
   const progressByTag = new Map<string, (step: ProgressStep) => void>();
   const tap: ExtensionTap = tapTransport(
     transport,
+    () => client.envelope(),
     (tag, deliver) => {
       const flight = callsByTag.get(tag);
       if (flight === undefined) deliver();
@@ -1525,7 +1538,6 @@ const eventsOf = (
 
   const stream: McpEvents["stream"] = Effect.fn("McpSession.eventStream")(function* (input, frame) {
     const queue = yield* Queue.unbounded<StreamFrame, Cause.Done>();
-    const clean = scrub([]);
     /** How many of its notifications arrived, and the heartbeat it was granted. */
     let heard = 0;
     let heartbeatMs = input.heartbeatMs;
@@ -1548,9 +1560,14 @@ const eventsOf = (
             if (one._tag === "active" && one.heartbeatMs !== null && one.heartbeatMs > 0) {
               heartbeatMs = one.heartbeatMs;
             }
+            // Cleaned of what signed the stream's request, which was signed
+            // after the stream was asked for, and of what signed the session's
+            // latest requests, as each event arrives.
             Queue.offerUnsafe(
               queue,
-              one._tag === "event" ? { ...one, occurrence: scrubbed(one.occurrence, clean) } : one,
+              one._tag === "event"
+                ? { ...one, occurrence: scrubbed(one.occurrence, scrub([])) }
+                : one,
             );
           },
           cancel,

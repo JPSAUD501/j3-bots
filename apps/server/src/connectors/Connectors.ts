@@ -331,6 +331,11 @@ export class Connectors extends Context.Service<
       readonly connectorId: ConnectorId;
       readonly use: (events: McpEvents) => Effect.Effect<A, ConnectorFailure | EventsRefused>;
     }) => Effect.Effect<EventsOutcome<A>>;
+    /** Whether the connector `connectorId` names is still there and granted to `botId`. */
+    readonly granted: (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+    }) => Effect.Effect<boolean>;
     /** One prompt of the connector `slug` names, as its server writes it, for `botId`, framed for the bot. */
     readonly getPrompt: (input: {
       readonly botId: BotId;
@@ -1890,6 +1895,11 @@ export const layer = Layer.effect(
       );
     });
 
+    const granted = (input: { readonly botId: BotId; readonly connectorId: ConnectorId }) =>
+      Effect.map(grantedTo(input.botId), (connectors) =>
+        connectors.some((connector) => connector.id === input.connectorId),
+      );
+
     /** An event as a bot reads it in a listing. */
     const listedEvent = (type: EventType): ListedEvent => ({
       name: type.name,
@@ -2815,6 +2825,7 @@ export const layer = Layer.effect(
       events,
       eventOf,
       withEvents,
+      granted,
       getPrompt,
       menuPrompts,
       renderPrompt,

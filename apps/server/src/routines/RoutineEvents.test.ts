@@ -409,7 +409,79 @@ describe("RoutineEvents", () => {
         assert.strictEqual((yield* events.delivered(forged))._tag, "refused");
         assert.strictEqual((yield* events.delivered({ ...forged, token: "nobody" }))._tag, "gone");
         assert.deepStrictEqual(yield* waitingOf(routine.id), []);
+
+        // New words for the same event keep its subscription and its address.
+        const routines = yield* Routines;
+        if (routine.trigger._tag !== "event") return yield* Effect.die("An event routine");
+        yield* routines.update({
+          commandId: null,
+          routineId: routine.id,
+          changes: { trigger: { ...routine.trigger, summary: "Bia writes" } },
+          author: { _tag: "bot", botId: ana },
+        });
+        yield* Effect.promise(() => control.emit(NAME, { subject: "Again" }));
+        yield* eventually(
+          "the event waits for the run going on",
+          Effect.map(waitingOf(routine.id), (waiting) =>
+            waiting.length === 1 ? Option.some(waiting) : Option.none(),
+          ),
+        );
+        assert.deepStrictEqual(yield* waitingOf(routine.id), ["Again"]);
+        assert.deepStrictEqual(
+          control.webhooks().map((each) => each.url),
+          [hook?.url],
+        );
+
+        // The operator takes the connector from the bot: the routine stops at
+        // once, and what the server still posts there wakes nobody.
+        yield* (yield* Connectors)
+          .setBots({
+            commandId: CommandId.make("revoke"),
+            connectorId: ID,
+            grant: { _tag: "bots", ids: [] },
+            by: { _tag: "operator" },
+          })
+          .pipe(Effect.orDie);
+        const stopped = yield* listeningAs(ana, routine.id, "stopped");
+        assert.strictEqual(
+          stopped.listening?._tag === "stopped" ? stopped.listening.reason : null,
+          "connector-gone",
+        );
+        assert.strictEqual((yield* events.delivered({ ...forged, signature: null }))._tag, "gone");
       }).pipe(Effect.scoped, Effect.provide(onMachine(published))),
+    SLOW,
+  );
+
+  it.live(
+    "gives way to polls when a stream never opens, and takes a burst in runs that fit",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* sdkHttpServer({
+          revision: "2026-07-28",
+          events: { types: [typeWith(["push", "poll"])], streamStatus: 502, nextPollMs: 1_000 },
+        });
+        const control = fake.events;
+        if (control === null) return yield* Effect.die("The fake offers events");
+        const ana = yield* connectBot(fake.url);
+        const routine = yield* mailRoutine(ana);
+        yield* listeningAs(ana, routine.id, "listening");
+        assert.isTrue(fake.requests.some((request) => request.method === "events/stream"));
+        assert.isTrue(fake.requests.some((request) => request.method === "events/poll"));
+
+        // Four long emails at once: one run takes as many as fit, oldest
+        // first, and the rest wait for the next.
+        const long = "x".repeat(15_000);
+        yield* Effect.promise(async () => {
+          for (const subject of ["A", "B", "C", "D"]) {
+            await control.emit(NAME, { subject, body: long });
+          }
+        });
+        assert.deepStrictEqual(yield* firstRun(routine.id), {
+          subjects: ["A", "B", "C"],
+          missed: false,
+        });
+        assert.deepStrictEqual(yield* waitingOf(routine.id), ["D"]);
+      }).pipe(Effect.scoped, Effect.provide(onMachine(atHome))),
     SLOW,
   );
 

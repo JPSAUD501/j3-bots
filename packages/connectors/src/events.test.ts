@@ -163,6 +163,9 @@ describe("poll", () => {
         const polled = fake.requests.filter((r) => r.method === "events/poll");
         assert.strictEqual(polled[0]?.headers["mcp-name"], "message.received");
         assert.strictEqual(polled[0]?.headers["mcp-param-folder"], "Inbox");
+        // The extension's requests carry the envelope the SDK frames its own with.
+        const listing = fake.requests.find((r) => r.method === "events/list");
+        assert.strictEqual(listing?.headers["mcp-protocol-version"], "2026-07-28");
       }).pipe(Effect.scoped),
   );
 

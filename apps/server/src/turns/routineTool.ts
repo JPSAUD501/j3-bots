@@ -2,7 +2,9 @@
 import {
   BotId,
   type Conflict,
+  EventArguments,
   type Invalid,
+  MAX_EVENT_ARGUMENTS_BYTES,
   type NotFound,
   Routine,
   RoutineId,
@@ -55,7 +57,8 @@ const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 /**
  * What is wrong with `given` as the arguments of an event whose arguments
- * schema is `schema`, by the schema's top level: a property it requires and
+ * schema is `schema`: too long for a routine to keep, or, by the schema's top
+ * level, a property it requires and
  * the call leaves out, or one it does not take when it takes no others. The
  * connector's server checks the rest when J3 Bots asks it for the event.
  */
@@ -66,6 +69,9 @@ export const eventArgumentsProblem = (
   const required = Array.isArray(schema["required"])
     ? schema["required"].filter((name): name is string => typeof name === "string")
     : [];
+  if (!Schema.is(EventArguments)(given)) {
+    return `Its arguments must fit in ${MAX_EVENT_ARGUMENTS_BYTES} bytes as JSON; give only what the event needs.`;
+  }
   const missing = required.filter((name) => !Object.hasOwn(given, name));
   if (missing.length > 0) return `It requires ${missing.join(", ")} in arguments.`;
   const properties = isObject(schema["properties"]) ? Object.keys(schema["properties"]) : [];

@@ -36,6 +36,8 @@ export interface EventsFakeOptions {
   readonly heartbeatMs?: number;
   /** How long it suggests waiting between polls. */
   readonly nextPollMs?: number;
+  /** The HTTP status a stream is answered with in place of opening, as a proxy in between might. */
+  readonly streamStatus?: number;
 }
 
 /** An error it answers with, or ends a subscription with. */
@@ -213,6 +215,11 @@ export const eventsFake = (options: EventsFakeOptions) => {
         return true;
       }
       case "events/stream": {
+        if (options.streamStatus !== undefined) {
+          response.writeHead(options.streamStatus);
+          response.end();
+          return true;
+        }
         cursorsAsked.push(
           positionOf(rpc.params["cursor"]) === null ? null : String(rpc.params["cursor"]),
         );

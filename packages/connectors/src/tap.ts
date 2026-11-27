@@ -68,9 +68,6 @@ const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
 /** The requests a call is tagged on: those a server may answer with a task or with a request for input. */
 const TAGGED = new Set(["tools/call", "resources/read", "prompts/get"]);
 
-/** The reserved `_meta` keys of 2026-07-28's per-request envelope. */
-const ENVELOPE_PREFIX = "io.modelcontextprotocol/";
-
 /** The notifications of an event stream: each names its stream in `_meta`. */
 const EVENT_NOTIFICATION_PREFIX = "notifications/events/";
 
@@ -88,22 +85,23 @@ export class ExtensionTap {
   readonly #waiting = new Map<string, Waiting>();
   /** Where each open event stream's notifications go, by its request id. */
   readonly #streams = new Map<string, (method: string, params: unknown) => void>();
-  #envelope: Readonly<Record<string, unknown>> = {};
+  /** The per-request `_meta` envelope the SDK frames its own requests with now. */
+  readonly #envelope: () => Readonly<Record<string, unknown>>;
   #next = 0;
 
-  constructor(send: (message: JSONRPCMessage, options?: TransportSendOptions) => Promise<void>) {
+  constructor(
+    send: (message: JSONRPCMessage, options?: TransportSendOptions) => Promise<void>,
+    envelope: () => Readonly<Record<string, unknown>>,
+  ) {
     this.#send = send;
+    this.#envelope = envelope;
   }
 
-  /** Notes an outgoing message: the envelope the SDK framed it with, and its tag when it is a tagged call. */
+  /** Notes an outgoing message: its tag when it is a tagged call. */
   outgoing(message: JSONRPCMessage): void {
     if (!("method" in message) || !("id" in message)) return;
     const meta = isObject(message.params) ? message.params["_meta"] : undefined;
     if (!isObject(meta)) return;
-    const envelope = Object.fromEntries(
-      Object.entries(meta).filter(([key]) => key.startsWith(ENVELOPE_PREFIX)),
-    );
-    if (Object.keys(envelope).length > 0) this.#envelope = envelope;
     const tag = meta[CALL_TAG];
     if (TAGGED.has(message.method) && typeof tag === "string") this.#calls.set(message.id, tag);
   }
@@ -278,7 +276,7 @@ export class ExtensionTap {
         },
       });
       this.#send(
-        { jsonrpc: "2.0", id, method, params: { ...params, _meta: { ...this.#envelope } } },
+        { jsonrpc: "2.0", id, method, params: { ...params, _meta: { ...this.#envelope() } } },
         {
           ...(Object.keys(options.headers).length === 0 ? {} : { headers: { ...options.headers } }),
           ...(options.requestSignal === undefined ? {} : { requestSignal: options.requestSignal }),
@@ -302,11 +300,12 @@ export class ExtensionTap {
  */
 export const tapTransport = (
   transport: Transport,
+  envelope: () => Readonly<Record<string, unknown>>,
   enter: (tag: string, deliver: () => void) => void,
   progress: (step: ProgressStep) => void,
 ): ExtensionTap => {
   const send = transport.send.bind(transport);
-  const tap = new ExtensionTap((message, options) => send(message, options));
+  const tap = new ExtensionTap((message, options) => send(message, options), envelope);
   transport.send = (message, options) => {
     tap.outgoing(message);
     return send(message, options);

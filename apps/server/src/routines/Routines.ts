@@ -483,6 +483,8 @@ export const layer = Layer.effect(
       now: DateTime.Utc,
     ) {
       yield* sql`DELETE FROM routine_event_pending WHERE routine_id = ${routineId}`;
+      // Ids are the old subscription's: another connector may give the same.
+      yield* sql`DELETE FROM routine_event_seen WHERE routine_id = ${routineId}`;
       if (trigger._tag !== "event") {
         yield* sql`DELETE FROM routine_event_listeners WHERE routine_id = ${routineId}`;
         return;
@@ -602,16 +604,17 @@ export const layer = Layer.effect(
             WHERE id = ${before.id}
           `;
           // An event routine listens anew from now when it is turned back on,
-          // and when given an event to listen for, unless it listens for that
-          // one already: a bot setting it again after J3 Bots stopped
-          // listening starts it again too.
-          const newEvent =
-            change.trigger?._tag === "event" &&
-            (before.trigger._tag !== "event" ||
-              eventTriggerKey(change.trigger) !== eventTriggerKey(before.trigger) ||
-              before.listening?._tag === "stopped" ||
-              !before.enabled);
-          if (retriggered || newEvent || (enabled && !before.enabled)) {
+          // and when given an event it does not listen for already: new words
+          // for the same event keep its subscription. A bot setting it again
+          // after J3 Bots stopped listening starts it again too.
+          const listensAnew =
+            trigger._tag === "event"
+              ? before.trigger._tag !== "event" ||
+                eventTriggerKey(trigger) !== eventTriggerKey(before.trigger) ||
+                (change.trigger !== undefined && before.listening?._tag === "stopped") ||
+                (enabled && !before.enabled)
+              : retriggered;
+          if (listensAnew) {
             yield* listenAnew(before.id, trigger, now);
           } else if (!enabled) {
             // What arrived before the pause runs nothing once it is lifted.
