@@ -91,6 +91,11 @@ interface Waiting {
 }
 
 interface Delivery {
+  /**
+   * Counts the times the switch went off. A send that started under another
+   * leaves nothing behind it: what it carried was dropped with the rest.
+   */
+  readonly epoch: number;
   /** The batch that failed, sent again before anything newer. */
   readonly failed: ReadonlyArray<Waiting>;
   readonly attempts: number;
@@ -99,7 +104,13 @@ interface Delivery {
   readonly retryAt: number;
 }
 
-const IDLE: Delivery = { failed: [], attempts: 0, failures: 0, retryAt: 0 };
+const idle = (epoch: number): Delivery => ({
+  epoch,
+  failed: [],
+  attempts: 0,
+  failures: 0,
+  retryAt: 0,
+});
 
 /** The wait before the next try, after `failures` in a row; `random` is in [0, 1). */
 const retryDelay = (timing: DeliveryTiming, failures: number, random: number): number => {
@@ -144,16 +155,16 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
   const http = yield* HttpClient.HttpClient;
   const random = yield* SecureRandom.SecureRandom;
   const { environment } = config;
-  const server = yield* config.server;
   const install = yield* store.install;
   const buffer = yield* Ref.make<ReadonlyArray<Waiting>>([]);
-  const delivery = yield* Ref.make<Delivery>(IDLE);
+  const delivery = yield* Ref.make<Delivery>(idle(0));
   // The background flush and the stop's must not send one batch twice.
   const lock = yield* Semaphore.make(1);
 
   const sending = Effect.map(onOff.enabled, (enabled) => enabled && environment.hold === null);
 
-  const asSent = (waiting: Waiting) =>
+  // What the server says of itself is read only once there is something to send.
+  const asSent = (waiting: Waiting, server: ServerDimensions) =>
     encodeSent({
       uuid: waiting.uuid,
       event: waiting.event.event,
@@ -181,8 +192,9 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
     });
 
   const send = Effect.fn("Telemetry.send")(function* (batch: ReadonlyArray<Waiting>) {
+    const server = yield* config.server;
     const encoded = yield* Effect.forEach(batch, (waiting) =>
-      asSent(waiting).pipe(
+      asSent(waiting, server).pipe(
         Effect.map((json) => ({ uuid: waiting.uuid, json })),
         // An event its schema refuses never leaves; the rest of the batch does.
         Effect.tapError((cause) =>
@@ -199,6 +211,8 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
       }),
       Effect.flatMap(http.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
+      // Read to its end, so a body that stalls is the timeout's too and no socket outlives it.
+      Effect.flatMap((response) => response.arrayBuffer),
       Effect.timeout(timing.sendTimeout),
     );
     yield* store.keepSent(
@@ -219,9 +233,16 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
       const batch = state.failed.length > 0 ? state.failed : yield* take;
       if (batch.length === 0) return;
       const result = yield* Effect.result(send(batch));
+      /** Sets what comes next, unless the switch went off meanwhile, which dropped the batch. */
+      const settle = (next: Omit<Delivery, "epoch">) =>
+        Ref.modify(delivery, (current) =>
+          current.epoch === state.epoch
+            ? ([true, { ...next, epoch: state.epoch }] as const)
+            : ([false, current] as const),
+        );
       if (result._tag === "Success") {
-        yield* Ref.set(delivery, IDLE);
-        continue;
+        if (yield* settle(idle(state.epoch))) continue;
+        return;
       }
       const now = yield* Clock.currentTimeMillis;
       const failures = state.failures + 1;
@@ -233,14 +254,14 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
         error.reason._tag === "StatusCodeError" &&
         REFUSED_BATCH_STATUSES.has(error.reason.response.status);
       if (!refused && attempts < MAX_BATCH_ATTEMPTS) {
-        yield* Ref.set(delivery, { failed: batch, attempts, failures, retryAt });
+        if (!(yield* settle({ failed: batch, attempts, failures, retryAt }))) return;
         yield* Effect.logDebug("Usage data could not be sent; it will be tried again", {
           attempts,
         });
         return;
       }
       // Waits even after dropping, so an endpoint that refuses everything is not asked in a loop.
-      yield* Ref.set(delivery, { failed: [], attempts: 0, failures, retryAt });
+      if (!(yield* settle({ failed: [], attempts: 0, failures, retryAt }))) return;
       yield* Effect.logWarning(
         refused
           ? "Usage data was refused, and dropped"
@@ -257,7 +278,10 @@ const make = Effect.fn("Telemetry.make")(function* (timing: DeliveryTiming) {
   });
 
   /** What waits, and a failed batch, are dropped: off means nothing more leaves. */
-  const drop = Effect.andThen(Ref.set(buffer, []), Ref.set(delivery, IDLE));
+  const drop = Effect.andThen(
+    Ref.set(buffer, []),
+    Ref.update(delivery, (current) => idle(current.epoch + 1)),
+  );
 
   yield* onOff.changes.pipe(
     Stream.runForEach((enabled) => (enabled ? Effect.void : drop)),

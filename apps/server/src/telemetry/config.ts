@@ -93,7 +93,13 @@ export const layer = (started: "desktop" | "cli") =>
           engineVersion: Option.isNone(config.engineBinary) ? EngineLive.pinnedRelease : null,
           os: osFamily(process.platform),
           arch: archFamily(process.arch),
-          installKind: yield* installKind(config.home, started),
+          // A service manager that does not answer leaves it `manual` rather than hold a send.
+          installKind: yield* installKind(config.home, started).pipe(
+            Effect.timeoutOrElse({
+              duration: "5 seconds",
+              orElse: () => Effect.succeed<TelemetryInstallKind>("manual"),
+            }),
+          ),
         } satisfies ServerDimensions;
       }).pipe(Effect.provideContext(context), Effect.cached);
       return TelemetryConfig.of({ environment, server: yield* server });

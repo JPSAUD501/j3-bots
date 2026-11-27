@@ -14,6 +14,7 @@ import {
 import { modelOf, originOf, requestFailedOf } from "./events.ts";
 
 const CLAUDE = ProviderId.make("claude");
+const CODEX = ProviderId.make("codex");
 const GATEWAY = ProviderId.make("gateway");
 
 const provider = (
@@ -29,7 +30,7 @@ const provider = (
   usage: [],
 });
 
-/** An engine that lists one Claude Code model of its own, one the operator added, and a provider of another harness. */
+/** An engine that lists Claude Code models of its own, one the operator added, two a gateway named, Codex's, and a provider of another harness. */
 const status: EngineStatus = {
   state: { _tag: "ready" },
   pinnedVersion: "0.1.13",
@@ -37,6 +38,13 @@ const status: EngineStatus = {
     provider(CLAUDE, "claude-code", [
       { id: ModelId.make("claude-opus-5-5"), name: "Claude Opus 5.5" },
       { id: ModelId.make("my-team-finetune"), name: "Our finetune", custom: true },
+      // As Claude Code lists a gateway's model: not marked as added by anyone.
+      { id: ModelId.make("finance-prod-large"), name: "Finance large" },
+      { id: ModelId.make("claude-acme-internal"), name: "Acme" },
+    ]),
+    provider(CODEX, "codex", [
+      { id: ModelId.make("gpt-5.1-codex-max"), name: "GPT 5.1 Codex Max" },
+      { id: ModelId.make("o3-mini"), name: "o3 mini" },
     ]),
     provider(GATEWAY, "other", [{ id: ModelId.make("gateway-large"), name: "Gateway large" }]),
   ],
@@ -48,13 +56,18 @@ describe("the model an event names", () => {
       modelOf(status, { providerId: CLAUDE, modelId: ModelId.make("claude-opus-5-5") }),
       "claude-opus-5-5",
     );
+    for (const id of ["gpt-5.1-codex-max", "o3-mini"]) {
+      assert.strictEqual(modelOf(status, { providerId: CODEX, modelId: ModelId.make(id) }), id);
+    }
   });
 
-  it("is custom for a model someone added, one the engine does not list, or another harness's", () => {
+  it("is custom for a model someone added or named, one the engine does not list, or another harness's", () => {
     const custom = (providerId: ProviderId, modelId: string) =>
       modelOf(status, { providerId, modelId: ModelId.make(modelId) });
     assert.strictEqual(custom(CLAUDE, "my-team-finetune"), "custom");
     assert.strictEqual(custom(CLAUDE, "claude-unlisted"), "custom");
+    assert.strictEqual(custom(CLAUDE, "finance-prod-large"), "custom");
+    assert.strictEqual(custom(CLAUDE, "claude-acme-internal"), "custom");
     assert.strictEqual(custom(GATEWAY, "gateway-large"), "custom");
     assert.strictEqual(
       modelOf(null, { providerId: CLAUDE, modelId: ModelId.make("claude-opus-5-5") }),

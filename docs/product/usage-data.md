@@ -18,10 +18,10 @@ Each event is one of a fixed list, and each of its details is one word from a fi
 | `install.active` | Once a day while the server runs | How many bots, active rooms, routines turned on and connectors you have, each as `0`, `1`, `2-3`, `4-10` or `11+` |
 | `client.connected` | A device connects, once a day per device | Only what every event says |
 | `message.sent` | You send a message | In a bot's conversation or a room; whether it mentions, replies, quotes or carries files |
-| `turn.finished` | A bot's turn ends | The harness, the model as the engine's catalog names it (`custom` for any other), the effort, what woke the bot, how the turn ended and why it failed, and how many seconds it took |
+| `turn.finished` | A bot's turn ends | The harness, the model by its public name, such as `claude-opus-4-5` (`custom` for any other, a gateway's included), the effort, what woke the bot, how the turn ended and why it failed, and how many seconds it took |
 | `bot.created`, `room.created` | A bot or a room is made | The harness, or the number of members as a rough count; whether from a template; whether you or a bot made it |
 | `routine.ran` | A routine's run ends | Whether it said something, stayed silent, failed, was skipped or stopped |
-| `connector.added`, `connector.removed` | A connector is added or removed | From the catalog or your own; whether it had an app |
+| `connector.added`, `connector.removed` | A connector is added or removed | From the catalog or your own; once removed, whether it had an app |
 | `connector-app.shown` | A connector's app is shown | In the reply, full screen or pinned |
 | `update.applied` | The server runs another release, or an update failed | The versions, and the kind of failure |
 | `feature.used` | What's new is opened, or a message is dictated | Which of the two |

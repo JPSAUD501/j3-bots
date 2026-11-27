@@ -371,6 +371,24 @@ it.layer(layer, { excludeTestServices: true })("usage data", (it) => {
     }),
   );
 
+  it.effect("never sends again a batch that was on its way as the switch went off", () =>
+    Effect.gen(function* () {
+      yield* answer("hang");
+      const { telemetry, turn, stop } = yield* start({ timing: TIMING });
+      yield* telemetry.record(used("whats-new"));
+      // On its way, and it will fail by timing out after the switch went off and on.
+      yield* next;
+      yield* turn(false);
+      yield* Effect.sleep("20 millis");
+      yield* turn(true);
+      yield* answer("accept");
+      yield* telemetry.record(used("voice-input"));
+      const after = yield* next;
+      assert.deepStrictEqual(after.batch.map(featureOf), ["voice-input"]);
+      yield* stop;
+    }),
+  );
+
   it.effect("sends nothing while the environment holds it, whatever the switch says", () =>
     Effect.gen(function* () {
       const { telemetry, stop } = yield* start({ timing: AT_STOP, hold: "do-not-track" });

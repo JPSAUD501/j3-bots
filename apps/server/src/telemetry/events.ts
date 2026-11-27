@@ -31,15 +31,31 @@ const decodeModel = Schema.decodeUnknownOption(TelemetryModel);
 const CUSTOM = TelemetryModel.make("custom");
 
 /**
+ * The shapes of the model ids Anthropic and OpenAI publish, such as
+ * `claude-opus-4-5`, `claude-3-7-sonnet-20250219`, `gpt-5.1-codex-max` or
+ * `o3-mini`. The engine does not mark every model someone else named: Claude
+ * Code lists a gateway's models as its own (**Read** at `bc0f04d`,
+ * `ClaudeModelCatalog.ts`, `claudeReportedModels`), and a gateway can name a
+ * model anything.
+ */
+const PUBLISHED: Readonly<Record<"claude-code" | "codex", RegExp>> = {
+  "claude-code": /^claude-(?:\d+(?:-\d+)?-)?(?:opus|sonnet|haiku|fable)(?:-\d+){0,2}(?:-\d{8})?$/,
+  codex:
+    /^(?:gpt-\d+(?:\.\d+)?(?:-(?:codex|mini|nano|pro|max|spark|sol|chat|latest))*|o\d+(?:-(?:mini|pro))?|codex-mini-latest)$/,
+};
+
+/**
  * The model as the engine's catalog names it: only a Claude Code or Codex
- * model the engine lists, and does not mark as one someone added. Any other
- * is `custom`, since its id could name a person, a deployment or a file.
+ * model the engine lists, does not mark as one someone added, and whose id
+ * has the shape its maker publishes. Any other is `custom`, since its id
+ * could name a person, a deployment or a file.
  */
 export const modelOf = (status: EngineStatus | null, model: ModelChoice): TelemetryModel => {
   const provider = providerOf(status, model.providerId);
   if (provider === undefined || provider.harness === "other") return CUSTOM;
   const listed = provider.models.find((each) => each.id === model.modelId);
   if (listed === undefined || listed.custom === true) return CUSTOM;
+  if (!PUBLISHED[provider.harness].test(listed.id)) return CUSTOM;
   return Option.getOrElse(decodeModel(listed.id), () => CUSTOM);
 };
 

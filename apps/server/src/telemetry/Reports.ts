@@ -71,7 +71,7 @@ export const layer = Layer.effectDiscard(
     const store = yield* TelemetryStore;
     const sql = yield* SqlClient.SqlClient;
     const { home } = yield* ServerConfig;
-    const { j3Version } = yield* (yield* TelemetryConfig).server;
+    const config = yield* TelemetryConfig;
     const files = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
 
     const count = (query: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) =>
@@ -106,21 +106,25 @@ export const layer = Layer.effectDiscard(
       yield* store.mark({ toldUpdateRun: recorded.run.id });
     });
 
-    const marks = yield* store.marks;
-    yield* telemetry.record({ event: "server.started", properties: {} });
-    yield* Effect.forEach(Option.toArray(versionChange(marks.lastVersion, j3Version)), (event) =>
-      telemetry.record(event),
-    );
-    yield* store.mark({ lastVersion: j3Version });
+    // What the server says of itself can take a while to read, so none of it is on the start's way.
+    const begin = Effect.gen(function* () {
+      const { j3Version } = yield* config.server;
+      const marks = yield* store.marks;
+      yield* telemetry.record({ event: "server.started", properties: {} });
+      yield* Effect.forEach(Option.toArray(versionChange(marks.lastVersion, j3Version)), (event) =>
+        telemetry.record(event),
+      );
+      yield* store.mark({ lastVersion: j3Version });
+    });
 
     // A failed tick is logged and the next one tries again: usage data never stops the server.
     const tick = Effect.gen(function* () {
       yield* update(yield* store.marks);
       yield* active;
     }).pipe(Effect.catchCause((cause) => Effect.logDebug("A usage report failed", { cause })));
-    yield* tick.pipe(
-      Effect.andThen(Effect.sleep(REPORT_INTERVAL)),
-      Effect.forever,
+    yield* begin.pipe(
+      Effect.catchCause((cause) => Effect.logDebug("A usage report failed", { cause })),
+      Effect.andThen(tick.pipe(Effect.andThen(Effect.sleep(REPORT_INTERVAL)), Effect.forever)),
       Effect.forkScoped,
     );
   }),

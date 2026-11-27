@@ -86,7 +86,7 @@ systemctl --user daemon-reload
 systemctl --user restart j3-bots
 ```
 
-The server the desktop app runs does not get `J3_*` variables from the app's environment, so use the switch there, or `DO_NOT_TRACK`, which it does get. A server that keeps usage data off says why once in its log as it starts.
+The server the desktop app runs gets these variables from the app's environment, though no other `J3_*` one. A server that keeps usage data off says why once in its log as it starts.
 
 ## Quick access in the desktop app
 
