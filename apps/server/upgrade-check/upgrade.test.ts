@@ -404,14 +404,19 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
 
         /**
          * Nothing waits or runs: no wake pending or dispatched, which a turn
-         * running or held on a card keeps, and no routine run going. A turn's
+         * running or held on a card keeps, no routine run going, and no turn a
+         * session admitted still open, which the roster shows as the bot's
+         * state and which can outlast its wake by a moment. A turn's
          * follow-up wake is written in the transaction that ends the turn.
          */
         const quiet = Effect.gen(function* () {
           const open = yield* query(
             database,
             `SELECT (SELECT count(*) FROM wakes WHERE status IN ('pending', 'dispatched'))
-              + (SELECT count(*) FROM routine_runs WHERE status = 'running') AS count`,
+              + (SELECT count(*) FROM routine_runs WHERE status = 'running')
+              + (SELECT count(*) FROM sessions s JOIN turns t
+                  ON t.session_id = s.id AND t.engine_turn_id = s.admitted_turn_id
+                  WHERE s.lost_at IS NULL AND t.finished_at IS NULL) AS count`,
           ).pipe(Effect.flatMap((rows) => decodeCount(rows[0])));
           if (open.count > 0) return yield* Effect.fail("busy" as const);
         }).pipe(
