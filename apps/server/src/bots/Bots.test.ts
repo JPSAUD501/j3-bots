@@ -278,13 +278,13 @@ it.effect("gives a bot the browser's rules in its instructions only while its br
     const path = yield* Path.Path;
     const bot = yield* createBot("Scout", "Watches the repository for new issues.");
     const agents = path.join(layout.workspace(bot.id), "AGENTS.md");
-    assert.notInclude(yield* fs.readFileString(agents), "# Your browser");
-
-    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: true } });
     assert.include(yield* fs.readFileString(agents), "# Your browser");
 
     yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
     assert.notInclude(yield* fs.readFileString(agents), "# Your browser");
+
+    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: true } });
+    assert.include(yield* fs.readFileString(agents), "# Your browser");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
