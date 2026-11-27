@@ -206,7 +206,7 @@ export class Bots extends Context.Service<
       readonly changes: BotChanges;
     }) => Effect.Effect<Bot, CommandError>;
     /**
-     * A bot's `set_visibility` for a bot: shows or hides it as `caller` asks,
+     * A bot's `set_listed` for a bot: shows or hides it as `caller` asks,
      * when `visibilityRefusal` lets it, decided in the transaction that saves
      * it, so a choice the operator just made wins. Whose choice the
      * visibility is stays as it was.
@@ -652,6 +652,8 @@ export const layer = Layer.effect(
                 permissionModeChooser: input.permissionModeChooser(draft),
                 primary: draft.primary === true,
                 hidden: draft.hidden === true,
+                // Every new bot may browse; the operator turns it off per bot (decision 0109).
+                browser: true,
                 madeBy: input.madeBy?.maker ?? null,
                 workspacePath: layout.workspace(id),
                 at,
@@ -662,22 +664,28 @@ export const layer = Layer.effect(
               // cause is the operator's, as the creation is, also when the primary
               // bot's `create_bot` carried their word: it follows from no
               // dispatch's work, so no Stop of earlier work can drop it unwritten.
-              yield* wakes.record([
-                {
-                  botId: id,
-                  kind: "system",
-                  audience: conversation,
-                  payload: {
-                    _tag: "first-run",
-                    ...(input.madeBy === null ? {} : { madeIn: input.madeBy.turn }),
-                    ...(input.fromTemplate ? { fromTemplate: true } : {}),
+              // A helper another bot made behind the scenes opens nothing: a
+              // hello there would only leave unread where the operator does not
+              // look, and its maker gives it its first work (decision 0101).
+              const helper = input.madeBy !== null && draft.hidden === true;
+              if (!helper) {
+                yield* wakes.record([
+                  {
+                    botId: id,
+                    kind: "system",
+                    audience: conversation,
+                    payload: {
+                      _tag: "first-run",
+                      ...(input.madeBy === null ? {} : { madeIn: input.madeBy.turn }),
+                      ...(input.fromTemplate ? { fromTemplate: true } : {}),
+                    },
+                    sourceEntryId: null,
+                    hops: 0,
+                    retryOf: null,
+                    cause: { _tag: "operator" },
                   },
-                  sourceEntryId: null,
-                  hops: 0,
-                  retryOf: null,
-                  cause: { _tag: "operator" },
-                },
-              ]);
+                ]);
+              }
               yield* changes.touch({ _tag: "bot", botId: id });
               return (yield* require(id).pipe(Effect.orDie)).bot;
             }),

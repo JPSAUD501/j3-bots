@@ -70,6 +70,11 @@ export interface ReactionTarget {
 }
 
 interface Reacting {
+  /**
+   * Whether the operator reacts here: not in a room of bots only, where the
+   * bots' reactions only show, and a tap on one says who reacted.
+   */
+  readonly offered: boolean;
   /** Opens the quick bar over the message. */
   readonly open: (target: ReactionTarget) => void;
   /** Sets the operator's reaction on the message, or takes it off with null. */
@@ -93,7 +98,13 @@ export const useReacting = (): Reacting => {
  * server did not take says so in a toast; one it took comes back with the
  * message.
  */
-export function Reactions({ children }: { readonly children: ReactNode }) {
+export function Reactions({
+  offered,
+  children,
+}: {
+  readonly offered: boolean;
+  readonly children: ReactNode;
+}) {
   const client = useJ3Client();
   const say = useSay();
   const { t } = usePresentation().i18n;
@@ -108,7 +119,10 @@ export function Reactions({ children }: { readonly children: ReactNode }) {
     },
     [client, say, t],
   );
-  const value = useMemo<Reacting>(() => ({ open: setBar, react, showWho: setWho }), [react]);
+  const value = useMemo<Reacting>(
+    () => ({ offered, open: setBar, react, showWho: setWho }),
+    [offered, react],
+  );
   const pick = (target: ReactionTarget, emoji: ReactionEmoji) =>
     react(target.entryId, reactionAfterPick(target.reactions, emoji));
   return (
@@ -536,9 +550,9 @@ const pillIn: EntryExitAnimationFunction = () => {
 /**
  * A message's reactions, under it: a pill for each emoji, with how many when
  * more than one, the operator's own drawn chosen. A tap on the operator's
- * takes it off; a tap on another makes it theirs. A long press shows who
- * reacted. What was there when the message was drawn shows in place; a pill
- * that comes after pops in.
+ * takes it off; a tap on another makes it theirs; where the operator does not
+ * react, it shows who reacted, as a long press does. What was there when the
+ * message was drawn shows in place; a pill that comes after pops in.
  */
 export function ReactionPills({
   entryId,
@@ -575,7 +589,11 @@ export function ReactionPills({
             onAccessibilityAction={(event) => {
               if (event.nativeEvent.actionName === "longpress") reacting.showWho(pill);
             }}
-            onPress={() => reacting.react(entryId, reactionAfterPick(reactions, pill.emoji))}
+            onPress={() =>
+              reacting.offered
+                ? reacting.react(entryId, reactionAfterPick(reactions, pill.emoji))
+                : reacting.showWho(pill)
+            }
             onLongPress={() => {
               feelLongPress();
               reacting.showWho(pill);

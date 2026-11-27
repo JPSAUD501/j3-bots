@@ -139,7 +139,9 @@ function LittleDots({ count, color }: { readonly count: number; readonly color: 
 }
 
 /**
- * One bot or room in the roster: avatar, name, time, and one line of status.
+ * One bot or room in the roster: avatar, name and time, a bot's title, and
+ * one line of status. The title takes two lines at most; the status line is
+ * cut first.
  * Rows that need the operator carry their state in the line's words and color
  * and in the avatar's light. Hover fills the row more lightly than the open
  * conversation's, so the two never read as one. Renders a button unless `render` gives a link.
@@ -159,6 +161,8 @@ export function RosterRow({
   const line = rosterLine(item, ctx);
   const needs = needsOperator(item);
   const name = item._tag === "bot" ? item.bot.profile.name : item.room.name;
+  // A bot's title says what it is for: under its name, before what it is doing.
+  const title = item._tag === "bot" ? item.bot.profile.title : "";
   // An idle bot's avatar already says it with its dark light; other rows mark it with a dot.
   const unreadDot = item.unread && (item._tag === "room" || item.bot.state._tag !== "idle");
   const makesWay = withMenu
@@ -225,6 +229,9 @@ export function RosterRow({
             </span>
           )}
         </span>
+        {title !== "" && (
+          <span className="row-title line-clamp-2 text-xs text-muted-foreground">{title}</span>
+        )}
         <span className="row-line flex items-center gap-2">
           <SwapText text={line.text} className={cn("text-xs", toneClass[line.tone])} />
           {item.unread &&
@@ -241,7 +248,7 @@ export function RosterRow({
   );
   const own: ComponentProps<"button"> & DataAttributes = {
     className:
-      "group/row pressable pressable-row flex h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 text-start hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:h-(--layout-row-touch)",
+      "group/row pressable pressable-row flex min-h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 py-2 text-start hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:min-h-(--layout-row-touch)",
     type: render ? undefined : "button",
     "data-selected": selected ? "" : undefined,
     "aria-current": selected ? "page" : undefined,

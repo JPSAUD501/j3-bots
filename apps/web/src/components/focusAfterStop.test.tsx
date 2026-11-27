@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment happy-dom
 import { act, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { useFocusAfterStop } from "./focusAfterStop";
 
@@ -35,7 +36,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
 });
 
 afterEach(() => {

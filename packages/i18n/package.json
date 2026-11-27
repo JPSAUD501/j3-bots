@@ -9,6 +9,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./load": {
+      "types": "./src/load.ts",
+      "import": "./src/load.ts"
+    },
     "./whats-new": {
       "types": "./src/whatsNew/index.ts",
       "import": "./src/whatsNew/index.ts"

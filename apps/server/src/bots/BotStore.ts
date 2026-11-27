@@ -132,6 +132,8 @@ export interface NewBot {
   readonly permissionModeChooser: Chooser;
   readonly primary: boolean;
   readonly hidden: boolean;
+  /** Whether it may use the engine's browser. */
+  readonly browser: boolean;
   /**
    * The bot whose `create_bot` makes it, whose choice its visibility then is;
    * null for the operator's, whose choice it is.
@@ -240,14 +242,15 @@ export const layer = Layer.effect(
         INSERT INTO bots (
           id, name, title, avatar_shape, avatar_color, job, provider_id, model_id, effort, fast,
           model_by_server, permission_mode, permission_mode_by_server, is_primary, hidden,
-          made_by_bot_id, made_by, visibility_by_operator, workspace_path, created_at, updated_at
+          browser, made_by_bot_id, made_by, visibility_by_operator, workspace_path, created_at,
+          updated_at
         ) VALUES (
           ${bot.id}, ${bot.profile.name}, ${bot.profile.title}, ${bot.profile.avatar.shape},
           ${bot.profile.avatar.color}, ${bot.profile.job}, ${bot.model.providerId},
           ${bot.model.modelId}, ${bot.effort}, ${bot.fast ? 1 : 0},
           ${bot.modelChooser === "server" ? 1 : 0}, ${bot.permissionMode},
           ${bot.permissionModeChooser === "server" ? 1 : 0}, ${bot.primary ? 1 : 0},
-          ${bot.hidden ? 1 : 0}, ${bot.madeBy}, ${bot.madeBy === null ? "operator" : "bot"},
+          ${bot.hidden ? 1 : 0}, ${bot.browser ? 1 : 0}, ${bot.madeBy}, ${bot.madeBy === null ? "operator" : "bot"},
           ${bot.madeBy === null ? 1 : 0},
           ${bot.workspacePath}, ${at}, ${at}
         )

@@ -106,7 +106,9 @@ export function botPatch(bot: Bot, edits: BotEdits, engine: EngineStatus | null)
     if (edit === null) continue;
     const trimmed = edit.trim();
     if (trimmed === bot.profile[field]) continue;
-    const decoded = decoders[field](trimmed);
+    // A title, once a bot has one, is never taken away: it says what the bot
+    // is for (decision 0101). A bot from before titles saves without one.
+    const decoded = field === "title" && trimmed === "" ? Option.none() : decoders[field](trimmed);
     if (Option.isNone(decoded)) invalid.add(field);
     else profile[field] = decoded.value;
   }

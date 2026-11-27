@@ -543,7 +543,7 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   exact: Schema.Boolean,
   /**
-   * What "Allow for session" would allow from then on, when the card offers
+   * What "Don’t ask again" would allow from then on, when the card offers
    * it: only when `exact`, and the provider takes such a grant for this
    * approval and its scope is known. Null otherwise, and always for a summary,
    * since a grant allows again what nobody has seen exactly.
@@ -1138,6 +1138,14 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      * room `roomId`, where it opens instead of greeting here.
      */
     Schema.TaggedStruct("made-for-room", { botId: BotId, roomId: RoomId }),
+    /**
+     * Room `roomId`, of bots only, paused: its bots answered each other
+     * `ROOM_QUIET_ROUND` rounds since its kickoff, and their messages there
+     * wake nobody from then on. Bot `botId`, which started it, was told in its
+     * own conversation, and the notice shows there too; `null` when that bot
+     * was deleted before, and nobody was told.
+     */
+    Schema.TaggedStruct("room-paused", { botId: Schema.NullOr(BotId), roomId: RoomId }),
     AsksBeforeActing,
   ] as const;
 

@@ -2,6 +2,7 @@
 import { loadedList } from "@j3-bots/client-runtime";
 import {
   asksYou,
+  BROWSER_SETUP_DOCS,
   botStop,
   connectorsOf,
   type Teammate,
@@ -54,6 +55,7 @@ import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
+import { DocsLink } from "../components/DocsLink.tsx";
 import { DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useConfirm } from "../confirm.tsx";
 import { PressScale } from "../press.tsx";
@@ -70,7 +72,7 @@ import { RoutineSentence } from "../conversation/RoutineTrack.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useShareBotTemplate } from "../template/share.ts";
 import { useBotPlacing } from "../screens/placing.ts";
-import { HiddenNotice } from "./HiddenNotice.tsx";
+import { BackstageNotice } from "./BackstageNotice.tsx";
 import { useBotActions } from "./actions.ts";
 import { useOpenConnectors } from "../connectors/intents.ts";
 import { ConnectorTile, StatusWord } from "../connectors/parts.tsx";
@@ -78,7 +80,7 @@ import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
 
 /**
  * Answers: what is this bot, and what runs without me. Its profile, Stop
- * while it has work to stop, that it is hidden while it is, its routines
+ * while it has work to stop, that it is behind the scenes while it is, its routines
  * with a switch to pause each, the files it sent, its memory, its
  * connectors, the teammates it wrote with, the model it runs on, a fresh
  * start, and, last and apart, deleting it.
@@ -162,7 +164,7 @@ export function BotDetails({
         />
       )}
 
-      {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}
+      {bot.hidden && <BackstageNotice name={name} onBringBack={() => placing.bringBack(bot)} />}
 
       <View
         onLayout={(event) => {
@@ -461,8 +463,16 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="text-base text-foreground">{t("details.browser.use")}</Text>
         <Text className="text-sm text-muted-foreground">{t("details.browser.hint", { name })}</Text>
+        {bot.browser && botStop(bot) !== "hidden" && (
+          <Text className="text-sm text-muted-foreground">
+            {t("details.browser.offStops", { name })}
+          </Text>
+        )}
         {bot.browser && needsSetup && (
-          <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>
+          <View className="items-start">
+            <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>
+            <DocsLink href={BROWSER_SETUP_DOCS} label={t("details.browser.howToFix")} />
+          </View>
         )}
       </View>
       <Switch
@@ -482,10 +492,10 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
 }
 
 /**
- * A teammate the bot wrote with: its face and name, then the latest message
- * between them after who wrote it, and when. It opens their conversation,
- * and a long press the teammate's card. A deleted teammate is named so, its
- * face left blank.
+ * A teammate the bot wrote with: its face, its name over its title, then the
+ * latest message between them after who wrote it, and when. It opens their
+ * conversation, and a long press the teammate's card. A deleted teammate is
+ * named so, its face left blank.
  */
 function TeammateRow({
   teammate,
@@ -497,6 +507,7 @@ function TeammateRow({
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
   const name = peer?.profile.name ?? ctx.i18n.t("bot.unknown");
+  const title = peer?.profile.title ?? "";
   // A long press opens the teammate's card (decision 0102); a deleted one has none.
   const card = useBotCardPress(peer === undefined ? null : peer.id, name);
   const line = pairLine(teammate.pair, ctx);
@@ -505,7 +516,7 @@ function TeammateRow({
     <PressScale
       depth="row"
       accessibilityRole="button"
-      accessibilityLabel={[name, time, line].join(", ")}
+      accessibilityLabel={[name, title, time, line].filter((part) => part !== "").join(", ")}
       onPress={onOpen}
       {...card?.props}
       className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
@@ -522,6 +533,11 @@ function TeammateRow({
           </Text>
           <Text className="text-xs text-muted-foreground">{time}</Text>
         </View>
+        {title !== "" && (
+          <Text numberOfLines={2} className="text-xs text-muted-foreground">
+            {title}
+          </Text>
+        )}
         <Text numberOfLines={1} className="text-sm text-muted-foreground">
           {line}
         </Text>

@@ -55,7 +55,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0047](0047-j3-bots-is-a-complete-mcp-host-at-the-current-specification.md) | J3 Bots is a complete MCP host at the current specification | Accepted |
 | [0048](0048-a-servers-interface-runs-isolated-in-j3-bots-clients.md) | A server's interface runs isolated in J3 Bots' clients | Accepted; where an app shows and what it may tell its bot amended by [0093](0093-a-connectors-app-is-part-of-the-bots-reply.md) |
 | [0049](0049-the-bots-manage-mcp-servers-and-skills.md) | The bots manage MCP servers and skills | Accepted |
-| [0050](0050-bots-and-rooms-are-visible-or-hidden-and-the-operators-choice-wins.md) | Bots and rooms are visible or hidden, and the operator's choice wins | Accepted |
+| [0050](0050-bots-and-rooms-are-visible-or-hidden-and-the-operators-choice-wins.md) | Bots and rooms are visible or hidden, and the operator's choice wins | Accepted, amended by 0101 |
 | [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |
 | [0052](0052-motion-follows-palco.md) | Motion follows Palco: a stage for entrances, and motion that carries on | Accepted; the first run's steps, lights and finale amended by [0065](0065-the-first-run-tells-what-j3-bots-is-before-it-asks.md) |
 | [0055](0055-a-delegated-report-goes-back-to-its-audience.md) | A delegated task's report goes back to the audience that delegated it | Accepted |
@@ -95,7 +95,11 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0098](0098-the-desktop-app-records-the-screen-for-a-bot.md) | The desktop app records the screen for a bot, as one zip a bot's AI can read | Accepted |
 | [0099](0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md) | Usage data is the server's, typed, and on until the operator turns it off | Accepted |
 | [0100](0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md) | A diagnostics zip holds what the server knows, and nothing of the person | Accepted |
+| [0101](0101-a-bot-is-its-name-and-its-title-and-a-helper-waits-behind-the-scenes.md) | A bot is its name and its title, and a helper waits behind the scenes | Accepted |
 | [0102](0102-a-bots-card-opens-from-its-face-and-name.md) | A bot's card opens from its face and name | Accepted |
+| [0103](0103-a-room-of-bots-only-is-read-and-never-written-by-the-operator.md) | A room of bots only is read, never written, by the operator | Accepted |
+| [0105](0105-the-web-client-loads-what-a-window-shows-and-ci-holds-it-to-a-budget.md) | The web client loads what a window shows, and CI holds it and a turn's traffic to a budget | Accepted |
 | [0108](0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md) | The operator sets up each AI account, and picks a bot's model as in T3 Code | Accepted |
+| [0109](0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md) | A new bot can browse the web, and the operator turns it off | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

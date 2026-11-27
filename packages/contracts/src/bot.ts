@@ -273,8 +273,9 @@ export const Bot = Schema.Struct({
   hidden: Schema.Boolean,
   /**
    * The bot may use a web browser on the server's computer, signed in to
-   * every site the operator signed in to there. Off unless the operator
-   * turns it on. False from a server that predates it.
+   * every site the operator signed in to there. On for a new bot; the
+   * operator turns it off per bot (decision 0109). False from a server that
+   * predates it.
    */
   browser: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   /**

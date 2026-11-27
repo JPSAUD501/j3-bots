@@ -4,7 +4,8 @@ import type { QuickSend, QuickSendResult } from "@j3-bots/client-runtime/react";
 import { type BotId, EntryId, NotFound } from "@j3-bots/contracts";
 import { cardTiming } from "@j3-bots/design-tokens";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { RosterProvider } from "../app/context";
 import { ids, SAMPLE_NOW, sampleTeam } from "../gallery/sample";
@@ -59,7 +60,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
   told = { talk: [], sent: [] };
   answer = () => Promise.resolve({ _tag: "done", value: EntryId.make("quick") });
   const intents: BotCardIntents = {

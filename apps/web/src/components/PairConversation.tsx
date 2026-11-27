@@ -8,7 +8,6 @@ import {
   pairMessageKey,
 } from "@j3-bots/client-runtime/presentation";
 import { type EventMark, handoffMarks, pairTitle } from "@j3-bots/client-runtime/wording";
-import { LockIcon } from "lucide-react";
 import {
   type RefObject,
   useEffect,
@@ -25,6 +24,7 @@ import { FaceOf, PairAvatar } from "./avatar/TeamAvatars";
 import { Centered, Heading } from "./EmptyStates";
 import { botCorners } from "./MessageBubble";
 import { MessageText } from "./MessageText";
+import { ReadOnlyMark } from "./ReadOnlyMark";
 import { type PairIntents, PairHeader } from "./PairHeader";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { TimeDivider } from "./TimeDivider";
@@ -158,7 +158,7 @@ export function PairConversation({
           </div>
         </div>
       )}
-      <ReadOnly />
+      <ReadOnlyMark label={t("pairs.readOnly")} />
     </>
   );
 }
@@ -200,7 +200,12 @@ function PairMessage({
       {/* The face sits beside the bubble, not beside the marks under it. */}
       <div className={cn("flex flex-col items-start gap-1 self-stretch", speakerGutter)}>
         <span aria-hidden className="contents">
-          <SpeakerName position={position} name={name} botId={message.from} />
+          <SpeakerName
+            position={position}
+            name={name}
+            title={sender?.profile.title ?? ""}
+            botId={message.from}
+          />
         </span>
         <SpeakerFace position={position} botId={message.from}>
           <FaceOf botId={message.from} size={28} />
@@ -227,19 +232,6 @@ function PairMessage({
           ))}
         </p>
       )}
-    </div>
-  );
-}
-
-/** Where the composer would be: the operator reads this conversation and writes nothing in it. */
-function ReadOnly() {
-  const { t } = usePresentation().i18n;
-  return (
-    <div className="flex justify-center px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))]">
-      <p className="inline-flex items-center gap-1.5 rounded-pill border border-border bg-surface px-3.5 py-2 text-xs text-muted-foreground">
-        <LockIcon aria-hidden className="size-3.5" />
-        {t("pairs.readOnly")}
-      </p>
     </div>
   );
 }

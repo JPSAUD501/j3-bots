@@ -9,7 +9,7 @@ import { useBots } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 
 /**
- * Where the operator puts a bot in the roster: pinned, hidden, shown again,
+ * Where the operator puts a bot in the roster: pinned, behind the scenes, back in the list,
  * made the primary bot or moved between sections, and whether its
  * conversation reads as unread. Each changes nothing on screen until the
  * server has it, and says in a toast when it did not take.
@@ -26,8 +26,8 @@ export function useBotPlacing() {
   return {
     pin: (bot: Bot) => place(bot, { pinned: true }),
     unpin: (bot: Bot) => place(bot, { pinned: false }),
-    hide: (bot: Bot) => place(bot, { hidden: true }),
-    unhide: (bot: Bot) => place(bot, { hidden: false }),
+    moveBackstage: (bot: Bot) => place(bot, { hidden: true }),
+    bringBack: (bot: Bot) => place(bot, { hidden: false }),
     /** Into the section, or out of the one it is in with null. */
     move: (bot: Bot, section: Section | null) => place(bot, { sectionId: section?.id ?? null }),
     /** Asks for the new section's name, then creates it with the bot in it. */
@@ -77,7 +77,7 @@ export function useBotPlacing() {
 
 /**
  * Where the operator puts a room in the roster: pinned at the top of the
- * list, hidden among the hidden conversations, or shown again. As with a
+ * list, behind the scenes, or back in the list. As with a
  * bot, nothing changes on screen until the server has it, and a toast says
  * when it did not take.
  */
@@ -89,8 +89,8 @@ export function useRoomPlacing() {
   return {
     pin: (room: Room) => place(room, { pinned: true }),
     unpin: (room: Room) => place(room, { pinned: false }),
-    hide: (room: Room) => place(room, { hidden: true }),
-    unhide: (room: Room) => place(room, { hidden: false }),
+    moveBackstage: (room: Room) => place(room, { hidden: true }),
+    bringBack: (room: Room) => place(room, { hidden: false }),
   };
 }
 

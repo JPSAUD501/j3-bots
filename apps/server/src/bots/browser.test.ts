@@ -20,7 +20,7 @@ import { BotStore } from "./BotStore.ts";
 import { Bots } from "./Bots.ts";
 
 it.effect(
-  "gives a bot the browser from its next turn once the operator turns it on, and takes it away the same way",
+  "gives a new bot the browser from its first turn, and once the operator turns it off, takes it away until they turn it on again",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -28,16 +28,7 @@ it.effect(
       const store = yield* BotStore;
       const bot = yield* createBot("Ana");
       const session = yield* engineSession(bot.id);
-      assert.isFalse(bot.browser);
-      assert.isFalse(yield* control.sessionBrowserTools(session));
-
-      const on = yield* bots.update({
-        commandId: command(),
-        botId: bot.id,
-        changes: { browser: true },
-      });
-      assert.isTrue(on.browser);
-      assert.isTrue(Option.getOrThrow(yield* store.find(bot.id)).bot.browser);
+      assert.isTrue(bot.browser);
       const browsing = yield* sendToBot(bot.id, "Read the release notes on the site.");
       const first = yield* nextTurn(bot.id);
       assert.isTrue(yield* control.sessionBrowserTools(session));
@@ -51,9 +42,22 @@ it.effect(
         changes: { browser: false },
       });
       assert.isFalse(off.browser);
+      assert.isFalse(Option.getOrThrow(yield* store.find(bot.id)).bot.browser);
       yield* sendToBot(bot.id, "Summarize them.");
-      yield* nextTurn(bot.id, first);
+      const second = yield* nextTurn(bot.id, first);
       assert.isFalse(yield* control.sessionBrowserTools(session));
+      yield* finishRunning(bot.id);
+      yield* turnEnded(bot.id);
+
+      const on = yield* bots.update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { browser: true },
+      });
+      assert.isTrue(on.browser);
+      yield* sendToBot(bot.id, "Check the site again.");
+      yield* nextTurn(bot.id, second);
+      assert.isTrue(yield* control.sessionBrowserTools(session));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -63,6 +67,7 @@ it.effect("lets a turn already running keep the tools it started with", () =>
     const bots = yield* Bots;
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
+    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
     yield* sendToBot(bot.id, "Plan the launch.");
     const running = yield* nextTurn(bot.id);
 

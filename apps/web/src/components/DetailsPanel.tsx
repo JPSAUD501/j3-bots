@@ -48,12 +48,14 @@ import {
 } from "react";
 import {
   asksYou,
+  BROWSER_SETUP_DOCS,
   botStop,
   connectorsOf,
   roomStop,
   type Teammate,
   trackCast,
   trackTrigger,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -70,6 +72,7 @@ import {
 import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { FaceOf } from "./avatar/TeamAvatars";
+import { DocsLink } from "./DocsLink";
 import { FileCard } from "./FileCard";
 import { useBotCard } from "./BotCard";
 import { RoutineSentence } from "./RoutineTrack";
@@ -78,7 +81,7 @@ import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import { Switch } from "./ui/switch";
-import { HiddenNotice } from "./Visibility";
+import { BackstageNotice } from "./Visibility";
 
 interface PanelFrameProps {
   readonly title: string;
@@ -249,7 +252,7 @@ export interface BotDetailsIntents {
   readonly stop: () => void;
   /** Stop, for an AI that ignores it (`botStop` is `force`), as the shortcut then does. */
   readonly forceStop: () => void;
-  /** Puts a hidden bot back in the roster's list. */
+  /** Brings a bot behind the scenes back to the roster's list. */
   readonly show: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
@@ -291,8 +294,8 @@ interface BotDetailsProps {
 
 /**
  * Answers: what is this bot, and what runs without me. While it has work to
- * stop, Stop comes first under its profile; while it is hidden, a line says
- * so after that, with Show.
+ * stop, Stop comes first under its profile; while it is behind the scenes, a
+ * line says so after that, with Bring back to the list.
  */
 export function BotDetails({
   bot,
@@ -380,7 +383,7 @@ export function BotDetails({
           </button>
         </StopPlace>
       )}
-      {bot.hidden && <HiddenNotice name={name} onShow={intents.show} />}
+      {bot.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
 
       <DetailsSection title={t("details.routines")} ref={routinesRef}>
         {routines === null ? (
@@ -486,8 +489,16 @@ export function BotDetails({
               {t("details.browser.use")}
             </label>
             <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
+            {bot.browser && stop !== "hidden" && (
+              <p className="text-xs text-muted-foreground">
+                {t("details.browser.offStops", { name })}
+              </p>
+            )}
             {bot.browser && browserHost?._tag === "setup-required" && (
-              <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
+              <p className="mt-1 text-xs text-blocked">
+                {t("details.browser.setup")}{" "}
+                <DocsLink href={BROWSER_SETUP_DOCS}>{t("details.browser.howToFix")}</DocsLink>
+              </p>
             )}
           </div>
           <Switch
@@ -691,8 +702,7 @@ function RoutineCast({ steps }: { steps: ReadonlyArray<RoutineStep> }) {
   );
 }
 
-/** A teammate: its face and name, and the latest message between the two, which the row opens. */
-/** A room's member: its face, name and title, which open its card under a resting pointer. */
+/** A room's member: its face, its name over its title, which open its card under a resting pointer. */
 function MemberRow({ bot }: { bot: Bot }) {
   const card = useBotCard(bot.id, "left");
   return (
@@ -712,6 +722,10 @@ function MemberRow({ bot }: { bot: Bot }) {
   );
 }
 
+/**
+ * A teammate: its face, its name over its title, and the latest message
+ * between the two, which the row opens.
+ */
 function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => void }) {
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
@@ -739,6 +753,9 @@ function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => v
               {activityTime(pair.lastMessage.createdAt, ctx)}
             </span>
           </span>
+          {peer !== undefined && peer.profile.title !== "" && (
+            <span className="line-clamp-2 text-xs text-muted-foreground">{peer.profile.title}</span>
+          )}
           <span className="truncate text-xs text-muted-foreground">{pairLine(pair, ctx)}</span>
         </span>
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -795,7 +812,7 @@ export interface RoomDetailsIntents {
   readonly stop: () => void;
   /** Stop, for a member's AI that ignores the room's Stop (`roomStop` is `force`). */
   readonly forceStop: () => void;
-  /** Puts a hidden room back in the roster's list. */
+  /** Brings a room behind the scenes back to the roster's list. */
   readonly show: () => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: () => Promise<void>;
@@ -808,7 +825,7 @@ export interface RoomDetailsIntents {
  * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first;
- * while it is hidden, a line says so after that, with Show.
+ * while it is behind the scenes, a line says so after that, with Bring back to the list.
  */
 export function RoomDetails({
   room,
@@ -853,11 +870,16 @@ export function RoomDetails({
           archived ? (
             <span>{t("room.archivedLine")}</span>
           ) : (
-            <span>{plural("room.memberCount", members.length)}</span>
+            <span>
+              {room.botsOnly === true
+                ? t("room.botsOnlyLine", { count: plural("room.memberCount", members.length) })
+                : plural("room.memberCount", members.length)}
+            </span>
           )
         }
+        // Its bots chose who talks in a room of bots only: the operator reads it.
         actions={
-          archived ? undefined : (
+          archived || room.botsOnly === true ? undefined : (
             <Button size="sm" onClick={intents.editRoom}>
               <PencilIcon aria-hidden />
               {t("room.edit", { name })}
@@ -896,7 +918,7 @@ export function RoomDetails({
           </Confirm>
         </StopPlace>
       )}
-      {room.hidden && <HiddenNotice name={name} onShow={intents.show} />}
+      {room.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
       <DetailsSection title={t("room.membersTitle")}>
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>
@@ -909,7 +931,9 @@ export function RoomDetails({
         )}
       </DetailsSection>
       <DetailsSection title={t("room.archiveSection")}>
-        {archived ? (
+        {archived && !unarchivable(room) ? (
+          <p className="text-xs text-muted-foreground">{t("room.staysArchived")}</p>
+        ) : archived ? (
           <PendingButton onPress={intents.unarchiveRoom}>
             <ArchiveRestoreIcon aria-hidden />
             {t("room.unarchive", { name })}

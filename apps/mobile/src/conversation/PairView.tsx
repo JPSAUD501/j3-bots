@@ -10,12 +10,10 @@ import { dividerTime, handoffMarks, pairOrder } from "@j3-bots/client-runtime/wo
 import type { EntryId, PairBotIds, PairSeq, TeammateMessage } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import { Lock } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AvatarStack } from "../components/avatar/BotAvatar.tsx";
-import { Icon } from "../components/Icon.tsx";
 import { openIn } from "../motion.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { Text } from "../text.tsx";
@@ -23,6 +21,7 @@ import { Body, Centered } from "../ui.tsx";
 import { AnimatedView } from "./animated.ts";
 import { markTone } from "./markTone.ts";
 import { MessageText } from "./MessageText.tsx";
+import { ReadOnlyMark } from "./ReadOnlyMark.tsx";
 import { Speaker, speakerGutter } from "./Speaker.tsx";
 import { useTint } from "./tint.ts";
 
@@ -140,14 +139,10 @@ export function PairView({
         className="absolute start-0 end-0 bottom-0 items-center pt-2"
         style={{ paddingBottom: insets.bottom + 12 }}
       >
-        <View
-          accessible
-          accessibilityLabel={`${t("pairs.readOnly")}. ${t("pairs.readOnlyHint")}`}
-          className="flex-row items-center gap-1.5 rounded-pill border border-border bg-surface px-3.5 py-2"
-        >
-          <Icon icon={Lock} size={14} color="accent-muted-foreground" />
-          <Text className="text-xs font-medium text-muted-foreground">{t("pairs.readOnly")}</Text>
-        </View>
+        <ReadOnlyMark
+          label={t("pairs.readOnly")}
+          spoken={`${t("pairs.readOnly")}. ${t("pairs.readOnlyHint")}`}
+        />
       </View>
     </AnimatedView>
   );

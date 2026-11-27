@@ -1021,7 +1021,9 @@ export const layer = Layer.effect(
         ? ({
             status: "recorded",
             stopped: "room",
-            note: `Your message is in the room, but nobody was woken: the bots here have answered each other for ${ROOM_QUIET_ROUND} rounds since your user last wrote, so the room waits for your user. Do not try to wake anyone for it again.`,
+            note: routed.paused
+              ? `Your message is in the room, but nobody was woken: the bots here have answered each other for ${ROOM_QUIET_ROUND} rounds since the room started, the most a room of bots only takes, so it has paused. The bot that started it is told. Do not try to wake anyone for it again.`
+              : `Your message is in the room, but nobody was woken: the bots here have answered each other for ${ROOM_QUIET_ROUND} rounds since your user last wrote, so the room waits for your user. Do not try to wake anyone for it again.`,
           } satisfies Schema.Json)
         : null;
 
@@ -1218,6 +1220,16 @@ export const layer = Layer.effect(
           reason:
             "A routine runs where the operator cannot answer a question card. Put the question in your say message instead.",
         });
+      }
+      // Nobody answers for a room of bots only (decision 0103): its card
+      // would wait on the operator for a room they take no part in.
+      if (found.audience._tag === "room" && found.audience.roomId !== null) {
+        const room = yield* roomOf(found.audience.roomId);
+        if (Option.isSome(room) && room.value.botsOnly) {
+          return yield* new TurnToolRefused({
+            reason: `Nothing was asked: your user does not take part in the room ${room.value.name}, so nobody answers a question from it. Go on with what the room has; if it cannot go on without your user, tell them in your own conversation with \`say\` and \`to: "dm"\`, and say in the room what waits on them.`,
+          });
+        }
       }
       const options = input.options.map((option, index) => ({
         id: `option-${index + 1}`,
@@ -1554,14 +1566,18 @@ export const layer = Layer.effect(
         text: input.text,
       });
       const spoke = !inThisRoom && (yield* operatorSpokeIn(found));
-      const word = spoke && (yield* firstRelay(found, roomId)) ? "relayed" : "bot";
+      // The operator's word never reaches a room of bots only, also through
+      // a bot (decision 0103): the post is the bot's own, and takes its round.
+      const word =
+        spoke && !live.value.botsOnly && (yield* firstRelay(found, roomId)) ? "relayed" : "bot";
       const routed =
         entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, word) : null;
       const quiet = roomPosted(routed);
       // A turn from outside the room that the operator did not speak in may
       // carry a message of theirs steered into it, which does not count: they
       // are asked again, as the other tools that take only their word ask.
-      if (quiet !== null && !inThisRoom && !spoke) {
+      // A room of bots only takes nobody's word again, so nothing is to ask.
+      if (quiet !== null && !inThisRoom && !spoke && !live.value.botsOnly) {
         return { ...quiet, note: `${quiet.note} ${LATE_WORD}` };
       }
       return (
@@ -1969,7 +1985,8 @@ export const layer = Layer.effect(
             .open({
               name: input.name,
               members: [found.botId, ...members],
-              hidden: input.hidden ?? false,
+              hidden: !input.listed,
+              botsOnly: !input.with_user,
               madeBy: found.botId,
             })
             .pipe(
@@ -2019,7 +2036,17 @@ export const layer = Layer.effect(
             id: room.id,
             note:
               posted?.note ??
-              "The room is in your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up.",
+              [
+                input.listed
+                  ? "The room is in your user's list, and the members the kickoff wakes answer it there."
+                  : "The room is behind the scenes, out of your user's list, and the members the kickoff wakes answer it there.",
+                ...(input.with_user
+                  ? []
+                  : [
+                      "Your user reads it but does not write there; you are told here if it pauses at its round limit.",
+                    ]),
+                "Tell your user what you set up.",
+              ].join(" "),
             ...(posted === null ? {} : { stopped: posted.stopped }),
           } satisfies Schema.Json;
         }),

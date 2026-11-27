@@ -13,6 +13,7 @@ export {
   type PairHandle,
   type PairResult,
   type Platform,
+  type RecordingAttachment,
   type SecretsHandle,
   type ServerUpdateHandle,
   type SendWithFilesResult,

@@ -255,6 +255,8 @@ describe("the desktop bridge", () => {
       openRecorder: call,
       onRecording: call,
       readRecording: call,
+      readRecordingSpeech: call,
+      keepTranscript: call,
       releaseRecording: call,
       recorderJob: call,
       recorderStarted: call,

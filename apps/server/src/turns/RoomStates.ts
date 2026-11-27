@@ -182,7 +182,9 @@ export const layer = Layer.effect(
     /**
      * The members of the rooms `rooms` selects, as `ra_room`, that answer
      * there (`RoomStates`), in member order, each as often as it has a turn,
-     * dispatch or wake for the room.
+     * dispatch or wake for the room. A dispatch counts while open, unless it
+     * waits for a continuation, which only a delivered one does: written so,
+     * the filter is the one of the index of a room's open dispatches.
      */
     const selectAnswering = (rooms: Statement.Fragment) => sql`
       SELECT ra_queue.room_id AS room_id, ra_queue.bot_id AS bot_id FROM (
@@ -194,10 +196,8 @@ export const layer = Layer.effect(
         SELECT ra_dispatch.audience_room_id, ra_dispatch.bot_id
         FROM dispatches ra_dispatch
         WHERE ra_dispatch.audience = 'room'
-          AND (
-            ra_dispatch.status IN ('intended', 'accepted')
-            OR (ra_dispatch.status = 'delivered' AND ra_dispatch.continuation_resumes_at IS NULL)
-          )
+          AND ra_dispatch.status IN ('intended', 'accepted', 'delivered')
+          AND ra_dispatch.continuation_resumes_at IS NULL
           AND NOT (
             EXISTS (
               SELECT 1 FROM wakes ra_carried

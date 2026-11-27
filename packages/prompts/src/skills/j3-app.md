@@ -13,16 +13,16 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 
 ## The list
 
-- One row per bot and per room, with the last message or what it is doing. Rows that need your user (a question, an approval, an unread result) come first.
+- One row per bot and per room: a bot's name, its title under it, then the last message or what it is doing. Rows that need your user (a question, an approval, an unread result) come first.
 - "New bot or room" makes a bot, a bot from a template file (`.j3bot`), or a room of two to six bots.
-- Each row has a menu (right-click, the "…" button, or a long press). A bot's: "Mark as read" or "Mark as unread", "Pin", "Move to section", "Make primary bot" (or "Replace primary bot…" when there is one, which asks first), "Hide" or "Show", and under "More", "Details" and "Delete {name}". A room's: "Pin", "Hide" or "Show", and "Details". Sections are named groups your user makes; deleting one keeps its bots.
-- Search finds bots, rooms and messages, hidden ones too. Hidden bots and rooms keep working, and are listed under "Hidden conversations" at the list's end.
+- Each row has a menu (right-click, the "…" button, or a long press). A bot's: "Mark as read" or "Mark as unread", "Pin", "Move to section", "Make primary bot" (or "Replace primary bot…" when there is one, which asks first), "Move behind the scenes" or "Bring back to the list", and under "More", "Details" and "Delete {name}". A bot with no title also has "Give a title". A room's: "Pin", "Move behind the scenes" or "Bring back to the list", and "Details". Sections are named groups your user makes; deleting one keeps its bots.
+- Search finds bots, rooms and messages, those behind the scenes too. Bots and rooms behind the scenes keep working and notifying, and are listed under "Behind the scenes" at the list's end.
 - "Between bots" lists what pairs of bots said to each other. Your user can read those conversations, never write in them.
 
 ## A conversation
 
 - The message field takes text, attached files and dictation. Typing `/` lists the prompts of the connectors that bot may use.
-- What needs your user arrives as a card: a question (tap an option or type an answer; a question a bot asked can be dismissed, which counts as a no), an approval naming the exact action ("Allow once", "Allow for session", "Deny"), a request for a secret, a step in the bot's browser, or a service to sign in to. A card can be answered on any paired device.
+- What needs your user arrives as a card: a question (tap an option or type an answer; a question a bot asked can be dismissed, which counts as a no), an approval naming the exact action ("Allow once", "Don’t ask again", "Deny"), a request for a secret, a step in the bot's browser, or a service to sign in to. A card can be answered on any paired device.
 - A finished turn's work folds into one line, such as "Worked · 6 steps", which opens to show the steps.
 - While a bot has a page open in its browser, a globe in the header opens it. "Take control" lets your user use the page; "Done" gives it back.
 - The conversation's header opens the bot's details. On a computer, `Ctrl+.` (`⌘.` on macOS) stops the bot's work.
@@ -31,12 +31,12 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 
 From top to bottom:
 
-- **Profile:** name, title and job. "Edit {name}" changes the name, title, avatar, job, model and permission mode, and "Hide from the list". "Share as template…" makes a template file of the bot, after showing everything it holds.
+- **Profile:** name, title and job. "Edit {name}" changes the name, title, avatar, job, model and permission mode, and "Keep behind the scenes". "Share as template…" makes a template file of the bot, after showing everything it holds.
 - **"Stop what it's doing"**, while the bot has work running. Stopping does not undo what was already done.
 - **Routines:** each with its schedule, next run and last result, and a switch that pauses or resumes it. Pressing one shows its recent runs. To change, run or delete a routine, your user asks the bot; the app has no button for that.
 - **Files** the bot sent, **Memory** (each file can be opened and edited), **Connectors** this bot may use, with "Manage", and the teammates it talked to.
 - **Model** and **permission mode**: "Supervised" asks before running commands or changing files, "Auto-accept edits" changes files and asks before commands, "Auto" lets an automatic reviewer decide what needs approval, "Full access" asks nothing.
-- **Browser:** "Use this computer's browser".
+- **Browser:** "Can browse the web", on for a new bot.
 - **Working context:** "Start fresh" clears what the bot holds in mind and stops its work; its conversation, memory, routines and files stay.
 - **"Delete {name}"**, last, after a confirmation: the bot, its conversation, memory and routines go, and this cannot be undone. Files in its workspace are kept.
 

@@ -434,14 +434,16 @@ export const layer = Layer.effect(
               name: bot.profile.name,
               title: bot.profile.title,
               job: bot.profile.job,
-              hidden: bot.hidden,
+              listed: !bot.hidden,
             }));
           const listed = (room: Room) => ({
             id: room.id,
             name: room.name,
             members: [...room.members],
             archived: room.status === "archived",
-            hidden: room.hidden,
+            listed: !room.hidden,
+            // A room of bots only, which the operator reads and never writes in.
+            withUser: room.botsOnly !== true,
           });
           const primary = all.some(({ bot }) => bot.id === caller.botId && bot.primary);
           // The primary bot may show or hide any room, so it is told of those
@@ -468,7 +470,7 @@ export const layer = Layer.effect(
       ),
       // A turn tool of its own: the bot is saved with the call's pin on its
       // turn, which only this service's `Bots` can do.
-      create_bot: handler(tools.create_bot.input, ({ model, ...draft }, call) =>
+      create_bot: handler(tools.create_bot.input, (input, call) =>
         Effect.gen(function* () {
           yield* requirePrimary(call.caller);
           return yield* turnTools
@@ -481,8 +483,11 @@ export const layer = Layer.effect(
                   .create({
                     commandId: commandIdOf(call.requestId),
                     draft: {
-                      ...draft,
-                      ...(model === undefined ? {} : modelSettingsOf(model)),
+                      name: input.name,
+                      title: input.title,
+                      ...(input.job === undefined ? {} : { job: input.job }),
+                      hidden: !input.listed,
+                      ...(input.model === undefined ? {} : modelSettingsOf(input.model)),
                     },
                     madeBy,
                   })
@@ -584,23 +589,25 @@ export const layer = Layer.effect(
       ),
       // A bot or a room, by its id: bots are looked up first, as ids of both
       // kinds are never the same (`Ids`). Both store one receipt
-      // (`visibilityCommand`), so a retry finds its result either way.
-      set_visibility: handler(tools.set_visibility.input, (input, call) =>
+      // (`visibilityCommand`), so a retry finds its result either way. The
+      // server keeps the operator's word for it, hidden; the bot reads listed.
+      set_listed: handler(tools.set_listed.input, (input, call) =>
         Effect.gen(function* () {
           const commandId = commandIdOf(call.requestId);
           const botId = BotId.make(input.id);
+          const hidden = !input.listed;
           if (Option.isSome(yield* store.find(botId))) {
             const shown = yield* bots
-              .showOrHide({ commandId, caller: call.caller.botId, botId, hidden: input.hidden })
+              .showOrHide({ commandId, caller: call.caller.botId, botId, hidden })
               .pipe(refuseFailure);
-            return { ...shown } satisfies Schema.Json;
+            return { id: shown.id, listed: !shown.hidden } satisfies Schema.Json;
           }
           const shown = yield* rooms
             .showOrHide({
               commandId,
               caller: call.caller.botId,
               roomId: RoomId.make(input.id),
-              hidden: input.hidden,
+              hidden,
             })
             .pipe(
               Effect.catchTag(
@@ -612,7 +619,7 @@ export const layer = Layer.effect(
               ),
               refuseFailure,
             );
-          return { ...shown } satisfies Schema.Json;
+          return { id: shown.id, listed: !shown.hidden } satisfies Schema.Json;
         }),
       ),
       update_profile: handler(tools.update_profile.input, (input, call) =>

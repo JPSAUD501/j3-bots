@@ -171,7 +171,7 @@ describe("the connect step", () => {
     for (const step of [restarting, stuck]) {
       expect(`${step.title} ${step.body}`).not.toMatch(jargon);
     }
-    expect(stuck.details[0]).toBe("The engine’s port is taken");
+    expect(stuck.details[0]).toBe("A port J3 Bots needs is taken");
     // The server lists no AI while its engine is out, so the bot waits for it to run again.
     const silent = connectStepText({ ...out("port-in-use"), providers: [] }, null, "Nova", en);
     expect(silent.createWaits).toBe("You can create Nova once J3 Bots is running again.");
@@ -252,8 +252,6 @@ describe("the connect step", () => {
     const text = aiAccountText(firstAccountOf("claude-code"), state, at("here"), ctx);
     expect(text.line).toBe("Claude was downloaded, but J3 Bots couldn’t start using it yet.");
     expect(text.line).not.toMatch(jargon);
-    expect(text.details).toContain(
-      "The engine couldn’t switch to it, so the copy before keeps running.",
-    );
+    expect(text.details).toContain("Couldn’t switch to it, so the version before keeps running.");
   });
 });

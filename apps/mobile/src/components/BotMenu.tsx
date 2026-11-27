@@ -8,19 +8,20 @@ import {
   ChevronLeft,
   CircleDot,
   Ellipsis,
-  Eye,
-  EyeOff,
   FileOutput,
   Folder,
   FolderInput,
   FolderMinus,
   FolderPlus,
   Info,
+  ListPlus,
   Pencil,
   Pin,
   PinOff,
   RotateCcw,
   Star,
+  Tag,
+  Theater,
   Trash2,
 } from "lucide-react-native";
 import { useState } from "react";
@@ -54,10 +55,12 @@ type Page = "main" | "sections" | "more";
 /**
  * What the operator can do to a bot from the roster, opened by a long press
  * on its row or its pinned avatar: mark its conversation read or unread, pin
- * or unpin it, put it in a section, make it the primary bot, hide it, and
- * under More what its details offer (the details, its profile, sharing it as
- * a template, a fresh start and deleting it). A hidden bot, which a search finds, offers Show in
- * place of Pin and Hide. The system's Back on a page a row opened goes back
+ * or unpin it, put it in a section, make it the primary bot, move it behind
+ * the scenes, and under More what its details offer (the details, its
+ * profile, sharing it as a template, a fresh start and deleting it). A bot
+ * from before titles offers first to give it one. A bot behind the scenes,
+ * which a search finds, offers Bring back to the list in place of Pin and
+ * Move behind the scenes. The system's Back on a page a row opened goes back
  * to the first page. Sections and Mark as unread are offered once the roster
  * has loaded its sections; Mark as read, only with the preview's place to
  * read through. `onLeave` hears of a row about to
@@ -139,7 +142,7 @@ export function BotMenu({
               onPress: () => setPage("sections"),
             },
           ];
-  // A hidden bot, which only a search lists, is pinned or hidden again by nothing but showing it.
+  // A bot behind the scenes, which only a search lists, is pinned by nothing but bringing it back.
   const placement: ReadonlyArray<MenuEntry> = bot.hidden
     ? []
     : [
@@ -154,8 +157,20 @@ export function BotMenu({
               },
             },
       ];
+  // A bot from before titles: the way to give it one, until it has one.
+  const naming: ReadonlyArray<MenuEntry> =
+    bot.profile.title === ""
+      ? [
+          {
+            label: t("roster.giveTitle"),
+            icon: Tag,
+            onPress: () => navigation.navigate("editBot", { botId: bot.id, at: "title" }),
+          },
+        ]
+      : [];
   const main: ReadonlyArray<MenuEntry> = [
     ...reading,
+    ...naming,
     ...placement,
     ...filing,
     ...(bot.primary
@@ -171,13 +186,13 @@ export function BotMenu({
           },
         ]),
     bot.hidden
-      ? { label: t("roster.unhide"), icon: Eye, onPress: () => placing.unhide(bot) }
+      ? { label: t("backstage.bringBack"), icon: ListPlus, onPress: () => placing.bringBack(bot) }
       : {
-          label: t("roster.hide"),
-          icon: EyeOff,
+          label: t("backstage.move"),
+          icon: Theater,
           onPress: () => {
             onLeave(item);
-            placing.hide(bot);
+            placing.moveBackstage(bot);
           },
         },
     { label: t("roster.more"), icon: Ellipsis, opens: "page", onPress: () => setPage("more") },

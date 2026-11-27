@@ -4,7 +4,8 @@ import type { PromptOption } from "@j3-bots/client-runtime/presentation";
 import { ConnectorPrompt } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { act, useEffect, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { type RenderedPrompt, usePromptPicker } from "./PromptPicker";
 
@@ -60,7 +61,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
   written.length = 0;
 });
 

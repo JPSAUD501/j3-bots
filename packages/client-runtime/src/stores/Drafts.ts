@@ -43,9 +43,19 @@ import { sameQuotes, withQuote } from "../presentation/quotes.ts";
 import { Conversations, keyTarget, type MentionLabel, targetKey } from "./Conversations.ts";
 import { UsageData } from "./UsageData.ts";
 
-/** A file in the composer, from the moment the operator picks it. */
+/**
+ * A file in the composer, from the moment the operator picks it. A screen
+ * recording whose voice is being written down first is `uploading` with
+ * `transcribing`, the share of it done, from 0 to 1; its upload starts once
+ * that is over.
+ */
 export type DraftFile =
-  | ({ readonly _tag: "uploading"; readonly key: string; readonly sent: number } & LocalFile)
+  | ({
+      readonly _tag: "uploading";
+      readonly key: string;
+      readonly sent: number;
+      readonly transcribing?: number;
+    } & LocalFile)
   | {
       readonly _tag: "ready";
       readonly key: string;
@@ -68,6 +78,13 @@ export interface DraftRecording extends RecordingSource {
    * closed with it uploading, since the device can offer it again.
    */
   readonly release: () => void;
+  /**
+   * Writes down the recording's voice before it uploads, telling `progress`
+   * the share done (`transcript.ts`): answers the zip's size once it holds
+   * its transcript, or once it is settled that it goes without. Absent when
+   * there is nothing to write down.
+   */
+  readonly transcribe?: (progress: (done: number) => void) => Effect.Effect<number, UploadRefused>;
 }
 
 /**
@@ -1152,9 +1169,11 @@ export const layer = Layer.effect(
       yield* change(
         target,
         withFiles(at, [
-          problem === null
-            ? { _tag: "uploading", key: fileKey, sent: 0, ...local }
-            : { _tag: "failed", key: fileKey, problem, ...local },
+          problem !== null
+            ? { _tag: "failed", key: fileKey, problem, ...local }
+            : recording.transcribe === undefined
+              ? { _tag: "uploading", key: fileKey, sent: 0, ...local }
+              : { _tag: "uploading", key: fileKey, sent: 0, transcribing: 0, ...local },
         ]),
       );
       // Not taken after all: the recording is left as it was.
@@ -1162,14 +1181,46 @@ export const layer = Layer.effect(
       if (!taken) return false;
       releases.set(fileKey, recording.release);
       if (problem !== null) return true;
+      const { transcribe } = recording;
+      /** Shows how far the transcript has come, while the recording still waits for it. */
+      const transcribing = (done: number) => {
+        const current = state
+          .get()
+          .get(key)
+          ?.files.find((candidate) => candidate.key === fileKey);
+        if (current?._tag !== "uploading" || current.transcribing === undefined) return;
+        if (current.transcribing === done) return;
+        replaceFileNow(target, fileKey, { ...current, transcribing: done });
+      };
+      /** The zip's size once it is ready to upload, its transcript in it or settled without. */
+      const sized =
+        transcribe === undefined
+          ? Effect.succeed(recording.size)
+          : transcribe(transcribing).pipe(
+              Effect.tap((size) =>
+                Effect.sync(() =>
+                  replaceFileNow(target, fileKey, {
+                    _tag: "uploading",
+                    key: fileKey,
+                    sent: 0,
+                    ...local,
+                    size,
+                  }),
+                ),
+              ),
+            );
       yield* startUpload(target, fileKey, local, (pairing, onProgress) =>
-        files.uploadRecording({
-          pairing,
-          name: recording.name,
-          size: recording.size,
-          read: recording.read,
-          onProgress,
-        }),
+        sized.pipe(
+          Effect.flatMap((size) =>
+            files.uploadRecording({
+              pairing,
+              name: recording.name,
+              size,
+              read: recording.read,
+              onProgress,
+            }),
+          ),
+        ),
       );
       return true;
     });

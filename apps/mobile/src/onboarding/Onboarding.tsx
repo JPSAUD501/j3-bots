@@ -296,7 +296,9 @@ export function Onboarding({
     const from = step;
     go("arrival");
     onCreating(true);
-    void client.createBot({ name: botName, primary: true, avatar: look }).then((result) => {
+    // The first bot is the primary one, and its title says so.
+    const draft = { name: botName, title: t("bot.primaryTitle"), primary: true, avatar: look };
+    void client.createBot(draft).then((result) => {
       if (result._tag !== "done") {
         onCreating(false);
         setFailure(refusedWith(result, "model") ? "no-model" : "other");

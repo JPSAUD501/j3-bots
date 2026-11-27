@@ -162,9 +162,9 @@ import {
 } from "../components/LocalMode";
 import { ServerAddress } from "../components/ServerAddress";
 import type { DesktopPhone, DesktopSystem } from "../shell/data";
+import { SettingsButton } from "../components/SettingsButton";
 import {
   LookingAtSetting,
-  SettingsButton,
   SettingsPanel,
   UpdatesSection,
   WhereSection,
@@ -175,6 +175,8 @@ import {
   PhoneAccessSetting,
 } from "../components/PhoneAccess";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
+import { NewBotForm } from "../components/NewBotForm";
+import { dialogTitle } from "../components/ui/dialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
 import { EventLine } from "../components/EventLine";
@@ -189,7 +191,7 @@ import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
-import { HiddenConversations, SectionBlock, useFoldedSections } from "../components/RosterGroups";
+import { Backstage, SectionBlock, useFoldedSections } from "../components/RosterGroups";
 import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { AnsweringLine } from "../components/AnsweringLine";
 import { RoomWork } from "../components/RoomWork";
@@ -1107,15 +1109,17 @@ function NotificationPreview({
       current = false;
     };
   }, [notification, theme]);
-  const name = (id: BotId) =>
+  const profileOf = (id: BotId) =>
     team.roster.flatMap((row) =>
-      row._tag === "bot" && row.bot.id === id ? [row.bot.profile.name] : [],
-    )[0] ?? null;
+      row._tag === "bot" && row.bot.id === id ? [row.bot.profile] : [],
+    )[0];
+  const name = (id: BotId) => profileOf(id)?.name ?? null;
+  const botTitle = (id: BotId) => profileOf(id)?.title ?? "";
   const roomName = (id: RoomId) =>
     team.roster.flatMap((row) =>
       row._tag === "room" && row.room.id === id ? [row.room.name] : [],
     )[0] ?? null;
-  const text = notificationText(notification, { botName: name, roomName }, i18n);
+  const text = notificationText(notification, { botName: name, botTitle, roomName }, i18n);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
       {icon === null ? (
@@ -1159,16 +1163,42 @@ const memberAvatars = (item: RosterItem) =>
       )
     : [];
 
+/** Maple with the longest title a bot takes, to show where a row cuts what. */
+const longTitled = team.roster.flatMap((item) =>
+  item._tag === "bot" && item.bot.id === ids.maple
+    ? [
+        {
+          ...item,
+          bot: {
+            ...item.bot,
+            profile: { ...item.bot.profile, title: "Competitor bakeries and their launches" },
+          },
+        },
+      ]
+    : [],
+);
+
 function RosterSection() {
   return (
     <Section title="Roster rows">
-      <ul className="flex w-(--layout-roster-width) max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
-        {team.roster.map((item, index) => (
-          <li key={item._tag === "bot" ? item.bot.id : item.room.id}>
-            <RosterRow item={item} selected={index === 0} memberAvatars={memberAvatars(item)} />
-          </li>
-        ))}
-      </ul>
+      <Labeled label="Each bot's name over its title, then its status line; a room, and Moss, a bot from before titles, in two lines">
+        <ul className="flex w-(--layout-roster-width) max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
+          {team.roster.map((item, index) => (
+            <li key={item._tag === "bot" ? item.bot.id : item.room.id}>
+              <RosterRow item={item} selected={index === 0} memberAvatars={memberAvatars(item)} />
+            </li>
+          ))}
+        </ul>
+      </Labeled>
+      <Labeled label="The longest title on a narrow roster: two lines at most, the status line cut first">
+        <ul className="flex w-60 max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
+          {longTitled.map((item) => (
+            <li key="long">
+              <RosterRow item={item} selected={false} />
+            </li>
+          ))}
+        </ul>
+      </Labeled>
     </Section>
   );
 }
@@ -1230,7 +1260,7 @@ const quietMenu: RosterMenuContext = {
 };
 
 const homeSection = team.sections[0];
-// The sample's hidden bot, and its room as it would be hidden.
+// The sample's bot behind the scenes, and its room as it would be there.
 const hiddenConversations = team.roster.flatMap((item) =>
   isHidden(item)
     ? [item]
@@ -1260,6 +1290,13 @@ const cardBots: ReadonlyArray<{ readonly label: string; readonly bot: Bot }> = [
     bot: { ...team.bots.otto, state: { _tag: "blocked", failure: "unreachable", retryAt: null } },
   },
   { label: "No title and no job", bot: team.bots.moss },
+  {
+    label: "The longest title, in two lines",
+    bot: {
+      ...team.bots.wren,
+      profile: { ...team.bots.wren.profile, title: "Competitor bakeries and their launches" },
+    },
+  },
 ];
 
 /** Where a quick message stands, under its field. */
@@ -1322,7 +1359,7 @@ function RosterOrganizeSection() {
   return (
     <Section title="Organizing the roster">
       <Frame
-        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to the hidden conversations. Right-click a row or tile, or its “…”, for its menu"
+        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to what is behind the scenes. Right-click a row or tile, or its “…”, for its menu"
         width={340}
         height={980}
       >
@@ -1350,17 +1387,17 @@ function RosterOrganizeSection() {
         </Labeled>
       )}
       <Frame
-        label="The hidden conversations, a bot and a room, each with Show"
+        label="Behind the scenes: a bot and a room, each with Bring back to the list"
         width={340}
-        height={220}
+        height={240}
       >
         <div className="h-full bg-sidebar p-2">
-          <HiddenConversations
+          <Backstage
             items={hiddenConversations}
             selected={null}
             rowLink={() => rowButton(nothing)}
             onBack={nothing}
-            onShow={nothing}
+            onBringBack={nothing}
           />
         </div>
       </Frame>
@@ -1795,6 +1832,17 @@ const recordingFile: DraftFile = {
   sent: 150_000_000,
 };
 
+/** The same zip just after Stop, its voice being written down before it uploads. */
+const transcribingFile: DraftFile = {
+  _tag: "uploading",
+  key: "recording",
+  name: "Screen recording 2026-11-20 14.32.zip",
+  mediaType: "application/zip",
+  size: 412_000_000,
+  sent: 0,
+  transcribing: 0.4,
+};
+
 function ScreenRecordingSection() {
   const scoutName = team.bots.scout.profile.name;
   const draftKey = useId();
@@ -1851,7 +1899,12 @@ function ScreenRecordingSection() {
           <PillFrame label="Saving" phase="finishing" />
         </div>
       </Labeled>
-      <Labeled label="Stopped: the recording's zip in the composer, uploading">
+      <Labeled label="Stopped: the recording's zip in the composer, its voice being written down first (hover for how far), then uploading">
+        <div className="max-w-(--layout-text-column)">
+          <ComposerDemo initial="" recipient={scoutName} files={[transcribingFile]} />
+        </div>
+      </Labeled>
+      <Labeled label="Uploading, once its transcript is in it, or it goes without one">
         <div className="max-w-(--layout-text-column)">
           <ComposerDemo initial="" recipient={scoutName} files={[recordingFile]} />
         </div>
@@ -2952,13 +3005,14 @@ function ComposerDemo({
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot, a waiting bot and a blocked bot, each only its face and name; a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
+      <Labeled label="Headers: a working bot, a waiting bot and a blocked bot, each its face and its name over its title; Moss, a bot from before titles, by its name alone; a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
         <div className="flex flex-col gap-2">
           {(
             [
               { key: "working", subject: { _tag: "bot", bot: team.bots.scout } },
               { key: "waiting", subject: { _tag: "bot", bot: team.bots.atlas } },
               { key: "blocked", subject: { _tag: "bot", bot: team.bots.ledger } },
+              { key: "untitled", subject: { _tag: "bot", bot: team.bots.moss } },
               { key: "room", subject: { _tag: "room", room: team.room } },
               { key: "room-stopping", subject: { _tag: "room", room: stoppingRoom } },
               { key: "room-resting", subject: { _tag: "room", room: restingRoom } },
@@ -3097,6 +3151,7 @@ function ComposerSection() {
 }
 
 const READY_BROWSER = { _tag: "ready" } as const;
+const BROWSER_NEEDS_SETUP = { _tag: "setup-required", needs: ["sandbox"] } as const;
 
 const detailsIntents = {
   setRoutineEnabled: nothing,
@@ -3396,9 +3451,9 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* The browser on. */}
+          {/* The browser off: the operator turned it off. */}
           <BotDetails
-            bot={{ ...atlas, browser: true }}
+            bot={{ ...atlas, browser: false }}
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
@@ -3412,7 +3467,23 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* Hidden, with nothing to stop: the line under its profile. No connector yet: the line that says to ask it. */}
+          {/* The browser on, and the server's machine still needs setting up for it. */}
+          <BotDetails
+            bot={atlas}
+            routines={team.routines[atlas.id] ?? []}
+            memory={team.memory[atlas.id] ?? []}
+            files={team.files[atlas.id] ?? []}
+            connectors={sampleConnectors}
+            teammates={[]}
+            modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={BROWSER_NEEDS_SETUP}
+            intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
+            onClose={nothing}
+          />
+        </Pane>
+        <Pane>
+          {/* Behind the scenes, with nothing to stop: the line under its profile. No connector yet: the line that says to ask it. */}
           <BotDetails
             bot={{ ...moss, hidden: true }}
             routines={[]}
@@ -3475,7 +3546,7 @@ function DetailsSection() {
           <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
-          {/* Hidden while its work stops: the line after the Stop. */}
+          {/* Behind the scenes while its work stops: the line after the Stop. */}
           <RoomDetails
             room={{ ...stoppingRoom, hidden: true }}
             intents={roomIntents}
@@ -3488,6 +3559,14 @@ function DetailsSection() {
         </Pane>
         <Pane>
           <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />
+        </Pane>
+        <Pane>
+          {/* A room of bots only left too small takes no members from the operator: it stays archived. */}
+          <RoomDetails
+            room={{ ...archivedRoom, botsOnly: true }}
+            intents={roomIntents}
+            onClose={nothing}
+          />
         </Pane>
       </div>
     </Section>
@@ -3636,6 +3715,8 @@ const shareActions = {
 
 function TemplatesSection() {
   const elsewhere = { ...scoutTemplate, model: { ...toCodex, modelId: ModelId.make("gpt-6") } };
+  const untitled = { ...scoutTemplate, profile: { ...scoutTemplate.profile, title: "" } };
+  const { t } = useI18n();
   return (
     <Section title="Templates: sharing a bot and creating one from a file">
       <div className="flex flex-wrap gap-4">
@@ -3697,6 +3778,33 @@ function TemplatesSection() {
             />
           )}
         </TemplateFrame>
+        <TemplateFrame label="Create: a template from a bot with no title asks for one before Create">
+          {(titleId) => (
+            <TemplateForm
+              template={untitled}
+              engine={twoProviders}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+        <Frame
+          label="New bot: a name and a title, both required; type a name and press Create to see the title asked for"
+          width={448}
+          height={640}
+        >
+          <div className="flex h-full flex-col gap-3 bg-popover p-5">
+            <h2 className={dialogTitle}>{t("newBot.title")}</h2>
+            <p className="text-sm text-muted-foreground">{t("newBot.body")}</p>
+            <NewBotForm
+              bots={Object.values(team.bots)}
+              onCreate={() => new Promise(() => {})}
+              onCancel={nothing}
+            />
+          </div>
+        </Frame>
       </div>
     </Section>
   );
@@ -3913,7 +4021,17 @@ function RoomFormVariant({
 const roomMembers: MentionChoices = {
   candidates: team.room.members.flatMap((id): ReadonlyArray<MentionCandidate> => {
     const bot = bots.find((candidate) => candidate.id === id);
-    return bot ? [{ _tag: "bot", id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
+    return bot
+      ? [
+          {
+            _tag: "bot",
+            id,
+            name: bot.profile.name,
+            title: bot.profile.title,
+            avatar: bot.profile.avatar,
+          },
+        ]
+      : [];
   }),
   everyone: true,
 };
@@ -6623,6 +6741,13 @@ function ShellSection() {
           <ShellFrame initial={scout} details />
         </Frame>
         <Frame
+          label="Desktop, 1280 px: a room of bots only with its details: no Edit, and it says only bots talk there"
+          width={1280}
+          height={760}
+        >
+          <ShellFrame initial={{ _tag: "room", roomId: ids.fairStands }} details />
+        </Frame>
+        <Frame
           label="Desktop, 1440 px: Scout's browser beside the conversation; Take control hands the page to the operator, Done gives it back"
           width={1440}
           height={800}
@@ -6664,6 +6789,13 @@ function ShellSection() {
             height={760}
           >
             <ShellFrame initial={null} initialPair={pairBotIds(ids.scout, ids.wren)} />
+          </Frame>
+          <Frame
+            label="Phone: a room of bots only, read-only: the bots' reactions show, none to add, and it paused at its round limit"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={{ _tag: "room", roomId: ids.fairStands }} />
           </Frame>
         </div>
       </div>
