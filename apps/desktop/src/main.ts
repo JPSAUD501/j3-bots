@@ -52,6 +52,7 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
   type WebContents,
 } from "electron";
 import { secretClipboard } from "@j3-bots/client-runtime/presentation";
@@ -74,6 +75,7 @@ import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
+import { grants, holds } from "./permissions.ts";
 import * as QuickAccess from "./quickAccess.ts";
 import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
@@ -91,9 +93,6 @@ const APP_ORIGIN = appOrigin(app.isPackaged);
 const SCHEME = schemeOf(APP_ORIGIN);
 /** Links to the app, taken from as early as the system hands them over. */
 const links = AppLinks.start(SCHEME);
-
-/** What a page may ask for: showing notifications and writing to the clipboard. */
-const PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write"]);
 
 // Before `ready`, as Electron requires. `standard` and `secure` make the page
 // a secure context with a real origin, so Web Locks, BroadcastChannel and
@@ -572,16 +571,24 @@ const program = Effect.gen(function* () {
 
   // The app's page only, never a frame in it: a bot's visual and a
   // connector's app are on the app's scheme, though sandboxed.
-  session.defaultSession.setPermissionRequestHandler((_contents, permission, grant, details) =>
-    grant(
-      PERMISSIONS.has(permission) &&
-        details.isMainFrame &&
-        isAppUrl(details.requestingUrl, APP_ORIGIN),
-    ),
-  );
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, grant, details) => {
+    const granted =
+      grants(permission, "mediaTypes" in details ? details.mediaTypes : undefined) &&
+      details.isMainFrame &&
+      isAppUrl(details.requestingUrl, APP_ORIGIN);
+    // macOS asks the operator itself, once, before the app hears the
+    // microphone; a refusal there reaches the page as one here.
+    if (granted && permission === "media" && process.platform === "darwin") {
+      systemPreferences.askForMediaAccess("microphone").then(grant, () => grant(false));
+      return;
+    }
+    grant(granted);
+  });
   session.defaultSession.setPermissionCheckHandler(
     (_contents, permission, requestingOrigin, details) =>
-      PERMISSIONS.has(permission) && details.isMainFrame && isAppUrl(requestingOrigin, APP_ORIGIN),
+      holds(permission, details.mediaType) &&
+      details.isMainFrame &&
+      isAppUrl(requestingOrigin, APP_ORIGIN),
   );
   app.on("web-contents-created", (_event, contents) => lockNavigation(contents));
 

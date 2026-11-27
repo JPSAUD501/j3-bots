@@ -16,6 +16,14 @@ class FieldValue : Record {
   @Field val mentions: List<MentionLook> = emptyList()
   /** The last change of the field the text answers; an older one is not shown over a newer edit. */
   @Field val eventCount: Int = 0
+  /** The words dictation may still change, drawn lighter; none while it is not under way. */
+  @Field val open: OpenWords? = null
+}
+
+/** `[start, end)` of the text. */
+class OpenWords : Record {
+  @Field val start: Int = 0
+  @Field val end: Int = 0
 }
 
 /** A picked mention, drawn as a chip over `[start, end)` of the text while that reads `text`. */
@@ -78,8 +86,6 @@ class ChipFieldModule : Module() {
       Prop("chips") { view: ChipFieldView, chips: List<ChipLook> -> view.pendingChips = chips }
       Prop("look") { view: ChipFieldView, look: FieldLook -> view.pendingLook = look }
       Prop("placeholder") { view: ChipFieldView, placeholder: String -> view.placeholder = placeholder }
-      Prop("status") { view: ChipFieldView, status: String? -> view.status = status }
-      Prop("statusNote") { view: ChipFieldView, note: String? -> view.statusNote = note }
       Prop("editable") { view: ChipFieldView, editable: Boolean -> view.editable = editable }
       Prop("label") { view: ChipFieldView, label: String? -> view.label = label }
       OnViewDidUpdateProps { view: ChipFieldView -> view.applyProps() }

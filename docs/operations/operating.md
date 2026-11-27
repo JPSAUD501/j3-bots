@@ -255,6 +255,14 @@ The first writes the AppArmor profile that lets the browser J3 Bots' engine down
 
 **Sign out of all sites**, in Settings under Bots' browser, deletes the engine's `default` browser profile, the one every bot's browser uses: you are signed out everywhere, for every bot, and its open tabs close. A profile made in the engine's own console is left alone.
 
+## Dictation
+
+Dictation on the server runs the engine's speech model on this machine ([decision 0096](../decisions/0096-dictation-goes-through-the-engines-speech-recognition-and-stays-on-the-operators-machines.md)). Nothing needs installing beforehand: the first dictation downloads the model J3 Bots picks, 751 MB, into the engine's own data in the J3 Bots home (`speech/models` under the engine's state folder, **Read** in T3 Code's `SpeechModelStore.ts`), and every device shows the download. Plan for that much free disk, and more for a bigger model chosen under Settings → Voice → More.
+
+While a dictation runs, the model takes about 1.4 GB of memory, the file it maps included; it leaves memory two minutes after the last dictation on a machine with 8 GiB or less, fifteen on a bigger one. On a 4 GB board that sits beside the bots, dictating while several bots work can press on memory; a cloud provider in Settings → Voice uses none of it.
+
+The engine runs one dictation at a time; a second device is told to wait. Audio is never written to disk, by the server or the engine (whose speech code writes only model files, **Read** at `bc0f04d`), and the server logs neither the audio nor the words. A cloud provider's key is a secret named `voice-openai`, `voice-xai` or `voice-openrouter` in Secrets; removing it there stops dictation with that provider, even one under way: what was recorded is not sent. A dictation whose device goes quiet, as a laptop put to sleep, ends after 15 seconds, so it never keeps another device waiting.
+
 ## Secrets
 
 Secrets keep the logins and values you type for bots, and what connectors need to reach their services, in `~/.j3-bots/vault/vault.sqlite`, sealed under a key the server keeps beside it, `~/.j3-bots/vault/key` ([Server: secrets](../architecture/server.md#secrets)). There is no password and nothing to unlock: they work from the server's start, also after an update or a reboot.

@@ -145,7 +145,12 @@ const engineWith = (starting: StartingStatuses) =>
     }),
   ).pipe(
     Layer.provideMerge(
-      Layer.mergeAll(TestEngine.layer, TestEngine.browserLayer, testProviders(starting)),
+      Layer.mergeAll(
+        TestEngine.layer,
+        TestEngine.browserLayer,
+        TestEngine.speechLayer,
+        testProviders(starting),
+      ),
     ),
   );
 

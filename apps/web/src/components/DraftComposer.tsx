@@ -29,7 +29,7 @@ interface DraftComposerProps {
     | "dismissDraftOffer"
     | "connectorPrompts"
     | "renderPrompt"
-    | "dictate"
+    | "dictation"
   >;
   /** Whom the message is for as the draft stands (`addressingOf`). */
   readonly addressing?: Addressing | undefined;
@@ -58,7 +58,6 @@ export function DraftComposer({
 }: DraftComposerProps) {
   const draft = data.draft(target);
   const offer = data.offer(target);
-  const { dictate } = intents;
   const promptMenu = (botId: BotId): PromptMenu => ({
     load: () =>
       intents.connectorPrompts(botId).then(
@@ -88,7 +87,7 @@ export function DraftComposer({
       onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
       onOpenFile={intents.openAttachment}
       onSend={() => intents.sendDraft(target, addressing)}
-      {...(dictate ? { onDictate: () => dictate(target) } : {})}
+      dictation={intents.dictation}
       {...(offer === null
         ? {}
         : {

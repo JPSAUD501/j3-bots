@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Label, MAX_LABEL_LENGTH, PositiveInt } from "./base.ts";
 import { UpdateChannel } from "./update.ts";
+import { VoiceSettings, VoiceSettingsChange } from "./voice.ts";
 
 /** An IANA time zone name, such as `America/Sao_Paulo`. The server checks that it exists. */
 export const TimeZone = Label.pipe(Schema.brand("TimeZone"));
@@ -135,6 +136,12 @@ export const Settings = Schema.Struct({
   suggestReplies: Schema.NullOr(Schema.Boolean).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
+  /**
+   * How the operator dictates (decision 0096). Null from a server that
+   * predates dictation through it, which serves no voice socket: a client
+   * then offers only what its own device recognizes.
+   */
+  voice: Schema.NullOr(VoiceSettings).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type Settings = typeof Settings.Type;
 
@@ -159,5 +166,10 @@ export const SettingsChange = Schema.Struct({
    * would take the rest of the change and drop it.
    */
   suggestReplies: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Sent only to a server whose settings carry `voice`: an older one would
+   * take the rest of the change and drop it.
+   */
+  voice: Schema.optionalKey(VoiceSettingsChange),
 });
 export type SettingsChange = typeof SettingsChange.Type;

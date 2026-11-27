@@ -14,6 +14,7 @@ const saved: Settings = {
   updateChannel: "stable",
   autoUpdateHarnesses: true,
   suggestReplies: true,
+  voice: null,
 };
 
 describe("settingsPatch", () => {
