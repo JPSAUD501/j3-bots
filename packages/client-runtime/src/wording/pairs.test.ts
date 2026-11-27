@@ -44,6 +44,25 @@ describe("teamNoticeLine", () => {
     expect(started.parts).toContainEqual({ _tag: "room", roomId: support, name: "Support" });
   });
 
+  it("says a room of bots only paused, and that the bot that started it knows", () => {
+    const paused = teamNoticeLine(
+      { _tag: "room-paused", botId: BotId.make("scout"), roomId: support },
+      team("Support"),
+    );
+    expect(paused.text).toBe(
+      "Support paused: its bots talked as long as they may on their own, and Scout was told",
+    );
+    expect(paused.parts).toContainEqual({ _tag: "room", roomId: support, name: "Support" });
+  });
+
+  it("names nobody as told when the bot that started it was deleted before it paused", () => {
+    const paused = teamNoticeLine(
+      { _tag: "room-paused", botId: null, roomId: support },
+      team("Support"),
+    );
+    expect(paused.text).toBe("Support paused: its bots talked as long as they may on their own");
+  });
+
   it("says a room deleted since is a room", () => {
     expect(
       teamNoticeLine(

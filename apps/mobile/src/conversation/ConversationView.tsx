@@ -25,6 +25,7 @@ import {
   type TeammateRunPair,
   type TimelineItem,
   withLiveTurn,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import {
   useArrivals,
@@ -111,6 +112,7 @@ import { EventLine } from "./EventLine.tsx";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { createHighlights, Quotes } from "./Quotes.tsx";
 import { Reactions } from "./Reactions.tsx";
+import { ReadOnlyMark } from "./ReadOnlyMark.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
@@ -441,6 +443,8 @@ export function ConversationView({
   const fullscreen = stage.staged?.mode === "fullscreen";
 
   const archived = room !== null && room.status === "archived";
+  // A room of bots only takes nothing of the operator's: they read it (decision 0103).
+  const botsOnly = room?.botsOnly === true;
   // Reply and Quote part, once the server takes quotes, where the conversation takes messages.
   const quotesTaken = useReadable(client.quotes);
   const composerView = useRef<ComposerHandle>(null);
@@ -500,12 +504,12 @@ export function ConversationView({
                   one quick bar, picker and list of who reacted. */}
                   <Quotes
                     target={target}
-                    offered={quotesTaken && !archived}
+                    offered={quotesTaken && !archived && !botsOnly}
                     onQuoted={focusComposer}
                     goTo={goToQuoted}
                     highlights={lit}
                   >
-                    <Reactions>
+                    <Reactions offered={!botsOnly}>
                       {quiet ? (
                         item._tag === "bot" ? (
                           <Quiet bot={item.bot} bottom={composerHeight} />
@@ -630,6 +634,10 @@ export function ConversationView({
               <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
                 {archived ? (
                   <ArchivedLine room={room} />
+                ) : botsOnly ? (
+                  <View className="items-center px-4 py-2">
+                    <ReadOnlyMark label={t("room.readOnly")} spoken={t("room.readOnly")} />
+                  </View>
                 ) : (
                   <Composer
                     ref={composerView}
@@ -664,10 +672,14 @@ function ArchivedLine({ room }: { readonly room: Room }) {
       <Text className="text-center text-xs text-muted-foreground">
         {t("room.composerArchived", { name: room.name })}
       </Text>
-      <PendingButton
-        label={t("room.unarchive", { name: room.name })}
-        onPress={() => unarchive(room)}
-      />
+      {unarchivable(room) ? (
+        <PendingButton
+          label={t("room.unarchive", { name: room.name })}
+          onPress={() => unarchive(room)}
+        />
+      ) : (
+        <Text className="text-center text-xs text-muted-foreground">{t("room.staysArchived")}</Text>
+      )}
     </View>
   );
 }

@@ -30,6 +30,7 @@ import {
   rosterKeyText,
   rosterTarget,
   teammatesOf,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
@@ -55,6 +56,7 @@ import {
   QuietRoom,
 } from "../components/EmptyStates";
 import { PairConversation } from "../components/PairConversation";
+import { ReadOnlyMark } from "../components/ReadOnlyMark";
 import type { PairIntents } from "../components/PairHeader";
 import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
@@ -473,11 +475,14 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     const recipient = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     // An archived room takes no messages: no composer, and a way to unarchive it.
     const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
+    // A room of bots only takes nothing of the operator's: they read it (decision 0103).
+    const botsOnly = item._tag === "room" && item.room.botsOnly === true;
+    const writes = archivedRoom === null && !botsOnly;
     const mentionable = mentionChoicesOf(target, rosterItems, data.conversationMentions);
     const addressing = addressingOf(target, draft, rosterItems, mentionable);
     // Reply and Quote add to the draft, where the server takes quotes and the composer shows.
     const drafting =
-      data.quotes && archivedRoom === null
+      data.quotes && writes
         ? {
             drafted: draft.quotes,
             quote: (quote: MessageQuote) => {
@@ -610,9 +615,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                       reveal: (entryId) => intents.revealEntry(target, entryId),
                       drafting,
                     }}
-                    recordScreen={
-                      archivedRoom === null ? recordScreenIn(intents.recordScreen, target) : null
-                    }
+                    recordScreen={writes ? recordScreenIn(intents.recordScreen, target) : null}
                     {...(browserBot === null
                       ? {}
                       : {
@@ -644,7 +647,9 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             tintOf(item._tag === "bot" ? item.bot.profile.avatar : null),
           )}
         >
-          {archivedRoom === null ? (
+          {archivedRoom === null && botsOnly ? (
+            <ReadOnlyMark label={t("room.readOnly")} />
+          ) : archivedRoom === null ? (
             <DraftComposer
               target={target}
               recipient={recipient}
@@ -660,13 +665,17 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">
               <p>{t("room.composerArchived", { name: archivedRoom.name })}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
-              >
-                {t("room.unarchive", { name: archivedRoom.name })}
-              </Button>
+              {unarchivable(archivedRoom) ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
+                >
+                  {t("room.unarchive", { name: archivedRoom.name })}
+                </Button>
+              ) : (
+                <p>{t("room.staysArchived")}</p>
+              )}
             </div>
           )}
         </div>

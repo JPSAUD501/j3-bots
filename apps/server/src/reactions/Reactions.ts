@@ -175,8 +175,11 @@ export const layer = Layer.effect(
           if (found._tag === "missing") return yield* new NotFound({ resource: "entry" });
           if (found._tag === "not-a-message") return yield* new Invalid({ reason: "reaction" });
           const { target, message } = found;
-          if (target._tag === "room" && Option.isNone(yield* roomOf(target.roomId))) {
-            return yield* new Conflict({ reason: "room-archived" });
+          if (target._tag === "room") {
+            const room = yield* roomOf(target.roomId);
+            if (Option.isNone(room)) return yield* new Conflict({ reason: "room-archived" });
+            // The operator takes no part in a room of bots only (decision 0103).
+            if (room.value.botsOnly) return yield* new Conflict({ reason: "room-bots-only" });
           }
           const by: Reactor = { _tag: "operator" };
           const changed = yield* entries.react({ target, entryId: message.id, by, emoji });

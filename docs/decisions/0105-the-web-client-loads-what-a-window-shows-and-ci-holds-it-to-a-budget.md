@@ -56,7 +56,7 @@ What was open:
 
 ### Indexes
 
-Migration 0067:
+Migration 0068:
 
 - **Partial indexes for each hot read.** These are a session's dispatches in any state, the dispatches not sent yet, a bot's continuation and its opening wake, the open `ask` cards, a connector's requests for input, the turns whose little ones still work, and a room's live turns.
 - **An index on every foreign key a cascade looks up.**
