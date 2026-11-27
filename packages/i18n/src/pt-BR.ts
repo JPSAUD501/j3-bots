@@ -1417,6 +1417,7 @@ const sentences = {
 
   "file.gone": "{name} não está mais no servidor.",
   "file.unreachable": "Não deu para abrir {name}. Verifique a conexão e tente de novo.",
+  "file.tooLarge": "{name} é grande demais para abrir neste dispositivo. O bot tem o arquivo.",
   "file.cannotOpen": "Não deu para abrir {name} neste aparelho.",
 
   "connection.offline": "Você está sem internet. O que enviar sai quando a conexão voltar.",

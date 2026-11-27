@@ -13,6 +13,7 @@ import {
   MemoryPath,
   ModelId,
   MAX_ATTACHMENT_NAME_LENGTH,
+  MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
@@ -60,7 +61,7 @@ import {
 } from "../src/connection/Connection.ts";
 import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
-import { Files } from "../src/files/Files.ts";
+import { AttachmentUnavailable, Files } from "../src/files/Files.ts";
 import { FILE_MARK } from "../src/files/placed.ts";
 import { passageOf, type QuotableMessage, replyTo } from "../src/presentation/quotes.ts";
 import { waitFor } from "../src/Store.ts";
@@ -1359,6 +1360,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         const stored = yield* (yield* Files).download(file.attachment);
         assert.strictEqual(stored.mediaType, "application/zip");
         assert.isTrue(Buffer.from(stored.bytes).equals(Buffer.from(bytes)));
+        // One past every other file's limit is not pulled into memory.
+        const held = yield* (yield* Files)
+          .download({ ...file.attachment, size: MAX_ATTACHMENT_SIZE + 1 })
+          .pipe(Effect.flip);
+        assert.deepStrictEqual(held, new AttachmentUnavailable({ reason: "too-large" }));
       }).pipe(
         Effect.provide(
           client(

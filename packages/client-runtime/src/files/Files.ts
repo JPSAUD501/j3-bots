@@ -5,6 +5,7 @@ import {
   type DeviceId,
   type DeviceToken,
   HTTP_PATHS,
+  MAX_ATTACHMENT_SIZE,
   MAX_INLINE_IMAGE_SIZE,
   NotAuthenticated,
   RECORDING_CHUNK_SIZE,
@@ -71,7 +72,7 @@ export interface RecordingSource {
 /** The file is not on the server, or the server could not be reached for it. */
 export class AttachmentUnavailable extends Schema.TaggedError<AttachmentUnavailable>()(
   "AttachmentUnavailable",
-  { reason: Schema.Literals(["not-found", "unreachable"]) },
+  { reason: Schema.Literals(["not-found", "unreachable", "too-large"]) },
 ) {
   override get message(): string {
     return `The file is unavailable: ${this.reason}.`;
@@ -470,6 +471,10 @@ export const layer = Layer.effect(
     });
 
     const download = Effect.fn("Files.download")(function* (attachment: Attachment) {
+      // A download is held in memory whole, which a screen recording, the one
+      // file past every other file's limit, would not fit.
+      if (attachment.size > MAX_ATTACHMENT_SIZE)
+        return yield* new AttachmentUnavailable({ reason: "too-large" });
       return yield* get(
         `${HTTP_PATHS.attachments}/${encodeURIComponent(attachment.id)}`,
         attachment.size,

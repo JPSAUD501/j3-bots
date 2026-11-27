@@ -321,7 +321,10 @@ export interface BrowserViewHandle {
 /** A file's bytes, or why there are none. */
 export type DownloadResult =
   | { readonly _tag: "done"; readonly value: Files.Download }
-  | { readonly _tag: "failed"; readonly reason: "not-found" | "unreachable" | "not-paired" };
+  | {
+      readonly _tag: "failed";
+      readonly reason: "not-found" | "unreachable" | "too-large" | "not-paired";
+    };
 
 /** A download's result as `J3Client` gives it, its failures as data. */
 const downloaded = <R>(

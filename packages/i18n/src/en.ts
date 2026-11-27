@@ -1400,6 +1400,7 @@ export const en = {
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
+  "file.tooLarge": "{name} is too large to open on this device. The bot has it.",
   "file.cannotOpen": "{name} couldn’t be opened on this device.",
 
   "connection.offline": "You’re offline. What you send goes out when you’re back.",
