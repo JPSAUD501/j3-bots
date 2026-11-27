@@ -24,7 +24,7 @@ A mention there could mean two things. It could deliver, as in a room: what it n
 - **The bot decides what happens.** A mention does nothing by itself: if the bot misreads the operator, the bot or room named hears nothing. The same judgment already carries `message_bot`, and the bot tells the operator what it sent and what came back.
 - **Two fields name what a message mentions.** `mentions` for a room, `conversationMentions` for a conversation. One field would mean a new kind in a closed set, and so a protocol bump.
 - **A mention names what was there when it was sent.** A room the bot has left since reads as one it is no longer a member of; a bot or room deleted since reads as a former one, and its chip turns back into the name in plain text.
-- **Send again drops what moved.** A message refused because a room it mentions was archived or left meanwhile goes again without the mentions `@` no longer offers.
+- **Send again drops what moved.** A message refused because a room it mentions was archived or left meanwhile says which, by name, and goes again without the mentions `@` no longer offers.
 
 ## Rejected
 

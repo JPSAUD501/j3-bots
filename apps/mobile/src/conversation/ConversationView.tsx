@@ -8,6 +8,7 @@ import {
   cardPlace,
   conversationMentionables,
   conversationMentionNames,
+  mentionLabel,
   liveTurn,
   mentionedNames,
   mentionedWhoLeft,
@@ -906,10 +907,7 @@ function OutgoingMessage({
       mentionable={highlighted(message, message.labels)}
       onRetry={() =>
         void client
-          .resend(
-            message.commandId,
-            left !== null ? { mentions: left.without } : (noLonger ?? undefined),
-          )
+          .resend(message.commandId, left !== null ? { mentions: left.without } : noLonger?.without)
           .then((result) => {
             if (result._tag === "not-kept") say(t("message.changeNotKept"));
           })
@@ -919,12 +917,24 @@ function OutgoingMessage({
           if (!discarded) say(t("message.changeNotKept"));
         })
       }
-      {...(left === null || room === null
-        ? {}
-        : {
-            leftRoom: left.left.map(labelOf),
+      {...(left !== null && room !== null
+        ? {
+            refusedMentions: { _tag: "left-room", names: left.left.map(labelOf) },
             retryLabel: resendLabel(left.without, nameOf, ctx.i18n),
-          })}
+          }
+        : noLonger !== null
+          ? {
+              refusedMentions: {
+                _tag: "not-mentionable",
+                names: noLonger.gone.map(
+                  (of) =>
+                    mentionLabel(of, message.labels, (named) =>
+                      named._tag === "bot" ? nameOf(named.botId) : rooms.get(named.roomId)?.name,
+                    ) ?? t(of._tag === "bot" ? "bot.unknown" : "room.unknown"),
+                ),
+              },
+            }
+          : {})}
     />
   );
 }

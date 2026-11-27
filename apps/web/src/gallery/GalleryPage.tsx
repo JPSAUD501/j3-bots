@@ -1348,8 +1348,17 @@ function BubblesSection() {
             onOpenAttachment={nothing}
             onRetry={nothing}
             onDiscard={nothing}
-            leftRoom={["Wren"]}
+            refusedMentions={{ _tag: "left-room", names: ["Wren"] }}
             retryLabel={t("message.retry.room")}
+          />
+          {/* In a bot's conversation, refused because the room it mentions was archived since. */}
+          <MessageBubble
+            message={bubbles.notSent}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onDiscard={nothing}
+            refusedMentions={{ _tag: "not-mentionable", names: [team.room.name] }}
           />
           <MessageBubble
             message={bubbles.unrecorded}

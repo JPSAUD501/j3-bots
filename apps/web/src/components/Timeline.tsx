@@ -30,6 +30,7 @@ import {
   type CardEntry,
   conversationMentionables,
   conversationMentionNames,
+  mentionLabel,
   latestOfLine,
   mentionedNames,
   mentionedWhoLeft,
@@ -298,16 +299,27 @@ export function Timeline({
                       left !== null
                         ? intents.resendMessage(message.commandId, { mentions: left.without })
                         : noLonger !== null
-                          ? intents.resendMessage(message.commandId, noLonger)
+                          ? intents.resendMessage(message.commandId, noLonger.without)
                           : intents.resendMessage(message.commandId)
                     }
                     onDiscard={() => intents.discardMessage(message.commandId)}
-                    {...(left === null || room === null
-                      ? {}
-                      : {
-                          leftRoom: left.left.map(labelOf),
+                    {...(left !== null && room !== null
+                      ? {
+                          refusedMentions: { _tag: "left-room", names: left.left.map(labelOf) },
                           retryLabel: resendLabel(left.without, nameOf, i18n),
-                        })}
+                        }
+                      : noLonger !== null
+                        ? {
+                            refusedMentions: {
+                              _tag: "not-mentionable",
+                              names: noLonger.gone.map(
+                                (of) =>
+                                  mentionLabel(of, message.labels, nameOfNamed) ??
+                                  t(of._tag === "bot" ? "bot.unknown" : "room.unknown"),
+                              ),
+                            },
+                          }
+                        : {})}
                   />
                 </div>
               );

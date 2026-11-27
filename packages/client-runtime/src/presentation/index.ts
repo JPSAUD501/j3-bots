@@ -178,6 +178,7 @@ export {
   type Mentionable,
   mentionedNames,
   mentionedWhoLeft,
+  mentionLabel,
   type MentionOption,
   mentionOptions,
   mentionQuery,

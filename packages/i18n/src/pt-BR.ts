@@ -4,6 +4,7 @@ import type { AddingNone, Catalog } from "./i18n.ts";
 /** Brazilian Portuguese. Every key of `en.ts`, with its placeholders and no others. */
 const sentences = {
   "bot.unknown": "Um bot excluído",
+  "room.unknown": "Uma sala excluída",
 
   "avatar.shape": "Forma",
   "avatar.color": "Cor",
@@ -1214,6 +1215,8 @@ const sentences = {
   "message.sending": "Enviando…",
   "message.notSent.left.one": "Não enviada: {names} não está mais nesta sala",
   "message.notSent.left.other": "Não enviada: {names} não estão mais nesta sala",
+  "message.notSent.notMentionable.one": "Não enviada: não dá mais para mencionar {names} aqui",
+  "message.notSent.notMentionable.other": "Não enviada: não dá mais para mencionar {names} aqui",
   "message.notSent.refused": "Não enviada: o servidor recusou",
   "message.notSent.tooLong": "Não enviada: longa demais para este bot receber numa mensagem só",
   "message.notSent.notPaired": "Não enviada: este dispositivo saiu da conta",

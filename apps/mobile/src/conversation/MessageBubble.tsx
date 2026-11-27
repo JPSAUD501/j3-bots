@@ -8,7 +8,7 @@ import {
   type OpeningHold,
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
-import { deliveryLine } from "@j3-bots/client-runtime/wording";
+import { deliveryLine, type RefusedMentions } from "@j3-bots/client-runtime/wording";
 import type { Avatar, BotId } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import {
@@ -154,7 +154,7 @@ export function MessageBubble({
   onRetry,
   onDiscard,
   submitting = false,
-  leftRoom = [],
+  refusedMentions = null,
   retryLabel,
   tint = null,
   arriving = false,
@@ -173,8 +173,8 @@ export function MessageBubble({
   readonly onDiscard?: () => void;
   /** A retry is on its way: Send again takes no second one. */
   readonly submitting?: boolean;
-  /** The members it mentions who left the room, for which the server refused it. */
-  readonly leftRoom?: ReadonlyArray<string>;
+  /** What it mentions that the server refused it for, by name: said in place of the refusal. */
+  readonly refusedMentions?: RefusedMentions | null;
   /** What Send again says when it sends somewhere else than the message did. */
   readonly retryLabel?: string;
   /** The bot whose color a bot's bubble takes; the neutral bubble when it is not known. */
@@ -200,7 +200,7 @@ export function MessageBubble({
   const failed = status._tag === "failed" || status._tag === "not-sent";
   const troubled = failed || status._tag === "unrecorded";
   const delivery = fromOperator
-    ? deliveryLine(status, { submitting, leftRoom, openingHold }, ctx)
+    ? deliveryLine(status, { submitting, refusedMentions, openingHold }, ctx)
     : null;
   useAnnounced(delivery);
   const bubble = useTint(tint).bubble;

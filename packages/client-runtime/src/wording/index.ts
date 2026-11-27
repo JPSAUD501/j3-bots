@@ -62,6 +62,7 @@ export {
   fileProblemText,
   fileSize,
   messageProblemText,
+  type RefusedMentions,
 } from "./message.ts";
 export {
   heldHelloText,

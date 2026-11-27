@@ -62,10 +62,20 @@ const behindOpeningText = (hold: OpeningHold, ctx: TimeContext): string => {
 };
 
 /**
+ * What a message mentions that the server refused it for, by name: in a room,
+ * members who have left it; in a bot's conversation, bots and rooms it can no
+ * longer mention there, as a room archived or left since the pick.
+ */
+export interface RefusedMentions {
+  readonly _tag: "left-room" | "not-mentionable";
+  readonly names: ReadonlyArray<string>;
+}
+
+/**
  * What the operator reads under their message, or null when there is nothing
- * to say. `submitting`: a retry is on its way. `leftRoom`: the members the
- * message mentions who have left the room, for which the server refused it,
- * said in place of the refusal. `openingHold`: what holds the bot's hello
+ * to say. `submitting`: a retry is on its way. `refusedMentions`: what the
+ * message mentions that the server refused it for, said in place of the
+ * refusal. `openingHold`: what holds the bot's hello
  * back (`openingHeld`), which a message the server says waits behind it
  * (`behindOpening`) waits for too; any other message reads as queued.
  */
@@ -73,20 +83,25 @@ export function deliveryLine(
   status: MessageStatus,
   {
     submitting,
-    leftRoom,
+    refusedMentions,
     openingHold,
   }: {
     readonly submitting: boolean;
-    readonly leftRoom: ReadonlyArray<string>;
+    readonly refusedMentions: RefusedMentions | null;
     readonly openingHold: OpeningHold | null;
   },
   ctx: TimeContext,
 ): string | null {
   const { i18n } = ctx;
-  if (status._tag === "not-sent" && leftRoom.length > 0) {
-    return i18n.plural("message.notSent.left", leftRoom.length, {
-      names: new Intl.ListFormat(i18n.locale, { type: "conjunction" }).format(leftRoom),
-    });
+  if (status._tag === "not-sent" && refusedMentions !== null && refusedMentions.names.length > 0) {
+    const { names } = refusedMentions;
+    return i18n.plural(
+      refusedMentions._tag === "left-room"
+        ? "message.notSent.left"
+        : "message.notSent.notMentionable",
+      names.length,
+      { names: new Intl.ListFormat(i18n.locale, { type: "conjunction" }).format(names) },
+    );
   }
   if (status._tag === "queued" && status.behindOpening === true && openingHold !== null) {
     return behindOpeningText(openingHold, ctx);

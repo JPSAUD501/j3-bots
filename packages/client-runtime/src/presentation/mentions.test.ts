@@ -17,6 +17,7 @@ import {
   mentionQuery,
   movedOption,
   named,
+  mentionLabel,
   namedNoLonger,
   standingMentions,
 } from "./mentions.ts";
@@ -457,6 +458,20 @@ describe("conversationMentionNames", () => {
   });
 });
 
+describe("mentionLabel", () => {
+  const room = { _tag: "room", roomId: launch.id } as const;
+  const now = () => "Launch week";
+
+  it("names a mention by the name it was picked by, else by its name now", () => {
+    expect(mentionLabel(room, [{ roomId: launch.id, label: "Launch" }], now)).toBe("Launch");
+    // A bot's label with the same id names no room.
+    expect(mentionLabel(room, [{ botId: BotId.make("launch"), label: "Lau" }], now)).toBe(
+      "Launch week",
+    );
+    expect(mentionLabel(room, [], () => undefined)).toBeUndefined();
+  });
+});
+
 describe("namedNoLonger", () => {
   const refused = { _tag: "refused", error: new Invalid({ reason: "mentions" }) } as const;
   const mentions = [
@@ -466,7 +481,8 @@ describe("namedNoLonger", () => {
 
   it("drops from a refused message what `@` no longer offers there", () => {
     expect(namedNoLonger(refused, mentions, [ana])).toEqual({
-      conversationMentions: [{ _tag: "bot", botId: ana.id }],
+      gone: [{ _tag: "room", roomId: launch.id }],
+      without: { conversationMentions: [{ _tag: "bot", botId: ana.id }] },
     });
   });
 

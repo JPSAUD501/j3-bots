@@ -253,6 +253,16 @@ export function mentionedNames(
 }
 
 /**
+ * What one of a message's mentions in a bot's conversation goes by: the name
+ * it was picked by, when the message keeps it, else its name now.
+ */
+export const mentionLabel = (
+  of: ConversationMention,
+  picked: ReadonlyArray<MentionLabel>,
+  nameOf: (named: ConversationMention) => string | undefined,
+): string | undefined => picked.find((label) => labels(label, of))?.label ?? nameOf(of);
+
+/**
  * The names a message in a bot's conversation highlights: those of the bots
  * and rooms it mentions, as the server took them, by the names they were
  * picked by when the message keeps them, else by their names now.
@@ -695,15 +705,19 @@ export function mentionedWhoLeft(
 
 /**
  * For a message in a bot's conversation the server refused for its
- * mentions: its mentions without those `@` no longer offers there, as a room
- * archived or left since the pick, which `message.send` takes. Null when
- * every one is still offered, as for a refusal of another kind.
+ * mentions: those `@` no longer offers there (`gone`), as a room archived or
+ * left since the pick, and the message's mentions without them, which
+ * `message.send` takes. Null when every one is still offered, as for a
+ * refusal of another kind.
  */
 export function namedNoLonger(
   failure: IntentFailure,
   mentions: ReadonlyArray<ConversationMention> | undefined,
   mentionable: ReadonlyArray<Mentionable>,
-): Readdressing | null {
+): {
+  readonly gone: ReadonlyArray<ConversationMention>;
+  readonly without: Readdressing;
+} | null {
   if (
     failure._tag !== "refused" ||
     failure.error._tag !== "Invalid" ||
@@ -712,6 +726,10 @@ export function namedNoLonger(
   ) {
     return null;
   }
-  const still = mentions.filter((mention) => offers(mentionable, mention));
-  return still.length === mentions.length ? null : { conversationMentions: still };
+  const gone = mentions.filter((mention) => !offers(mentionable, mention));
+  if (gone.length === 0) return null;
+  return {
+    gone,
+    without: { conversationMentions: mentions.filter((mention) => offers(mentionable, mention)) },
+  };
 }
