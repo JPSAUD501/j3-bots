@@ -32,6 +32,7 @@ import {
 } from "../testing/rooms.ts";
 import {
   admittedTurn,
+  backgroundCheckDue,
   command,
   concurrentTurns,
   conversation,
@@ -563,17 +564,6 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-/** Whether the session's background check is due (`Stops`). */
-const checkDue = (one: Member) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const session = yield* mainSessionId(one.bot.id);
-    const [row] = yield* sql<{ readonly due: number }>`
-      SELECT background_check_due AS due FROM sessions WHERE id = ${session}
-    `.pipe(Effect.orDie);
-    return row?.due === 1;
-  });
-
 it.effect("holds a room's Stop while the engine starts a private turn no event shows yet", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
@@ -934,7 +924,7 @@ it.effect(
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
-      yield* until(Effect.map(checkDue(hal), (due) => !due));
+      yield* until(Effect.map(backgroundCheckDue(hal.bot.id), (due) => !due));
 
       // The report the room's Stop asks for never comes, and the next one is
       // asked for in vain too.
