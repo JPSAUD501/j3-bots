@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a shipped skill's copies are recognized by their SHA-256, from node:crypto.
 import * as NodeCrypto from "node:crypto";
-import { type SharedSkill, sharedSkills } from "@j3-bots/prompts";
+import { sharedSkills } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -25,15 +25,6 @@ const ShippedRecord = Schema.fromJsonString(
 );
 const decodeRecord = Schema.decodeUnknownOption(ShippedRecord);
 const encodeRecord = Schema.encodeEffect(ShippedRecord);
-
-/**
- * Texts a release installed before the server kept its record, by skill, as
- * their SHA-256: `j3-routines` as #27 shipped it. A copy that still holds one
- * is the server's, and a later text replaces it.
- */
-const SHIPPED_BEFORE_THE_RECORD: Partial<Record<SharedSkill["name"], ReadonlyArray<string>>> = {
-  "j3-routines": ["ee729ac25824581ebc0a3b2ef3182444ebc203cb838200f3139a986a387ed241"],
-};
 
 /** What is at a file the installer reads, checked with `lstat` before it is opened. */
 type Found =
@@ -68,8 +59,7 @@ const readRegular = Effect.fnUntraced(function* (file: string) {
  * alone.
  *
  * A `SKILL.md` already at a shipped name is the server's when it holds the
- * shipped text or a text the server recorded writing there (or one installed
- * before it kept that record). Anything else is the operator's: it is kept,
+ * shipped text or a text the server recorded writing there. Anything else is the operator's: it is kept,
  * with a warning, and the shipped text is not installed. So is a `SKILL.md`
  * that is not a regular file (a link, a folder, a FIFO), which is never read.
  *
@@ -178,11 +168,7 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
         continue;
       }
       const shipped = digest(skill.text);
-      const ours = new Set([
-        shipped,
-        ...(record[skill.name] ?? []),
-        ...(SHIPPED_BEFORE_THE_RECORD[skill.name] ?? []),
-      ]);
+      const ours = new Set([shipped, ...(record[skill.name] ?? [])]);
       if (current._tag === "text" && !ours.has(digest(current.text))) {
         yield* Effect.logWarning(
           `${skillFile} is not a copy J3 Bots installed, so it was kept and the ${skill.name} skill J3 Bots ships was not installed. Move it aside to get the shipped one.`,

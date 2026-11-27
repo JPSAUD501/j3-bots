@@ -136,7 +136,6 @@ export const makeUpdatePrompt = (deps: UpdatePromptDeps): UpdatePrompt => {
                 reason: outcome.reason,
                 runningBots: outcome.runningBots,
               });
-            case "unsupported":
             case "unreachable":
             case "not-paired":
               return dispatch({ _tag: "server-unreachable" });

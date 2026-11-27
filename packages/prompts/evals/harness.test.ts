@@ -28,6 +28,7 @@ const run: RoutineWake = {
   recentRunsLeftOut: false,
   recentRuns: [],
   triggerData: null,
+  events: null,
   dueAt: null,
 };
 

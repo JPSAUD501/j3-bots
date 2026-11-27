@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   arrangeRoster,
+  ARRIVAL_LENGTH,
   arrivalsSettled,
   betweenBots,
   type BotItem,
@@ -225,7 +226,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const { entering } = comings;
   useEffect(() => {
     if (entering.size === 0) return;
-    const settled = setTimeout(() => setArrivals(arrivalsSettled), stage.rowLight + 600);
+    const settled = setTimeout(() => setArrivals(arrivalsSettled), ARRIVAL_LENGTH);
     return () => clearTimeout(settled);
   }, [entering]);
   // The rows on screen, by key; the others' avatars hold still. Stable, as the list requires.
@@ -432,7 +433,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       />
       <PairMenu pressed={pressedPair} onClose={() => setPressedPair(null)} />
       <AvatarHold held={scrolling}>
-        <RowMoves motion={motion} leaving={leaving}>
+        <RowMoves motion={motion} leaving={leaving} entering={entering}>
           <FlatList
             className="flex-1"
             contentContainerStyle={{ paddingBottom: insets.bottom }}

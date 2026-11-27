@@ -145,9 +145,8 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Shows each change the server tells. A server older than the RPC answers
-     * it with a defect, which changes nothing here: the settings are then
-     * read as before.
+     * Shows each change the server tells. A failure of the stream changes
+     * nothing here: the settings stay as last read.
      */
     const follow = (client: J3RpcClient) =>
       client["settings.subscribe"]().pipe(

@@ -52,6 +52,7 @@ export class Signals extends Context.Service<
     readonly routines: Trigger;
     readonly unwatched: Trigger;
     readonly push: Trigger;
+    readonly reactions: Trigger;
   }
 >()("@j3-bots/server/turns/Signals") {}
 
@@ -68,6 +69,7 @@ export const layer = Layer.effect(
       routines: yield* makeTrigger,
       unwatched: yield* makeTrigger,
       push: yield* makeTrigger,
+      reactions: yield* makeTrigger,
     });
   }),
 );

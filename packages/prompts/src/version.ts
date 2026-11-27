@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- a synchronous hash of constant text at load; Effect's Digest is asynchronous and needs a service.
-import { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import { BotId, EntryId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
 import {
   CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
+  connectorSkillsDescription,
   connectorToolDescription,
   listingText,
   NOTHING_LISTED,
   renderConnectorResultWithNonce,
+  SKILL_REFUSALS,
 } from "./connectorResult.ts";
-import { renderWakeWithNonce, type Wake } from "./envelope.ts";
+import { type CatchUpItem, renderWakeWithNonce, type Wake } from "./envelope.ts";
 import {
   BASE_TEMPLATE,
   BOT_TEMPLATE,
@@ -34,6 +36,7 @@ import {
   preApprovedTools,
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
+  SECRET_ASK_VALUES_SHOWN,
   toolList,
 } from "./tools.ts";
 
@@ -54,6 +57,15 @@ const botId = Schema.decodeSync(BotId)("bot");
 const teammate = { id: botId, name: "Bot", title: "Title" };
 const message = { from: teammate, at, text: "text", urgent: false };
 const base = { at, timeZone, sinceLastTurn: [] };
+const entryId = Schema.decodeSync(EntryId)("entry");
+const news = {
+  room: { id: Schema.decodeSync(RoomId)("room"), name: "Room" },
+  message: { id: entryId, from: "you", excerpt: "text" },
+  reactions: [
+    { from: "user", emoji: "👍" },
+    { from: teammate, emoji: "🎉" },
+  ],
+} as const;
 
 const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   {
@@ -63,6 +75,17 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { type: "routine-delivered", routine: "Routine", at, text: "text" },
       { type: "held-message", message },
       { type: "profile-changed", changes: [{ field: "job", value: "text" }] },
+      ...(["access-revoked", "event-gone", "connector-gone", "refused"] as const).map(
+        (reason): CatchUpItem => ({
+          type: "routine-stopped",
+          routine: "Routine",
+          routineId: Schema.decodeSync(RoutineId)("routine"),
+          connector: "Connector",
+          at,
+          reason,
+        }),
+      ),
+      { type: "reactions", news: { ...news, room: null } },
       {
         type: "session-rotated",
         digest: [
@@ -78,6 +101,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     },
     messages: [
       {
+        id: entryId,
         at,
         text: "text",
         attachments: [{ name: "a.pdf", path: "files/a.pdf", mediaType: "x", offset: null }],
@@ -113,13 +137,14 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     entries: [
       {
         author: "user",
+        id: entryId,
         at,
         text: "text",
         mentions: "everyone",
         attachments: [],
         lookingAt: { app: "App", title: null },
       },
-      { author: teammate, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
+      { author: teammate, id: entryId, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
     ],
   },
   ...(["kickoff", "addressed", "everyone", "member"] as const).map((reason): Wake => ({
@@ -134,7 +159,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     closing: false,
     newcomer: false,
     omitted: 0,
-    entries: [{ author: teammate, at, text: "text", mentions: [], files: [] }],
+    entries: [{ author: teammate, id: entryId, at, text: "text", mentions: [], files: [] }],
   })),
   { ...base, kind: "bot", messages: [message] },
   // Every way the recent runs read: listed or none, and with runs left out to fit or not.
@@ -158,9 +183,27 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       recentRuns,
       recentRunsLeftOut,
       triggerData: "text",
+      events: null,
       dueAt: at,
     })),
   ),
+  // A run on a connector's event: what arrived, and whether some was missed.
+  ...[false, true].map((missed): Wake => ({
+    ...base,
+    kind: "routine",
+    routine: {
+      id: Schema.decodeSync(RoutineId)("routine"),
+      name: "Routine",
+      trigger: { type: "event", connector: "Connector", event: "event" },
+      instruction: "text",
+    },
+    runId: Schema.decodeSync(RoutineRunId)("run"),
+    recentRuns: [],
+    recentRunsLeftOut: false,
+    triggerData: null,
+    events: { occurrences: [{ name: "event", at, data: "{}" }], missed },
+    dueAt: null,
+  })),
   // A step of a routine with several steps: the first, and a later one after a yes, with every report it asks for.
   ...[
     {
@@ -190,6 +233,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     recentRuns: [],
     recentRunsLeftOut: false,
     triggerData: null,
+    events: null,
     dueAt: null,
   })),
   ...[false, true].flatMap((askName) =>
@@ -205,6 +249,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     event: { name: "profile-changed", changes: [{ field: "name", value: "text" }] },
   },
   { ...base, kind: "system", event: { name: "undelivered" } },
+  { ...base, kind: "system", event: { name: "reaction", news } },
   { ...base, kind: "system", event: { name: "delegated-result", text: "text" } },
   ...(["done", "declined", "tab-closed", "timed-out", "handed-back"] as const).map(
     (outcome): Wake => ({
@@ -216,7 +261,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   ...(["saved", "declined", "expired"] as const).map((outcome): Wake => ({
     ...base,
     kind: "system",
-    event: { name: "secret-ask", outcome, reference: "secret:name" },
+    event: { name: "secret-ask", outcome, references: ["secret:name", "secret:other"] },
   })),
   ...(["added", "declined", "failed", "expired"] as const).map((outcome): Wake => ({
     ...base,
@@ -287,8 +332,59 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
       ],
     }),
   },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "listing", of: "events" },
+    ...listingText({
+      of: "events",
+      items: [
+        {
+          name: "event",
+          description: "text",
+          arguments: '{"type":"object"}',
+          payload: '{"type":"object"}',
+          delivery: ["poll", "push", "webhook"],
+        },
+        { name: "event", description: "", arguments: "{}", payload: null, delivery: ["poll"] },
+      ],
+    }),
+  },
+  {
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "listing", of: "skills" },
+    ...listingText({
+      of: "skills",
+      items: [{ name: "skill", uri: "skill://skill/SKILL.md", description: "text" }],
+    }),
+  },
+  // A skill checked against a manifest of one file, of several, and one its server generates.
+  ...[1, 3, null].map((files): ConnectorResult => ({
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "skill", name: "skill", uri: "skill://skill/SKILL.md", files },
+    text: "text",
+    cut: false,
+  })),
+  ...[false, true].map((folder): ConnectorResult => ({
+    type: "data",
+    connector: "Connector",
+    slug: "connector",
+    about: { kind: "skill-file", skill: "skill", path: "path", folder },
+    text: "text",
+    cut: false,
+  })),
   ...CONNECTOR_UNAVAILABLE.map((reason): ConnectorResult => ({
     type: "unavailable",
+    connector: "Connector",
+    reason,
+  })),
+  ...SKILL_REFUSALS.map((reason): ConnectorResult => ({
+    type: "skill-refused",
     connector: "Connector",
     reason,
   })),
@@ -349,6 +445,7 @@ const fingerprint = (): string => {
     JSON.stringify(toolList),
     BROWSER_HELP_REQUESTED,
     SECRET_ASK_SHOWN,
+    SECRET_ASK_VALUES_SHOWN,
     SECRET_ASK_EXISTS,
     ...Object.values(FILL_NOTES),
     ...Object.values(MANAGEMENT_NOTES),
@@ -359,6 +456,25 @@ const fingerprint = (): string => {
     ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
     connectorToolDescription("Connector", "text"),
+    // Every line the catalog adds, cut short; the tool's own description is in `toolList`.
+    connectorSkillsDescription("", [
+      {
+        connector: "Connector",
+        slug: "connector",
+        name: "skill",
+        uri: "skill://skill/SKILL.md",
+        description: "text",
+        shared: false,
+      },
+      ...Array.from({ length: 12 }, () => ({
+        connector: "Connector",
+        slug: "connector",
+        name: "skill",
+        uri: "skill://other/skill/SKILL.md",
+        description: "x".repeat(300),
+        shared: true,
+      })),
+    ]),
     ...Object.values(NOTHING_LISTED),
     ...SAMPLE_CONNECTOR_RESULTS.map((result) =>
       renderConnectorResultWithNonce(result, "000000000000"),

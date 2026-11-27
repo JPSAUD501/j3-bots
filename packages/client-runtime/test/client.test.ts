@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  AttachmentId,
   BotId,
   CommandId,
   DeviceId,
@@ -24,6 +23,7 @@ import {
   PROTOCOL_VERSION,
   ProviderId,
   PushToken,
+  ReactionEmoji,
   RoomId,
   ServerInfo,
   MAX_USAGE_TURNS,
@@ -113,6 +113,10 @@ class Taps extends Context.Service<
     readonly silentReads: { count: number };
     /** How many of the next `bot.freshStart` calls fail, as the server fails one that breaks. */
     readonly failingFreshStarts: { count: number };
+    /** Every `message.react` the server received, its emoji, as it arrives. */
+    readonly reacts: Queue.Queue<ReactionEmoji | null>;
+    /** How many of the next `message.react` calls never answer. */
+    readonly silentReacts: { count: number };
   }
 >()("@j3-bots/client-runtime/test/client.test/Taps") {}
 
@@ -130,6 +134,8 @@ const taps = Layer.effect(
       failingReads: { count: 0 },
       silentReads: { count: 0 },
       failingFreshStarts: { count: 0 },
+      reacts: yield* Queue.unbounded<ReactionEmoji | null>(),
+      silentReacts: { count: 0 },
     });
   }),
 );
@@ -207,6 +213,23 @@ const tapped = Layer.mergeAll(
     }),
   ),
   J3Rpcs.toLayerHandler(
+    "message.react",
+    Effect.gen(function* () {
+      const { reacts, silentReacts } = yield* Taps;
+      const react = yield* J3Rpcs.accessHandler("message.react");
+      return (input, options) =>
+        Queue.offer(reacts, input.emoji).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              if (silentReacts.count === 0) return react(input, options);
+              silentReacts.count -= 1;
+              return Effect.never;
+            }),
+          ),
+        );
+    }),
+  ),
+  J3Rpcs.toLayerHandler(
     "bot.freshStart",
     Effect.gen(function* () {
       const { failingFreshStarts } = yield* Taps;
@@ -243,6 +266,9 @@ const client = (
       ),
     ),
   );
+
+/** A reaction, as the server takes one. */
+const emoji = Schema.decodeSync(ReactionEmoji);
 
 /** For a test of a request that never answers: it gives up soon. */
 const SHORT_TIMEOUT: Partial<ReconnectSettings> = { requestTimeout: Duration.seconds(1) };
@@ -1457,6 +1483,40 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const [copy] = copies;
       assert.deepStrictEqual(copy?._tag === "message" && messageStatus(copy), { _tag: "queued" });
     }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect(
+    "sends the operator's reactions on a message in the order picked, through a dropped socket",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const { reacts, silentReacts } = yield* Taps;
+        const network = yield* TestPlatform.TestNetwork;
+        const conversations = yield* Conversations;
+        const botId = yield* createBot("Courier");
+        const sent = yield* conversations.send({
+          target: { _tag: "conversation", botId },
+          text: "Shall we ship it?",
+        });
+        if (sent._tag !== "done") return assert.fail("The message was not sent");
+
+        // 👍 gets no answer before the socket drops, and 👎 is picked meanwhile:
+        // 👍 is sent again on the next socket, and 👎 only after it.
+        silentReacts.count = 1;
+        const first = yield* Effect.forkChild(conversations.react(sent.value, emoji("👍")));
+        assert.strictEqual(yield* Queue.take(reacts), "👍");
+        const second = yield* Effect.forkChild(conversations.react(sent.value, emoji("👎")));
+        // Time enough for a request to reach the server: 👎 waits for 👍's answer.
+        yield* Effect.sleep(Duration.millis(300));
+        assert.strictEqual(yield* Queue.size(reacts), 0);
+        yield* network.dropSockets;
+        assert.strictEqual((yield* Fiber.join(first))._tag, "done");
+        assert.strictEqual((yield* Fiber.join(second))._tag, "done");
+        assert.deepStrictEqual(Arr.fromIterable(yield* Queue.takeAll(reacts)), [
+          emoji("👍"),
+          emoji("👎"),
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
   it.effect("answers a card once when it is submitted twice", () =>
@@ -2737,6 +2797,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             revision: "earlier",
             pairing: Option.getOrThrow(first.credential).deviceId,
             text: "all of them",
+            mentions: [],
             files,
           }),
         )
@@ -3010,37 +3071,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }),
   );
 
-  it.effect("places the files of a draft kept before drafts placed them after its text", () =>
-    Effect.gen(function* () {
-      const device = TestPlatform.makeDevice();
-      const target: EntryTarget = { _tag: "conversation", botId: BotId.make("reader") };
-      const key = targetKey(target);
-      const file = {
-        id: AttachmentId.make("notes"),
-        name: "notes.txt",
-        mediaType: "text/plain",
-        size: 5,
-      };
-
-      const credential = yield* Effect.gen(function* () {
-        yield* pairAndConnect;
-        const pairing = yield* (yield* Connection).deviceId;
-        const older = JSON.stringify({ revision: "older", pairing, text: "notes", files: [file] });
-        yield* device.storage.commit([{ table: "drafts", key, value: older }]).pipe(Effect.orDie);
-        return yield* savedCredential;
-      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
-
-      yield* Effect.gen(function* () {
-        const shown = (yield* Drafts).state.get().get(key);
-        assert.strictEqual(shown?.text, `notes${FILE_MARK}`);
-        assert.deepStrictEqual(
-          shown?.files.map((one) => one.key),
-          ["notes"],
-        );
-      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
-    }),
-  );
-
   it.effect("keeps the mentions picked in a draft through a reload", () =>
     Effect.gen(function* () {
       const device = TestPlatform.makeDevice();
@@ -3062,16 +3092,6 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* Effect.gen(function* () {
         const drafts = yield* Drafts;
         assert.deepStrictEqual(drafts.state.get().get(key)?.mentions, first.mentions);
-        // A draft kept before drafts held mentions reads as holding none.
-        const pairing = yield* (yield* Connection).deviceId;
-        const older = JSON.stringify({ revision: "older", pairing, text: "@Ana", files: [] });
-        yield* device.storage.commit([{ table: "drafts", key, value: older }]).pipe(Effect.orDie);
-      }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
-
-      yield* Effect.gen(function* () {
-        const shown = (yield* Drafts).state.get().get(key);
-        assert.strictEqual(shown?.text, "@Ana");
-        assert.deepStrictEqual(shown?.mentions, []);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
     }),
   );
@@ -3670,6 +3690,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             revision: "earlier",
             pairing: Option.getOrThrow(credential).deviceId,
             text: "",
+            mentions: [],
             files: images,
           }),
         )

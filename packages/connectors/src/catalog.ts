@@ -4,7 +4,6 @@ import * as NodeCrypto from "node:crypto";
 import { defuseTags } from "@j3-bots/prompts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { codePointsEnd } from "./text.ts";
 
 /**
  * A connector's tool catalog (`docs/architecture/server.md`, "Connectors"):
@@ -137,10 +136,16 @@ export const cleanText = (text: string): string =>
 export const cleanDescription = (text: string): string =>
   cap(cleanText(text).trim(), MAX_DESCRIPTION_CHARACTERS);
 
-/** `text` at most `max` characters, ending in `…` when cut. */
+/**
+ * `text` at most `max` characters as the contracts count them (UTF-16 code
+ * units, a string's `length`), ending in `…` when cut, never between the two
+ * halves of a character outside the BMP.
+ */
 export const cap = (text: string, max: number) => {
-  const end = codePointsEnd(text, max - 1);
-  return end === null || codePointsEnd(text, max) === null ? text : `${text.slice(0, end)}…`;
+  if (text.length <= max) return text;
+  const end = max - 1;
+  const last = text.charCodeAt(end - 1);
+  return `${text.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}…`;
 };
 
 /** A remote title as the operator reads it: one line, cleaned, at most {@link MAX_TITLE_CHARACTERS}; null when empty. */
@@ -151,11 +156,11 @@ export const cleanTitle = (text: string | undefined): string | null => {
   return line === "" ? null : cap(line, MAX_TITLE_CHARACTERS);
 };
 
-/** JSON with every object's keys in order, so equal values have one text. */
 const isJsonArray = (value: Schema.JsonArray | Schema.JsonObject): value is Schema.JsonArray =>
   Array.isArray(value);
 
-const canonical = (value: Schema.Json): string => {
+/** JSON with every object's keys in order, so equal values have one text. */
+export const canonical = (value: Schema.Json): string => {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (isJsonArray(value)) return `[${value.map(canonical).join(",")}]`;
   const object = value;
@@ -168,7 +173,7 @@ const canonical = (value: Schema.Json): string => {
  * a model reads those too; undefined when cleaning would change a key, which
  * a call names its arguments by.
  */
-const cleanObject = (
+export const cleanObject = (
   object: Schema.JsonObject,
   clean: (text: string) => string,
 ): Schema.JsonObject | undefined => {

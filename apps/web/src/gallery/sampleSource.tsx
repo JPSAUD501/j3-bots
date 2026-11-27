@@ -68,7 +68,7 @@ import { sampleDocumentBytes } from "./sampleDocuments";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
-import { ordered, previewOf, type DraftEntry } from "./entries";
+import { ordered, previewOf, type DraftEntry, withOwnReaction } from "./entries";
 import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
 import { copySample, sampleSecrets } from "./sampleSecrets";
@@ -281,7 +281,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           _tag: "thinking",
           since: now(),
           stalled: false,
-          quietSince: null,
           typing: false,
           retrying: false,
         }),
@@ -380,7 +379,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           _tag: "thinking",
           since: now(),
           stalled: false,
-          quietSince: null,
           typing: false,
           retrying: false,
         })(working(left, { _tag: "idle" })(s)),
@@ -608,6 +606,14 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
       inFlight(entryId, (e) =>
         e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
       ),
+    react: (entryId, emoji) =>
+      update((s) =>
+        updateEntry(s, entryId, (e) =>
+          e._tag === "message" && e.reactions !== undefined
+            ? { ...e, reactions: withOwnReaction(e.reactions, emoji) }
+            : e,
+        ),
+      ),
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
     forceStopBot: (botId) =>
       update((s) =>
@@ -669,7 +675,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 _tag: "thinking",
                 since: now(),
                 stalled: false,
-                quietSince: null,
                 typing: false,
                 retrying: false,
               }
@@ -700,7 +705,6 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           _tag: "thinking",
           since: now(),
           stalled: false,
-          quietSince: null,
           typing: true,
           retrying: false,
         });

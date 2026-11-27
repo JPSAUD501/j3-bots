@@ -62,6 +62,7 @@ import { stopTargets } from "../turns/stopTargets.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
+import { eventsOf } from "./eventRuns.ts";
 import { dueToTell, RoutineRuns } from "./RoutineRuns.ts";
 import { recordRunFailure } from "./runFailure.ts";
 import { StepReport } from "./runSteps.ts";
@@ -85,6 +86,8 @@ const Attempt = Schema.Struct({
   name: Label,
   instruction: RoutineInstruction,
   trigger_json: json(RoutineTrigger),
+  /** For a trigger on a connector's event, the connector's name; null once it is removed. */
+  connector_name: Schema.NullOr(Schema.String),
   /** A run of a routine with several steps: its copy of them, and the step at work. */
   steps_json: Schema.NullOr(json(Schema.Array(RoutineStep))),
   step: Schema.NullOr(Schema.Int),
@@ -143,7 +146,7 @@ type Step =
   | "unavailable"
   | { readonly _tag: "until"; readonly at: DateTime.Utc | null };
 
-const envelopeTrigger = (trigger: RoutineTrigger): EnvelopeTrigger => {
+const envelopeTrigger = (trigger: RoutineTrigger, connector: string | null): EnvelopeTrigger => {
   switch (trigger._tag) {
     case "schedule":
       return { type: "schedule", cron: trigger.cron };
@@ -151,6 +154,8 @@ const envelopeTrigger = (trigger: RoutineTrigger): EnvelopeTrigger => {
       return { type: "once" };
     case "webhook":
       return { type: "webhook" };
+    case "event":
+      return { type: "event", connector: connector ?? "a removed connector", event: trigger.name };
   }
 };
 
@@ -213,7 +218,11 @@ export const layer = Layer.effect(
     const attemptRows = sql`
       SELECT w.id AS wake_id, w.bot_id, r.id AS run_id, r.retry_at, r.trigger_data, r.due_at,
         r.started_at, ro.id AS routine_id, ro.name, ro.instruction, ro.trigger_json, r.steps_json,
-        r.step
+        r.step,
+        (
+          SELECT c.name FROM connectors c
+          WHERE c.id = json_extract(ro.trigger_json, '$.connectorId')
+        ) AS connector_name
       FROM wakes w
       JOIN routine_runs r ON r.wake_id = w.id
       JOIN routines ro ON ro.id = r.routine_id
@@ -440,12 +449,16 @@ export const layer = Layer.effect(
         routine: {
           id: attempt.routine_id,
           name: attempt.name,
-          trigger: envelopeTrigger(attempt.trigger_json),
+          trigger: envelopeTrigger(attempt.trigger_json, attempt.connector_name),
           instruction: current?._tag === "bot" ? current.instruction : attempt.instruction,
         },
         ...(Option.isSome(step) ? { step: step.value } : {}),
         runId: attempt.run_id,
-        triggerData: attempt.trigger_data,
+        // A run on an event carries the events, framed each on its own, in
+        // place of a webhook's body. One the operator started carries none.
+        ...(attempt.trigger_json._tag === "event" && attempt.trigger_data !== null
+          ? { triggerData: null, events: eventsOf(attempt.trigger_data) }
+          : { triggerData: attempt.trigger_data, events: null }),
         dueAt: dueToTell(due, now, timeZone),
       } as const;
       for (let count = recent.length; count > 0; count--) {

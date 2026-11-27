@@ -1,6 +1,6 @@
 # 0006: Memory is files
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
@@ -8,7 +8,7 @@ A bot's memory could live in J3 Bots' database behind tools, in a vector store, 
 
 ## Decision
 
-Memory is Markdown files in the bot's workspace: a small pinned note and a dated log. Shared facts about the operator are one file every bot can read. Bots change memory through tools (`remember`, `forget`) that keep the files tidy and deduplicated, and search it with `recall`, which is plain text search. The pinned note is rendered into the system prompt.
+Memory is Markdown files in the bot's workspace: a small pinned note and a dated log. Shared memory, what every bot may know about the operator, is a folder like a bot's own, with its pinned note and its log. Bots change memory through tools (`remember`, `forget`) that keep the files tidy and deduplicated, and search it with `recall`, which is plain text search. The pinned notes, the bot's and the shared one, are rendered into the system prompt.
 
 ## Consequences
 

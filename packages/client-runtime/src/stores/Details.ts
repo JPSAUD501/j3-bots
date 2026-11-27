@@ -293,7 +293,7 @@ export const layer = Layer.effect(
       connection,
       keyOf: (botId) => botId,
       follow: (botId, client, set) =>
-        client["routines.subscribe"]({ botId, after: null }).pipe(
+        client["routines.subscribe"]({ botId, after: null, withEvents: true }).pipe(
           Stream.runForEach((frame) => {
             // Every routine the frame changed, deleted ones too, so their
             // runs are read again and a deleted one's read finds it gone. A

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import type { JSONRPCMessage, Transport } from "@modelcontextprotocol/client";
-import { CALL_TAG, tapTransport } from "./tasks.ts";
+import { CALL_TAG } from "./tasks.ts";
+import { tapTransport } from "./tap.ts";
 
 /** A connected transport whose messages a test delivers, the SDK's handler recording what reaches it. */
 const fakeTransport = (seen: Array<string>): Transport => ({
@@ -18,6 +19,7 @@ it("hands a tagged call its progress as it arrives, before the answer behind it,
   const transport = fakeTransport(seen);
   tapTransport(
     transport,
+    () => ({}),
     (_tag, deliver) => deliver(),
     (step) => seen.push(`call: ${step.message ?? ""}`),
   );

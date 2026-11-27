@@ -9,10 +9,14 @@
  *   current revision of MCP or the one it speaks, signed from the store at
  *   each request: its tools, resources and prompts, its requests for input,
  *   and calls it runs as tasks.
+ * - {@link skillsOf}: the skills a server serves (MCP's Skills extension),
+ *   each file checked against its skill's entry before it is used.
  * - {@link catalogOf}: a server's tools, cleaned into what bots are offered.
  * - {@link elicitationOf}: a server's request for input, as the operator
  *   sees it.
  * - {@link toolName}: the name a bot calls a connector's tool by.
+ * - {@link McpEvents}: a server's events (MCP's Events extension), polled,
+ *   streamed or posted to a webhook, and {@link verifyWebhook} for a delivery.
  * - {@link statusOf} and {@link observe}: a connector's status.
  * - {@link openCommandSession} and {@link makeSupervisor}: a connector started
  *   by command, its process run as `docs/architecture/server.md` says. Which
@@ -31,6 +35,23 @@ export {
 } from "./catalog.ts";
 export { type ResourceContents, resourceText } from "./content.ts";
 export { type ElicitationRefusal, elicitationOf } from "./elicitation.ts";
+export {
+  DELIVERY_MODES,
+  DeliveryMode,
+  type EventRefusal,
+  EventsRefused,
+  type EventType,
+  MAX_WEBHOOK_BODY_BYTES,
+  newWebhookSecret,
+  type Occurrence,
+  type PollAnswer,
+  type StreamFrame,
+  type SubscribeAnswer,
+  verifyWebhook,
+  type WebhookBody,
+  webhookBodyOf,
+  type WebhookRefusal,
+} from "./events.ts";
 export type { Prompt, PromptArgument, Resource } from "./features.ts";
 export { type CommandSession, openCommandSession } from "./command/session.ts";
 export { makeSupervisor, processCapacity, type Supervisor } from "./command/supervisor.ts";
@@ -44,6 +65,7 @@ export {
   NotMcp,
   ResponseTooLarge,
   SecretNeeded,
+  StepNotFinished,
   SecretsUnavailable,
   ServerError,
   TimedOut,
@@ -73,7 +95,10 @@ export {
   type ClientSetup,
   type ConnectorCredentials,
   DEFAULT_SESSION_LIMITS,
+  type EventPosition,
+  type EventRequest,
   type ListKind,
+  type McpEvents,
   type McpSession,
   openSession,
   sameHeaders,
@@ -87,6 +112,20 @@ export {
   type SessionOptions,
   type ToolAnswer,
 } from "./session.ts";
+export {
+  MAX_SKILL_BYTES,
+  MAX_SKILL_FILES,
+  type ServedSkill,
+  type SessionSkills,
+  type SkillFile,
+  type SkillFolderEntry,
+  type SkillListing,
+  type SkillRead,
+  type SkillReadRefusal,
+  SKILLS_EXTENSION,
+  skillPath,
+  skillsOf,
+} from "./skills.ts";
 export {
   type Activity,
   type Failing,

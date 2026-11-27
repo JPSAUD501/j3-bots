@@ -35,7 +35,6 @@ const statusOf = (view: ServerUpdateView): ReceivedUpdateStatus | null => {
     case "lost":
       return view.last;
     case "unread":
-    case "unsupported":
       return null;
   }
 };
@@ -129,8 +128,6 @@ function UpdateServerButton({
       switch (outcome._tag) {
         case "started":
           return;
-        case "unsupported":
-          return update.refresh();
         case "unreachable":
         case "not-paired":
           return setRefusal(t("serverUpdate.notReached"));

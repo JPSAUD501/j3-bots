@@ -55,8 +55,6 @@ const READ_AGAIN_EVERY = Duration.hours(1);
  * Where the server's updates stand, as this client knows it.
  *
  * - `unread`: not read yet;
- * - `unsupported`: the server has no update routes, as a release before them;
- *   it is updated on its machine (`j3-bots update`);
  * - `unreachable`: the server did not answer, and no update was under way;
  *   `last` is what it said before, if anything;
  * - `status`: what the server said last;
@@ -67,7 +65,6 @@ const READ_AGAIN_EVERY = Duration.hours(1);
  */
 export type ServerUpdateView =
   | { readonly _tag: "unread" }
-  | { readonly _tag: "unsupported" }
   | { readonly _tag: "unreachable"; readonly last: ReceivedUpdateStatus | null }
   | { readonly _tag: "status"; readonly status: ReceivedUpdateStatus }
   | {
@@ -88,12 +85,7 @@ export type ServerUpdateView =
  * is set up in the app.
  */
 export const runByDesktopApp = (view: ServerUpdateView): boolean => {
-  const last =
-    view._tag === "status"
-      ? view.status
-      : view._tag === "unread" || view._tag === "unsupported"
-        ? null
-        : view.last;
+  const last = view._tag === "status" ? view.status : view._tag === "unread" ? null : view.last;
   return last?.canUpdate._tag === "unable" && last.canUpdate.reason === "desktop-managed";
 };
 
@@ -109,11 +101,10 @@ export type StartResult =
       /** With `work-running`, how many bots have work running. */
       readonly runningBots: number | null;
     }
-  | { readonly _tag: "unsupported" }
   | { readonly _tag: "unreachable" };
 
 /** What a check or a change of channel did; the view shows what it found. */
-export type RequestResult = "done" | "unsupported" | "unreachable";
+export type RequestResult = "done" | "unreachable";
 
 /**
  * Whether `state` is a step of an update under way. A state a newer server
@@ -176,7 +167,6 @@ export class ServerUpdate extends Context.Service<
 type Answer =
   | { readonly _tag: "status"; readonly status: ReceivedUpdateStatus }
   | { readonly _tag: "refused"; readonly refused: ReceivedUpdateRefused }
-  | { readonly _tag: "unsupported" }
   | { readonly _tag: "unreachable" };
 
 /** What `make` needs: where the server is, how to reach it, and this device's token. */
@@ -200,9 +190,9 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
   ) => HttpClientResponse.schemaBodyJson(schema)(response);
 
   /**
-   * Sends `request` with this device's token. 404 is a server without the
-   * routes. Anything else outside the contract, a 401 from a proxy in
-   * between included, counts as not reached: the socket's own check is what
+   * Sends `request` with this device's token. Anything outside the
+   * contract, a 404 or a 401 from a proxy in between included, counts as not
+   * reached: the socket's own check is what
    * tells this device it was signed out.
    */
   const send = Effect.fn("ServerUpdate.send")(function* (
@@ -221,8 +211,6 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
             return decode(response, ReceivedUpdateRefused).pipe(
               Effect.map((refused) => ({ _tag: "refused", refused }) as const),
             );
-          case 404:
-            return Effect.succeed({ _tag: "unsupported" } as const);
           default:
             return Effect.succeed({ _tag: "unreachable" } as const);
         }
@@ -243,7 +231,6 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
       case "unreachable":
         return current.last;
       case "unread":
-      case "unsupported":
         return null;
     }
   };
@@ -310,9 +297,6 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
         }
         return;
       }
-      case "unsupported":
-        view.set({ _tag: "unsupported" });
-        return;
       case "unreachable":
         // A run under way is restarting, and its follower says so.
         if (!following) view.set({ _tag: "unreachable", last: lastStatus() });
@@ -323,11 +307,7 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
   });
 
   const result = (answer: Answer): RequestResult =>
-    answer._tag === "status"
-      ? "done"
-      : answer._tag === "unsupported"
-        ? "unsupported"
-        : "unreachable";
+    answer._tag === "status" ? "done" : "unreachable";
 
   /**
    * Starts this client sent. A read sent before the latest start may answer
@@ -390,7 +370,6 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
                 runningBots: answer.refused.runningBots,
               } as const),
             );
-          case "unsupported":
           case "unreachable":
             return Effect.succeed({ _tag: answer._tag });
         }

@@ -411,7 +411,7 @@ const j3Sessions = Effect.fnUntraced(function* (executable: string, home: string
 
 describe("Engine conformance, real engine only", () => {
   it.live(
-    "revokes the token an earlier J3 Bots minted once it mints one with the browser scope",
+    "revokes the token minted without the browser scope once it mints one with it",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -431,13 +431,18 @@ describe("Engine conformance, real engine only", () => {
         const first = yield* j3Sessions(executable, home);
         assert.strictEqual(first.length, 1);
 
-        // As J3 Bots before 0.4 left it: no scopes recorded, so it lacks `preview:operate`.
+        // Recorded as minted before the adapter asked for `preview:operate`.
         const stored = path.join(engineFolders(path, home).j3, "credential.json");
-        const Unscoped = Schema.fromJsonString(
-          Schema.Struct({ token: Schema.String, expiresAt: Schema.String }),
+        const Recorded = Schema.fromJsonString(
+          Schema.Struct({
+            token: Schema.String,
+            expiresAt: Schema.String,
+            scopes: Schema.Array(Schema.String),
+          }),
         );
-        const unscoped = yield* Schema.decodeEffect(Unscoped)(yield* fs.readFileString(stored));
-        yield* files.write(stored, yield* Schema.encodeEffect(Unscoped)(unscoped));
+        const recorded = yield* Schema.decodeEffect(Recorded)(yield* fs.readFileString(stored));
+        const narrower = { ...recorded, scopes: ["orchestration:read", "orchestration:operate"] };
+        yield* files.write(stored, yield* Schema.encodeEffect(Recorded)(narrower));
         yield* ensureCredential({ executable, home, files });
 
         const after = yield* j3Sessions(executable, home);

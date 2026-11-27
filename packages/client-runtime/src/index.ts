@@ -143,6 +143,7 @@ export {
   type SettingsSaves,
 } from "./stores/Settings.ts";
 export {
+  type AskedValues,
   type NewSecret,
   Secrets,
   type SecretsFailure,

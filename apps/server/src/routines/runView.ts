@@ -65,6 +65,8 @@ const CardRow = Schema.Struct({
   owner_id: BotId,
   name: Schema.String,
   trigger_json: json(RoutineTrigger),
+  /** For a trigger on a connector's event, the connector's name; null once it is removed. */
+  connector_name: Schema.NullOr(Schema.String),
 });
 
 const StepRow = Schema.Struct({
@@ -197,7 +199,11 @@ export const runView = (sql: SqlClient.SqlClient) => {
     execute: (runId) => sql`
       SELECT r.id, r.routine_id, r.wake_id, r.status, r.attempts, r.note, r.started_at,
         r.finished_at, r.failure_json, r.due_at, r.steps_json, r.stopped, r.retry_at, r.entry_id,
-        ro.bot_id AS owner_id, ro.name, ro.trigger_json
+        ro.bot_id AS owner_id, ro.name, ro.trigger_json,
+        (
+          SELECT c.name FROM connectors c
+          WHERE c.id = json_extract(ro.trigger_json, '$.connectorId')
+        ) AS connector_name
       FROM routine_runs r JOIN routines ro ON ro.id = r.routine_id
       WHERE r.id = ${runId} AND r.steps_json IS NOT NULL
     `,

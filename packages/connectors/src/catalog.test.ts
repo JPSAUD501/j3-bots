@@ -51,6 +51,15 @@ describe("catalogOf", () => {
     expect(Array.from(tool?.description ?? "").length).toBe(MAX_DESCRIPTION_CHARACTERS);
   });
 
+  it("cuts a description to the length the contracts allow, never through a character", () => {
+    const [tool] = catalogOf([
+      listed("search", { description: "📎".repeat(MAX_DESCRIPTION_CHARACTERS) }),
+    ]);
+    const description = tool?.description ?? "";
+    expect(description.length).toBeLessThanOrEqual(MAX_DESCRIPTION_CHARACTERS);
+    expect(description).toMatch(/^(?:📎)+…$/u);
+  });
+
   it("cleans the strings of an input schema, and leaves out a tool whose keys would change", () => {
     const tools = catalogOf([
       listed("search", {

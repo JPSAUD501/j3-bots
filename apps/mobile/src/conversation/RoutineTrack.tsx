@@ -13,6 +13,9 @@ import {
   trackStations,
   trackStatus,
   type TrackStatus,
+  type TrackChangeEntry,
+  type TrackTrigger,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import {
@@ -24,22 +27,30 @@ import {
   foldLine,
   keyedRuns,
   routineSentence,
-  scheduleInWords,
   stationStateText,
   trackTag,
+  triggerInWords,
   youStationLines,
 } from "@j3-bots/client-runtime/wording";
 import type {
   BotId,
+  EventRoutineRunEntry,
   RoutineAnswer,
-  RoutineChangeEntry,
   RoutineRun,
   RoutineRunEntry,
   RoutineStep,
-  RoutineTrigger,
 } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { CalendarClock, Check, ChevronRight, Minus, User, Webhook } from "lucide-react-native";
+import {
+  CalendarClock,
+  Check,
+  ChevronRight,
+  type LucideIcon,
+  Minus,
+  PlugZap,
+  User,
+  Webhook,
+} from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { type LayoutChangeEvent, View } from "react-native";
 import {
@@ -91,19 +102,32 @@ const routineFailed = {
   stop: "routine.track.stopFailed",
 } as const satisfies Record<RoutineCardCommand["_tag"], string>;
 
+/** The icon of a trigger's station and of its card: the connector's for an event. */
+const triggerIcon = (trigger: TrackTrigger): LucideIcon => {
+  switch (trigger._tag) {
+    case "webhook":
+      return Webhook;
+    case "event":
+      return PlugZap;
+    case "once":
+    case "schedule":
+      return CalendarClock;
+  }
+};
+
 /**
  * A routine with several steps that a bot made or changed, drawn as its
  * track at rest (decision 0080).
  */
-export function RoutineChangeCard({
-  entry,
-}: {
-  readonly entry: RoutineChangeEntry & { readonly steps: ReadonlyArray<RoutineStep> };
-}) {
+export function RoutineChangeCard({ entry }: { readonly entry: TrackChangeEntry }) {
   return (
     <TrackCard
       name={entry.name}
-      trigger={entry.trigger}
+      trigger={
+        entry._tag === "event-routine-change"
+          ? trackTrigger(entry.trigger, entry.connector)
+          : entry.trigger
+      }
       owner={entry.author._tag === "bot" ? entry.author.botId : null}
       steps={entry.steps}
       run={null}
@@ -118,12 +142,20 @@ export function RoutineChangeCard({
  * follows the run, opens the yes inside its stop, says what to do about a
  * failed step with one action, and folds into one line once it ends.
  */
-export function RoutineRunCard({ entry }: { readonly entry: RoutineRunEntry }) {
+export function RoutineRunCard({
+  entry,
+}: {
+  readonly entry: RoutineRunEntry | EventRoutineRunEntry;
+}) {
   const { t } = useI18n();
   const client = useJ3Client();
   const say = useSay();
   const submitting = useSubmitting(entry.id);
   const { run } = entry;
+  const trigger =
+    entry._tag === "event-routine-run"
+      ? trackTrigger(entry.trigger, entry.connector)
+      : entry.trigger;
   const status = trackStatus(run);
   const ended = status === "done" || status === "stopped-quietly";
   const reduced = useReducedMotion();
@@ -149,7 +181,7 @@ export function RoutineRunCard({ entry }: { readonly entry: RoutineRunEntry }) {
     return (
       <TrackFold
         name={entry.name}
-        trigger={entry.trigger}
+        trigger={trigger}
         owner={entry.author.botId}
         run={run}
         folding={!endedAtFirst}
@@ -159,7 +191,7 @@ export function RoutineRunCard({ entry }: { readonly entry: RoutineRunEntry }) {
   return (
     <TrackCard
       name={entry.name}
-      trigger={entry.trigger}
+      trigger={trigger}
       owner={entry.author.botId}
       steps={[]}
       run={run}
@@ -176,7 +208,7 @@ export function RoutineRunCard({ entry }: { readonly entry: RoutineRunEntry }) {
 
 interface TrackCardProps {
   readonly name: string;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   /** The bot whose routine it is, which a failed step names; a run's is always known. */
   readonly owner: BotId | null;
   readonly steps: ReadonlyArray<RoutineStep>;
@@ -205,7 +237,7 @@ function TrackCard({
   const going = status === "running" || status === "waiting";
   return (
     <CardFrame
-      icon={trigger._tag === "webhook" ? Webhook : CalendarClock}
+      icon={triggerIcon(trigger)}
       title={name}
       attention={attention === "blocked" ? "blocked" : attention === "waiting"}
       tag={trackTag(status, ctx)}
@@ -245,7 +277,7 @@ export function RoutineSentence({
   className,
   lines,
 }: {
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly steps: ReadonlyArray<RoutineStep>;
   readonly className: string;
   /** At most this many lines, the rest cut with an ellipsis. */
@@ -307,7 +339,7 @@ interface Placed {
 
 interface RailProps {
   readonly name: string;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly owner: BotId | null;
   readonly stations: ReadonlyArray<Station>;
   readonly retryable: boolean;
@@ -602,7 +634,7 @@ function RailLine({
 interface StationRowProps {
   readonly station: Station;
   readonly stations: ReadonlyArray<Station>;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly owner: BotId | null;
   readonly reason: string | null;
   readonly retryable: boolean;
@@ -668,17 +700,13 @@ function StationMark({
   trigger,
 }: {
   readonly station: Station;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
 }) {
   switch (station._tag) {
     case "trigger":
       return (
         <View className="size-[22px] items-center justify-center rounded-pill bg-muted">
-          <Icon
-            icon={trigger._tag === "webhook" ? Webhook : CalendarClock}
-            size={13}
-            color="accent-muted-foreground"
-          />
+          <Icon icon={triggerIcon(trigger)} size={13} color="accent-muted-foreground" />
         </View>
       );
     case "bot":
@@ -821,7 +849,7 @@ function StationText({
   const titleClass = `pt-1 text-sm ${lit || (station._tag !== "trigger" && station.state === "rest") || station._tag === "trigger" ? "text-foreground" : "text-muted-foreground"} ${lit ? "font-medium" : ""}`;
   switch (station._tag) {
     case "trigger":
-      return <Text className={titleClass}>{scheduleInWords(trigger, ctx)}</Text>;
+      return <Text className={titleClass}>{triggerInWords(trigger, ctx)}</Text>;
     case "bot": {
       const sub = botStationSub(station, reason, ctx);
       return (
@@ -976,7 +1004,7 @@ function TrackFold({
   folding,
 }: {
   readonly name: string;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly owner: BotId;
   readonly run: RoutineRun;
   readonly folding: boolean;
@@ -1031,7 +1059,7 @@ export function RoutineTrackRest({
   steps,
 }: {
   readonly name: string;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly owner: BotId;
   readonly steps: ReadonlyArray<RoutineStep>;
 }) {

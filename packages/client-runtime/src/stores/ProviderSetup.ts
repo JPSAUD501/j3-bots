@@ -19,13 +19,9 @@ import { Cell, type Readable } from "../Store.ts";
 
 /**
  * Where a harness's sign-in stands, as this client follows it: as the server
- * reports it, `idle` before any, or `unsupported` when the server cannot run
- * one, as a server from before 0.3.0 answers.
+ * reports it, or `idle` before any.
  */
-export type SignInView =
-  | { readonly _tag: "idle" }
-  | ProviderSignInStatus
-  | { readonly _tag: "unsupported" };
+export type SignInView = { readonly _tag: "idle" } | ProviderSignInStatus;
 
 /** What became of an endpoint connection; `failed` when the server gave no answer it could. */
 export type ConnectEndpointResult = ProviderConnectionOutcome | { readonly _tag: "failed" };
@@ -45,8 +41,8 @@ export class ProviderSetup extends Context.Service<
     /**
      * Starts the harness's sign-in, or follows the one under way. On a new
      * socket it follows the same one again, and never starts another.
-     * `openPage` opens the page it waits on, once, unless the harness opened
-     * it itself.
+     * `openPage` opens the page it waits on, once, as soon as the server
+     * has it: the operator never presses anything to see it.
      */
     readonly signIn: (
       harness: SignInHarness,
@@ -113,7 +109,7 @@ export const layer = Layer.effect(
         Effect.andThen(
           show(harness, status),
           Effect.sync(() => {
-            if (status._tag !== "waiting-for-browser" || status.opened || pageOpened) return;
+            if (status._tag !== "waiting-for-browser" || pageOpened) return;
             pageOpened = true;
             openPage(status.url);
           }),
@@ -125,10 +121,8 @@ export const layer = Layer.effect(
       ).pipe(
         Effect.exit,
         Effect.flatMap((exit) => {
-          // Not paired any more, or a server that answers this RPC with a defect.
-          if (Exit.isFailure(exit)) {
-            return show(harness, Exit.hasDies(exit) ? { _tag: "unsupported" } : idle);
-          }
+          // Not paired any more, or the call failed: no sign-in is under way.
+          if (Exit.isFailure(exit)) return show(harness, idle);
           // A server that reported nothing has no sign-in under way.
           return exit.value ? Effect.void : show(harness, idle);
         }),

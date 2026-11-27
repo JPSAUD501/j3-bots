@@ -386,8 +386,8 @@ describe("with stand-in harnesses", () => {
               {
                 _tag: "waiting-for-browser",
                 url: "https://claude.ai/oauth/authorize?code=true&state=xyz",
-                // Where it had no `BROWSER` to hand the page to, the harness opened it.
-                opened: !HANDS_BROWSER,
+                // Whether the harness opened it too or not, the client opens it.
+                opened: false,
               },
             ]);
             assert.notInclude(JSON.stringify(reported), SECRET);

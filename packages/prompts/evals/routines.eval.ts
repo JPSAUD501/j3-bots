@@ -111,6 +111,7 @@ const routineWake: RoutineWake = {
   recentRunsLeftOut: false,
   recentRuns: quietRuns,
   triggerData: null,
+  events: null,
   dueAt: null,
 };
 
@@ -152,6 +153,7 @@ const reminderWake: RoutineWake = {
   recentRunsLeftOut: false,
   recentRuns: [],
   triggerData: null,
+  events: null,
   dueAt: null,
 };
 
@@ -185,6 +187,7 @@ const lateBriefingWake: RoutineWake = {
     },
   ],
   triggerData: null,
+  events: null,
   dueAt: briefingDue,
 };
 
@@ -247,6 +250,7 @@ const pullRequestWake: RoutineWake = {
     { at: todayAt(8, 17), outcome: { type: "silent", note: null } },
   ],
   triggerData: null,
+  events: null,
   dueAt: null,
 };
 
@@ -849,8 +853,9 @@ const savedRunWake = (
   recentRuns: (at: DateTime.Utc) => ReadonlyArray<RoutineRunSummary> = () => [],
   next: DateTime.Utc | null = routine.nextRunAt,
 ): RoutineWake | undefined => {
-  if (next === null) return undefined;
   const { trigger } = routine;
+  // An event routine runs when its connector says so, never at a time of its own.
+  if (next === null || trigger._tag === "event") return undefined;
   return {
     at: next,
     timeZone,
@@ -869,6 +874,7 @@ const savedRunWake = (
     recentRunsLeftOut: false,
     recentRuns: recentRuns(next),
     triggerData: null,
+    events: null,
     dueAt: null,
   };
 };
@@ -1033,6 +1039,7 @@ const fixedWatchWake = (
   recentRunsLeftOut: false,
   recentRuns,
   triggerData: null,
+  events: null,
   dueAt: null,
 });
 

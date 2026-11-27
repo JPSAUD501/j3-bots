@@ -15,7 +15,8 @@ import { shownStep } from "./shownStep.ts";
 
 /**
  * What `entries.workSteps` streams: every step so far, then each step as it
- * changes, until the fold's turn ends and the work it handed off with it.
+ * changes, until the fold's turn ends. Work the turn handed off adds its
+ * steps to the fold after that, read with the fold's next opening.
  */
 export type WorkStepsFrame =
   | { readonly _tag: "snapshot"; readonly steps: ReadonlyArray<WorkStep> }
@@ -35,10 +36,7 @@ export class WorkSteps extends Context.Service<
   {
     /** Tells followers about a step the observer just committed. */
     readonly changed: (entryId: EntryId, step: WorkStep) => Effect.Effect<void>;
-    /**
-     * Tells followers the fold's turn ended, and the work it handed off with
-     * it: its steps change no more.
-     */
+    /** Tells followers the fold's turn ended: they stop following it. */
     readonly finished: (entryId: EntryId) => Effect.Effect<void>;
     readonly follow: (entryId: EntryId) => Stream.Stream<WorkStepsFrame, NotFound>;
     /** The step that says what the fold's work is doing or did (`shownStep`). */
@@ -81,7 +79,7 @@ export const layer = Layer.effect(
           const steps = (yield* stepsOf(entryId).pipe(Effect.orDie)).map((row) => row.step_json);
           const snapshot = Stream.succeed<WorkStepsFrame>({ _tag: "snapshot", steps });
           const { status } = fold.value.entry;
-          if (status._tag === "finished" && !status.background) return snapshot;
+          if (status._tag === "finished") return snapshot;
           return Stream.concat(
             snapshot,
             Stream.fromSubscription(live).pipe(

@@ -31,19 +31,19 @@ describe("credentialRecord", () => {
   });
 
   it("reads a browser's record without a server as the page's own server's", () => {
-    const legacy = JSON.stringify({ deviceId: "device-1", token: "t".repeat(32) });
+    const browserRecord = JSON.stringify({ deviceId: "device-1", token: "t".repeat(32) });
     const page = "https://bots.example.com";
-    expect(Option.isSome(credentialRecord(new URL(page), page).read(legacy))).toBe(true);
+    expect(Option.isSome(credentialRecord(new URL(page), page).read(browserRecord))).toBe(true);
   });
 
-  it("writes a browser's record as older builds of the page write it", () => {
+  it("writes a browser's record without a server", () => {
     const page = "https://bots.example.com";
     const stored = credentialRecord(new URL(page), page).write(credential);
     expect(JSON.parse(stored)).toEqual({ deviceId: "device-1", token: "t".repeat(32) });
   });
 
   it("does not read a record without a server in the desktop app", () => {
-    const legacy = JSON.stringify({ deviceId: "device-1", token: "t".repeat(32) });
-    expect(credentialRecord(serverA, DESKTOP_PAGE).read(legacy)).toEqual(Option.none());
+    const browserRecord = JSON.stringify({ deviceId: "device-1", token: "t".repeat(32) });
+    expect(credentialRecord(serverA, DESKTOP_PAGE).read(browserRecord)).toEqual(Option.none());
   });
 });

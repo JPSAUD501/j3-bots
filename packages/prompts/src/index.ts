@@ -38,6 +38,9 @@ export {
   type LookingAtRef,
   type OperatorMessage,
   type ProfileChange,
+  REACTION_LINE,
+  type ReactionNews,
+  type ReactionWho,
   renderWake,
   renderWakeForSize,
   ROOM_CLOSING_LINES,
@@ -47,9 +50,12 @@ export {
   type RoomMentions,
   type RoomReason,
   type RoomWake,
+  type RoutineEventOccurrence,
+  type RoutineEvents,
   ROUTINE_STEP_CLOSING_LINE,
   type EarlierStep,
   type RoutineRunSummary,
+  type RoutineStopReason,
   type RoutineStepWake,
   type RoutineTrigger,
   type RoutineWake,
@@ -84,6 +90,7 @@ export {
   ROOM_READ_COUNT,
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
+  SECRET_ASK_VALUES_SHOWN,
   type ToolDefinition,
   readSteps,
   type RoutineStepDraft,
@@ -94,17 +101,23 @@ export {
   tools,
 } from "./tools.ts";
 export {
+  type CatalogSkill,
   CONNECTOR_UNAVAILABLE,
   type ConnectorData,
   type ConnectorResult,
+  connectorSkillsDescription,
   type ConnectorUnavailable,
   connectorToolDescription,
+  type ListedEvent,
   type ListedPrompt,
   type ListedResource,
+  type ListedSkill,
   listingText,
   MAX_LISTING_CHARACTERS,
   NOTHING_LISTED,
   renderConnectorResult,
+  SKILL_REFUSALS,
+  type SkillRefusal,
 } from "./connectorResult.ts";
 export {
   renderRoomMovedOn,
@@ -117,6 +130,6 @@ export {
   type RoomReadEntry,
   roomReadFits,
 } from "./roomRead.ts";
-export { type SharedSkill, sharedSkills } from "./skills.ts";
+export { sharedSkills } from "./skills.ts";
 export { defuseTags } from "./text.ts";
 export { PROMPT_VERSION } from "./version.ts";

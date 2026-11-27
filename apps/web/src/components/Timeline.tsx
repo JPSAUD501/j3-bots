@@ -11,6 +11,7 @@ import type {
   EntryId,
   ListingRef,
   QuestionAnswers,
+  ReactionEmoji,
   Room,
   RoomId,
   RoutineId,
@@ -29,6 +30,7 @@ import {
   type OwnAppSetup,
   type SecretRequestValues,
   type TimelineItem,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
@@ -67,6 +69,8 @@ export interface TimelineIntents {
   readonly declineSecretAsk: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
+  /** Sets the operator's reaction on a message, or takes it off with `null`. */
+  readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => void;
   /**
    * Sends again a message this device could not send, with `mentions` in
    * place of its own when given.
@@ -277,6 +281,7 @@ export function Timeline({
                 mentionable={highlighted(message.mentions, [])}
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
+                onReact={(emoji) => intents.react(message.id, emoji)}
                 submitting={submitting(message.id)}
                 openingHold={openingHold}
               />
@@ -377,23 +382,33 @@ function Card({
         />
       );
     case "routine-change":
+    case "event-routine-change":
       return (
         <RoutineTrack
           entryId={entry.id}
           name={entry.name}
-          trigger={entry.trigger}
+          trigger={
+            entry._tag === "event-routine-change"
+              ? trackTrigger(entry.trigger, entry.connector)
+              : entry.trigger
+          }
           owner={entry.author._tag === "bot" ? entry.author.botId : null}
           steps={entry.steps}
           run={null}
         />
       );
-    case "routine-run": {
+    case "routine-run":
+    case "event-routine-run": {
       const { run } = entry;
       return (
         <RoutineTrack
           entryId={entry.id}
           name={entry.name}
-          trigger={entry.trigger}
+          trigger={
+            entry._tag === "event-routine-run"
+              ? trackTrigger(entry.trigger, entry.connector)
+              : entry.trigger
+          }
           owner={entry.author.botId}
           steps={[]}
           run={run}

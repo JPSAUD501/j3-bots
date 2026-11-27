@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { AskedValues } from "@j3-bots/client-runtime";
 import { typedOrigins } from "@j3-bots/client-runtime/presentation";
 import {
   type BotId,
@@ -6,9 +7,12 @@ import {
   type Secret,
   type SecretAccess,
   type SecretAskEntry,
+  type SecretAskValue,
   SecretChanges,
   SecretDraft,
   SecretName,
+  type SecretRequestFieldId,
+  SecretValue,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -17,6 +21,7 @@ import * as Schema from "effect/Schema";
 const decodeName = Schema.decodeUnknownOption(SecretName);
 const decodeDraft = Schema.decodeUnknownOption(SecretDraft);
 const decodeChanges = Schema.decodeUnknownOption(SecretChanges);
+const decodeValue = Schema.decodeUnknownOption(SecretValue);
 
 /** The name typed, as a secret takes it; none while it breaks the rule `SecretName` states. */
 export const secretNameOf = (typed: string): Option.Option<SecretName> => decodeName(typed.trim());
@@ -67,6 +72,27 @@ export const askDraft = (
  */
 export const askAccess = (everyBot: boolean, asking: BotId | null): SecretAccess =>
   everyBot ? { _tag: "every-bot" } : { _tag: "bots", botIds: asking === null ? [] : [asking] };
+
+/**
+ * The values a bot's ask for several saves, each under the name the bot
+ * asked for it by; none while one is empty or too long, or a name is one no
+ * secret takes. Space around a pasted value is never part of it.
+ */
+export const askedValues = (
+  entry: SecretAskEntry,
+  asked: ReadonlyArray<SecretAskValue>,
+  typed: ReadonlyMap<SecretRequestFieldId, string>,
+  access: SecretAccess,
+): Option.Option<AskedValues> => {
+  const values: Array<AskedValues["values"][number]> = [];
+  for (const each of asked) {
+    const name = secretNameOf(each.name);
+    const value = decodeValue(Redacted.make((typed.get(each.id) ?? "").trim()));
+    if (Option.isNone(name) || Option.isNone(value)) return Option.none();
+    values.push({ field: each.id, name: name.value, value: value.value });
+  }
+  return Option.some({ request: entry.id, access, values });
+};
 
 /** What the operator typed to change a secret. A value left empty keeps the one it has. */
 export interface TypedEdit {

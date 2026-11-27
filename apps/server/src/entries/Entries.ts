@@ -2,6 +2,9 @@
 import {
   BotId,
   type CommandId,
+  type Reaction,
+  ReactionEmoji,
+  type Reactor,
   Entry,
   EntryId,
   EntryOrder,
@@ -52,8 +55,12 @@ export const FRAME_BUDGET = 8 * 1024 * 1024;
 /** The total size of some entries' stored bodies. */
 const SizeRows = Schema.Array(Schema.Struct({ size: Schema.Number }));
 
-/** The fields every entry has, kept in their own columns rather than in `body_json`. */
-const COMMON_FIELDS = new Set(["_tag", "id", "order", "author", "createdAt"]);
+/**
+ * The fields `body_json` does not hold: the row's own columns, and a
+ * message's reactions, which are rows of their own (`reactions`) so that
+ * writing a message again, as its delivery changes, never takes one back.
+ */
+const NOT_IN_BODY = new Set(["_tag", "id", "order", "author", "createdAt", "reactions"]);
 
 const EntryJson = Schema.toCodecJson(Entry);
 const decodeEntry = Schema.decodeUnknownEffect(EntryJson);
@@ -78,7 +85,20 @@ const LocatedRow = Schema.Struct({
 
 const ENTRY_COLUMNS = `id, position, kind, author_kind, author_bot_id, body_json, created_at`;
 
-const toEntry = Effect.fn("Entries.toEntry")(function* (row: typeof EntryRow.Type) {
+const ReactionRow = Schema.Struct({
+  entry_id: EntryId,
+  reactor_kind: Schema.Literals(["operator", "bot"]),
+  reactor_bot_id: Schema.NullOr(BotId),
+  emoji: ReactionEmoji,
+});
+
+/** How many entries' reactions one query reads: well under SQLite's limit on parameters. */
+const REACTIONS_CHUNK = 500;
+
+const toEntry = Effect.fn("Entries.toEntry")(function* (
+  row: typeof EntryRow.Type,
+  reactions: ReadonlyArray<Reaction>,
+) {
   const author =
     row.author_kind === "bot" && row.author_bot_id !== null
       ? { _tag: "bot", botId: row.author_bot_id }
@@ -90,6 +110,7 @@ const toEntry = Effect.fn("Entries.toEntry")(function* (row: typeof EntryRow.Typ
     order: row.position,
     author,
     createdAt: DateTime.formatIso(row.created_at),
+    ...(row.kind === "message" ? { reactions } : {}),
   });
 }, Effect.orDie);
 
@@ -147,6 +168,19 @@ export class Entries extends Context.Service<
      * routine's run that came to wait for them, say.
      */
     readonly update: (entry: Entry, options?: { readonly notify: boolean }) => Effect.Effect<void>;
+    /**
+     * Sets `by`'s reaction on a message of `target`, replacing the one it had
+     * there, or takes it off (`null`), in the caller's transaction. Answers
+     * whether anything changed; a change is recorded for the message, so its
+     * subscribers receive it again with its reactions. A replaced reaction
+     * keeps its place among the others.
+     */
+    readonly react: (input: {
+      readonly target: EntryTarget;
+      readonly entryId: EntryId;
+      readonly by: Reactor;
+      readonly emoji: ReactionEmoji | null;
+    }) => Effect.Effect<boolean>;
     readonly find: (
       id: EntryId,
     ) => Effect.Effect<Option.Option<{ readonly target: EntryTarget; readonly entry: Entry }>>;
@@ -227,6 +261,41 @@ export const layer = Layer.effect(
       }
     });
 
+    /** The reactions on each of these entries, in the order each reactor first reacted. */
+    const reactionsOf = Effect.fn("Entries.reactionsOf")(function* (ids: ReadonlyArray<EntryId>) {
+      const found = new Map<EntryId, Array<Reaction>>();
+      for (let start = 0; start < ids.length; start += REACTIONS_CHUNK) {
+        const rows = yield* sql`
+          SELECT entry_id, reactor_kind, reactor_bot_id, emoji FROM reactions
+          WHERE ${sql.in("entry_id", ids.slice(start, start + REACTIONS_CHUNK))}
+          ORDER BY reacted_at, rowid
+        `;
+        for (const row of yield* Schema.decodeUnknownEffect(Schema.Array(ReactionRow))(rows)) {
+          const reaction: Reaction = {
+            emoji: row.emoji,
+            by:
+              row.reactor_kind === "bot" && row.reactor_bot_id !== null
+                ? { _tag: "bot", botId: row.reactor_bot_id }
+                : { _tag: "operator" },
+          };
+          const list = found.get(row.entry_id);
+          if (list === undefined) found.set(row.entry_id, [reaction]);
+          else list.push(reaction);
+        }
+      }
+      return found;
+    }, Effect.orDie);
+
+    /** Rows as entries, each message with its reactions. */
+    const toEntries = Effect.fn("Entries.toEntries")(function* (
+      rows: ReadonlyArray<typeof EntryRow.Type>,
+    ) {
+      const reactions = yield* reactionsOf(
+        rows.flatMap((row) => (row.kind === "message" ? [row.id] : [])),
+      );
+      return yield* Effect.forEach(rows, (row) => toEntry(row, reactions.get(row.id) ?? []));
+    });
+
     const rowsOf = SqlSchema.findAll({
       Request: Schema.Struct({ ids: Schema.Array(EntryId) }),
       Result: EntryRow,
@@ -269,7 +338,7 @@ export const layer = Layer.effect(
             `;
       const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(rows);
       const kept = decoded.slice(0, limit);
-      const entries = yield* Effect.forEach(kept.toReversed(), toEntry);
+      const entries = yield* toEntries(kept.toReversed());
       const oldest = kept.at(-1);
       if (budget === null || decoded.length > limit || oldest === undefined) {
         return { entries, hasOlder: decoded.length > limit };
@@ -292,7 +361,7 @@ export const layer = Layer.effect(
         return yield* Effect.die("An entry encodes to a JSON object");
       }
       return yield* encodeBody(
-        Object.fromEntries(Object.entries(encoded).filter(([key]) => !COMMON_FIELDS.has(key))),
+        Object.fromEntries(Object.entries(encoded).filter(([key]) => !NOT_IN_BODY.has(key))),
       );
     }, Effect.orDie);
 
@@ -384,6 +453,36 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
+    const react = Effect.fn("Entries.react")(function* (input: {
+      readonly target: EntryTarget;
+      readonly entryId: EntryId;
+      readonly by: Reactor;
+      readonly emoji: ReactionEmoji | null;
+    }) {
+      const kind = input.by._tag;
+      const botId = input.by._tag === "bot" ? input.by.botId : null;
+      const reactor = sql`
+        entry_id = ${input.entryId} AND reactor_kind = ${kind}
+        AND IFNULL(reactor_bot_id, '') = ${botId ?? ""}
+      `;
+      const changed =
+        input.emoji === null
+          ? yield* sql`DELETE FROM reactions WHERE ${reactor} RETURNING 1 AS one`
+          : yield* sql`
+              INSERT INTO reactions (entry_id, reactor_kind, reactor_bot_id, emoji, reacted_at)
+              VALUES (
+                ${input.entryId}, ${kind}, ${botId}, ${input.emoji},
+                ${timeText(yield* DateTime.now)}
+              )
+              ON CONFLICT (entry_id, reactor_kind, IFNULL(reactor_bot_id, ''))
+              DO UPDATE SET emoji = excluded.emoji WHERE emoji <> excluded.emoji
+              RETURNING 1 AS one
+            `;
+      if (changed.length === 0) return false;
+      yield* changes.record(scopeOf(input.target), input.entryId);
+      return true;
+    }, Effect.orDie);
+
     const findRowQuery = SqlSchema.findOneOption({
       Request: EntryId,
       Result: LocatedRow,
@@ -404,7 +503,9 @@ export const layer = Layer.effect(
             ? { _tag: "room", roomId }
             : null;
       if (target === null) return yield* Effect.die("An entry has a target");
-      return Option.some({ target, entry: yield* toEntry(row.value) });
+      const [entry] = yield* toEntries([row.value]);
+      if (entry === undefined) return yield* Effect.die("A row reads as an entry");
+      return Option.some({ target, entry });
     }, Effect.orDie);
 
     const history = Effect.fn("Entries.history")(function* (input: {
@@ -500,7 +601,7 @@ export const layer = Layer.effect(
         LIMIT 1
       `;
       return {
-        last: last === undefined ? Option.none() : Option.some(yield* toEntry(last)),
+        last: Option.fromNullishOr((yield* toEntries(last === undefined ? [] : [last]))[0]),
         unread: unread.length > 0,
       };
     }, Effect.orDie);
@@ -541,7 +642,7 @@ export const layer = Layer.effect(
           `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows)), Effect.orDie);
           if ((sized[0]?.size ?? 0) > FRAME_BUDGET) return Option.none<EntryFrame>();
           const rows = yield* rowsOf({ ids }).pipe(Effect.orDie);
-          const upsert = yield* Effect.forEach(rows, toEntry);
+          const upsert = yield* toEntries(rows);
           return Option.some<EntryFrame>({ _tag: "changed", sequence: last.sequence, upsert });
         }),
       );
@@ -590,7 +691,7 @@ export const layer = Layer.effect(
         ORDER BY position
       `;
       const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(rows);
-      return yield* Effect.forEach(decoded, toEntry);
+      return yield* toEntries(decoded);
     }, Effect.orDie);
 
     const ofKind = <K extends Entry["_tag"]>(target: EntryTarget, kind: K) =>
@@ -601,6 +702,7 @@ export const layer = Layer.effect(
     return Entries.of({
       append,
       update,
+      react,
       find: findRow,
       history,
       latest,

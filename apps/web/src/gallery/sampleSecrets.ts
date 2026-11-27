@@ -31,9 +31,6 @@ import { useState, useSyncExternalStore } from "react";
 import type { SecretsAccess } from "../components/secrets/parts";
 import { writeClipboard } from "../lib/clipboard";
 
-/** The sample's old vault password, in the gallery's notes. */
-export const SAMPLE_OLD_VAULT_PASSWORD = "correct horse";
-
 /** A secret's values, as the sample keeps them in the clear. */
 export type SampleValues =
   | {
@@ -47,8 +44,8 @@ export type SampleValues =
 interface Options {
   readonly state: SecretsState;
   readonly secrets?: ReadonlyArray<readonly [Secret, SampleValues]>;
-  /** A secret saved from a bot's ask, for the sample to close its card. */
-  readonly onSaved?: (request: EntryId, secret: Secret) => void;
+  /** A bot's ask answered, for the sample to close its card. */
+  readonly onSaved?: (request: EntryId) => void;
   readonly now: () => DateTime.Utc;
 }
 
@@ -122,21 +119,45 @@ export function sampleSecrets({ state, secrets = [], onSaved, now }: Options): S
     return done(secret);
   };
 
+  const store = ({ name, draft, access }: NewSecret): Secret => {
+    added += 1;
+    const at = now();
+    const secret: Secret = {
+      id: SecretId.make(`sec_sampleadded${String(added).padStart(6, "0")}`),
+      name,
+      kind:
+        draft._tag === "login"
+          ? { _tag: "login", origins: draft.origins, hasTotp: draft.totp !== null }
+          : { _tag: "value" },
+      access,
+      createdAt: at,
+      updatedAt: at,
+      lastUse: null,
+      lastReveal: null,
+    };
+    saved.set(secret.id, {
+      secret,
+      values:
+        draft._tag === "login"
+          ? {
+              _tag: "login",
+              username: Redacted.value(draft.username),
+              password: Redacted.value(draft.password),
+              totp: draft.totp === null ? null : Redacted.value(draft.totp),
+            }
+          : { _tag: "value", value: Redacted.value(draft.value) },
+    });
+    changed();
+    return secret;
+  };
+
   return {
     view,
-    openOldVault: (password) => {
-      if (current !== "old-vault") return done(undefined);
-      if (Redacted.value(password) !== SAMPLE_OLD_VAULT_PASSWORD) {
-        return refused(new Invalid({ reason: "old-vault-password" }));
-      }
-      current = "ready";
-      changed();
-      return done(undefined);
-    },
-    add: ({ name, draft, access }: NewSecret, request) => {
+    add: (secret, request) => {
       const closed = unavailable();
       if (closed !== null) return closed;
-      if (taken(name, null)) return refused(new Conflict({ reason: "secret-name-taken" }));
+      if (taken(secret.name, null)) return refused(new Conflict({ reason: "secret-name-taken" }));
+      const { draft } = secret;
       if (
         draft._tag === "login" &&
         draft.totp !== null &&
@@ -144,36 +165,21 @@ export function sampleSecrets({ state, secrets = [], onSaved, now }: Options): S
       ) {
         return refused(new Invalid({ reason: "totp" }));
       }
-      added += 1;
-      const at = now();
-      const secret: Secret = {
-        id: SecretId.make(`sec_sampleadded${String(added).padStart(6, "0")}`),
-        name,
-        kind:
-          draft._tag === "login"
-            ? { _tag: "login", origins: draft.origins, hasTotp: draft.totp !== null }
-            : { _tag: "value" },
-        access,
-        createdAt: at,
-        updatedAt: at,
-        lastUse: null,
-        lastReveal: null,
-      };
-      saved.set(secret.id, {
-        secret,
-        values:
-          draft._tag === "login"
-            ? {
-                _tag: "login",
-                username: Redacted.value(draft.username),
-                password: Redacted.value(draft.password),
-                totp: draft.totp === null ? null : Redacted.value(draft.totp),
-              }
-            : { _tag: "value", value: Redacted.value(draft.value) },
-      });
-      changed();
-      if (request !== null) onSaved?.(request, secret);
-      return done(secret);
+      const stored = store(secret);
+      if (request !== null) onSaved?.(request);
+      return done(stored);
+    },
+    addFromAsk: ({ request, access, values }) => {
+      const closed = unavailable();
+      if (closed !== null) return closed;
+      if (values.some(({ name }) => taken(name, null))) {
+        return refused(new Conflict({ reason: "secret-name-taken" }));
+      }
+      const stored = values.map(({ name, value }) =>
+        store({ name, draft: { _tag: "value", value }, access }),
+      );
+      onSaved?.(request);
+      return done(stored);
     },
     update: (id, changes) => {
       const closed = unavailable();

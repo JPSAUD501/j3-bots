@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { json } from "../persistence/columns.ts";
+import { Flag, json } from "../persistence/columns.ts";
 import { RoutineRuns } from "../routines/RoutineRuns.ts";
 import { StepReport } from "../routines/runSteps.ts";
 import { laterStepsFit } from "../routines/stepFit.ts";
@@ -23,6 +23,7 @@ const StepOfSession = Schema.Struct({
   routine_id: RoutineId,
   name: Schema.String,
   trigger_data: Schema.NullOr(Schema.String),
+  on_event: Flag,
   position: Schema.Int,
   steps_json: json(Schema.Array(RoutineStep)),
 });
@@ -85,7 +86,8 @@ export const finishStepTool = Effect.gen(function* () {
     Result: StepOfSession,
     execute: (sessionId) => sql`
       SELECT s.side_wake_id AS wake_id, r.id AS run_id, r.routine_id, ro.name, r.trigger_data,
-        r.step AS position, r.steps_json
+        json_extract(ro.trigger_json, '$._tag') = 'event' AS on_event, r.step AS position,
+        r.steps_json
       FROM sessions s JOIN routine_runs r ON r.wake_id = s.side_wake_id
       JOIN routines ro ON ro.id = r.routine_id
       WHERE s.id = ${sessionId} AND s.purpose = 'side' AND r.status = 'running'
@@ -142,6 +144,7 @@ export const finishStepTool = Effect.gen(function* () {
           { position, result: report.result, handoff: report.handoff },
         ],
         triggerData: found.value.trigger_data,
+        onEvent: found.value.on_event,
       });
       if (!fits) {
         return yield* refuse(

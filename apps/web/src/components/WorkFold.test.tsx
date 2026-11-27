@@ -22,10 +22,10 @@ const scout = bot("Scout", {
   _tag: "working",
   since: started,
   stalled: false,
-  quietSince: null,
   typing: false,
   retrying: false,
   activity: null,
+  activityKind: null,
   tool: null,
   littleOnes: 2,
 });
@@ -72,9 +72,6 @@ const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
         _tag: "finished",
         finishedAt: at("2026-11-20T10:02:00Z"),
         ending: "completed",
-        waitedMs: 0,
-        waitedBeforeMs: 0,
-        background: false,
       },
 });
 

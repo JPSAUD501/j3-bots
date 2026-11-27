@@ -18,7 +18,7 @@ import type { TimelineIntents } from "../components/Timeline";
 /**
  * What a timeline's cards and messages ask of the server, the same wherever
  * the conversation shows: an answer to a question or an approval, a secret,
- * a message sent again or taken out, a connector's request. What opens
+ * a message sent again or taken out, a reaction, a connector's request. What opens
  * another screen is left to whoever shows the timeline.
  */
 export type CardIntents = Pick<
@@ -33,6 +33,7 @@ export type CardIntents = Pick<
   | "declineSecretAsk"
   | "retryNotice"
   | "retryMessage"
+  | "react"
   | "resendMessage"
   | "discardMessage"
   | "answerConnectorInput"
@@ -108,6 +109,10 @@ export function useCardIntents(
     declineSecretAsk: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
+    react: (entryId, emoji) =>
+      void j3.react(entryId, emoji).then((result) => {
+        if (result._tag === "failed") say(t("reaction.failed"));
+      }),
     resendMessage: (commandId, mentions) =>
       void j3.resend(commandId, mentions).then((result) => {
         if (result._tag === "not-kept") say(t("message.changeNotKept"));

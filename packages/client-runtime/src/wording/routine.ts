@@ -6,16 +6,17 @@
  * step's action, a result and a question are the bots' own words, in the
  * operator's language, shown as content.
  */
-import type { BotId, RoutineRun, RoutineStep, RoutineTrigger } from "@j3-bots/contracts";
+import type { BotId, RoutineRun, RoutineStep } from "@j3-bots/contracts";
 import type { KeyWith } from "@j3-bots/i18n";
 import {
   keptResults,
   type Station,
   type StationOf,
   type TrackStatus,
+  type TrackTrigger,
 } from "../presentation/routineTrack.ts";
 import { clockTime, millisBetween, shortDuration } from "../presentation/time.ts";
-import { scheduleInWords } from "./schedule.ts";
+import { triggerInWords } from "./schedule.ts";
 import type { PresentationContext } from "./status.ts";
 import { timeInSentence } from "./time.ts";
 
@@ -45,7 +46,7 @@ const plain = (text: string): Clause => [{ text, tone: "plain" }];
  * "you" are runs of their own, which the card sets apart.
  */
 export function routineSentence(
-  trigger: RoutineTrigger,
+  trigger: TrackTrigger,
   steps: ReadonlyArray<RoutineStep>,
   ctx: PresentationContext,
 ): ReadonlyArray<SentenceRun> {
@@ -92,7 +93,7 @@ export function routineSentence(
       if (part.type === "literal") return plain(part.value);
       return clauses[Number(part.value.slice(1))] ?? [];
     });
-  const opening = scheduleInWords(trigger, ctx);
+  const opening = triggerInWords(trigger, ctx);
   const sentence =
     opening === null
       ? [...joined, ...plain(".")]

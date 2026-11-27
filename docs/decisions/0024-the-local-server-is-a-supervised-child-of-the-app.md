@@ -1,6 +1,6 @@
 # 0024: The local-mode server is a supervised child of the app
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
@@ -8,7 +8,7 @@ Someone with no always-on machine wants the bots on the computer they use, set u
 
 ## Decision
 
-**The app starts the release's own server as a child process.** The package carries the release archive without its web client (`resources/server-runtime`: its Node and server bundle). The app copies it to `<userData>/server-runtime/<version>/`, where the version transition keeps the release the data moved from ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)), and spawns `node server/bin.mjs serve` from there, with `J3_HOME=<userData>/server/home` and `J3_HOST=127.0.0.1`. It does not run from the package: an AppImage's mount goes when the app exits, Windows will not let an update replace a running `node.exe`, and a rollback needs the earlier version after the package was replaced. On Windows it runs from a stable `current/` copy, so the firewall asks once.
+**The app starts the release's own server as a child process.** The package carries the release archive without its web client (`resources/server-runtime`: its Node and server bundle). The app copies it to `<userData>/server-runtime/<version>/`, where the version transition keeps the release the data moved from ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)), and spawns `node server/bin.mjs serve` from there, with `J3_HOME=<userData>/server/home`, `J3_HOST` the loopback address or, with phone access on, the address phone access needs ([decision 0036](0036-phone-access-restarts-the-local-server-on-the-network.md)), and `J3_WEB_CLIENT` the app's web build copied to `<userData>/server/web`, which phones load. It does not run from the package: an AppImage's mount goes when the app exits, Windows will not let an update replace a running `node.exe`, and a rollback needs the earlier version after the package was replaced. On Windows it runs from a stable `current/` copy, so the firewall asks once.
 
 **The app is the only supervisor.** Nothing is installed in the system: no service, unit or scheduled task. The app restarts a server that stops on its own (1 s, doubled up to 30 s, reset after a minute of running) and never restarts one that refused to start (exit status 78). On Quit it holds the quit, asks the server to stop, and kills it after 30 seconds. A server is never left running without the app: it is started with `--exit-with-stdin` and stops when its stdin ends, which happens when the app dies, however it dies. A server an earlier run left behind is taken over when it is the release the app would start as it is, and stopped otherwise.
 
@@ -19,7 +19,7 @@ Someone with no always-on machine wants the bots on the computer they use, set u
 - The bots stop when the app quits. Closing the window hides the app to the tray instead, so they keep running while the operator is logged in. Starting with the system is the app's own login item, not a service.
 - The app's process tree carries the server and the engine, and the operator sees one app. Its logs go to `<userData>/server/server.log`, not to the journal.
 - Two Nodes ship in the package: Electron's and the server's. The package grows by the size of the runtime.
-- A server the app takes over on Unix is trusted through `<home>/admin.sock`, so the app checks that only this user can open the home before it trusts it. On Windows no `admin.sock` is bound, so a server left behind is ended by the pid the app recorded, after it checks that the pid still runs the recorded `node.exe`.
+- A server the app takes over on Unix is trusted through `<home>/admin.sock`, so the app checks that only this user can open the home before it trusts it. On Windows no `admin.sock` is bound, so a server left behind is ended by the pid the app recorded, after it checks that the process with that pid still has the recorded start time.
 - A port chosen at the first start stays in the home's `config.json`, so the origin the page signed in to stays the same. A port taken later by another program makes the start fail until it is freed.
 
 ## Rejected

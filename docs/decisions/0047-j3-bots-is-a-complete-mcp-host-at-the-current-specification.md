@@ -31,7 +31,7 @@ What changed:
 - **More of what a server writes reaches a bot.** Resources and prompts are more untrusted text in its context, read only when the bot or the operator asks for them.
 - **A question in the middle of a call holds the bot.** Its turn waits on the card until the operator answers, declines or the call ends.
 - **The client metadata document needs a public origin.** A server reached only on the operator's network registers as before, and that a provider reads the document as the draft says is **Assumed**: the tests use a fake authorization server.
-- **What is not handled yet.** A 2025-era server's `-32042` error (URL elicitation required) reaches the bot as the call's error instead of a card; a request for input from such a server over a process's streams, while several bots call it at once, is declined, since the call that asked cannot be told.
+- **What is not handled yet.** A request for input from a 2025-era server over a process's streams, while several bots call it at once, is declined, since the call that asked cannot be told. Such a server's `-32042` error (URL elicitation required) is a card for each page since [decision 0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md).
 
 ## What was rejected
 

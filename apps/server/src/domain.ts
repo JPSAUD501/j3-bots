@@ -36,10 +36,12 @@ import * as Presence from "./presence/Presence.ts";
 import * as SignIns from "./providers/SignIns.ts";
 import * as PushDeliveries from "./push/PushDeliveries.ts";
 import * as PushWorker from "./push/PushWorker.ts";
+import * as Reactions from "./reactions/Reactions.ts";
 import * as RoomRouting from "./rooms/RoomRouting.ts";
 import * as Rooms from "./rooms/Rooms.ts";
 import * as Roster from "./roster/Roster.ts";
 import * as Sections from "./sections/Sections.ts";
+import * as RoutineEvents from "./routines/RoutineEvents.ts";
 import * as RoutineRunner from "./routines/RoutineRunner.ts";
 import * as RoutineRuns from "./routines/RoutineRuns.ts";
 import * as Routines from "./routines/Routines.ts";
@@ -84,8 +86,8 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
  * finds the operator's own with, and the `SkillRepositories` skills are
  * installed from. Which engine, sender, client, registry, sources and
  * repositories are the caller's: the real ones in `server.ts`, in-memory or
- * local ones in tests. Building it starts the turn machinery and the push
- * worker, which run for as long as the layer's scope.
+ * local ones in tests. Building it starts the turn machinery, the push
+ * worker and the reaction worker, which run for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(
   BotTools.layer,
@@ -111,6 +113,7 @@ export const layer = Layer.mergeAll(
       Rotations.layer,
       RunningWork.layer,
       RoutineRunner.layer,
+      RoutineEvents.layer,
       // The machine as the sign-ins see it: the `PATH` the server runs harnesses with.
       SignIns.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
     ),
@@ -139,6 +142,7 @@ export const layer = Layer.mergeAll(
   Layer.provideMerge(RoomRouting.layer),
   Layer.provideMerge(OAuthSignIns.layer),
   Layer.provideMerge(ConnectorAuth.layer.pipe(Layer.provide(OAuthSignIns.connectorsLayer))),
+  Layer.provideMerge(Reactions.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Ledger.layer,

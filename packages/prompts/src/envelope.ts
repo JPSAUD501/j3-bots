@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import type { BotId, EntryId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,6 +64,11 @@ export interface LookingAtRef {
 }
 
 export interface OperatorMessage {
+  /**
+   * The message's id, which `react` names it by. Left out only where there
+   * is none yet: a size check before the message is written.
+   */
+  readonly id?: EntryId;
   readonly at: DateTime.Utc;
   readonly text: string;
   readonly attachments: ReadonlyArray<AttachmentRef>;
@@ -125,7 +130,52 @@ export type CatchUpItem =
    * The bot's working session was replaced since its last turn; `digest`
    * holds the recent conversation for the new one, oldest first.
    */
-  | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> };
+  | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> }
+  /**
+   * J3 Bots stopped listening for the event a routine runs on, for `reason`,
+   * and the routine will not run again until its trigger is set anew.
+   */
+  | {
+      readonly type: "routine-stopped";
+      readonly routine: string;
+      readonly routineId: RoutineId;
+      readonly connector: string;
+      readonly at: DateTime.Utc;
+      readonly reason: RoutineStopReason;
+    }
+  /** Reactions on a message changed since the bot's last turn: how they stand now. */
+  | { readonly type: "reactions"; readonly news: ReactionNews };
+
+/** Whoever wrote a message or reacted to one, as an envelope names them. */
+export type ReactionWho = "user" | "you" | TeammateRef;
+
+/**
+ * The reactions on one message as they stand, with the start of the message
+ * they are on: enough to know which it is without the conversation at hand.
+ */
+export interface ReactionNews {
+  /** The room the message is in; `null` for the bot's own conversation. */
+  readonly room: { readonly id: RoomId; readonly name: string } | null;
+  readonly message: {
+    readonly id: EntryId;
+    readonly from: ReactionWho;
+    /** Its start, cut to a few hundred characters. */
+    readonly excerpt: string;
+  };
+  /** In the order each reactor first reacted; never empty. */
+  readonly reactions: readonly [
+    { readonly from: ReactionWho; readonly emoji: string },
+    ...Array<{ readonly from: ReactionWho; readonly emoji: string }>,
+  ];
+}
+
+/**
+ * Why J3 Bots stopped listening for a routine's event: the connector's server
+ * refused access or ended it (`access-revoked`), no longer offers the event
+ * (`event-gone`), refused what the trigger asks for (`refused`), or the
+ * connector is gone (`connector-gone`).
+ */
+export type RoutineStopReason = "access-revoked" | "event-gone" | "connector-gone" | "refused";
 
 /**
  * One message of a session digest: who wrote it, its text, the names of its
@@ -165,6 +215,8 @@ export type RoomMentions = ReadonlyArray<string> | "everyone";
 export type RoomEntry =
   | {
       readonly author: "user";
+      /** The message's id, which `react` names it by; left out as for `OperatorMessage`. */
+      readonly id?: EntryId;
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
@@ -173,6 +225,8 @@ export type RoomEntry =
     }
   | {
       readonly author: TeammateRef;
+      /** The message's id, which `react` names it by; left out as for `OperatorMessage`. */
+      readonly id?: EntryId;
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
@@ -231,7 +285,28 @@ export interface BotWake extends WakeBase {
 export type RoutineTrigger =
   | { readonly type: "schedule"; readonly cron: string }
   | { readonly type: "once" }
-  | { readonly type: "webhook" };
+  | { readonly type: "webhook" }
+  /** A connector's event: `connector` is its name as the operator sees it, `event` the event's name at its server. */
+  | { readonly type: "event"; readonly connector: string; readonly event: string };
+
+/** One occurrence of a connector's event a run was started for. */
+export interface RoutineEventOccurrence {
+  readonly name: string;
+  readonly at: DateTime.Utc;
+  /** What its server said happened, as JSON text: untrusted. */
+  readonly data: string;
+}
+
+/**
+ * What a run on a connector's event was started for: the occurrences that
+ * arrived since the last run, oldest first, and whether some may have been
+ * missed, its server having said it lost track, or more having arrived than
+ * J3 Bots keeps for one run.
+ */
+export interface RoutineEvents {
+  readonly occurrences: ReadonlyArray<RoutineEventOccurrence>;
+  readonly missed: boolean;
+}
 
 export interface RoutineRunSummary {
   readonly at: DateTime.Utc;
@@ -299,6 +374,8 @@ export interface RoutineWake extends WakeBase {
   readonly recentRunsLeftOut: boolean;
   /** The webhook request body, for a webhook trigger. */
   readonly triggerData: string | null;
+  /** What happened, for a trigger on a connector's event. */
+  readonly events: RoutineEvents | null;
   /**
    * When the run was due, when that was more than a minute before `at` or on
    * another day in `timeZone`: J3 Bots was not running at a scheduled run's
@@ -355,8 +432,11 @@ export type SystemEvent =
        * or it waited too long.
        */
       readonly outcome: "saved" | "declined" | "expired";
-      /** The reference the bot names the secret by (`secret:<name>`), saved or not. */
-      readonly reference: string;
+      /**
+       * The references the bot names the secrets by (`secret:<name>`), saved
+       * or not: one, or each of the values it asked for together.
+       */
+      readonly references: readonly [string, ...Array<string>];
     }
   | {
       readonly name: "connector-ask";
@@ -369,6 +449,15 @@ export type SystemEvent =
       readonly server: string;
       /** What comes next for a server added, or why one failed; null otherwise. */
       readonly note: string | null;
+    }
+  | {
+      readonly name: "reaction";
+      /**
+       * Your user reacted to a message of the bot's, and these are the
+       * reactions on it as they stand: a light signal, which the bot answers
+       * only when the reaction answers something it offered.
+       */
+      readonly news: ReactionNews;
     };
 
 export interface SystemWake extends WakeBase {
@@ -488,7 +577,7 @@ const SECRET_ASK_LINES: {
   readonly [O in Extract<SystemEvent, { readonly name: "secret-ask" }>["outcome"]]: string;
 } = {
   saved:
-    "Your user saved the secret you asked for. You never see its value: use it by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
+    "Your user saved what you asked for. You never see a value: use each by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
   declined:
     "Your user declined to give the secret you asked for. Do not ask again on your own, and do not look for it elsewhere. Finish what does not need it, then end with a `say` with `done: true` that tells your user what it still blocks.",
   expired:
@@ -512,6 +601,15 @@ const CONNECTOR_ASK_LINES: {
     "Your ask to add the MCP server named below closed without an answer: it waited too long, or J3 Bots restarted while it waited. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on it, and that you will continue when they tell you to.",
 };
 
+/**
+ * What a `reaction` event says, and what to do: a reaction is a light signal,
+ * not a message. The bot answers it only when it answers an offer of the
+ * bot's and the bot knows that emoji as a yes there; otherwise the turn ends
+ * without a word, which leaves nothing in the conversation.
+ */
+export const REACTION_LINE =
+  "Your user reacted to a message of yours; the reactions on it as they stand now follow. A reaction is a light signal, not a message: by default, end your turn without a word and without a reaction. Act only if it answers something you offered there and your instructions or memory say that emoji means yes to it (they may have told you, say, that a 👍 on an offer of yours means go ahead): then say in a few words that you are on it, do it, and deliver the result with `say` as usual. Never treat it as approval for anything else.";
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -533,6 +631,8 @@ const eventLine = (event: SystemEvent): string => {
       return SECRET_ASK_LINES[event.outcome];
     case "connector-ask":
       return CONNECTOR_ASK_LINES[event.outcome];
+    case "reaction":
+      return REACTION_LINE;
   }
 };
 
@@ -732,6 +832,70 @@ const writeProfileChanges = (w: EnvelopeWriter, changes: ReadonlyArray<ProfileCh
   for (const change of changes) w.block("field", [["name", change.field]], change.value);
 };
 
+/** Why a routine stopped, as the bot is told; `routine` and `connector` come quoted. */
+const ROUTINE_STOPPED: {
+  readonly [K in RoutineStopReason]: (routine: string, connector: string) => string;
+} = {
+  "access-revoked": (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} no longer allows it, as when access was taken back.`,
+  "event-gone": (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} no longer offers it.`,
+  "connector-gone": (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} was removed or is no longer yours to use.`,
+  refused: (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} refused what its trigger asks for.`,
+};
+
+/** The occurrences a run on a connector's event was started for, each as untrusted data. */
+const writeEvents = (w: EnvelopeWriter, events: RoutineEvents): void => {
+  if (events.missed) {
+    w.line(
+      "Some events may have been missed before these: the connector's server lost track of them, or more arrived than one run takes. If the instruction needs every one, check the source itself.",
+    );
+  }
+  for (const event of events.occurrences) {
+    w.data(
+      [
+        ["source", "event"],
+        ["name", event.name],
+        ["at", w.time(event.at)],
+      ],
+      event.data,
+    );
+  }
+};
+
+/** Who wrote or reacted, as attributes: you, your user, or a teammate by name and id. */
+const whoAttributes = (who: ReactionWho): Attributes =>
+  typeof who === "string"
+    ? [["from", who]]
+    : [
+        ["from", who.name],
+        ["from-id", who.id],
+      ];
+
+/**
+ * The reactions on one message as they stand: the message by its id, the room
+ * it is in, and its start as a quote, which is never a request; then each
+ * reaction.
+ */
+const writeReactionNews = (w: EnvelopeWriter, news: ReactionNews): void => {
+  w.open("reactions", [
+    ["message", news.message.id],
+    ["room", news.room?.name ?? null],
+    ["room-id", news.room?.id ?? null],
+  ]);
+  w.data([["source", "quote"], ...whoAttributes(news.message.from)], news.message.excerpt);
+  for (const reaction of news.reactions) {
+    w.empty("reaction", [...whoAttributes(reaction.from), ["emoji", reaction.emoji]]);
+  }
+  w.close("reactions");
+};
+
+/** The line before reactions that changed since the bot's last turn. */
+const REACTIONS_SINCE_LINE =
+  "Reactions on this message changed since your last turn; they stand now as follows:";
+
 const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>): void => {
   if (items.length === 0) return;
   w.open("since-last-turn");
@@ -750,6 +914,11 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
       case "profile-changed":
         w.line(PROFILE_CHANGED_LINE);
         writeProfileChanges(w, item.changes);
+        break;
+      case "routine-stopped":
+        w.line(
+          `${ROUTINE_STOPPED[item.reason](`"${escapeAttribute(item.routine)}"`, `"${escapeAttribute(item.connector)}"`)} Since ${w.time(item.at)} it does not run; its trigger was kept. Tell your user in a sentence, in your next message to them, and offer to set the event again (set_routine update with id ${item.routineId}) or to check on a schedule instead.`,
+        );
         break;
       case "session-rotated":
         if (item.digest.length === 0) {
@@ -776,6 +945,10 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
           );
           if (message.lookingAt !== null) writeLookingAt(w, message.lookingAt);
         }
+        break;
+      case "reactions":
+        w.line(REACTIONS_SINCE_LINE);
+        writeReactionNews(w, item.news);
         break;
     }
   }
@@ -855,7 +1028,16 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       for (const message of wake.messages) {
         // Times tell coalesced messages apart; a single one was sent at the wake's time.
         const at = wake.messages.length > 1 ? w.time(message.at) : null;
-        writeOperatorMessage(w, [["at", at]], message.text, message.attachments, message.lookingAt);
+        writeOperatorMessage(
+          w,
+          [
+            ["id", message.id ?? null],
+            ["at", at],
+          ],
+          message.text,
+          message.attachments,
+          message.lookingAt,
+        );
       }
       return;
     case "room": {
@@ -883,6 +1065,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           writeOperatorMessage(
             w,
             [
+              ["id", entry.id ?? null],
               ["at", w.time(entry.at)],
               ["to", to],
             ],
@@ -894,6 +1077,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           w.data(
             [
               ["source", "room"],
+              ["id", entry.id ?? null],
               ["from", entry.author.name],
               ["from-id", entry.author.id],
               ["at", w.time(entry.at)],
@@ -923,6 +1107,8 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ["run", wake.runId],
         ["trigger", trigger.type],
         ["cron", trigger.type === "schedule" ? trigger.cron : null],
+        ["connector", trigger.type === "event" ? trigger.connector : null],
+        ["event", trigger.type === "event" ? trigger.event : null],
         ["due", due?.iso ?? null],
         ["due-weekday", due?.weekday ?? null],
       ]);
@@ -967,6 +1153,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       w.close("recent-runs");
       w.close("routine");
       if (wake.triggerData !== null) w.data([["source", "webhook"]], wake.triggerData);
+      if (wake.events !== null) writeEvents(w, wake.events);
       return;
     }
     case "system": {
@@ -976,7 +1163,9 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       if (event.name === "browser-help" && event.site !== null) {
         w.empty("browser-tab", [["site", event.site]]);
       }
-      if (event.name === "secret-ask") w.empty("secret", [["reference", event.reference]]);
+      if (event.name === "secret-ask") {
+        for (const reference of event.references) w.empty("secret", [["reference", reference]]);
+      }
       if (event.name === "connector-ask") {
         w.empty("server", [
           ["name", event.server],
@@ -984,6 +1173,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ]);
       }
       if (event.name === "delegated-result") w.data([["source", "delegated-task"]], event.text);
+      if (event.name === "reaction") writeReactionNews(w, event.news);
       return;
     }
   }

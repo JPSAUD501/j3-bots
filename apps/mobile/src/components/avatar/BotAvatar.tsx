@@ -256,7 +256,17 @@ export interface AvatarHandle {
 }
 
 /** When an avatar comes in from above as it first shows: at once, or after `delay` ms. */
-type AvatarEntrance = boolean | { readonly delay: number };
+/** An avatar's entrance, when it is more than coming in at once. */
+export interface AvatarEntrance {
+  /** It sets off this many ms after it first shows; until then it is not there. */
+  readonly delay: number;
+  /**
+   * Set true on the UI thread on the frame it lands, so what arrives with it
+   * can follow it, whenever its frames come. Never set by an entrance that
+   * does not play, as under reduced motion.
+   */
+  readonly landed?: SharedValue<boolean>;
+}
 
 export interface BotAvatarProps {
   readonly avatar: Avatar;
@@ -270,7 +280,7 @@ export interface BotAvatarProps {
   /** Draws the still form and never moves, as beside a message. */
   readonly still?: boolean;
   /** Comes in from above as it first shows: it drops into its place, lands and lights its antenna. */
-  readonly entrance?: AvatarEntrance;
+  readonly entrance?: boolean | AvatarEntrance;
   /** Draws a band of what it sits on around the body, to stand clear of what it overlaps. */
   readonly cutout?: boolean;
   /** What it sits on, which the body's cutout and a status light's are drawn in: `background` unless given. */
@@ -445,6 +455,8 @@ function MovingAvatar({
   // At half rate, half the avatars step on even frames and half on odd ones, so the work is spread.
   const skip = useSharedValue(avatarSeed(seed) % 2 === 0);
   const [running, setRunning] = useState(false);
+  // Told of the landing: its entrance's own, from its first mount.
+  const [landing] = useState(() => (typeof entrance === "object" ? entrance.landed : undefined));
 
   const frames = useFrameCallback((info) => {
     "worklet";
@@ -480,6 +492,7 @@ function MovingAvatar({
     const next = stepAvatar(current, dt + owed.get(), near);
     owed.set(0);
     sim.set(next);
+    if (current.entering && !next.entering) landing?.set(true);
     face.set(avatarFace(next));
     if (entered.get() && shown.get() === 0) shown.set(withTiming(1, { duration: ENTRANCE_FADE }));
   }, false);
@@ -864,8 +877,15 @@ export function roomAvatarMembers(
 
 const pop = reanimatedSpring(springs.pop);
 
-/** A room's member coming down into its place, on `pop`, after `delay` ms: a still face, dropped in. */
-const dropIn = (size: number, delay: number): EntryExitAnimationFunction => {
+/**
+ * A room's member coming down into its place, on `pop`, after `delay` ms: a
+ * still face, dropped in. `landed`, when given, is set as it comes to rest.
+ */
+const dropIn = (
+  size: number,
+  delay: number,
+  landed: SharedValue<boolean> | undefined,
+): EntryExitAnimationFunction => {
   const from = -size * stage.rowDrop;
   return () => {
     "worklet";
@@ -873,7 +893,16 @@ const dropIn = (size: number, delay: number): EntryExitAnimationFunction => {
       initialValues: { opacity: 0, transform: [{ translateY: from }] },
       animations: {
         opacity: withDelay(delay, withTiming(1, { duration: ENTRANCE_FADE })),
-        transform: [{ translateY: withDelay(delay, withSpring(0, pop)) }],
+        transform: [
+          {
+            translateY: withDelay(
+              delay,
+              withSpring(0, pop, (finished) => {
+                if (finished === true) landed?.set(true);
+              }),
+            ),
+          },
+        ],
       },
     };
   };
@@ -881,7 +910,8 @@ const dropIn = (size: number, delay: number): EntryExitAnimationFunction => {
 
 /**
  * Two members overlapping and still: a room, idle, or asleep with the bots
- * while offline. With `entrance`, its members come in one after the other.
+ * while offline. With `entrance`, its members come in one after the other,
+ * and the room has landed once the last of them has.
  */
 export function RoomAvatar({
   members,
@@ -892,12 +922,18 @@ export function RoomAvatar({
   readonly members: ReadonlyArray<{ readonly id: string; readonly avatar: Avatar }>;
   readonly size: number;
   readonly ground?: AvatarGround;
-  readonly entrance?: boolean;
+  readonly entrance?: boolean | AvatarEntrance;
 }) {
   const [back, front] = members;
   const state = useContext(AvatarsAsleep) ? "offline" : "idle";
   const part = Math.round(size * roomAvatarShare);
-  const entering = (delay: number) => (entrance ? { entering: dropIn(part, delay) } : {});
+  const at = entrance === false ? null : entrance === true ? { delay: 0 } : entrance;
+  const entering = (index: number, last: boolean) =>
+    at === null
+      ? {}
+      : {
+          entering: dropIn(part, at.delay + index * stage.stagger, last ? at.landed : undefined),
+        };
   return (
     <View
       style={{ width: size, height: size }}
@@ -905,15 +941,15 @@ export function RoomAvatar({
       importantForAccessibility="no-hide-descendants"
     >
       {back !== undefined && (
-        <Animated.View style={{ position: "absolute", top: 0, left: 0 }} {...entering(0)}>
+        <Animated.View
+          style={{ position: "absolute", top: 0, left: 0 }}
+          {...entering(0, front === undefined)}
+        >
           <BotAvatar avatar={back.avatar} seed={back.id} state={state} size={part} still />
         </Animated.View>
       )}
       {front !== undefined && (
-        <Animated.View
-          style={{ position: "absolute", right: 0, bottom: 0 }}
-          {...entering(stage.stagger)}
-        >
+        <Animated.View style={{ position: "absolute", right: 0, bottom: 0 }} {...entering(1, true)}>
           <BotAvatar
             avatar={front.avatar}
             seed={front.id}

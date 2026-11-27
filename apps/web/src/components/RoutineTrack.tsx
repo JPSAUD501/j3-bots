@@ -13,6 +13,7 @@ import {
   trackStations,
   trackStatus,
   type TrackStatus,
+  type TrackTrigger,
   trackWindow,
 } from "@j3-bots/client-runtime/presentation";
 import {
@@ -24,9 +25,9 @@ import {
   foldLine,
   keyedRuns,
   routineSentence,
-  scheduleInWords,
   stationStateText,
   trackTag,
+  triggerInWords,
   youStationLines,
 } from "@j3-bots/client-runtime/wording";
 import type {
@@ -36,7 +37,6 @@ import type {
   RoutineAnswer,
   RoutineRun,
   RoutineStep,
-  RoutineTrigger,
 } from "@j3-bots/contracts";
 import { resolveAvatar } from "@j3-bots/design-tokens";
 import {
@@ -44,6 +44,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   MinusIcon,
+  PlugZapIcon,
   UserIcon,
   WebhookIcon,
 } from "lucide-react";
@@ -76,7 +77,7 @@ type Answer = (step: number, choice: RoutineAnswer["choice"], note: string | nul
 export interface RoutineTrackProps {
   readonly entryId: EntryId;
   readonly name: string;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   /**
    * The bot whose routine it is, which a failed step names. A run's entry is
    * always its owner's; a change the operator made does not say, and needs it
@@ -123,8 +124,16 @@ export function RoutineTrack(props: RoutineTrackProps) {
   return <TrackCard {...props} status={status} />;
 }
 
-function TriggerIcon({ trigger }: { readonly trigger: RoutineTrigger }) {
-  return trigger._tag === "webhook" ? <WebhookIcon /> : <CalendarClockIcon />;
+function TriggerIcon({ trigger }: { readonly trigger: TrackTrigger }) {
+  switch (trigger._tag) {
+    case "webhook":
+      return <WebhookIcon />;
+    case "event":
+      return <PlugZapIcon />;
+    case "once":
+    case "schedule":
+      return <CalendarClockIcon />;
+  }
 }
 
 function TrackCard({
@@ -199,7 +208,7 @@ export function RoutineSentence({
   id,
   className,
 }: {
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly steps: ReadonlyArray<RoutineStep>;
   readonly id?: string;
   readonly className?: string;
@@ -264,7 +273,7 @@ function lightColor(station: Station | undefined, bots: ReadonlyMap<BotId, Bot>)
 
 interface RailProps {
   readonly name: string;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly owner: BotId | null;
   readonly stations: ReadonlyArray<Station>;
   readonly retryable: boolean;
@@ -559,7 +568,7 @@ interface StationRowProps {
   /** Its place among the stations shown. */
   readonly place: number;
   readonly stations: ReadonlyArray<Station>;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
   readonly owner: BotId | null;
   /** Why the steps after the run's end were skipped. */
   readonly reason: string | null;
@@ -616,7 +625,7 @@ function StationMark({
   trigger,
 }: {
   readonly station: Station;
-  readonly trigger: RoutineTrigger;
+  readonly trigger: TrackTrigger;
 }) {
   switch (station._tag) {
     case "trigger":
@@ -723,7 +732,7 @@ function StationText({
   const ctx = usePresentation();
   switch (station._tag) {
     case "trigger":
-      return <p className="track-title">{scheduleInWords(trigger, ctx)}</p>;
+      return <p className="track-title">{triggerInWords(trigger, ctx)}</p>;
     case "bot": {
       const sub = botStationSub(station, reason, ctx);
       return (

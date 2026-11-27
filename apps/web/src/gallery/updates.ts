@@ -181,7 +181,6 @@ export const said = (status: ReceivedUpdateStatus): ServerUpdateView => ({
 /** The views of a server that does not say anything the gallery shows as a status. */
 export const serverViews = {
   unread: { _tag: "unread" },
-  unsupported: { _tag: "unsupported" },
   restarting: { _tag: "restarting", to: NEXT, last: restartingStatus },
   lost: { _tag: "lost", to: NEXT, last: restartingStatus },
 } satisfies Record<string, ServerUpdateView>;

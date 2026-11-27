@@ -31,24 +31,18 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import {
-  liveTurn,
-  millisBetween,
-  shortDuration,
-  shownPlan,
-  turnClock,
-  turnElapsed,
-} from "@j3-bots/client-runtime/presentation";
+import { shownPlan } from "@j3-bots/client-runtime/presentation";
 import { resolveAvatar, springs } from "@j3-bots/design-tokens";
-import { useSeconds } from "../app/clock";
 import { useBots, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { touchTarget } from "../lib/touchTarget";
 import {
   fillDetail,
+  fillText,
+  stepDetail,
+  stepMark,
   stepText,
-  turnLabel,
   turnLine,
   workFoldTitle,
 } from "@j3-bots/client-runtime/wording";
@@ -82,7 +76,7 @@ export interface TurnBot {
 interface WorkFoldProps {
   /** The turn's fold; null for a turn under way that has done no work yet. */
   readonly fold: WorkFoldEntry | null;
-  /** While the turn runs, its bot: the row says what it is doing, and for how long. */
+  /** While the turn runs, its bot: the row says what it is doing. */
   readonly live: TurnBot | null;
   /** The turn's steps once loaded; null while they load. */
   readonly steps: ReadonlyArray<WorkStep> | null;
@@ -139,11 +133,11 @@ function useFoldedHeight(root: RefObject<HTMLDivElement | null>, folding: boolea
 }
 
 /**
- * A turn's work in one row. While the turn runs: a small copy of the bot, one
- * line saying what it is doing now and the turn's clock; under it, the bot's
+ * A turn's work in one row. While the turn runs: a small copy of the bot and
+ * one line saying, in plain words, what it is doing now; under it, the bot's
  * little ones while part of the work runs in parallel, and the turn's plan as
- * a short card. When it ends, the row folds into one quiet line, "Worked for
- * 2m", that opens to every step, as the running row does once there are
+ * a short card. When it ends, the row folds into one quiet line, "Worked · 6
+ * steps", that opens to every step, as the running row does once there are
  * steps, and the plan into a line of its own, "Plan done, 4 of 4". Never opens
  * by itself.
  */
@@ -170,6 +164,8 @@ export function WorkFold({
   if (live !== null && !wasLive) setWasLive(true);
   const folding = live === null && wasLive;
   const hasSteps = fold !== null && fold.stepCount > 0;
+  // Once the turn has ended, a step still running, work it handed off, reads as part of it (`stepMark`).
+  const working = fold?.status._tag === "running";
   const root = useRef<HTMLDivElement>(null);
   useFoldedHeight(root, folding);
   // The turn's plan and little ones, and the bot whose they are: the one at work, or the fold's author.
@@ -249,24 +245,18 @@ export function WorkFold({
                 return (
                   <li key={step.id} className="flex min-h-7 items-start gap-2 py-1 text-xs">
                     <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
-                    {/* Long commands and paths wrap: every step reads in full without a pointer. */}
-                    {step.kind === "command" ? (
-                      <span className="min-w-0 flex-1 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">
-                        <CodeLines text={step.label} />
-                      </span>
-                    ) : step.fill !== undefined ? (
-                      <FillLine step={step} fill={step.fill} />
-                    ) : step.image !== undefined ? (
-                      <span className="flex min-w-0 flex-1 flex-col items-start gap-1.5 wrap-break-word">
-                        <span>{stepText(step, ctx.i18n)}</span>
-                        <StepImage id={step.image.id} onOpen={onOpenImage} />
-                      </span>
+                    {step.fill !== undefined ? (
+                      <FillLine fill={step.fill} />
                     ) : (
-                      <span className="min-w-0 flex-1 wrap-break-word">
-                        {stepText(step, ctx.i18n)}
+                      <span className="flex min-w-0 flex-1 flex-col items-start gap-1 wrap-break-word">
+                        <span>{stepText(step, working, ctx.i18n)}</span>
+                        <StepDetail step={step} />
+                        {step.image !== undefined && (
+                          <StepImage id={step.image.id} onOpen={onOpenImage} />
+                        )}
                       </span>
                     )}
-                    <StepStatus step={step} />
+                    <StepStatus step={step} working={working} />
                   </li>
                 );
               })}
@@ -280,15 +270,30 @@ export function WorkFold({
 }
 
 /**
+ * What a step worked on, as it was given, under its plain words: the command,
+ * the path or the search, quiet and in monospace, for whoever opened the
+ * steps to see it. Long ones wrap, so each reads in full without a pointer.
+ */
+function StepDetail({ step }: { readonly step: WorkStep }) {
+  const detail = stepDetail(step);
+  if (detail === null) return null;
+  return (
+    <span className="w-full font-mono text-2xs whitespace-pre-wrap text-muted-foreground wrap-anywhere">
+      {step.kind === "command" ? <CodeLines text={detail} /> : detail}
+    </span>
+  );
+}
+
+/**
  * A login's fill: which login and field, then where it was filled, or why it
  * was not, in the blocked tone, with the page's origin as the server checked it.
  */
-function FillLine({ step, fill }: { readonly step: WorkStep; readonly fill: CredentialFill }) {
+function FillLine({ fill }: { readonly fill: CredentialFill }) {
   const { i18n } = usePresentation();
   const detail = fillDetail(fill, i18n);
   return (
     <span className="flex min-w-0 flex-1 flex-col wrap-break-word">
-      <span>{stepText(step, i18n)}</span>
+      <span>{fillText(fill, i18n)}</span>
       {detail !== "" && (
         <span className={fill.outcome._tag === "filled" ? "text-muted-foreground" : "text-blocked"}>
           {detail}
@@ -353,12 +358,11 @@ const endTone = (fold: WorkFoldEntry) =>
     : "text-muted-foreground";
 
 /**
- * The running row: the bot at list size in its state, what it is doing now,
- * swapping as it moves to a new step, and the turn's clock, counted from the
- * turn's start on the server. Once there are steps, a chevron opens them.
- * Assistive technology reads the line and the time so far in minutes, not
- * each tick, nor the visible line a second time; out of touch, only the line.
- * The conversation's header says each new line aloud.
+ * The running row: the bot at list size in its state and what it is doing
+ * now, in plain words, swapping as it moves to a new step. Once there are
+ * steps, a chevron opens them. Assistive technology reads the line once, not
+ * the visible line a second time as it swaps; the conversation's header says
+ * each new line aloud.
  */
 function LiveLine({
   turn,
@@ -376,11 +380,7 @@ function LiveLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const offline = useOffline();
-  const started = liveTurn(turn.bot);
-  // Out of touch, the client cannot say how long the turn has run: the clock stops showing.
-  const now = useSeconds(started !== null && !offline);
   const line = turnLine(turn.bot, offline, ctx);
-  const elapsed = started === null ? null : turnElapsed(started, now);
   return (
     <div className="flex min-h-8 items-center gap-2.5 text-xs">
       {/* Above its little ones, which come out from behind it. */}
@@ -391,16 +391,8 @@ function LiveLine({
         <span aria-hidden>
           <SwapText text={line.text} className={toneClass[line.tone]} />
         </span>
-        <span className="sr-only">{turnLabel(line, offline ? null : elapsed, ctx)}</span>
+        <span className="sr-only">{line.text}</span>
       </span>
-      {elapsed !== null && !offline && (
-        <span
-          aria-hidden
-          className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums"
-        >
-          {turnClock(elapsed)}
-        </span>
-      )}
       {hasSteps && (
         <Collapsible.Trigger
           aria-label={t("work.showSteps")}
@@ -419,10 +411,10 @@ function LiveLine({
   );
 }
 
-function StepStatus({ step }: { step: WorkStep }) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
-  switch (step.status) {
+/** A step's mark (`stepMark`): running, done or failed, or none. */
+function StepStatus({ step, working }: { step: WorkStep; working: boolean }) {
+  const { t } = usePresentation().i18n;
+  switch (stepMark(step, working)) {
     case "running":
       return (
         <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
@@ -434,12 +426,13 @@ function StepStatus({ step }: { step: WorkStep }) {
       return <XIcon className="size-3.5 shrink-0 text-blocked" aria-label={t("work.stepFailed")} />;
     case "completed":
       return (
-        <span className="flex items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-          {step.finishedAt &&
-            shortDuration(millisBetween(step.startedAt, step.finishedAt), ctx.i18n)}
-          <CheckIcon className="size-3.5 shrink-0" aria-label={t("work.stepDone")} />
-        </span>
+        <CheckIcon
+          className="size-3.5 shrink-0 text-muted-foreground"
+          aria-label={t("work.stepDone")}
+        />
       );
+    case null:
+      return null;
   }
 }
 

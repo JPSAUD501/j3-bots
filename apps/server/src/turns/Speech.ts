@@ -12,7 +12,10 @@ import {
   ROOM_QUIET_ROUND,
   RoomId,
   type SecretAskEntry,
+  type SecretName,
   secretReference,
+  secretRequestFieldId,
+  SetupPageUrl,
   siteOriginOf,
   type Visual,
   visualEscapesGuard,
@@ -33,6 +36,7 @@ import {
   ROOM_READ_COUNT,
   SECRET_ASK_EXISTS,
   SECRET_ASK_SHOWN,
+  SECRET_ASK_VALUES_SHOWN,
   type ToolInput,
 } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
@@ -50,6 +54,7 @@ import type { BotSession } from "../bots/EngineSessions.ts";
 import { BROWSER_HELP_WAIT, siteOf } from "../browser/browserHelpRules.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Entries } from "../entries/Entries.ts";
+import { Reactions } from "../reactions/Reactions.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
@@ -83,6 +88,7 @@ import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
 import { type RoomReader, roomReads } from "./roomReads.ts";
 import { routineSpeech } from "./routineSpeech.ts";
+import { quietTurns } from "./quietTurns.ts";
 import { saidInConversation } from "./saidInConversation.ts";
 import { finishStepTool } from "./finishStepTool.ts";
 import { type Once, routineTool } from "./routineTool.ts";
@@ -219,12 +225,32 @@ type SayVisual = NonNullable<ToolInput<"say">["visual"]>;
 const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
 const decodeVisualHtml = Schema.decodeUnknownOption(VisualHtml);
 const decodeVisualTitle = Schema.decodeUnknownOption(VisualTitle);
+const decodeSetupPage = Schema.decodeUnknownOption(SetupPageUrl);
+
+/** The page an ask links to, where the service issues what it asks for, as the card takes it. */
+const setupOf = (
+  input: ToolInput<"ask_for_secret">,
+): Effect.Effect<Pick<SecretAskEntry, "setup">, TurnToolRefused> => {
+  if (input.setup === undefined) return Effect.succeed({});
+  const setup = decodeSetupPage(input.setup);
+  return Option.isSome(setup)
+    ? Effect.succeed({ setup: setup.value })
+    : Effect.fail(
+        new TurnToolRefused({
+          reason:
+            "Nothing was shown: setup must be an https address, such as the service's page where it issues keys.",
+        }),
+      );
+};
+
+const NAME_REFUSED =
+  "Nothing was shown: a name must be lower-case letters, digits, `-` and `_`, starting with a letter or a digit, such as `github-work`.";
 
 /** What an `ask_for_secret` asks for: a login takes the origin of the page that asks for it. */
 const secretAskOf = (
   input: ToolInput<"ask_for_secret">,
 ): Effect.Effect<SecretAskEntry["secret"], TurnToolRefused> => {
-  if (input.kind === "value") {
+  if (input.kind === "value" || input.kind === "values") {
     return input.origin === undefined
       ? Effect.succeed({ _tag: "value" })
       : Effect.fail(
@@ -264,6 +290,7 @@ const askFits = (
 type PinnedTool =
   | "say"
   | "ask"
+  | "react"
   | "request_browser_help"
   | "message_bot"
   | "read_room"
@@ -319,6 +346,8 @@ export const layer = Layer.effect(
     const transaction = transactional(sql);
     const observer = yield* Observer;
     const entries = yield* Entries;
+    const reactions = yield* Reactions;
+    const quiet = quietTurns(sql);
     const ledger = yield* Ledger;
     const attachments = yield* Attachments;
     const bots = yield* BotStore;
@@ -1058,6 +1087,7 @@ export const layer = Layer.effect(
                   });
                 }
                 const target = yield* requireTarget(found.botId, audience);
+                yield* quiet.spoke(found.sessionId, found.turnId);
                 const room = target._tag === "room" ? yield* roomOf(target.roomId) : Option.none();
                 const mention = Option.isSome(room)
                   ? yield* mentionedIn(found, room.value, given)
@@ -1124,6 +1154,33 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * `react`: the bot's reaction on a message where its turn speaks
+     * (`Reactions.byBot`). It notifies nobody; `done` makes it the whole
+     * reply, as `say`'s does.
+     */
+    const react = Effect.fn("Speech.react")(function* (found: Pin, input: ToolInput<"react">) {
+      return yield* once(
+        "react",
+        found,
+      )(
+        Effect.gen(function* () {
+          const target = yield* requireTarget(found.botId, found.audience);
+          yield* reactions.byBot({
+            botId: found.botId,
+            target,
+            entryId: input.message,
+            emoji: input.emoji,
+          });
+          yield* quiet.spoke(found.sessionId, found.turnId);
+          if (input.done === true) {
+            for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "done");
+          }
+          return { status: "recorded" } satisfies Schema.Json;
+        }),
+      );
+    });
+
     const ask = Effect.fn("Speech.ask")(function* (found: Pin, input: ToolInput<"ask">) {
       // An answer wakes the bot's main session, which never saw a routine's
       // question: a routine's turn says what it needs instead.
@@ -1153,6 +1210,7 @@ export const layer = Layer.effect(
           // the room is told once a turn where to look. Its answer still
           // wakes the bot for the audience that asked.
           yield* requireTarget(found.botId, found.audience);
+          yield* quiet.spoke(found.sessionId, found.turnId);
           const card = yield* entries.append({
             target: { _tag: "conversation", botId: found.botId },
             entry: {
@@ -1965,14 +2023,11 @@ export const layer = Layer.effect(
       found: Pin,
       input: ToolInput<"ask_for_secret">,
     ) {
-      const name = nameFromBot(input.name);
-      if (Option.isNone(name)) {
-        return yield* new TurnToolRefused({
-          reason:
-            "Nothing was shown: name must be lower-case letters, digits, `-` and `_`, starting with a letter or a digit, such as `github-work`.",
-        });
-      }
+      if (input.kind === "values") return yield* askForValues(found, input);
+      const name = nameFromBot(input.name ?? "");
+      if (Option.isNone(name)) return yield* new TurnToolRefused({ reason: NAME_REFUSED });
       const secret = yield* secretAskOf(input);
+      const setup = yield* setupOf(input);
       const reference = secretReference(name.value);
       return yield* once(
         "ask_for_secret",
@@ -2025,6 +2080,7 @@ export const layer = Layer.effect(
               author: { _tag: "bot", botId: found.botId },
               name: name.value,
               secret,
+              ...setup,
               note: input.note,
               status: { _tag: "pending" },
             },
@@ -2040,6 +2096,94 @@ export const layer = Layer.effect(
             )
           `.pipe(Effect.orDie);
           return { status: "shown", reference, note: SECRET_ASK_SHOWN } satisfies Schema.Json;
+        }),
+      );
+    });
+
+    /**
+     * `ask_for_secret` for a few values that go together, such as a service's
+     * client ID and secret: one card with a field for each, each saved as a
+     * single value under its own name. Refused, with nothing written, when a
+     * secret has one of the names already, or one of the bot's asks under one
+     * still waits: the bot asks only for what it lacks, under names of its own.
+     */
+    const askForValues = Effect.fn("Speech.askForValues")(function* (
+      found: Pin,
+      input: ToolInput<"ask_for_secret">,
+    ) {
+      const asked: Array<{
+        readonly name: SecretName;
+        readonly label: string;
+        readonly masked: boolean;
+      }> = [];
+      for (const value of input.values ?? []) {
+        const name = nameFromBot(value.name);
+        if (Option.isNone(name)) return yield* new TurnToolRefused({ reason: NAME_REFUSED });
+        asked.push({ name: name.value, label: value.label, masked: value.shown !== true });
+      }
+      const names = asked.map((value) => value.name);
+      const [first] = names;
+      if (first === undefined || new Set(names).size !== names.length) {
+        return yield* new TurnToolRefused({
+          reason: "Nothing was shown: give each value a name of its own.",
+        });
+      }
+      const setup = yield* setupOf(input);
+      const references = names.map(secretReference);
+      return yield* once(
+        "ask_for_secret",
+        found,
+      )(
+        Effect.gen(function* () {
+          for (const name of names) {
+            const existing = yield* secrets.named(name).pipe(Effect.option);
+            if (Option.isSome(existing) && Option.isSome(existing.value)) {
+              return yield* new TurnToolRefused({
+                reason: `Nothing was shown: a secret named ${name} exists already. If you may use it and it is what you need, ask only for the others; otherwise ask under other names.`,
+              });
+            }
+            const [waiting] = yield* waitingAsk({ botId: found.botId, name });
+            if (waiting !== undefined) {
+              return yield* new TurnToolRefused({
+                reason: `Nothing was shown: your card asking under the name ${name} still waits. Wait for it, or ask under other names.`,
+              });
+            }
+          }
+          const target = yield* requireTarget(found.botId, conversation);
+          const work = yield* workStopped(found);
+          if (work.stopped) {
+            return yield* new TurnToolRefused({
+              reason: "Nothing was shown: your user stopped this work. Stop here.",
+            });
+          }
+          const card = yield* entries.append({
+            target,
+            entry: {
+              _tag: "secret-ask",
+              author: { _tag: "bot", botId: found.botId },
+              name: first,
+              secret: { _tag: "value" },
+              values: asked.map((value, index) => ({ id: secretRequestFieldId(index), ...value })),
+              ...setup,
+              note: input.note,
+              status: { _tag: "pending" },
+            },
+          });
+          const now = yield* DateTime.now;
+          const columns = audienceColumns(found.audience);
+          yield* sql`
+            INSERT INTO secret_asks (
+              entry_id, bot_id, audience, audience_room_id, origin_seq, expires_at, created_at
+            ) VALUES (
+              ${card.id}, ${found.botId}, ${columns.audience}, ${columns.roomId}, ${work.seq},
+              ${timeText(DateTime.addDuration(now, SECRET_ASK_WAIT))}, ${timeText(now)}
+            )
+          `.pipe(Effect.orDie);
+          return {
+            status: "shown",
+            references,
+            note: SECRET_ASK_VALUES_SHOWN,
+          } satisfies Schema.Json;
         }),
       );
     });
@@ -2067,6 +2211,8 @@ export const layer = Layer.effect(
           return yield* say(found, call.input);
         case "ask":
           return yield* ask(found, call.input);
+        case "react":
+          return yield* react(found, call.input);
         case "request_browser_help":
           return yield* requestBrowserHelp(found, call.input);
         case "message_bot":

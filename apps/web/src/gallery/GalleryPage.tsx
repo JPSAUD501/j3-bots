@@ -99,7 +99,6 @@ import {
   teammatesOf,
   withLiveTurn,
   mentionOptions,
-  type AiAccount,
   type OnboardingStep,
   type SettingsPage,
 } from "@j3-bots/client-runtime/presentation";
@@ -183,6 +182,7 @@ import {
   trackRoutine,
   trackRuns,
   trackSteps,
+  trackEventTrigger,
   trackTrigger,
 } from "./sampleRoutineTrack";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
@@ -226,7 +226,8 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
-import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
+import { useSampleSecrets } from "./sampleSecrets";
+import { withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
 import { galleryImage } from "./workImages";
 import { SAMPLE_DOCUMENTS, sampleDocumentBytes } from "./sampleDocuments";
@@ -326,6 +327,7 @@ export default function GalleryPage() {
                 <RosterSection />
                 <RosterOrganizeSection />
                 <BubblesSection />
+                <ReactionsSection />
                 <DocumentsSection />
                 <CardsSection />
                 <RoutineTracksSection />
@@ -1027,7 +1029,6 @@ const sampleNotification = (
  */
 const sampleNotifications: ReadonlyArray<Notification> = [
   sampleNotification("message", ids.scout),
-  sampleNotification("handoff", ids.wren),
   sampleNotification("question", ids.otto),
   sampleNotification("approval", ids.atlas),
   sampleNotification("secret-request", ids.iris),
@@ -1249,6 +1250,7 @@ const timelineIntents: TimelineIntents = {
   declineSecretAsk: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
+  react: nothing,
   openWorkFold: nothing,
   openAttachment: nothing,
   openWorkImage: nothing,
@@ -1445,6 +1447,80 @@ function BubblesSection() {
   );
 }
 
+function ReactionsSection() {
+  const { reactions } = variants;
+  return (
+    <Section title="Reactions">
+      <Labeled label="Under a message, a bot's and the operator's: one pill per emoji, a count past one, the operator's own marked. Hover a pill for who reacted, a deleted bot among them; hover a message for React. Clicking your pill takes it off, another sets that emoji as yours">
+        <ReactingBubbles />
+      </Labeled>
+      <Frame
+        label="React open: the quick reactions, the operator's 🎉 marked, then More"
+        width={420}
+        height={150}
+        replay
+      >
+        <div className="flex h-full flex-col justify-end p-4">
+          <MessageBubble
+            message={reactions.onBot}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onReact={nothing}
+            reactionView="quick"
+          />
+        </div>
+      </Frame>
+      <Frame label="More open: every reaction, by group" width={420} height={470} replay>
+        <div className="flex h-full flex-col justify-end p-4">
+          <MessageBubble
+            message={reactions.onBot}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            onReact={nothing}
+            reactionView="picker"
+          />
+        </div>
+      </Frame>
+      <Labeled label="After taking off your 🎉: two left, and the pill no longer marked">
+        <MessageBubble
+          message={reactions.removed}
+          position="single"
+          onOpenAttachment={nothing}
+          onRetry={nothing}
+          onReact={nothing}
+        />
+      </Labeled>
+    </Section>
+  );
+}
+
+/** A bot's message and the operator's, whose reactions change as the operator picks. */
+function ReactingBubbles() {
+  const { onBot, onOperator } = variants.reactions;
+  const [botReactions, setBotReactions] = useState(onBot.reactions ?? []);
+  const [operatorReactions, setOperatorReactions] = useState(onOperator.reactions ?? []);
+  return (
+    <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+      <MessageBubble
+        message={{ ...onBot, reactions: botReactions }}
+        position="single"
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+        onReact={(emoji) => setBotReactions((current) => withOwnReaction(current, emoji))}
+      />
+      <MessageBubble
+        message={{ ...onOperator, reactions: operatorReactions }}
+        position="single"
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+        onReact={(emoji) => setOperatorReactions((current) => withOwnReaction(current, emoji))}
+      />
+    </div>
+  );
+}
+
 /** The gallery's documents, read as the server's would be, in the gallery's language. */
 function GalleryDocuments({ children }: { children: ReactNode }) {
   const { locale } = useI18n();
@@ -1544,9 +1620,7 @@ function CardsSection() {
       <Labeled label="Approval becoming exact while it waits: the change arrives after the summary, and focus in the summary moves to it">
         <ApprovalBecomingExact />
       </Labeled>
-      <Labeled
-        label={`A bot asks for a secret: a login, a value, either while secrets wait for the old vault's password (“${SAMPLE_OLD_VAULT_PASSWORD}”); saved, declined, expired`}
-      >
+      <Labeled label="A bot asks for a secret: a login, a value, either while the secrets can’t be read; saved, declined, expired">
         <AskCards />
       </Labeled>
       <Labeled label="Connector sign-in: pending, signed in, removed">
@@ -1614,14 +1688,15 @@ function CardsSection() {
 /** A bot's ask for a secret in each state, each with secrets of its own. */
 function AskCards() {
   const ready = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
-  const oldVault = useSampleSecrets({ state: "old-vault", now: () => SAMPLE_NOW });
-  const [login, value, ...closed] = variants.asks;
-  if (login === undefined || value === undefined) return null;
+  const unreadable = useSampleSecrets({ state: "unreadable", now: () => SAMPLE_NOW });
+  const [login, value, values, ...closed] = variants.asks;
+  if (login === undefined || value === undefined || values === undefined) return null;
   return (
     <div className="flex flex-col gap-3">
       <SecretAskCard entry={login} secrets={ready} onDecline={nothing} />
       <SecretAskCard entry={value} secrets={ready} onDecline={nothing} />
-      <SecretAskCard entry={value} secrets={oldVault} onDecline={nothing} />
+      <SecretAskCard entry={values} secrets={ready} onDecline={nothing} />
+      <SecretAskCard entry={value} secrets={unreadable} onDecline={nothing} />
       {closed.map((entry) => (
         <SecretAskCard key={entry.id} entry={entry} secrets={ready} onDecline={nothing} />
       ))}
@@ -1642,7 +1717,6 @@ const turnStates = (() => {
         _tag: "thinking",
         since: ago(7),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
       }),
@@ -1654,7 +1728,6 @@ const turnStates = (() => {
         _tag: "thinking",
         since: ago(3),
         stalled: false,
-        quietSince: null,
         typing: true,
         retrying: false,
       }),
@@ -1666,10 +1739,10 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(72),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
         activity: "pnpm test billing",
+        activityKind: "command",
         tool: null,
         littleOnes: 0,
       }),
@@ -1686,10 +1759,10 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(1220),
         stalled: true,
-        quietSince: ago(780),
         typing: false,
         retrying: false,
         activity: null,
+        activityKind: null,
         tool: null,
         littleOnes: 0,
       }),
@@ -1701,10 +1774,10 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(95),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: true,
         activity: "pnpm test billing",
+        activityKind: "command",
         tool: null,
         littleOnes: 0,
       }),
@@ -1716,10 +1789,10 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(3723),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
         activity: null,
+        activityKind: null,
         tool: "browser",
         littleOnes: 0,
       }),
@@ -1746,7 +1819,7 @@ function WorkSection() {
             ))}
           </div>
         </Labeled>
-        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
+        <Labeled label="Folded: running with no turn seen, finished, images it looked at (shown, arriving, gone), finished with work it handed off still running, using a connector's skills, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, secrets unavailable)">
           <div className="flex flex-col gap-2">
             {variants.folds.map(({ entry, steps, open }) => (
               <WorkFold
@@ -1773,10 +1846,10 @@ const scoutWorking = (doing: string, littleOnes = 0): Bot => ({
     _tag: "working",
     since: DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) - 72_000),
     stalled: false,
-    quietSince: null,
     typing: false,
     retrying: false,
     activity: doing,
+    activityKind: "command",
     tool: null,
     littleOnes,
   },
@@ -2428,6 +2501,28 @@ function RoutineTracksSection() {
           </div>
         </Labeled>
       ))}
+      <Labeled label="On a connector's event: the trigger reads in its words, with the connector's mark, at rest and in a run">
+        <div className="flex flex-col">
+          <RoutineTrack
+            entryId={trackEntry("event-rest")}
+            name={trackName}
+            trigger={trackEventTrigger}
+            owner={trackOwner}
+            steps={trackSteps}
+            run={null}
+          />
+          <RoutineTrack
+            entryId={trackEntry("event-run")}
+            name={trackName}
+            trigger={trackEventTrigger}
+            owner={trackOwner}
+            steps={trackSteps}
+            run={trackMoments.waiting}
+            onAnswer={nothing}
+            onStop={nothing}
+          />
+        </div>
+      </Labeled>
       <Labeled label="How a run ends: each folds into one line that opens its whole rail">
         <div className="flex flex-col">
           {trackEndings.map(([label, moment]) => (
@@ -2975,7 +3070,10 @@ function ConnectorsGallerySection() {
           initialSkills={shippedSkills}
         />
         <ConnectorsVariant label="Offline" at={{ _tag: "home" }} connected={false} />
-        <ConnectorsVariant label="Connected, for all bots" at={connectorAt(0)} />
+        <ConnectorsVariant
+          label="Connected, for all bots, with the skills its server offers"
+          at={connectorAt(0)}
+        />
         <ConnectorsVariant
           label="Signing in again from a browser: paste the address"
           at={connectorAt(1, true)}
@@ -3675,7 +3773,6 @@ function SecretsGallerySection() {
   const now = () => SAMPLE_NOW;
   const saved = useSampleSecrets({ state: "ready", now, secrets: variants.savedSecrets });
   const empty = useSampleSecrets({ state: "ready", now });
-  const oldVault = useSampleSecrets({ state: "old-vault", now, secrets: variants.savedSecrets });
   const unreadable = useSampleSecrets({ state: "unreadable", now });
   const newer = useSampleSecrets({ state: "newer", now });
   return (
@@ -3691,14 +3788,6 @@ function SecretsGallerySection() {
         </Frame>
         <Frame padded label="None saved yet; Add a secret opens the form" width={420} height={640}>
           <SecretsSection secrets={empty} />
-        </Frame>
-        <Frame
-          padded
-          label={`A vault from before secrets (the password is “${SAMPLE_OLD_VAULT_PASSWORD}”)`}
-          width={420}
-          height={420}
-        >
-          <SecretsSection secrets={oldVault} />
         </Frame>
         <Frame padded label="The key file is missing" width={420} height={200}>
           <SecretsSection secrets={unreadable} />
@@ -3806,7 +3895,6 @@ const speakingFirst = {
     _tag: "thinking",
     since: SAMPLE_NOW,
     stalled: false,
-    quietSince: null,
     typing: false,
     retrying: false,
   },
@@ -3822,7 +3910,6 @@ function FirstRunAt({
   engine = team.engine,
   providerSetup,
   starting = false,
-  account,
   inDesktopApp = false,
 }: {
   step: OnboardingStep;
@@ -3830,8 +3917,6 @@ function FirstRunAt({
   providerSetup?: LocalProviderSetup;
   /** The server on this computer has not answered yet. */
   starting?: boolean;
-  /** The AI account the connect step is open on; without it, it asks which. */
-  account?: AiAccount;
   /** Seen from a device that reaches the desktop app's server. */
   inDesktopApp?: boolean;
 }) {
@@ -3840,7 +3925,6 @@ function FirstRunAt({
       engine={engine}
       initialStep={step}
       initialName="Maya"
-      initialAccount={account}
       providerSetup={providerSetup}
       starting={starting}
       serverUpdate={inDesktopApp ? said(serverStatuses.desktopManaged) : undefined}
@@ -3898,56 +3982,53 @@ function FirstRunSection() {
         <Frame label="Its look" width={390} height={760} replay>
           <FirstRunAt step="look" />
         </Frame>
-        <Frame label="The AI: which one do you have?" width={390} height={760}>
+        <Frame
+          label="The AI, on a server: one row each, How to connect beside Not connected"
+          width={390}
+          height={760}
+        >
           <FirstRunAt step="connect" engine={engines.connect} />
         </Frame>
         <Frame
-          label="Claude picked, on a server: the sign-in drawn, one command"
+          label="From a device that reaches the desktop app: How to connect says where"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.connect} account="claude-code" />
-        </Frame>
-        <Frame
-          label="ChatGPT picked, from a device that reaches the desktop app: sign in there"
-          width={390}
-          height={760}
-        >
-          <FirstRunAt step="connect" engine={engines.connect} account="codex" inDesktopApp />
+          <FirstRunAt step="connect" engine={engines.connect} inDesktopApp />
         </Frame>
         <Frame label="Claude still being checked" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.checking} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.checking} />
         </Frame>
         <Frame
           label="Claude downloading: calm progress, and Create works meanwhile"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.gettingClaude} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.gettingClaude} />
         </Frame>
         <Frame
           label="The download did not finish: why, Try again, and the rest under Details"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.gettingFailed} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.gettingFailed} />
         </Frame>
         <Frame
           label="A machine J3 Bots downloads nothing for: its maker's page, and Look again"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.cannotGet} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.cannotGet} />
         </Frame>
         <Frame
           label="Claude found but not starting: Try again, the engine's words under Details"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.failed} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.failed} />
         </Frame>
         <Frame label="Claude turned off on the server" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.disabled} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.disabled} />
         </Frame>
         <Frame label="Claude connected, at its usage limit" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.unusable} />
@@ -3957,20 +4038,24 @@ function FirstRunSection() {
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.bothInstalling} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.bothInstalling} />
         </Frame>
         <Frame
           label="Claude's download refused while another program held it: the true reason, Try again"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.copyInUse} account="claude-code" />
+          <FirstRunAt step="connect" engine={engines.copyInUse} />
         </Frame>
         <Frame label="J3 Bots still starting: Create waits, and says so" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.downloading} />
         </Frame>
-        <Frame label="Still starting, with an account picked" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.downloadingNoTotal} account="codex" />
+        <Frame
+          label="Still starting, a download that does not say its size"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.downloadingNoTotal} />
         </Frame>
         <Frame
           label="Still starting, the account already downloading beside it, as the server reports from its start"
@@ -3989,7 +4074,6 @@ function FirstRunSection() {
                 codex: noCopy,
               },
             }}
-            account="claude-code"
           />
         </Frame>
         <Frame
@@ -4133,18 +4217,25 @@ function LocalFirstRunSection() {
         <Frame label="Preparing a server elsewhere" width={390} height={760}>
           <FirstRunAt step="look" engine={engines.harnessesArriving} />
         </Frame>
-        <Frame label="The AI: which one do you have?" width={390} height={760}>
+        <Frame
+          label="The AI, on a server: one row each, How to connect beside Not connected"
+          width={390}
+          height={760}
+        >
           <FirstRunAt
             step="connect"
             engine={engines.connect}
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>
-        <Frame label="Claude picked: the sign-in drawn, one big button" width={390} height={760}>
+        <Frame
+          label="On this computer: Sign in with Claude beside Not connected"
+          width={390}
+          height={760}
+        >
           <FirstRunAt
             step="connect"
             engine={engines.connect}
-            account="claude-code"
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>
@@ -4155,7 +4246,11 @@ function LocalFirstRunSection() {
             providerSetup={localSetup(harnessesFound.both, [["claude-code", { _tag: "starting" }]])}
           />
         </Frame>
-        <Frame label="Signing in, in the browser" width={390} height={760}>
+        <Frame
+          label="Signing in: the browser opened by itself, Cancel beside it, the page again if it did not"
+          width={390}
+          height={760}
+        >
           <FirstRunAt
             step="connect"
             engine={engines.connect}
@@ -4186,7 +4281,6 @@ function LocalFirstRunSection() {
           <FirstRunAt
             step="connect"
             engine={engines.connect}
-            account="codex"
             providerSetup={localSetup(harnessesFound.both, [
               ["codex", { _tag: "failed", reason: "timed-out" }],
             ])}
@@ -4200,7 +4294,6 @@ function LocalFirstRunSection() {
           <FirstRunAt
             step="connect"
             engine={engines.connect}
-            account="claude-code"
             providerSetup={localSetup(harnessesFound.both, [
               ["claude-code", { _tag: "failed", reason: "needs-terminal" }],
             ])}
@@ -4214,7 +4307,6 @@ function LocalFirstRunSection() {
           <FirstRunAt
             step="connect"
             engine={engines.gettingClaude}
-            account="claude-code"
             providerSetup={localSetup(harnessesFound.none)}
           />
         </Frame>
@@ -4226,7 +4318,6 @@ function LocalFirstRunSection() {
           <FirstRunAt
             step="connect"
             engine={engines.downloading}
-            account="claude-code"
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
@@ -4238,7 +4329,6 @@ function LocalFirstRunSection() {
           <FirstRunAt
             step="connect"
             engine={engines.failed}
-            account="claude-code"
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
@@ -4257,6 +4347,55 @@ function LocalFirstRunSection() {
         </Frame>
         <Frame
           padded
+          label="Settings: Claude signed in and being checked, ChatGPT not connected"
+          width={420}
+          height={560}
+        >
+          <EngineSection
+            engine={engines.connect}
+            stale={false}
+            actions={providerActions}
+            connect={{
+              _tag: "here",
+              setup: localSetup(harnessesFound.both, [
+                ["claude-code", { _tag: "succeeded", endpoint: null }],
+              ]),
+            }}
+          />
+        </Frame>
+        <Frame
+          padded
+          label="Settings: a sign-in that did not finish, Try again beside why"
+          width={420}
+          height={560}
+        >
+          <EngineSection
+            engine={engines.connect}
+            stale={false}
+            actions={providerActions}
+            connect={{
+              _tag: "here",
+              setup: localSetup(harnessesFound.both, [
+                ["codex", { _tag: "failed", reason: "timed-out" }],
+              ]),
+            }}
+          />
+        </Frame>
+        <Frame
+          padded
+          label="Settings on another device: How to connect beside Not connected"
+          width={420}
+          height={560}
+        >
+          <EngineSection
+            engine={engines.connect}
+            stale={false}
+            actions={providerActions}
+            connect={{ _tag: "server" }}
+          />
+        </Frame>
+        <Frame
+          padded
           label="Settings: one account connected, the other signing in"
           width={420}
           height={560}
@@ -4268,7 +4407,7 @@ function LocalFirstRunSection() {
             connect={{
               _tag: "here",
               setup: localSetup(harnessesFound.both, [
-                ["codex", { _tag: "waiting-for-browser", url: signInPage, opened: true }],
+                ["codex", { _tag: "waiting-for-browser", url: signInPage, opened: false }],
               ]),
             }}
           />
@@ -4351,7 +4490,7 @@ function EmptyStatesSection() {
             connect={{
               _tag: "here",
               setup: localSetup(harnessesFound.both, [
-                ["claude-code", { _tag: "waiting-for-browser", url: signInPage, opened: true }],
+                ["claude-code", { _tag: "waiting-for-browser", url: signInPage, opened: false }],
               ]),
             }}
             actions={providerActions}
@@ -4562,13 +4701,13 @@ const grantedLink: Extract<LocalPairingLink, { readonly _tag: "granted" }> = {
 
 /**
  * Bots that moved from this computer the day before the sample's now,
- * leaving out their secrets, still in an old vault, and two files.
+ * leaving out their secrets, whose key was missing, and two files.
  */
 const movedAway = {
   file: "/exports/j3-bots-export-2026-11-19.tar.gz",
   at: DateTime.subtract(SAMPLE_NOW, { days: 1 }),
   leftOut: {
-    secrets: "old-vault",
+    secrets: "unreadable",
     links: 0,
     names: 2,
     firstNames: ["bots/ana/files/report\\draft.md", "shared/memory/notes\\old.md"],
@@ -5066,10 +5205,6 @@ function UpdatesGallerySection() {
           server={serverUpdate(said(s.refused))}
         />
         <UpdatesFrame
-          label="A server older than updates from the apps"
-          server={serverUpdate(serverViews.unsupported)}
-        />
-        <UpdatesFrame
           label="The app: downloading"
           app={appUpdate(appPhases.downloading)}
           height={300}
@@ -5195,13 +5330,6 @@ function UpdatesGallerySection() {
             server={desktopServer}
             mismatch={{ behind: "server", serverVersion: "0.3.1" }}
             serverUpdate={serverUpdate(said({ ...s.startedByHand, available: null }))}
-          />
-        </Frame>
-        <Frame label="Mismatch: the server predates the update routes" width={390} height={560}>
-          <Incompatible
-            server={desktopServer}
-            mismatch={{ behind: "server", serverVersion: "0.3.0" }}
-            serverUpdate={serverUpdate(serverViews.unsupported)}
           />
         </Frame>
         <Frame label="Mismatch: the app is behind, it updates in place" width={390} height={560}>
@@ -5460,7 +5588,7 @@ function ShellFrame({
     browser ? "front" : null,
   );
   return (
-    // One app, one memory of the AI picked: the first run's choice opens in the conversation.
+    // One app, one memory of a sign-in asked for: the first run's carries into the conversation.
     <AiSessionProvider>
       <Shell
         data={source.data}

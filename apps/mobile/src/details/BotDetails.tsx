@@ -7,6 +7,7 @@ import {
   type Teammate,
   teammatesOf,
   trackCast,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import {
   useBotFiles,
@@ -43,6 +44,7 @@ import {
   FileText,
   Globe,
   NotebookText,
+  PlugZap,
   ShieldCheck,
   Webhook,
 } from "lucide-react-native";
@@ -335,7 +337,9 @@ function RoutineRow({
     ? CirclePause
     : routine.trigger._tag === "webhook"
       ? Webhook
-      : CalendarClock;
+      : routine.trigger._tag === "event"
+        ? PlugZap
+        : CalendarClock;
   const last = lines.lastRun;
   return (
     <View className="flex-row items-start gap-3">
@@ -371,7 +375,7 @@ function RoutineRow({
               <RoutineCast steps={steps} />
             </View>
             <RoutineSentence
-              trigger={routine.trigger}
+              trigger={trackTrigger(routine.trigger, routine.connectorName ?? null)}
               steps={steps}
               className="text-sm"
               lines={2}
@@ -379,7 +383,13 @@ function RoutineRow({
           </>
         )}
         {lines.status !== null && (
-          <Text className="text-xs text-muted-foreground">{lines.status}</Text>
+          <Text
+            className={
+              lines.status.blocked ? "text-xs text-blocked" : "text-xs text-muted-foreground"
+            }
+          >
+            {lines.status.text}
+          </Text>
         )}
         {last !== null && (
           // Only what went wrong is drawn in the blocked color; the run count stays quiet.

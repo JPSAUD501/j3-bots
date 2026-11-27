@@ -15,17 +15,14 @@ import {
   littleSpot,
   perkLittle,
   settleLitter,
-  shortDuration,
   stepLitter,
   stillLittle,
   syncLitter,
 } from "@j3-bots/client-runtime/presentation";
 import { type AvatarShapeName, litter, resolveAvatar } from "@j3-bots/design-tokens";
-import * as DateTime from "effect/DateTime";
 import { useLittleRows } from "@j3-bots/client-runtime/react";
 import { littleOneText } from "@j3-bots/client-runtime/wording";
 import { type CSSProperties, type RefObject, useEffect, useLayoutEffect, useRef } from "react";
-import { useSeconds } from "../app/clock";
 import { useI18n } from "../app/context";
 import { type AvatarHandle, AvatarParts, AVATAR_VIEW_BOX, painter } from "./avatar/BotAvatar";
 import { animate, reducedMotion } from "./avatar/ticker";
@@ -250,7 +247,7 @@ interface LittleOnesProps {
  * what it does, four at most and a count of the rest. They come out from
  * under the bot one after another, land by their lines and bob there; one
  * that ends jumps back up into the bot, grey first if it failed. Hovering or
- * pressing one shows its line in full and how long it has worked.
+ * pressing one shows its line in full.
  *
  * Everything that moves is drawn from the shared model
  * (`presentation/littleOnes.ts`) on the page's frame loop: no render of this
@@ -355,8 +352,8 @@ export function LittleOnes({
 
 /**
  * One little one and its line. The whole line is what opens its details: the
- * line in full and how long it has worked. Nothing else: it has no name, no
- * conversation and no result of its own.
+ * line in full, and that it failed for one that did. Nothing else: it has no
+ * name, no conversation and no result of its own.
  */
 function LittleRow({
   one,
@@ -407,19 +404,13 @@ function LittleRow({
   );
 }
 
-/** A little one's line in full, and how long it has worked, counted while this shows. */
+/** A little one's line in full, and that it failed, for one that did. */
 function LittleDetails({ one, failed }: { readonly one: LittleOne; readonly failed: boolean }) {
   const i18n = useI18n();
-  const now = useSeconds(!failed);
-  const worked = Math.max(0, now - DateTime.toEpochMillis(one.startedAt));
   return (
     <>
       <span className="wrap-break-word">{littleOneText(one, i18n)}</span>
-      <span className="text-muted-foreground">
-        {failed
-          ? i18n.t("littleOnes.failed")
-          : i18n.t("littleOnes.workingFor", { duration: shortDuration(worked, i18n) })}
-      </span>
+      {failed && <span className="text-muted-foreground">{i18n.t("littleOnes.failed")}</span>}
     </>
   );
 }

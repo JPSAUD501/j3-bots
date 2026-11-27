@@ -14,7 +14,6 @@ import {
   type AiAction,
   aiOutage,
   type AiPlace,
-  type SignInStep,
 } from "../presentation/aiAccount.ts";
 import { hasDefaultModel, providerDetail } from "../presentation/engine.ts";
 import type { SignInView } from "../stores/ProviderSetup.ts";
@@ -80,7 +79,7 @@ export function aiAccountText(
     case "ready":
       return {
         ...plain,
-        line: t("ai.ready", { account: name }),
+        line: t("ai.ready"),
         tone: "ready",
         hint: state.limit === null ? null : usageLimitText(state.limit.resetsAt, ctx),
       };
@@ -161,10 +160,7 @@ export function aiAccountText(
     case "preparing":
       return {
         ...plain,
-        line:
-          state.progress === null
-            ? t("ai.preparing")
-            : t("ai.preparing.progress", { percent: percent(state.progress) }),
+        line: t("ai.preparing"),
         tone: "waiting",
         hint: context.queued ? t("ai.queued") : null,
       };
@@ -336,42 +332,13 @@ export function aiActionLabel(action: AiAction, account: AiAccount, { t }: I18n)
 }
 
 /**
- * One of the sign-in's three steps, in a few words, where the account signs
- * in at `place`: only the first differs, since it is where the operator
- * starts.
- */
-export function signInStepLabel(
-  step: SignInStep,
-  account: AiAccount,
-  place: AiPlace,
-  { t }: I18n,
-): string {
-  switch (step) {
-    case "page":
-      return t(
-        place === "here"
-          ? "ai.steps.page.here"
-          : place === "desktop-app"
-            ? "ai.steps.page.desktopApp"
-            : "ai.steps.page.server",
-      );
-    case "sign-in":
-      return t("ai.steps.signIn", { account: aiAccountNames[account].name });
-    case "back":
-      return t("ai.steps.back");
-  }
-}
-
-/**
- * The first run's connect step, in words, for the bot named `name`:
- * - `title` and `body`: with no account opened, the question, which AI the
- *   operator has; with one, where it stands. When J3 Bots itself cannot run
- *   any (`aiOutage`), that it cannot, whether it is coming back by itself,
- *   and what the operator can do when its own install failed on a full disk
- *   or a file another program held;
- * - `says`: which of the account's own sentences the body already is, so the
- *   screen does not repeat it under itself: its `line`, its `hint`, or
- *   neither;
+ * The first run's connect step, in words, for the bot named `name`, above
+ * the accounts, each of which says where it stands itself:
+ * - `title` and `body`: the question, which AI the bot uses, until one is
+ *   `connected`, and then that it is. When J3 Bots itself cannot run any
+ *   (`aiOutage`), that it cannot, whether it is coming back by itself, and
+ *   what the operator can do when its own install failed on a full disk or a
+ *   file another program held;
  * - `details`: what J3 Bots itself says of an engine that is out, in its own
  *   words, for the step's "Details"; empty otherwise;
  * - `later`, while the bot can be created before its AI is connected, says
@@ -379,15 +346,14 @@ export function signInStepLabel(
  * - `createWaits`, while the server has no model to give the bot, so
  *   creating it would only be refused: why Create waits. That is while J3
  *   Bots is still starting or is out, when it lists no AI, and while no
- *   account it lists can take a bot, as one that failed to start beside one that lists
- *   no model until it is connected. Null while Create can be pressed, and
- *   before the server answers at all, when a client waits for it to create
- *   the bot.
+ *   account it lists can take a bot, as one that failed to start beside one
+ *   that lists no model until it is connected. Null while Create can be
+ *   pressed, and before the server answers at all, when a client waits for
+ *   it to create the bot.
  */
 export interface ConnectStepText {
   readonly title: string;
   readonly body: string;
-  readonly says: "line" | "hint" | null;
   readonly details: ReadonlyArray<string>;
   readonly later: string | null;
   readonly createWaits: string | null;
@@ -395,8 +361,7 @@ export interface ConnectStepText {
 
 export function connectStepText(
   engine: EngineStatus | null,
-  opened: { readonly account: AiAccount; readonly text: AiAccountText } | null,
-  state: AiAccountState | null,
+  connected: AiAccount | null,
   name: string,
   i18n: I18n,
 ): ConnectStepText {
@@ -415,8 +380,7 @@ export function connectStepText(
               : "onboarding.connect.createWaits.out",
           { name },
         );
-  const connected = state?._tag === "ready";
-  const later = canCreate && !connected ? t("onboarding.connect.later", { name }) : null;
+  const later = canCreate && connected === null ? t("onboarding.connect.later", { name }) : null;
   const rest = { details: [], later, createWaits } as const;
   const outage = aiOutage(engine);
   if (engine !== null && outage !== null) {
@@ -437,56 +401,19 @@ export function connectStepText(
         mine === "setup" && actionable && problem !== null
           ? problem.body
           : t(`onboarding.connect.${mine}.body`),
-      says: null,
       details: problem === null ? [] : [problem.title, problem.body],
     };
   }
-  if (opened === null || state === null) {
+  if (connected === null) {
     return {
       ...rest,
       title: t("onboarding.connect.choice.title", { name }),
       body: t("onboarding.connect.choice.body"),
-      says: null,
     };
   }
-  const title = stepTitle(state, aiAccountNames[opened.account].name, i18n);
-  if (connected) {
-    return { ...rest, title, body: t("onboarding.connect.ready.body", { name }), says: "line" };
-  }
-  // A signed-out account's line only says so, which the title already does:
-  // the body is what the operator does about it.
-  if (state._tag === "sign-in" && state.failed === null) {
-    return {
-      ...rest,
-      title,
-      body: opened.text.hint ?? t("onboarding.connect.signIn.body"),
-      says: "hint",
-    };
-  }
-  return { ...rest, title, body: opened.text.line, says: "line" };
-}
-
-function stepTitle(state: AiAccountState, account: string, { t }: I18n): string {
-  switch (state._tag) {
-    case "ready":
-      return t("onboarding.connect.ready.title", { account });
-    case "finishing":
-      return t("onboarding.connect.finishing.title");
-    case "signing-in":
-      return t("onboarding.connect.signIn.title", { account });
-    case "sign-in":
-      return state.failed === null
-        ? t("onboarding.connect.signIn.title", { account })
-        : t("onboarding.connect.failed.title");
-    case "getting":
-    case "checking":
-    case "preparing":
-      return t("onboarding.connect.getting.title", { account });
-    case "missing":
-      return state.canGet && state.failed === null
-        ? t("onboarding.connect.getting.title", { account })
-        : t("onboarding.connect.stuck.title", { account });
-    case "problem":
-      return t("onboarding.connect.stuck.title", { account });
-  }
+  return {
+    ...rest,
+    title: t("onboarding.connect.ready.title", { account: aiAccountNames[connected].name }),
+    body: t("onboarding.connect.ready.body", { name }),
+  };
 }

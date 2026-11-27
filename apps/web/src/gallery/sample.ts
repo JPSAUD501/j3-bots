@@ -17,6 +17,7 @@ import {
   pairBotIds,
   PairSeq,
   ModelId,
+  ReactionEmoji,
   ProviderId,
   RoomId,
   RoutineId,
@@ -35,6 +36,7 @@ import {
   type MemoryFile,
   type Mentions,
   type MessageDelivery,
+  type Reaction,
   type Room,
   type RosterItem,
   type Routine,
@@ -193,10 +195,10 @@ export function sampleTeam(now: DateTime.Utc) {
         _tag: "working",
         since: ago(9),
         stalled: false,
-        quietSince: null,
         typing: false,
         retrying: false,
         activity: "Checking which of the three the shop has in stock",
+        activityKind: "tool",
         tool: "browser",
         littleOnes: 0,
       },
@@ -232,10 +234,10 @@ export function sampleTeam(now: DateTime.Utc) {
         _tag: "working",
         since: ago(14),
         stalled: true,
-        quietSince: ago(12),
         typing: false,
         retrying: false,
         activity: "Comparing prices",
+        activityKind: "web",
         tool: null,
         littleOnes: 0,
       },
@@ -290,6 +292,7 @@ export function sampleTeam(now: DateTime.Utc) {
       prefix?: string;
       mentions?: ReadonlyArray<BotId>;
       visual?: Visual;
+      reactions?: ReadonlyArray<Reaction>;
     } = {},
   ): DraftEntry {
     return {
@@ -303,8 +306,15 @@ export function sampleTeam(now: DateTime.Utc) {
       delivery: options.delivery ?? { _tag: "delivered" },
       commandId: null,
       ...(options.visual === undefined ? {} : { visual: options.visual }),
+      // The sample stands for a server that has reactions, which sends them with every message.
+      reactions: options.reactions ?? [],
     };
   }
+
+  const reacted = (emoji: string, reactor: BotId | "operator"): Reaction => ({
+    emoji: ReactionEmoji.make(emoji),
+    by: reactor === "operator" ? operator : by(reactor),
+  });
 
   const attachments = {
     report: {
@@ -344,16 +354,17 @@ export function sampleTeam(now: DateTime.Utc) {
         _tag: "finished",
         finishedAt: ago(60 * 26 - 3),
         ending: "completed",
-        waitedMs: 0,
-        waitedBeforeMs: 0,
-        background: false,
       },
     },
     message(
       by(ids.scout),
       ago(60 * 26 - 3),
       "Three fit. All of them have a mid-drive motor, which is what makes the difference on that hill, and the cheapest needs the larger battery for the round trip.\n\nThe range figures come from owners, not spec sheets: see the `range_km` column. The most useful review is https://example.com/ebikes/long-term.",
-      { attachments: [attachments.report], visual: sampleVisuals.table },
+      {
+        attachments: [attachments.report],
+        visual: sampleVisuals.table,
+        reactions: [reacted("👍", "operator")],
+      },
     ),
     {
       _tag: "routine-change",
@@ -654,7 +665,10 @@ export function sampleTeam(now: DateTime.Utc) {
       by(ids.scout),
       ago(47),
       "1,284 new subscribers this quarter, up from 910. Most came through the March workshop.",
-      { prefix: "r" },
+      {
+        prefix: "r",
+        reactions: [reacted("🎉", ids.juniper), reacted("🎉", "operator"), reacted("👍", ids.wren)],
+      },
     ),
     message(
       by(ids.wren),
@@ -739,6 +753,15 @@ export function sampleTeam(now: DateTime.Utc) {
     note: null,
   });
 
+  const mailEvent = (summary: string) =>
+    ({
+      _tag: "event",
+      connectorId: ConnectorId.make("conn_samplemail0000000"),
+      name: "message_received",
+      arguments: {},
+      summary,
+    }) as const;
+
   // Run times match the schedules at SAMPLE_NOW: a Friday, 14:40 in São Paulo and 17:40 in Lisbon.
   const routines: Record<string, Routine[]> = {
     [ids.scout]: [
@@ -779,6 +802,49 @@ export function sampleTeam(now: DateTime.Utc) {
         nextRunAt: null,
         lastRun: run(7 * 24 * 60 - 110, "failed"),
         runCount: 4,
+      },
+      // On a connector's event: listening, waiting for the connector, and stopped.
+      {
+        id: RoutineId.make("invoices-from-ana"),
+        botId: ids.scout,
+        name: "Invoices from Ana",
+        instruction: "When Ana sends an invoice, add it to the bills sheet and tell me the total.",
+        trigger: mailEvent("a new email from Ana arrives"),
+        enabled: true,
+        webhookUrl: null,
+        nextRunAt: null,
+        lastRun: run(95, "delivered"),
+        runCount: 6,
+        listening: { _tag: "listening" },
+        connectorName: "Mail",
+      },
+      {
+        id: RoutineId.make("school-notes"),
+        botId: ids.scout,
+        name: "School notes",
+        instruction: "Summarize any note from the school in two lines.",
+        trigger: mailEvent("an email from the school arrives"),
+        enabled: true,
+        webhookUrl: null,
+        nextRunAt: null,
+        lastRun: null,
+        runCount: 0,
+        listening: { _tag: "waiting", since: ago(12) },
+        connectorName: "Mail",
+      },
+      {
+        id: RoutineId.make("bank-statements"),
+        botId: ids.scout,
+        name: "Bank statements",
+        instruction: "When the bank sends a statement, list anything I didn't expect.",
+        trigger: mailEvent("the bank sends a statement"),
+        enabled: true,
+        webhookUrl: null,
+        nextRunAt: null,
+        lastRun: run(2 * 24 * 60, "silent"),
+        runCount: 11,
+        listening: { _tag: "stopped", reason: "access-revoked", since: ago(60) },
+        connectorName: "Mail",
       },
     ],
     [ids.atlas]: [

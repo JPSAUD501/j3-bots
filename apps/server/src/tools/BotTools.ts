@@ -259,6 +259,7 @@ export const layer = Layer.effect(
     } = {
       say: handler(tools.say.input, (input, call) => admit({ tool: "say", input, ...call })),
       ask: handler(tools.ask.input, (input, call) => admit({ tool: "ask", input, ...call })),
+      react: handler(tools.react.input, (input, call) => admit({ tool: "react", input, ...call })),
       request_browser_help: handler(tools.request_browser_help.input, (input, call) =>
         admit({ tool: "request_browser_help", input, ...call }),
       ),
@@ -327,6 +328,11 @@ export const layer = Layer.effect(
             })
             .pipe(Effect.map(asText), refuseUnknownConnector),
       ),
+      list_connector_events: framedHandler(tools.list_connector_events.input, (input, { caller }) =>
+        connectors
+          .events({ botId: caller.botId, ...scopeOf(input) })
+          .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
       list_connector_prompts: framedHandler(
         tools.list_connector_prompts.input,
         (input, { caller }) =>
@@ -344,6 +350,37 @@ export const layer = Layer.effect(
             hooks: askFor(caller.botId),
           })
           .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
+      list_connector_skills: framedHandler(tools.list_connector_skills.input, (input, { caller }) =>
+        connectors
+          .skills({ botId: caller.botId, ...scopeOf(input) })
+          .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
+      // Loading a skill asks first, as the bot's permission mode says: what
+      // it says becomes the bot's instructions for the task (decision 0089).
+      use_connector_skill: framedHandler(tools.use_connector_skill.input, (input, call) =>
+        Effect.flatMap(claim("use_connector_skill", call), (place) =>
+          connectors
+            .loadSkill({
+              botId: call.caller.botId,
+              slug: input.connector,
+              skill: input.skill,
+              started: (connector) => steps.started(place, { connectorId: connector.id, ui: null }),
+            })
+            .pipe(Effect.map(asText), refuseUnknownConnector),
+        ),
+      ),
+      read_connector_skill_file: framedHandler(
+        tools.read_connector_skill_file.input,
+        (input, { caller }) =>
+          connectors
+            .readSkillFile({
+              botId: caller.botId,
+              slug: input.connector,
+              skill: input.skill,
+              path: input.path,
+            })
+            .pipe(Effect.map(asText), refuseUnknownConnector),
       ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory

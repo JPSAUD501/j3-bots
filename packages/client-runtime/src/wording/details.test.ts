@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  ConnectorId,
   BotId,
   EffortLevel,
   MemoryPath,
@@ -61,8 +62,10 @@ describe("routineLines", () => {
 
   it("says a paused routine is paused before when it would run next", () => {
     const next = at("2026-11-21T12:00:00Z");
-    expect(routineLines(routine({ enabled: false, nextRunAt: next }), en).status).toBe("Paused");
-    expect(plain(routineLines(routine({ nextRunAt: next }), en).status ?? "")).toMatch(
+    expect(routineLines(routine({ enabled: false, nextRunAt: next }), en).status?.text).toBe(
+      "Paused",
+    );
+    expect(plain(routineLines(routine({ nextRunAt: next }), en).status?.text ?? "")).toMatch(
       /^Next run /,
     );
     expect(routineLines(routine({}), en).status).toBeNull();
@@ -75,27 +78,70 @@ describe("routineLines", () => {
       nextRunAt: at("2026-11-21T11:00:00Z"),
       missed: { ...missed, count: 1 },
     });
-    expect(plain(routineLines(once, en).status ?? "")).toBe(
+    expect(plain(routineLines(once, en).status?.text ?? "")).toBe(
       "Missed 1 run while J3 Bots wasn’t running · Next run tomorrow at 8:00 AM",
     );
-    expect(plain(routineLines(once, pt).status ?? "")).toBe(
+    expect(plain(routineLines(once, pt).status?.text ?? "")).toBe(
       "Perdeu 1 execução enquanto o J3 Bots não estava rodando · Próxima execução amanhã às 08:00",
     );
     const three = routine({
       nextRunAt: at("2026-11-21T11:00:00Z"),
       missed: { ...missed, count: 3 },
     });
-    expect(plain(routineLines(three, en).status ?? "")).toMatch(
+    expect(plain(routineLines(three, en).status?.text ?? "")).toMatch(
       /^Missed 3 runs while J3 Bots wasn’t running · Next run /,
     );
     const many = routine({ missed: { ...missed, count: MISSED_RUNS_LIMIT } });
-    expect(routineLines(many, en).status).toBe(
+    expect(routineLines(many, en).status?.text).toBe(
       "Missed 1,000 or more runs while J3 Bots wasn’t running",
     );
     // A later server may count further; this client still says what it knows.
     const more = routine({ missed: { ...missed, count: MISSED_RUNS_LIMIT * 4 } });
-    expect(routineLines(more, en).status).toBe(routineLines(many, en).status);
-    expect(routineLines({ ...once, enabled: false }, en).status).toBe("Paused");
+    expect(routineLines(more, en).status).toEqual(routineLines(many, en).status);
+    expect(routineLines({ ...once, enabled: false }, en).status?.text).toBe("Paused");
+  });
+
+  it("says a routine on a connector's event in words, and marks when J3 Bots stopped listening", () => {
+    const event = routine({
+      trigger: {
+        _tag: "event",
+        connectorId: ConnectorId.make("conn_mail0000000000000"),
+        name: "message_received",
+        arguments: {},
+        summary: "a new email from Ana arrives",
+      },
+      connectorName: "Mail",
+      listening: { _tag: "listening" },
+    });
+    expect(routineLines(event, en)).toMatchObject({
+      schedule: "When Mail says a new email from Ana arrives",
+      expression: false,
+      status: null,
+    });
+    const since = at("2026-11-20T12:00:00Z");
+    expect(routineLines({ ...event, listening: { _tag: "waiting", since } }, pt).status).toEqual({
+      text: "Esperando Mail responder",
+      blocked: false,
+    });
+    const revoked = {
+      ...event,
+      listening: { _tag: "stopped", reason: "access-revoked", since },
+    } as const;
+    expect(routineLines(revoked, en).status).toEqual({
+      text: "Stopped: Mail no longer allows it",
+      blocked: true,
+    });
+    // A reason added after this client was built is still a stop.
+    const later = { ...event, listening: { _tag: "stopped", reason: "unknown", since } } as const;
+    expect(routineLines(later, pt).status).toEqual({ text: "Parou de escutar", blocked: true });
+    // Its connector was removed since.
+    expect(routineLines({ ...event, connectorName: null }, en).schedule).toBe(
+      "When a removed connector says a new email from Ana arrives",
+    );
+    expect(routineLines({ ...revoked, enabled: false }, en).status).toEqual({
+      text: "Paused",
+      blocked: false,
+    });
   });
 
   it("says what the last run did, and marks only a failure", () => {

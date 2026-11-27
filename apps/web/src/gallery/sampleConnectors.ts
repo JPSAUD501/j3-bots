@@ -16,6 +16,7 @@ import {
   type ListingRef,
   SecretName,
   SetupPageUrl,
+  SkillName,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
@@ -124,6 +125,18 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     account: "sam@example.com",
     signedInAt: ago(60 * 24 * 12),
     tools: notesTools,
+    skills: [
+      {
+        uri: "skill://notes/meeting-notes/SKILL.md",
+        name: SkillName.make("meeting-notes"),
+        description: "Turns a page of notes into decisions, owners and dates.",
+      },
+      {
+        uri: "skill://notes/project-brief/SKILL.md",
+        name: SkillName.make("project-brief"),
+        description: "Writes a one-page brief for a new project from its database row.",
+      },
+    ],
     lastChange: { by: { _tag: "operator" }, at: ago(60 * 24 * 12) },
     server: {
       protocolVersion: "2026-07-28",
@@ -195,6 +208,35 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     status: { _tag: "needs-secret", secret: SecretName.make("weather-key"), reason: "not-shared" },
     grant: { _tag: "bots", ids: [ids.atlas, ids.pip] },
     tools: [tool("forecast", "Forecast", "Tells the forecast for the days ahead.")],
+  },
+  {
+    ...base,
+    id: connectorId("builds"),
+    name: "Build server",
+    publisher: { _tag: "operator" },
+    listing: null,
+    transport: { _tag: "remote", origin: ConnectorOrigin.make("https://builds.example.com") },
+    signIn: "none",
+    status: {
+      _tag: "needs-secret",
+      secret: SecretName.make("builds-client-secret"),
+      reason: "refused",
+    },
+    grant: { _tag: "bots", ids: [ids.scout] },
+    tools: [tool("start_build", "Start a build", "Starts a build of a branch.")],
+    lastChange: { by: { _tag: "bot", botId: ids.scout }, at: ago(60 * 24 * 12) },
+  },
+  {
+    ...base,
+    id: connectorId("deploys"),
+    name: "Deploys",
+    publisher: { _tag: "operator" },
+    listing: null,
+    transport: { _tag: "remote", origin: ConnectorOrigin.make("https://deploys.example.com") },
+    signIn: "none",
+    status: { _tag: "failing", reason: "issuer-changed", since: ago(40) },
+    grant: { _tag: "bots", ids: [ids.atlas] },
+    tools: [tool("deploy", "Deploy", "Deploys a build that passed.")],
   },
   {
     ...base,

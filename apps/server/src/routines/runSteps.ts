@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  type Entry,
   RoutineAnswer,
   RoutineAsk,
   type RoutineBotStep,
   RoutineId,
+  type RoutineRun,
   type RoutineRunEntry,
   RoutineRunId,
   RoutineStep,
   type RoutineStepFailure,
+  type RoutineTrigger,
 } from "@j3-bots/contracts";
 import { TurnId } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
@@ -18,7 +21,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import type { Entries } from "../entries/Entries.ts";
+import type { Entries, EntryDraft } from "../entries/Entries.ts";
 import type { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import type { Ledger } from "../turns/Ledger.ts";
@@ -74,6 +77,33 @@ const StepTurnRow = Schema.Struct({
 });
 
 /**
+ * A run's card as its routine stands: an `event-routine-run` for a routine on
+ * a connector's event, which a client built before event routines passes
+ * over, and a `routine-run` for any other.
+ */
+const cardOf = (
+  placed: Pick<RoutineRunEntry, "author" | "routineId">,
+  row: {
+    readonly name: string;
+    readonly trigger_json: RoutineTrigger;
+    readonly connector_name: string | null;
+  },
+  run: RoutineRun,
+): Extract<EntryDraft, { readonly _tag: "routine-run" | "event-routine-run" }> => {
+  const trigger = row.trigger_json;
+  return trigger._tag === "event"
+    ? {
+        _tag: "event-routine-run",
+        ...placed,
+        name: row.name,
+        trigger,
+        connector: row.connector_name,
+        run,
+      }
+    : { _tag: "routine-run", ...placed, name: row.name, trigger, run };
+};
+
+/**
  * The run's card in its owner's conversation (`routine-run`), brought up to
  * date with the run. `notify` tells the operator, as a new entry would: when
  * the run waits for their yes, or failed.
@@ -89,14 +119,23 @@ export const runCards = (
     const row = yield* view.cardRow(runId);
     if (Option.isNone(row) || row.value.entry_id === null) return;
     const found = yield* entries.find(row.value.entry_id);
-    if (Option.isNone(found) || found.value.entry._tag !== "routine-run") return;
-    const card: RoutineRunEntry = {
-      ...found.value.entry,
-      name: row.value.name,
-      trigger: row.value.trigger_json,
-      run: yield* view.toRun(row.value),
-    };
-    yield* entries.update(card, { notify });
+    if (Option.isNone(found)) return;
+    const shown = found.value.entry;
+    if (shown._tag !== "routine-run" && shown._tag !== "event-routine-run") return;
+    const card = cardOf(
+      { author: shown.author, routineId: shown.routineId },
+      row.value,
+      yield* view.toRun(row.value),
+    );
+    // A card keeps its kind: one whose routine moved to or from an event
+    // meanwhile keeps the trigger it was posted with, and shows the run.
+    const updated: Entry =
+      shown._tag === "routine-run" && card._tag === "routine-run"
+        ? { ...shown, ...card }
+        : shown._tag === "event-routine-run" && card._tag === "event-routine-run"
+          ? { ...shown, ...card }
+          : { ...shown, name: card.name, run: card.run };
+    yield* entries.update(updated, { notify });
     // A yes that opens or closes changes whether its owner waits on the operator.
     yield* changes.touch({ _tag: "bot", botId: row.value.owner_id });
   }, Effect.orDie);
@@ -111,14 +150,11 @@ export const runCards = (
     }
     const posted = yield* entries.append({
       target: { _tag: "conversation", botId: row.value.owner_id },
-      entry: {
-        _tag: "routine-run",
-        author: { _tag: "bot", botId: row.value.owner_id },
-        routineId: row.value.routine_id,
-        name: row.value.name,
-        trigger: row.value.trigger_json,
-        run: yield* view.toRun(row.value),
-      },
+      entry: cardOf(
+        { author: { _tag: "bot", botId: row.value.owner_id }, routineId: row.value.routine_id },
+        row.value,
+        yield* view.toRun(row.value),
+      ),
     });
     yield* sql`UPDATE routine_runs SET entry_id = ${posted.id} WHERE id = ${runId}`;
   }, Effect.orDie);

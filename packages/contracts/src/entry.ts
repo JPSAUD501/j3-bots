@@ -7,6 +7,7 @@ import { Attachment, AttachmentOffsets } from "./attachment.ts";
 import {
   BotId,
   CommandId,
+  ConnectorId,
   EntryId,
   EntryOrder,
   Label,
@@ -20,13 +21,19 @@ import {
 } from "./base.ts";
 import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
+import { ConnectorGlyph, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
-import { RoutineRun, RoutineStep, RoutineTrigger } from "./routine.ts";
+import {
+  EVENT_STOP_REASONS,
+  EventTrigger,
+  OwnTrigger,
+  RoutineRun,
+  RoutineStep,
+} from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepTool, TurnWork } from "./work.ts";
+import { StepSkill, StepTool, TurnWork, WorkStepKind } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -105,6 +112,35 @@ export const Mentions = Schema.Union([
 ]);
 export type Mentions = typeof Mentions.Type;
 
+/** The most UTF-16 code units one reaction's emoji takes: a long ZWJ sequence fits. */
+export const MAX_REACTION_LENGTH = 32;
+
+/**
+ * One emoji a person or a bot reacts with. The contract bounds it and keeps it
+ * to one line with no space; the server takes only a single emoji, which
+ * needs Unicode's emoji sequences to tell, and the clients render what it
+ * sends.
+ */
+export const ReactionEmoji = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_REACTION_LENGTH),
+  Schema.makeFilter((emoji: string) =>
+    /[\p{Cc}\p{Z}]/u.test(emoji) ? "One emoji, with no space or control character." : true,
+  ),
+).pipe(Schema.brand("ReactionEmoji"));
+export type ReactionEmoji = typeof ReactionEmoji.Type;
+
+/** Who reacted: the operator, or a bot, whose id outlives it as an author's does. */
+export const Reactor = Schema.Union([Schema.TaggedStruct("operator", {}), BotAuthor]);
+export type Reactor = typeof Reactor.Type;
+
+/**
+ * One reaction on a message. Each person and each bot has at most one on a
+ * message: picking another emoji replaces it.
+ */
+export const Reaction = Schema.Struct({ emoji: ReactionEmoji, by: Reactor });
+export type Reaction = typeof Reaction.Type;
+
 const entry = {
   id: EntryId,
   order: EntryOrder,
@@ -169,6 +205,13 @@ export const MessageEntry = Schema.TaggedStruct("message", {
    * and from a server that predates it.
    */
   lookingAt: Schema.optionalKey(LookingAt),
+  /**
+   * The reactions on it, in the order each reactor first reacted. A server
+   * that has reactions sends it with every message, empty for none, and a
+   * client offers to react only on a message that carries it: a server that
+   * predates reactions leaves it out, and has no `message.react`.
+   */
+  reactions: Schema.optionalKey(Schema.Array(Reaction)),
 });
 export type MessageEntry = typeof MessageEntry.Type;
 
@@ -564,13 +607,35 @@ export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
 /** The most characters a bot's note on an ask for a secret holds. */
 export const MAX_SECRET_ASK_NOTE_LENGTH = 500;
 
+/** The fewest and the most values one ask for secrets takes on its card. */
+export const MIN_SECRET_ASK_VALUES = 2;
+export const MAX_SECRET_ASK_VALUES = 4;
+
+/**
+ * One of the values a bot asks for together, each saved as a single value
+ * under its own name: a service's client ID and its client secret, say.
+ */
+export const SecretAskValue = Schema.Struct({
+  /** Its place on the card, `field-1` for the first, which the answer names it by. */
+  id: SecretRequestFieldId,
+  /** The name it is saved under, which the bot names it by (`secret:<name>`). */
+  name: Label,
+  /** What the operator reads above its input, such as "Client ID". */
+  label: Label,
+  /** Whether what is typed is hidden. False shows it, as for an identifier that is not secret. */
+  masked: Schema.Boolean,
+});
+export type SecretAskValue = typeof SecretAskValue.Type;
+
 /**
  * A bot asks the operator for a secret: a login for a site, or a single value
- * such as a token. The client sends what the operator types with
- * `secrets.add`, naming this card, straight to the server: it never passes
- * through the bot, and this entry has no field for it. Saving, declining
- * (`card.answer` with `dismiss`) or expiring closes it and wakes the bot with
- * the outcome, and once saved, with the secret's reference.
+ * such as a token, or a few values that go together, each saved as a single
+ * value. The client sends what the operator types with `secrets.add`
+ * (`secrets.addFromAsk` for an ask with `values`), naming this card, straight
+ * to the server: it never passes through the bot, and this entry has no field
+ * for it. Saving, declining (`card.answer` with `dismiss`) or expiring closes
+ * it and wakes the bot with the outcome, and once saved, with the secrets'
+ * references.
  */
 export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   ...entry,
@@ -578,7 +643,8 @@ export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   /**
    * The name the secret is saved under, which the bot asked for and names
    * it by (`secret:<name>`). A save-login card from before secrets shows the
-   * name it was saved under, or its site.
+   * name it was saved under, or its site. For an ask with `values`, the
+   * first value's.
    */
   name: Label,
   secret: Schema.Union([
@@ -586,6 +652,23 @@ export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
     Schema.TaggedStruct("login", { origin: SiteOrigin }),
     Schema.TaggedStruct("value", {}),
   ]),
+  /**
+   * The values asked for together, in order, for a `value` ask that takes
+   * several on one card; absent for an ask for one secret. A client that
+   * does not know it shows one input, and the server refuses that answer
+   * (`Invalid("answer")`).
+   */
+  values: Schema.optionalKey(
+    Schema.Array(SecretAskValue).check(
+      Schema.isMinLength(MIN_SECRET_ASK_VALUES),
+      Schema.isMaxLength(MAX_SECRET_ASK_VALUES),
+    ),
+  ),
+  /**
+   * Where the service issues what is asked for, when the bot knows it, which
+   * the card links to: a page of the service's own settings, say.
+   */
+  setup: Schema.optionalKey(SetupPageUrl),
   /** Why the bot needs it, in its own words. */
   note: Schema.String.check(Schema.isMaxLength(MAX_SECRET_ASK_NOTE_LENGTH)),
   status: Schema.Union([
@@ -682,19 +765,17 @@ export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]
 export type TurnEnding = typeof TurnEnding.Type;
 
 /**
- * One turn's work, folded into a line. Its steps are read with
- * `entries.workSteps`. The line says how long the bot worked: from the start
- * of its turn (`turnStartedAt`) to its end, less `waitedBeforeMs` and
- * `waitedMs`; from a server that predates `turnStartedAt`, from the fold's
- * first step, less `waitedMs`. A turn stopped or failed before its first step
+ * One turn's work, folded into a line that says how the turn ended and how
+ * many steps it took. Its steps are read with `entries.workSteps`, work the
+ * turn handed off among them. A turn stopped or failed before its first step
  * has a fold of no steps, so how it ended stays in the conversation.
  */
 export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   ...entry,
   /**
    * When the fold's turn started, the time a working bot's state counts from
-   * (`BotState` `since`), so the fold and the turn's clock agree. Null from a
-   * server, or a fold, that predates it.
+   * (`BotState` `since`), which ties the fold to its turn. Null from a server,
+   * or a fold, that predates it.
    */
   turnStartedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
@@ -721,24 +802,6 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
     Schema.TaggedStruct("finished", {
       finishedAt: Schema.DateTimeUtc,
       ending: TurnEnding,
-      /**
-       * How long the turn waited on the operator after the fold was
-       * written: for a card it asked them to answer (an approval, a
-       * question, a credential), from the card's arrival until it closed.
-       */
-      waitedMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-      /**
-       * How long the turn waited on the operator before its fold was written,
-       * from `turnStartedAt`: kept apart from `waitedMs`, which counts from the
-       * fold's creation as clients before `turnStartedAt` read it.
-       */
-      waitedBeforeMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-      /**
-       * Work the turn handed off still runs, as the engine last reported:
-       * a background task it started, say. The fold's steps go on changing
-       * until it ends.
-       */
-      background: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }),
   ]),
 });
@@ -747,20 +810,7 @@ export type WorkFoldEntry = typeof WorkFoldEntry.Type;
 /** A step replaces an earlier one with the same id: a running command, then its result. */
 export const WorkStep = Schema.Struct({
   id: WorkStepId,
-  /**
-   * `delegation` is no longer written: the work a turn hands off is its
-   * little ones (`TurnWork`, decision 0070). Steps stored before keep it.
-   */
-  kind: Schema.Literals([
-    "command",
-    "edit",
-    "read",
-    "search",
-    "web",
-    "tool",
-    "delegation",
-    "other",
-  ]),
+  kind: WorkStepKind,
   /**
    * For a `tool` step, the tool in J3 Bots' words, which a client shows in
    * place of the label; `null` for a tool it cannot name, and for every other
@@ -768,8 +818,11 @@ export const WorkStep = Schema.Struct({
    */
   tool: StepTool,
   /**
-   * The step in one line: a command, a path, a search. For a tool J3 Bots
-   * names, a short English phrase, for a client that predates `tool`.
+   * The step in one line: a command, a path, a search. A client says the
+   * step in plain words from its kind and tool, and shows this only as the
+   * step's detail, one step in. For a tool J3 Bots names, a short English
+   * phrase, for a client that predates `tool`; for a tool it cannot name,
+   * the tool's own name made readable, which a client says.
    */
   label: Label,
   status: Schema.Literals(["running", "completed", "failed"]),
@@ -777,6 +830,8 @@ export const WorkStep = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** For a `login` step, the fill it made or refused. */
   fill: Schema.optionalKey(CredentialFill),
+  /** For a `connector-skill` step, the skill it loads; absent when it could not be named. */
+  skill: Schema.optionalKey(StepSkill),
   /**
    * For a call to a connector's tool: the connector, and the tool's `_meta.ui`
    * as its server listed it (MCP Apps), null when it has none.
@@ -799,8 +854,13 @@ export const WorkStep = Schema.Struct({
 });
 export type WorkStep = typeof WorkStep.Type;
 
-/** What a client needs to say a step in a line: its kind, its tool and its label. */
-export const StepSummary = WorkStep.mapFields(({ kind, tool, label }) => ({ kind, tool, label }));
+/** What a client needs to say a step in a line: its kind, its tool, its label and the skill it loads. */
+export const StepSummary = WorkStep.mapFields(({ kind, tool, label, skill }) => ({
+  kind,
+  tool,
+  label,
+  skill,
+}));
 export type StepSummary = typeof StepSummary.Type;
 
 /**
@@ -1016,8 +1076,8 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   routineId: RoutineId,
   name: Label,
   change: Schema.Literals(["created", "updated", "paused", "resumed", "deleted"]),
-  /** The trigger as saved by this change. */
-  trigger: RoutineTrigger,
+  /** The trigger as saved by this change: a schedule, a time or a webhook. */
+  trigger: OwnTrigger,
   /**
    * The steps as saved by this change, for a routine with several steps:
    * the card draws its track. Absent for a one-step routine, a deletion, and
@@ -1026,6 +1086,45 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   steps: Schema.optionalKey(Schema.Array(RoutineStep)),
 });
 export type RoutineChangeEntry = typeof RoutineChangeEntry.Type;
+
+/** What can happen to a routine whose trigger is a connector's event, as its conversation shows it. */
+export const EVENT_ROUTINE_CHANGES = [
+  "created",
+  "updated",
+  "paused",
+  "resumed",
+  "deleted",
+  "stopped",
+] as const;
+
+/**
+ * A routine whose trigger is a connector's event was created or changed, by
+ * the bot or by the operator. A kind of its own, not `routine-change`: a
+ * client of protocol 11 built before 0.13.0 reads `routine-change`'s trigger
+ * as a schedule, a time or a webhook only, so it would refuse the whole
+ * conversation for one it does not know, while an entry of a kind it does not
+ * know it passes over (docs/architecture/clients.md, "Protocol compatibility").
+ */
+export const EventRoutineChangeEntry = Schema.TaggedStruct("event-routine-change", {
+  ...entry,
+  routineId: RoutineId,
+  name: Label,
+  /**
+   * As `routine-change`'s, and `stopped`: J3 Bots stopped listening for the
+   * event, for `stopped`'s reason. Open: a change a client does not know
+   * decodes as `unknown`.
+   */
+  change: OpenLiterals(EVENT_ROUTINE_CHANGES),
+  /** The trigger as saved by this change. */
+  trigger: EventTrigger,
+  /** As `routine-change`'s: the steps as saved by this change, for a routine with several. */
+  steps: Schema.optionalKey(Schema.Array(RoutineStep)),
+  /** The trigger's connector's name at this change; null when it was already removed. */
+  connector: Schema.NullOr(Label),
+  /** On a `stopped` change, why. */
+  stopped: Schema.optionalKey(OpenLiterals(EVENT_STOP_REASONS)),
+});
+export type EventRoutineChangeEntry = typeof EventRoutineChangeEntry.Type;
 
 /**
  * A run of a routine with several steps (decision 0080), in its owner's
@@ -1038,10 +1137,30 @@ export const RoutineRunEntry = Schema.TaggedStruct("routine-run", {
   author: BotAuthor,
   routineId: RoutineId,
   name: Label,
-  trigger: RoutineTrigger,
+  /** A schedule, a time or a webhook: an event routine's run is an `event-routine-run`. */
+  trigger: OwnTrigger,
   run: RoutineRun,
 });
 export type RoutineRunEntry = typeof RoutineRunEntry.Type;
+
+/**
+ * A run of an event routine with several steps: a `routine-run` whose
+ * trigger is a connector's event. A kind of its own for the reason
+ * `event-routine-change` is one: a client built before event routines reads
+ * `routine-run`'s trigger as a schedule, a time or a webhook only, and passes
+ * over a kind it does not know.
+ */
+export const EventRoutineRunEntry = Schema.TaggedStruct("event-routine-run", {
+  ...entry,
+  author: BotAuthor,
+  routineId: RoutineId,
+  name: Label,
+  trigger: EventTrigger,
+  /** The trigger's connector's name as the card was last brought up to date; null once it is removed. */
+  connector: Schema.NullOr(Label),
+  run: RoutineRun,
+});
+export type EventRoutineRunEntry = typeof EventRoutineRunEntry.Type;
 
 export const Entry = Schema.Union([
   MessageEntry,
@@ -1057,7 +1176,9 @@ export const Entry = Schema.Union([
   NoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  EventRoutineChangeEntry,
   RoutineRunEntry,
+  EventRoutineRunEntry,
 ]);
 export type Entry = typeof Entry.Type;
 
@@ -1114,7 +1235,9 @@ export const ReceivedEntry = Schema.Union([
   ReceivedNoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  EventRoutineChangeEntry,
   RoutineRunEntry,
+  EventRoutineRunEntry,
   UnknownEntry,
 ]);
 export type ReceivedEntry = typeof ReceivedEntry.Type;
@@ -1149,7 +1272,9 @@ export const entryText = (entry: Entry): string => {
     case "connector-ask":
       return entry.name;
     case "routine-change":
+    case "event-routine-change":
     case "routine-run":
+    case "event-routine-run":
       return entry.name;
     case "work-fold":
     case "notice":

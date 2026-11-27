@@ -209,6 +209,7 @@ it("keeps a login's user name apart from its secrets: it is not one, though answ
     env: [],
     formSecrets: [],
     formValues: [],
+    service: null,
   };
   const resolved = withValues(
     settings,

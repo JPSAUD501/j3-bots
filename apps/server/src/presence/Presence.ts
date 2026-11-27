@@ -10,6 +10,7 @@ import {
   type NotificationSettings,
   PREVIEW_LENGTH,
   type RoutineNotice,
+  type EventRoutineRunEntry,
   type RoutineRunEntry,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -53,8 +54,8 @@ const kindOf = (
   readonly botId: BotId;
   readonly routine: RoutineNotice | null;
 } | null => {
-  if (entry.author._tag !== "bot" || entry._tag === "handoff") return null;
-  if (entry._tag === "routine-run") {
+  if (entry.author._tag !== "bot") return null;
+  if (entry._tag === "routine-run" || entry._tag === "event-routine-run") {
     const notice = routineNoticeOf(entry);
     return notice === null ? null : { ...notice, botId: entry.author.botId };
   }
@@ -69,7 +70,7 @@ const kindOf = (
  * notifies nothing.
  */
 const routineNoticeOf = (
-  entry: RoutineRunEntry,
+  entry: RoutineRunEntry | EventRoutineRunEntry,
 ): { readonly kind: NotificationKind; readonly routine: RoutineNotice } | null => {
   const steps = entry.run.steps ?? [];
   if (entry.run.status === "running" && steps.some((step) => step.state === "waiting")) {
@@ -93,8 +94,7 @@ const routineNoticeOf = (
  * The notification an entry of this kind makes when it notifies, which names
  * the Android channel a push shows in: its own kind, or `connector` for either
  * connector card. Null for a kind that never notifies. A push read back from
- * its delivery takes its channel from here too, from the entry it is about:
- * so `handoff` keeps its channel for a push an earlier release recorded.
+ * its delivery takes its channel from here too, from the entry it is about.
  */
 export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null => {
   switch (kind) {
@@ -103,7 +103,6 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "approval":
     case "secret-request":
     case "browser-help":
-    case "handoff":
       return kind;
     // A bot's ask for a secret shows where the engine's secret requests do,
     // Android's channel for them included.
@@ -115,13 +114,17 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "connector-auth":
     case "connector-input":
       return "connector";
+    // A bot's message to a teammate shows in both conversations and notifies no one.
+    case "handoff":
     case "work-fold":
     case "notice":
     case "routine-change":
+    case "event-routine-change":
       return null;
     // A run's card notifies only when it needs the operator (`routineNoticeOf`),
     // as a question.
     case "routine-run":
+    case "event-routine-run":
       return "question";
   }
 };
@@ -146,7 +149,7 @@ const connectorCard = (entry: Entry): ConnectorNotice | null => {
 const previewText = (entry: Entry, settings: NotificationSettings): string | null => {
   if (!settings.previews || entry._tag === "browser-help") return null;
   // A run's card: the question its yes asks, never a step's own words otherwise.
-  if (entry._tag === "routine-run") {
+  if (entry._tag === "routine-run" || entry._tag === "event-routine-run") {
     const asked = entry.run.steps?.find((step) => step.state === "waiting")?.ask?.question;
     const line = cut((asked?.split("\n")[0] ?? "").trim(), PREVIEW_LENGTH);
     return line === "" ? null : line;

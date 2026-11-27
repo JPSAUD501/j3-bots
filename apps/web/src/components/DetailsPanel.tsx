@@ -27,6 +27,7 @@ import {
   GlobeIcon,
   NotebookTextIcon,
   PencilIcon,
+  PlugZapIcon,
   RotateCcwIcon,
   Share2Icon,
   ShieldCheckIcon,
@@ -43,6 +44,7 @@ import {
   roomStop,
   type Teammate,
   trackCast,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -573,7 +575,9 @@ function RoutineRow({
     ? CirclePauseIcon
     : routine.trigger._tag === "webhook"
       ? WebhookIcon
-      : CalendarClockIcon;
+      : routine.trigger._tag === "event"
+        ? PlugZapIcon
+        : CalendarClockIcon;
   return (
     <li className="flex items-center gap-1">
       <button type="button" onClick={onOpen} title={t("routine.runs.hint")} className={rowButton}>
@@ -601,13 +605,22 @@ function RoutineRow({
                 <RoutineCast steps={steps} />
               </span>
               <RoutineSentence
-                trigger={routine.trigger}
+                trigger={trackTrigger(routine.trigger, routine.connectorName ?? null)}
                 steps={steps}
                 className="line-clamp-2 text-xs text-muted-foreground"
               />
             </>
           )}
-          {lines.status && <span className="text-2xs text-muted-foreground">{lines.status}</span>}
+          {lines.status && (
+            <span
+              className={cn(
+                "text-2xs",
+                lines.status.blocked ? "text-blocked" : "text-muted-foreground",
+              )}
+            >
+              {lines.status.text}
+            </span>
+          )}
           {lines.lastRun && (
             // Only what went wrong is drawn in the blocked color; the run count stays quiet.
             <span className="text-2xs text-muted-foreground">

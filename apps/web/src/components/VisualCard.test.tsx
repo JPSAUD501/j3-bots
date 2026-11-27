@@ -26,6 +26,7 @@ const intents: TimelineIntents = {
   declineSecretAsk: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
+  react: nothing,
   resendMessage: nothing,
   discardMessage: nothing,
   openWorkFold: nothing,

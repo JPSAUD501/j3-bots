@@ -24,9 +24,9 @@ const EXPORT = "/exports/j3-bots-export.tar.gz";
 /** The bots' data on this computer, which deleting it deletes. */
 const DATA = "/data/server/home";
 const PASSPHRASE = Redacted.make("a long passphrase for the move");
-/** What an export left out: the secrets, which wait for an old vault's password. */
+/** What an export left out: the secrets, whose key was missing. */
 const LEFT_OUT = {
-  secrets: "old-vault",
+  secrets: "unreadable",
   links: 1,
   names: 0,
   firstNames: [],
@@ -136,7 +136,9 @@ describe("naming the server", () => {
 
   it.effect("refuses while a server is kept, without checking or touching the page", () =>
     Effect.gen(function* () {
-      const file = yield* settingsFile(JSON.stringify({ server: SERVER, window: null }));
+      const file = yield* settingsFile(
+        JSON.stringify({ mode: "remote", server: SERVER, window: null }),
+      );
       const { choice, page, done, checked } = yield* setUp(file);
       const result = yield* choice.connect("10.0.0.5:3737", page);
       assert.deepStrictEqual(result, { _tag: "refused", reason: "server-kept" });
@@ -159,7 +161,9 @@ describe("naming the server", () => {
 describe("forgetting the server", () => {
   it.effect("writes it forgotten, then empties the page's storage and loads it again", () =>
     Effect.gen(function* () {
-      const file = yield* settingsFile(JSON.stringify({ server: SERVER, window: null }));
+      const file = yield* settingsFile(
+        JSON.stringify({ mode: "remote", server: SERVER, window: null }),
+      );
       const { choice, page, done } = yield* setUp(file);
       assert.strictEqual(yield* choice.forget(page), "forgotten");
       assert.deepStrictEqual(done, ["clear (server none)", "open home (server none)"]);
@@ -183,7 +187,11 @@ describe("running the bots on this computer", () => {
     () =>
       Effect.gen(function* () {
         const file = yield* settingsFile(
-          JSON.stringify({ server: SERVER, localDevice: { id: DEVICE, current: true } }),
+          JSON.stringify({
+            mode: "remote",
+            server: SERVER,
+            localDevice: { id: DEVICE, current: true },
+          }),
         );
         const { choice, page, done, settings } = yield* setUp(file);
         assert.strictEqual(yield* choice.useThisComputer(page), "changed");
@@ -219,7 +227,7 @@ describe("running the bots on this computer", () => {
             createPrivate: () => Effect.die("the ACL is set on Windows only"),
           },
         };
-        const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
+        const file = yield* settingsFile(JSON.stringify({ mode: "remote", server: SERVER }));
         const { choice, page, done, settings } = yield* setUp(
           file,
           null,
@@ -244,7 +252,7 @@ describe("running the bots on this computer", () => {
 
   it.effect("changes nothing where this computer cannot run the server", () =>
     Effect.gen(function* () {
-      const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
+      const file = yield* settingsFile(JSON.stringify({ mode: "remote", server: SERVER }));
       const { choice, page, done, settings } = yield* setUp(file, null, false);
       assert.strictEqual(yield* choice.useThisComputer(page), "unavailable");
       assert.deepStrictEqual(done, []);
@@ -359,7 +367,13 @@ describe("the settings file", () => {
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
       Settings.decodeSettings(
-        JSON.stringify({ server: SERVER, window: { x: "left" }, shortcut, appearance: "dark" }),
+        JSON.stringify({
+          mode: "remote",
+          server: SERVER,
+          window: { x: "left" },
+          shortcut,
+          appearance: "dark",
+        }),
       ),
       {
         settings: { ...REMOTE, window: null, shortcut, appearance: "dark" },
@@ -375,21 +389,27 @@ describe("the settings file", () => {
     );
     // Shift alone does not make a shortcut: it would take a capital letter from every app.
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, window, shortcut: "Shift+K" })),
+      Settings.decodeSettings(
+        JSON.stringify({ mode: "remote", server: SERVER, window, shortcut: "Shift+K" }),
+      ),
       {
         settings: { ...REMOTE, window, shortcut: null, appearance: "system" },
         dropped: ["shortcut"],
       },
     );
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, appearance: "sepia" })),
+      Settings.decodeSettings(
+        JSON.stringify({ mode: "remote", server: SERVER, appearance: "sepia" }),
+      ),
       {
         settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["appearance"],
       },
     );
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, startWithSystem: "yes" })),
+      Settings.decodeSettings(
+        JSON.stringify({ mode: "remote", server: SERVER, startWithSystem: "yes" }),
+      ),
       {
         settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["startWithSystem"],
@@ -399,7 +419,9 @@ describe("the settings file", () => {
       Settings.decodeSettings(JSON.stringify({ startWithSystem: true })).settings.startWithSystem,
     );
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, phoneAccess: "on" })),
+      Settings.decodeSettings(
+        JSON.stringify({ mode: "remote", server: SERVER, phoneAccess: "on" }),
+      ),
       {
         settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["phoneAccess"],
@@ -410,7 +432,9 @@ describe("the settings file", () => {
         .phoneAccess,
     );
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, updateChannel: "beta" })),
+      Settings.decodeSettings(
+        JSON.stringify({ mode: "remote", server: SERVER, updateChannel: "beta" }),
+      ),
       {
         settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["updateChannel"],
@@ -422,7 +446,9 @@ describe("the settings file", () => {
     );
     // Updating by itself is on until the operator turns it off, in a file from before it too.
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, automaticUpdates: "no" })),
+      Settings.decodeSettings(
+        JSON.stringify({ mode: "remote", server: SERVER, automaticUpdates: "no" }),
+      ),
       {
         settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["automaticUpdates"],
@@ -447,7 +473,8 @@ describe("the settings file", () => {
       },
     );
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: "https://192.0.2.10:3737" })).settings,
+      Settings.decodeSettings(JSON.stringify({ mode: "remote", server: "https://192.0.2.10:3737" }))
+        .settings,
       {
         mode: "remote",
         server: origin("https://192.0.2.10:3737"),
@@ -474,12 +501,14 @@ describe("the settings file", () => {
       { display: "7", right: 0, bottom: 0 },
     ];
     assert.deepStrictEqual(
-      Settings.decodeSettings(JSON.stringify({ server: SERVER, quickAccess })).settings.quickAccess,
+      Settings.decodeSettings(JSON.stringify({ mode: "remote", server: SERVER, quickAccess }))
+        .settings.quickAccess,
       quickAccess,
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(
         JSON.stringify({
+          mode: "remote",
           server: SERVER,
           quickAccess: [{ display: "7", right: "far", bottom: 0 }],
         }),

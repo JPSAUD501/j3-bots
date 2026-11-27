@@ -34,21 +34,21 @@ const recordLogs = Layer.merge(
   Layer.succeed(References.MinimumLogLevel, "All"),
 );
 
-/** What a client could send as `secrets.openOldVault`, unchecked: a password of any length. */
+/** What a client could send as `secrets.update`, unchecked: a password of any length. */
 const UncheckedRpcs = RpcGroup.make(
-  Rpc.make("secrets.openOldVault", {
-    payload: { password: Schema.String },
+  Rpc.make("secrets.update", {
+    payload: { id: Schema.String, changes: Schema.Struct({ password: Schema.String }) },
     success: Schema.Unknown,
   }),
 );
 
-const OLD_PASSWORD = "old-vault-password-value";
+const LONG_PASSWORD = "long-password-value";
 const USERNAME = "username-value@example.com";
 const PASSWORD = "login-password-value";
 const NEXT_PASSWORD = "next-password-value";
 const TOTP = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 const TOKEN = "single-token-value";
-const VALUES = [OLD_PASSWORD, USERNAME, PASSWORD, NEXT_PASSWORD, TOTP, TOKEN, "not-a-totp-value"];
+const VALUES = [LONG_PASSWORD, USERNAME, PASSWORD, NEXT_PASSWORD, TOTP, TOKEN, "not-a-totp-value"];
 
 // The client listener as the server runs it, on a port the system chooses.
 it.layer(
@@ -129,7 +129,10 @@ it.layer(
       showsNone(
         shown(
           yield* Effect.exit(
-            unchecked["secrets.openOldVault"]({ password: OLD_PASSWORD.repeat(60) }),
+            unchecked["secrets.update"]({
+              id,
+              changes: { password: LONG_PASSWORD.repeat(600) },
+            }),
           ),
         ),
       );

@@ -25,6 +25,7 @@ import {
   roomAvatarMembers,
 } from "./avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "./avatar/mood.tsx";
+import { arrivalClip, RowLight, useRowArrival } from "./RowArrival.tsx";
 
 export const toneClass = {
   default: "text-muted-foreground",
@@ -115,7 +116,7 @@ export function RosterRow({
   readonly selected: boolean;
   /** A bot row's avatar, to make it move: a row that rises makes its bot hop. */
   readonly avatarRef?: Ref<AvatarHandle>;
-  /** The bot or room is new to the roster: it comes down into its row. */
+  /** The bot or room is new to the roster: it arrives in its row (`useRowArrival`). */
   readonly entrance?: boolean;
   /** Opens its conversation; a row drawn only to be seen, as over a menu, has none. */
   readonly onOpen?: () => void;
@@ -143,9 +144,16 @@ export function RosterRow({
     item._tag === "bot" && item.bot.state._tag === "working" ? item.bot.state.littleOnes : 0;
   const primary = item._tag === "bot" && item.bot.primary;
   const row = useRef<ComponentRef<typeof View>>(null);
+  const arrival = useRowArrival(entrance);
+  // A room's light is its first member's color.
+  const face =
+    item._tag === "bot"
+      ? item.bot.profile.avatar
+      : (roomAvatarMembers(item.room, bots)[0]?.avatar ?? null);
   return (
     <PressScale
       ref={row}
+      frame={arrival.frame}
       depth="row"
       accessibilityRole="button"
       accessibilityState={{ selected }}
@@ -175,30 +183,35 @@ export function RosterRow({
       className={`${lifted ? "" : "mx-2"} flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
       style={{ height }}
     >
-      {item._tag === "bot" ? (
-        <View>
-          <LiveBotAvatar
-            bot={item.bot}
-            unread={item.unread}
-            lastEntry={item.lastEntry}
-            size={40}
-            ground={ground}
-            markPrimary
-            entrance={entrance}
-            {...(avatarRef === undefined ? {} : { ref: avatarRef })}
-          />
-          <LittleDots count={split} avatar={item.bot.profile.avatar} ground={ground} />
+      <View>
+        {arrival.staged && <RowLight avatar={face} height={height} arrival={arrival} />}
+        <View style={arrival.staged ? arrivalClip(height) : undefined}>
+          {item._tag === "bot" ? (
+            <LiveBotAvatar
+              bot={item.bot}
+              unread={item.unread}
+              lastEntry={item.lastEntry}
+              size={40}
+              ground={ground}
+              markPrimary
+              entrance={arrival.avatarEntrance}
+              {...(avatarRef === undefined ? {} : { ref: avatarRef })}
+            />
+          ) : (
+            <RoomAvatar
+              size={40}
+              ground={ground}
+              members={roomAvatarMembers(item.room, bots)}
+              entrance={arrival.avatarEntrance}
+            />
+          )}
         </View>
-      ) : (
-        <RoomAvatar
-          size={40}
-          ground={ground}
-          members={roomAvatarMembers(item.room, bots)}
-          entrance={entrance}
-        />
-      )}
+        {item._tag === "bot" && (
+          <LittleDots count={split} avatar={item.bot.profile.avatar} ground={ground} />
+        )}
+      </View>
       <View className="min-w-0 flex-1 gap-0.5">
-        <View className="flex-row items-baseline gap-2">
+        <Animated.View style={arrival.name} className="flex-row items-baseline gap-2">
           <Text
             numberOfLines={1}
             className={`flex-1 text-base text-foreground ${needs ? "font-semibold" : "font-medium"}`}
@@ -206,13 +219,13 @@ export function RosterRow({
             {name}
           </Text>
           {time !== null && <Text className="text-2xs text-muted-foreground">{time}</Text>}
-        </View>
-        <View className="flex-row items-center gap-2">
+        </Animated.View>
+        <Animated.View style={arrival.line} className="flex-row items-center gap-2">
           <View className="min-w-0 flex-1">
             <SwapText text={line.text} className={`text-sm ${toneClass[line.tone]}`} />
           </View>
           {unreadDot && <View className="size-2 rounded-pill bg-accent" />}
-        </View>
+        </Animated.View>
       </View>
     </PressScale>
   );

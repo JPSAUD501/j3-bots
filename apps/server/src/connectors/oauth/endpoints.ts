@@ -168,8 +168,9 @@ export const resourceMetadata = (urls: ReadonlyArray<string>) =>
 /**
  * The authorization server's metadata, from the first address in the
  * specification's order that has it, checked: it names the issuer it was
- * looked up for, every endpoint is `https`, and it offers PKCE with `S256`,
- * without which the MCP specification forbids going on.
+ * looked up for (RFC 8414 §3.3), and every endpoint is `https`. What a
+ * person's sign-in needs besides, PKCE with `S256` among it, is checked
+ * where one begins.
  */
 export const authorizationServerMetadata = Effect.fn("OAuth.authorizationServerMetadata")(
   function* (issuer: string) {
@@ -184,16 +185,15 @@ export const authorizationServerMetadata = Effect.fn("OAuth.authorizationServerM
           return yield* new OAuthFailure({ reason: "issuer-mismatch" });
         }
         const endpoints = [
-          document.authorization_endpoint,
+          ...(document.authorization_endpoint === undefined
+            ? []
+            : [document.authorization_endpoint]),
           document.token_endpoint,
           ...(document.registration_endpoint === undefined ? [] : [document.registration_endpoint]),
           ...(document.revocation_endpoint === undefined ? [] : [document.revocation_endpoint]),
         ];
         if (endpoints.some((endpoint) => Option.isNone(secureUrl(endpoint)))) {
           return yield* new OAuthFailure({ reason: "insecure-endpoint" });
-        }
-        if (!(document.code_challenge_methods_supported ?? []).includes("S256")) {
-          return yield* new OAuthFailure({ reason: "pkce-unsupported" });
         }
         return document;
       }),
@@ -294,39 +294,58 @@ export const register = Effect.fn("OAuth.register")(function* (input: {
   } satisfies Registered;
 });
 
-/** The client a token request authenticates as. */
-export interface TokenClient {
-  readonly clientId: string;
-  readonly clientSecret: Option.Option<Redacted.Redacted<string>>;
-  readonly authMethod: AuthMethod;
-}
+/**
+ * The client a token request authenticates as: with its secret, or none for
+ * a public one, or with an assertion it signed with its private key
+ * (`private_key_jwt`, RFC 7523 §2.2).
+ */
+export type TokenClient =
+  | {
+      readonly clientId: string;
+      readonly clientSecret: Option.Option<Redacted.Redacted<string>>;
+      readonly authMethod: AuthMethod;
+    }
+  | {
+      readonly clientId: string;
+      readonly authMethod: "private_key_jwt";
+      readonly assertion: Redacted.Redacted<string>;
+    };
+
+const JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 /**
  * `params` with the client's authentication (RFC 6749 §2.3.1): its id in the
  * body for a public client, its secret in the body or in a Basic header, with
- * both parts form-encoded first, as §2.3.1 asks.
+ * both parts form-encoded first, as §2.3.1 asks; or its signed assertion in
+ * the body, which names the client itself (RFC 7523 §3).
  */
 const authenticated = (
   endpoint: string,
   client: TokenClient,
   params: ReadonlyArray<readonly [string, string]>,
 ) => {
-  const secret = Option.map(client.clientSecret, Redacted.value).pipe(Option.getOrElse(() => ""));
   const body: Array<readonly [string, string]> = [...params];
+  const request = (form: ReadonlyArray<readonly [string, string]>) =>
+    HttpClientRequest.post(endpoint).pipe(
+      HttpClientRequest.acceptJson,
+      HttpClientRequest.bodyUrlParams(form),
+    );
+  if (client.authMethod === "private_key_jwt") {
+    body.push(["client_assertion_type", JWT_BEARER]);
+    body.push(["client_assertion", Redacted.value(client.assertion)]);
+    return request(body);
+  }
+  const secret = Option.map(client.clientSecret, Redacted.value).pipe(Option.getOrElse(() => ""));
   if (client.authMethod !== "client_secret_basic") body.push(["client_id", client.clientId]);
   if (client.authMethod === "client_secret_post") body.push(["client_secret", secret]);
-  const request = HttpClientRequest.post(endpoint).pipe(
-    HttpClientRequest.acceptJson,
-    HttpClientRequest.bodyUrlParams(body),
-  );
   return client.authMethod === "client_secret_basic"
-    ? request.pipe(
+    ? request(body).pipe(
         HttpClientRequest.basicAuth(
           encodeURIComponent(client.clientId),
           encodeURIComponent(secret),
         ),
       )
-    : request;
+    : request(body);
 };
 
 /** What a token endpoint gave. */
@@ -338,10 +357,10 @@ export interface Tokens {
 }
 
 /**
- * A token request (RFC 6749 §4.1.3, §6), with the resource the token is for
- * (RFC 8707 §2.2). Only a Bearer token is taken. A refusal says only its
- * kind: `invalid-grant` when the code or refresh token is no longer good,
- * `invalid-client` when the client itself is refused.
+ * A token request (RFC 6749 §4.1.3, §4.4.2, §6), with the resource the
+ * token is for (RFC 8707 §2.2). Only a Bearer token is taken. A refusal says
+ * only its kind: `invalid-grant` when the code or refresh token is no longer
+ * good, `invalid-client` when the client itself is refused.
  */
 export const requestTokens = Effect.fn("OAuth.requestTokens")(function* (input: {
   readonly endpoint: string;

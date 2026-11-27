@@ -29,10 +29,10 @@ const working: BotState = {
   _tag: "working",
   since,
   stalled: false,
-  quietSince: null,
   typing: false,
   retrying: false,
   activity: null,
+  activityKind: null,
   tool: null,
   littleOnes: 0,
 };
@@ -47,7 +47,6 @@ describe("avatarMood", () => {
           _tag: "thinking",
           since,
           stalled: false,
-          quietSince: null,
           typing: false,
           retrying: false,
         },
@@ -94,7 +93,6 @@ describe("avatarMood", () => {
           _tag: "thinking",
           since,
           stalled: true,
-          quietSince: since,
           typing: false,
           retrying: false,
         },
@@ -112,13 +110,10 @@ describe("notificationState", () => {
     },
   );
 
-  it.each(["message", "handoff"] as const)(
-    "shows a %s as unread, even while the turn goes on",
-    (kind: NotificationKind) => {
-      expect(notificationState({ kind }, working)).toBe("unread");
-      expect(notificationState({ kind }, { _tag: "idle" })).toBe("unread");
-    },
-  );
+  it("shows a message as unread, even while the turn goes on", () => {
+    expect(notificationState({ kind: "message" }, working)).toBe("unread");
+    expect(notificationState({ kind: "message" }, { _tag: "idle" })).toBe("unread");
+  });
 
   it("shows a blocked bot as blocked, and one waiting on another card as waiting", () => {
     const blocked: BotState = { _tag: "blocked", failure: "usage-limit", retryAt: null };
