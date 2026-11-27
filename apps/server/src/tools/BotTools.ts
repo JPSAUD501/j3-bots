@@ -51,7 +51,12 @@ import { CredentialFills } from "../secrets/Fill.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { imageTypeOf } from "../attachments/WorkImages.ts";
 import { type WorkspaceRead, workspaceReader } from "../attachments/workspaceFile.ts";
-import { type BackgroundChange, MAX_SAVED_THEMES, Themes, type ThemeRefused } from "../themes/Themes.ts";
+import {
+  type BackgroundChange,
+  MAX_SAVED_THEMES,
+  Themes,
+  type ThemeRefused,
+} from "../themes/Themes.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
@@ -258,7 +263,9 @@ export const layer = Layer.effect(
       }
       const read = yield* readWorkspaceFile(root.value, given, MAX_THEME_BACKGROUND_SIZE);
       if (read._tag !== "read") {
-        return yield* new Refused({ reason: THEME_NOTES.background(BACKGROUND_PROBLEMS[read._tag]) });
+        return yield* new Refused({
+          reason: THEME_NOTES.background(BACKGROUND_PROBLEMS[read._tag]),
+        });
       }
       const mediaType = imageTypeOf(read.bytes);
       if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp") {

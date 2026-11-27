@@ -1092,11 +1092,14 @@ const sentences = {
   "settings.themes.edit": "Mudar as cores",
 
   "theme.palco.name": "Palco",
-  "theme.palco.description": "Monocromático, preto puro no escuro. A cor fica só para os bots e o que precisa de você.",
+  "theme.palco.description":
+    "Monocromático, preto puro no escuro. A cor fica só para os bots e o que precisa de você.",
   "theme.grafite.name": "Grafite",
-  "theme.grafite.description": "Cinza azulado em vez de preto puro. Mais macio para quem fica horas com o app aberto.",
+  "theme.grafite.description":
+    "Cinza azulado em vez de preto puro. Mais macio para quem fica horas com o app aberto.",
   "theme.oceano.name": "Oceano",
-  "theme.oceano.description": "Azul-petróleo profundo com destaque ciano. Calmo, com cara de mar à noite.",
+  "theme.oceano.description":
+    "Azul-petróleo profundo com destaque ciano. Calmo, com cara de mar à noite.",
   "theme.floresta.name": "Floresta",
   "theme.floresta.description": "Verde musgo escuro com destaque menta. Natural e tranquilo.",
   "theme.brasa.name": "Brasa",
@@ -1104,7 +1107,8 @@ const sentences = {
   "theme.lavanda.name": "Lavanda",
   "theme.lavanda.description": "Roxo acinzentado com destaque lilás. Suave e com personalidade.",
   "theme.papel.name": "Papel",
-  "theme.papel.description": "Creme quente com tinta azul-marinho. Feito para ler: parece um caderno.",
+  "theme.papel.description":
+    "Creme quente com tinta azul-marinho. Feito para ler: parece um caderno.",
 
   "firstRun.connecting.title": "Conectando ao J3 Bots",
   "firstRun.connecting.body":

@@ -50,14 +50,12 @@ const STOCK_CHOICE = builtInChoice(DEFAULT_THEME_ID);
  */
 export const themeChoices = (library: ThemeLibrary | null): ReadonlyArray<ThemeChoice> => [
   ...BUILT_IN_CHOICES,
-  ...(library?.themes ?? []).map(
-    (theme): ThemeChoice => ({
-      id: theme.id,
-      definition: theme.definition,
-      origin: theme.madeBy,
-      background: theme.background,
-    }),
-  ),
+  ...(library?.themes ?? []).map((theme): ThemeChoice => ({
+    id: theme.id,
+    definition: theme.definition,
+    origin: theme.madeBy,
+    background: theme.background,
+  })),
 ];
 
 /**

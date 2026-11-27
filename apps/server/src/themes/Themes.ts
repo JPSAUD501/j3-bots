@@ -80,9 +80,7 @@ const toSaved = (row: typeof ThemeRow.Type): SavedTheme => ({
   id: row.id,
   definition: row.definition,
   madeBy:
-    row.made_by === "operator"
-      ? { _tag: "operator" }
-      : { _tag: "bot", botId: row.made_by_bot },
+    row.made_by === "operator" ? { _tag: "operator" } : { _tag: "bot", botId: row.made_by_bot },
   background:
     row.revision === null || row.media_type === null
       ? null
@@ -226,8 +224,7 @@ export const layer = Layer.effect(
     /** Tells subscribers the library as committed now; serialized, so the last read wins. */
     const publish = SubscriptionRef.updateEffect(current, () => load);
 
-    const find = (id: ThemeId) =>
-      findRow(id).pipe(Effect.orDie, Effect.map(Option.map(toSaved)));
+    const find = (id: ThemeId) => findRow(id).pipe(Effect.orDie, Effect.map(Option.map(toSaved)));
 
     const require = Effect.fn("Themes.require")(function* (id: ThemeId) {
       const found = yield* find(id);
@@ -348,10 +345,10 @@ export const layer = Layer.effect(
         input.background._tag === "set"
           ? {
               ...input.background.image,
-              revision: (yield* digest.digestHex(Digest.sha256, input.background.image.bytes)).slice(
-                0,
-                32,
-              ),
+              revision: (yield* digest.digestHex(
+                Digest.sha256,
+                input.background.image.bytes,
+              )).slice(0, 32),
             }
           : undefined;
       const saved = yield* receipts.once({
@@ -361,8 +358,7 @@ export const layer = Layer.effect(
           botId: input.botId,
           themeId: input.themeId,
           definition: input.definition,
-          background:
-            image === undefined ? input.background._tag : { revision: image.revision },
+          background: image === undefined ? input.background._tag : { revision: image.revision },
         },
         result: BotSave,
         apply: Effect.gen(function* () {

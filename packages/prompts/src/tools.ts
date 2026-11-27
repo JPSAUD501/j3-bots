@@ -1069,10 +1069,7 @@ const ThemeSaveInput = toolInput({
   ),
   name: described(ThemeName, "What your user sees it called."),
   description: Schema.optionalKey(
-    described(
-      text(1, THEME_DESCRIPTION_LENGTH),
-      "A few words on its look, shown under its name.",
-    ),
+    described(text(1, THEME_DESCRIPTION_LENGTH), "A few words on its look, shown under its name."),
   ),
   canvas: described(
     ThemeSeed,

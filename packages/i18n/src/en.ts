@@ -1090,9 +1090,11 @@ export const en = {
   "settings.themes.edit": "Change colors",
 
   "theme.palco.name": "Palco",
-  "theme.palco.description": "Monochrome, pure black in the dark. Color belongs to the bots and to what needs you.",
+  "theme.palco.description":
+    "Monochrome, pure black in the dark. Color belongs to the bots and to what needs you.",
   "theme.grafite.name": "Graphite",
-  "theme.grafite.description": "Bluish gray instead of pure black. Softer for long hours with the app open.",
+  "theme.grafite.description":
+    "Bluish gray instead of pure black. Softer for long hours with the app open.",
   "theme.oceano.name": "Ocean",
   "theme.oceano.description": "Deep petrol blue with a cyan accent. Calm, like the sea at night.",
   "theme.floresta.name": "Forest",
@@ -1102,7 +1104,8 @@ export const en = {
   "theme.lavanda.name": "Lavender",
   "theme.lavanda.description": "Grayish purple with a lilac accent. Soft, with character.",
   "theme.papel.name": "Paper",
-  "theme.papel.description": "Warm cream with navy ink. Made for reading: it feels like a notebook.",
+  "theme.papel.description":
+    "Warm cream with navy ink. Made for reading: it feels like a notebook.",
 
   "firstRun.connecting.title": "Connecting to J3 Bots",
   "firstRun.connecting.body":

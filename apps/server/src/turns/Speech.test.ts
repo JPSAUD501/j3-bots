@@ -734,42 +734,48 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("keeps a say's offer of a theme that exists, and refuses one of a theme that does not", () =>
-  Effect.gen(function* () {
-    const control = yield* TestEngineControl;
-    const tools = yield* BotTools;
-    const { bot, session, turnId } = yield* working("Make the app blue.");
-    const says = [
-      { text: "Try this one.", offer: { apply_theme: "nowhere" } },
-      { text: "Ocean is the bluest.", offer: { apply_theme: "oceano" }, done: true },
-    ] as const;
-    const replies = [];
-    for (const [n, args] of says.entries()) {
-      yield* control.toolCall({
-        sessionId: session,
-        turnId,
-        tool: "say",
-        input: args,
-        recorded: "now",
-      });
-      replies.push(
-        yield* tools.call({
-          requestId: `call-${n}`,
+it.effect(
+  "keeps a say's offer of a theme that exists, and refuses one of a theme that does not",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const tools = yield* BotTools;
+      const { bot, session, turnId } = yield* working("Make the app blue.");
+      const says = [
+        { text: "Try this one.", offer: { apply_theme: "nowhere" } },
+        { text: "Ocean is the bluest.", offer: { apply_theme: "oceano" }, done: true },
+      ] as const;
+      const replies = [];
+      for (const [n, args] of says.entries()) {
+        yield* control.toolCall({
           sessionId: session,
+          turnId,
           tool: "say",
-          arguments: { ...args, offer: { ...args.offer } },
-        }),
+          input: args,
+          recorded: "now",
+        });
+        replies.push(
+          yield* tools.call({
+            requestId: `call-${n}`,
+            sessionId: session,
+            tool: "say",
+            arguments: { ...args, offer: { ...args.offer } },
+          }),
+        );
+      }
+      assert.include(replies[0]?._tag === "refused" ? replies[0].message : "", "no theme nowhere");
+      const said = (yield* conversation(bot.id)).flatMap((entry) =>
+        entry._tag === "message" && entry.author._tag === "bot" ? [entry] : [],
       );
-    }
-    assert.include(replies[0]?._tag === "refused" ? replies[0].message : "", "no theme nowhere");
-    const said = (yield* conversation(bot.id)).flatMap((entry) =>
-      entry._tag === "message" && entry.author._tag === "bot" ? [entry] : [],
-    );
-    assert.deepStrictEqual(
-      said.map(({ text, offer }) => ({ text, kind: offer?.kind, themeId: String(offer?.themeId) })),
-      [{ text: "Ocean is the bluest.", kind: "apply-theme", themeId: "oceano" }],
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.deepStrictEqual(
+        said.map(({ text, offer }) => ({
+          text,
+          kind: offer?.kind,
+          themeId: String(offer?.themeId),
+        })),
+        [{ text: "Ocean is the bluest.", kind: "apply-theme", themeId: "oceano" }],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 /** Where each teammate message the bot's conversation shows stands, oldest first. */

@@ -73,7 +73,11 @@ it.effect("saves a bot's theme, tells it what moved, and lists it as that bot's"
 );
 
 for (const [why, args, reason] of [
-  ["names a role a theme does not set", { ...dusk, colors: { waiting: "#ff0000" } }, "not a theme role"],
+  [
+    "names a role a theme does not set",
+    { ...dusk, colors: { waiting: "#ff0000" } },
+    "not a theme role",
+  ],
   ["gives a role no color", { ...dusk, colors: { border: "red" } }, "#rrggbb or oklch"],
   [
     "has CSS that loads a file",
@@ -138,7 +142,10 @@ it.effect("keeps a theme's image from the bot's workspace, served by its revisio
     const background = saved?.background ?? null;
     assert.strictEqual(background?.mediaType, "image/png");
     const served = yield* themes.background(ThemeId.make("dusk"), background?.revision ?? "");
-    assert.deepStrictEqual(Option.map(served, (image) => [...image.bytes]), Option.some([...PNG]));
+    assert.deepStrictEqual(
+      Option.map(served, (image) => [...image.bytes]),
+      Option.some([...PNG]),
+    );
 
     // Saved again without `background`, it keeps the image; with null, it drops it.
     yield* callAs(ana.id, "theme_save", { ...dusk, name: "Dusk again" }, 4);
