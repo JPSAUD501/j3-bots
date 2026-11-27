@@ -21,6 +21,7 @@ interface DraftComposerProps {
     | "setDraftText"
     | "attachFiles"
     | "detachFile"
+    | "unquoteInDraft"
     | "openAttachment"
     | "sendDraft"
     | "retryDrafts"
@@ -77,6 +78,8 @@ export function DraftComposer({
       mentions={draft.mentions}
       onValueChange={(value, picked, order) => intents.setDraftText(target, value, picked, order)}
       files={draft.files}
+      quotes={draft.quotes}
+      onUnquote={(index) => intents.unquoteInDraft(target, index)}
       sending={draft.sending}
       loading={data.draftsLoading}
       {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}

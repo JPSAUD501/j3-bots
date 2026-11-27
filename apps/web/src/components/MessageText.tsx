@@ -19,19 +19,25 @@ interface PlacedFiles {
 /**
  * Message text with paragraphs, code and links, and each of its files where
  * it was placed. Plain text everywhere else; nothing is rendered as HTML.
+ * Each part is marked with where it stands in `text`, so a selection maps
+ * back to it (`quoteSelection.ts`).
  */
 export function MessageText({
   text,
   mentionable,
   placed,
+  quoteId,
 }: {
   text: string;
   mentionable?: ReadonlyArray<MentionName>;
   placed?: PlacedFiles;
+  /** The message's id, where a passage of it can be quoted. */
+  quoteId?: string;
 }) {
   const blocks = parseMessageText(text, mentionable, placed?.offsets);
   return (
-    <div className="flex flex-col gap-2">
+    // The attribute is `QUOTE_TEXT` (quoteSelection.ts).
+    <div className="flex flex-col gap-2" data-quote-text={quoteId}>
       {blocks.map((block, i) =>
         block.kind === "code" ? (
           <pre
@@ -40,7 +46,7 @@ export function MessageText({
             key={i}
             className="overflow-x-auto rounded-md bg-code-background px-2.5 py-2 font-mono text-xs leading-5"
           >
-            <code>{block.text}</code>
+            <code data-at={block.at}>{block.text}</code>
           </pre>
         ) : (
           // oxlint-disable-next-line react/no-array-index-key -- blocks are positional
@@ -59,16 +65,20 @@ export function MessageText({
 function InlinePart({ inline, placed }: { inline: Inline; placed: PlacedFiles | undefined }) {
   switch (inline.kind) {
     case "text":
-      return inline.text;
+      return <span data-at={inline.at}>{inline.text}</span>;
     case "code":
       return (
-        <code className="rounded-sm bg-code-background px-1 py-px font-mono text-[0.9em]">
+        <code
+          data-at={inline.at}
+          className="rounded-sm bg-code-background px-1 py-px font-mono text-[0.9em]"
+        >
           {inline.text}
         </code>
       );
     case "link":
       return (
         <a
+          data-at={inline.at}
           href={inline.href}
           target="_blank"
           rel="noreferrer noopener"
@@ -78,7 +88,12 @@ function InlinePart({ inline, placed }: { inline: Inline; placed: PlacedFiles | 
         </a>
       );
     case "mention":
-      return <TextMention name={inline.name} of={inline.of} />;
+      // `@` and the name, which a selection takes whole.
+      return (
+        <span data-atom-at={inline.at} data-atom-end={inline.at + 1 + inline.name.length}>
+          <TextMention name={inline.name} of={inline.of} />
+        </span>
+      );
     case "file": {
       const attachment = placed?.files[inline.index];
       return attachment === undefined ? null : (

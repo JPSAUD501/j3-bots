@@ -14,9 +14,11 @@ import {
   EffortLevel,
   type EngineStatus,
   EntryId,
+  type Entry,
   type EntryTarget,
   Invalid,
   LANGUAGES,
+  type MessageQuote,
   type Language,
   MemoryPath,
   MemoryRevision,
@@ -85,6 +87,7 @@ import {
   type PairingFailure,
   type RecentTurns,
   type RecentTurnsState,
+  type Revealed,
   type RoutineCardCommand,
   type SignInView,
 } from "@j3-bots/client-runtime";
@@ -102,6 +105,7 @@ import {
   mentionOptions,
   type OnboardingStep,
   type SettingsPage,
+  withQuote,
 } from "@j3-bots/client-runtime/presentation";
 import { Dialog } from "@base-ui/react/dialog";
 import {
@@ -126,6 +130,7 @@ import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { type AvatarHandle, BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import {
   Composer,
+  focusAtEnd,
   type MentionCandidate,
   type MentionChoices,
   MentionList,
@@ -164,6 +169,7 @@ import { Onboarding } from "../onboarding/Onboarding";
 import { EventLine } from "../components/EventLine";
 import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
+import { OpenQuote } from "../components/Quotes";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { LaunchUpdate } from "../components/LaunchUpdate";
@@ -195,7 +201,7 @@ import {
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
-import { Timeline, type TimelineIntents } from "../components/Timeline";
+import { type QuoteDrafting, Timeline, type TimelineIntents } from "../components/Timeline";
 import { ConnectorsSection, EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
@@ -236,7 +242,7 @@ import {
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { useSampleSecrets } from "./sampleSecrets";
-import { withOwnReaction } from "./entries";
+import { ordered, withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
 import { galleryImage } from "./workImages";
 import { SAMPLE_DOCUMENTS, sampleDocumentBytes } from "./sampleDocuments";
@@ -337,6 +343,7 @@ export default function GalleryPage() {
                 <RosterOrganizeSection />
                 <BubblesSection />
                 <ReactionsSection />
+                <QuotesSection />
                 <DocumentsSection />
                 <CardsSection />
                 <RoutineTracksSection />
@@ -1278,6 +1285,12 @@ const timelineIntents: TimelineIntents = {
 };
 
 const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
+
+/** Every gallery entry is held: a quoted one shows at once, or was deleted since. */
+const revealIn =
+  (entries: ReadonlyArray<Entry>) =>
+  (entryId: string): Promise<Revealed> =>
+    Promise.resolve(entries.some((entry) => entry.id === entryId) ? "shown" : "missing");
 const notSubmitting = () => false;
 
 function BubblesSection() {
@@ -1448,6 +1461,10 @@ function BubblesSection() {
             onOpenPair={nothing}
             onOpenRoom={nothing}
             onOpenBot={nothing}
+            quotes={{
+              reveal: revealIn(team.entries[`bot:${ids.scout}`] ?? []),
+              drafting: null,
+            }}
           />
         </div>
       </Labeled>
@@ -1463,6 +1480,10 @@ function BubblesSection() {
             onOpenPair={nothing}
             onOpenRoom={nothing}
             onOpenBot={nothing}
+            quotes={{
+              reveal: revealIn(team.entries[`room:${ids.newsletter}`] ?? []),
+              drafting: null,
+            }}
           />
         </div>
       </Labeled>
@@ -1516,6 +1537,145 @@ function ReactionsSection() {
         />
       </Labeled>
     </Section>
+  );
+}
+
+function QuotesSection() {
+  const { quotes } = variants;
+  const scoutName = team.bots.scout.profile.name;
+  return (
+    <Section title="Reply and quote">
+      <Labeled label="Try it: hover a message for Reply, or select part of one's text for Quote. The composer gathers what you quote, and a sent message's card goes to its source and lights it">
+        <QuotingDemo />
+      </Labeled>
+      <Labeled label="Composer replying: the reply as a strip over the field, the start of the message on one line, and Cancel reply">
+        <div className="max-w-(--layout-text-column)">
+          <ComposerDemo initial="" recipient={scoutName} quotes={[quotes.replyToScout]} />
+        </div>
+      </Labeled>
+      <Labeled label="Composer with two passages quoted, each a chip with its author and the passage on two lines at most, and a way out">
+        <div className="max-w-(--layout-text-column)">
+          <ComposerDemo initial="Let’s do this" recipient={scoutName} quotes={quotes.passages} />
+        </div>
+      </Labeled>
+      <Labeled label="Sent: a reply to Scout's message, and a message quoting two passages, Scout's and Wren's, each card above it with its author's face and name">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          <MessageBubble
+            message={quotes.reply}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            message={quotes.twoPassages}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="In a room: Wren replies to Juniper's draft">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          <MessageBubble
+            message={quotes.roomReply}
+            position="single"
+            speaker={ids.wren}
+            tint={team.bots.wren.profile.avatar}
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="The source a card went to, lit: a ring that shows and fades, without moving">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={quotes.source}
+            position="single"
+            tint={team.bots.scout.profile.avatar}
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            sourceLit
+          />
+        </div>
+      </Labeled>
+      <Frame
+        label="A reply whose message was deleted since: its card says so once tapped"
+        width={420}
+        height={130}
+        replay
+      >
+        <MissingSource message={quotes.missing} />
+      </Frame>
+    </Section>
+  );
+}
+
+/** A reply whose source is gone, its card tapped as it shows. */
+function MissingSource({ message }: { readonly message: (typeof variants)["quotes"]["missing"] }) {
+  const own = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    own.current?.querySelector("button")?.click();
+  }, []);
+  return (
+    <div ref={own} className="flex h-full flex-col justify-end p-4">
+      <OpenQuote value={() => Promise.resolve("missing")}>
+        <MessageBubble
+          message={message}
+          position="single"
+          onOpenAttachment={nothing}
+          onRetry={nothing}
+        />
+      </OpenQuote>
+    </div>
+  );
+}
+
+/** Scout's news, Wren's note and the operator's reply, over a composer that takes what they quote. */
+function QuotingDemo() {
+  const gallerySecrets = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
+  const { quotes } = variants;
+  const entries = ordered([quotes.source, quotes.wrenNote, quotes.reply]);
+  const draftKey = useId();
+  const field = useRef<HTMLDivElement>(null);
+  const [value, setValue] = useState("");
+  const [drafted, setDrafted] = useState<ReadonlyArray<MessageQuote>>([]);
+  const drafting: QuoteDrafting = {
+    drafted,
+    quote: (quote) => {
+      const next = withQuote(drafted, quote);
+      if (next === "full") return;
+      setDrafted(next);
+      focusAtEnd(field.current);
+    },
+  };
+  return (
+    <div className="flex max-w-(--layout-text-column) flex-col gap-3">
+      <Timeline
+        rows={buildTimeline(entries)}
+        room={null}
+        workSteps={workSteps}
+        submitting={notSubmitting}
+        intents={timelineIntents}
+        secrets={gallerySecrets}
+        onOpenPair={nothing}
+        onOpenRoom={nothing}
+        onOpenBot={nothing}
+        quotes={{ reveal: revealIn(entries), drafting }}
+      />
+      <Composer
+        draftKey={draftKey}
+        recipient={team.bots.scout.profile.name}
+        value={value}
+        onValueChange={setValue}
+        quotes={drafted}
+        onUnquote={(index) => setDrafted((current) => current.toSpliced(index, 1))}
+        onSend={() => {
+          setValue("");
+          setDrafted([]);
+        }}
+        inputRef={field}
+      />
+    </div>
   );
 }
 
@@ -2255,9 +2415,12 @@ function ComposerDemo({
   mentionable,
   mentions: initialMentions = [],
   suggestion = null,
+  quotes: initialQuotes = [],
 }: {
   initial: string;
   recipient: string;
+  /** What the draft quotes. */
+  quotes?: ReadonlyArray<MessageQuote>;
   files?: ReadonlyArray<DraftFile>;
   sending?: boolean;
   /** The device could not keep the draft yet. */
@@ -2276,6 +2439,7 @@ function ComposerDemo({
   const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>(initialMentions);
   const [files, setFiles] = useState(initialFiles);
   const [replaced, setReplaced] = useState(initialReplaced);
+  const [quotes, setQuotes] = useState(initialQuotes);
   return (
     <Composer
       draftKey={draftKey}
@@ -2287,6 +2451,8 @@ function ComposerDemo({
         setMentions(picked);
       }}
       files={files}
+      quotes={quotes}
+      onUnquote={(index) => setQuotes((current) => current.toSpliced(index, 1))}
       sending={sending}
       notSaved={notSaved}
       onAttachFiles={nothing}

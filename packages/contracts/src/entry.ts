@@ -186,6 +186,23 @@ export const Quoted = Schema.Union([
 export type Quoted = typeof Quoted.Type;
 
 /**
+ * What a reply keeps of a message's `text` (`Quoted` `message`): its start,
+ * trimmed, at most `QUOTE_OPENING_LENGTH` characters and never half of a
+ * pair of UTF-16 code units, and whether the text goes on past it. The server
+ * keeps it, and a client shows the same on the copy it holds while sending.
+ */
+export const quoteOpening = (text: string): Extract<Quoted, { readonly _tag: "message" }> => {
+  const trimmed = text.trim();
+  if (trimmed.length <= QUOTE_OPENING_LENGTH) {
+    return { _tag: "message", opening: trimmed, more: false };
+  }
+  let end = QUOTE_OPENING_LENGTH;
+  const last = trimmed.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return { _tag: "message", opening: trimmed.slice(0, end).trimEnd(), more: true };
+};
+
+/**
  * A message a message quotes (decision 0094): which, who said it and when,
  * and what of it is quoted. Its message's id outlives it, as an author's does:
  * a client that cannot find it says so where the quote is.

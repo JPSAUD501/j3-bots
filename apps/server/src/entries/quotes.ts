@@ -5,30 +5,13 @@ import {
   Invalid,
   type MessageEntry,
   type MessageQuote,
-  QUOTE_OPENING_LENGTH,
+  quoteOpening,
   type QuoteRequest,
-  type Quoted,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { Entries } from "./Entries.ts";
 import { sameTarget } from "./sameTarget.ts";
-
-/**
- * The start of a message's text that a reply keeps (`Quoted` `message`):
- * at most `QUOTE_OPENING_LENGTH` characters, never half of a pair of UTF-16
- * code units, and whether the text goes on past it.
- */
-export const openingOf = (text: string): Extract<Quoted, { readonly _tag: "message" }> => {
-  const trimmed = text.trim();
-  if (trimmed.length <= QUOTE_OPENING_LENGTH) {
-    return { _tag: "message", opening: trimmed, more: false };
-  }
-  let end = QUOTE_OPENING_LENGTH;
-  const last = trimmed.charCodeAt(end - 1);
-  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return { _tag: "message", opening: trimmed.slice(0, end).trimEnd(), more: true };
-};
 
 /**
  * A message as a quote keeps it: whole, or the passage of its text given,
@@ -46,7 +29,7 @@ export const quoteOf = (message: MessageEntry, passage: string | null): MessageQ
     entryId: message.id,
     author,
     saidAt: message.createdAt,
-    quoted: passage === null ? openingOf(message.text) : { _tag: "passage", text: passage },
+    quoted: passage === null ? quoteOpening(message.text) : { _tag: "passage", text: passage },
   };
 };
 

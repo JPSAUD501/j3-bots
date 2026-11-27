@@ -157,8 +157,9 @@ const groupNames = {
 } as const satisfies Record<ReactionGroupId, `reaction.group.${ReactionGroupId}`>;
 
 /**
- * The button that opens the reaction bar beside a message: it shows while the
- * pointer is over the message, while it has focus, and while the bar is open.
+ * The button that opens the reaction bar beside a message (`MessageBubble`
+ * places it): it shows while the pointer is over the message, while it has
+ * focus, and while the bar is open.
  * The bar holds the quick reactions and More, which opens the picker in its
  * place. Picking sets the operator's reaction, or takes it off when it was
  * theirs already, and closes the bar.
@@ -171,7 +172,7 @@ export function ReactButton({
 }: {
   readonly reactions: ReadonlyArray<Reaction>;
   readonly onReact: OnReact;
-  /** On the operator's side it stands before their bubble; on a bot's, after it. */
+  /** On the operator's side the bar opens toward their bubble's end; on a bot's, its start. */
   readonly fromOperator: boolean;
   /** Shows the bar open from the start, as the gallery does. */
   readonly defaultView?: ReactionView;
@@ -207,8 +208,7 @@ export function ReactButton({
       <Popover.Trigger
         aria-label={t("reaction.add")}
         className={cn(
-          "pressable pressable-round absolute bottom-0.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[opacity,color,background-color] duration-(--duration-fast) ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-accent data-popup-open:bg-muted data-popup-open:text-foreground data-popup-open:opacity-100",
-          fromOperator ? "end-full me-1.5" : "start-full ms-1.5",
+          "pressable pressable-round inline-flex size-7 cursor-pointer items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[opacity,color,background-color] duration-(--duration-fast) ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-accent data-popup-open:bg-muted data-popup-open:text-foreground data-popup-open:opacity-100",
           touchTarget,
         )}
       >

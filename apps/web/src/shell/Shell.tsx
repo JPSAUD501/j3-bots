@@ -3,6 +3,7 @@ import type {
   BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
+  MessageQuote,
   PairBotIds,
   RosterItem,
   RosterItemKey,
@@ -38,6 +39,7 @@ import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
 import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
+import { focusAtEnd } from "../components/Composer";
 import { DraftComposer } from "../components/DraftComposer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
@@ -454,6 +456,16 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     const archivedRoom = item._tag === "room" && item.room.status === "archived" ? item.room : null;
     const mentionable = mentionChoicesOf(target, rosterItems, data.conversationMentions);
     const addressing = addressingOf(target, draft, rosterItems, mentionable);
+    // Reply and Quote add to the draft, where the server takes quotes and the composer shows.
+    const drafting =
+      data.quotes && archivedRoom === null
+        ? {
+            drafted: draft.quotes,
+            quote: (quote: MessageQuote) => {
+              if (intents.quoteInDraft(target, quote) === "added") focusAtEnd(composerRef.current);
+            },
+          }
+        : null;
     const toggleDetails = () =>
       aside === "browser"
         ? viewerRef.current?.requestClose(() => navigation.setDetailsOpen(true))
@@ -563,6 +575,10 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   onOpenPair={navigation.openPair}
                   onOpenRoom={(roomId) => navigation.select({ _tag: "room", roomId })}
                   onOpenBot={(botId) => navigation.select({ _tag: "bot", botId })}
+                  quotes={{
+                    reveal: (entryId) => intents.revealEntry(target, entryId),
+                    drafting,
+                  }}
                   {...(browserBot === null
                     ? {}
                     : {

@@ -1438,6 +1438,10 @@ function LiveShell({
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
     },
+    revealEntry: (asked, entryId) =>
+      viewKey !== null && targetKey(asked) === viewKey
+        ? conversation.reveal(entryId)
+        : Promise.resolve("unreachable"),
     loadOlderPair: (asked) => {
       if (pairKeyText(asked) === pairKey) pairConversation.loadOlder();
     },

@@ -12,19 +12,27 @@ import { useReadable } from "@j3-bots/client-runtime/react";
 import { useI18n } from "../app/context";
 import type { ShellData, ShellIntents } from "../shell/data";
 
-const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
+const blankDraft: Draft = { text: "", mentions: [], quotes: [], files: [], sending: false };
 
 /** What a conversation's composer shows and asks for, the same wherever the conversation shows. */
 export interface ComposerSource {
   readonly data: Pick<
     ShellData,
-    "draft" | "offer" | "draftsLoading" | "draftsFailed" | "draftNotSaved" | "conversationMentions"
+    | "draft"
+    | "offer"
+    | "draftsLoading"
+    | "draftsFailed"
+    | "draftNotSaved"
+    | "conversationMentions"
+    | "quotes"
   >;
   readonly intents: Pick<
     ShellIntents,
     | "setDraftText"
     | "attachFiles"
     | "detachFile"
+    | "quoteInDraft"
+    | "unquoteInDraft"
     | "sendDraft"
     | "retryDrafts"
     | "restoreDraft"
@@ -56,6 +64,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
   const draftsFailed = useReadable(j3.draftsReadFailed);
   const notSaved = useReadable(j3.draftsNotSaved);
   const conversationMentions = useReadable(j3.conversationMentions);
+  const quotes = useReadable(j3.quotes);
   const send: ComposerSource["send"] = (target, addressing, context) =>
     j3.sendDraft(target, addressing, context).then((result) => {
       if (result === "not-kept") say(t("composer.notKept"));
@@ -70,6 +79,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
       draftsFailed,
       draftNotSaved: (asked) => notSaved.has(targetKey(asked)),
       conversationMentions,
+      quotes,
     },
     intents: {
       setDraftText: j3.setDraftText,
@@ -80,6 +90,8 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
           at,
         ),
       detachFile: j3.detachFile,
+      quoteInDraft: j3.quoteInDraft,
+      unquoteInDraft: j3.unquoteInDraft,
       restoreDraft: j3.restoreDraft,
       retryDrafts: j3.retryDrafts,
       dismissDraftOffer: j3.dismissDraftOffer,

@@ -197,6 +197,8 @@ export {
   replyIn,
   replyTo,
   takesPassage,
+  takesReply,
+  withQuote,
 } from "./quotes.ts";
 export {
   acrossStage,

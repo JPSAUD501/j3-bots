@@ -9,6 +9,7 @@ import type {
   IntentResult,
   PairingOffer,
   RecentTurnsState,
+  Revealed,
   SectionChanges,
   ServerUpdateStart,
   ServerUpdateView,
@@ -35,6 +36,7 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryPath,
+  MessageQuote,
   PairBotIds,
   PairSeq,
   PromptArguments,
@@ -105,6 +107,8 @@ export interface ShellData {
    * conversation: only then does `@` offer them there.
    */
   readonly conversationMentions: boolean;
+  /** Whether the server takes quotes on a message: only then are Reply and Quote offered. */
+  readonly quotes: boolean;
   readonly conversation: (target: EntryTarget) => ConversationView;
   /** Every pair of bots that wrote each other, latest first; null until they load. */
   readonly pairs: ReadonlyArray<TeammatePair> | null;
@@ -210,6 +214,13 @@ export interface ShellIntents extends TimelineIntents {
   readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>, at?: number) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
+   * Adds a reply or a passage to the draft's quotes: `full` when it quotes
+   * all a message can, and nothing changed; `not-now` while it is sent.
+   */
+  readonly quoteInDraft: (target: EntryTarget, quote: MessageQuote) => "added" | "full" | "not-now";
+  /** Takes the draft's quote at `index` out. */
+  readonly unquoteInDraft: (target: EntryTarget, index: number) => void;
+  /**
    * Sends the draft once, however often it is called, and clears it.
    * `addressing` only applies in a room; leaving it out mentions nobody.
    */
@@ -221,6 +232,11 @@ export interface ShellIntents extends TimelineIntents {
   /** Reads the drafts again after they could not be read: resolves with whether they are read now. */
   readonly retryDrafts: () => Promise<boolean>;
   readonly loadOlder: (target: EntryTarget) => void;
+  /**
+   * Reads the conversation shown back until `entryId` is held, as for a
+   * quote's card: whether it is (`Conversation.reveal`).
+   */
+  readonly revealEntry: (target: EntryTarget, entryId: EntryId) => Promise<Revealed>;
   readonly loadOlderPair: (botIds: PairBotIds) => void;
   /**
    * Reads the teammate conversation shown back to the message of the card

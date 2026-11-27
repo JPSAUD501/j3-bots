@@ -5,7 +5,7 @@ import {
   MAX_QUOTES,
   type MessageEntry,
   type MessageQuote,
-  QUOTE_OPENING_LENGTH,
+  quoteOpening,
   type QuoteRequest,
 } from "@j3-bots/contracts";
 
@@ -24,28 +24,12 @@ export type QuotableMessage = MessageEntry & {
 export const isQuotable = (entry: Entry): entry is QuotableMessage =>
   entry._tag === "message" && entry.author._tag !== "system";
 
-/**
- * The start of a message a reply shows, as the server keeps it: at most
- * `QUOTE_OPENING_LENGTH` characters, never half of a pair of UTF-16 code
- * units, and whether the text goes on.
- */
-const openingOf = (text: string) => {
-  const trimmed = text.trim();
-  if (trimmed.length <= QUOTE_OPENING_LENGTH) {
-    return { _tag: "message", opening: trimmed, more: false } as const;
-  }
-  let end = QUOTE_OPENING_LENGTH;
-  const last = trimmed.charCodeAt(end - 1);
-  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return { _tag: "message", opening: trimmed.slice(0, end).trimEnd(), more: true } as const;
-};
-
 /** A reply to `message`: the message quoted whole. */
 export const replyTo = (message: QuotableMessage): MessageQuote => ({
   entryId: message.id,
   author: message.author,
   saidAt: message.createdAt,
-  quoted: openingOf(message.text),
+  quoted: quoteOpening(message.text),
 });
 
 /**
@@ -79,7 +63,7 @@ const passageKey = (quote: MessageQuote) =>
   quote.quoted._tag === "passage" ? quote.quoted.text : null;
 
 /** Whether two quotes quote the same: the same message, whole or by the same passage. */
-export const sameQuote = (one: MessageQuote, other: MessageQuote) =>
+const sameQuote = (one: MessageQuote, other: MessageQuote) =>
   one.entryId === other.entryId && passageKey(one) === passageKey(other);
 
 export const sameQuotes = (one: ReadonlyArray<MessageQuote>, other: ReadonlyArray<MessageQuote>) =>
@@ -114,6 +98,10 @@ export const takesPassage = (quotes: ReadonlyArray<MessageQuote>) => quotes.leng
 /** The reply among `quotes`, if any. */
 export const replyIn = (quotes: ReadonlyArray<MessageQuote>) =>
   quotes.find((quote) => quote.quoted._tag === "message") ?? null;
+
+/** Whether a draft with `quotes` takes a reply: one in place of its own, or one more quote. */
+export const takesReply = (quotes: ReadonlyArray<MessageQuote>) =>
+  replyIn(quotes) !== null || quotes.length < MAX_QUOTES;
 
 /**
  * What a quote's card reads: the passage, or the start of the message, as
