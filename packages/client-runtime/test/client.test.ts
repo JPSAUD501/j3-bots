@@ -1279,12 +1279,14 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   it.effect("sends a draft's reply and passages with it, and the next draft quotes nothing", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
+      const { sends } = yield* Taps;
       const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Wren") };
       const conversation = yield* (yield* Conversations).open(target);
       const drafts = yield* Drafts;
       const said = "Two options: alpha, or beta.";
       yield* drafts.setText(target, said);
       assert.strictEqual(yield* drafts.send(target), "sent");
+      yield* Queue.take(sends);
       const first = yield* waitFor(conversation.state, (state) =>
         state.items.some((item) => item._tag === "message" && item.text === said),
       );
@@ -1308,6 +1310,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         ["message", "passage"],
       );
       assert.strictEqual(yield* drafts.send(target), "sent");
+      yield* Queue.take(sends);
 
       const sent = yield* waitFor(conversation.state, (state) =>
         state.items.some((item) => item._tag === "message" && item.text === "The second."),
