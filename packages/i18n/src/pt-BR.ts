@@ -197,6 +197,9 @@ const sentences = {
   "conversation.details": "Detalhes",
 
   "message.lookingAt": "Vendo {window}",
+  "message.offer.recordScreen": "Gravar a tela",
+  "message.offer.recordScreen.elsewhere":
+    "Para gravar a tela, abra o app J3 Bots no seu computador.",
   "message.queued": "Na fila",
   "message.waitingForModel": "Enviada assim que a IA for conectada",
   "message.waitingForReset": "Enviada quando o limite de uso renovar",

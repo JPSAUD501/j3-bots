@@ -200,6 +200,9 @@ export const en = {
   "conversation.details": "Details",
 
   "message.lookingAt": "Looking at {window}",
+  "message.offer.recordScreen": "Record your screen",
+  "message.offer.recordScreen.elsewhere":
+    "To record your screen, open the J3 Bots app on your computer.",
   "message.queued": "Queued",
   "message.waitingForModel": "Sent once the AI is connected",
   "message.waitingForReset": "Sent when the usage limit resets",

@@ -79,6 +79,7 @@ describe("a conversation", () => {
         onOpenRoom={() => {}}
         onOpenBot={() => {}}
         quotes={{ reveal: () => Promise.resolve("shown"), drafting: null }}
+        recordScreen={null}
       />,
     );
     const before = html.indexOf("Before");
@@ -110,6 +111,7 @@ describe("a conversation", () => {
           onOpenRoom={() => {}}
           onOpenBot={() => {}}
           quotes={{ reveal: () => Promise.resolve("shown"), drafting: offered }}
+          recordScreen={null}
         />,
       ).split('aria-label="Reply"').length - 1;
 

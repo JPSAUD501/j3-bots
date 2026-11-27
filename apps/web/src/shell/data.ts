@@ -277,6 +277,12 @@ export interface ShellIntents extends TimelineIntents {
   readonly forceStopRoom: (roomId: RoomId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
+  /**
+   * In the desktop app, opens its screen recorder for the conversation or room
+   * `target`, whose draft the recording joins (decision 0098). Absent in a
+   * browser, where a bot's offer to record says to open the app on the computer.
+   */
+  readonly recordScreen?: (target: EntryTarget) => void;
   /** Resolves with the new bot's id once the server has created it, or with why it did not. */
   readonly createBot: (draft: NewBot) => Promise<IntentResult<BotId>>;
   readonly newBot: () => void;

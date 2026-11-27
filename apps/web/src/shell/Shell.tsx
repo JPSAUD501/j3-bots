@@ -60,6 +60,7 @@ import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
+import { recordScreenIn } from "../components/RecordOffer";
 import { Timeline } from "../components/Timeline";
 import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { tintOf } from "../lib/botTint";
@@ -588,6 +589,9 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                       reveal: (entryId) => intents.revealEntry(target, entryId),
                       drafting,
                     }}
+                    recordScreen={
+                      archivedRoom === null ? recordScreenIn(intents.recordScreen, target) : null
+                    }
                     {...(browserBot === null
                       ? {}
                       : {

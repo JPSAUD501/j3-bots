@@ -354,6 +354,7 @@ export default function GalleryPage() {
                 <BubblesSection />
                 <ReactionsSection />
                 <QuotesSection />
+                <RecordOfferSection />
                 <DocumentsSection />
                 <CardsSection />
                 <RoutineTracksSection />
@@ -1479,6 +1480,7 @@ function BubblesSection() {
               reveal: revealIn(team.entries[`bot:${ids.scout}`] ?? []),
               drafting: null,
             }}
+            recordScreen={null}
           />
         </div>
       </Labeled>
@@ -1498,6 +1500,7 @@ function BubblesSection() {
               reveal: revealIn(team.entries[`room:${ids.newsletter}`] ?? []),
               drafting: null,
             }}
+            recordScreen={null}
           />
         </div>
       </Labeled>
@@ -1549,6 +1552,36 @@ function ReactionsSection() {
           onRetry={nothing}
           onReact={nothing}
         />
+      </Labeled>
+    </Section>
+  );
+}
+
+function RecordOfferSection() {
+  const { recordOffer } = variants;
+  return (
+    <Section title="A bot's offer to record the screen">
+      <Labeled label="In the desktop app and its quick access: Record your screen under the bot's message, which opens the recorder">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={recordOffer}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            recordScreen={{ _tag: "here", record: nothing }}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="In a browser, which cannot record: a quiet line saying to open the app on the computer">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={recordOffer}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            recordScreen={{ _tag: "elsewhere" }}
+          />
+        </div>
       </Labeled>
     </Section>
   );
@@ -1675,6 +1708,7 @@ function QuotingDemo() {
         onOpenRoom={nothing}
         onOpenBot={nothing}
         quotes={{ reveal: revealIn(entries), drafting }}
+        recordScreen={null}
       />
       <Composer
         draftKey={draftKey}
