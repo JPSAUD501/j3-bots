@@ -239,7 +239,7 @@ export const layer = Layer.effect(
     /**
      * The bytes the upload's file holds: none before its first piece. A link
      * at its name is not the file (`lstat`), so it counts as none, and the
-     * next piece's write refuses it.
+     * next piece refuses to write through it.
      */
     const receivedOf = (id: RecordingUploadId) =>
       fs.lstat(partOf(id)).pipe(
@@ -381,6 +381,14 @@ export const layer = Layer.effect(
                 );
                 yield* layout.writable(folder).pipe(
                   Effect.catchTag("PrivateLocationExposed", exposed),
+                  // Where opening cannot refuse a link (Windows has no O_NOFOLLOW),
+                  // anything at the file's name that is not the file is refused first.
+                  Effect.andThen(fs.lstat(partOf(input.id)).pipe(Effect.option)),
+                  Effect.flatMap((part) =>
+                    Option.isSome(part) && part.value.type !== "File"
+                      ? exposed({ message: `${partOf(input.id)} is not the upload's own file.` })
+                      : Effect.void,
+                  ),
                   Effect.andThen(writeInPlace(partOf(input.id), true, counted)),
                   Effect.ensuring(
                     // Touched whatever happened: a piece cut off is progress too.

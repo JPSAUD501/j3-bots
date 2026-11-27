@@ -373,6 +373,8 @@ it.layer(server)("attachments", (it) => {
       assert.strictEqual(offset.received, 0);
       const written = yield* recordingPiece(token, upload.id, 0, bytes);
       assert.strictEqual(written.status, 409);
+      // Nothing was written through the link.
+      assert.strictEqual((yield* fs.stat(elsewhere)).size, BigInt(bytes.length));
       const standing = yield* recordingStatus(token, upload.id).pipe(Effect.flatMap(asRecording));
       assert.isUndefined(standing.attachment);
     }),
