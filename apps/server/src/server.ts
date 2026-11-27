@@ -43,6 +43,9 @@ import * as UpdateRuns from "./update/UpdateRuns.ts";
 import * as RefusedNames from "./web/RefusedNames.ts";
 import * as WebClient from "./web/WebClient.ts";
 
+/** How the server writes its log: one JSON object per line, on the console. */
+export const logs = Logger.layer([Logger.consoleJson]);
+
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
 
 /**
@@ -154,5 +157,5 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     Layer.provide(
       Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer, Listener.unbound),
     ),
-    Layer.provide(Logger.layer([Logger.consoleJson])),
+    Layer.provide(logs),
   );

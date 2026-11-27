@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -8,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { CliError, Command, Flag } from "effect/cli";
 import * as ServerStop from "../ServerStop.ts";
 import { portStateOf } from "../system/Ports.ts";
+import * as Lingering from "../system/Lingering.ts";
 import * as Stdin from "../system/Stdin.ts";
 import { refuse } from "./errors.ts";
 
@@ -75,6 +77,14 @@ export const startFailure = (error: { readonly _tag: string; readonly message: s
     ? new StartRefused({ refusal: error.message })
     : new CliError.UserError({ cause: error, userMessage: error.message });
 
+/**
+ * How long a stop may take before the server says what keeps it running. A
+ * stop takes well under a second, and what it waits on longest, a request in
+ * progress, is cut off after 5 s; whoever stops it (the desktop app, the
+ * service manager, the release's check, which gives it 30 s) is still waiting.
+ */
+const LINGERING_AFTER = Duration.seconds(15);
+
 const adminFdFlag = Flag.Int("admin-fd").pipe(
   Flag.withDescription(
     'Also serve the admin channel on this inherited file descriptor: the server\'s end of a pipe from the process that started it, as Node\'s spawn makes one for a stdio entry of "pipe" or "overlapped". Start fails on a descriptor below 3, on a TCP socket, listening or connected, and, on Linux and macOS, on anything but a socket (a FIFO, a one-way pipe, a file or a terminal). For an app that runs its own server; it passes 3.',
@@ -106,17 +116,28 @@ export const serveCommand = Command.make("serve", {
       }
       // Loaded on demand: the other commands start faster without the server.
       const Server = yield* Effect.promise(() => import("../server.ts"));
-      const stop = yield* ServerStop.ServerStop;
-      if (exitWithStdin) yield* Effect.forkScoped(Stdin.ended.pipe(Effect.andThen(stop.request)));
-      // Released with the scope, as SIGINT and SIGTERM release it. A stop asked
-      // for while it starts ends the start there.
-      yield* Effect.raceFirst(
-        Layer.build(Server.layer({ adminFd })).pipe(
-          Effect.mapError(startFailure),
-          Effect.andThen(Effect.never),
-        ),
-        stop.requested,
+      // A stop still running after a while says what keeps it running.
+      const stopping = yield* Lingering.watchStop(LINGERING_AFTER, (lingering) =>
+        Effect.logWarning(
+          `The server is still running ${Duration.format(LINGERING_AFTER)} after its stop began`,
+          lingering,
+        ).pipe(Effect.provide(Server.logs)),
       );
-    }).pipe(Effect.scoped, Effect.provide(ServerStop.layer)),
+      yield* Effect.gen(function* () {
+        const stop = yield* ServerStop.ServerStop;
+        if (exitWithStdin) {
+          yield* Effect.forkScoped(Stdin.ended.pipe(Effect.andThen(stop.request)));
+        }
+        // Released with the scope, as SIGINT and SIGTERM release it. A stop asked
+        // for while it starts ends the start there.
+        yield* Effect.raceFirst(
+          Layer.build(Server.layer({ adminFd })).pipe(
+            Effect.mapError(startFailure),
+            Effect.andThen(Effect.never),
+          ),
+          stop.requested,
+        ).pipe(Effect.ensuring(stopping.begun));
+      }).pipe(Effect.scoped, Effect.provide(ServerStop.layer), Effect.ensuring(stopping.released));
+    }),
   ),
 );
