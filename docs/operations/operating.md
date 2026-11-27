@@ -80,7 +80,7 @@ j3-bots diagnostics                     # j3-bots-diagnostics-<date>-<time>.zip 
 j3-bots diagnostics --out support.zip
 ```
 
-Like `doctor` ([What doctor says](install.md#what-doctor-says)), it acts on the installed service's data directory, else on the one `j3-bots serve` would use from this shell. It changes nothing, and it never writes over a file that is already there. With the server stopped it still writes the zip, without the engine's state or the providers'; it says so.
+Like `doctor` ([What doctor says](install.md#what-doctor-says)), it acts on the installed service's data directory, else on the one `j3-bots serve` would use from this shell. It changes nothing, and it never writes over anything already at the file's name. With the server stopped it still writes the zip, without the engine's state or the providers'; it says so.
 
 The zip holds:
 

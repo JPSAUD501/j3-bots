@@ -1245,11 +1245,11 @@ A diagnostics zip says how the server runs, for whoever helps the operator, and 
   - Otherwise it streams the zip as `application/zip`, with a file name of `diagnosticsFileName` and `cache-control: no-store`.
   - Any paired device may ask, as for every route: a paired device holds the operator's authority.
   - The server names the route's version in `ServerInfo.diagnostics`.
-- **`j3-bots diagnostics`** opens the database read-only and writes the file with mode 0600. Over the admin channel, it asks a running server for the engine's state and when the server started ([Operating: diagnostics](../operations/operating.md#diagnostics)).
+- **`j3-bots diagnostics`** opens the database read-only, and makes its file with mode 0600, refusing anything already at its name, a link included. It removes the file again when no whole zip was written. Over the admin channel, it asks a running server for the engine's state and when the server started ([Operating: diagnostics](../operations/operating.md#diagnostics)).
 
 **Where the logs come from.**
 
-- **The server's log.** The server keeps the same JSON lines it writes to the console in `logs/server.log`, batched once a second, so a zip has them however the server runs (`ServerLogFile`). Only a line that decodes as the server's own log shape enters the zip, re-encoded without its fiber, its cause cut at 8 KiB.
+- **The server's log.** The server keeps the same JSON lines it writes to the console in `logs/server.log`, batched once a second, so a zip has them however the server runs (`ServerLogFile`). It is private state: each write checks the folder with `Layout.writable` and opens the file so that a link at its name is refused (`writeInPlace`), and a write that fails is dropped, never stopping the server. Only a line that decodes as the server's own log shape enters the zip, re-encoded without its fiber, scrubbed, its cause then cut at 8 KiB. A line that names something of the operator's network names it in an annotation the zip leaves out (`logs/annotations.ts`): the name a refused plain-HTTP request asked for is `refusedName`.
 - **The engine's log.** It comes from the engine's trace file, through the adapter ([Engine: what J3 Bots uses](engine.md#what-j3-bots-uses-and-what-it-leaves-alone)).
 
 Each log is read newest first, file by file, and stops at the first file older than 7 days. It keeps the newest lines that fit its budget: 14 MiB for the server's and 6 MiB for the engine's. The zip is at most 24 MiB (`MAX_DIAGNOSTICS_SIZE`).
@@ -1259,14 +1259,14 @@ Each log is read newest first, file by file, and stops at the first file older t
 - Each file is made in turn, scrubbed, deflated and passed on before the next is read.
 - At most one log's kept lines are in memory at a time.
 - A file that cannot be made says so: `{ "unreadable": … }`, with why. The other files are still made.
-- A failure to read the secret values the scrubber needs stops the zip instead, since without them a secret could pass.
+- A failure to read the secret values the scrubber needs stops the zip instead, since without them a secret could pass: a query that fails, or a secret store, the engine's included, that is there and cannot be read.
 
-**One scrubber** (`scrub.ts`) goes over every file's text before it enters the zip. It replaces:
+**One scrubber** (`scrub.ts`) goes over every file's text before it enters the zip: a log line by line, a JSON file value by value (`scrubJson`), so it still parses whatever a secret looks like, and every text whole before it is cut. It replaces:
 
-- the values the server holds as secrets, read fresh for each zip: the vault's, the webhooks', the push registrations', the bridge key, and the engine's, as the adapter lists them;
+- the values the server holds as secrets, read fresh for each zip: the vault's, the webhooks', the push registrations', the bridge key, and the engine's, as the adapter lists them; one that is a JSON document also by each text inside it;
 - credentials, and anything shaped like a token;
 - email addresses;
-- the home folder, the OS user name and the host name;
+- the home folder, the OS user name, the host name and the name in `publicOrigin`;
 - IP addresses other than loopback.
 
 Ids stay, so a flow can be followed across files.

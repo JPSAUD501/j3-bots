@@ -33,12 +33,17 @@ const sources: DiagnosticsSources = {
 };
 
 /** A line of the server's log as `Logger.formatJson` writes one. */
-const logLine = (at: string, message: string, level = "INFO") =>
+const logLine = (
+  at: string,
+  message: string,
+  level = "INFO",
+  annotations: Record<string, string> = {},
+) =>
   JSON.stringify({
     message,
     level,
     timestamp: at,
-    annotations: {},
+    annotations,
     spans: {},
     fiberId: "#1",
   });
@@ -92,6 +97,10 @@ const Manifest = Schema.Struct({
 });
 const decodeManifest = Schema.decodeSync(Schema.fromJsonString(Manifest));
 
+/** Whether `text` parses as JSON. */
+const parses = (text: string) =>
+  Option.isSome(Schema.decodeOption(Schema.fromJsonString(Schema.Unknown))(text));
+
 const Failures = Schema.Array(
   Schema.Struct({
     notice: Schema.String,
@@ -109,6 +118,12 @@ const decodeCounts = Schema.decodeSync(Schema.fromJsonString(Counts));
 
 const Settings = Schema.Struct({ voice: Schema.Struct({ words: Schema.Number }) });
 const decodeSettings = Schema.decodeSync(Schema.fromJsonString(Settings));
+const decodeAnnotations = (line: string) =>
+  Schema.decodeSync(
+    Schema.fromJsonString(
+      Schema.Struct({ annotations: Schema.Record(Schema.String, Schema.String) }),
+    ),
+  )(line).annotations;
 
 it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
   it.effect("holds the files its README names, and nothing of the person", () =>
@@ -158,15 +173,42 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       yield* writeServerLog([
         logLine("2026-11-10T09:00:00.000Z", "Too old to keep"),
         logLine("2026-11-26T09:00:00.000Z", `Signed a webhook with ${WEBHOOK_SECRET}`),
+        logLine("2026-11-26T09:30:00.000Z", "Refused a name", "WARN", {
+          refusedName: "lab.example.test",
+          route: "/",
+        }),
         "Book the flight to Lisbon",
         logLine("2026-11-27T09:00:00.000Z", `Bridge key ${MEMORY_SECRET}`, "WARN"),
       ]);
 
-      const zip = yield* unzipped();
+      // A secret that reads like a number the zip holds, the hour the server has run, as a short one may.
+      const zip = yield* unzipped({
+        secrets: [Redacted.make(MEMORY_SECRET), Redacted.make("3600")],
+      });
       assert.deepStrictEqual(zip.names, [...DIAGNOSTICS_FILES]);
       const everything = zip.names.map(zip.text).join("\n");
-      for (const kept of [BOT_NAME, "Marina", "Lisbon", "Quillon", WEBHOOK_SECRET, MEMORY_SECRET]) {
+      for (const kept of [
+        BOT_NAME,
+        "Marina",
+        "Lisbon",
+        "Quillon",
+        "lab.example.test",
+        WEBHOOK_SECRET,
+        MEMORY_SECRET,
+      ]) {
         assert.notInclude(everything, kept);
+      }
+      // Every JSON file and every log line still parses, its numbers as they were.
+      for (const name of zip.names.filter((each) => each.endsWith(".json"))) {
+        assert.isTrue(parses(zip.text(name)), name);
+      }
+      for (const name of zip.names.filter((each) => each.endsWith(".jsonl"))) {
+        for (const line of zip
+          .text(name)
+          .split("\n")
+          .filter((each) => each.length > 0)) {
+          assert.isTrue(parses(line), name);
+        }
       }
 
       const manifest = decodeManifest(zip.text("manifest.json"));
@@ -187,7 +229,7 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
           install: "service",
           uptimeSeconds: 3600,
           timeZone: "UTC",
-          server: { lines: 2, cut: false },
+          server: { lines: 3, cut: false },
         },
       );
 
@@ -195,7 +237,7 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
       const serverLog = zip.text("server-log.jsonl").trimEnd().split("\n");
       assert.deepStrictEqual(
         serverLog.map((line) => messageOf(line)),
-        ["Signed a webhook with [secret]", "Bridge key [secret]"],
+        ["Signed a webhook with [secret]", "Refused a name", "Bridge key [secret]"],
       );
       assert.deepStrictEqual(decodeFailures(zip.text("failures.json")), [
         { notice: "turn-failed", failure: "usage-limit", conversation: "bot_00000000000000000001" },
@@ -205,6 +247,8 @@ it.layer(TestDatabase.layer)("a diagnostics zip", (it) => {
         routines: { all: 1, enabled: 1 },
       });
       assert.strictEqual(decodeSettings(zip.text("settings.json")).voice.words, 1);
+      // The name a request was refused at is left out, the rest of the line kept.
+      assert.deepStrictEqual(decodeAnnotations(serverLog[1] ?? ""), { route: "/" });
     }),
   );
 

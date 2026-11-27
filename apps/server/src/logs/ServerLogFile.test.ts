@@ -20,7 +20,7 @@ it.layer(NodeServices.layer)("the server's log in its home", (it) => {
       // A line of a quarter of a file: four fill a file, and the fifth begins the next.
       const line = (n: number) => `{"n":${n},"pad":"${"x".repeat(MAX_FILE_BYTES / 4 - 20)}"}`;
       const written = KEPT_FILES * 4 + 6;
-      for (let n = 0; n < written; n++) yield* appendLines(folder, [line(n)]);
+      for (let n = 0; n < written; n++) yield* appendLines(folder, [line(n)], Effect.succeed);
 
       const names = (yield* fs.readDirectory(folder)).toSorted();
       assert.deepStrictEqual(
@@ -42,6 +42,24 @@ it.layer(NodeServices.layer)("the server's log in its home", (it) => {
         Array.from({ length: kept }, (_, index) => written - kept + index),
       );
       assert.isAtLeast(kept, (KEPT_FILES - 1) * 4);
+    }),
+  );
+
+  // Windows has no open that refuses a link at the file's name (`writeInPlace`).
+  it.effect.skipIf(process.platform === "win32")("never follows a link put at the log's name", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "j3-log-" });
+      const folder = path.join(root, "logs");
+      const elsewhere = path.join(root, "web", "log.txt");
+      yield* fs.makeDirectory(folder);
+      yield* fs.makeDirectory(path.dirname(elsewhere));
+      yield* fs.symlink(elsewhere, path.join(folder, SERVER_LOG));
+
+      const written = yield* Effect.result(appendLines(folder, ['{"n":1}'], Effect.succeed));
+      assert.strictEqual(written._tag, "Failure");
+      assert.isFalse(yield* fs.exists(elsewhere));
     }),
   );
 });

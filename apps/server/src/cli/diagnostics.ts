@@ -4,6 +4,7 @@ import { diagnosticsFileName } from "@j3-bots/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -57,48 +58,66 @@ export const diagnosticsCommand = Command.make("diagnostics", { out: outFlag }).
       const config = yield* userFacing(ServerConfig.load.pipe(Effect.provide(described)));
       const at = yield* DateTime.now;
       const file = path.resolve(Option.getOrElse(out, () => diagnosticsFileName(at)));
-      if (yield* fs.exists(file)) {
-        return yield* refuse(`${file} already exists. Name another file with --out.`);
-      }
       if (!(yield* fs.exists(config.databasePath))) {
         return yield* refuse(
           `No server has run on ${config.home} yet, so there is nothing to put in a diagnostics zip. Start it once with \`j3-bots serve\` or \`j3-bots service install\`.`,
         );
       }
-      // The running server, when one answers, says what only it knows: the
-      // engine's state and when it started. Without one, the zip says so.
-      const running = hasAdminSocket(process.platform)
-        ? yield* (yield* AdminClient)
-            .status(config.adminSocket)
-            .pipe(Effect.orElseSucceed(() => Option.none()))
-        : Option.none();
-      const sql = yield* SqliteClient.make({ filename: config.databasePath, readonly: true }).pipe(
-        Effect.provide(Reactivity.layer),
-        Effect.mapError(() =>
-          refuse(`The database in ${config.home} could not be opened, so no zip was written.`),
-        ),
-      );
-      const zip = yield* diagnosticsZip(config, {
-        at,
-        client: Option.none(),
-        version: Option.match(running, {
-          onNone: () => packageJson.version,
-          onSome: (status) => status.version,
-        }),
-        startedAt: Option.map(running, (status) => status.startedAt),
-        install: yield* installKind(Option.isSome(unitText)),
-        engine: Option.map(running, (status) => status.engine),
-        secrets: [],
-      }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
-      yield* zip.pipe(
-        Stream.run(fs.sink(file, { flag: "wx", mode: 0o600 })),
-        Effect.catch(() =>
-          fs
-            .remove(file, { force: true })
-            .pipe(
-              Effect.ignore,
-              Effect.andThen(Effect.fail(refuse(`${file} could not be written.`))),
+      // The file is made here, and only here: anything already at its name, a
+      // link included, is refused and left as it is. Once made, it is removed
+      // again when no whole zip is written, however that ends, and only once
+      // it is closed, which Windows needs.
+      let made = false;
+      const running = yield* Effect.gen(function* () {
+        const handle = yield* fs
+          .open(file, { flag: "wx", mode: 0o600 })
+          .pipe(
+            Effect.mapError((error) =>
+              error.reason._tag === "AlreadyExists"
+                ? refuse(`${file} already exists. Name another file with --out.`)
+                : refuse(`${file} could not be written.`),
             ),
+          );
+        made = true;
+        // The running server, when one answers, says what only it knows: the
+        // engine's state and when it started. Without one, the zip says so.
+        const running = hasAdminSocket(process.platform)
+          ? yield* (yield* AdminClient)
+              .status(config.adminSocket)
+              .pipe(Effect.orElseSucceed(() => Option.none()))
+          : Option.none();
+        const sql = yield* SqliteClient.make({
+          filename: config.databasePath,
+          readonly: true,
+        }).pipe(
+          Effect.provide(Reactivity.layer),
+          Effect.mapError(() =>
+            refuse(`The database in ${config.home} could not be opened, so no zip was written.`),
+          ),
+        );
+        const zip = yield* diagnosticsZip(config, {
+          at,
+          client: Option.none(),
+          version: Option.match(running, {
+            onNone: () => packageJson.version,
+            onSome: (status) => status.version,
+          }),
+          startedAt: Option.map(running, (status) => status.startedAt),
+          install: yield* installKind(Option.isSome(unitText)),
+          engine: Option.map(running, (status) => status.engine),
+          secrets: [],
+        }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+        yield* zip.pipe(
+          Stream.runForEach((chunk) => handle.writeAll(chunk)),
+          Effect.mapError(() => refuse(`${file} could not be written.`)),
+        );
+        return running;
+      }).pipe(
+        Effect.scoped,
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) && made
+            ? fs.remove(file, { force: true }).pipe(Effect.ignore)
+            : Effect.void,
         ),
       );
       yield* Console.log(

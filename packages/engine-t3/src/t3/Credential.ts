@@ -105,6 +105,19 @@ class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
 const credentialFile = (path: Path.Path, home: string) =>
   path.join(engineFolders(path, home).j3, "credential.json");
 
+/**
+ * The token `credential.json` holds for the engine at `home`, when it holds
+ * one that reads: for a diagnostics zip to take out wherever it appears.
+ */
+export const storedToken = Effect.fn("engine.storedToken")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(credentialFile(path, home)).pipe(
+    Effect.map((text) => Option.map(decodeStored(text), (stored) => Redacted.make(stored.token))),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+  );
+});
+
 /** Runs the engine's CLI, `auth session` and `args`, against the engine's data directory. */
 const authSession = Effect.fnUntraced(function* (
   executable: string,

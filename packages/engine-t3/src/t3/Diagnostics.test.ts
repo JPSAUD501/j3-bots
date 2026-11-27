@@ -10,6 +10,10 @@ import * as Stream from "effect/Stream";
 import { engineLogNewestFirst, engineSecretValues } from "./Diagnostics.ts";
 
 const NOW = DateTime.makeUnsafe("2026-11-27T12:00:00Z");
+/** A warning long enough to be cut, with a made-up key across where it is cut. */
+const LONG_WARNING = `Provider slow to answer ${"x".repeat(270)} key KEY-0123456789`;
+/** What the zip's scrubber does, for this test: takes the key out. */
+const clean = (text: string) => text.replaceAll("KEY-0123456789", "[secret]");
 const nanos = (iso: string) =>
   (BigInt(DateTime.makeUnsafe(iso).epochMilliseconds) * 1_000_000n).toString();
 
@@ -77,7 +81,7 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
             at: "2026-11-26T10:00:00Z",
             events: [
               { name: "Turn started", level: "Info" },
-              { name: "Provider slow to answer", level: "Warning" },
+              { name: LONG_WARNING, level: "Warning" },
             ],
           }),
           span({
@@ -98,7 +102,7 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
         yield* fs.utimes(path.join(logs, file), time, time);
       }
       const lines = yield* Stream.runCollect(
-        engineLogNewestFirst(home, DateTime.subtract(NOW, { days: 7 })),
+        engineLogNewestFirst(home, DateTime.subtract(NOW, { days: 7 }), clean),
       );
       assert.deepStrictEqual(
         lines.map((line) => JSON.parse(line)),
@@ -115,7 +119,8 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
             span: "orchestrator.dispatch",
             ms: 12.3,
             outcome: "success",
-            logs: [{ level: "Warning", message: "Provider slow to answer" }],
+            // Cleaned whole, then cut: no part of the key is left.
+            logs: [{ level: "Warning", message: `${clean(LONG_WARNING).slice(0, 300)}…` }],
           },
           {
             at: "2026-11-25T10:00:00.000Z",
@@ -128,10 +133,11 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
         ],
       );
       assert.notInclude(lines.join("\n"), "Lisbon");
+      assert.notInclude(lines.join("\n"), "KEY-0");
     }),
   );
 
-  it.effect("finds the credential and every value of the engine's secret store", () =>
+  it.effect("finds the credential's token and every value of the engine's secret store", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -140,21 +146,31 @@ it.layer(NodeServices.layer)("what of the engine a diagnostics zip holds", (it) 
       yield* fs.makeDirectory(path.join(home, "userdata", "secrets"), { recursive: true });
       yield* fs.writeFileString(
         path.join(home, "j3", "credential.json"),
-        JSON.stringify({ token: "engine-token-value", expiresAt: "2026-12-01T00:00:00Z" }),
+        JSON.stringify({
+          token: "engine-token-value",
+          expiresAt: "2026-12-01T00:00:00Z",
+          scopes: ["orchestration:read"],
+        }),
       );
+      const connection = JSON.stringify({
+        baseUrl: "https://ai.example.test",
+        key: "provider-key-value",
+      });
       yield* fs.writeFileString(
         path.join(home, "userdata", "secrets", "j3-provider-connection.json"),
-        JSON.stringify({ baseUrl: "https://ai.example.test", key: "provider-key-value" }),
+        connection,
       );
       yield* fs.writeFileString(
         path.join(home, "userdata", "secrets", "OPENAI_API_KEY"),
         "plain-value\n",
       );
 
+      // The token alone of the credential: its scopes are words a log uses.
       const values = (yield* engineSecretValues(home)).map(Redacted.value);
-      for (const expected of ["engine-token-value", "provider-key-value", "plain-value"]) {
-        assert.include(values, expected);
-      }
+      assert.deepStrictEqual(
+        values.toSorted(),
+        [connection, "engine-token-value", "plain-value"].toSorted(),
+      );
     }),
   );
 });

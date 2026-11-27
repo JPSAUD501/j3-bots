@@ -16,16 +16,18 @@ import type * as SqlError from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import type { ServerConfigShape } from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
+import { PRIVATE_ANNOTATIONS } from "../logs/annotations.ts";
 import { logFiles } from "../logs/ServerLogFile.ts";
 import { everyValue } from "../secrets/transfer.ts";
 import { readRun } from "../update/run.ts";
-import { makeScrubber } from "./scrub.ts";
+import { makeScrubber, scrubJson } from "./scrub.ts";
 import { type ZipEntry, zipStream } from "./zip.ts";
 
 // A diagnostics zip (docs/decisions/0100-…): what the server knows of how it
 // runs, for the operator to send to whoever helps them, and nothing of the
-// person. Every file is text, and every text goes through one scrubber
-// before it is written (`scrub.ts`). The logs are the newest lines that fit
+// person. Every file is text, and every text the server read or wrote into
+// it goes through one scrubber before it is written (`scrub.ts`): a log line
+// by line, a JSON file value by value. The logs are the newest lines that fit
 // their budget; the other files are small by what they hold.
 
 /** How far back the logs go. */
@@ -84,8 +86,6 @@ export const DIAGNOSTICS_FILES = [
 ] as const;
 type DiagnosticsFile = (typeof DIAGNOSTICS_FILES)[number];
 
-const LOGS: ReadonlySet<DiagnosticsFile> = new Set(["server-log.jsonl", "engine-log.jsonl"]);
-
 const README = `# J3 Bots diagnostics
 
 This zip says how a J3 Bots server runs, for whoever helps its operator: a
@@ -128,11 +128,6 @@ rest appear by their ids alone (\`bot_…\`, \`room_…\`).
 A file the server could not read holds \`{ "unreadable": … }\` and says why.
 `;
 
-/** A file of the zip that could not be made, saying why instead. */
-const unreadable = (why: string) => json({ unreadable: why });
-
-const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-
 const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
 
 const encodeEngineStatus = Schema.encodeSync(Schema.toCodecJson(EngineStatus));
@@ -141,23 +136,46 @@ const encodeEngineStatus = Schema.encodeSync(Schema.toCodecJson(EngineStatus));
 const ServerLogLine = Schema.Struct({
   timestamp: Schema.String,
   level: Schema.String,
-  message: Schema.Unknown,
+  message: Schema.Json,
   cause: Schema.optionalKey(Schema.String),
-  annotations: Schema.Record(Schema.String, Schema.Unknown),
+  annotations: Schema.Record(Schema.String, Schema.Json),
   spans: Schema.Record(Schema.String, Schema.Number),
 });
+type ServerLogLine = typeof ServerLogLine.Type;
 const decodeServerLine = Schema.decodeUnknownOption(Schema.fromJsonString(ServerLogLine));
 const encodeServerLine = Schema.encodeSync(Schema.fromJsonString(ServerLogLine));
 
+const cutCause = (cause: string) =>
+  cause.length > MAX_CAUSE ? `${cause.slice(0, MAX_CAUSE)}…` : cause;
+
+/**
+ * `line` as the zip holds it: without the annotations that name something of
+ * the operator's, each text scrubbed, and its cause cut once scrubbed, so a
+ * secret is never cut in two before the scrubber sees it whole.
+ */
+const zipLine = (scrub: (text: string) => string, line: ServerLogLine): ServerLogLine => ({
+  timestamp: line.timestamp,
+  level: line.level,
+  message: scrubJson(scrub, line.message),
+  ...(line.cause === undefined ? {} : { cause: cutCause(scrub(line.cause)) }),
+  annotations: Object.fromEntries(
+    Object.entries(line.annotations)
+      .filter(([key]) => !PRIVATE_ANNOTATIONS.has(key))
+      .map(([key, value]) => [key, scrubJson(scrub, value)]),
+  ),
+  spans: line.spans,
+});
+
 /**
  * The server's log in `folder` from `since` on, newest first, each line
- * re-encoded with only the fields the log writes. A file is read only once
- * the lines after it were taken, and the reading stops at the first one last
- * written before `since`.
+ * re-encoded with only the fields the log writes, scrubbed (`zipLine`). A
+ * file is read only once the lines after it were taken, and the reading stops
+ * at the first one last written before `since`.
  */
 const serverLogNewestFirst = (
   folder: string,
   since: DateTime.Utc,
+  scrub: (text: string) => string,
 ): Stream.Stream<string, never, FileSystem.FileSystem | Path.Path> =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -178,13 +196,7 @@ const serverLogNewestFirst = (
               Option.toArray(
                 decodeServerLine(raw).pipe(
                   Option.filter((line) => line.timestamp >= sinceIso),
-                  Option.map((line) =>
-                    encodeServerLine(
-                      line.cause !== undefined && line.cause.length > MAX_CAUSE
-                        ? { ...line, cause: `${line.cause.slice(0, MAX_CAUSE)}…` }
-                        : line,
-                    ),
-                  ),
+                  Option.map((line) => encodeServerLine(zipLine(scrub, line))),
                 ),
               ),
             );
@@ -201,23 +213,19 @@ const serverLogNewestFirst = (
   );
 
 /** What the zip holds of a log. */
-interface KeptLog {
+type KeptLog = {
   readonly lines: number;
   /** Whether older lines of the days were left out to keep within the budget. */
   readonly cut: boolean;
-}
+};
 
 /**
- * The newest lines of `newestFirst`, scrubbed, that fit in `budget` bytes,
- * as a file oldest first. The lines past the budget are never read.
+ * The newest lines of `newestFirst`, scrubbed as they are read, that fit in
+ * `budget` bytes, as a file oldest first. The lines past the budget are never
+ * read.
  */
-const keepNewest = <R>(
-  newestFirst: Stream.Stream<string, never, R>,
-  budget: number,
-  scrub: (text: string) => string,
-) =>
+const keepNewest = <R>(newestFirst: Stream.Stream<string, never, R>, budget: number) =>
   newestFirst.pipe(
-    Stream.map(scrub),
     Stream.mapAccum(
       () => 0,
       (total, line) => {
@@ -365,15 +373,31 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
   const since = DateTime.subtract(sources.at, { days: LOG_DAYS });
   const sinceIso = DateTime.formatIso(since);
 
+  // Without every secret value the server and the engine hold, no file could
+  // be trusted to hold none: a store there that cannot be read makes no zip.
   const secrets = [
     ...sources.secrets,
-    ...(yield* everyValue(path.join(config.home, HOME_ENTRIES.secrets))),
-    ...(yield* engineSecretValues(config.engineHome)),
+    ...(yield* everyValue(path.join(config.home, HOME_ENTRIES.secrets)).pipe(Effect.orDie)),
+    ...(yield* engineSecretValues(config.engineHome).pipe(Effect.orDie)),
     ...(yield* databaseSecrets),
   ];
-  const scrub = makeScrubber({ secrets, ...(yield* machine), host: NodeOs.hostname() });
+  const scrub = makeScrubber({
+    secrets,
+    ...(yield* machine),
+    hosts: [
+      NodeOs.hostname(),
+      ...Option.toArray(
+        Option.flatMapNullishOr(config.publicOrigin, (origin) => URL.parse(origin)?.hostname),
+      ),
+    ],
+  });
+  /** A JSON file of the zip, each of its texts scrubbed. */
+  const json = (value: Schema.Json) => `${JSON.stringify(scrubJson(scrub, value), null, 2)}\n`;
+  /** A file of the zip that could not be made, saying why instead. */
+  const unreadable = (why: string) => json({ unreadable: why });
 
-  const logs: Partial<Record<"server" | "engine", KeptLog>> = {};
+  /** What the zip holds of each log, by name, as it is made. */
+  const logs: Record<string, KeptLog> = {};
 
   const query = <Row extends Schema.Constraint, E>(
     result: Row,
@@ -389,9 +413,8 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
   > = {
     "README.md": Effect.succeed(README),
     "server-log.jsonl": keepNewest(
-      serverLogNewestFirst(path.join(config.home, HOME_ENTRIES.logs), since),
+      serverLogNewestFirst(path.join(config.home, HOME_ENTRIES.logs), since, scrub),
       budgets.server,
-      scrub,
     ).pipe(
       Effect.map(({ text, log }) => {
         logs.server = log;
@@ -399,9 +422,8 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
       }),
     ),
     "engine-log.jsonl": keepNewest(
-      engineLogNewestFirst(config.engineHome, since),
+      engineLogNewestFirst(config.engineHome, since, scrub),
       budgets.engine,
-      scrub,
     ).pipe(
       Effect.map(({ text, log }) => {
         logs.engine = log;
@@ -626,8 +648,10 @@ export const diagnosticsZip = Effect.fn("diagnostics.zip")(function* (
     Stream.mapEffect((name) =>
       sections[name].pipe(
         Effect.orElseSucceed(() => unreadable("The server could not read it.")),
-        // A log is scrubbed as each line is taken, so its budget counts what the zip holds.
-        Effect.map((text): ZipEntry => ({ name, text: LOGS.has(name) ? text : scrub(text) })),
+        // Each file is scrubbed as it is made: a log line by line, so its
+        // budget counts what the zip holds, and a JSON file value by value.
+        // The README is this module's own text.
+        Effect.map((text): ZipEntry => ({ name, text })),
         Effect.provide(context),
       ),
     ),

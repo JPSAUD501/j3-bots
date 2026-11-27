@@ -756,7 +756,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
-  it.effect("downloads the server's diagnostics zip once the server says it makes one", () =>
+  it.effect("downloads the server's diagnostics zip while the server says it makes one", () =>
     Effect.gen(function* () {
       const connection = yield* Connection;
       assert.strictEqual(connection.server.get(), null);
@@ -767,6 +767,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       assert.strictEqual(zip.mediaType, "application/zip");
       // A zip starts with its first file's local header.
       assert.deepStrictEqual(Array.from(zip.bytes.subarray(0, 4)), [0x50, 0x4b, 0x03, 0x04]);
+
+      // Signed out, the device is offered nothing of the server.
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
+      assert.strictEqual(yield* waitFor(connection.server, (info) => info === null), null);
     }).pipe(Effect.provide(client())),
   );
 

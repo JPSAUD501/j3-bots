@@ -4,7 +4,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
+import { writeInPlace } from "../home/inPlace.ts";
+import * as Layout from "../Layout.ts";
+import type { PrivateLocationExposed } from "../Layout.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 
 // The server's log, kept in its home as well as written to the console
@@ -40,16 +44,23 @@ export const logFiles = (path: Path.Path, folder: string): ReadonlyArray<string>
  * the current one would pass `MAX_FILE_BYTES`, the oldest dropped. Lines are
  * never split between two files. A batch larger than a file on its own is
  * still written whole, to a new file.
+ *
+ * The log is private state: `writable` checks `folder` first, as for every
+ * write in the home (`Layout.writable`), and a link at the file's name is
+ * refused rather than followed, even one put there after that check
+ * (`writeInPlace`), so the log never lands where the web client serves it.
  */
 export const appendLines = Effect.fnUntraced(function* (
   folder: string,
   lines: ReadonlyArray<string>,
+  writable: (location: string) => Effect.Effect<string, PrivateLocationExposed>,
 ) {
   if (lines.length === 0) return;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const current = fileAt(path, folder, 0);
   const bytes = new TextEncoder().encode(`${lines.join("\n")}\n`);
+  yield* writable(folder);
   yield* fs.makeDirectory(folder, { recursive: true, mode: 0o700 });
   const size = yield* fs.stat(current).pipe(
     Effect.map((info) => Number(info.size)),
@@ -62,7 +73,7 @@ export const appendLines = Effect.fnUntraced(function* (
       if (yield* fs.exists(from)) yield* fs.rename(from, fileAt(path, folder, index + 1));
     }
   }
-  yield* fs.writeFile(current, bytes, { flag: "a", mode: 0o600 });
+  yield* writeInPlace(current, true, Stream.make(bytes));
 });
 
 /**
@@ -74,12 +85,14 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const { home } = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
+    const layout = yield* Layout.Layout;
     const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
     const folder = path.join(home, HOME_ENTRIES.logs);
     const file = Logger.batched(Logger.formatJson, {
       window: WRITE_WINDOW,
-      flush: (lines) => appendLines(folder, lines).pipe(Effect.provide(context), Effect.ignore),
+      flush: (lines) =>
+        appendLines(folder, lines, layout.writable).pipe(Effect.provide(context), Effect.ignore),
     });
     return Logger.layer([file], { mergeWithExisting: true });
   }),
-);
+).pipe(Layer.provide(Layout.layer));

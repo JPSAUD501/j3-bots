@@ -36,7 +36,7 @@ What was open:
 - The web client and the desktop app save the file through the browser's download. The Android app hands it to the system's share sheet, for the operator to send where they choose.
 - **`j3-bots diagnostics [--out <file>]`** writes the same zip on the server's machine, for when no client opens.
   - It reads the data directory and changes nothing, whether the server is running or stopped.
-  - It never writes over a file that is already there.
+  - It never writes over anything already at the file's name, a link included. It removes the file it made when no whole zip could be written.
   - A running server tells it, over the admin channel, what only the server knows: the engine's state and when it started. A stopped one leaves that out, and the command says so.
 
 ### What the zip holds
@@ -46,8 +46,8 @@ A `README.md` inside explains each file for a person or an AI:
 | File | What it holds |
 | --- | --- |
 | `manifest.json` | J3 Bots' release, the engine it is pinned to and the protocol; the client that asked, with its version and system; the server's OS and architecture; the install kind; uptime and time zone; when the zip was made; and, per log, how many lines it holds and whether older ones were left out. |
-| `server-log.jsonl` | The server's log for the last 7 days, oldest first, each line re-encoded from the server's own shape. A line that does not decode as that shape is dropped rather than trusted. An error's cause is cut at 8 KiB. |
-| `engine-log.jsonl` | The engine's work that went wrong over the same days, from T3 Code's trace file. Only spans that failed, were interrupted or logged a warning or an error are kept, in J3 Bots' own shape: the span's name, how long it took, the name of its error (never the error's message), and the level and message of what it logged, each cut at 300 characters. |
+| `server-log.jsonl` | The server's log for the last 7 days, oldest first, each line re-encoded from the server's own shape. A line that does not decode as that shape is dropped rather than trusted. An error's cause is cut at 8 KiB once scrubbed. A line that names something of the operator's network, as the name a refused request asked for, names it in an annotation the zip leaves out. |
+| `engine-log.jsonl` | The engine's work that went wrong over the same days, from T3 Code's trace file. Only spans that failed, were interrupted or logged a warning or an error are kept, in J3 Bots' own shape: the span's name, how long it took, the name of its error (never the error's message), and the level and message of what it logged, each scrubbed, then cut at 300 characters. |
 | `engine.json` | The engine's state and each provider's: whether it is ready, whether it is signed in, why it cannot run, the harness's version and J3 Bots' own copy of it. |
 | `failures.json` | The failures the server told the operator of in the last 7 days, newest first, at most 500. Each gives its class, its target by id, and when it happened. |
 | `updates.json` | The last update of J3 Bots, and the engine release recorded. |
@@ -58,29 +58,29 @@ A `README.md` inside explains each file for a person or an AI:
 
 - **Telemetry.** Today the server sends nothing, so the file says `{ "sends": "nothing" }`. One function makes it (`telemetry()` in `apps/server/src/diagnostics/build.ts`). Once the server can send telemetry, that function says whether it is on and what it sent lately, from the same list Settings shows.
 - **The client's own log.** No client keeps one today: the desktop app's file is the log of the server it runs, which the zip holds already. A client that keeps a log later adds it through the same route.
-- **The server keeps its own copy of its log**, `<J3_HOME>/logs/server.log`: the same JSON lines it writes to the console. The file is moved aside at 4 MiB, and at most 5 files (20 MiB) are kept. A service install wrote its log only to the journal before, and the zip should not depend on reading it.
+- **The server keeps its own copy of its log**, `<J3_HOME>/logs/server.log`: the same JSON lines it writes to the console. The file is moved aside at 4 MiB, and at most 5 files (20 MiB) are kept. A service install wrote its log only to the journal before, and the zip should not depend on reading it. The log is private state like the rest of the home: its folder is checked before each write, and a link at the file's name is refused rather than followed, so the log never lands where the web client serves it.
 
 ### One scrubber, every file
 
-`apps/server/src/diagnostics/scrub.ts` goes over the text of every file before it enters the zip. It replaces, in this order, so a broader rule never half-replaces a value:
+`apps/server/src/diagnostics/scrub.ts` goes over the text of every file before it enters the zip: a log line by line, as each is read, and a JSON file value by value, so its numbers and its shape stay as they are and it always parses. A text is scrubbed whole before anything cuts it, so no secret is cut in two where the scrubber cannot find it. The `README.md` is the server's own text. The scrubber replaces, in this order, so a broader rule never half-replaces a value:
 
-1. **The exact values the server holds as secrets**, read fresh for each zip, as they are and as JSON escapes them. These are:
+1. **The exact values the server holds as secrets**, read fresh for each zip, as they are and as JSON escapes them. A value that is a JSON document, as a connector's headers or sign-in, counts whole and by each text inside it. These are:
    - the operator's and the connectors' sealed secrets;
    - the webhook secrets and tokens;
    - the push registrations' tokens;
-   - the engine's credential, and each value in the engine's secret store;
+   - J3 Bots' token for the engine, and each value in the engine's secret store;
    - the bridge key.
 
    Each becomes `[secret]`.
 2. **Credentials** in a URL, and bearer and basic authorization, become `[credentials]` or `[token]`.
 3. **Token-shaped strings** become `[token]`: JWTs, known prefixes (`sk-`, `ghp_`, `phc_` and others), and long runs of hex or of mixed-case base64.
 4. **Email addresses** become `[email]`.
-5. **The operator's home folder** becomes `~`. Their OS user name becomes `[user]`, and the machine's name `[host]`.
+5. **The operator's home folder** becomes `~`. Their OS user name becomes `[user]`. The machine's name, and the name `publicOrigin` serves the server at, become `[host]`.
 6. **IPv4 and IPv6 addresses** become `[ipv4]` and `[ipv6]`. Loopback and the unspecified address are kept, since they say nothing about the machine.
 
 Bots, rooms, conversations and the rest appear only by their ids. Those ids are random, short and lowercase, so they never look like tokens, and they stay in the zip: someone helping can follow one flow from file to file.
 
-A query for secret values that fails stops the zip. Without those values, the scrubber could miss a secret.
+A store of secret values that is there but cannot be read stops the zip, as does a query for them that fails. Without those values, the scrubber could miss a secret. A store this release cannot open at all (its key is missing, or a newer release wrote it) adds none.
 
 ### Bounded, and streamed
 
@@ -104,6 +104,7 @@ A query for secret values that fails stops the zip. Without those values, the sc
   - It catches every value the server holds, and anything shaped like a token, an address or an email.
   - A secret the operator typed into a bot's conversation is not in the zip at all, since no message is.
   - A secret of a shape the scrubber does not know, somewhere the server logs it, would still pass.
+  - A user or host name that is also a common word, as a host named `server`, is replaced everywhere that word stands alone, which makes the logs harder to read.
 - **The engine's warnings keep their message, cut at 300 characters and scrubbed.** That T3 Code's warnings carry no conversation text is **Assumed** from reading its log calls, not proved for every one.
 - **The command run while the server is stopped knows less**: the zip says nothing of the engine's state or the providers'.
 - **The client's own log is missing**, until a client keeps one.

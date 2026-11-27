@@ -164,35 +164,33 @@ const inspect = Effect.fn("secrets.inspect")(function* (
 /**
  * Every value the secrets in `folder` hold, opened: each field of each
  * login, single value and connector secret, for a diagnostics zip to take
- * out of everything it holds. None when they cannot be read. Read only,
- * with the server running or not: nothing is written.
+ * out of everything it holds. None when there are none, or none this
+ * release can open (no key, or a newer release's); a store that is there and
+ * fails to read fails, so no zip is made without its values. Read only, with
+ * the server running or not: nothing is written.
  */
-export const everyValue = Effect.fn("secrets.everyValue")(
-  function* (folder: string) {
-    const found = yield* inspect(folder);
-    if (found._tag !== "ready") return [];
-    const file = (yield* Path.Path).join(folder, SECRETS_FILE);
-    const sql = yield* SqliteClient.make({ filename: file, readonly: true }).pipe(
-      Effect.provide(Reactivity.layer),
-    );
-    const rows = yield* decodeRows(
-      yield* sql`SELECT record_id, field, nonce, sealed FROM record_fields`,
-    ).pipe(Effect.orDie);
-    const values = rows.flatMap((row) =>
-      Option.toArray(
-        Option.map(openField(found.key, row.record_id, row.field, sealedOfText(row)), (plain) => {
-          const text = plain.toString("utf8");
-          plain.fill(0);
-          return Redacted.make(text);
-        }),
-      ),
-    );
-    found.key.fill(0);
-    return values;
-  },
-  Effect.scoped,
-  Effect.orElseSucceed((): ReadonlyArray<Redacted.Redacted<string>> => []),
-);
+export const everyValue = Effect.fn("secrets.everyValue")(function* (folder: string) {
+  const found = yield* inspect(folder);
+  if (found._tag !== "ready") return [];
+  const file = (yield* Path.Path).join(folder, SECRETS_FILE);
+  const sql = yield* SqliteClient.make({ filename: file, readonly: true }).pipe(
+    Effect.provide(Reactivity.layer),
+  );
+  const rows = yield* decodeRows(
+    yield* sql`SELECT record_id, field, nonce, sealed FROM record_fields`,
+  ).pipe(Effect.orDie);
+  const values = rows.flatMap((row) =>
+    Option.toArray(
+      Option.map(openField(found.key, row.record_id, row.field, sealedOfText(row)), (plain) => {
+        const text = plain.toString("utf8");
+        plain.fill(0);
+        return Redacted.make(text);
+      }),
+    ),
+  );
+  found.key.fill(0);
+  return values;
+}, Effect.scoped);
 
 /** Whether the home whose secrets are in `folder` holds any, read or not. */
 export const holdsSecrets = (folder: string) =>

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- node:net's isIPv6 is the only full IPv6 grammar at hand; Effect has none.
 import * as NodeNet from "node:net";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 // The one scrubber every text file of a diagnostics zip goes through before it
 // enters the zip (docs/decisions/0100-…). What it replaces, in this order, so
@@ -20,6 +22,10 @@ import * as Redacted from "effect/Redacted";
 // Ids of bots, rooms, conversations and the rest are random and stay, so a
 // flow can be followed across files: lowercase base32 behind a short prefix,
 // none of them long enough to look like a token.
+//
+// A JSON file is scrubbed value by value (`scrubJson`): only its text, never
+// its numbers or its shape, so a secret that reads like a port never turns a
+// file into one that does not parse.
 
 /** What the scrubber needs to know of this machine and this server. */
 export interface ScrubContext {
@@ -30,12 +36,17 @@ export interface ScrubContext {
    * every "abc" in a log would hide more than it protects.
    */
   readonly secrets: ReadonlyArray<Redacted.Redacted<string>>;
+  /**
+   * A secret value that is a JSON document (a connector's headers, its
+   * sign-in) counts whole and by each text value inside it, as a log may
+   * quote one of them alone.
+   */
   /** The OS user's home directory, as the system gives it. */
   readonly home: string;
   /** The OS user's name. */
   readonly user: string;
-  /** The machine's host name. */
-  readonly host: string;
+  /** The names of this machine and its server: its host name, and the name `publicOrigin` serves it at. */
+  readonly hosts: ReadonlyArray<string>;
 }
 
 /** The shortest secret value replaced as such. */
@@ -106,12 +117,29 @@ const homeForms = (home: string): ReadonlyArray<string> => {
   return [...forms].sort((a, b) => b.length - a.length);
 };
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
+
+/** Each text value of `value`, at any depth. */
+const textsOf = (value: Schema.Json): ReadonlyArray<string> =>
+  typeof value === "string"
+    ? [value]
+    : value === null || typeof value !== "object"
+      ? []
+      : Object.values(value).flatMap(textsOf);
+
+/** Each text value of the JSON in `text`, at any depth, or none when `text` is not JSON of an object or an array. */
+const textsInside = (text: string): ReadonlyArray<string> =>
+  /^\s*[[{]/.test(text)
+    ? Option.match(decodeJson(text), { onNone: () => [], onSome: textsOf })
+    : [];
+
 /** The scrubber for `context`: text in, the same text with nothing of the person in it. */
 export const makeScrubber = (context: ScrubContext): ((text: string) => string) => {
   const secrets = [
     ...new Set(
       context.secrets
         .map(Redacted.value)
+        .flatMap((value) => [value, ...textsInside(value)])
         .filter((value) => value.length >= MIN_SECRET_LENGTH)
         .flatMap(formsOf),
     ),
@@ -124,9 +152,10 @@ export const makeScrubber = (context: ScrubContext): ((text: string) => string) 
       ? null
       : new RegExp(`${homes.map(escapeRegExp).join("|")}(?![A-Za-z0-9_-])`, "gi");
   const names: ReadonlyArray<readonly [RegExp, string]> = [
-    ...(context.host.length >= MIN_NAME_LENGTH
-      ? [[wordPattern(context.host), PLACEHOLDERS.host] as const]
-      : []),
+    ...[...new Set(context.hosts)]
+      .filter((host) => host.length >= MIN_NAME_LENGTH)
+      .sort((a, b) => b.length - a.length)
+      .map((host) => [wordPattern(host), PLACEHOLDERS.host] as const),
     ...(context.user.length >= MIN_NAME_LENGTH
       ? [[wordPattern(context.user), PLACEHOLDERS.user] as const]
       : []),
@@ -153,3 +182,19 @@ export const makeScrubber = (context: ScrubContext): ((text: string) => string) 
       );
   };
 };
+
+/**
+ * `value` with `scrub` applied to each of its texts, object keys included, at
+ * any depth: its numbers, flags and shape as they were.
+ */
+export const scrubJson = (scrub: (text: string) => string, value: Schema.Json): Schema.Json => {
+  if (typeof value === "string") return scrub(value);
+  if (value === null || typeof value !== "object") return value;
+  if (isJsonArray(value)) return value.map((each) => scrubJson(scrub, each));
+  return Object.fromEntries(
+    Object.entries(value).map(([key, each]) => [scrub(key), scrubJson(scrub, each)]),
+  );
+};
+
+const isJsonArray = (value: Schema.JsonArray | Schema.JsonObject): value is Schema.JsonArray =>
+  Array.isArray(value);

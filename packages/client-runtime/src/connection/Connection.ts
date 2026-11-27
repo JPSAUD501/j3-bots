@@ -324,8 +324,10 @@ export class Connection extends Context.Service<
     ) => Effect.Effect<string, NotPaired | ServerHttp.ServerUnreachable>;
     /**
      * What the server said of itself when this window last reached it, as it
-     * opened a socket: null before. It names what the server offers beside
-     * the protocol, as the diagnostics zip, which a client offers only then.
+     * opened a socket: null before, while this device is not paired, and
+     * against a server of another protocol. It names what the server offers
+     * beside the protocol, as the diagnostics zip, which a client offers only
+     * then.
      */
     readonly server: Readable<ServerInfo | null>;
     /** This device's id, as the server knows it. Fails with `NotPaired` without a credential. */
@@ -488,6 +490,7 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const info = yield* http.serverInfo;
         if (info.protocolVersion !== PROTOCOL_VERSION) {
+          server.set(null);
           return {
             _tag: "incompatible",
             serverProtocol: info.protocolVersion,
@@ -550,6 +553,8 @@ export const layer = Layer.effect(
         const current = yield* SubscriptionRef.get(credential);
         if (current._tag !== "paired") {
           state.set({ _tag: "unpaired", reason: current._tag === "none" ? current.reason : "new" });
+          // Nothing of the server is offered to a device it no longer knows.
+          server.set(null);
           yield* SubscriptionRef.set(slot, { _tag: "unpaired" });
           yield* firstChange(credential, (next) => next !== current);
           if ((yield* SubscriptionRef.get(credential))._tag === "paired") {

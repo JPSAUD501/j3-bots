@@ -21,7 +21,7 @@ const Manifest = Schema.Struct({
 const decodeManifest = Schema.decodeSync(Schema.fromJsonString(Manifest));
 
 it.layer(TestDatabase.layer)("j3-bots diagnostics", (it) => {
-  it.effect("writes the zip of a stopped server, and never over a file already there", () =>
+  it.effect("writes the zip of a stopped server, and never over anything already at its name", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -50,6 +50,15 @@ it.layer(TestDatabase.layer)("j3-bots diagnostics", (it) => {
       const again = yield* Effect.result(run(["--out", out]));
       assert.strictEqual(again._tag, "Failure");
       assert.strictEqual(yield* fs.readFileString(out), "kept");
+
+      // A link to a drive not mounted now: refused, and the link left as it is.
+      if (process.platform !== "win32") {
+        const link = path.join(home, "to-a-drive.zip");
+        yield* fs.symlink(path.join(home, "not-mounted", "support.zip"), link);
+        const onLink = yield* Effect.result(run(["--out", link]));
+        assert.strictEqual(onLink._tag, "Failure");
+        assert.strictEqual(yield* fs.readLink(link), path.join(home, "not-mounted", "support.zip"));
+      }
     }),
   );
 });

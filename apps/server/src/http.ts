@@ -34,6 +34,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../package.json" with { type: "json" };
+import { REFUSED_NAME } from "./logs/annotations.ts";
 import { Attachments } from "./attachments/Attachments.ts";
 import { WorkImages } from "./attachments/WorkImages.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
@@ -313,9 +314,10 @@ const refusedNameLogger = (
     Effect.gen(function* () {
       const name = requestedName(host);
       if (!(yield* refused.record(name))) return;
+      // The name is the operator's network's: in an annotation, which a diagnostics zip leaves out.
       yield* Effect.logWarning(
-        `Refused a plain-HTTP request for ${name} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at ${name}, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
-      );
+        `Refused a plain-HTTP request for the name in ${REFUSED_NAME} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at that name, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
+      ).pipe(Effect.annotateLogs(REFUSED_NAME, name));
     });
 };
 

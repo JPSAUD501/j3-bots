@@ -8,6 +8,7 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { storedToken } from "./Credential.ts";
 import { engineFolders } from "./PrivateFiles.ts";
 
 // What of the engine a diagnostics zip may hold (docs/decisions/0100-…): the
@@ -83,14 +84,17 @@ const encodeLine = Schema.encodeSync(Schema.fromJsonString(EngineLogLine));
 
 const cut = (text: string) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text);
 
+/** What takes the operator's secrets and names out of a text, before it is cut. */
+type Clean = (text: string) => string;
+
 /**
  * The name of the error a cause begins with, as Effect prints a cause: the
  * first line's leading identifier before a `:`. A cause that does not begin
  * so, a message alone, is `unknown`: its text is never kept.
  */
-const errorName = (cause: string): string => {
+const errorName = (cause: string, clean: Clean): string => {
   const match = /^\s*([A-Za-z_$][\w$]*)(?::|\s*$)/m.exec(cause.split("\n", 1)[0] ?? "");
-  return match?.[1] === undefined ? "unknown" : cut(match[1]);
+  return match?.[1] === undefined ? "unknown" : cut(clean(match[1]));
 };
 
 const LOUD_LEVELS = new Set(["warning", "warn", "error", "fatal"]);
@@ -103,7 +107,7 @@ const isoOfNanos = (nanos: string): Option.Option<string> =>
  * wrong: a span that succeeded and logged no warning or error says nothing a
  * diagnosis needs, and most spans are those.
  */
-const lineOf = (span: TraceSpan): Option.Option<EngineLogLine> => {
+const lineOf = (span: TraceSpan, clean: Clean): Option.Option<EngineLogLine> => {
   const outcome: EngineSpanOutcome =
     span.exit?._tag === "Failure" || span.status?.code === "ERROR"
       ? "failure"
@@ -113,16 +117,16 @@ const lineOf = (span: TraceSpan): Option.Option<EngineLogLine> => {
   const logs = span.events.flatMap((event) => {
     const level = event.attributes["effect.logLevel"];
     return Predicate.isString(level) && LOUD_LEVELS.has(level.toLowerCase())
-      ? [{ level, message: cut(event.name) }]
+      ? [{ level, message: cut(clean(event.name)) }]
       : [];
   });
   if (outcome === "success" && logs.length === 0) return Option.none();
   return Option.map(isoOfNanos(span.endTimeUnixNano), (at) => ({
     at,
-    span: cut(span.name),
+    span: cut(clean(span.name)),
     ms: Math.round(span.durationMs * 10) / 10,
     outcome,
-    ...(span.exit?._tag === "Failure" ? { error: errorName(span.exit.cause) } : {}),
+    ...(span.exit?._tag === "Failure" ? { error: errorName(span.exit.cause, clean) } : {}),
     logs,
   }));
 };
@@ -132,11 +136,14 @@ const lineOf = (span: TraceSpan): Option.Option<EngineLogLine> => {
  * JSON lines of `EngineLogLine`, from `since` on. Each file is read only
  * once the lines before it were taken, and the reading stops at the first
  * file last written before `since`. A line that does not decode as a span of
- * T3 Code's trace file is left out rather than trusted.
+ * T3 Code's trace file is left out rather than trusted. Each text a line
+ * keeps goes through `clean` whole, before it is cut, so a secret is never
+ * cut in two where `clean` cannot find it.
  */
 export const engineLogNewestFirst = (
   home: string,
   since: DateTime.Utc,
+  clean: Clean,
 ): Stream.Stream<string, never, FileSystem.FileSystem | Path.Path> =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -162,7 +169,7 @@ export const engineLogNewestFirst = (
             .toReversed()
             .flatMap((raw) =>
               Option.toArray(
-                Option.flatMap(decodeSpan(raw), lineOf).pipe(
+                Option.flatMap(decodeSpan(raw), (span) => lineOf(span, clean)).pipe(
                   Option.filter((line) => line.at >= sinceIso),
                   Option.map(encodeLine),
                 ),
@@ -180,52 +187,38 @@ export const engineLogNewestFirst = (
     }),
   );
 
-const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
-
-/** The text values `json` holds, at any depth, or the text itself when it is not JSON. */
-const valuesIn = (text: string): ReadonlyArray<string> => {
-  const parsed = decodeJson(text);
-  if (Option.isNone(parsed)) return [text.trim()];
-  const found: Array<string> = [];
-  const walk = (value: unknown): void => {
-    if (Predicate.isString(value)) found.push(value);
-    else if (Array.isArray(value)) value.forEach(walk);
-    else if (Predicate.isObject(value)) Object.values(value).forEach(walk);
-  };
-  walk(parsed.value);
-  return found;
-};
-
 /**
  * The secret values the engine's data directory at `home` holds, for a
- * diagnostics zip to take out wherever they appear: J3 Bots' credential for
- * the engine, and each value in the engine's secret store, the provider
- * connection's key among them, every text value of a JSON one. Read as they
- * are now; what cannot be read is passed over.
+ * diagnostics zip to take out wherever they appear: J3 Bots' token for the
+ * engine, and each value in the engine's secret store, the provider
+ * connection's key among them, whole (the zip's scrubber also takes each text
+ * value of one that is JSON). A store or a value that is there but cannot be
+ * read fails: the zip is not made without it.
  */
 export const engineSecretValues = Effect.fn("engine.secretValues")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const folders = engineFolders(path, home);
-  const read = (file: string) =>
-    fs.stat(file).pipe(
+  const names = yield* fs
+    .readDirectory(folders.secrets)
+    .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+  const values = yield* Effect.forEach(names, (name) => {
+    const file = path.join(folders.secrets, name);
+    return fs.stat(file).pipe(
       Effect.flatMap((info) =>
         info.type === "File" && Number(info.size) <= MAX_SECRET_FILE_BYTES
-          ? fs.readFileString(file)
-          : Effect.succeed(""),
+          ? Effect.map(fs.readFileString(file), (text) => [text.trim()])
+          : Effect.succeed([]),
       ),
-      Effect.orElseSucceed(() => ""),
+      // Removed since the folder was read: nothing to take out.
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])),
     );
-  const names = yield* fs.readDirectory(folders.secrets).pipe(Effect.orElseSucceed(() => []));
-  const texts = yield* Effect.forEach(
-    [
-      path.join(folders.j3, "credential.json"),
-      ...names.map((name) => path.join(folders.secrets, name)),
-    ],
-    read,
-  );
-  return texts
-    .flatMap(valuesIn)
-    .filter((value) => value.length > 0)
-    .map((value) => Redacted.make(value));
+  });
+  return [
+    ...Option.toArray(yield* storedToken(home)),
+    ...values
+      .flat()
+      .filter((value) => value.length > 0)
+      .map((value) => Redacted.make(value)),
+  ];
 });
