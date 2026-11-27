@@ -96,10 +96,10 @@ const farFromExpiry = Effect.map(DateTime.now, (now) =>
 );
 
 describe("ensureCredential", () => {
-  it.effect("mints again a token stored without the browser scope, asking for it", () =>
+  it.effect("mints again a token stored without a scope it needs, asking for it", () =>
     Effect.gen(function* () {
       const cli = mintingCli("fresh");
-      // Minted before the adapter asked for `preview:operate`.
+      // Minted before the adapter asked for `settings:write`.
       const credential = yield* ensureWith(cli, {
         token: "older",
         expiresAt: yield* farFromExpiry,
@@ -108,7 +108,7 @@ describe("ensureCredential", () => {
       assert.strictEqual(Redacted.value(credential.token), "fresh");
       const args = cli.calls.find((each) => each[2] === "issue") ?? [];
       assert.isTrue(
-        args.some((word, index) => word === "--scope" && args[index + 1] === "preview:operate"),
+        args.some((word, index) => word === "--scope" && args[index + 1] === "settings:write"),
       );
     }),
   );
@@ -134,7 +134,6 @@ describe("ensureCredential", () => {
         scopes: [
           "orchestration:read",
           "orchestration:operate",
-          "preview:operate",
           "settings:write",
           "providers:manage",
         ],
@@ -178,12 +177,11 @@ describe("checkAccess", () => {
       const all = [
         "orchestration:read",
         "orchestration:operate",
-        "preview:operate",
         "settings:write",
         "providers:manage",
       ];
       assert.strictEqual(yield* accessWith(all), "granted");
-      for (const missing of ["preview:operate", "settings:write", "providers:manage"]) {
+      for (const missing of ["settings:write", "providers:manage"]) {
         assert.strictEqual(yield* accessWith(all.filter((scope) => scope !== missing)), "refused");
       }
     }),
