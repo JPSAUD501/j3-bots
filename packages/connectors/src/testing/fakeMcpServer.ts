@@ -67,6 +67,8 @@ export interface FakeSkills {
   readonly pageSize?: number;
   /** Declares and serves `resources/directory/read`. */
   readonly directoryRead?: boolean;
+  /** How long its listing holds, as `skills/list` says (`ttlMs`). */
+  readonly ttlMs?: number;
 }
 
 interface FakeRequest {
@@ -224,6 +226,7 @@ export const fakeMcpServer = (options: FakeOptions) =>
             return reply(response, id, {
               skills: await Promise.all(skills.listed.slice(from, to).map(entryOf)),
               ...(to < skills.listed.length ? { nextCursor: String(to) } : {}),
+              ...(options.skills?.ttlMs === undefined ? {} : { ttlMs: options.skills.ttlMs }),
             });
           }
           if (method === "skills/get") {

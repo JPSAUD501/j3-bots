@@ -15,6 +15,7 @@ import {
   DEFAULT_SESSION_LIMITS,
   makeSupervisor,
   MAX_APP_RESOURCE_JSON_BYTES,
+  MAX_SKILL_BYTES,
   type McpSession,
   NeedsSignIn,
   nextFailing,
@@ -1279,7 +1280,7 @@ export const layer = Layer.effect(
         yield* updateSeen(id, (seen) => ({ ...seen, signing: seen.signing + 1 }));
         // What bots loaded, and the skills they are offered, were of what signed before.
         yield* Ref.update(heldRef, (held) => forgetConnector(held, id));
-        yield* skillsRecorded(id, offered);
+        if (yield* skillsRecorded(id, offered)) yield* touch(id);
         yield* processes.stop(id);
         yield* dropCache(id);
       }
@@ -2169,6 +2170,7 @@ export const layer = Layer.effect(
      * was checked against, which is the one to hold.
      */
     const readChecked = Effect.fn("Connectors.readChecked")(function* (
+      id: ConnectorId,
       session: McpSession,
       skill: ServedSkill,
       path?: string,
@@ -2179,6 +2181,17 @@ export const layer = Layer.effect(
       if (fresh === null || fresh.tooLarge) {
         return { skill, read: { _tag: "refused", reason: "gone" } satisfies SkillRead<SkillFile> };
       }
+      // Its server's word now, in place of what it listed, which every later read starts from.
+      yield* updateSeen(id, (seen) => ({
+        ...seen,
+        served: Option.map(seen.served, (served) => ({
+          ...served,
+          skills: {
+            ...served.skills,
+            skills: served.skills.skills.map((one) => (one.uri === fresh.uri ? fresh : one)),
+          },
+        })),
+      }));
       return { skill: fresh, read: yield* session.skills.readSkillFile(fresh, path) };
     });
 
@@ -2196,6 +2209,8 @@ export const layer = Layer.effect(
         (connector) =>
           withSession(connector, input.botId, (session) =>
             Effect.gen(function* () {
+              // What signs its requests as it loads: a hold of another sign-in's is never read.
+              const { signing } = yield* seenOf(connector.id);
               const listed = yield* skillsNow(connector, session);
               const found = findSkill(listed.skills, input.skill);
               if (found._tag === "ambiguous") return refusedSkill("ambiguous");
@@ -2209,14 +2224,21 @@ export const layer = Layer.effect(
               if (skill === null) return refusedSkill("unknown");
               if (skill.tooLarge) return refusedSkill("too-large");
               if (input.started !== undefined) yield* input.started(refOf(connector));
-              const loaded = yield* readChecked(session, skill);
+              const loaded = yield* readChecked(connector.id, session, skill);
               if (loaded.read._tag === "refused") {
                 return refusedSkill(loaded.read.reason === "gone" ? "unknown" : "mismatch");
               }
               const { value: file } = loaded.read;
               if (file.text === null) return refusedSkill("not-text");
+              if (loaded.skill.files === null && file.bytes > MAX_SKILL_BYTES) {
+                return refusedSkill("too-large");
+              }
               yield* Ref.update(heldRef, (held) =>
-                hold(held, input.botId, connector.id, loaded.skill, file.bytes),
+                hold(held, input.botId, connector.id, {
+                  skill: loaded.skill,
+                  bytes: file.bytes,
+                  signing,
+                }),
               );
               return {
                 _tag: "skill",
@@ -2262,6 +2284,8 @@ export const layer = Layer.effect(
           Ref.update(heldRef, (all) => letGo(all, botId, connectorId, held.skill.uri)),
           refusedSkill(reason),
         );
+      // Loaded under another sign-in than the one that signs its requests now: not this account's.
+      if (held.signing !== (yield* seenOf(connectorId)).signing) return yield* lettingGo("changed");
       const current = yield* currentSkill(connectorId, session, held.skill.uri);
       if (current === null) return yield* lettingGo("gone");
       if (!sameInstructions(held.skill, current)) return yield* lettingGo("changed");
@@ -2279,7 +2303,7 @@ export const layer = Layer.effect(
       if (path.trim() === "" || path.trim() === "/") {
         return folder(current, yield* session.skills.listSkillFolder(current, ""));
       }
-      const checked = yield* readChecked(session, current, path);
+      const checked = yield* readChecked(connectorId, session, current, path);
       if (checked.read._tag === "refused") {
         switch (checked.read.reason) {
           case "unlisted":
@@ -2671,6 +2695,8 @@ export const layer = Layer.effect(
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
+      // Its add listed its tools only: what it serves besides, its skills among them, is listed now.
+      if (Result.isSuccess(listing)) yield* ensureListed(input.id);
       return yield* render(connector);
     });
 
@@ -2744,9 +2770,8 @@ export const layer = Layer.effect(
      * seen of it, then its sign-in and secrets, now or once the secrets can be read.
      */
     const forget = Effect.fn("Connectors.forget")(function* (id: ConnectorId) {
+      // Its sessions close, and what bots loaded of its skills goes with them.
       yield* closeSessions(id);
-      // What bots loaded of its skills goes with it.
-      yield* Ref.update(heldRef, (held) => forgetConnector(held, id));
       yield* Ref.update(seenRef, (seen) => {
         const next = new Map(seen);
         next.delete(id);

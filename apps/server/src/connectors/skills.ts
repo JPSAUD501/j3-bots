@@ -41,6 +41,8 @@ export const isAddress = (named: string): boolean =>
 export interface HeldSkill {
   readonly connectorId: ConnectorId;
   readonly skill: ServedSkill;
+  /** `Seen.signing` when it was loaded: what signed the connector's requests then. */
+  readonly signing: number;
   /** Bytes of its files read since it was loaded, its `SKILL.md` too: for one its server generates, at most {@link MAX_SKILL_BYTES}. */
   readonly bytes: number;
 }
@@ -54,19 +56,17 @@ export type HeldSkills = ReadonlyMap<BotId, ReadonlyArray<HeldSkill>>;
 const same = (a: HeldSkill, connectorId: ConnectorId, uri: string) =>
   a.connectorId === connectorId && a.skill.uri === uri;
 
-/** `held` with `skill` held by `botId` as it loaded it, `bytes` of it read, in place of the entry it held for that skill. */
+/** `held` with a skill `botId` loaded, in place of the entry it held for that skill. */
 export const hold = (
   held: HeldSkills,
   botId: BotId,
   connectorId: ConnectorId,
-  skill: ServedSkill,
-  bytes: number,
+  loaded: Omit<HeldSkill, "connectorId">,
 ): HeldSkills => {
-  const others = (held.get(botId) ?? []).filter((entry) => !same(entry, connectorId, skill.uri));
-  return new Map(held).set(
-    botId,
-    [...others, { connectorId, skill, bytes }].slice(-MAX_HELD_SKILLS),
+  const others = (held.get(botId) ?? []).filter(
+    (entry) => !same(entry, connectorId, loaded.skill.uri),
   );
+  return new Map(held).set(botId, [...others, { connectorId, ...loaded }].slice(-MAX_HELD_SKILLS));
 };
 
 /** `held` with the entry `botId` holds of `skill` replaced by the one its server gives now. */
@@ -176,6 +176,19 @@ export const catalogOf = (
       })),
   );
 
+/** `value` as JSON with every object's keys in order, so two equal values read the same whatever order they came in. */
+const canonical = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const fields = Object.entries(value)
+      .filter(([, field]) => field !== undefined)
+      .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, field]) => `${JSON.stringify(key)}:${canonical(field)}`);
+    return `{${fields.join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+
 /**
  * Whether two entries of a skill give the same instructions: its
  * `SKILL.md` has the same digest in both, or for a skill its server
@@ -186,10 +199,7 @@ export const sameInstructions = (a: ServedSkill, b: ServedSkill): boolean => {
   const { resources: before } = a.entry;
   const { resources: after } = b.entry;
   if (before === "dynamic" || after === "dynamic") {
-    return (
-      before === after &&
-      JSON.stringify(a.entry.frontmatter) === JSON.stringify(b.entry.frontmatter)
-    );
+    return before === after && canonical(a.entry.frontmatter) === canonical(b.entry.frontmatter);
   }
   const digestOf = (files: typeof before) => files.find((file) => file.uri === a.uri)?.digest;
   const digest = digestOf(before);

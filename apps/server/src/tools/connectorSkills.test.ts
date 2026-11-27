@@ -6,10 +6,11 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { toolList } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Connectors } from "../connectors/Connectors.ts";
 import { fakeConnector, reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
+import { createBot, engineSession, eventually, nextTurn, sendToBot } from "../testing/turns.ts";
 import { BotTools } from "./BotTools.ts";
 import { ToolLists } from "./ToolLists.ts";
 
@@ -56,6 +57,16 @@ const ARCHIVE: FakeSkill = {
 };
 
 const TOOL = [{ name: "search", description: "Search." }];
+
+/** The skills the connector named `name` shows the operator, once its server listed them. */
+const skillsListed = Effect.fn(function* (name: string) {
+  const connectors = yield* Connectors;
+  return yield* eventually(
+    Effect.map(connectors.listed, (all) =>
+      Option.fromNullishOr(all.find(({ connector }) => connector.name === name)?.connector.skills),
+    ),
+  );
+});
 
 const billing = fakeConnector({
   name: "Billing",
@@ -266,6 +277,39 @@ it.effect(
         /^That is not a file Reports's server listed/,
       );
       assert.include((yield* read("parts/summary.md")).text, "Summary of the week.");
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
+);
+
+it.effect(
+  "loads a skill its server changed while its listing holds, and reads its files",
+  () =>
+    Effect.gen(function* () {
+      const ledger = yield* fakeConnector({
+        name: "Ledger",
+        tools: TOOL,
+        skills: { listed: [BILLING_INVOICES], ttlMs: 3_600_000 },
+      });
+      const ana = yield* working("Ana");
+      yield* ledger.grant([ana.bot.id]);
+      yield* skillsListed("Ledger");
+      ledger.fake.setSkillFile(
+        "billing/invoices",
+        "SKILL.md",
+        skillMd("invoices", "Drafts an invoice from hours.", "Ledger: read rates.md twice."),
+      );
+      const loaded = yield* callInTurn(ana, "use_connector_skill", {
+        connector: "ledger",
+        skill: "invoices",
+      });
+      assert.include(loaded.text, "Ledger: read rates.md twice.");
+      const rates = yield* callInTurn(ana, "read_connector_skill_file", {
+        connector: "ledger",
+        skill: "invoices",
+        path: "rates.md",
+      });
+      assert.isFalse(rates.isError);
+      assert.include(rates.text, "Billing rates.");
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );
