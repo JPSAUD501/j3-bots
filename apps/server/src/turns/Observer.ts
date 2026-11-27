@@ -57,7 +57,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { type EntryDraft, Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
-import { json, Time, timeText } from "../persistence/columns.ts";
+import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { liveRoom } from "../rooms/liveRoom.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
