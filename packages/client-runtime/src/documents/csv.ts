@@ -38,12 +38,13 @@ function delimiterOf(text: string): Delimiter {
 }
 
 /**
- * A CSV or TSV file as one table: quoted fields with their delimiters, quotes
- * and line breaks, up to `rows` rows and `columns` columns, and every row as
+ * A CSV or TSV file as one table, apart by `tabs` when its type or name says
+ * so and by the delimiter it uses otherwise: quoted fields with their
+ * delimiters, quotes and line breaks, up to `rows` rows and `columns` columns, and every row as
  * wide as the widest.
  */
-export function readCsv(text: string): DocumentContent {
-  const delimiter = delimiterOf(text);
+export function readCsv(text: string, tabs: "\t" | null): DocumentContent {
+  const delimiter = tabs ?? delimiterOf(text);
   const start = /^sep=.\r?\n/.exec(text)?.[0].length ?? 0;
   const rows: Array<Array<string>> = [];
   let row: Array<string> = [];

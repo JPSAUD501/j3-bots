@@ -34,8 +34,9 @@ function contentOf(kind: ReadKind, bytes: Uint8Array, locale: string): DocumentC
       return readMarkdown(text, cut);
     }
     case "csv":
+    case "tsv":
       if (looksBinary(bytes)) throw new Refused({ reason: "unreadable" });
-      return readCsv(decodeText(bytes));
+      return readCsv(decodeText(bytes), kind === "tsv" ? "\t" : null);
     case "sheet":
       return readSheets(bytes, locale);
     case "word":

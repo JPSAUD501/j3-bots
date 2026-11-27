@@ -40,41 +40,58 @@ class BundledDecoders {
 let library: Promise<typeof import("pdfjs-dist")> | null = null;
 
 const pdfjs = () => {
-  library ??= import("pdfjs-dist").then((loaded) => {
-    loaded.GlobalWorkerOptions.workerSrc = worker;
-    return loaded;
-  });
+  library ??= import("pdfjs-dist");
   return library;
 };
 
-/** How opening a PDF ended. */
+/** How opening a PDF ended: open, with the way to close it and its worker, or unreadable. */
 export type PdfOpened =
-  | { readonly _tag: "opened"; readonly pdf: PDFDocumentProxy }
+  | { readonly _tag: "opened"; readonly pdf: PDFDocumentProxy; readonly close: () => void }
   | { readonly _tag: "unreadable" };
 
 /** The largest picture in a PDF drawn, in pixels; a larger one is left out. */
 const MAX_IMAGE_PIXELS = 50_000_000;
+/** How long a PDF may take to open before it counts as unreadable. */
+const OPEN_TIMEOUT_MS = 30_000;
 
 /**
  * Opens a PDF from a copy of its bytes (PDF.js takes the buffer it is given
- * for its worker). One that is protected by a password, or that is no PDF, is
- * unreadable.
+ * for its worker), in a worker of its own: one the app starts and hands to
+ * PDF.js, so PDF.js never parses on the page instead, as it does when it
+ * cannot start one itself. A PDF that is protected by a password, that is
+ * no PDF, or that takes too long to open is unreadable, and its worker ends.
  */
 export async function openPdf(bytes: Uint8Array): Promise<PdfOpened> {
-  try {
-    const { getDocument } = await pdfjs();
-    const pdf = await getDocument({
-      data: bytes.slice(),
-      BinaryDataFactory: BundledDecoders,
-      useWorkerFetch: false,
-      useSystemFonts: true,
-      enableXfa: false,
-      maxImageSize: MAX_IMAGE_PIXELS,
-    }).promise;
-    return { _tag: "opened", pdf };
-  } catch {
+  const { getDocument, PDFWorker } = await pdfjs();
+  const thread = new Worker(worker, { type: "module" });
+  const port = PDFWorker.create({ port: thread });
+  const task = getDocument({
+    data: bytes.slice(),
+    worker: port,
+    BinaryDataFactory: BundledDecoders,
+    useWorkerFetch: false,
+    useSystemFonts: true,
+    enableXfa: false,
+    maxImageSize: MAX_IMAGE_PIXELS,
+  });
+  const close = () => {
+    void task.destroy().finally(() => {
+      port.destroy();
+      thread.terminate();
+    });
+  };
+  let timer: number | undefined;
+  const failed = new Promise<null>((resolve) => {
+    timer = window.setTimeout(() => resolve(null), OPEN_TIMEOUT_MS);
+    thread.addEventListener("error", () => resolve(null));
+  });
+  const pdf = await Promise.race([task.promise, failed]).catch(() => null);
+  window.clearTimeout(timer);
+  if (pdf === null) {
+    close();
     return { _tag: "unreadable" };
   }
+  return { _tag: "opened", pdf, close };
 }
 
 /** The most pixels a page is drawn with: a page of A4 at about 300 dots an inch. */

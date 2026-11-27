@@ -63,6 +63,20 @@ export const factsOfState = (state: DocumentState): DocumentFacts =>
       ? { _tag: "pages", count: state.count }
       : { _tag: "none" };
 
+// The tallest a page shows, as a multiple of the width it has: a taller one
+// shows narrower, whole.
+const TALLEST = 20;
+
+/** The box a page of `size` shows in, at most `width` wide: its own shape, whole. */
+export function pageBox(
+  size: PageSize,
+  width: number,
+): { readonly width: number; readonly height: number } {
+  const tallness = Math.max(size.height, 1) / Math.max(size.width, 1);
+  const height = Math.round(width * Math.min(tallness, TALLEST));
+  return { width: Math.round(height / tallness), height };
+}
+
 /** Whether a PDF has more pages than show. */
 export const pdfIsCut = (state: { readonly count: number }) => state.count > DOCUMENT_LIMITS.pages;
 
@@ -70,8 +84,11 @@ export const pdfIsCut = (state: { readonly count: number }) => state.count > DOC
 const folder = () => (native === null ? null : new Directory(native.folder()));
 
 /** Each document this run has read, the last shown last, by its file and the language it was read in. */
-const kept = new Map<string, Promise<DocumentState>>();
-// The most documents kept read; the one shown longest ago goes first.
+const kept = new Map<string, { readonly id: string; readonly state: Promise<DocumentState> }>();
+/** How many cards and viewers show each document now: one shown is kept. */
+const holds = new Map<string, number>();
+// The most documents kept read that nothing shows; the one shown longest ago
+// goes first, and the PDF it wrote to the folder with it.
 const KEPT = 8;
 /** Documents read before the server was last forgotten belong to it: none is kept after. */
 let generation = 0;
@@ -134,19 +151,47 @@ function documentOf(client: J3Client, attachment: Attachment, locale: string) {
   if (known !== undefined) {
     kept.delete(key);
     kept.set(key, known);
-    return known;
+    return known.state;
   }
   const loaded = read(client, attachment, locale, generation);
   // One that could not be had is asked for again the next time it shows.
   void loaded.then((state) => {
-    if (state._tag === "unreachable" && kept.get(key) === loaded) kept.delete(key);
+    if (state._tag === "unreachable" && kept.get(key)?.state === loaded) kept.delete(key);
   });
-  kept.set(key, loaded);
-  for (const old of kept.keys()) {
-    if (kept.size <= KEPT) break;
-    kept.delete(old);
-  }
+  kept.set(key, { id: attachment.id, state: loaded });
+  trim();
   return loaded;
+}
+
+/** Lets go of the documents past `KEPT` that nothing shows, the one shown longest ago first. */
+function trim() {
+  let over = kept.size - KEPT;
+  for (const [key, old] of kept) {
+    if (over <= 0) break;
+    if ((holds.get(key) ?? 0) > 0) continue;
+    kept.delete(key);
+    over -= 1;
+    void old.state.then((state) => {
+      // Unless the file is read again meanwhile, in this language or another: its PDF is the same file.
+      if (state._tag !== "pdf" || [...kept.values()].some(({ id }) => id === old.id)) return;
+      try {
+        new File(state.uri).delete();
+      } catch {
+        // Gone already, with the folder.
+      }
+    });
+  }
+}
+
+/** Keeps the document of `key` while something shows it; the answer lets it go. */
+function hold(key: string): () => void {
+  holds.set(key, (holds.get(key) ?? 0) + 1);
+  return () => {
+    const left = (holds.get(key) ?? 1) - 1;
+    if (left > 0) holds.set(key, left);
+    else holds.delete(key);
+    trim();
+  };
 }
 
 /**
@@ -165,11 +210,13 @@ export function useDocument(attachment: Attachment, wanted: boolean): DocumentSt
   useEffect(() => {
     if (!wanted) return;
     let current = true;
+    const release = hold(key);
     void documentOf(client, attachmentNow(), locale).then((document) => {
       if (current) setState({ key, document });
     });
     return () => {
       current = false;
+      release();
     };
   }, [client, locale, wanted, key]);
   if (!wanted) return null;

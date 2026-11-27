@@ -176,6 +176,29 @@ describe("Word documents", () => {
     expect(lines(blocksOf(content))).toEqual(["image image/png"]);
   });
 
+  it("counts a picture each time it shows, and leaves out one whose header says it is enormous", () => {
+    const drawing = (id: string) =>
+      `<w:p><w:r><w:drawing><a:blip r:embed="${id}"/></w:drawing></w:r></w:p>`;
+    // The same few bytes, but saying they are 60,000 pixels square.
+    const huge = PNG.slice();
+    new DataView(huge.buffer).setUint32(16, 60_000);
+    new DataView(huge.buffer).setUint32(20, 60_000);
+    const content = read(
+      "word",
+      word(drawing("rId9") + drawing("rId5").repeat(DOCUMENT_LIMITS.images + 10), {
+        "word/_rels/document.xml.rels": `<Relationships>
+          <Relationship Id="rId5" Type="image" Target="media/image1.png"/>
+          <Relationship Id="rId9" Type="image" Target="media/huge.png"/>
+        </Relationships>`,
+        "word/media/image1.png": PNG,
+        "word/media/huge.png": huge,
+      }),
+    );
+    expect(blocksOf(content).filter((block) => block._tag === "image")).toHaveLength(
+      DOCUMENT_LIMITS.images,
+    );
+  });
+
   it("says how many pages the file says it had", () => {
     const content = read(
       "word",
@@ -277,10 +300,25 @@ describe("Excel workbooks", () => {
         rows: [
           ["Rent", "", "Total due", "", "", ""],
           ["", "", "", "", "", ""],
-          ["15/03/2023", "12,5%", "1234,5", "inline", "TRUE", "Rent"],
+          ["15/03/2023", "12,50%", "1234,5", "inline", "TRUE", "Rent"],
         ],
       },
     ]);
+  });
+
+  it("keeps what a number format means: zeros it pads with, decimals, thousands and durations past a day", () => {
+    const content = read(
+      "sheet",
+      workbook(
+        {
+          Codes: `<row r="1"><c r="A1" s="1"><v>42</v></c><c r="B1" s="2"><v>1234.5</v></c><c r="C1" s="3"><v>1.5</v></c><c r="D1" s="4"><v>0.75</v></c></row>`,
+        },
+        {
+          "xl/styles.xml": `<styleSheet><numFmts><numFmt numFmtId="164" formatCode="000000"/><numFmt numFmtId="165" formatCode="[h]:mm:ss"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="4"/><xf numFmtId="165"/><xf numFmtId="46"/></cellXfs></styleSheet>`,
+        },
+      ),
+    );
+    expect(sheetsOf(content)[0]?.rows).toEqual([["000042", "1,234.50", "36:00:00", "18:00:00"]]);
   });
 
   it("stops reading a sheet past the rows it shows, and says so", () => {
@@ -381,6 +419,15 @@ describe("CSV files", () => {
       0x6f,
     ]);
     expect(sheet(read("csv", bytes))?.rows).toEqual([["Ação,1", "Preço"]]);
+  });
+
+  it("splits a TSV file at its tabs, however many commas its text has", () => {
+    expect(documentKind({ name: "notes.tsv", mediaType: "text/plain", size: 9 })).toBe("tsv");
+    const text = "Name\tNote\nRosa\tCame early, left late, said hi\n";
+    expect(sheet(read("tsv", strToU8(text)))?.rows).toEqual([
+      ["Name", "Note"],
+      ["Rosa", "Came early, left late, said hi"],
+    ]);
   });
 
   it("says how many rows it has", () => {

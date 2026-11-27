@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Reads PDFs with Android's own renderer, in the isolated process the
@@ -28,8 +29,9 @@ import kotlin.math.roundToInt
  * - `SHAPE`: the PDF; answers its page count, or -1 when it cannot be read,
  *   then the width and height of each of its first pages, in points.
  * - `DRAW`: the PDF, a page, a width in pixels and the file to write;
- *   draws the page that wide, on white, and writes it there as a PNG.
- *   Answers 1 when it did, 0 when it could not.
+ *   draws the whole page that wide, on white, or narrower when that would
+ *   take more than `MAX_PIXELS` or `MAX_SIDE`, and writes it there as a PNG. Answers 1
+ *   when it did, 0 when it could not.
  *
  * One call runs at a time. One that takes longer than `LIMIT_SECONDS` ends
  * this process: a file that hangs the renderer stops there, and the app
@@ -111,15 +113,25 @@ class PdfPageService : Service() {
         PdfRenderer(pdf).use { renderer ->
           if (index in 0 until renderer.pageCount) {
             renderer.openPage(index).use { page ->
-              val scale = width.toFloat() / max(page.width, 1)
-              val height = min((page.height * scale).roundToInt(), width * MAX_TALLNESS).coerceAtLeast(1)
-              val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+              val pageWidth = max(page.width, 1).toDouble()
+              val pageHeight = max(page.height, 1).toDouble()
+              // As wide as asked, unless a tall page would then take too many pixels
+              // or be taller than a picture can be: the whole page shows, less sharp, never cut.
+              val scale =
+                minOf(
+                  width / pageWidth,
+                  sqrt(MAX_PIXELS / (pageWidth * pageHeight)),
+                  MAX_SIDE / pageHeight,
+                )
+              val drawnWidth = (pageWidth * scale).roundToInt().coerceAtLeast(1)
+              val drawnHeight = (pageHeight * scale).roundToInt().coerceAtLeast(1)
+              val bitmap = Bitmap.createBitmap(drawnWidth, drawnHeight, Bitmap.Config.ARGB_8888)
               try {
                 bitmap.eraseColor(Color.WHITE)
                 page.render(
                   bitmap,
                   null,
-                  Matrix().apply { setScale(scale, scale) },
+                  Matrix().apply { setScale(scale.toFloat(), scale.toFloat()) },
                   PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
                 )
                 ParcelFileDescriptor.AutoCloseOutputStream(out).use { stream ->
@@ -158,8 +170,10 @@ class PdfPageService : Service() {
     const val LIMIT_SECONDS = 20L
     /** The widest a page is drawn, in pixels. */
     const val MAX_WIDTH = 2400
-    /** The tallest a page is drawn, as a multiple of its width. */
-    const val MAX_TALLNESS = 4
+    /** The most pixels a page is drawn with: 2,400 wide for a page up to twice as tall as wide. */
+    const val MAX_PIXELS = 2400.0 * 4800.0
+    /** The tallest a page is drawn, in pixels: what any Android device can show as one picture. */
+    const val MAX_SIDE = 8192.0
   }
 }
 

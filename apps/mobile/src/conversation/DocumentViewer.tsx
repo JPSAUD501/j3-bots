@@ -11,6 +11,7 @@ import {
   type DocumentState,
   factsOfState,
   type PageSize,
+  pageBox,
   pdfIsCut,
   useDocument,
   usePdfPage,
@@ -237,16 +238,15 @@ function PdfPage({
   readonly width: number;
 }) {
   const { t } = useI18n();
-  const drawing = usePdfPage(uri, index, pixelsFor(width), true);
-  // As the renderer draws it: no taller than four times its width.
-  const height = Math.round(width * Math.min(size.height / Math.max(size.width, 1), 4));
+  const box = pageBox(size, width);
+  const drawing = usePdfPage(uri, index, pixelsFor(box.width), true);
   return (
-    <View style={{ width, height }} className="overflow-hidden rounded-sm bg-white">
+    <View style={box} className="self-center overflow-hidden rounded-sm bg-white">
       {drawing._tag === "drawn" && (
         <Image
           source={{ uri: drawing.uri }}
           accessibilityLabel={t("document.page", { number: String(index + 1) })}
-          style={{ width, height }}
+          style={box}
         />
       )}
     </View>

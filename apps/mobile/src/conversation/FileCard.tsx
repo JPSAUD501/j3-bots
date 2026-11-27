@@ -21,6 +21,7 @@ import {
   type DocumentState,
   drawsPdfs,
   factsOfState,
+  pageBox,
   useDocument,
   usePdfPage,
 } from "../platform/documents.ts";
@@ -349,11 +350,10 @@ function PdfTop({
 }) {
   const pixels = Math.min(1024, Math.ceil(PixelRatio.getPixelSizeForLayoutSize(width) / 256) * 256);
   const drawing = usePdfPage(uri, 0, pixels, true);
-  const height = Math.round(width * Math.min(page.height / Math.max(page.width, 1), 4));
   return (
-    <View className="flex-1 bg-white">
+    <View className="flex-1 items-center bg-white">
       {drawing._tag === "drawn" && (
-        <Image source={{ uri: drawing.uri }} style={{ width, height }} />
+        <Image source={{ uri: drawing.uri }} style={pageBox(page, width)} />
       )}
     </View>
   );

@@ -96,7 +96,10 @@ describe("the page's content security policy", () => {
     assert.strictEqual(sources.length, 1);
     // `echo -n 'document…;' | openssl dgst -sha256 -binary | base64`
     assert.deepStrictEqual(sources, ["'sha256-2m0LKtL9TkM7m6BmMncU8A6pAb9ikh3OzrtPZXy+uhU='"]);
-    assert.include(contentSecurityPolicy(null, sources), `script-src 'self' ${sources[0]};`);
+    assert.include(
+      contentSecurityPolicy(null, sources),
+      `script-src 'self' 'wasm-unsafe-eval' ${sources[0]};`,
+    );
   });
 
   it("serves the visual and connector app pages under their own policies, every other under the app's", () => {

@@ -21,7 +21,8 @@ export type DocumentState =
   | { readonly _tag: "tooBig" }
   | { readonly _tag: "unreadable" }
   | { readonly _tag: "content"; readonly content: DocumentContent }
-  | { readonly _tag: "pdf"; readonly pdf: PDFDocumentProxy };
+  /** An open PDF, and the way to close it and its worker once nothing shows it. */
+  | { readonly _tag: "pdf"; readonly pdf: PDFDocumentProxy; readonly close: () => void };
 
 /** What a document's card says it holds, once read. */
 export const factsOfState = (state: DocumentState): DocumentFacts =>
@@ -58,10 +59,12 @@ function readInWorker(kind: ReadKind, bytes: Uint8Array, locale: string): Promis
 interface DocumentCache {
   readonly peek: (attachment: Attachment) => DocumentState | undefined;
   readonly load: (attachment: Attachment) => Promise<DocumentState>;
+  /** Keeps a document read while something shows it; the answer lets it go. */
+  readonly hold: (attachment: Attachment) => () => void;
 }
 
-// The most documents the page keeps read; the oldest one shown goes first,
-// and a PDF it lets go of is closed.
+// The most documents the page keeps read that nothing shows; the one shown
+// longest ago goes first, and a PDF it lets go of is closed. One shown stays.
 const KEPT = 8;
 
 function documentCache(
@@ -70,14 +73,21 @@ function documentCache(
 ): DocumentCache {
   const kept = new Map<string, DocumentState>();
   const loading = new Map<string, Promise<DocumentState>>();
+  const holds = new Map<string, number>();
+  const trim = () => {
+    let over = kept.size - KEPT;
+    for (const [key, state] of kept) {
+      if (over <= 0) break;
+      if ((holds.get(key) ?? 0) > 0) continue;
+      kept.delete(key);
+      over -= 1;
+      if (state._tag === "pdf") state.close();
+    }
+  };
   const keep = (key: string, state: DocumentState) => {
     kept.delete(key);
     kept.set(key, state);
-    for (const [old, oldState] of kept) {
-      if (kept.size <= KEPT) break;
-      kept.delete(old);
-      if (oldState._tag === "pdf") void oldState.pdf.loadingTask.destroy();
-    }
+    trim();
   };
   const read = async (attachment: Attachment): Promise<DocumentState> => {
     const kind = documentKind(attachment);
@@ -86,7 +96,9 @@ function documentCache(
     if (bytes === null) return { _tag: "unreachable" };
     if (kind !== "pdf") return readInWorker(kind, bytes, locale);
     const opened = await openPdf(bytes);
-    return opened._tag === "opened" ? { _tag: "pdf", pdf: opened.pdf } : opened;
+    return opened._tag === "opened"
+      ? { _tag: "pdf", pdf: opened.pdf, close: opened.close }
+      : opened;
   };
   return {
     peek: (attachment) => {
@@ -107,6 +119,16 @@ function documentCache(
       });
       loading.set(attachment.id, next);
       return next;
+    },
+    hold: (attachment) => {
+      const key = attachment.id;
+      holds.set(key, (holds.get(key) ?? 0) + 1);
+      return () => {
+        const left = (holds.get(key) ?? 1) - 1;
+        if (left > 0) holds.set(key, left);
+        else holds.delete(key);
+        trim();
+      };
     },
   };
 }
@@ -148,11 +170,14 @@ export function useDocument(attachment: Attachment, wanted: boolean): DocumentSt
   useEffect(() => {
     if (cache === null || !wanted) return;
     let current = true;
-    void cache.load(attachmentNow()).then((document) => {
+    const shown = attachmentNow();
+    const release = cache.hold(shown);
+    void cache.load(shown).then((document) => {
       if (current) setState({ key, document });
     });
     return () => {
       current = false;
+      release();
     };
   }, [cache, wanted, key]);
   if (cache === null || !wanted) return null;

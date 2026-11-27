@@ -203,42 +203,94 @@ function sharedStrings(zip: Zip, linked: ReadonlyMap<string, string>): ReadonlyA
   return strings;
 }
 
-/** What a cell's number shows as: a date (with a time or not), a percentage, or a number. */
-type Shape = "date" | "dateTime" | "time" | "percent" | "number";
+/** How many digits a number format shows: zeros it pads to, decimals, and thousands apart. */
+interface Digits {
+  readonly integer: number;
+  readonly fractionMin: number;
+  readonly fractionMax: number;
+  readonly grouping: boolean;
+}
 
-// Excel's built-in formats: 14 to 17 and 22 are dates, 18 to 21 and 45 to 47 times, 9 and 10 percentages.
-const BUILT_IN: ReadonlyMap<number, Shape> = new Map([
-  [9, "percent"],
-  [10, "percent"],
-  [14, "date"],
-  [15, "date"],
-  [16, "date"],
-  [17, "date"],
-  [18, "time"],
-  [19, "time"],
-  [20, "time"],
-  [21, "time"],
-  [22, "dateTime"],
-  [45, "time"],
-  [46, "time"],
-  [47, "time"],
+/**
+ * What a cell's number shows as: a date (with a time or not), a time of day,
+ * a duration that runs past a day (`[h]:mm:ss`), or a number or percentage
+ * with the digits its format names; `null` digits for Excel's General.
+ */
+type Shape =
+  | { readonly kind: "date" | "dateTime" | "time" }
+  | { readonly kind: "elapsed"; readonly unit: "h" | "m" | "s"; readonly seconds: boolean }
+  | { readonly kind: "number" | "percent"; readonly digits: Digits | null };
+
+const GENERAL: Shape = { kind: "number", digits: null };
+const digits = (integer: number, fraction: number, grouping: boolean): Digits => ({
+  integer,
+  fractionMin: fraction,
+  fractionMax: fraction,
+  grouping,
+});
+
+// Excel's built-in formats that are no General: 1 to 4 numbers, 9 and 10 percentages, 14 to 17
+// and 22 dates, 18 to 21, 45 and 47 times, 46 a duration, 37 to 40 numbers in thousands.
+const BUILT_IN: ReadonlyMap<number, Shape> = new Map<number, Shape>([
+  [1, { kind: "number", digits: digits(1, 0, false) }],
+  [2, { kind: "number", digits: digits(1, 2, false) }],
+  [3, { kind: "number", digits: digits(1, 0, true) }],
+  [4, { kind: "number", digits: digits(1, 2, true) }],
+  [9, { kind: "percent", digits: digits(1, 0, false) }],
+  [10, { kind: "percent", digits: digits(1, 2, false) }],
+  [14, { kind: "date" }],
+  [15, { kind: "date" }],
+  [16, { kind: "date" }],
+  [17, { kind: "date" }],
+  [18, { kind: "time" }],
+  [19, { kind: "time" }],
+  [20, { kind: "time" }],
+  [21, { kind: "time" }],
+  [22, { kind: "dateTime" }],
+  [37, { kind: "number", digits: digits(1, 0, true) }],
+  [38, { kind: "number", digits: digits(1, 0, true) }],
+  [39, { kind: "number", digits: digits(1, 2, true) }],
+  [40, { kind: "number", digits: digits(1, 2, true) }],
+  [45, { kind: "time" }],
+  [46, { kind: "elapsed", unit: "h", seconds: true }],
+  [47, { kind: "time" }],
 ]);
 
-/** The shape a custom number format gives a number, from its code outside quotes and brackets. */
+/** The digits a number format's placeholders name (`000042`, `#,##0.00`); null for any other. */
+function digitsOf(bare: string): Digits | null {
+  // Scientific notation, fractions and text are shown as General.
+  if (/e[+-]|\/|@/.test(bare)) return null;
+  const placeholders = bare.replaceAll(/[^0#?.,]/g, "");
+  if (!/[0#?]/.test(placeholders)) return null;
+  const point = placeholders.indexOf(".");
+  const whole = point < 0 ? placeholders : placeholders.slice(0, point);
+  const fraction = point < 0 ? "" : placeholders.slice(point + 1);
+  return {
+    integer: Math.min(Math.max(whole.split("0").length - 1, 1), 21),
+    fractionMin: Math.min(fraction.split("0").length - 1, 20),
+    fractionMax: Math.min(fraction.replaceAll(/[^0#?]/g, "").length, 20),
+    grouping: /[0#?],[0#?]/.test(whole),
+  };
+}
+
+/** The shape a custom number format gives a number, from its first section outside quotes. */
 function shapeOfFormat(code: string): Shape {
-  const bare =
+  const section =
     code
       .replaceAll(/"[^"]*"/g, "")
-      .replaceAll(/\[[^\]]*\]/g, "")
       .replaceAll(/\\./g, "")
-      .split(";")[0]
-      ?.toLowerCase() ?? "";
+      .split(";")[0] ?? "";
+  const elapsed = /\[(h+|m+|s+)\]/i.exec(section)?.[1]?.[0]?.toLowerCase();
+  const bare = section.replaceAll(/\[[^\]]*\]/g, "").toLowerCase();
+  if (elapsed === "h" || elapsed === "m" || elapsed === "s") {
+    return { kind: "elapsed", unit: elapsed, seconds: elapsed === "s" || /s/.test(bare) };
+  }
   const day = /[dy]/.test(bare) || /m{3,}/.test(bare) || (/m/.test(bare) && !/[hs]/.test(bare));
   const time = /[hs]/.test(bare);
-  if (day && time) return "dateTime";
-  if (day) return "date";
-  if (time) return "time";
-  return bare.includes("%") ? "percent" : "number";
+  if (day && time) return { kind: "dateTime" };
+  if (day) return { kind: "date" };
+  if (time) return { kind: "time" };
+  return { kind: bare.includes("%") ? "percent" : "number", digits: digitsOf(bare) };
 }
 
 /** The shape of each cell style, by its index (`s`). */
@@ -259,7 +311,7 @@ function cellFormats(zip: Zip, linked: ReadonlyMap<string, string>): ReadonlyArr
     ? []
     : childrenNamed(cells, "xf").map((xf: XmlElement) => {
         const id = Number(xf.attributes.get("numFmtId") ?? "0");
-        return custom.get(id) ?? BUILT_IN.get(id) ?? "number";
+        return custom.get(id) ?? BUILT_IN.get(id) ?? GENERAL;
       });
 }
 
@@ -268,13 +320,51 @@ const DAY = 86_400_000;
 const EPOCH_1900 = Date.UTC(1899, 11, 30);
 const EPOCH_1904 = Date.UTC(1904, 0, 1);
 
+/** A duration of `days`, as `[h]:mm:ss` shows it: hours (or minutes, or seconds) past a day. */
+function elapsedOf(days: number, shape: Extract<Shape, { kind: "elapsed" }>): string {
+  const total = Math.round(Math.abs(days) * 86_400);
+  const sign = days < 0 ? "-" : "";
+  const two = (value: number) => String(value).padStart(2, "0");
+  const seconds = total % 60;
+  switch (shape.unit) {
+    case "h": {
+      const minutes = Math.floor(total / 60) % 60;
+      const rest = shape.seconds ? `:${two(seconds)}` : "";
+      return `${sign}${Math.floor(total / 3600)}:${two(minutes)}${rest}`;
+    }
+    case "m":
+      return `${sign}${Math.floor(total / 60)}${shape.seconds ? `:${two(seconds)}` : ""}`;
+    case "s":
+      return `${sign}${total}`;
+  }
+}
+
 /** How a cell's stored value shows, by its type and style, in the reader's language. */
 function shower(locale: string, shapes: ReadonlyArray<Shape>, date1904: boolean) {
-  const number = new Intl.NumberFormat(locale, {
+  const general = new Intl.NumberFormat(locale, {
     maximumSignificantDigits: 15,
     useGrouping: false,
   });
-  const percent = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 2 });
+  const generalPercent = new Intl.NumberFormat(locale, {
+    style: "percent",
+    maximumFractionDigits: 2,
+  });
+  const formats = new Map<string, Intl.NumberFormat>();
+  const numberIn = (style: "decimal" | "percent", shown: Digits) => {
+    const key = `${style}:${shown.integer}:${shown.fractionMin}:${shown.fractionMax}:${shown.grouping}`;
+    let format = formats.get(key);
+    if (format === undefined) {
+      format = new Intl.NumberFormat(locale, {
+        style,
+        minimumIntegerDigits: shown.integer,
+        minimumFractionDigits: shown.fractionMin,
+        maximumFractionDigits: shown.fractionMax,
+        useGrouping: shown.grouping,
+      });
+      formats.set(key, format);
+    }
+    return format;
+  };
   const options = { timeZone: "UTC" } as const;
   const date = new Intl.DateTimeFormat(locale, { ...options, dateStyle: "short" });
   const dateTime = new Intl.DateTimeFormat(locale, {
@@ -283,6 +373,29 @@ function shower(locale: string, shapes: ReadonlyArray<Shape>, date1904: boolean)
     timeStyle: "short",
   });
   const time = new Intl.DateTimeFormat(locale, { ...options, timeStyle: "short" });
+  const numberShown = (stored: number, shape: Shape): string => {
+    switch (shape.kind) {
+      case "number":
+        return (shape.digits === null ? general : numberIn("decimal", shape.digits)).format(stored);
+      case "percent":
+        return (shape.digits === null ? generalPercent : numberIn("percent", shape.digits)).format(
+          stored,
+        );
+      case "elapsed":
+        return elapsedOf(stored, shape);
+      case "date":
+      case "dateTime":
+      case "time": {
+        // Excel counts a 29 February 1900 that never was: days before it are one more than they are.
+        const days = !date1904 && stored < 60 ? stored + 1 : stored;
+        const when = (date1904 ? EPOCH_1904 : EPOCH_1900) + Math.round(days * DAY);
+        if (!Number.isFinite(when) || Math.abs(when) > 8.64e15) return general.format(stored);
+        return (shape.kind === "date" ? date : shape.kind === "time" ? time : dateTime).format(
+          when,
+        );
+      }
+    }
+  };
   return (value: string, type: string, style: number): string => {
     switch (type) {
       case "b":
@@ -290,14 +403,7 @@ function shower(locale: string, shapes: ReadonlyArray<Shape>, date1904: boolean)
       case "n": {
         const stored = Number(value);
         if (value.trim() === "" || !Number.isFinite(stored)) return value;
-        const shape = shapes[style] ?? "number";
-        if (shape === "percent") return percent.format(stored);
-        if (shape === "number") return number.format(stored);
-        // Excel counts a 29 February 1900 that never was: days before it are one more than they are.
-        const days = !date1904 && stored < 60 ? stored + 1 : stored;
-        const when = (date1904 ? EPOCH_1904 : EPOCH_1900) + Math.round(days * DAY);
-        if (!Number.isFinite(when) || Math.abs(when) > 8.64e15) return number.format(stored);
-        return (shape === "date" ? date : shape === "time" ? time : dateTime).format(when);
+        return numberShown(stored, shapes[style] ?? GENERAL);
       }
       default:
         // A formula's text (`str`), an error (`e`) or an ISO date (`d`), as stored.

@@ -28,7 +28,8 @@ import java.util.concurrent.TimeUnit
  * itself happens in `PdfPageService`, Android's own PDF renderer in a process
  * Android isolates; this module hands it the PDF and the file to draw into,
  * and answers where the drawing is. A drawing is kept in the folder's
- * `pages/` and given again when asked for again.
+ * `pages/` and given again when asked for again; past `PAGES_BYTES` of
+ * them, the ones shown longest ago are deleted.
  *
  * Only files in the document folder are read, and only `pages/` is written,
  * so nothing else on the phone reaches the renderer through this module. The
@@ -106,7 +107,11 @@ class DocumentPagesModule : Module() {
     val pages = pagesFolder()
     pages.mkdirs()
     val drawing = File(pages, "${file.nameWithoutExtension}-$index-$width.png")
-    if (drawing.isFile) return Uri.fromFile(drawing).toString()
+    if (drawing.isFile) {
+      // Shown again: the last to go.
+      drawing.setLastModified(System.currentTimeMillis())
+      return Uri.fromFile(drawing).toString()
+    }
     val part = File(pages, "${drawing.name}.part")
     val drawn = call(PdfPages.DRAW) { data, held ->
       writeFile(data, held, file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -128,9 +133,24 @@ class DocumentPagesModule : Module() {
       }
     } ?: false
     // Written whole before it is named, so a drawing cut short is never shown.
-    if (drawn && part.renameTo(drawing)) return Uri.fromFile(drawing).toString()
+    if (drawn && part.renameTo(drawing)) {
+      trim(pages, drawing)
+      return Uri.fromFile(drawing).toString()
+    }
     part.delete()
     return null
+  }
+
+  /** Deletes the drawings in `pages` shown longest ago until they take at most `PAGES_BYTES`, never `kept`. */
+  private fun trim(pages: File, kept: File) {
+    val drawings = pages.listFiles { file -> file.isFile && file.name.endsWith(".png") } ?: return
+    var bytes = drawings.sumOf { it.length() }
+    for (old in drawings.sortedBy { it.lastModified() }) {
+      if (bytes <= PAGES_BYTES) break
+      if (old == kept) continue
+      val size = old.length()
+      if (old.delete()) bytes -= size
+    }
   }
 
   /**
@@ -223,6 +243,8 @@ class DocumentPagesModule : Module() {
   private companion object {
     const val FOLDER = "documents"
     const val PAGES = "pages"
+    /** The most bytes of page drawings kept: a few hundred pages. */
+    const val PAGES_BYTES = 64L * 1024 * 1024
     /** The longest the renderer's process may take to start. */
     const val START_SECONDS = 10L
   }

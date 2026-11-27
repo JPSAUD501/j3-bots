@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const Request = Schema.Struct({
-  kind: Schema.Literals(["text", "markdown", "csv", "sheet", "word", "slides"]),
+  kind: Schema.Literals(["text", "markdown", "csv", "tsv", "sheet", "word", "slides"]),
   bytes: Schema.Uint8Array,
   locale: Schema.String,
 });

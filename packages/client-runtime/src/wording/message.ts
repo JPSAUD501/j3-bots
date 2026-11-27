@@ -120,6 +120,7 @@ const documentKinds = {
   text: "document.kind.text",
   markdown: "document.kind.text",
   csv: "document.kind.csv",
+  tsv: "document.kind.csv",
   sheet: "document.kind.sheet",
   word: "document.kind.word",
   slides: "document.kind.slides",

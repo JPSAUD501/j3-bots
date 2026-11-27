@@ -58,33 +58,117 @@ function imageTypeOf(bytes: Uint8Array): DocumentImageType | null {
   return null;
 }
 
+/** The width and height a picture's header says it has, in pixels; null when it says nothing that reads. */
+function pixelsOf(bytes: Uint8Array, type: DocumentImageType): number | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const read = (at: number, size: 1 | 2 | 4, little = false): number | null => {
+    if (at + size > bytes.length) return null;
+    return size === 1
+      ? view.getUint8(at)
+      : size === 2
+        ? view.getUint16(at, little)
+        : view.getUint32(at, little);
+  };
+  const area = (width: number | null, height: number | null) =>
+    width === null || height === null || width === 0 || height === 0 ? null : width * height;
+  switch (type) {
+    case "image/png":
+      return area(read(16, 4), read(20, 4));
+    case "image/gif":
+      return area(read(6, 2, true), read(8, 2, true));
+    case "image/webp": {
+      const chunk = String.fromCharCode(...bytes.subarray(12, 16));
+      if (chunk === "VP8X") {
+        const width = read(24, 2, true);
+        const widthHigh = read(26, 1);
+        const height = read(27, 2, true);
+        const heightHigh = read(29, 1);
+        if (width === null || widthHigh === null || height === null || heightHigh === null)
+          return null;
+        return area(width + widthHigh * 65_536 + 1, height + heightHigh * 65_536 + 1);
+      }
+      if (chunk === "VP8 ") {
+        const width = read(26, 2, true);
+        const height = read(28, 2, true);
+        return area(
+          width === null ? null : width & 0x3fff,
+          height === null ? null : height & 0x3fff,
+        );
+      }
+      if (chunk === "VP8L") {
+        const bits = read(21, 4, true);
+        return bits === null ? null : area((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
+      }
+      return null;
+    }
+    case "image/jpeg": {
+      // The first frame header (SOF0 to SOF15, but for DHT, JPG and DAC), past the segments before it.
+      let at = 2;
+      while (at + 4 <= bytes.length) {
+        if (bytes[at] !== 0xff) return null;
+        const marker = bytes[at + 1] ?? 0;
+        if (marker === 0xff) {
+          at += 1;
+          continue;
+        }
+        const length = read(at + 2, 2);
+        if (length === null || length < 2) return null;
+        if (
+          marker >= 0xc0 &&
+          marker <= 0xcf &&
+          marker !== 0xc4 &&
+          marker !== 0xc8 &&
+          marker !== 0xcc
+        ) {
+          return area(read(at + 7, 2), read(at + 5, 2));
+        }
+        at += 2 + length;
+      }
+      return null;
+    }
+  }
+}
+
 /**
- * The pictures a document shows, within `images` and `imagesBytes`: a part
- * whose bytes are no GIF, JPEG, PNG or WebP (an EMF, an SVG, a page) is no
- * picture, and one past the limits is left out.
+ * The pictures a document shows, within the limits (`images`, `imageBytes`,
+ * `imagesBytes`, `imagePixels`, `imagesPixels`): a part whose bytes are no
+ * GIF, JPEG, PNG or WebP (an EMF, an SVG, a page) is no picture, nor one whose
+ * size cannot be read from its header. Each time a picture shows it counts
+ * again, as a device draws it again; one past the limits is left out.
  */
 export function pictures(zip: Zip): (part: string) => DocumentImage | null {
   let count = 0;
-  let total = 0;
-  const seen = new Map<string, DocumentImage | null>();
+  let bytesShown = 0;
+  let pixelsShown = 0;
+  const read = new Map<string, { readonly image: DocumentImage; readonly pixels: number } | null>();
   return (part) => {
-    const known = seen.get(part);
-    if (known !== undefined) return known;
-    if (count >= DOCUMENT_LIMITS.images) return null;
-    const bytes = zip.bytes(part);
-    const mediaType = bytes === null ? null : imageTypeOf(bytes);
-    const fits =
-      bytes !== null &&
-      bytes.length <= DOCUMENT_LIMITS.imageBytes &&
-      total + bytes.length <= DOCUMENT_LIMITS.imagesBytes;
-    const image =
-      bytes !== null && mediaType !== null && fits ? { mediaType, bytes: bytes.slice() } : null;
-    if (image !== null) {
-      count += 1;
-      total += image.bytes.length;
+    let known = read.get(part);
+    if (known === undefined) {
+      const bytes = zip.bytes(part);
+      const mediaType = bytes === null ? null : imageTypeOf(bytes);
+      const pixels = bytes === null || mediaType === null ? null : pixelsOf(bytes, mediaType);
+      known =
+        bytes === null ||
+        mediaType === null ||
+        pixels === null ||
+        bytes.length > DOCUMENT_LIMITS.imageBytes ||
+        pixels > DOCUMENT_LIMITS.imagePixels
+          ? null
+          : { image: { mediaType, bytes: bytes.slice() }, pixels };
+      read.set(part, known);
     }
-    seen.set(part, image);
-    return image;
+    if (
+      known === null ||
+      count >= DOCUMENT_LIMITS.images ||
+      bytesShown + known.image.bytes.length > DOCUMENT_LIMITS.imagesBytes ||
+      pixelsShown + known.pixels > DOCUMENT_LIMITS.imagesPixels
+    ) {
+      return null;
+    }
+    count += 1;
+    bytesShown += known.image.bytes.length;
+    pixelsShown += known.pixels;
+    return known.image;
   };
 }
 

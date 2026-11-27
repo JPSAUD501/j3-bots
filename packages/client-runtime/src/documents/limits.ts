@@ -21,10 +21,17 @@ export const DOCUMENT_LIMITS = {
   cellCharacters: 2_000,
   /** Slides of a presentation shown. */
   slides: 300,
-  /** Pictures of a document shown, each at most `imageBytes`, together at most `imagesBytes`. */
+  /**
+   * Pictures of a document shown, each time one shows counted again: each at
+   * most `imageBytes` and `imagePixels` drawn, together at most `imagesBytes`
+   * and `imagesPixels`. A picture of a few kilobytes can say it is enormous,
+   * and a device would draw every pixel it says it has.
+   */
   images: 60,
   imageBytes: 10 * MiB,
   imagesBytes: 40 * MiB,
+  imagePixels: 25_000_000,
+  imagesPixels: 100_000_000,
   /**
    * Bytes a Word, Excel or PowerPoint file may unpack to: each part read, and
    * all of them together. A zip of a few kilobytes can unpack to gigabytes;
