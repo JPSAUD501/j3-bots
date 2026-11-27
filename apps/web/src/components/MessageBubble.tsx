@@ -228,11 +228,16 @@ export function MessageBubble({
         speaker !== null && speakerGutter,
       )}
     >
-      {speakerName !== null && (
-        <SpeakerName position={position} name={speakerName} title={speakerProfile?.title ?? ""} />
+      {speaker !== null && speakerName !== null && (
+        <SpeakerName
+          position={position}
+          name={speakerName}
+          title={speakerProfile?.title ?? ""}
+          botId={speaker}
+        />
       )}
       {speaker !== null && (
-        <SpeakerFace position={position}>
+        <SpeakerFace position={position} botId={speaker}>
           <FaceOf botId={speaker} size={28} />
         </SpeakerFace>
       )}

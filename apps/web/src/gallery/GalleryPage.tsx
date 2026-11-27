@@ -116,6 +116,7 @@ import {
 import { Dialog } from "@base-ui/react/dialog";
 import {
   AiSessionProvider,
+  type QuickMessageState,
   type SignInRoute,
   useProfileEdits,
 } from "@j3-bots/client-runtime/react";
@@ -209,6 +210,7 @@ import {
   trackEventTrigger,
   trackTrigger,
 } from "./sampleRoutineTrack";
+import { BotCard, QuickMessageField } from "../components/BotCard";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
@@ -266,7 +268,7 @@ import {
   sampleOwnAppSetup,
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
-import { sampleProviderActions, useSampleSource } from "./sampleSource";
+import { sampleCardIntents, sampleProviderActions, useSampleSource } from "./sampleSource";
 import { sampleSentEvents } from "./usageData";
 import { SentPanel } from "../components/UsageData";
 import { useSampleSecrets } from "./sampleSecrets";
@@ -369,6 +371,7 @@ export default function GalleryPage() {
                 <AvatarsSection />
                 <NotificationsSection />
                 <RosterSection />
+                <BotCardSection />
                 <RosterOrganizeSection />
                 <BubblesSection />
                 <ReactionsSection />
@@ -1264,6 +1267,92 @@ const hiddenConversations = team.roster.flatMap((item) =>
       ? [{ ...item, room: { ...item.room, hidden: true } }]
       : [],
 );
+
+/** A bot as its card shows it in each status, and a sample of the rest of the team for its own. */
+const cardBots: ReadonlyArray<{ readonly label: string; readonly bot: Bot }> = [
+  { label: "Working, by you", bot: team.bots.scout },
+  {
+    label: "Working, with little ones",
+    bot: {
+      ...team.bots.scout,
+      state:
+        team.bots.scout.state._tag === "working"
+          ? { ...team.bots.scout.state, littleOnes: 2 }
+          : team.bots.scout.state,
+    },
+  },
+  { label: "Waiting for you", bot: team.bots.atlas },
+  { label: "Free, made by another bot", bot: team.bots.wren },
+  { label: "Paused by a usage limit", bot: team.bots.ledger },
+  {
+    label: "Stopped by a problem",
+    bot: { ...team.bots.otto, state: { _tag: "blocked", failure: "unreachable", retryAt: null } },
+  },
+  { label: "No title and no job", bot: team.bots.moss },
+  {
+    label: "The longest title, in two lines",
+    bot: {
+      ...team.bots.wren,
+      profile: { ...team.bots.wren.profile, title: "Competitor bakeries and their launches" },
+    },
+  },
+];
+
+/** Where a quick message stands, under its field. */
+const quickStates: ReadonlyArray<{ readonly label: string; readonly state: QuickMessageState }> = [
+  { label: "Sending", state: { _tag: "sending" } },
+  { label: "Sent", state: { _tag: "sent" } },
+  { label: "Not sent: it waits in the conversation", state: { _tag: "failed" } },
+  { label: "Too long to send", state: { _tag: "invalid", problem: "too-long" } },
+  { label: "The bot is gone", state: { _tag: "gone" } },
+];
+
+/** What only a frame of this label, or the whole section, shows. */
+function Only({ label, children }: { label: string; children: ReactNode }) {
+  if (only.frame !== null && only.frame !== label) return null;
+  return <Labeled label={label}>{children}</Labeled>;
+}
+
+function BotCardSection() {
+  const rooms = [team.room, restingRoom];
+  const quietActions = {
+    talk: nothing,
+    startRoom: nothing,
+    openRoutines: nothing,
+    openDetails: nothing,
+  };
+  const send = () => Promise.resolve({ _tag: "done", value: EntryId.make("quick") } as const);
+  return (
+    <Section title="Bot card">
+      <div className="flex flex-wrap items-start gap-4">
+        {cardBots.map(({ label, bot }) => (
+          <Only key={label} label={label}>
+            <BotCard
+              bot={bot}
+              rooms={rooms}
+              routines={team.routines[bot.id] ?? []}
+              send={send}
+              actions={quietActions}
+            />
+          </Only>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-start gap-4">
+        {quickStates.map(({ label, state }) => (
+          <Only key={label} label={`Quick message: ${label}`}>
+            <div className="w-80">
+              <QuickMessageField
+                name="Wren"
+                quick={{ text: "", setText: nothing, state, submit: nothing }}
+                onOpen={nothing}
+              />
+            </div>
+          </Only>
+        ))}
+      </div>
+    </Section>
+  );
+}
 
 function RosterOrganizeSection() {
   return (
@@ -6398,6 +6487,7 @@ function QuickAccessFrame({
             lastEntry={row.lastEntry}
             data={source.data}
             intents={source.intents}
+            card={sampleCardIntents(source)}
             solid={solid}
             shown={shown}
             asked={asked}

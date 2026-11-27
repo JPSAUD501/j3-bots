@@ -27,7 +27,7 @@ export function DetailsScreen({ navigation, route }: NativeStackScreenProps<Scre
     );
   }
   return found.item._tag === "bot" ? (
-    <BotDetails bot={found.item.bot} />
+    <BotDetails bot={found.item.bot} at={route.params.at} />
   ) : (
     <RoomDetails room={found.item.room} />
   );

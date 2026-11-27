@@ -96,5 +96,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0099](0099-usage-data-is-the-servers-typed-and-on-until-turned-off.md) | Usage data is the server's, typed, and on until the operator turns it off | Accepted |
 | [0100](0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md) | A diagnostics zip holds what the server knows, and nothing of the person | Accepted |
 | [0101](0101-a-bot-is-its-name-and-its-title-and-a-helper-waits-behind-the-scenes.md) | A bot is its name and its title, and a helper waits behind the scenes | Accepted |
+| [0102](0102-a-bots-card-opens-from-its-face-and-name.md) | A bot's card opens from its face and name | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

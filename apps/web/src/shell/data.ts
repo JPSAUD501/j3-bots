@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ProviderActions } from "../components/ProviderFix";
+import type { QuickSend } from "@j3-bots/client-runtime/react";
 import type {
   Addressing,
   BotPlacement,
@@ -311,7 +312,15 @@ export interface ShellIntents extends TimelineIntents {
   readonly shareBotTemplate: (botId: BotId) => void;
   readonly newRoom: () => void;
   /** Opens the form for a new room with the two bots of a teammate conversation in it. */
-  readonly startRoomWith: (botIds: PairBotIds) => void;
+  /** Opens the new room form with these bots among its members. */
+  readonly startRoomWith: (botIds: ReadonlyArray<BotId>) => void;
+  /**
+   * Sends a message typed on a bot's card straight to its conversation
+   * (decision 0102), as `J3Client.send` does.
+   */
+  readonly sendQuickMessage: QuickSend;
+  /** The bot whose card shows, or null: its routines are kept live meanwhile. */
+  readonly setCardBot: (botId: BotId | null) => void;
   /** Opens the form that changes a room's name and members. */
   readonly editRoom: (roomId: RoomId) => void;
   /** Resolves once the server answered, whatever it said. */

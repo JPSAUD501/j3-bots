@@ -36,7 +36,16 @@ import {
   WebhookIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ReactElement, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from "react";
 import {
   asksYou,
   botStop,
@@ -62,6 +71,7 @@ import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { FaceOf } from "./avatar/TeamAvatars";
 import { FileCard } from "./FileCard";
+import { useBotCard } from "./BotCard";
 import { RoutineSentence } from "./RoutineTrack";
 import { Button } from "./ui/button";
 import { SkeletonRows } from "./ui/skeleton";
@@ -162,9 +172,17 @@ function Badge({ children }: { children: ReactNode }) {
   );
 }
 
-function DetailsSection({ title, children }: { title: string; children: ReactNode }) {
+function DetailsSection({
+  title,
+  children,
+  ref,
+}: {
+  title: string;
+  children: ReactNode;
+  ref?: Ref<HTMLElement>;
+}) {
   return (
-    <section className="px-5 pt-5">
+    <section ref={ref} className="scroll-mt-2 px-5 pt-5">
       <h3 className="mb-1.5 text-xs font-medium text-muted-foreground">{title}</h3>
       {children}
     </section>
@@ -253,6 +271,12 @@ interface BotDetailsProps {
   readonly connectors: ReadonlyArray<Connector> | null;
   /** The teammates it wrote or heard from, latest first (`teammatesOf`), deleted ones included. */
   readonly teammates: ReadonlyArray<Teammate>;
+  /**
+   * Its card asked for its routines (decision 0102): they come into view,
+   * and `onAtRoutines` says the request is met, so it is met once.
+   */
+  readonly atRoutines?: boolean;
+  readonly onAtRoutines?: () => void;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   /** Whether the browser can run on the server's computer; null until the engine has said. */
@@ -277,6 +301,8 @@ export function BotDetails({
   memory,
   connectors,
   teammates,
+  atRoutines = false,
+  onAtRoutines,
   modelName,
   browserHost,
   intents,
@@ -285,6 +311,13 @@ export function BotDetails({
   headingRef,
   headingId,
 }: BotDetailsProps) {
+  const routinesRef = useRef<HTMLElement>(null);
+  const reachedRoutines = useEffectEvent(() => onAtRoutines?.());
+  useEffect(() => {
+    if (!atRoutines) return;
+    routinesRef.current?.scrollIntoView({ block: "start" });
+    reachedRoutines();
+  }, [atRoutines]);
   const i18n = useI18n();
   const { t } = i18n;
   const { name, title, job } = bot.profile;
@@ -349,7 +382,7 @@ export function BotDetails({
       )}
       {bot.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
 
-      <DetailsSection title={t("details.routines")}>
+      <DetailsSection title={t("details.routines")} ref={routinesRef}>
         {routines === null ? (
           <SkeletonRows />
         ) : routines.length === 0 ? (
@@ -658,6 +691,26 @@ function RoutineCast({ steps }: { steps: ReadonlyArray<RoutineStep> }) {
   );
 }
 
+/** A room's member: its face, its name over its title, which open its card under a resting pointer. */
+function MemberRow({ bot }: { bot: Bot }) {
+  const card = useBotCard(bot.id, "left");
+  return (
+    <li data-card-anchor="" className="flex min-h-12 items-center gap-3 py-1.5">
+      <span {...card.hover} className="flex">
+        <LiveBotAvatar bot={bot} size={32} />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span {...card.hover} className="truncate text-sm font-medium">
+          {bot.profile.name}
+        </span>
+        {bot.profile.title !== "" && (
+          <span className="truncate text-xs text-muted-foreground">{bot.profile.title}</span>
+        )}
+      </span>
+    </li>
+  );
+}
+
 /**
  * A teammate: its face, its name over its title, and the latest message
  * between the two, which the row opens.
@@ -666,13 +719,23 @@ function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => v
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
   const { pair } = teammate;
+  // A teammate deleted since has no card.
+  const card = useBotCard(peer === undefined ? null : peer.id, "left");
   return (
     <li>
-      <button type="button" onClick={onOpen} className={cn(rowButton, "items-center")}>
-        <FaceOf botId={teammate.peer} size={32} />
+      <button
+        {...card.focus}
+        type="button"
+        data-card-anchor=""
+        onClick={onOpen}
+        className={cn(rowButton, "items-center")}
+      >
+        <span {...card.hover} className="flex">
+          <FaceOf botId={teammate.peer} size={32} />
+        </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-medium">
+            <span {...card.hover} className="truncate text-sm font-medium">
               {peer?.profile.name ?? ctx.i18n.t("bot.unknown")}
             </span>
             <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
@@ -846,17 +909,7 @@ export function RoomDetails({
         ) : (
           <ul className="flex flex-col [--avatar-cutout:var(--background)]">
             {members.map((bot) => (
-              <li key={bot.id} className="flex min-h-12 items-center gap-3 py-1.5">
-                <LiveBotAvatar bot={bot} size={32} />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm font-medium">{bot.profile.name}</span>
-                  {bot.profile.title !== "" && (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {bot.profile.title}
-                    </span>
-                  )}
-                </span>
-              </li>
+              <MemberRow key={bot.id} bot={bot} />
             ))}
           </ul>
         )}

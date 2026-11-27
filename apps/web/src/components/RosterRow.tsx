@@ -27,6 +27,7 @@ import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime
 import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { PrimaryBadge } from "./avatar/PrimaryBadge";
+import { useBotCard } from "./BotCard";
 import { SwapText } from "./SwapText";
 
 export const toneClass: Record<LineTone, string> = {
@@ -171,9 +172,14 @@ export function RosterRow({
   const face = item._tag === "bot" ? item.bot.profile.avatar : memberAvatars[0]?.avatar;
   const spot = face === undefined ? "var(--foreground)" : `var(--bot-${resolveAvatar(face).color})`;
   const { arrival, avatarEntrance, onAnimationEnd } = useArrival(entrance);
+  // A bot's face and name open its card, beside the roster (decision 0102).
+  const card = useBotCard(item._tag === "bot" ? item.bot.id : null, "right");
   const content = (
     <>
-      <span className="row-stage relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
+      <span
+        {...card.hover}
+        className="row-stage relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]"
+      >
         {(arrival === "lit" || arrival === "landed") && (
           <span aria-hidden className="row-light">
             <span className="row-beam" />
@@ -206,7 +212,10 @@ export function RosterRow({
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="row-name flex items-baseline gap-2">
-          <span className={cn("truncate text-sm", needs ? "font-semibold" : "font-medium")}>
+          <span
+            {...card.hover}
+            className={cn("truncate text-sm", needs ? "font-semibold" : "font-medium")}
+          >
             {name}
           </span>
           {item.lastActivityAt && (
@@ -245,6 +254,8 @@ export function RosterRow({
     "aria-current": selected ? "page" : undefined,
     // Which bot or room the row is, so focus can come back to it.
     "data-roster-row": rosterKeyText(rosterKeyOf(item)),
+    "data-card-anchor": "",
+    ...card.focus,
     ...(arrival === null
       ? {}
       : { "data-arrival": arrival, style: arrivalStyle(spot), onAnimationEnd }),
