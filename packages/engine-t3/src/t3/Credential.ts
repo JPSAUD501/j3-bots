@@ -70,12 +70,13 @@ const ListedSessions = Schema.Array(
 
 /**
  * What `credential.json` holds. `scopes` is what the token was minted with; a
- * file written before it was recorded has none, and its token is minted again.
+ * token missing one the adapter asks for is minted again, and so is one whose
+ * file does not read.
  */
 const StoredCredential = Schema.Struct({
   token: Schema.String.check(Schema.isNonEmpty()),
   expiresAt: Schema.DateTimeUtcFromString,
-  scopes: Schema.optionalKey(Schema.Array(Schema.String)),
+  scopes: Schema.Array(Schema.String),
 });
 
 const decodeSession = HttpClientResponse.schemaBodyJson(AuthSessionState);
@@ -235,7 +236,7 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
   );
   if (
     Option.isSome(stored) &&
-    CREDENTIAL_SCOPES.every((scope) => stored.value.scopes?.includes(scope) === true) &&
+    CREDENTIAL_SCOPES.every((scope) => stored.value.scopes.includes(scope)) &&
     DateTime.isGreaterThan(stored.value.expiresAt, DateTime.addDuration(now, RENEW_BEFORE))
   ) {
     return {
