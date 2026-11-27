@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { type BrowserHostError, BrowserTabRef } from "@j3-bots/contracts";
+import {
+  type BrowserHostError,
+  BrowserTabRef,
+  MAX_BROWSER_SNAPSHOT_LENGTH,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import { chromium } from "playwright-core";
 import { MASKED_VALUE } from "./redact.ts";
 import { makeDriverPage } from "./DriverPage.ts";
@@ -17,7 +23,9 @@ const PAGES: Readonly<Record<string, string>> = {
     <label>Name <input id="name"></label>
     <button onclick="document.querySelector('#out').textContent = 'sent ' + document.querySelector('#name').value">Send</button>
     <p id="out"></p>`,
-  "/other": `<title>Other</title><button>Elsewhere</button>`,
+  "/other": `<title>Other</title><button onclick="document.title = 'clicked'">Elsewhere</button>`,
+  "/waiting": `<title>Waiting</title><button disabled onclick="document.title = 'clicked'">Go</button>`,
+  "/long": `<title>Long</title><p>${"word ".repeat(6_000)}</p>`,
   "/secret": `<title>Signed in as hunter-two-secret</title>
     <label>Password <input type="password" value="hunter-two-secret"></label>
     <p>Your password is hunter-two-secret</p>`,
@@ -82,11 +90,18 @@ describe.skipIf(executablePath === undefined)("makeDriverPage", () => {
           { value: "sent Ada" },
         );
 
-        // A newer snapshot replaces the refs, even of the same page.
+        // Another snapshot of the same document keeps the refs: another bot's read takes nothing.
         const second = yield* driver.snapshot({ includeImage: false });
+        assert.strictEqual(refOf(second.tree, "Name"), name);
+        yield* driver.act({ action: "hover", locator: name });
+        // A ref goes alone, so no selector can carry the browser's own numbers past the check.
         assert.strictEqual(
-          reason(yield* Effect.flip(driver.act({ action: "hover", locator: name }))),
-          "stale-ref",
+          reason(
+            yield* Effect.flip(
+              driver.act({ action: "click", locator: `button >> internal:has="${name}"` }),
+            ),
+          ),
+          "invalid-target",
         );
         const send = refOf(second.tree, "Send");
         yield* driver.navigate({ kind: "url", url: `${SITE}/other` }, {});
@@ -94,6 +109,27 @@ describe.skipIf(executablePath === undefined)("makeDriverPage", () => {
           reason(yield* Effect.flip(driver.act({ action: "click", locator: send }))),
           "stale-ref",
         );
+      }).pipe(Effect.scoped),
+    60_000,
+  );
+
+  it.live(
+    "never lets an action that waits land on the next page's element",
+    () =>
+      Effect.gen(function* () {
+        const driver = yield* driven;
+        yield* driver.navigate({ kind: "url", url: `${SITE}/waiting` }, {});
+        const { tree } = yield* driver.snapshot({ includeImage: false });
+        // The button is disabled, so the click waits for it.
+        const click = yield* driver
+          .act({ action: "click", locator: refOf(tree, "Go"), timeoutMs: 10_000 })
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Effect.sleep(300);
+        yield* driver.navigate({ kind: "url", url: `${SITE}/other` }, {});
+        // Another bot reads the new page, so the browser numbers its elements again.
+        yield* driver.snapshot({ includeImage: false });
+        assert.strictEqual((yield* Fiber.join(click)).reason, "stale-ref");
+        assert.strictEqual((yield* driver.state).title, "Other");
       }).pipe(Effect.scoped),
     60_000,
   );
@@ -173,9 +209,51 @@ describe.skipIf(executablePath === undefined)("makeDriverPage", () => {
           message: "Leave?",
           defaultValue: "",
         });
+        // The page runs nothing while the dialog waits, so page work is refused, not left hanging.
+        assert.strictEqual(
+          reason(yield* Effect.flip(driver.snapshot({ includeImage: false }))),
+          "refused",
+        );
         yield* driver.answerDialog(true);
         assert.strictEqual((yield* driver.state).title, "true");
         assert.strictEqual(reason(yield* Effect.flip(driver.answerDialog(true))), "invalid-target");
+        // A key that opens a dialog returns too: the button kept the focus.
+        yield* driver.act({ action: "press", key: "Enter" });
+        assert.strictEqual((yield* driver.state).dialog?.kind, "confirm");
+        yield* driver.answerDialog(false);
+        assert.strictEqual((yield* driver.state).title, "false");
+      }).pipe(Effect.scoped),
+    60_000,
+  );
+
+  it.live(
+    "cuts a tree with no line end in reach to its limit",
+    () =>
+      Effect.gen(function* () {
+        const driver = yield* driven;
+        yield* driver.navigate({ kind: "url", url: `${SITE}/long` }, {});
+        const snapshot = yield* driver.snapshot({ includeImage: false });
+        assert.isTrue(snapshot.truncated);
+        assert.isAtMost(snapshot.tree.length, MAX_BROWSER_SNAPSHOT_LENGTH);
+        assert.isAbove(snapshot.tree.length, MAX_BROWSER_SNAPSHOT_LENGTH / 2);
+      }).pipe(Effect.scoped),
+    60_000,
+  );
+
+  it.live(
+    "refuses a second screencast of a tab while one runs",
+    () =>
+      Effect.gen(function* () {
+        const driver = yield* driven;
+        yield* driver.navigate({ kind: "url", url: `${SITE}/form` }, {});
+        const options = { maxWidth: 640, maxHeight: 480, quality: 50 };
+        const [first] = yield* driver.screencast(options).pipe(Stream.take(1), Stream.runCollect);
+        assert.isAbove(first?.jpeg.length ?? 0, 0);
+        const watching = yield* driver.screencast(options).pipe(Stream.runDrain, Effect.forkChild);
+        yield* Effect.sleep(300);
+        const second = yield* Effect.flip(driver.screencast(options).pipe(Stream.runDrain));
+        assert.strictEqual(second.reason, "refused");
+        yield* Fiber.interrupt(watching);
       }).pipe(Effect.scoped),
     60_000,
   );

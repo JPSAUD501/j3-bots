@@ -61,6 +61,12 @@ const CdpCommand = Schema.Struct({
 type CdpCommand = typeof CdpCommand.Type;
 
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(CdpCommand));
+/** A message's id and session, read apart, to answer one that is no command. */
+const decodeAddress = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ id: Schema.Number, sessionId: Schema.optionalKey(Schema.String) }),
+  ),
+);
 const isParams = Schema.is(Params);
 
 // CDP values are plain JSON data, so their serialized size can be bounded before
@@ -289,7 +295,19 @@ export function createCdpRelayConnection(
     receive: (raw) => {
       if (closed) return;
       const decoded = decodeCommand(raw);
-      if (Option.isNone(decoded)) return;
+      if (Option.isNone(decoded)) {
+        // Playwright waits for a reply to every id it sent; one that cannot be read gets an error.
+        const address = decodeAddress(raw);
+        if (Option.isSome(address))
+          send({
+            id: address.value.id,
+            error: { code: -32600, message: "Not a CDP command." },
+            ...(address.value.sessionId === undefined
+              ? {}
+              : { sessionId: address.value.sessionId }),
+          });
+        return;
+      }
       const command = decoded.value;
       const sessionId = command.sessionId;
       const answered =

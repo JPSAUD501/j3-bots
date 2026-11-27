@@ -4,16 +4,15 @@ import { BotId, DeviceId, MAX_ID_LENGTH, NonNegativeInt } from "./base.ts";
 
 // J3 Bots' browser (decision 0110): tabs J3 Bots runs itself, on a desktop
 // app's own browser or on the server's, shared by the person and every bot
-// that may browse. A client lists them on the RPC socket (`browser.tabs`, and
-// one bot's view with `browser.subscribe`) and watches and drives one on the
-// media socket (`HTTP_PATHS.browser`). A page host speaks `browserHost.ts`;
+// that may browse. A client follows one bot's tabs on the RPC socket
+// (`browser.subscribe`), and watches and drives one on the media socket
+// (`HTTP_PATHS.browser`). `SharedBrowserTabs` is the shape of the list of
+// every tab, which no call serves yet. A page host speaks `browserHost.ts`;
 // a bot reaches the tabs through the `browser_*` tools (`browserTools.ts`).
 
 /**
  * One tab, as J3 Bots names it everywhere: to clients, to page hosts and to
- * bots. Minted by the server when the tab opens, and kept with the tab in
- * the server's registry, so it names the same tab after a restart of the
- * server and when the tab moves to another host. Opaque.
+ * bots. Opaque.
  */
 export const BrowserTabRef = Schema.String.check(
   Schema.isMinLength(1),
@@ -129,7 +128,7 @@ export const SharedBrowserTab = Schema.Struct({
 });
 export type SharedBrowserTab = typeof SharedBrowserTab.Type;
 
-/** One frame of `browser.tabs`: every tab, as they are now. */
+/** Every tab, as they are now: the list the person and the bots share. */
 export const SharedBrowserTabs = Schema.Struct({ tabs: Schema.Array(SharedBrowserTab) });
 export type SharedBrowserTabs = typeof SharedBrowserTabs.Type;
 

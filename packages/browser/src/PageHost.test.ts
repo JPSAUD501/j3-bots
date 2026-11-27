@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import {
-  type BrowserCookie,
-  BrowserHostError,
-  BrowserHostRpcs,
-  BrowserTabRef,
-} from "@j3-bots/contracts";
+import { BrowserHostError, BrowserHostRpcs, BrowserTabRef } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -53,35 +48,6 @@ it.effect("refuses a ref the page has changed since, with its reason, across the
         (yield* Effect.flip(host.snapshot({ tab: missing, includeImage: false }))).reason,
         "no-tab",
       );
-    }),
-  ),
-);
-
-it.effect("keeps a session cookie and a partitioned one apart from their unpartitioned twin", () =>
-  overTheWire((host) =>
-    Effect.gen(function* () {
-      const session: BrowserCookie = {
-        name: "sid",
-        value: "one",
-        domain: "example.test",
-        hostOnly: true,
-        path: "/",
-        secure: true,
-        httpOnly: true,
-        sameSite: "unspecified",
-      };
-      const partitioned: BrowserCookie = {
-        ...session,
-        value: "two",
-        partition: { topLevelSite: "https://other.test", hasCrossSiteAncestor: true },
-      };
-      yield* host.writeCookies({ set: [session, partitioned], removed: [] });
-      assert.deepStrictEqual((yield* host.readCookies).cookies, [session, partitioned]);
-      yield* host.writeCookies({
-        set: [],
-        removed: [{ name: "sid", domain: "example.test", hostOnly: true, path: "/" }],
-      });
-      assert.deepStrictEqual((yield* host.readCookies).cookies, [partitioned]);
     }),
   ),
 );

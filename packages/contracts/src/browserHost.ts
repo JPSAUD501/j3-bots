@@ -360,7 +360,10 @@ export const BrowserHostRpcs = RpcGroup.make(
     success: BrowserPageState,
     error: BrowserHostError,
   }),
-  /** Reads the page with fresh refs, which replace the tab's earlier ones. */
+  /**
+   * Reads the page with its refs. A ref holds until the page's document
+   * changes: a later snapshot of the same document keeps it.
+   */
   Rpc.make("tab.snapshot", {
     payload: { ...tab, includeImage: Schema.Boolean },
     success: BrowserPageSnapshot,
@@ -407,8 +410,9 @@ export const BrowserHostRpcs = RpcGroup.make(
   }),
   /**
    * Pictures of the tab while the call runs, at most `maxWidth` by
-   * `maxHeight` device pixels. One screencast runs per tab, shared by
-   * every caller. A hidden tab keeps painting while it is watched.
+   * `maxHeight` device pixels. One screencast runs per tab: a second call
+   * while one runs is refused, and the server shares the one among its
+   * viewers. A hidden tab keeps painting while it is watched.
    */
   Rpc.make("tab.screencast", {
     payload: {

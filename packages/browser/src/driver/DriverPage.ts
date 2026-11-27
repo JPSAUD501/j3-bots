@@ -32,21 +32,20 @@ import * as Random from "effect/Random";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type { CDPSession, Dialog, Frame, Locator, Page, Request } from "playwright-core";
+import type { CDPSession, Dialog, Frame, Page, Request } from "playwright-core";
 import { addressOf } from "./address.ts";
 import {
   documentState,
   editableAt,
   focusTextTarget,
-  isValueOnlyInput,
   pageHasText,
-  scrollElement,
   scrollPage,
-  selectOptions,
   viewportSize,
 } from "./pageScripts.ts";
 import { hostErrorOf } from "./errors.ts";
+import { handleTarget, locatorTarget, type Target } from "./target.ts";
 import { FramesChanged, openReaders, type FrameReader } from "./frames.ts";
 import {
   dottedPattern,
@@ -76,13 +75,14 @@ export interface DriverPage {
   /** The page now. */
   readonly state: Effect.Effect<BrowserPageState>;
   /**
-   * The page after each change of address, title, loading or dialog, until
-   * the page closes. One subscriber at a time.
+   * The page after each navigation, load, failed load, and dialog opened or
+   * closed, until the page closes. A title the page changes by itself shows
+   * with the next of these.
    */
   readonly changes: Stream.Stream<BrowserPageState>;
   /**
-   * The page as a bot reads it, with fresh refs that replace the earlier
-   * ones. Hidden values are masked.
+   * The page as a bot reads it, with refs that hold until the document
+   * changes. Hidden values are masked.
    */
   readonly snapshot: (options: {
     readonly includeImage: boolean;
@@ -119,7 +119,7 @@ export interface DriverPage {
   /**
    * The page's pictures while the stream runs. The next comes only after
    * `screencastAck` of the last, and only the newest waits meanwhile. One
-   * stream at a time.
+   * stream at a time: a second, while one runs, is refused.
    */
   readonly screencast: (options: {
     readonly maxWidth: number;
@@ -127,14 +127,16 @@ export interface DriverPage {
     readonly quality: number;
   }) => Stream.Stream<BrowserScreencastFrame, BrowserHostError>;
   readonly screencastAck: (frame: number) => Effect.Effect<void>;
-  /** Revokes every ref the page gave out, as when a person takes the tab. */
-  readonly forgetRefs: Effect.Effect<void>;
 }
 
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
 const TARGET_COUNT_MS = 250;
 const WAIT_POLL_MS = 100;
+/** How long a ref's element may take to be found: it was on the page at the snapshot. */
+const REF_LOOKUP_MS = 1_000;
+/** Beyond an action's own time, for the steps Playwright gives no timeout of their own. */
+const ACTION_GRACE_MS = 1_000;
 const UNRESPONSIVE_SCRIPT_MS = 1_000;
 const MAX_SCREENSHOT_WIDTH = 1280;
 const MAX_TARGET_CHARS = 200;
@@ -203,12 +205,16 @@ export const makeDriverPage = (options: {
   Effect.gen(function* () {
     const { tab, page, cdp } = options;
 
-    // Refs carry a namespace of this driver and a count of its snapshots, so a ref from
-    // another tab, an earlier page or before a restart never names an element here.
+    // Refs carry a namespace of this driver and a count of the documents it has shown, so a
+    // ref from another tab, an earlier document or before a restart never names an element
+    // here. Within one document the browser keeps an element's number, so a ref holds
+    // across snapshots until the main frame navigates or a frame detaches.
     const namespace = (yield* Random.nextIntBetween(0, 0x7fffffff)).toString(36);
     let sequence = 0;
     let generation = "";
     const refs = new Map<string, string>();
+    /** Held while the browser numbers elements, and while a ref's element is looked up. */
+    const refLock = yield* Semaphore.make(1);
     const forget = () => {
       generation = `${namespace}-${(++sequence).toString(36)}`;
       refs.clear();
@@ -217,14 +223,26 @@ export const makeDriverPage = (options: {
 
     let dialog: Dialog | undefined;
     let loadError: BrowserLoadError | null = null;
-    const frameSessions = new WeakMap<Frame, Promise<CDPSession>>();
+    const frameSessions = new Map<Frame, Promise<CDPSession>>();
 
     const onFrameNavigated = (frame: Frame) => {
-      if (frame === page.mainFrame()) forget();
+      if (frame !== page.mainFrame()) return;
+      forget();
+      // A new document has no dialog: one left open went with the page.
+      dialog = undefined;
     };
-    const onFrameDetached = () => forget();
+    const onFrameDetached = (frame: Frame) => {
+      forget();
+      const session = frameSessions.get(frame);
+      frameSessions.delete(frame);
+      void session?.then((opened) => opened.detach()).catch(() => undefined);
+    };
     const onDialog = (opened: Dialog) => {
       dialog = opened;
+    };
+    // Answered by anyone: the bot, or the person in the desktop's own view.
+    const onDialogClosed = () => {
+      dialog = undefined;
     };
     const onRequest = (request: Request) => {
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) loadError = null;
@@ -241,8 +259,15 @@ export const makeDriverPage = (options: {
     page.on("dialog", onDialog);
     page.on("request", onRequest);
     page.on("requestfailed", onRequestFailed);
+    cdp.on("Page.javascriptDialogClosed", onDialogClosed);
+    // The page's events reach this session only once it asks for them.
+    yield* attempt(() => cdp.send("Page.enable")).pipe(Effect.ignore);
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
+        cdp.off("Page.javascriptDialogClosed", onDialogClosed);
+        for (const session of frameSessions.values())
+          void session.then((opened) => opened.detach()).catch(() => undefined);
+        frameSessions.clear();
         page.off("framenavigated", onFrameNavigated);
         page.off("framedetached", onFrameDetached);
         page.off("dialog", onDialog);
@@ -303,6 +328,7 @@ export const makeDriverPage = (options: {
         page.on("dialog", changed);
         page.on("requestfailed", changed);
         page.on("close", onClose);
+        cdp.on("Page.javascriptDialogClosed", changed);
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             page.off("framenavigated", onNavigated);
@@ -311,6 +337,7 @@ export const makeDriverPage = (options: {
             page.off("dialog", changed);
             page.off("requestfailed", changed);
             page.off("close", onClose);
+            cdp.off("Page.javascriptDialogClosed", changed);
           }),
         );
       }),
@@ -319,28 +346,60 @@ export const makeDriverPage = (options: {
     // ---------------------------------------------------------------------
     // Locating
 
-    /**
-     * The locator a target names. A ref must be one the latest snapshot gave
-     * out and the page has not changed since; anything else is refused as
-     * stale rather than letting it name another element.
-     */
-    const locate = (target: string): Effect.Effect<Locator, BrowserHostError> => {
-      const engines = target.replace(
-        /\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g,
-        " ",
-      );
-      if (!/(?:^|>>)\s*\*?aria-ref\s*=/.test(engines)) return Effect.succeed(page.locator(target));
-      const ref = /^\s*aria-ref\s*=\s*(\S+)\s*$/.exec(target)?.[1];
-      const native = ref === undefined ? undefined : refs.get(ref);
-      return native === undefined
-        ? Effect.fail(new BrowserHostError({ reason: "stale-ref" }))
-        : Effect.succeed(page.locator(`aria-ref=${native}`));
-    };
-
     const deadlineIn = (timeoutMs: number | undefined) =>
       Effect.map(Clock.currentTimeMillis, (now) => now + (timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS));
     const remaining = (deadline: number) =>
       Effect.map(Clock.currentTimeMillis, (now) => Math.max(1, deadline - now));
+
+    /**
+     * The element a ref names, found once, under the lock the snapshot takes
+     * while it numbers elements: the browser's own numbers start again in
+     * each document, so a ref looked up again later could name another
+     * element. Refused as stale when the ref is not one this document gave
+     * out, or the element is gone.
+     */
+    const elementOf = (ref: string) =>
+      Effect.acquireRelease(
+        refLock.withPermits(1)(
+          Effect.gen(function* () {
+            const native = refs.get(ref);
+            const taken = generation;
+            if (native === undefined) return yield* new BrowserHostError({ reason: "stale-ref" });
+            const handle = yield* attempt(() =>
+              page.locator(`aria-ref=${native}`).elementHandle({ timeout: REF_LOOKUP_MS }),
+            ).pipe(
+              Effect.catchIf(
+                (error) => error.reason === "timeout" || error.reason === "page",
+                () => Effect.fail(new BrowserHostError({ reason: "stale-ref" })),
+              ),
+            );
+            if (generation !== taken) {
+              void handle.dispose().catch(() => undefined);
+              return yield* new BrowserHostError({ reason: "stale-ref" });
+            }
+            return handle;
+          }),
+        ),
+        (handle) => Effect.sync(() => void handle.dispose().catch(() => undefined)),
+      );
+
+    /**
+     * What a target names. A ref goes alone, as `aria-ref=<ref>`; any other
+     * mention of `aria-ref` is refused, so a ref never reaches the browser
+     * except through `elementOf`.
+     */
+    const locate = (name: string): Effect.Effect<Target, BrowserHostError, Scope.Scope> => {
+      if (!/aria-ref/i.test(name)) return Effect.succeed(locatorTarget(name, page.locator(name)));
+      const ref = /^\s*aria-ref\s*=\s*(\S+)\s*$/.exec(name)?.[1];
+      if (ref === undefined)
+        return Effect.fail(
+          new BrowserHostError({
+            reason: "invalid-target",
+            detail: "A ref goes alone, as aria-ref=<ref> from the latest snapshot.",
+          }),
+        );
+      return Effect.map(elementOf(ref), (handle) => handleTarget(name, handle));
+    };
 
     const viewport = Effect.gen(function* () {
       const read: unknown = yield* attempt(() => page.evaluate(viewportSize));
@@ -348,40 +407,48 @@ export const makeDriverPage = (options: {
     });
 
     const targetPoint = Effect.fn("targetPoint")(function* (
-      locator: Locator | undefined,
+      target: Target | undefined,
       at: { readonly x?: number | undefined; readonly y?: number | undefined },
     ) {
-      if (locator === undefined) return { x: at.x ?? 0, y: at.y ?? 0 };
-      yield* attempt(async () => {
-        // A page that replaces the node mid-scroll fails it; the input after it resolves again.
-        await locator.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => undefined);
-      });
-      const box = yield* attempt(async () => locator.boundingBox({ timeout: 2_000 })).pipe(
-        Effect.orElseSucceed(() => null),
-      );
+      if (target === undefined) return { x: at.x ?? 0, y: at.y ?? 0 };
+      // A page that replaces the node mid-scroll fails it; the action after it says so.
+      yield* attempt(() => target.scrollIntoView(2_000)).pipe(Effect.ignore);
+      const box = yield* attempt(() => target.box(2_000)).pipe(Effect.orElseSucceed(() => null));
       if (box !== null) return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       const size = yield* viewport;
       return { x: size.width / 2, y: size.height / 2 };
     });
 
-    /** The page's dialog opening: a click that opens one does not end until it is answered. */
+    /** The page's dialog opening: an action that opens one ends there, for the bot to answer it. */
     const dialogOpens = Effect.callback<void>((resume) => {
       const opened = () => resume(Effect.void);
       page.once("dialog", opened);
       return Effect.sync(() => page.off("dialog", opened));
     });
 
+    /** A page that waits on a dialog runs no script: page work waits until it is answered. */
+    const noDialog = Effect.suspend(() =>
+      dialog === undefined
+        ? Effect.void
+        : Effect.fail(
+            new BrowserHostError({
+              reason: "refused",
+              detail: "A dialog on the page waits for an answer. Answer it first.",
+            }),
+          ),
+    );
+
     /**
      * Playwright's timeout names neither the target nor why it waited. The
      * click may still have happened, so the bot is told to look first.
      */
-    const namedTimeout = (locator: Locator, target: string) => (error: BrowserHostError) =>
+    const namedTimeout = (target: Target) => (error: BrowserHostError) =>
       Effect.gen(function* () {
         if (!isTimeoutError(error)) return yield* error;
-        const quoted = `"${target}"`;
+        const quoted = `"${target.name}"`;
         const shown =
           quoted.length > MAX_TARGET_CHARS ? `${quoted.slice(0, MAX_TARGET_CHARS)}...` : quoted;
-        const matches = yield* attempt(() => locator.count()).pipe(
+        const matches = yield* attempt(() => target.count()).pipe(
           Effect.timeoutOption(TARGET_COUNT_MS),
           Effect.orElseSucceed(Option.none),
         );
@@ -429,78 +496,56 @@ export const makeDriverPage = (options: {
         detail: "The target is not an enabled text field, so nothing was typed.",
       });
 
-    const act = (
+    const runAction = (
       action: BrowserAction,
-      pointer: PointerReporter = noPointer,
-    ): Effect.Effect<BrowserActOutcome, BrowserHostError> =>
+      deadline: number,
+      pointer: PointerReporter,
+    ): Effect.Effect<BrowserActOutcome, BrowserHostError, Scope.Scope> =>
       Effect.gen(function* () {
         switch (action.action) {
           case "click": {
-            const deadline = yield* deadlineIn(action.timeoutMs);
-            const locator =
-              action.locator === undefined ? undefined : yield* locate(action.locator);
-            const run = Effect.gen(function* () {
-              const point = yield* targetPoint(locator, action);
-              yield* pointer(point, "click");
-              const options = {
-                button: action.button ?? "left",
-                clickCount: action.clickCount ?? 1,
-              };
-              const timeout = yield* remaining(deadline);
-              const clicked = attempt(() =>
-                locator === undefined
-                  ? page.mouse.click(point.x, point.y, options)
-                  : locator.click({ ...options, timeout }),
-              );
-              yield* Effect.raceFirst(clicked, dialogOpens);
-            });
-            yield* locator === undefined || action.locator === undefined
-              ? run
-              : run.pipe(Effect.catch(namedTimeout(locator, action.locator)));
+            const target = action.locator === undefined ? undefined : yield* locate(action.locator);
+            const point = yield* targetPoint(target, action);
+            yield* pointer(point, "click");
+            const options = { button: action.button ?? "left", clickCount: action.clickCount ?? 1 };
+            const timeout = yield* remaining(deadline);
+            const clicked = attempt(() =>
+              target === undefined
+                ? page.mouse.click(point.x, point.y, options)
+                : target.click({ ...options, timeout }),
+            );
+            yield* target === undefined
+              ? clicked
+              : clicked.pipe(Effect.catch(namedTimeout(target)));
             return {};
           }
           case "hover": {
-            const deadline = yield* deadlineIn(action.timeoutMs);
-            const locator =
-              action.locator === undefined ? undefined : yield* locate(action.locator);
-            const point = yield* targetPoint(locator, action);
+            const target = action.locator === undefined ? undefined : yield* locate(action.locator);
+            const point = yield* targetPoint(target, action);
             yield* pointer(point, "move");
             const timeout = yield* remaining(deadline);
             yield* attempt(() =>
-              locator === undefined
-                ? page.mouse.move(point.x, point.y)
-                : locator.hover({ timeout }),
+              target === undefined ? page.mouse.move(point.x, point.y) : target.hover(timeout),
             );
             return {};
           }
           case "type": {
-            const deadline = yield* deadlineIn(action.timeoutMs);
-            const locator =
-              action.locator === undefined ? undefined : yield* locate(action.locator);
-            if (locator !== undefined && action.clear === true) {
+            const target = action.locator === undefined ? undefined : yield* locate(action.locator);
+            if (target !== undefined && action.clear === true) {
               const timeout = yield* remaining(deadline);
-              const valueOnly = yield* attempt(() =>
-                locator.evaluate(isValueOnlyInput, undefined, { timeout }),
-              );
-              if (valueOnly === true) {
-                yield* attempt(() => locator.fill(action.text, { timeout }));
+              if (yield* attempt(() => target.valueOnly())) {
+                yield* attempt(() => target.fill(action.text, timeout));
                 return {};
               }
               // fill follows a label to its control and leaves it focused for the keys.
-              yield* attempt(() => locator.fill("", { timeout }));
+              yield* attempt(() => target.fill("", timeout));
               yield* typeKeys(action.text, deadline);
               return {};
             }
-            const timeout = yield* remaining(deadline);
-            const focused = yield* locator === undefined
-              ? attempt(() => page.evaluate(focusTextTarget, null)).pipe(
-                  Effect.timeoutOrElse({
-                    duration: timeout,
-                    orElse: () => Effect.succeed(false),
-                  }),
-                )
-              : attempt(() => locator.evaluate(focusTextTarget, undefined, { timeout }));
-            if (focused !== true) return yield* notTextField();
+            const focused = yield* attempt(() =>
+              target === undefined ? page.evaluate(focusTextTarget, null) : target.focusText(),
+            );
+            if (!focused) return yield* notTextField();
             if (action.clear === true) {
               yield* attempt(() => page.keyboard.press("ControlOrMeta+A"));
               yield* attempt(() => page.keyboard.press("Delete"));
@@ -509,11 +554,8 @@ export const makeDriverPage = (options: {
             return {};
           }
           case "select": {
-            const locator = yield* locate(action.locator);
-            const timeout = action.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS;
-            const read: unknown = yield* attempt(() =>
-              locator.evaluate(selectOptions, undefined, { timeout }),
-            );
+            const target = yield* locate(action.locator);
+            const read: unknown = yield* attempt(() => target.options());
             const options = isOptions(read) ? read : null;
             if (options === null)
               return yield* new BrowserHostError({
@@ -528,27 +570,28 @@ export const makeDriverPage = (options: {
                   options.find((option) => option.label === entry.trim())
                 )?.value ?? entry,
             );
-            const selected = yield* attempt(() => locator.selectOption(values, { timeout }));
+            const timeout = yield* remaining(deadline);
+            const selected = yield* attempt(() => target.selectOption(values, timeout));
             return { selected };
           }
           case "drag": {
-            const deadline = yield* deadlineIn(action.timeoutMs);
             const source = yield* locate(action.source);
             const target = yield* locate(action.target);
-            yield* pointer(yield* targetPoint(source, {}), "move");
+            const start = yield* targetPoint(source, {});
+            yield* pointer(start, "move");
             const timeout = yield* remaining(deadline);
-            yield* attempt(() => source.dragTo(target, { timeout, steps: 5 }));
-            const end = yield* attempt(() => target.boundingBox({ timeout: 1_000 })).pipe(
-              Effect.orElseSucceed(() => null),
-            );
-            if (end !== null)
-              yield* pointer({ x: end.x + end.width / 2, y: end.y + end.height / 2 }, "move");
+            yield* attempt(() => source.hover(timeout));
+            yield* attempt(() => page.mouse.down());
+            const end = yield* targetPoint(target, {});
+            yield* attempt(() => page.mouse.move(end.x, end.y, { steps: 5 }));
+            yield* attempt(() => page.mouse.up());
+            yield* pointer(end, "move");
             return {};
           }
           case "upload": {
-            const locator = yield* locate(action.locator);
-            const timeout = action.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS;
-            yield* attempt(() => locator.setInputFiles([...action.paths], { timeout }));
+            const target = yield* locate(action.locator);
+            const timeout = yield* remaining(deadline);
+            yield* attempt(() => target.setInputFiles(action.paths, timeout));
             return {};
           }
           case "press": {
@@ -563,15 +606,41 @@ export const makeDriverPage = (options: {
               yield* attempt(() => page.evaluate(scrollPage, [x, y] as const));
               return {};
             }
-            const locator = yield* locate(action.locator);
-            yield* attempt(() =>
-              locator.evaluate(scrollElement, [x, y] as const, {
-                timeout: DEFAULT_BROWSER_TIMEOUT_MS,
-              }),
-            );
+            const target = yield* locate(action.locator);
+            yield* attempt(() => target.scrollBy(x, y));
             return {};
           }
         }
+      });
+
+    /**
+     * One action, within its time. An action that opens a dialog ends there,
+     * for the bot to answer it: the page runs nothing until then.
+     */
+    const act = (
+      action: BrowserAction,
+      pointer: PointerReporter = noPointer,
+    ): Effect.Effect<BrowserActOutcome, BrowserHostError> =>
+      Effect.gen(function* () {
+        yield* noDialog;
+        const timeoutMs =
+          ("timeoutMs" in action ? action.timeoutMs : undefined) ?? DEFAULT_BROWSER_TIMEOUT_MS;
+        const deadline = yield* deadlineIn(timeoutMs);
+        return yield* Effect.raceFirst(
+          runAction(action, deadline, pointer).pipe(Effect.scoped),
+          dialogOpens.pipe(Effect.as({})),
+        ).pipe(
+          Effect.timeoutOrElse({
+            duration: timeoutMs + ACTION_GRACE_MS,
+            orElse: () =>
+              Effect.fail(
+                new BrowserHostError({
+                  reason: "timeout",
+                  detail: `The ${action.action} ran over ${timeoutMs} ms.`,
+                }),
+              ),
+          }),
+        );
       });
 
     // ---------------------------------------------------------------------
@@ -606,7 +675,6 @@ export const makeDriverPage = (options: {
     });
 
     const capture = Effect.fn("capture")(function* (includeImage: boolean, deadline: number) {
-      forget();
       const taken = generation;
       const { frames, readers } = yield* Effect.tryPromise({
         try: () => openReaders(page, cdp, frameSessions),
@@ -615,8 +683,8 @@ export const makeDriverPage = (options: {
       const before = yield* readFrames(readers, frames);
       // Leaves time for the second read.
       const treeTimeout = Math.max(1, (yield* remaining(deadline)) - 2_000);
-      const tree = yield* attempt(() =>
-        page.ariaSnapshot({ mode: "ai", boxes: true, timeout: treeTimeout }),
+      const tree = yield* refLock.withPermits(1)(
+        attempt(() => page.ariaSnapshot({ mode: "ai", boxes: true, timeout: treeTimeout })),
       );
       const after = yield* readFrames(readers, frames, before);
       // A value that changed between the reads may be in the tree under neither.
@@ -659,9 +727,7 @@ export const makeDriverPage = (options: {
         return `[ref=${ref}]`;
       });
       const truncated = rewritten.length > MAX_BROWSER_SNAPSHOT_LENGTH;
-      const cut = truncated
-        ? rewritten.slice(0, rewritten.lastIndexOf("\n", MAX_BROWSER_SNAPSHOT_LENGTH))
-        : rewritten;
+      const cut = truncated ? cutTree(rewritten) : rewritten;
       return {
         ...page_,
         title: dotted._tag === "pattern" ? maskText(page_.title, dotted.pattern) : page_.title,
@@ -672,6 +738,7 @@ export const makeDriverPage = (options: {
     });
 
     const snapshot = Effect.fn("snapshot")(function* (options: { readonly includeImage: boolean }) {
+      yield* noDialog;
       const deadline = yield* deadlineIn(SNAPSHOT_TIMEOUT_MS);
       const once = capture(options.includeImage, deadline);
       // A page that changed while it was read is read once more, within the same time.
@@ -738,6 +805,11 @@ export const makeDriverPage = (options: {
     }) =>
       Stream.callback<BrowserScreencastFrame, BrowserHostError>((queue) =>
         Effect.gen(function* () {
+          if (screencastQueue !== undefined)
+            return yield* new BrowserHostError({
+              reason: "refused",
+              detail: "This tab is already being watched; its one screencast is shared.",
+            });
           screencastQueue = queue;
           delivered = undefined;
           waiting = undefined;
@@ -813,6 +885,7 @@ export const makeDriverPage = (options: {
       readonly awaitPromise: boolean;
       readonly timeoutMs?: number | undefined;
     }) {
+      yield* noDialog;
       const timeoutMs = input.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS;
       const params = {
         expression: input.expression,
@@ -869,13 +942,14 @@ export const makeDriverPage = (options: {
       return { value };
     });
 
-    const waitFor = Effect.fn("waitFor")(function* (condition: BrowserWaitCondition) {
+    const waitFor = (condition: BrowserWaitCondition) => waitScoped(condition).pipe(Effect.scoped);
+    const waitScoped = Effect.fn("waitFor")(function* (condition: BrowserWaitCondition) {
+      yield* noDialog;
       const timeoutMs = condition.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS;
-      const locator =
-        condition.locator === undefined ? undefined : yield* locate(condition.locator);
+      const target = condition.locator === undefined ? undefined : yield* locate(condition.locator);
       const { text, urlIncludes } = condition;
       const holds = Effect.gen(function* () {
-        if (locator !== undefined && (yield* attempt(() => locator.count())) === 0) return false;
+        if (target !== undefined && (yield* attempt(() => target.count())) === 0) return false;
         if (text !== undefined) {
           // A navigation can destroy the context mid-check; that counts as not yet.
           const found = yield* attempt(() => page.evaluate(pageHasText, text)).pipe(
@@ -1057,9 +1131,16 @@ export const makeDriverPage = (options: {
       probe,
       screencast,
       screencastAck,
-      forgetRefs: Effect.sync(forget),
     } satisfies DriverPage;
   });
+
+/** The tree cut to its limit, at a line's end where one is in reach, never inside a character. */
+const cutTree = (tree: string) => {
+  const lineEnd = tree.lastIndexOf("\n", MAX_BROWSER_SNAPSHOT_LENGTH);
+  const end = lineEnd > 0 ? lineEnd : MAX_BROWSER_SNAPSHOT_LENGTH;
+  const last = tree.charCodeAt(end - 1);
+  return tree.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end);
+};
 
 const sameValues = (a: ReadonlyArray<string>, b: ReadonlyArray<string> | undefined) =>
   b !== undefined && a.length === b.length && a.every((value, i) => value === b[i]);

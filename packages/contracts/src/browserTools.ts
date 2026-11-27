@@ -6,8 +6,8 @@ import { BrowserDialog, BrowserTabRef } from "./browser.ts";
 // The `browser_*` tools a bot uses J3 Bots' browser through (decision 0110),
 // and the page work a page host does for them (`browserHost.ts`). Their names
 // and arguments mirror the engine's own browser tools, so a model that knows
-// one knows the other. Each tool's description is prompt text and lives with
-// the other tools in `packages/prompts`; this file holds only their shapes.
+// one knows the other. This file holds only their shapes: a tool's
+// description is prompt text.
 
 /** The tools, in the order a bot reads them. */
 export const BROWSER_TOOL_NAMES = [

@@ -16,6 +16,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { addressOf } from "../driver/address.ts";
 import type { PageHost, PageHostPayload } from "../PageHost.ts";
 
 /**
@@ -48,7 +49,10 @@ export interface FakePageHost extends PageHost {
   readonly emit: (event: BrowserHostEvent) => Effect.Effect<void>;
   /** What a page at `url` shows when a tab goes there. */
   readonly serve: (url: string, page: FakePage) => Effect.Effect<void>;
-  /** A picture of the tab, to whoever watches it. */
+  /**
+   * A picture of the tab, to its watcher. As a real host does, it sends the
+   * next only after the last is acknowledged, keeping the newest meanwhile.
+   */
   readonly paint: (tab: BrowserTabRef) => Effect.Effect<void>;
   /** The frames acknowledged so far, by tab. */
   readonly acked: Effect.Effect<
@@ -59,8 +63,16 @@ export interface FakePageHost extends PageHost {
 interface FakeTab {
   state: BrowserPageState;
   readonly private: boolean;
+  /** How many documents the tab has shown: a ref holds within one. */
   generation: number;
-  refs: ReadonlySet<string>;
+  readonly refs: Set<string>;
+}
+
+interface Watcher {
+  readonly queue: Queue.Queue<number, BrowserHostError | Cause.Done>;
+  /** The frame out and not yet acknowledged, and the newest painted since. */
+  out: number | undefined;
+  next: number | undefined;
 }
 
 const BLANK: FakePage = { title: "", tree: "" };
@@ -87,10 +99,7 @@ export const makeFakePageHost = (
     const storage = new Map<string, BrowserOriginStorage>();
     const calls: Array<FakeHostCall> = [];
     const acked: Array<{ readonly tab: BrowserTabRef; readonly frame: number }> = [];
-    const watchers = new Map<
-      BrowserTabRef,
-      Set<Queue.Queue<number, BrowserHostError | Cause.Done>>
-    >();
+    const watchers = new Map<BrowserTabRef, Watcher>();
     let frames = 0;
 
     const record = (call: string, tab?: BrowserTabRef) =>
@@ -106,11 +115,34 @@ export const makeFakePageHost = (
           : Effect.succeed(found);
       });
 
-    const go = (tab: FakeTab, url: string) => {
-      const page = pages.get(url) ?? BLANK;
-      tab.state = { ...tab.state, url, title: page.title, loading: false, loadError: null };
-      tab.generation += 1;
-      tab.refs = new Set();
+    /** Takes the tab to `url`, a new document; only web addresses open, as on a real host. */
+    const go = (tab: FakeTab, url: string) =>
+      Effect.suspend(() => {
+        const address = addressOf(url);
+        if (address === undefined)
+          return Effect.fail(
+            new BrowserHostError({
+              reason: "refused",
+              detail: "Only http and https addresses open.",
+            }),
+          );
+        const page = pages.get(address) ?? BLANK;
+        tab.state = {
+          ...tab.state,
+          url: address,
+          title: page.title,
+          loading: false,
+          loadError: null,
+          dialog: null,
+        };
+        tab.generation += 1;
+        tab.refs.clear();
+        return Effect.void;
+      });
+
+    const deliver = (watcher: Watcher, frame: number) => {
+      watcher.out = frame;
+      Queue.offerUnsafe(watcher.queue, frame);
     };
 
     const changed = (tab: FakeTab) =>
@@ -125,9 +157,11 @@ export const makeFakePageHost = (
     const checkRefs = (found: FakeTab, targets: ReadonlyArray<string | undefined>) =>
       Effect.suspend(() => {
         for (const target of targets) {
-          const ref =
-            target === undefined ? undefined : /^aria-ref=(\S+)$/.exec(target.trim())?.[1];
-          if (ref !== undefined && !found.refs.has(ref))
+          if (target === undefined || !/aria-ref/i.test(target)) continue;
+          const ref = /^\s*aria-ref\s*=\s*(\S+)\s*$/.exec(target)?.[1];
+          if (ref === undefined)
+            return Effect.fail(new BrowserHostError({ reason: "invalid-target" }));
+          if (!found.refs.has(ref))
             return Effect.fail(new BrowserHostError({ reason: "stale-ref" }));
         }
         return Effect.void;
@@ -176,9 +210,14 @@ export const makeFakePageHost = (
                 generation: 0,
                 refs: new Set(),
               };
-              tabs.set(input.tab, tab);
-              if (input.url !== undefined) go(tab, input.url);
-              return Effect.succeed(tab.state);
+              return (input.url === undefined ? Effect.void : go(tab, input.url)).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    tabs.set(input.tab, tab);
+                    return tab.state;
+                  }),
+                ),
+              );
             }),
           ),
         ),
@@ -189,7 +228,8 @@ export const makeFakePageHost = (
               const found = tabs.get(tab);
               if (found === undefined) return Effect.void;
               tabs.delete(tab);
-              for (const queue of watchers.get(tab) ?? []) Queue.endUnsafe(queue);
+              const watcher = watchers.get(tab);
+              if (watcher !== undefined) Queue.endUnsafe(watcher.queue);
               watchers.delete(tab);
               return found.private
                 ? Effect.void
@@ -199,26 +239,22 @@ export const makeFakePageHost = (
         ),
       navigate: ({ tab, to }) =>
         onTab("tab.navigate", tab, (found) =>
-          Effect.suspend(() => {
-            if (to.kind === "url") go(found, to.url);
-            else go(found, found.state.url);
-            return changed(found).pipe(Effect.as(found.state));
-          }),
+          go(found, to.kind === "url" ? to.url : found.state.url).pipe(
+            Effect.andThen(changed(found)),
+            Effect.as(found.state),
+          ),
         ),
       snapshot: ({ tab }) =>
         onTab("tab.snapshot", tab, (found) =>
           Effect.sync(() => {
-            found.generation += 1;
-            const refs = new Set<string>();
             const tree = (pages.get(found.state.url) ?? BLANK).tree.replace(
               NATIVE_REF,
               (_match, native: string) => {
                 const ref = `fake-${found.generation}-${native}`;
-                refs.add(ref);
+                found.refs.add(ref);
                 return `[ref=${ref}]`;
               },
             );
-            found.refs = refs;
             return { ...found.state, tree, truncated: false };
           }),
         ),
@@ -263,12 +299,18 @@ export const makeFakePageHost = (
             return Stream.callback<number, BrowserHostError>((queue) =>
               Effect.acquireRelease(
                 // Recorded once watching, so a test that waits for the call loses no picture.
-                Effect.sync(() => {
-                  const set = watchers.get(tab) ?? new Set();
-                  set.add(queue);
-                  watchers.set(tab, set);
-                }).pipe(Effect.andThen(record("tab.screencast", tab))),
-                () => Effect.sync(() => watchers.get(tab)?.delete(queue)),
+                Effect.suspend(() => {
+                  if (watchers.has(tab))
+                    return Effect.fail(
+                      new BrowserHostError({
+                        reason: "refused",
+                        detail: "This tab is already being watched; its one screencast is shared.",
+                      }),
+                    );
+                  watchers.set(tab, { queue, out: undefined, next: undefined });
+                  return record("tab.screencast", tab);
+                }),
+                () => Effect.sync(() => watchers.delete(tab)),
               ),
             ).pipe(
               Stream.map((frame) => ({
@@ -283,6 +325,12 @@ export const makeFakePageHost = (
         onTab("tab.screencastAck", tab, () =>
           Effect.sync(() => {
             acked.push({ tab, frame });
+            const watcher = watchers.get(tab);
+            if (watcher === undefined || watcher.out !== frame) return;
+            const next = watcher.next;
+            watcher.out = undefined;
+            watcher.next = undefined;
+            if (next !== undefined) deliver(watcher, next);
           }),
         ),
       input: ({ tab }) => onTab("tab.input", tab, () => Effect.void),
@@ -341,7 +389,10 @@ export const makeFakePageHost = (
       paint: (tab) =>
         Effect.sync(() => {
           frames += 1;
-          for (const queue of watchers.get(tab) ?? []) Queue.offerUnsafe(queue, frames);
+          const watcher = watchers.get(tab);
+          if (watcher === undefined) return;
+          if (watcher.out === undefined) deliver(watcher, frames);
+          else watcher.next = frames;
         }),
       acked: Effect.sync(() => [...acked]),
     };

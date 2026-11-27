@@ -40,7 +40,7 @@ const WORLD = "j3-browser";
 export const openReaders = async (
   page: Page,
   cdp: CDPSession,
-  sessions: WeakMap<Frame, Promise<CDPSession>>,
+  sessions: Map<Frame, Promise<CDPSession>>,
 ): Promise<{
   readonly frames: ReadonlyArray<Frame>;
   readonly readers: ReadonlyArray<FrameReader>;

@@ -87,6 +87,15 @@ describe("createCdpRelayConnection", () => {
     assert.deepStrictEqual(attached, { id: 2, result: { sessionId: "j3-tab-page-1" } });
   });
 
+  it("answers a message it cannot read as a command, so Playwright does not wait for it", async () => {
+    const { relay, written } = relayOf();
+    relay.receive(JSON.stringify({ id: 7, method: "Page.navigate", params: [] }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepStrictEqual(written, [
+      { id: 7, error: { code: -32600, message: "Not a CDP command." } },
+    ]);
+  });
+
   it("passes the page session's commands to the page's debugger", async () => {
     const { call, sent } = relayOf((method) =>
       method === "Runtime.evaluate" ? { result: 2 } : {},

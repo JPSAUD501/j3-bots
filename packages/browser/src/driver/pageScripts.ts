@@ -121,3 +121,6 @@ export const viewportSize = () => ({
   height: innerHeight,
   ratio: devicePixelRatio,
 });
+
+/** Whether the element is still in its document. */
+export const isConnected = (element: Element): boolean => element.isConnected;
