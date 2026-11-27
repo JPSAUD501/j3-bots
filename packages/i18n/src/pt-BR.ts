@@ -754,6 +754,12 @@ const sentences = {
   "teamLine.roomStartedGone": "{bot} criou uma sala",
   "teamLine.madeForRoom": "Criado por {bot} para {room}",
   "teamLine.madeForRoomGone": "Criado por {bot} para uma sala",
+  "teamLine.roomPaused":
+    "{room} pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
+  "teamLine.roomPausedGone":
+    "Uma sala pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
+  "teamLine.roomPausedUntold": "{room} pausou: os bots conversaram o quanto podem sozinhos",
+  "teamLine.roomPausedUntoldGone": "Uma sala pausou: os bots conversaram o quanto podem sozinhos",
 
   "routine.paused": "Pausada",
   "routine.waiting": "Esperando {connector} responder",
@@ -967,6 +973,7 @@ const sentences = {
   "room.archive.hint":
     "Arquivar interrompe o que os bots estão fazendo aqui. O que foi dito fica, e você pode desarquivar depois.",
   "room.unarchive": "Desarquivar {name}",
+  "room.staysArchived": "Sobraram poucos bots dela, então ela fica arquivada.",
   "room.archiveFailed": "{name} não foi arquivada. Tente de novo.",
   "room.unarchiveFailed": "{name} não foi desarquivada. Tente de novo.",
   "room.unarchiveNeedsMembers":
@@ -988,6 +995,8 @@ const sentences = {
     "Um bot aqui não está respondendo ao Parar. Forçar parada encerra o que ele está rodando para {name} agora.",
   "room.stopFailed": "O trabalho em {name} não foi parado. Tente de novo.",
   "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",
+  "room.readOnly": "Somente leitura · Só os bots conversam aqui",
+  "room.botsOnlyLine": "{count} · Só os bots conversam aqui",
 
   "roomForm.newTitle": "Nova sala",
   "roomForm.editTitle": "Editar {name}",

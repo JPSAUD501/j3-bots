@@ -296,6 +296,10 @@ const StartRoomInput = toolInput({
       "The members the kickoff wakes; the others read it in their next turn. Leave it out to wake every member.",
     ),
   ),
+  with_user: described(
+    Schema.Boolean,
+    "Whether your user takes part. true: they read along and write too, as in any room. false: a room of bots only, which they read as they read two bots' messages and never write in; it pauses after a few rounds of the bots answering each other.",
+  ),
   listed: Listed,
 });
 
@@ -1214,7 +1218,7 @@ export const tools = {
   list_teammates: define(
     "list_teammates",
     [
-      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is `listed` in your user's conversation list or behind the scenes. As the primary bot, also the rooms you are not in, as `otherRooms`, which you can list or move behind the scenes but not read or post in.",
+      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is `listed` in your user's conversation list or behind the scenes, and each room whether your user takes part in it (`withUser`). As the primary bot, also the rooms you are not in, as `otherRooms`, which you can list or move behind the scenes but not read or post in.",
       "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there and `read_room` to read it, from any turn.",
     ],
     NoInput,
@@ -1232,11 +1236,12 @@ export const tools = {
   start_room: define(
     "start_room",
     [
-      "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn. Work for a room you are already in goes there with `message_bot`, not a new room.",
+      "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn. Work for a room you are already in goes there with `message_bot`, not a new room.",
+      "Choose `with_user` every time. true when your user asked to be in the room, will want to steer it, or should answer the members there. false when the bots can do the work among themselves and your user only wants the result: they still read it, but write, react and answer nothing there, so a member that needs them tells them in its own conversation, and you bring them the outcome in yours.",
       "You join as its first member. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member should answer first.",
       "The kickoff wakes the members in `mention`, every other member by default, and each answers in the room what it asks of them; none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
-      "A room holds two to six bots, you included. Your user's limit on how many rounds bots may answer each other in a room since they last wrote holds here too, and starts with your kickoff.",
-      "`listed` is false only when the room is for you and the teammates to coordinate and your user did not ask to see it; a room your user asked for is listed.",
+      "A room holds two to six bots, you included. Your user's limit on how many rounds bots may answer each other in a room since they last wrote holds here too, and starts with your kickoff. A room of bots only counts from the kickoff for good: at the limit it pauses, and you are told in your own conversation. To go on after that, start a new room on your user's word, whose kickoff picks up where the last one stopped.",
+      "`listed` is false only when the room is for you and the teammates to coordinate and your user did not ask to see it; a room your user asked for is listed. A room of bots only is usually behind the scenes: list it when your user asked to watch it.",
       "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
       BOT_ONLY,
     ],

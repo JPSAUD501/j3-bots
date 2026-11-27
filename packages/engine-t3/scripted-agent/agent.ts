@@ -697,6 +697,7 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
       members,
       listed: true,
       kickoff: "Each of you takes one part, in the order you are named. [[script:room-answer]]",
+      with_user: true,
     });
     if (started.failed) return refused(started.text);
     await callBotTool(turn, "say", { text: "I started Support with the team.", done: true });

@@ -58,7 +58,10 @@ export type EventLine =
   | { readonly _tag: "routine-paused"; readonly entry: NoticeOf<"routine-paused"> }
   | { readonly _tag: "event-routine"; readonly entry: EventRoutineChangeEntry }
   | { readonly _tag: "operator-named"; readonly entry: NoticeOf<"operator-named"> }
-  | { readonly _tag: "team"; readonly entry: NoticeOf<"room-started" | "made-for-room"> };
+  | {
+      readonly _tag: "team";
+      readonly entry: NoticeOf<"room-started" | "made-for-room" | "room-paused">;
+    };
 
 /** Every entry that is neither a message nor a turn's work. */
 export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry | ConnectorAppEntry>;
@@ -177,7 +180,11 @@ export function placeOf(entry: NonMessageEntry): EntryPlace {
         return { _tag: "line", line: { _tag: "routine-paused", entry: { ...entry, notice } } };
       if (notice._tag === "operator-named")
         return { _tag: "line", line: { _tag: "operator-named", entry: { ...entry, notice } } };
-      if (notice._tag === "room-started" || notice._tag === "made-for-room")
+      if (
+        notice._tag === "room-started" ||
+        notice._tag === "made-for-room" ||
+        notice._tag === "room-paused"
+      )
         return { _tag: "line", line: { _tag: "team", entry: { ...entry, notice } } };
       return { _tag: "card", entry };
     }
