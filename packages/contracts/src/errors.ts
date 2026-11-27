@@ -50,6 +50,8 @@ export const Resource = Schema.Literals([
   "connector-app",
   /** A saved theme, which only theme requests, new in 0.15.0, name. */
   "theme",
+  /** A browser tab, which only `browser.*` requests, new in 0.16.0, name. */
+  "browser-tab",
 ]);
 export type Resource = typeof Resource.Type;
 

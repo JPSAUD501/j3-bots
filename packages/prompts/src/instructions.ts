@@ -101,7 +101,7 @@ export interface BotInstructionsInput {
   readonly runtime: { readonly model: string; readonly harness: string };
   /** The pinned memory files, as Markdown. Empty when there is nothing pinned. */
   readonly pinned: { readonly shared: string; readonly bot: string };
-  /** Whether the bot has the engine's browser: its rules are rendered only then. */
+  /** Whether the bot's browser is on: its rules are rendered only then. */
   readonly browser: boolean;
   /**
    * Whether the operator gave the bot a connector, connected or not: its

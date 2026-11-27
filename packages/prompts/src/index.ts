@@ -139,6 +139,13 @@ export {
   type RoomReadEntry,
   roomReadFits,
 } from "./roomRead.ts";
+export {
+  BROWSER_NOTES,
+  type BrowserToolInput,
+  browserToolList,
+  browserTools,
+  type ServerBrowserProblem,
+} from "./browserTools.ts";
 export { sharedSkills } from "./skills.ts";
 export { defuseTags } from "./text.ts";
 export { THEME_GUIDE } from "./themeGuide.ts";

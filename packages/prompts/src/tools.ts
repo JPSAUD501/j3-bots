@@ -75,7 +75,7 @@ export const inputCapRefusal = (input: unknown): string | undefined => {
 const withinInputCap = Schema.makeFilter((input: object) => inputCapRefusal(input) ?? true);
 
 /** A tool's arguments: the named fields, within {@link MAX_TOOL_INPUT_BYTES}. */
-const toolInput = <const Fields extends Schema.Struct.Fields>(fields: Fields) =>
+export const toolInput = <const Fields extends Schema.Struct.Fields>(fields: Fields) =>
   Schema.Struct(fields).check(withinInputCap);
 
 /**
@@ -112,13 +112,13 @@ export const SECRET_ASK_EXISTS =
   "You may use a secret of this name already, so no card was shown. Use it by this reference.";
 
 /** For the tools a delegated worker can see but must not use. */
-const BOT_ONLY =
+export const BOT_ONLY =
   "Only the bot itself calls this. A subagent or delegated worker does not: it reports in its final reply.";
 
 const text = (min: number, max: number) =>
   Schema.String.check(Schema.isMinLength(min), Schema.isMaxLength(max));
 
-const described = <S extends Schema.Top>(schema: S, description: string) =>
+export const described = <S extends Schema.Top>(schema: S, description: string) =>
   schema.annotate({ description });
 
 /** An id as `list_teammates` or `list_routines` returns it. */
@@ -1154,7 +1154,7 @@ export interface ToolDefinition<S extends Schema.Top = Schema.Top> {
   readonly asks: boolean;
 }
 
-const define = <S extends Schema.Top>(
+export const define = <S extends Schema.Top>(
   name: string,
   description: ReadonlyArray<string>,
   input: S,
@@ -1771,7 +1771,7 @@ export interface McpTool {
   readonly _meta: { readonly "anthropic/alwaysLoad": true };
 }
 
-const toMcpTool = (tool: ToolDefinition): McpTool => ({
+export const toMcpTool = (tool: ToolDefinition): McpTool => ({
   name: tool.name,
   description: tool.description,
   inputSchema: Schema.toJsonSchemaDocument(tool.input, DECODE_OPTIONS).schema,
