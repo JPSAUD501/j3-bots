@@ -2203,7 +2203,7 @@ export const layer = Layer.effect(
               if (loaded.read._tag === "refused") {
                 return refusedSkill(loaded.read.reason === "gone" ? "unknown" : "mismatch");
               }
-              if (loaded.read.value.text === null) return refusedSkill("mismatch");
+              if (loaded.read.value.text === null) return refusedSkill("not-text");
               yield* Ref.update(heldRef, (held) =>
                 hold(held, input.botId, connector.id, loaded.skill),
               );
