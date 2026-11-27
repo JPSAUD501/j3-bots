@@ -56,7 +56,7 @@ import { UsageDataSentScreen } from "./settings/UsageData.tsx";
 import { WhatsNewScreen } from "./update/WhatsNew.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
-import { BrowserScreen } from "./browser/BrowserScreen.tsx";
+import { LiveScreen } from "./browser/LiveScreen.tsx";
 import { useColor } from "./theme.ts";
 import { SecretFormScreen } from "./secrets/SecretFormScreen.tsx";
 import { SecretScreen } from "./secrets/SecretScreen.tsx";
@@ -103,10 +103,10 @@ export type Screens = {
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
   /**
-   * The bot's browser, on the tab `ref` names or its front tab, answering the
-   * browser help card `help` once the operator is done.
+   * The live view of the browser, opened from `botId`'s conversation, on the
+   * tab `ref` names or else that bot's tab.
    */
-  browser: { readonly botId: BotId; readonly ref?: BrowserTabRef; readonly help?: EntryId };
+  browser: { readonly botId: BotId; readonly ref?: BrowserTabRef };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
   settings: undefined;
@@ -266,10 +266,10 @@ export function Main() {
                 <Stack.Screen name="pair" component={PairScreen} options={{ headerShown: false }} />
                 {/* Sets its own title. */}
                 <Stack.Screen name="backstage" component={BackstageScreen} />
-                {/* The browser draws its own bar: the page's site and who acts on it. */}
+                {/* The live view draws its own bars: the site above the page, and its controls below. */}
                 <Stack.Screen
                   name="browser"
-                  component={BrowserScreen}
+                  component={LiveScreen}
                   options={{ ...sheet, headerShown: false }}
                 />
                 {/* The forms, the memory file and a routine's runs set their own titles. */}

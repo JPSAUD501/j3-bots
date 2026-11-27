@@ -317,7 +317,7 @@ export function ConversationView({
   const [target] = useState(() => rosterTarget(rosterKeyOf(item)));
   /** A routine's runs, over its bot's details, which list it with the bot's other routines. */
   const openBrowser = (card: BrowserHelpEntry) =>
-    navigation.push("browser", { botId: card.author.botId, ref: card.tab, help: card.id });
+    navigation.push("browser", { botId: card.author.botId, ref: card.tab });
   const openRoutine = (routineId: RoutineId) => {
     onOpenDetails();
     if (target._tag === "conversation") {

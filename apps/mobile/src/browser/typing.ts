@@ -25,13 +25,22 @@ export const fieldChange = (before: string, after: string): FieldChange => {
   return { erased: Array.from(before.slice(kept)).length, added: after.slice(kept) };
 };
 
-/** One key pressed and let go. */
-export const keyPress = (key: "Backspace" | "Enter"): ReadonlyArray<BrowserInput> => {
-  const keyCode = key === "Backspace" ? 8 : 13;
+const keyCodes = { Backspace: 8, Tab: 9, Enter: 13 } as const;
+
+/** Shift, in a frame's modifiers. */
+const SHIFT = 8;
+
+/** One key pressed and let go; with `shift`, while Shift is held, as Shift+Tab goes back a field. */
+export const keyPress = (
+  key: keyof typeof keyCodes,
+  shift = false,
+): ReadonlyArray<BrowserInput> => {
+  const keyCode = keyCodes[key];
+  const modifiers = shift ? SHIFT : 0;
   const text = key === "Enter" ? { text: "\r" } : {};
   return [
-    { type: "key", action: "down", key, code: key, keyCode, modifiers: 0, ...text },
-    { type: "key", action: "up", key, code: key, keyCode, modifiers: 0 },
+    { type: "key", action: "down", key, code: key, keyCode, modifiers, ...text },
+    { type: "key", action: "up", key, code: key, keyCode, modifiers },
   ];
 };
 
