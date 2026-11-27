@@ -166,7 +166,6 @@ import {
   engineAnswersOf,
   liveProviderSessions,
   findRequest,
-  isDeleted,
   isEnded,
   isEndedTool,
   isOver,
@@ -804,11 +803,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         ),
       ),
       Effect.map((projection) => mirrorOf(projection)),
-      // A thread the engine deleted keeps its projection: the session is gone all the same.
-      Effect.filterOrFail(
-        (mirror) => !isDeleted(mirror),
-        () => new SessionNotFound({ sessionId }),
-      ),
     );
 
   /**

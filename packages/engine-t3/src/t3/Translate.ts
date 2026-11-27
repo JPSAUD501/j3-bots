@@ -436,11 +436,12 @@ export const isRetired = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.archivedAt !== null;
 
 /**
- * Whether the engine deleted the session's thread: the engine's word that the
- * session is gone, as `isMissingThread` is for a thread it has no record of.
- * A deletion keeps the thread's projection and only stamps `deletedAt` on it,
- * in the `thread.deleted` event too, so a read still succeeds (**Read** at
- * `db51b67`, `ThreadDeletion.ts`, L56-66).
+ * Whether the engine deleted the session's thread, as its stream's
+ * `thread.deleted` event stamps `deletedAt`: the engine's word that the
+ * session is gone. A read of a deleted thread fails as one the engine has no
+ * record of (`isMissingThread`), and the deletion purges its history
+ * (**Read** at `bc0f04d`, `orchestration-v2/ProjectionStore.ts`
+ * `getThreadSnapshotWindow`, `ThreadDeletion.ts`).
  */
 export const isDeleted = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.deletedAt !== null;
@@ -1586,14 +1587,17 @@ const questionRequestOf = (item: UserInputRequest): EngineRequest | undefined =>
  * the caller's bug. A typed answer is sent alone, as the engine's own client
  * sends it; a question that takes several choices gets the list of their
  * values, one that takes one choice the value itself. A question with neither
- * is left unanswered. **Read** at `db51b67`, `pendingUserInput.ts`
+ * is left unanswered; a card has none, since it takes an answer to every
+ * question. The result holds each question id as its own key, `__proto__`
+ * included. **Read** at `bc0f04d`,
+ * `packages/client-runtime/src/state/pendingUserInput.ts`
  * (`resolvePendingUserInputAnswer`).
  */
 export const engineAnswersOf = (
   questions: ReadonlyArray<EngineQuestion>,
   answers: QuestionAnswers,
 ): Record<string, string | ReadonlyArray<string>> | undefined => {
-  const result: Record<string, string | ReadonlyArray<string>> = {};
+  const result: Array<readonly [string, string | ReadonlyArray<string>]> = [];
   for (const [cardId, answer] of Object.entries(answers)) {
     const position = positionOf(cardId, QUESTION_ID);
     const question = position === undefined ? undefined : questions[position];
@@ -1601,7 +1605,7 @@ export const engineAnswersOf = (
     const typed = answer.text?.trim() ?? "";
     if (typed.length > 0) {
       if (question.allowCustomAnswer === false) return undefined;
-      result[question.id] = typed;
+      result.push([question.id, typed]);
       continue;
     }
     const values: Array<string> = [];
@@ -1613,11 +1617,11 @@ export const engineAnswersOf = (
     }
     const [single, ...others] = values;
     if (single === undefined) continue;
-    if (question.multiSelect === true) result[question.id] = values;
-    else if (others.length === 0) result[question.id] = single;
+    if (question.multiSelect === true) result.push([question.id, values]);
+    else if (others.length === 0) result.push([question.id, single]);
     else return undefined;
   }
-  return result;
+  return Object.fromEntries(result);
 };
 
 /** Where the engine takes the answer to a request. */

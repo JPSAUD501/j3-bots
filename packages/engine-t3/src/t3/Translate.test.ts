@@ -100,6 +100,16 @@ describe("engineAnswersOf", () => {
     );
   });
 
+  it("keeps an answer to a question whose id is `__proto__`", () => {
+    // An ACP form's field names are its question ids, and any name is one.
+    const proto = { ...colour, id: "__proto__" };
+    const answered = engineAnswersOf(
+      [proto],
+      answers({ "question-1": { optionIds: [], text: "Green" } }),
+    );
+    assert.deepStrictEqual(answered && Object.entries(answered), [["__proto__", "Green"]]);
+  });
+
   it("refuses answers that do not fit the questions", () => {
     assert.isUndefined(
       engineAnswersOf(
@@ -1113,7 +1123,7 @@ describe("what a Stop leaves to run", () => {
     assert.isTrue(nothingToStop(mirror, at));
   });
 
-  it("counts a thread the engine deleted as gone, though its record stays", () => {
+  it("counts a thread its stream says the engine deleted as gone", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, event("thread.created", appThread));
     assert.isFalse(isDeleted(mirror));
