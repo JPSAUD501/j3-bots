@@ -115,8 +115,8 @@ const SideSession = Schema.Struct({
 
 /**
  * A live side session whose attempt has ended, or that the engine lost, and
- * whether it is superseded: a retry of its attempt is due to start, or a
- * newer run of its routine has started.
+ * whether it is superseded: a retry of its attempt is due to start, a newer
+ * run of its routine, or its next step, has started, or a Stop ended its run.
  */
 const Spent = Schema.Struct({
   id: SessionRowId,
@@ -261,6 +261,10 @@ export const layer = Layer.effect(
           OR EXISTS (
             SELECT 1 FROM wakes n JOIN sessions ns ON ns.side_wake_id = n.id
             WHERE n.routine_id = w.routine_id AND n.retry_of IS NULL AND n.rowid > w.rowid
+          )
+          -- A Stop ended its run, a yes it waited for included.
+          OR EXISTS (
+            SELECT 1 FROM routine_runs r WHERE r.wake_id = s.side_wake_id AND r.stopped = 1
           ) AS superseded
         FROM sessions s
         LEFT JOIN wakes w ON w.id = s.side_wake_id

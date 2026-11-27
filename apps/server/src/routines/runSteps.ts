@@ -583,12 +583,14 @@ export const runSteps = (deps: {
               );
         if (Option.isSome(stored)) {
           const reported = stored.value.report_json;
+          // Its turn ran before the bot found it could not go on, so it may
+          // have done part of the step: Try again says so first.
           if (reported.blocked) {
             return yield* fail(
               run,
               position,
               "blocked",
-              { partial: false, result: reported.result },
+              { partial: true, result: reported.result },
               at,
             );
           }
@@ -612,11 +614,13 @@ export const runSteps = (deps: {
   /**
    * The operator's answer to the yes the run waits for, while it is open: a
    * yes starts the next bot step, with the note; a no ends the run quietly.
-   * An answer to a yes the deadline or a Stop closed is `closed`, and starts
-   * nothing.
+   * An answer to a yes the deadline or a Stop closed, or to another yes than
+   * the one the run waits for, is `closed`, and starts nothing.
    */
   const answer = Effect.fn("runSteps.answer")(function* (input: {
     readonly runId: RoutineRunId;
+    /** The yes the operator saw; null from a client that does not say. */
+    readonly step: number | null;
     readonly choice: RoutineAnswer["choice"];
     readonly note: string | null;
   }) {
@@ -632,6 +636,7 @@ export const runSteps = (deps: {
         deadline = NULL, finished_at = ${timeText(at)}
       WHERE run_id = ${run.id} AND state = 'waiting'
         AND position = (SELECT step FROM routine_runs WHERE id = ${run.id})
+        AND (${input.step} IS NULL OR position = ${input.step})
       RETURNING position
     `;
     const [yes] = closed;

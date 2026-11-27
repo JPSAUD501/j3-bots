@@ -398,10 +398,11 @@ function Card({
           steps={[]}
           run={run}
           submitting={submitting(entry.id)}
-          onAnswer={(choice, note) =>
+          onAnswer={(step, choice, note) =>
             intents.routineCard(entry.id, entry.name, {
               _tag: "answer",
               runId: run.id,
+              step,
               choice,
               note,
             })

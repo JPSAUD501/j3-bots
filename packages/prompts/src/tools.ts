@@ -501,10 +501,19 @@ const routineCallProblem = (input: SetRoutineFields): string | undefined => {
   return undefined;
 };
 
+/**
+ * The most a step's handoff may hold. Five of them, with the longest brief
+ * and webhook body, still fit the last step's envelope in the engine's input.
+ */
+export const MAX_HANDOFF = 6_000;
+
 const FinishStepInput = toolInput({
   result: described(text(1, 200), "One short line of what came of your step, for the card."),
   handoff: Schema.optionalKey(
-    described(text(1, 20_000), "What the next steps need from yours, complete."),
+    described(
+      text(1, MAX_HANDOFF),
+      "What the next steps need from yours, complete and concise: data, names, links, decisions.",
+    ),
   ),
   goOn: Schema.optionalKey(
     described(Schema.Boolean, "When a condition follows your step: whether it holds."),

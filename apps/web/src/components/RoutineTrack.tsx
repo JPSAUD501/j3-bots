@@ -68,7 +68,10 @@ const GAP = 4;
 /** How long a finished run stays drawn whole before it folds into its line, in ms. */
 const FOLD_AFTER = 900;
 
-type Answer = (choice: RoutineAnswer["choice"], note: string | null) => void;
+/** The operator's answer to a yes, from the ask that shows it. */
+type Reply = (choice: RoutineAnswer["choice"], note: string | null) => void;
+/** The operator's answer to the yes at `step` of the run, which is the one they saw. */
+type Answer = (step: number, choice: RoutineAnswer["choice"], note: string | null) => void;
 
 export interface RoutineTrackProps {
   readonly entryId: EntryId;
@@ -765,7 +768,7 @@ function StationText({
               yes={station.ask.yes}
               no={station.ask.no}
               submitting={submitting}
-              onAnswer={onAnswer}
+              onAnswer={(choice, note) => onAnswer(station.index, choice, note)}
             />
           )}
         </>
@@ -788,7 +791,7 @@ function YesAsk({
   readonly yes: string;
   readonly no: string;
   readonly submitting: boolean;
-  readonly onAnswer: Answer;
+  readonly onAnswer: Reply;
 }) {
   const { t } = useI18n();
   const [note, setNote] = useState("");

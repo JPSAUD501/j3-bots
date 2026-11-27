@@ -79,7 +79,10 @@ const FOLD_AFTER = 900;
 const slide = reanimatedSpring(springs.slide);
 const pop = reanimatedSpring(springs.pop);
 
-type Answer = (choice: RoutineAnswer["choice"], note: string | null) => void;
+/** The operator's answer to a yes, from the ask that shows it. */
+type Reply = (choice: RoutineAnswer["choice"], note: string | null) => void;
+/** The operator's answer to the yes at `step` of the run, which is the one they saw. */
+type Answer = (step: number, choice: RoutineAnswer["choice"], note: string | null) => void;
 
 /** What the operator is told when their command on a routine's run did not reach it. */
 const routineFailed = {
@@ -162,7 +165,9 @@ export function RoutineRunCard({ entry }: { readonly entry: RoutineRunEntry }) {
       run={run}
       status={status}
       submitting={submitting}
-      onAnswer={(choice, note) => command({ _tag: "answer", runId: run.id, choice, note })}
+      onAnswer={(step, choice, note) =>
+        command({ _tag: "answer", runId: run.id, step, choice, note })
+      }
       onRetry={() => command({ _tag: "retry", runId: run.id })}
       onStop={() => command({ _tag: "stop", runId: run.id })}
     />
@@ -875,7 +880,7 @@ function StationText({
               yes={station.ask.yes}
               no={station.ask.no}
               submitting={submitting}
-              onAnswer={onAnswer}
+              onAnswer={(choice, note) => onAnswer(station.index, choice, note)}
             />
           )}
         </>
@@ -894,7 +899,7 @@ function YesAsk({
   readonly yes: string;
   readonly no: string;
   readonly submitting: boolean;
-  readonly onAnswer: Answer;
+  readonly onAnswer: Reply;
 }) {
   const { t } = useI18n();
   const [note, setNote] = useState("");

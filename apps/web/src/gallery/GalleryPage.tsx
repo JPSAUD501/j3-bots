@@ -2335,7 +2335,9 @@ function PlayableTrack({ run: first, label }: { run: RoutineRun; label: string }
       steps={trackSteps}
       run={run}
       submitting={submitting}
-      onAnswer={(choice, note) => command({ _tag: "answer", runId: run.id, choice, note })}
+      onAnswer={(step, choice, note) =>
+        command({ _tag: "answer", runId: run.id, step, choice, note })
+      }
       onRetry={() => command({ _tag: "retry", runId: run.id })}
       onStop={() => command({ _tag: "stop", runId: run.id })}
     />

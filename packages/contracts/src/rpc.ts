@@ -13,6 +13,7 @@ import {
   EntryId,
   EntryOrder,
   Language,
+  NonNegativeInt,
   ProviderId,
   RoomId,
   RoutineId,
@@ -717,12 +718,19 @@ export const RoutineRpcs = RpcGroup.make(
   }),
   /**
    * Answers the yes a run waits for (decision 0080). A run no longer
-   * waiting fails `Conflict("card-closed")`.
+   * waiting, or waiting at another yes than `step` names, fails
+   * `Conflict("card-closed")`.
    */
   Rpc.make("routine.answer", {
     payload: {
       ...command,
       runId: RoutineRunId,
+      /**
+       * The yes's place in the run's steps, as the card showed it, so an
+       * answer to one yes never closes a later one. Absent from a client
+       * that predates it, whose answer goes to the yes the run waits for.
+       */
+      step: Schema.optionalKey(NonNegativeInt),
       choice: RoutineAnswer.fields.choice,
       note: RoutineAnswer.fields.note,
     },

@@ -209,6 +209,8 @@ export class Routines extends Context.Service<
     readonly answer: (input: {
       readonly commandId: CommandId;
       readonly runId: RoutineRunId;
+      /** The yes the operator saw; absent from an older client. */
+      readonly step?: number | undefined;
       readonly choice: RoutineAnswer["choice"];
       readonly note: string | null;
     }) => Effect.Effect<void, CommandError>;
@@ -622,16 +624,27 @@ export const layer = Layer.effect(
     const answer = Effect.fn("Routines.answer")(function* (input: {
       readonly commandId: CommandId;
       readonly runId: RoutineRunId;
+      readonly step?: number | undefined;
       readonly choice: RoutineAnswer["choice"];
       readonly note: string | null;
     }) {
       yield* receipts.once({
         commandId: input.commandId,
         method: "routine.answer",
-        payload: { runId: input.runId, choice: input.choice, note: input.note },
+        payload: {
+          runId: input.runId,
+          step: input.step ?? null,
+          choice: input.choice,
+          note: input.note,
+        },
         result: Schema.Void,
         apply: Effect.gen(function* () {
-          const outcome = yield* routineRuns.answer(input);
+          const outcome = yield* routineRuns.answer({
+            runId: input.runId,
+            step: input.step ?? null,
+            choice: input.choice,
+            note: input.note,
+          });
           if (outcome === "closed") return yield* new Conflict({ reason: "card-closed" });
         }),
       });

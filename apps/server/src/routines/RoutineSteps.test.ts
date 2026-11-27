@@ -6,6 +6,7 @@ import {
   type CommandError,
   CommandId,
   type Notification,
+  PushToken,
   type Routine,
   type RoutineId,
   type RoutineRun,
@@ -40,6 +41,8 @@ import {
 import { BotTools } from "../tools/BotTools.ts";
 import { BotStates } from "../turns/BotStates.ts";
 import { Stops } from "../turns/Stops.ts";
+import { TestPushService } from "../testing/push.ts";
+import { RoutineRunner } from "./RoutineRunner.ts";
 import { Routines } from "./Routines.ts";
 
 const GATHER = "Gather last week's emails into a list.";
@@ -285,6 +288,98 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("pushes the phone again when the same run needs the operator again", () =>
+  Effect.gen(function* () {
+    const ana = yield* createBot("Ana");
+    const bia = yield* createBot("Bia");
+    const devices = yield* Devices;
+    const { code } = yield* devices.startPairing;
+    const phone = (yield* devices.pair({ code, name: "Phone" })).deviceId;
+    yield* devices.registerPush({
+      commandId: command(),
+      deviceId: phone,
+      registration: {
+        provider: "expo",
+        token: PushToken.make("ExponentPushToken[fixture-phone]"),
+        platform: "android",
+        language: "en",
+      },
+    });
+    const service = yield* TestPushService;
+    // What the push service was handed, once it was handed `count` messages.
+    const pushed = (count: number) =>
+      eventually(
+        service.sends.pipe(
+          Effect.map((sends) =>
+            sends.length === count
+              ? Option.some(sends.map(({ title, body }) => ({ title, body })))
+              : Option.none(),
+          ),
+        ),
+      );
+
+    const routine = yield* ranRoutine(ana, [gather(ana.id), yes, draft(bia.id)]);
+    yield* doStep(yield* stepTurn(routine.id, ana.id), { result: "3 need a reply", ask: ASK });
+    const waiting = yield* runWhen(routine, (run) => states(run)[1] === "waiting");
+    assert.deepStrictEqual(yield* pushed(1), [{ title: "Ana", body: "Inbox waits for your yes" }]);
+
+    // The yes's push waits for its receipt when Bia's step fails.
+    yield* answer(waiting.id, "yes");
+    yield* doStep(yield* stepTurn(routine.id, bia.id), {
+      result: "The mail app asks to sign in again.",
+      blocked: true,
+    });
+    const run = yield* settled(routine);
+    // Bia's turn ran before it found it could not go on: Try again warns first.
+    assert.deepStrictEqual(
+      [run.steps?.[2]?.failure, run.steps?.[2]?.partial, run.retryable],
+      ["blocked", true, true],
+    );
+    assert.deepStrictEqual((yield* pushed(2))[1], {
+      title: "Ana",
+      body: "Inbox stopped at Bia’s step",
+    });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("takes an answer only for the yes the operator saw", () =>
+  Effect.gen(function* () {
+    const ana = yield* createBot("Ana");
+    const bia = yield* createBot("Bia");
+    const routine = yield* ranRoutine(ana, [
+      gather(ana.id),
+      yes,
+      draft(bia.id),
+      yes,
+      gather(ana.id),
+    ]);
+    yield* doStep(yield* stepTurn(routine.id, ana.id), { result: "3 need a reply", ask: ASK });
+    const first = yield* runWhen(routine, (run) => states(run)[1] === "waiting");
+    const routines = yield* Routines;
+    yield* routines.answer({
+      commandId: command(),
+      runId: first.id,
+      step: 1,
+      choice: "yes",
+      note: null,
+    });
+    yield* doStep(yield* stepTurn(routine.id, bia.id), { result: "3 drafted", ask: ASK });
+    yield* runWhen(routine, (run) => states(run)[3] === "waiting");
+
+    // A second device still showing the first yes answers it late.
+    const late = routines.answer({
+      commandId: command(),
+      runId: first.id,
+      step: 1,
+      choice: "no",
+      note: null,
+    });
+    assert.strictEqual(yield* conflictOf(late), "card-closed");
+    const run = yield* runWhen(routine, (run) => states(run)[3] === "waiting");
+    assert.strictEqual(run.status, "running");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("ends the run quietly at a no, and at a yes nobody answered in time", () =>
   Effect.gen(function* () {
     const ana = yield* createBot("Ana");
@@ -453,6 +548,37 @@ it.effect("ends a run waiting for a yes at Stop on its card, which then takes no
       "card-closed",
     );
     assert.strictEqual(yield* wakesOf(routine.id, bia.id), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends the background work of the step before a yes when Stop ends the run", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* createBot("Ana");
+    const bia = yield* createBot("Bia");
+    const routine = yield* ranRoutine(ana, [gather(bia.id), yes, draft(ana.id)]);
+    const turn = yield* stepTurn(routine.id, bia.id);
+    yield* control.startBackgroundWork({
+      sessionId: turn.engine_session_id,
+      turnId: turn.admitted_turn_id,
+    });
+    yield* doStep(turn, { result: "3 need a reply", ask: ASK });
+    const waiting = yield* runWhen(routine, (run) => states(run)[1] === "waiting");
+    const runner = yield* RoutineRunner;
+    const archived = sql`
+      SELECT 1 FROM sessions
+      WHERE engine_session_id = ${turn.engine_session_id} AND engine_retired_at IS NOT NULL
+    `.pipe(
+      Effect.orDie,
+      Effect.map((rows) => rows.length > 0),
+    );
+    yield* runner.pass;
+    // While the yes waits, the work Bia's step left keeps its session.
+    assert.isFalse(yield* archived);
+
+    yield* (yield* Routines).stopRun({ commandId: command(), runId: waiting.id });
+    yield* until(runner.pass.pipe(Effect.andThen(archived)));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

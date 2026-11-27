@@ -267,6 +267,8 @@ export class RoutineRuns extends Context.Service<
     /** The operator's answer to the yes a run waits for, in the caller's transaction. */
     readonly answer: (input: {
       readonly runId: RoutineRunId;
+      /** The yes the operator saw; null from a client that does not say. */
+      readonly step: number | null;
       readonly choice: RoutineAnswer["choice"];
       readonly note: string | null;
     }) => Effect.Effect<AnswerOutcome>;

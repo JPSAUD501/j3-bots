@@ -313,6 +313,8 @@ export type RoutineCardCommand =
   | {
       readonly _tag: "answer";
       readonly runId: RoutineRunId;
+      /** The yes's place in the run's steps: the one the operator saw. */
+      readonly step: number;
       readonly choice: RoutineAnswer["choice"];
       readonly note: string | null;
     }
@@ -1629,6 +1631,7 @@ export const layer = Layer.effect(
               return client["routine.answer"]({
                 commandId,
                 runId: command.runId,
+                step: command.step,
                 choice: command.choice,
                 note: command.note,
               });

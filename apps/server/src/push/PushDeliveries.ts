@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { DeviceId, Language, LANGUAGES } from "@j3-bots/contracts";
+import { type BotId, DeviceId, Language, LANGUAGES } from "@j3-bots/contracts";
 import { createI18n, type I18n, notificationText } from "@j3-bots/i18n";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -73,11 +73,19 @@ export const layer = Layer.effect(
     const record = Effect.fn("PushDeliveries.record")(function* (recipients: Recipients) {
       if (recipients.push.length === 0) return;
       const { notification } = recipients;
-      const bot = yield* botName(notification.botId);
+      // The bot the notification is from, and the bot of a routine's step it names.
+      const stepBotId = notification.routine?.stepBotId ?? null;
+      const botNames = new Map<string, string>();
+      for (const id of stepBotId === null
+        ? [notification.botId]
+        : [notification.botId, stepBotId]) {
+        const found = yield* botName(id);
+        if (Option.isSome(found)) botNames.set(id, found.value.name);
+      }
       const { target } = notification;
       const room = target._tag === "room" ? yield* roomName(target.roomId) : Option.none();
       const names = {
-        botName: () => Option.getOrNull(Option.map(bot, ({ name }) => name)),
+        botName: (id: BotId) => botNames.get(id) ?? null,
         roomName: () => Option.getOrNull(Option.map(room, ({ name }) => name)),
       };
       const now = yield* DateTime.now;
@@ -122,6 +130,14 @@ export const layer = Layer.effect(
             ${yield* ids.make("push")}, ${notification.entryId}, ${registered.value.device_id},
             'pending', ${text.title}, ${text.body}, ${plain.body}, ${at}, ${deadline}, ${at}
           )
+          -- A routine run's card notifies again when it needs the operator again:
+          -- a fresh delivery takes the earlier one's place, under a new id, so
+          -- a send of the earlier one still in flight records nothing on it.
+          ON CONFLICT (entry_id, device_id) DO UPDATE SET
+            id = excluded.id, status = 'pending', title = excluded.title, body = excluded.body,
+            plain_body = excluded.plain_body, attempts = 0, generation = NULL, receipt_id = NULL,
+            due_at = excluded.due_at, deadline_at = excluded.deadline_at,
+            created_at = excluded.created_at
         `;
         if (!written) yield* sql.afterCommit(signals.push.fire);
         written = true;

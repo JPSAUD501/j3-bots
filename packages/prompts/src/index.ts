@@ -73,6 +73,7 @@ export {
   DECODE_OPTIONS,
   FILL_NOTES,
   MAX_BOTS_PER_REQUEST,
+  MAX_HANDOFF,
   MAX_TOOL_INPUT_BYTES,
   inputCapRefusal,
   isConnectorTool,
