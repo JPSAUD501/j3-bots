@@ -132,15 +132,26 @@ const retrying = {
   retrying: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
 };
 
+/** A count of little ones, never negative. */
+const LittleOneCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/**
+ * How many little ones its turns that have ended still have at work: work a
+ * turn handed off goes on after the bot's reply (decision 0095). Only when
+ * there are some; absent from a server that predates it, which a client reads
+ * as none.
+ */
+const handedOff = { littleOnes: Schema.optionalKey(LittleOneCount) };
+
 /**
  * What the bot is doing. A bot is in exactly one state. Whether it has said
  * something the operator has not read is not a state: it is the roster item's
  * `unread`, and a client shows an idle bot with unread entries as done.
  */
 export const BotState = Schema.Union([
-  Schema.TaggedStruct("idle", {}),
+  Schema.TaggedStruct("idle", { ...handedOff }),
   /** A turn started and no visible work has happened yet. */
-  Schema.TaggedStruct("thinking", { ...since, ...stalled, ...typing, ...retrying }),
+  Schema.TaggedStruct("thinking", { ...since, ...stalled, ...typing, ...retrying, ...handedOff }),
   /** A turn is running tools. */
   Schema.TaggedStruct("working", {
     ...since,
@@ -166,12 +177,11 @@ export const BotState = Schema.Union([
     skill: Schema.optionalKey(StepSkill),
     /**
      * How many of its little ones work now (`LittleOnes.working`), in
-     * whichever audience its turn speaks to: a count only, which says
-     * nothing of the work. Zero from a server that predates it.
+     * whichever audience its turn speaks to, with those its turns that have
+     * ended still have at work: a count only, which says nothing of the
+     * work. Zero from a server that predates it.
      */
-    littleOnes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
-      Schema.withDecodingDefaultKey(Effect.succeed(0)),
-    ),
+    littleOnes: LittleOneCount.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
   }),
   /** The bot asked a question or needs an approval: the card awaiting the operator. */
   Schema.TaggedStruct("waiting", {
@@ -184,6 +194,7 @@ export const BotState = Schema.Union([
     since: Schema.NullOr(Schema.DateTimeUtc).pipe(
       Schema.withDecodingDefaultKey(Effect.succeed(null)),
     ),
+    ...handedOff,
   }),
   /** The turn cannot continue. */
   Schema.TaggedStruct("blocked", {
@@ -191,6 +202,7 @@ export const BotState = Schema.Union([
     failure: ReceivedFailureClass,
     /** When a usage limit resets, if the provider said. */
     retryAt: Schema.NullOr(Schema.DateTimeUtc),
+    ...handedOff,
   }),
 ]);
 export type BotState = typeof BotState.Type;

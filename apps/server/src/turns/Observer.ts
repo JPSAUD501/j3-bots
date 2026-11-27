@@ -814,6 +814,12 @@ export const layer = Layer.effect(
      * left, and only then is the session's check done (`Stops`), its turns
      * reported; otherwise what was known stands, and the check stays due.
      * The end of a turn that ran or waited makes it due again.
+     *
+     * A little one still working, by what was last told of it, in a turn the
+     * report leaves out has nothing left that runs it: the engine counts a
+     * live subagent as its turn's pending work (`BackgroundWork`), so it
+     * ended untold, and goes as failed (decision 0095). Not while the report
+     * counts work it names no turn for, which could be that little one.
      */
     const backgroundReported = Effect.fn("Observer.backgroundReported")(function* (
       session: Watched,
@@ -838,6 +844,9 @@ export const layer = Layer.effect(
         WHERE session_id = ${session.id} AND background_pending = 1
           ${listed.length === 0 ? sql`` : sql`AND NOT ${sql.in("engine_turn_id", listed)}`}
       `;
+      if (!event.backgroundWork.unattributed) {
+        yield* records.settleWork(session.id, event.at, listed);
+      }
     }, Effect.orDie);
 
     /** A dispatch the engine may yet take, or may have taken unseen. */
