@@ -5,6 +5,7 @@ export {
   type SkillsClient,
   type ConversationHandle,
   createJ3Client,
+  type DictationHandle,
   type DownloadResult,
   type J3Client,
   layer,

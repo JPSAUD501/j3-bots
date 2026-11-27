@@ -976,6 +976,15 @@ export function sampleTeam(now: DateTime.Utc) {
     updateChannel: "stable",
     autoUpdateHarnesses: true,
     suggestReplies: true,
+    voice: {
+      place: "automatic",
+      language: "auto",
+      words: ["J3 Bots", "Ledger"],
+      removeFillers: true,
+      cleanUp: false,
+      model: null,
+      openRouterModel: null,
+    },
   };
 
   const devices: ReadonlyArray<Device> = [

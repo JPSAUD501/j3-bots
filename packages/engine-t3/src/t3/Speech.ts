@@ -98,7 +98,7 @@ const PROGRESS_INTERVAL = Duration.millis(500);
 const UNLOAD = { short: "min_2", long: "min_15" } as const;
 
 /** The options a recording travels with, in the engine's terms. */
-export const engineOptions = (options: SpeechOptions): SpeechTranscriptionOptions => ({
+const engineOptions = (options: SpeechOptions): SpeechTranscriptionOptions => ({
   speechLanguage: options.language,
   speechTranslateToEnglish: false,
   speechCustomWords: options.words.map((term) => ({ term, aliases: [] })),
@@ -115,7 +115,7 @@ const encodeCommand = Schema.encodeSync(Schema.fromJsonString(SpeechStreamComman
  * audio. **Read** at `bc0f04d`, `packages/shared/src/speech.ts`
  * `encodeSpeechPcmRequest`.
  */
-export const pcmRequest = (pcm: Uint8Array, options: SpeechTranscriptionOptions): Uint8Array => {
+const pcmRequest = (pcm: Uint8Array, options: SpeechTranscriptionOptions): Uint8Array => {
   const metadata = new TextEncoder().encode(encodeOptions(options));
   const body = new Uint8Array(4 + metadata.byteLength + pcm.byteLength);
   new DataView(body.buffer).setUint32(0, metadata.byteLength, true);

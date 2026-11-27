@@ -107,7 +107,7 @@ const failureOf = (error: SpeechFailed | EngineUnavailable): Refused => {
 };
 
 /** A model as the operator chooses it, read for this server's hardware. */
-export const voiceModelOf = (
+const voiceModelOf = (
   model: SpeechModel,
   options: { readonly recommended: string; readonly processorOnly: boolean },
 ): VoiceModel => ({

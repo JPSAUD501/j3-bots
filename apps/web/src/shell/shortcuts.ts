@@ -37,6 +37,13 @@ export function shellShortcuts() {
       aria: "/",
       matches: (e) => e.key === "/" && !modifier(e) && !e.altKey,
     },
+    // In the composer: no browser and no desktop takes it by default, and it
+    // types nothing, unlike a letter with Alt or Option.
+    dictate: {
+      label: mac ? "⇧⌘Space" : "Ctrl+Shift+Space",
+      aria: mac ? "Meta+Shift+Space" : "Control+Shift+Space",
+      matches: (e) => modifier(e) && e.shiftKey && !e.altKey && e.code === "Space",
+    },
   } satisfies Record<string, Shortcut>;
 }
 

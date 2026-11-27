@@ -11,6 +11,9 @@ import type { EntryTarget } from "@j3-bots/contracts";
 import { useReadable } from "@j3-bots/client-runtime/react";
 import { useI18n } from "../app/context";
 import type { ShellData, ShellIntents } from "../shell/data";
+import { desktop } from "./desktop";
+import { useDictationSource } from "./dictation";
+import { openMicrophone } from "./microphone";
 
 const blankDraft: Draft = { text: "", mentions: [], quotes: [], files: [], sending: false };
 
@@ -39,6 +42,7 @@ export interface ComposerSource {
     | "dismissDraftOffer"
     | "connectorPrompts"
     | "renderPrompt"
+    | "dictation"
   >;
   /**
    * Sends the draft of `target`, with `context` when the window the
@@ -54,7 +58,8 @@ export interface ComposerSource {
 
 /**
  * The drafts `j3` keeps on this device, and what the composer does with
- * them; `say` tells the operator when a message could not be kept.
+ * them, dictation included; `say` tells the operator when a message could
+ * not be kept.
  */
 export function useComposerSource(j3: J3Client, say: (text: string) => void): ComposerSource {
   const { t } = useI18n();
@@ -65,6 +70,13 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
   const notSaved = useReadable(j3.draftsNotSaved);
   const conversationMentions = useReadable(j3.conversationMentions);
   const quotes = useReadable(j3.quotes);
+  const settings = useReadable(j3.settings);
+  const dictation = useDictationSource({
+    voice: j3.voice,
+    settings: settings._tag === "ready" ? settings.value.voice : null,
+    microphone: openMicrophone,
+    app: desktop === null ? "browser" : "desktop",
+  });
   const send: ComposerSource["send"] = (target, addressing, context) =>
     j3.sendDraft(target, addressing, context).then((result) => {
       if (result === "not-kept") say(t("composer.notKept"));
@@ -109,6 +121,7 @@ export function useComposerSource(j3: J3Client, say: (text: string) => void): Co
             arguments: given,
           })
           .then((result) => (result._tag === "done" ? result.value : null)),
+      dictation,
     },
     send,
   };
