@@ -26,7 +26,7 @@ The MCP Apps extension, at its stable 2026-01-26 version, defines the three disp
   - It is refused once the bot no longer has the connector.
 - **What it offers to save.** `ui/download-file` offers files, at most 8 and 16 MiB together, or addresses.
   - A file is saved only when the operator presses Save, under a name made safe: the browser's download, or Android's share sheet.
-  - An address opens in the browser, as a link does.
+  - An address is shown as itself, which is where it goes, and opens in the browser, as a link does.
 - **A complete host context.** `hostContext` carries every field 2026-01-26 defines:
   - the tool, the theme and its style variables;
   - the display, the language and the time zone;
