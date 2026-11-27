@@ -1634,7 +1634,12 @@ type AnswerTarget =
       readonly requestId: string;
       readonly questions: ReadonlyArray<EngineQuestion>;
     }
-  | { readonly _tag: "secret"; readonly turnItemId: string };
+  | {
+      readonly _tag: "secret";
+      readonly turnItemId: string;
+      /** The name the value is saved under, when the request asked for it as its one field. */
+      readonly field: string | null;
+    };
 
 /** A request item, its state, and what the operator sees of it. */
 export interface RequestState {
@@ -1724,22 +1729,32 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         closed: runtimeClose(mirror.requests.get(item.requestId), item),
       };
     }
-    case "secret_request":
+    case "secret_request": {
+      // A card takes one value. A request for several has none, and is left to
+      // time out (docs/architecture/engine.md, "The adapter's interface"); one asked for as a
+      // single field is the card's value, labelled as the field and saved under its name, as
+      // the engine's own client labels it (**Read** at bc0f04d,
+      // `client-runtime/src/secretRequest.ts`).
+      const fields = item.fields ?? [];
+      if (fields.length > 1) return undefined;
+      const field = fields[0];
+      const placeholder = field === undefined ? item.placeholder : field.placeholder;
       return {
         requestId: RequestId.make(localIdFor(item.id)),
-        answerTo: { _tag: "secret", turnItemId: item.id },
+        answerTo: { _tag: "secret", turnItemId: item.id, field: field?.name ?? null },
         turnId,
         openedAt,
         request: {
           _tag: "secret",
-          label: label(item.label, "Secret"),
+          label: label(field?.label ?? item.label, "Secret"),
           reason: item.reason.slice(0, 2000),
           url: item.url?.slice(0, 2000) ?? null,
-          placeholder: item.placeholder === undefined ? null : label(item.placeholder, "Secret"),
+          placeholder: placeholder === undefined ? null : label(placeholder, "Secret"),
         },
         heldCall: null,
         closed: secretClose(item),
       };
+    }
     default:
       return undefined;
   }

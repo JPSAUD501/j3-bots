@@ -71,9 +71,10 @@ const directive = (act: Act) => {
       return "[[script:slow every=500 for=120000]]";
     case "approval":
     case "question":
-    case "secret":
     case "delegate":
       return `[[script:${act._tag}]]`;
+    case "secret":
+      return act.field === undefined ? "[[script:secret]]" : `[[script:secret field=${act.field}]]`;
     case "speak":
       return `[[script:speak text=${act.text}]]`;
   }

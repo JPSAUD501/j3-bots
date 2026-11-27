@@ -1883,9 +1883,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           threadId: ThreadId.make(input.sessionId),
           turnItemId: TurnItemId.make(found.answerTo.turnItemId),
           answer:
-            input.answer._tag === "provide"
-              ? { type: "save", secret: Redacted.value(input.answer.value) }
-              : { type: "decline" },
+            input.answer._tag === "decline"
+              ? { type: "decline" }
+              : found.answerTo.field === null
+                ? { type: "save", secret: Redacted.value(input.answer.value) }
+                : {
+                    type: "save",
+                    values: { [found.answerTo.field]: Redacted.value(input.answer.value) },
+                  },
         }).pipe(
           Effect.timeoutOrElse({
             duration: COMMAND_TIMEOUT,
