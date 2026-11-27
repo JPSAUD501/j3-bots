@@ -22,7 +22,7 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 ## A conversation
 
 - The message field takes text, attached files and dictation. Typing `/` lists the prompts of the connectors that bot may use.
-- What needs your user arrives as a card: a question (tap an option or type an answer; a question a bot asked can be dismissed, which counts as a no), an approval naming the exact action ("Allow once", "Allow for session", "Deny"), a request for a secret, a step in the bot's browser, or a service to sign in to. A card can be answered on any paired device.
+- What needs your user arrives as a card: a question (tap an option or type an answer; a question a bot asked can be dismissed, which counts as a no), an approval naming the exact action ("Allow once", "Don’t ask again", "Deny"), a request for a secret, a step in the bot's browser, or a service to sign in to. A card can be answered on any paired device.
 - A finished turn's work folds into one line, such as "Worked · 6 steps", which opens to show the steps.
 - While a bot has a page open in its browser, a globe in the header opens it. "Take control" lets your user use the page; "Done" gives it back.
 - The conversation's header opens the bot's details. On a computer, `Ctrl+.` (`⌘.` on macOS) stops the bot's work.
@@ -36,7 +36,7 @@ From top to bottom:
 - **Routines:** each with its schedule, next run and last result, and a switch that pauses or resumes it. Pressing one shows its recent runs. To change, run or delete a routine, your user asks the bot; the app has no button for that.
 - **Files** the bot sent, **Memory** (each file can be opened and edited), **Connectors** this bot may use, with "Manage", and the teammates it talked to.
 - **Model** and **permission mode**: "Supervised" asks before running commands or changing files, "Auto-accept edits" changes files and asks before commands, "Auto" lets an automatic reviewer decide what needs approval, "Full access" asks nothing.
-- **Browser:** "Use this computer's browser".
+- **Browser:** "Can browse the web", on for a new bot.
 - **Working context:** "Start fresh" clears what the bot holds in mind and stops its work; its conversation, memory, routines and files stay.
 - **"Delete {name}"**, last, after a confirmation: the bot, its conversation, memory and routines go, and this cannot be undone. Files in its workspace are kept.
 

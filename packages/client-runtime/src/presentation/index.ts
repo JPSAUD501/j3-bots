@@ -89,6 +89,7 @@ export {
   withProfileEdit,
 } from "./botEdit.ts";
 export {
+  BROWSER_SETUP_DOCS,
   type DrawnRect,
   dragWheel,
   frontTab,

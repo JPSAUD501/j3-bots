@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserTab } from "@j3-bots/contracts";
 
+/** The page that says what the server's machine needs for a bot's browser, and how to give it. */
+export const BROWSER_SETUP_DOCS =
+  "https://github.com/JPSAUD501/j3-bots/blob/main/docs/operations/browser-secrets-and-connectors.md#what-the-machine-needs";
+
 /** The tab to show first: the one the bot opened or moved in most recently. */
 export const frontTab = (tabs: ReadonlyArray<BrowserTab>): BrowserTab | null =>
   tabs.find((tab) => tab.front) ?? null;

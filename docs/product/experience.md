@@ -117,6 +117,8 @@ A bot needs a decision or permission.
 
 A bot shops, books or reads a site in its own browser, on the machine J3 Bots runs on.
 
+- Every new bot can browse ([decision 0109](../decisions/0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md)). In its details, one switch says so in plain words, "Can browse the web", with one line under it: "Uses the bots’ shared browser. When a site asks to sign in, Wren calls you." Turning it off takes it away at once; while Wren has work running, a second line says so: "Turning it off now stops what Wren is doing." When the server's machine still needs setting up for the browser, one short line says so, with **How to fix it**, a link to the page that explains it.
+
 - While the bot has a page open, a globe sits in its conversation's header, its mark breathing while the bot acts on the page. Under the line of the turn under way, a picture of the page and the site's name, taken again as the page changes and every few seconds while the bot works. It is a picture, not a live view: watching it costs nothing.
 - Either opens the browser: beside the conversation on a wide window, over it on a tablet, rising from the bottom on a phone. The page is live, its site and address shown, and a line says who is acting on it: "The bot is browsing", "You have control" or "On another device". While the operator only watches, the page takes nothing they do, and the bot's pointer shows where it acts.
 - **Take control** is the one primary action. Once taken, the bot cannot act on the page, and everything the operator does over it goes to the page: the pointer, the wheel, typing, a phone's keyboard on a field they tap. Back, forward, reload and the address field appear only now. **Done** gives the page back to the bot.

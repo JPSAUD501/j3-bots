@@ -373,7 +373,7 @@ const exactOf = (
 };
 
 /**
- * What "Allow for session" grants for an exact action of `kind`, or `null` when
+ * What the engine's accept for the session ("Don’t ask again" on the card) grants for an exact action of `kind`, or `null` when
  * the provider takes no such grant here or what it covers is not known. When
  * the approval lists its options, it takes one only if they hold
  * `acceptForSession`; when it lists none, the engine's own client offers

@@ -50,7 +50,7 @@ const buttonLook = {
   plain: { box: "", text: "text-foreground" },
   /** One of a screen's actions that is not the one it exists for: quiet and filled, as on the web. */
   secondary: { box: "bg-muted", text: "text-foreground" },
-  /** One of several actions of the same weight, such as Deny beside Allow for session. */
+  /** One of several actions of the same weight, such as Deny beside Don’t ask again. */
   outline: { box: "border border-input bg-surface", text: "text-foreground" },
   /** An action that says no, such as Dismiss, quieter than the rest. */
   quiet: { box: "", text: "text-muted-foreground" },

@@ -48,6 +48,7 @@ import {
 } from "react";
 import {
   asksYou,
+  BROWSER_SETUP_DOCS,
   botStop,
   connectorsOf,
   roomStop,
@@ -71,6 +72,7 @@ import {
 import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { FaceOf } from "./avatar/TeamAvatars";
+import { DocsLink } from "./DocsLink";
 import { FileCard } from "./FileCard";
 import { useBotCard } from "./BotCard";
 import { RoutineSentence } from "./RoutineTrack";
@@ -487,8 +489,16 @@ export function BotDetails({
               {t("details.browser.use")}
             </label>
             <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
+            {bot.browser && stop !== "hidden" && (
+              <p className="text-xs text-muted-foreground">
+                {t("details.browser.offStops", { name })}
+              </p>
+            )}
             {bot.browser && browserHost?._tag === "setup-required" && (
-              <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
+              <p className="mt-1 text-xs text-blocked">
+                {t("details.browser.setup")}{" "}
+                <DocsLink href={BROWSER_SETUP_DOCS}>{t("details.browser.howToFix")}</DocsLink>
+              </p>
             )}
           </div>
           <Switch

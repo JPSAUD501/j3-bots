@@ -3181,6 +3181,7 @@ function ComposerSection() {
 }
 
 const READY_BROWSER = { _tag: "ready" } as const;
+const BROWSER_NEEDS_SETUP = { _tag: "setup-required", needs: ["sandbox"] } as const;
 
 const detailsIntents = {
   setRoutineEnabled: nothing,
@@ -3480,9 +3481,9 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* The browser on. */}
+          {/* The browser off: the operator turned it off. */}
           <BotDetails
-            bot={{ ...atlas, browser: true }}
+            bot={{ ...atlas, browser: false }}
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
@@ -3490,6 +3491,22 @@ function DetailsSection() {
             teammates={[]}
             modelName="Claude Code · Claude Sonnet 5.5"
             browserHost={READY_BROWSER}
+            intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
+            onClose={nothing}
+          />
+        </Pane>
+        <Pane>
+          {/* The browser on, and the server's machine still needs setting up for it. */}
+          <BotDetails
+            bot={atlas}
+            routines={team.routines[atlas.id] ?? []}
+            memory={team.memory[atlas.id] ?? []}
+            files={team.files[atlas.id] ?? []}
+            connectors={sampleConnectors}
+            teammates={[]}
+            modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={BROWSER_NEEDS_SETUP}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}

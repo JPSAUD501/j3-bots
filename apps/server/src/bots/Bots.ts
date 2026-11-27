@@ -614,6 +614,8 @@ export const layer = Layer.effect(
                 permissionModeChooser: input.permissionModeChooser(draft),
                 primary: draft.primary === true,
                 hidden: draft.hidden === true,
+                // Every new bot may browse; the operator turns it off per bot (decision 0109).
+                browser: true,
                 madeBy: input.madeBy?.maker ?? null,
                 workspacePath: layout.workspace(id),
                 at,

@@ -46,7 +46,7 @@ const summaryOnly: Record<ApprovalEntry["kind"], KeyWith> = {
   other: "approval.summaryOnly.other",
 };
 
-// What "Allow for session" allows from then on, in words, starting with the button's name: under
+// What "Don’t ask again" allows from then on, in words, starting with the button's name: under
 // the buttons, so on a phone it never reads as the consequence of the full-width button above it.
 const grantScope: Record<SessionGrant["covers"], KeyWith> = {
   "every-command": "approval.grant.everyCommand",

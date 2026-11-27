@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserViewState, Readable } from "@j3-bots/client-runtime";
-import { frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
+import { BROWSER_SETUP_DOCS, frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
 import {
   useBrowserTabs,
   useBrowserView,
@@ -17,6 +17,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "re
 import { PixelRatio, Pressable, useWindowDimensions, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { DocsLink } from "../components/DocsLink.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { Working } from "../components/States.tsx";
 import { useConfirm } from "../confirm.tsx";
@@ -140,12 +141,11 @@ function InPlace({
     case "gone":
       return message(t("browser.gone"));
     case "setup-needed":
-      return message(
-        t(
-          state.status.need === "sandbox"
-            ? "browser.setupNeeded.sandbox"
-            : "browser.setupNeeded.libraries",
-        ),
+      return (
+        <View className="absolute inset-0 items-center justify-center gap-2 px-6">
+          <Body>{t("browser.setupNeeded")}</Body>
+          <DocsLink href={BROWSER_SETUP_DOCS} label={t("details.browser.howToFix")} />
+        </View>
       );
     case "replaced":
       return message(t("browser.replaced"), { label: t("browser.showHere"), onPress: onShowHere });
