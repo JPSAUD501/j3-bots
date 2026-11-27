@@ -74,7 +74,14 @@ import {
 } from "./memory.ts";
 import { PairBotIds, PairSeq, TeammateMessage, TeammatePair } from "./pair.ts";
 import { Room, RoomMembers, RoomName } from "./room.ts";
-import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
+import {
+  Routine,
+  RoutineAnswer,
+  RoutineNotice,
+  RoutineInstruction,
+  RoutineRun,
+  RoutineTrigger,
+} from "./routine.ts";
 import {
   HarnessLocation,
   ProviderConnectionOutcome,
@@ -708,6 +715,33 @@ export const RoutineRpcs = RpcGroup.make(
     payload: { ...command, routineId: RoutineId },
     error: CommandError,
   }),
+  /**
+   * Answers the yes a run waits for (decision 0080). A run no longer
+   * waiting fails `Conflict("card-closed")`.
+   */
+  Rpc.make("routine.answer", {
+    payload: {
+      ...command,
+      runId: RoutineRunId,
+      choice: RoutineAnswer.fields.choice,
+      note: RoutineAnswer.fields.note,
+    },
+    error: CommandError,
+  }),
+  /**
+   * Resumes a failed run from the step it failed at, keeping what the steps
+   * before reported. A run that is not `retryable` fails
+   * `Conflict("not-retryable")`.
+   */
+  Rpc.make("routine.retry", {
+    payload: { ...command, runId: RoutineRunId },
+    error: CommandError,
+  }),
+  /** Ends a run that is going, as a Stop of its owner ends it. A run already over fails `Conflict("card-closed")`. */
+  Rpc.make("routine.stopRun", {
+    payload: { ...command, runId: RoutineRunId },
+    error: CommandError,
+  }),
 );
 
 export const MemoryRpcs = RpcGroup.make(
@@ -880,6 +914,14 @@ export const Notification = Schema.Struct({
   browserHelp: Schema.NullOr(
     Schema.Struct({ reason: BrowserHelpEntry.fields.reason, site: BrowserHelpEntry.fields.site }),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * A run of a routine with several steps that needs the operator (decision
+   * 0080), always a `question`: its routine's name, and why, in fixed words.
+   * For the yes it waits for, the preview is what the yes asks; for a step
+   * it failed at, it names that step's bot. Absent for every other
+   * notification, and from a server that predates steps.
+   */
+  routine: Schema.optionalKey(RoutineNotice),
 });
 export type Notification = typeof Notification.Type;
 
