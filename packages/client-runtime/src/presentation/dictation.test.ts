@@ -99,29 +99,39 @@ describe("followTyping", () => {
     });
     expect(followTyping(at, "Hello world", "Hi")).toEqual({ start: 2, end: 2 });
   });
+
+  it("places the operator's edit at their caret, when it starts with the letter after the place", () => {
+    const place = { start: 7, end: 7 };
+    // "cool " typed at the place, before "cats": a bare diff reads it as typed after the "c".
+    expect(followTyping(place, "I like cats", "I like cool cats", 12)).toEqual({
+      start: 12,
+      end: 12,
+    });
+    // Typed further on, after the words' place: it stays.
+    expect(followTyping(place, "I like cats", "I like cats now", 15)).toEqual(place);
+  });
 });
 
 describe("placeHeard", () => {
-  it("puts the words at the caret, spaced from the words around them, settled before open", () => {
+  it("puts the words at the caret, spaced from the words around them", () => {
     const draft = { text: "Ask Wren about tomorrow", start: 14, end: 14 };
-    const placed = placeHeard(draft, { committed: "the photo", tentative: "for" });
+    const placed = placeHeard(draft, "the photo for");
     expect(placed.text).toBe("Ask Wren about the photo for tomorrow");
-    expect(placed.text.slice(placed.from, placed.committed)).toBe("the photo");
-    expect(placed.text.slice(placed.committed, placed.tentative)).toBe(" for");
+    expect(placed.text.slice(placed.from, placed.end)).toBe("the photo for");
   });
 
   it("replaces the selection, and takes no space before punctuation", () => {
-    const placed = placeHeard(
-      { text: "Hello there.", start: 6, end: 11 },
-      { committed: "world", tentative: "" },
-    );
+    const placed = placeHeard({ text: "Hello there.", start: 6, end: 11 }, "world");
     expect(placed.text).toBe("Hello world.");
-    expect(placed.tentative).toBe(11);
+    expect(placed.end).toBe(11);
   });
 
   it("leaves the draft as it was while nothing was heard", () => {
-    const placed = placeHeard({ text: "Hi ", start: 3, end: 3 }, { committed: "", tentative: "" });
-    expect(placed).toEqual({ text: "Hi ", from: 3, committed: 3, tentative: 3 });
+    expect(placeHeard({ text: "Hi ", start: 3, end: 3 }, "")).toEqual({
+      text: "Hi ",
+      from: 3,
+      end: 3,
+    });
   });
 });
 

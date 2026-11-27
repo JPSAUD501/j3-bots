@@ -12,7 +12,6 @@ import {
   dictationPath,
   followFieldEdit,
   followTyping,
-  type HeardWords,
   levelOf,
   placeHeard,
 } from "@j3-bots/client-runtime/presentation";
@@ -53,7 +52,7 @@ import {
   phoneRecognizer,
   usePhoneRecognizer,
 } from "../platform/dictation.ts";
-import { type Heard, hear, heardWords, nothingHeard } from "../platform/recognition.ts";
+import { type Heard, hear, heardText, nothingHeard } from "../platform/recognition.ts";
 import { samplesOf, voiceCapture } from "../platform/voiceCapture.ts";
 import { Text } from "../text.tsx";
 import { useColor } from "../theme.ts";
@@ -107,6 +106,12 @@ export interface Dictation {
   readonly cancel: () => void;
   /** Forgets the last notice, as the operator moves on. */
   readonly dismiss: () => void;
+  /**
+   * The operator edited the draft into `text`, leaving the caret at
+   * `caret`: the last notice is behind them, and the words under way move
+   * with that edit.
+   */
+  readonly edited: (text: string, caret: number) => void;
   /** Opens Settings → Voice, where a notice that says so is fixed. */
   readonly setUp: () => void;
 }
@@ -134,10 +139,6 @@ interface Session {
 }
 
 const IDLE: DictationPhase = { _tag: "idle" };
-
-/** Everything heard, settled or not, as the words a stop leaves. */
-const allOf = (heard: HeardWords): string =>
-  [heard.committed.trim(), heard.tentative.trim()].filter((part) => part !== "").join(" ");
 
 /**
  * Dictation into `target`'s draft, at the field's `selection` when a press
@@ -190,6 +191,8 @@ export function useDictation({
   const waiting = useRef<{ readonly session: Session; readonly words: string } | null>(null);
   /** Counts presses: a press being prepared goes on only while it is the latest. */
   const presses = useRef(0);
+  /** The operator's last edit: the text it made, and where it left the caret, which places it. */
+  const lastEdit = useRef<{ readonly text: string; readonly caret: number } | null>(null);
 
   const pathFor = (device: DeviceRecognizer): DictationPath => {
     const path = dictationPath({ voice, device, keys, secureContext: true });
@@ -201,7 +204,13 @@ export function useDictation({
   useLayoutEffect(() => {
     const current = session.current ?? waiting.current?.session ?? null;
     if (current === null) return;
-    current.at = followTyping(current.at, current.seen, text);
+    const edit = lastEdit.current;
+    current.at = followTyping(
+      current.at,
+      current.seen,
+      text,
+      edit?.text === text ? edit.caret : undefined,
+    );
     current.seen = text;
   }, [text]);
 
@@ -212,12 +221,18 @@ export function useDictation({
   const land = (current: Session, words: string) => {
     const draft = client.drafts.get().get(targetKey(target));
     const now = draft?.text ?? "";
-    const followed = followTyping(current.at, current.seen, now);
+    const edit = lastEdit.current;
+    const followed = followTyping(
+      current.at,
+      current.seen,
+      now,
+      edit?.text === now ? edit.caret : undefined,
+    );
     const at = {
       start: Math.min(followed.start, now.length),
       end: Math.min(followed.end, now.length),
     };
-    const place = placeHeard({ text: now, ...at }, { committed: words, tentative: "" });
+    const place = placeHeard({ text: now, ...at }, words);
     const mentions = followFieldEdit(
       {
         _tag: "change",
@@ -225,14 +240,14 @@ export function useDictation({
         after: place.text,
         over: at.start < at.end ? [at.start, at.end] : null,
         written: null,
-        caret: place.committed,
+        caret: place.end,
       },
       draft?.mentions ?? [],
     );
     const [start, end] = selection();
     const caret =
       start === at.start && end === at.end
-        ? { start: place.committed, end: place.committed }
+        ? { start: place.end, end: place.end }
         : followTyping({ start, end }, now, place.text);
     client.setDraftText(target, place.text, mentions);
     setPlaced({ text: place.text, selection: [caret.start, caret.end] });
@@ -311,7 +326,6 @@ export function useDictation({
           return;
         case "listening":
           current.listened = true;
-          capture(current);
           return;
         case "connecting":
         case "finishing":
@@ -320,6 +334,8 @@ export function useDictation({
     };
     server.unsubscribe = handle.state.subscribe(follow);
     follow();
+    // What is said while the server gets ready is held for it, so the first words count.
+    if (session.current === current) capture(current);
   };
 
   const start = () => {
@@ -425,7 +441,7 @@ export function useDictation({
   useSpeechRecognitionEvent("error", (event) => {
     const current = session.current;
     if (current?.device == null || event.error === "aborted") return;
-    const said = allOf(heardWords(current.device.heard));
+    const said = heardText(current.device.heard);
     // Android's on-device recognizer answers Stop of a continuous recognition
     // with a client error instead of its end: the end the operator asked for.
     if (current.device.stopping) return end(current, said, null);
@@ -445,7 +461,7 @@ export function useDictation({
   useSpeechRecognitionEvent("end", () => {
     const current = session.current;
     if (current?.device == null) return;
-    const said = allOf(heardWords(current.device.heard));
+    const said = heardText(current.device.heard);
     end(current, said, said === "" && !current.device.stopping ? { _tag: "noSpeech" } : null);
   });
 
@@ -502,6 +518,10 @@ export function useDictation({
     stop,
     cancel,
     dismiss: () => setNotice(null),
+    edited: (edited: string, caret: number) => {
+      lastEdit.current = { text: edited, caret };
+      setNotice(null);
+    },
     setUp: () => {
       setNotice(null);
       onSetUp();

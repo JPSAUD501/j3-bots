@@ -209,7 +209,7 @@ export function Composer({
   const edit = (change: FieldEdit) => {
     setNotTaken(false);
     setCut(false);
-    dictation?.dismiss();
+    dictation?.edited(change.text, change.selection[1]);
     const [start, end] = selection.current;
     const followed = followFieldEdit(
       {

@@ -210,7 +210,7 @@ const pagesFor = (
       group.filter((page) => {
         switch (page) {
           case "voice":
-            return intents.voice !== undefined && data.settings?.voice != null;
+            return intents.voice !== undefined && data.settings?.voice?.provider !== undefined;
           case "where":
             return intents.server !== undefined || intents.local !== undefined;
           case "updates":

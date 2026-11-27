@@ -308,7 +308,6 @@ export {
   type DictationPath,
   dictationPath,
   followTyping,
-  type HeardWords,
   levelOf,
   placeHeard,
 } from "./dictation.ts";

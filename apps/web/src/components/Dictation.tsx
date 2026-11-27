@@ -74,6 +74,20 @@ export interface DictationSource {
   readonly setUp?: (() => void) | undefined;
 }
 
+/** An edit of the operator's: the text it made, and where it left the caret. */
+interface OperatorEdit {
+  readonly text: string;
+  readonly caret: number;
+}
+
+/** Where words placed at `at` in `before` go once the draft is `now`, the operator's `edit` placing theirs. */
+const movedWith = (
+  at: { readonly start: number; readonly end: number },
+  before: string,
+  now: string,
+  edit: OperatorEdit | null,
+) => followTyping(at, before, now, edit?.text === now ? edit.caret : undefined);
+
 /** A dictation under way, and where its words go in the draft as it is now. */
 interface Session {
   readonly handle: DictationHandle;
@@ -194,10 +208,13 @@ export function useDictation({
     session?.handle.state.get ?? noState,
   );
 
+  /** The operator's last edit: the text it made, and where it left the caret. */
+  const lastEdit = useRef<OperatorEdit | null>(null);
+
   // The words' place follows each change of the draft, the operator's or another tab's.
   useLayoutEffect(() => {
     const under = current.current;
-    if (under !== null) under.at = followTyping(under.at, seen.current, value);
+    if (under !== null) under.at = movedWith(under.at, seen.current, value, lastEdit.current);
     seen.current = value;
   }, [value]);
 
@@ -280,16 +297,16 @@ export function useDictation({
 
   /** `words` where `heard`'s place is, the caret after them if it stood there. */
   const land = (heard: Session, words: string) => {
-    const at = followTyping(heard.at, seen.current, value);
-    const place = placeHeard({ text: value, ...at }, { committed: words, tentative: "" });
+    const at = movedWith(heard.at, seen.current, value, lastEdit.current);
+    const place = placeHeard({ text: value, ...at }, words);
     const moved = followFieldEdit(
       {
         _tag: "change",
         before: value,
         after: place.text,
         over: at.start < at.end ? [at.start, at.end] : null,
-        written: place.text.slice(place.from, place.committed),
-        caret: place.committed,
+        written: place.text.slice(place.from, place.end),
+        caret: place.end,
       },
       mentions,
     );
@@ -297,7 +314,7 @@ export function useDictation({
     // A caret still at the words' place goes after them; one elsewhere stays by its own text.
     const caret =
       selStart === at.start && selEnd === at.end
-        ? { start: place.committed, end: place.committed }
+        ? { start: place.end, end: place.end }
         : followTyping({ start: selStart, end: selEnd }, value, place.text);
     pending.current = { text: place.text, ...caret };
     onValueChange(place.text, moved);
@@ -309,6 +326,8 @@ export function useDictation({
     const now = heard.handle.state.get();
     if (!isOver(now)) return;
     end(heard);
+    // The composer moved to another draft before it let this one go: its words are not that draft's.
+    if (heard.draft !== draftKey) return;
     if (now._tag === "failed") {
       setProblem({
         text: dictationFailureWords(now.reason, i18n),
@@ -394,8 +413,15 @@ export function useDictation({
       setProblem(null);
       source?.setUp?.();
     },
-    /** The operator edited the draft: what the last dictation said is behind them. */
-    edited: () => setProblem(null),
+    /**
+     * The operator edited the draft into `text`, leaving the caret at
+     * `caret`: what the last dictation said is behind them, and the words
+     * under way move with that edit.
+     */
+    edited: (text: string, caret: number) => {
+      lastEdit.current = { text, caret };
+      setProblem(null);
+    },
     /** Handles a key in the composer; true when it took it. */
     onKeyDown: (event: KeyboardEvent<HTMLElement>): boolean => {
       if (source === undefined || event.defaultPrevented || event.nativeEvent.isComposing) {

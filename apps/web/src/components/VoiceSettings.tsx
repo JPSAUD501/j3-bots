@@ -139,10 +139,14 @@ function VoiceForm({
   const keys = useLoadedHandle(voice.openCloudKeys);
   const provider = shown.provider ?? null;
   const ready = setUp(shown, keys);
-  const languages = DICTATION_LANGUAGES.map((code) => ({
-    code,
-    name: languageName(code, i18n),
-  })).toSorted((a, b) => a.name.localeCompare(b.name, i18n.locale));
+  // The providers' languages, and one chosen before that is not among them, as on the phone.
+  const codes = new Set([
+    ...DICTATION_LANGUAGES,
+    ...(shown.language === "auto" ? [] : [shown.language]),
+  ]);
+  const languages = [...codes]
+    .map((code) => ({ code, name: languageName(code, i18n) }))
+    .toSorted((a, b) => a.name.localeCompare(b.name, i18n.locale));
   const phone: PhoneChoice =
     shown.place === "device" ? "device" : shown.place === "automatic" ? "automatic" : "service";
   return (
@@ -213,7 +217,7 @@ function VoiceForm({
             aria-readonly={readOnly}
             onChange={(event) => {
               const picked = event.currentTarget.value;
-              if (!readOnly && (picked === "auto" || DICTATION_LANGUAGES.includes(picked))) {
+              if (!readOnly && (picked === "auto" || codes.has(picked))) {
                 onChange({ language: picked });
               }
             }}

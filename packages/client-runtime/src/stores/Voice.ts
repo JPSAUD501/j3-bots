@@ -5,11 +5,14 @@ import {
   type CloudVoiceProvider,
   HTTP_PATHS,
   MAX_VOICE_FRAME_BYTES,
+  MAX_VOICE_SECONDS,
+  VOICE_SAMPLE_RATE,
   VoiceClientFrame,
   type VoiceFailure,
   VoiceServerFrame,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,7 +21,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
-import { Connection, ReconnectPolicy } from "../connection/Connection.ts";
+import { Connection, type NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
+import type { ServerUnreachable } from "../connection/http.ts";
 import { intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { type Loaded, makeLive } from "./reads.ts";
@@ -57,16 +61,21 @@ export interface Dictation {
   readonly state: Readable<DictationState>;
   /**
    * Passes on one piece of the recording: mono 16 kHz 32-bit float PCM,
-   * little-endian (`VOICE_SAMPLE_RATE`). Dropped unless the server listens;
-   * a piece over `MAX_VOICE_FRAME_BYTES` goes in parts.
+   * little-endian (`VOICE_SAMPLE_RATE`). What is recorded while the socket
+   * opens is held and goes once the server listens, so the first words are
+   * not lost; after Stop, or once the dictation ended, a piece is dropped.
+   * A piece over `MAX_VOICE_FRAME_BYTES` goes in parts.
    */
   readonly audio: (pcm: Uint8Array) => Effect.Effect<void>;
   /**
-   * The operator stopped. Before the server listens, nothing was heard: the
-   * dictation is done with no text.
+   * The operator stopped. Before the server listens, it is finishing, and
+   * the server is told once what was held has gone.
    */
   readonly finish: Effect.Effect<void>;
 }
+
+/** The most a dictation holds while its socket opens: as much as the server takes in one. */
+const MAX_HELD_BYTES = MAX_VOICE_SECONDS * VOICE_SAMPLE_RATE * 4;
 
 const decodeServerFrame = Schema.decodeUnknownOption(Schema.fromJsonString(VoiceServerFrame));
 const encodeClientFrame = Schema.encodeSync(Schema.fromJsonString(VoiceClientFrame));
@@ -82,6 +91,116 @@ const nextState = (frame: VoiceServerFrame): DictationState => {
       return { _tag: "failed", reason: frame.reason };
   }
 };
+
+/**
+ * One dictation on the voice socket at `address`, opened with the
+ * `WebSocketConstructor` in context, for as long as its scope lives.
+ * `transcript` asks for a piece of a screen recording's voice.
+ */
+export const openDictation = Effect.fnUntraced(function* (
+  address: Effect.Effect<string, NotPaired | ServerUnreachable>,
+  openTimeout: Duration.Input,
+  transcript: boolean,
+) {
+  const state = new Cell<DictationState>({ _tag: "connecting" });
+  /** Writes on the open socket; false once it is closed. */
+  let write: ((data: string | Uint8Array) => Effect.Effect<boolean>) | null = null;
+  /** What was recorded before the server listened, oldest first. */
+  const held: Array<Uint8Array> = [];
+  let heldBytes = 0;
+  /** Whether the operator stopped before the server listened. */
+  let stoppedEarly = false;
+  /** Writes `pcm` in frames the server takes; false once the socket is closed. */
+  const send = Effect.fnUntraced(function* (pcm: Uint8Array) {
+    for (let offset = 0; offset < pcm.byteLength; offset += MAX_VOICE_FRAME_BYTES) {
+      const piece = pcm.subarray(offset, offset + MAX_VOICE_FRAME_BYTES);
+      if (write === null || !(yield* write(piece))) return false;
+    }
+    return true;
+  });
+  const fail = (reason: DictationFailure) =>
+    Effect.sync(() => {
+      if (!isOver(state.get())) state.set({ _tag: "failed", reason });
+    });
+
+  const run = Effect.gen(function* () {
+    const socket = yield* Socket.makeWebSocket(yield* address, { openTimeout });
+    const reader = yield* socket.reader;
+    const writer = yield* socket.writer;
+    write = (data) =>
+      writer.write(data).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+    yield* write(
+      encodeClientFrame(transcript ? { type: "start", transcript: true } : { type: "start" }),
+    );
+    while (!isOver(state.get())) {
+      for (const message of yield* reader.pull) {
+        if (typeof message !== "string") continue;
+        // A frame this client does not know is passed over.
+        const frame = decodeServerFrame(message);
+        if (Option.isNone(frame)) continue;
+        const next = nextState(frame.value);
+        if (next._tag !== "listening" || isOver(state.get())) {
+          state.set(next);
+          continue;
+        }
+        // Held pieces go first; one recorded meanwhile joins them, so the order holds.
+        for (let piece = held.shift(); piece !== undefined; piece = held.shift()) {
+          if (!(yield* send(piece))) break;
+        }
+        held.length = 0;
+        heldBytes = 0;
+        if (!stoppedEarly) {
+          state.set(next);
+          continue;
+        }
+        const told = write !== null && (yield* write(encodeClientFrame({ type: "finish" })));
+        if (!told) yield* fail("unreachable");
+      }
+    }
+  }).pipe(
+    Effect.catchTags({
+      NotPaired: () => fail("not-paired"),
+      ServerUnreachable: () => fail("unreachable"),
+      SocketError: () => fail("unreachable"),
+    }),
+    Effect.ensuring(
+      Effect.sync(() => {
+        write = null;
+      }),
+    ),
+    Effect.scoped,
+  );
+  yield* Effect.forkScoped(run);
+
+  const audio = Effect.fn("Dictation.audio")(function* (pcm: Uint8Array) {
+    const now = state.get()._tag;
+    if (now === "connecting") {
+      if (heldBytes + pcm.byteLength > MAX_HELD_BYTES) return;
+      held.push(pcm.slice());
+      heldBytes += pcm.byteLength;
+      return;
+    }
+    if (now === "listening") yield* send(pcm);
+  });
+
+  const finish = Effect.gen(function* () {
+    const now = state.get();
+    if (now._tag === "connecting") {
+      stoppedEarly = true;
+      state.set({ _tag: "finishing" });
+      return;
+    }
+    if (now._tag !== "listening") return;
+    state.set({ _tag: "finishing" });
+    const sent = write !== null && (yield* write(encodeClientFrame({ type: "finish" })));
+    if (!sent) yield* fail("unreachable");
+  });
+
+  return { state, audio, finish } satisfies Dictation;
+});
 
 export class Voice extends Context.Service<
   Voice,
@@ -134,73 +253,12 @@ export const layer = Layer.effect(
         .call((client) => client["voice.setCloudKey"]({ provider, key }))
         .pipe(Effect.exit, Effect.map(intentResult));
 
-    const open = Effect.fnUntraced(function* (transcript: boolean) {
-      const state = new Cell<DictationState>({ _tag: "connecting" });
-      /** Writes on the open socket; false once it is closed. */
-      let write: ((data: string | Uint8Array) => Effect.Effect<boolean>) | null = null;
-      const fail = (reason: DictationFailure) =>
-        Effect.sync(() => {
-          if (!isOver(state.get())) state.set({ _tag: "failed", reason });
-        });
-
-      const run = Effect.gen(function* () {
-        const address = yield* connection.socketAddress(HTTP_PATHS.voice, {});
-        const socket = yield* Socket.makeWebSocket(address, {
-          openTimeout: policy.openTimeout,
-        }).pipe(Effect.provideService(Socket.WebSocketConstructor, makeWebSocket));
-        const reader = yield* socket.reader;
-        const writer = yield* socket.writer;
-        write = (data) =>
-          writer.write(data).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-        yield* write(
-          encodeClientFrame(transcript ? { type: "start", transcript: true } : { type: "start" }),
-        );
-        while (!isOver(state.get())) {
-          for (const message of yield* reader.pull) {
-            if (typeof message !== "string") continue;
-            // A frame this client does not know is passed over.
-            const frame = decodeServerFrame(message);
-            if (Option.isSome(frame)) state.set(nextState(frame.value));
-          }
-        }
-      }).pipe(
-        Effect.catchTags({
-          NotPaired: () => fail("not-paired"),
-          ServerUnreachable: () => fail("unreachable"),
-          SocketError: () => fail("unreachable"),
-        }),
-        Effect.ensuring(
-          Effect.sync(() => {
-            write = null;
-          }),
-        ),
-        Effect.scoped,
-      );
-      yield* Effect.forkScoped(run);
-
-      const audio = Effect.fn("Dictation.audio")(function* (pcm: Uint8Array) {
-        if (write === null || state.get()._tag !== "listening") return;
-        for (let offset = 0; offset < pcm.byteLength; offset += MAX_VOICE_FRAME_BYTES) {
-          yield* write(pcm.subarray(offset, offset + MAX_VOICE_FRAME_BYTES));
-        }
-      });
-
-      const finish = Effect.gen(function* () {
-        const now = state.get();
-        if (now._tag !== "listening") {
-          if (!isOver(now)) state.set({ _tag: "done", text: "" });
-          return;
-        }
-        state.set({ _tag: "finishing" });
-        const sent = write !== null && (yield* write(encodeClientFrame({ type: "finish" })));
-        if (!sent) yield* fail("unreachable");
-      });
-
-      return { state, audio, finish } satisfies Dictation;
-    });
+    const open = (transcript: boolean) =>
+      openDictation(
+        connection.socketAddress(HTTP_PATHS.voice, {}),
+        policy.openTimeout,
+        transcript,
+      ).pipe(Effect.provideService(Socket.WebSocketConstructor, makeWebSocket));
 
     return Voice.of({
       cloudKeys: cloudKeys.acquire(undefined),

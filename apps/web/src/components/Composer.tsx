@@ -356,7 +356,7 @@ export function Composer({
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
     setNotTaken(false);
-    dictation.edited();
+    dictation.edited(change.text, change.selection[1]);
     const edit: FieldInput = {
       before: value,
       after: change.text,

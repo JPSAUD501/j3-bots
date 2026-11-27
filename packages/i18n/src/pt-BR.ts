@@ -1373,7 +1373,6 @@ const sentences = {
   "dictation.start": "Ditar",
   "dictation.stop": "Parar e escrever",
   "dictation.cancel": "Cancelar o ditado",
-  "dictation.connecting": "Preparando…",
   "dictation.listening": "Ouvindo…",
   "dictation.finishing": "Escrevendo…",
   "dictation.level": "Nível do microfone",

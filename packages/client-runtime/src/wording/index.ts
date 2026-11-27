@@ -119,7 +119,6 @@ export {
   dictationBlockWords,
   dictationFailureNeedsSetup,
   dictationFailureWords,
-  dictationStateWords,
   elapsedWords,
   languageName,
 } from "./voice.ts";

@@ -2,7 +2,7 @@
 import type { CloudVoiceProvider } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { DictationBlock } from "../presentation/dictation.ts";
-import type { DictationFailure, DictationState } from "../stores/Voice.ts";
+import type { DictationFailure } from "../stores/Voice.ts";
 
 /** A cloud provider's name, which is the same in every language. */
 export const CLOUD_PROVIDER_NAMES: Record<CloudVoiceProvider, string> = {
@@ -16,22 +16,6 @@ export const CLOUD_PROVIDER_KEY_PAGES: Record<CloudVoiceProvider, string> = {
   openai: "https://platform.openai.com/api-keys",
   xai: "https://console.x.ai",
   openrouter: "https://openrouter.ai/settings/keys",
-};
-
-/** What a dictation under way is doing, for a screen reader and a tooltip. */
-export const dictationStateWords = (state: DictationState, i18n: I18n): string | null => {
-  switch (state._tag) {
-    case "connecting":
-      return i18n.t("dictation.connecting");
-    case "listening":
-      return i18n.t("dictation.listening");
-    case "finishing":
-      return i18n.t("dictation.finishing");
-    case "done":
-      return null;
-    case "failed":
-      return dictationFailureWords(state.reason, i18n);
-  }
 };
 
 const failures: Record<DictationFailure, KeyWith> = {

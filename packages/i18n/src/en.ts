@@ -1356,7 +1356,6 @@ export const en = {
   "dictation.start": "Dictate",
   "dictation.stop": "Stop and write it down",
   "dictation.cancel": "Cancel dictation",
-  "dictation.connecting": "Getting ready…",
   "dictation.listening": "Listening…",
   "dictation.finishing": "Writing it down…",
   "dictation.level": "Microphone level",

@@ -5,12 +5,6 @@ import { type CloudVoiceKeys, type VoiceSettings, voiceProviderOf } from "@j3-bo
 // 0096 and 0107). Words go where the caret was when the operator started,
 // moved along with what they typed meanwhile.
 
-/** What has been heard so far: settled words, then words still open to change. */
-export interface HeardWords {
-  readonly committed: string;
-  readonly tentative: string;
-}
-
 /**
  * Whether this device has a speech recognizer of its own for the language,
  * which recognizes on the device and nowhere else:
@@ -88,23 +82,39 @@ export const dictationPath = (input: {
 /**
  * Where words dictated into `before`, at `start` to `end`, go once it became
  * `after`, as the operator typed meanwhile: moved along with the text before
- * them, and to the end of an edit that ran over them.
+ * them, and to the end of an edit that ran over them. `caret`, where the
+ * caret stands in `after` once the operator's own edit is in, places that
+ * edit: without it, typing the letter that follows the words' place would
+ * read as typed after it.
  */
 export const followTyping = (
   at: { readonly start: number; readonly end: number },
   before: string,
   after: string,
+  caret?: number,
 ): { readonly start: number; readonly end: number } => {
   if (before === after) return at;
-  let head = 0;
   const shortest = Math.min(before.length, after.length);
-  while (head < shortest && before[head] === after[head]) head += 1;
-  let tail = 0;
-  while (
-    tail < shortest - head &&
-    before[before.length - 1 - tail] === after[after.length - 1 - tail]
-  ) {
-    tail += 1;
+  const same = (limit: number, alike: (index: number) => boolean) => {
+    let count = 0;
+    while (count < limit && alike(count)) count += 1;
+    return count;
+  };
+  const fromStart = (index: number) => before[index] === after[index];
+  const fromEnd = (index: number) =>
+    before[before.length - 1 - index] === after[after.length - 1 - index];
+  let head: number;
+  let tail: number;
+  if (caret === undefined) {
+    head = same(shortest, fromStart);
+    tail = same(shortest - head, fromEnd);
+  } else {
+    // The edit ends at the caret: what follows it is as it was.
+    tail = same(
+      Math.min(shortest, after.length - Math.min(Math.max(caret, 0), after.length)),
+      fromEnd,
+    );
+    head = same(shortest - tail, fromStart);
   }
   // The edit replaced `before`'s [head, before.length - tail) with after's [head, after.length - tail).
   const changedEnd = before.length - tail;
@@ -125,25 +135,17 @@ const spaced = (before: string, after: string): boolean =>
   before !== "" && after !== "" && !OPENING.test(before) && !CLOSING.test(after);
 
 /**
- * The text with what was heard where the caret was (`start` to `end`, which
- * it replaces), spaced from the words around it. The heard words run from
- * `from`: the settled ones to `committed`, then the ones still open to
- * change to `tentative`, where the caret goes.
+ * The text with `words` where the caret was (`start` to `end`, which they
+ * replace), spaced from the words around them. They run from `from` to
+ * `end`, where the caret goes.
  */
 export const placeHeard = (
   draft: { readonly text: string; readonly start: number; readonly end: number },
-  heard: HeardWords,
-): {
-  readonly text: string;
-  readonly from: number;
-  readonly committed: number;
-  readonly tentative: number;
-} => {
+  words: string,
+): { readonly text: string; readonly from: number; readonly end: number } => {
   const before = draft.text.slice(0, draft.start);
   const after = draft.text.slice(draft.end);
-  const settled = heard.committed.trim();
-  const open = heard.tentative.trim();
-  const spoken = spaced(settled, open) ? `${settled} ${open}` : settled + open;
+  const spoken = words.trim();
   const from = before.length + (spaced(before, spoken) ? 1 : 0);
   return {
     text:
@@ -152,8 +154,7 @@ export const placeHeard = (
       (spaced(spoken, after) ? " " : "") +
       after,
     from,
-    committed: from + settled.length,
-    tentative: from + spoken.length,
+    end: from + spoken.length,
   };
 };
 

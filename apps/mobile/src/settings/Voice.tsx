@@ -19,11 +19,12 @@ import {
   DICTATION_LANGUAGES,
   MAX_VOICE_WORD_LENGTH,
   MAX_VOICE_WORDS,
-  type VoiceLanguage,
+  VoiceLanguage,
   type VoiceSettings,
   type VoiceSettingsChange,
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import { getLocales } from "expo-localization";
 import { ExternalLink, Info, X } from "lucide-react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -255,7 +256,7 @@ function Languages({
   const own = getLocales()[0]?.languageCode ?? null;
   const first = [
     ...new Set([...(own === null ? [] : [own]), ...(chosen === "auto" ? [] : [chosen])]),
-  ].filter((code) => DICTATION_LANGUAGES.includes(code));
+  ].filter(isLanguage);
   const rest = DICTATION_LANGUAGES.filter((code) => !first.includes(code));
   const named = (codes: ReadonlyArray<string>) =>
     codes
@@ -289,6 +290,9 @@ function Languages({
   );
 }
 
+/** A language code a setting can hold, as the phone's own may not be one the providers list. */
+const isLanguage = Schema.is(VoiceLanguage);
+
 /** How the test went: listening, being written down, and what it heard or why not. */
 type TestRun =
   | { readonly _tag: "idle" }
@@ -313,7 +317,17 @@ function VoiceTest({ connected }: { readonly connected: boolean }) {
   const start = async () => {
     if (live.current !== null || !connected || voiceCapture === null) return;
     const microphone = voiceCapture;
+    // Held while the microphone is asked for: leaving the page, or a second press, finds it.
+    let left = false;
+    const asking = () => {
+      left = true;
+      live.current = null;
+    };
+    live.current = asking;
+    setRun({ _tag: "listening" });
     const access = await askMicrophone();
+    if (left) return;
+    live.current = null;
     if (access !== "granted") {
       setRun({
         _tag: "failed",
