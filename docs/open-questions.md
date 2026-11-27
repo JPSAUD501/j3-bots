@@ -32,7 +32,7 @@ A self-hosted server cannot send to Apple's and Google's push services without c
 
 **Recommended:** Expo's push service, behind an interface any of the others can replace ([decision 0014](decisions/0014-push-goes-through-a-push-sender.md), proposed). The server sends through it, and the app registers for it.
 
-**Where it stands.** A build turns push on only with an Expo project and a Firebase configuration ([Clients: mobile](architecture/clients.md#mobile)). The project has neither, by the owner's decision, so no build turns push on, the 0.1.0 APK included, and push has not been tried on a device. **Settled by** the owner deciding whether the project holds those credentials, or another option above replaces Expo, and then one push proven on a phone.
+**Where it stands.** A build turns push on only with an Expo project and a Firebase configuration ([Clients: mobile](architecture/clients.md#mobile)). The project has neither, by the owner's decision, so no build turns push on, the release APK included, and push has not been tried on a device. **Settled by** the owner deciding whether the project holds those credentials, or another option above replaces Expo, and then one push proven on a phone.
 
 ## 5. How many bots does a host and a subscription sustain?
 
