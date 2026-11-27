@@ -75,10 +75,6 @@ export const withComment = (quote: MessageQuote, comment: string): MessageQuote 
   return trimmed === "" || quote.quoted._tag !== "passage" ? bare : { ...bare, comment: trimmed };
 };
 
-/** Whether `quotes` say something of their own: a passage the operator commented, which goes as a message. */
-export const commented = (quotes: ReadonlyArray<MessageQuote>): boolean =>
-  quotes.some((quote) => quote.comment !== undefined);
-
 const passageKey = (quote: MessageQuote) =>
   quote.quoted._tag === "passage" ? quote.quoted.text : null;
 
@@ -97,7 +93,8 @@ export const sameQuotes = (one: ReadonlyArray<MessageQuote>, other: ReadonlyArra
 /**
  * A draft's quotes with `quote` added: a reply replaces the draft's reply,
  * first; a passage goes last, or, quoted already, takes the place of its
- * twin with the comment it brings now. `full` when the draft has
+ * twin with the comment it brings now, keeping the twin's when it brings
+ * none, so quoting it again never loses what the operator wrote. `full` when the draft has
  * `MAX_QUOTES` and `quote` replaces none of them.
  */
 export const withQuote = (
@@ -110,7 +107,14 @@ export const withQuote = (
     return [quote, ...others];
   }
   const twin = quotes.findIndex((one) => sameQuote(one, quote));
-  if (twin !== -1) return quotes.with(twin, quote);
+  if (twin !== -1) {
+    // Quoted again: a comment it brings replaces the one there; none keeps it.
+    const kept = quotes[twin]?.comment;
+    return quotes.with(
+      twin,
+      quote.comment === undefined && kept !== undefined ? { ...quote, comment: kept } : quote,
+    );
+  }
   if (quotes.length >= MAX_QUOTES) return "full";
   return [...quotes, quote];
 };

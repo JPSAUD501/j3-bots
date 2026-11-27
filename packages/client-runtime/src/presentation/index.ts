@@ -190,7 +190,6 @@ export {
 } from "./mentions.ts";
 export { type Inline, type MentionName, parseMessageText } from "./messageText.ts";
 export {
-  commented,
   isQuotable,
   passageOf,
   type QuotableMessage,

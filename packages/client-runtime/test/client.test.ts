@@ -1686,7 +1686,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   );
 
   it.effect(
-    "sends a draft's reply and passages with it, a commented passage even alone, and the next draft quotes nothing",
+    "sends a draft's reply and passages with it, a passage's comment too, and the next draft quotes nothing",
     () =>
       Effect.gen(function* () {
         yield* pairAndConnect;
@@ -1740,22 +1740,16 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         );
         assert.isUndefined(drafts.state.get().get(targetKey(target)));
 
-        // A passage quoted bare is no message; with the operator's comment it is one.
-        assert.strictEqual(yield* drafts.quote(target, passage), "added");
-        assert.strictEqual(yield* drafts.send(target), "empty");
+        // The operator's comment on a passage goes with it, and stays with the message.
         assert.strictEqual(yield* drafts.quote(target, withComment(passage, "Why this?")), "added");
+        yield* drafts.setText(target, "Tell me more.");
         assert.strictEqual(yield* drafts.send(target), "sent");
         yield* Queue.take(sends);
-        const alone = yield* waitFor(conversation.state, (state) =>
+        yield* waitFor(conversation.state, (state) =>
           state.items.some(
-            (item) => item._tag === "message" && item.quotes?.[0]?.comment === "Why this?",
-          ),
-        );
-        assert.isTrue(
-          alone.items.some(
             (item) =>
               item._tag === "message" &&
-              item.text === "" &&
+              item.text === "Tell me more." &&
               item.quotes?.[0]?.comment === "Why this?",
           ),
         );

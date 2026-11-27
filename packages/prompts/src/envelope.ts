@@ -1100,12 +1100,13 @@ const writeOperatorMessage = (
   );
   w.line(placedText(w, trimEnd(text), placed));
   for (const file of attachments) if (file.offset === null) w.line(attachmentTag(w, file));
-  // The operator's own words on a passage they quote: theirs, so in their message.
-  for (const quote of quotes) {
+  // The operator's own words on a passage they quote: theirs, so in their message. A comment
+  // names its quote by its number, since two passages of one message share its id.
+  quotes.forEach((quote, index) => {
     if (quote.quoted.kind === "passage" && quote.quoted.comment !== undefined) {
-      w.inline("comment", [["on", quote.id]], quote.quoted.comment);
+      w.inline("comment", [["quote", String(index + 1)]], quote.quoted.comment);
     }
-  }
+  });
   w.close("message");
   writeQuotes(w, quotes);
   writeMentions(w, mentions);
@@ -1118,7 +1119,7 @@ const writeOperatorMessage = (
  * quotes something.
  */
 export const QUOTES_LINE =
-  "The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. `from` says who said each, `you` being you. A `comment` in the message is your user's word on the passage whose `id` its `on` names.";
+  "The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. `from` says who said each, `you` being you. A `comment` in the message is your user's word on the quote whose `n` its `quote` names.";
 
 /**
  * What a message quotes, after it: a line of J3 Bots' own, then a data block
@@ -1130,11 +1131,12 @@ export const QUOTES_LINE =
 const writeQuotes = (w: EnvelopeWriter, quotes: ReadonlyArray<QuoteRef>): void => {
   if (quotes.length === 0) return;
   w.line(QUOTES_LINE);
-  for (const quote of quotes) {
+  quotes.forEach((quote, index) => {
     const { from, quoted } = quote;
     w.data(
       [
         ["source", "quote"],
+        ["n", String(index + 1)],
         ["id", quote.id],
         ["from", typeof from === "string" ? from : from.name],
         ["from-id", typeof from === "string" ? null : from.id],
@@ -1143,7 +1145,7 @@ const writeQuotes = (w: EnvelopeWriter, quotes: ReadonlyArray<QuoteRef>): void =
       ],
       quoted.kind === "passage" ? quoted.text : `${quoted.opening}${quoted.more ? "…" : ""}`,
     );
-  }
+  });
 };
 
 /**

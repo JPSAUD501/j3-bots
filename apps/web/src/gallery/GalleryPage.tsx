@@ -1942,7 +1942,7 @@ function QuotesSection() {
           />
         </div>
       </Labeled>
-      <Labeled label="Sent: a reply to Scout's message, a message quoting two passages, and a passage sent with only the operator's comment; each quote a quiet block at the top of its bubble, with no colored bar">
+      <Labeled label="Sent: a reply to Scout's message, a message quoting two passages, and a passage with the operator's comment under it; each quote a quiet block at the top of its bubble, with no colored bar">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           <MessageBubble
             message={quotes.reply}

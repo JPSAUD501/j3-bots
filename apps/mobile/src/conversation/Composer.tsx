@@ -150,7 +150,7 @@ export function Composer({
 
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
-  const { uploading, sendable, problem } = draftReadiness(text, files, draft.quotes);
+  const { uploading, sendable, problem } = draftReadiness(text, files);
   const comments = useReadable(client.quoteComments);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;

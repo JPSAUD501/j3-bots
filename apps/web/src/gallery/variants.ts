@@ -306,7 +306,7 @@ export function galleryVariants(now: DateTime.Utc) {
       },
     ),
     juniperDraft,
-    // A passage commented (decision 0106): in the draft, and sent with words of its own or alone.
+    // A passage commented (decision 0106): in the draft, and sent with the message's own words.
     commented: [
       {
         ...quoteOf(scoutSource, { _tag: "passage", text: "test ride on Saturday at 10" }),
@@ -314,7 +314,7 @@ export function galleryVariants(now: DateTime.Utc) {
       },
       quoteOf(wrenNote, { _tag: "passage", text: "I can bring the helmet and the lock" }),
     ],
-    commentedSent: message("quoting-commented", operator, "", {
+    commentedSent: message("quoting-commented", operator, "Otherwise Saturday works.", {
       quotes: [
         {
           ...quoteOf(scoutSource, { _tag: "passage", text: "test ride on Saturday at 10" }),

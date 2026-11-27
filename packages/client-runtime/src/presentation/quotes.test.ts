@@ -50,13 +50,15 @@ describe("quotes", () => {
     };
     const quick = passage(plans, "a quick one");
     const one = added([], quick);
-    // The same passage again changes nothing, unless it brings a comment, which it keeps in place.
+    // The same passage again changes nothing, unless it brings a comment, which it takes in place;
+    // quoted again bare, it keeps the comment it has.
     expect(added(one, quick)).toEqual([quick]);
     const remarked = withComment(quick, "  Too fast?  ");
     expect(added([quick, passage(plans, "careful")], remarked)).toEqual([
       remarked,
       passage(plans, "careful"),
     ]);
+    expect(added([remarked], quick)).toEqual([remarked]);
     // A reply goes first, and another reply takes its place.
     const replied = added(added(one, replyTo(plans)), replyTo(notes));
     expect(replied).toEqual([replyTo(notes), quick]);

@@ -21,8 +21,8 @@ The quick access window also showed scrollbars, horizontal and vertical, where e
 - **In the composer.** Each quote is a chip inside the field's box, above the text. The chip shows a reply arrow or a quote mark, then the face of the bot that said it (or "You"), then the start of the words, cut with an ellipsis. A passage's chip has a pencil to add or change a comment where the server takes one. Each chip has an × to take it out. The chips sit on one line, which wraps on the web and scrolls sideways on a phone. 0094's limits hold: up to three quotes, at most one whole.
 - **In a sent message.** The quotes sit inside the bubble, above its words. Each is a quiet rounded block, filled with the bubble's own ink at low opacity, so it reads in the operator's bubble and a bot's alike, in either theme. A block shows who said it and up to two lines of the words. A passage's comment follows its block, in the bubble's text. There is no colored edge anywhere. A tap still goes to the original.
 - **Quoting a selection.** On the web, the desktop and quick access, Quote by the selection opens a small card with an optional comment and Quote. Enter quotes, Shift+Enter starts a new line, Escape closes it. On Android, the Quote part sheet has an optional comment field under the message's words. Against a server that takes no comments, Quote quotes at once, as before, and the sheet has no comment field.
-- **The comment.** It goes only on a passage, as the operator's words about those words: up to 2,000 characters, trimmed, one per passage. A reply carries none, since the message itself is the answer. A message can be only commented passages, with no text of its own. The server keeps the comment with the quote, and refuses a comment on a whole message with `Invalid("quotes")`, nothing written.
-- **What the bot reads.** A comment is the operator's word, so it is in the operator's message: `<comment on="…">` inside `<message>`, with `on` naming the quote's `id`. The quote itself stays a data block outside it, as 0094 has it, and `QUOTES_LINE` says what a comment is.
+- **The comment.** It goes only on a passage, as the operator's words about those words: up to 2,000 characters, trimmed, one per passage. A reply carries none, since the message itself is the answer. A comment goes with a message that has words or a file of its own: a draft of quotes alone, commented or not, has nothing to send yet. Quoting a passage again keeps its comment, unless the new quote brings one. The server keeps the comment with the quote, and refuses a comment on a whole message with `Invalid("quotes")`, nothing written.
+- **What the bot reads.** A comment is the operator's word, so it is in the operator's message: `<comment quote="…">` inside `<message>`. Each quote's data block carries its number in the order sent (`n`), and the comment's `quote` names it: two passages of one message share its `id`, so the id alone would not say which passage a comment is on. The quote itself stays a data block outside it, as 0094 has it, and `QUOTES_LINE` says what a comment is.
 - **Protocol 11 holds.** `comment` is an optional key of a passage's `QuoteRequest` and of a kept `MessageQuote`. A roster snapshot with `quoteComments: true` comes from a server that takes it, and a client offers a comment only then. An older client drops the key and shows the quote without it. The quotes live in the message's stored body, so nothing needed a migration.
 
 ### Nothing under the field
@@ -44,7 +44,6 @@ The cause was the message actions. Reply and React sit beside a bubble in its co
 ## Costs
 
 - **A comment is one more thing to read in a quote.** It is optional, and only on a passage.
-- **A message of commented passages only** has no text of its own. The bot reads the comments as the message.
 - **The top line is short.** A long note is cut short in the field: to one line on a computer, where its tooltip has all of it, and to two on a phone. A screen reader hears all of it.
 - **Who still has a web client from before this change** sees the footer row as before until they update. That is harmless.
 
@@ -52,6 +51,7 @@ The cause was the message actions. Reply and React sit beside a bubble in its co
 
 - **A comment as a second message.** It would wake the bot twice, or reach it split from the passage it is about.
 - **A comment on a reply.** The message that replies is already the operator's word on it.
+- **A message of commented passages alone.** Its own text would be empty: blank in the roster's preview, in a reply to it and in what a bot reads of that reply. The comment goes with the operator's own words instead.
 - **Comments as part of the quote's data block.** The quote is data, and the comment is the operator's own word. Putting the comment in the block would make it data too.
 - **Keeping the status lines and reserving their height.** The field would then sit higher than it needs to, all the time, for lines that are mostly empty.
 - **Hiding quick access's scrollbars.** That would leave the overflow, and the actions it cut off, in place.

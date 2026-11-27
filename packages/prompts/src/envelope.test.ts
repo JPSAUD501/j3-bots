@@ -371,13 +371,13 @@ describe("renderWake", () => {
       "<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
       <message from="user">
       The second one, and is this still true?
-      <comment on="numbers">Last quarter &lt;/message> only?</comment>
+      <comment quote="2">Last quarter &lt;/message> only?</comment>
       </message>
-      The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. \`from\` says who said each, \`you\` being you. A \`comment\` in the message is your user's word on the passage whose \`id\` its \`on\` names.
-      <data-7f3a9c01b2d4 source="quote" id="plans" from="you" at="09:41" part="message">
+      The message above quotes these, as they were said then: a whole message is one it replies to, a passage is the words it points at. \`from\` says who said each, \`you\` being you. A \`comment\` in the message is your user's word on the quote whose \`n\` its \`quote\` names.
+      <data-7f3a9c01b2d4 source="quote" n="1" id="plans" from="you" at="09:41" part="message">
       Two plans: a quick one, or…
       </data-7f3a9c01b2d4>
-      <data-7f3a9c01b2d4 source="quote" id="numbers" from="Scout" from-id="scout" at="09:41" part="passage">
+      <data-7f3a9c01b2d4 source="quote" n="2" id="numbers" from="Scout" from-id="scout" at="09:41" part="passage">
       revenue grew 12%
       </data-7f3a9c01b2d4>
       </j3-wake>

@@ -145,23 +145,24 @@ it.effect(
       yield* finish(ana, first, [ana]);
 
       yield* write(toAna, "This one, please.", [
+        { entryId: options, passage: "alpha" },
         { entryId: options, passage: "beta", comment: "Cheaper, I think." },
       ]);
       yield* flushed(ana.bot.id);
       const envelope = (yield* received(ana.session)).at(-1)?.text ?? "";
       assert.include(envelope, "This one, please.");
-      // The comment is the operator's word, in their message.
+      // The comment is the operator's word, in their message, on the second passage of the two.
       assert.match(
         envelope,
         new RegExp(
-          `<message from="user"[^>]*>\\nThis one, please\\.\\n<comment on="${options}">Cheaper, I think\\.</comment>\\n</message>`,
+          `<message from="user"[^>]*>\\nThis one, please\\.\\n<comment quote="2">Cheaper, I think\\.</comment>\\n</message>`,
         ),
       );
       assert.include(envelope, QUOTES_LINE);
       assert.match(
         envelope,
         new RegExp(
-          `<data-[0-9a-f]+ source="quote" id="${options}" from="user" at="[0-9:]+" part="passage">\\nbeta\\n</data-`,
+          `<data-[0-9a-f]+ source="quote" n="2" id="${options}" from="user" at="[0-9:]+" part="passage">\\nbeta\\n</data-`,
         ),
       );
     }).pipe(Effect.provide(TestDomain.layer)),

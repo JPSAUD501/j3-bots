@@ -293,7 +293,7 @@ export function Composer({
   const waitingId = useId();
   const suggestionId = useId();
   const label = t("composer.label", { name: recipient });
-  const { uploading, sendable, problem } = draftReadiness(value, files, quotes);
+  const { uploading, sendable, problem } = draftReadiness(value, files);
   // The field's selection as the operator last left it: what an edit replaces,
   // where files attached go, and where dictated words go.
   const selection = useRef<readonly [number, number] | null>(null);
