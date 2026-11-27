@@ -19,6 +19,8 @@ import {
   type QuestionAnswers,
   type ReceivedEntry,
   RoomId,
+  type RoutineAnswer,
+  type RoutineRunId,
   type Sequence,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
@@ -302,6 +304,21 @@ export const messageStatus = (message: MessageEntry | OutgoingMessage): MessageS
   }
 };
 
+/**
+ * What the operator does on a run's card of a routine with several steps
+ * (decision 0080): answers the yes it waits for, tries a failed step again,
+ * or stops it.
+ */
+export type RoutineCardCommand =
+  | {
+      readonly _tag: "answer";
+      readonly runId: RoutineRunId;
+      readonly choice: RoutineAnswer["choice"];
+      readonly note: string | null;
+    }
+  | { readonly _tag: "retry"; readonly runId: RoutineRunId }
+  | { readonly _tag: "stop"; readonly runId: RoutineRunId };
+
 export type CardAnswer =
   | { readonly _tag: "question"; readonly answers: QuestionAnswers }
   | { readonly _tag: "dismiss" }
@@ -466,6 +483,11 @@ export class Conversations extends Context.Service<
     readonly retryMessage: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly retryNotice: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly answerCard: (entryId: EntryId, answer: CardAnswer) => Effect.Effect<IntentResult>;
+    /** `command` on the run's card `entryId`, which shows as submitting meanwhile. */
+    readonly routineCard: (
+      entryId: EntryId,
+      command: RoutineCardCommand,
+    ) => Effect.Effect<IntentResult>;
     readonly provideSecret: (entryId: EntryId, answer: SecretAnswer) => Effect.Effect<IntentResult>;
     /**
      * Runs `effect` with every delivery stopped, and starts again what is
@@ -1593,6 +1615,32 @@ export const layer = Layer.effect(
       );
     });
 
+    const routineCard = Effect.fn("Conversations.routineCard")(function* (
+      entryId: EntryId,
+      command: RoutineCardCommand,
+    ) {
+      const commandId = yield* actions.commandId;
+      return yield* actions.run(
+        cardAction(entryId),
+        entryId,
+        connection.call((client) => {
+          switch (command._tag) {
+            case "answer":
+              return client["routine.answer"]({
+                commandId,
+                runId: command.runId,
+                choice: command.choice,
+                note: command.note,
+              });
+            case "retry":
+              return client["routine.retry"]({ commandId, runId: command.runId });
+            case "stop":
+              return client["routine.stopRun"]({ commandId, runId: command.runId });
+          }
+        }),
+      );
+    });
+
     // No command id: the value must not be kept in a receipt. A retry after a
     // lost reply finds the card closed and fails with `Conflict("card-closed")`.
     const provideSecret = (entryId: EntryId, answer: SecretAnswer) =>
@@ -1678,6 +1726,7 @@ export const layer = Layer.effect(
       retryMessage,
       retryNotice,
       answerCard,
+      routineCard,
       provideSecret,
       withSendingPaused,
       discardAll,
