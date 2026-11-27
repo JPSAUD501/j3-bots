@@ -325,6 +325,8 @@ const sentences = {
   "secrets.title": "Segredos",
   "secrets.intro":
     "Logins e chaves que seus bots usam sem nunca ver. Eles ficam no seu servidor do J3 Bots: o bot só fica sabendo o nome do segredo.",
+  "secrets.oldVault":
+    "Seus segredos estão num cofre antigo que espera a senha dele. Abra Configurações → Segredos no app web que este servidor serve e digite a senha lá.",
   "secrets.unreadable":
     "Seus segredos não podem ser lidos: o arquivo de chave na pasta do cofre do servidor sumiu ou não é o deles. Coloque-o de volta a partir de um backup, ou recomece como diz o guia de operação.",
   "secrets.newer":
@@ -1332,6 +1334,8 @@ const sentences = {
     "O J3 Bots os exportou {when}. O servidor deles neste computador está parado, e os dados continuam aqui.",
   "local.moved.file": "O arquivo: {file}",
   "local.moved.leftOut": "Ficaram fora do arquivo:",
+  "local.moved.leftOut.secrets.old-vault":
+    "Os segredos: estão num cofre antigo que espera a senha dele, que esta versão do J3 Bots não aceita.",
   "local.moved.leftOut.secrets.unreadable":
     "Os segredos: a chave que os protege não está neste computador, ou é outra.",
   "local.moved.leftOut.secrets.newer": "Os segredos: uma versão mais nova do J3 Bots os mudou.",

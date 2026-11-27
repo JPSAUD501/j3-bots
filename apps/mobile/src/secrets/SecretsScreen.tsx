@@ -26,8 +26,7 @@ type Props = NativeStackScreenProps<Screens, "secrets">;
 
 /**
  * The operator's secrets, each opening its own screen, and Add a secret.
- * While they cannot be used, it says why, or asks for the old vault's
- * password in place.
+ * While they cannot be used, it says why.
  */
 export function SecretsScreen({ navigation }: Props) {
   const { t, plural } = useI18n();

@@ -196,6 +196,10 @@ export type Secret = typeof Secret.Type;
 
 /**
  * - `ready`: secrets can be added and used.
+ * - `old-vault`: a vault sealed under a master password, from before secrets,
+ *   waits for that password. Only a server of 0.12 or earlier says it, and
+ *   only that server's own web app takes the password; a later server
+ *   refuses to start over such a vault.
  * - `unreadable`: secrets are saved, and the key that opens them is missing
  *   or is another one: its file was deleted or replaced. Nothing in them can
  *   be read until the key is put back, or the operator starts over.
@@ -203,7 +207,7 @@ export type Secret = typeof Secret.Type;
  *   a rollback to this one, which a rollback does not undo. This release
  *   cannot read it; the release that changed it can.
  */
-export const SecretsState = Schema.Literals(["ready", "unreadable", "newer"]);
+export const SecretsState = Schema.Literals(["ready", "old-vault", "unreadable", "newer"]);
 export type SecretsState = typeof SecretsState.Type;
 
 export const SecretsStatus = Schema.Struct({

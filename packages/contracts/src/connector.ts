@@ -371,7 +371,7 @@ export const SECRET_NEED_REASONS = ["missing", "no-value", "not-shared"] as cons
  * - `failing`: it has not answered as it should since `since`; bots get a
  *   result that says it is unavailable;
  * - `secrets-unavailable`: its secrets cannot be read: the operator's
- *   secrets wait for an old vault's password, or their key is missing
+ *   secrets' key is missing or another one, or a newer release changed them
  *   (`SecretsState`);
  * - `needs-secret`: its settings name a secret (`${secret:<name>}`) it cannot
  *   use (`SECRET_NEED_REASONS`). No bot gets its tools, and nothing is sent to

@@ -124,6 +124,8 @@ const secretsLine = (secrets: ArchivedSecrets, verb: "exported" | "imported") =>
         : `${secrets.records} secret${secrets.records === 1 ? "" : "s"}, sealed again under this server's key.`;
     case "left-out":
       switch (secrets.reason) {
+        case "old-vault":
+          return "The secrets were left out: they were in an old vault that waited for its password.";
         case "unreadable":
           return "The secrets were left out: the key they are sealed under is missing or another one.";
         case "newer":

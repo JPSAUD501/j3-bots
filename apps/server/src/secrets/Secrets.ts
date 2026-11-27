@@ -384,9 +384,7 @@ export const layer = Layer.effect(
      */
     const start = Effect.fn("Secrets.start")(function* (sql: SqlClient.SqlClient) {
       if (yield* holdsUnopenedOldVault(sql).pipe(Effect.orDie)) {
-        const refused = new OldVaultUnopened();
-        yield* Effect.logError(refused.message);
-        return yield* Effect.die(refused);
+        return yield* new OldVaultUnopened();
       }
       const keyring = yield* sql`SELECT 1 FROM keyring LIMIT 1`.pipe(Effect.orDie);
       if (keyring.length > 0) {

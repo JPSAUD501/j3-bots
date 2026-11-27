@@ -87,8 +87,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "secrets-unavailable",
     /**
      * A value of a secret does not open under its key, or does not read as
-     * what it should be, or an old vault's key settings are out of range: the
-     * file was changed by hand or damaged. The server's log names the record
+     * what it should be: the file was changed by hand or damaged. The server's log names the record
      * and field, never the value. Restoring the file from a backup fixes it.
      */
     "secrets-damaged",

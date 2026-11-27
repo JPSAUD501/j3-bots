@@ -71,8 +71,7 @@ export interface NewSecret {
  *
  * Every request may run again on a new socket when the one it went out on
  * drops (`Connection.call`), which the server's requests take: a secret is
- * added under an id this client chose, once, and opening an old vault that
- * is open already succeeds.
+ * added under an id this client chose, once.
  */
 export class Secrets extends Context.Service<
   Secrets,

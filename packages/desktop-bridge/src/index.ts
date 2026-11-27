@@ -158,9 +158,10 @@ const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const LeftOut = Schema.Struct({
   /**
    * Why the secrets stayed behind, when they did: under a key that is missing
-   * or another one, or changed by a newer release.
+   * or another one, or changed by a newer release. `old-vault`, in a vault
+   * that waited for its password, only 0.12 and earlier wrote.
    */
-  secrets: Schema.optionalKey(Schema.Literals(["unreadable", "newer"])),
+  secrets: Schema.optionalKey(Schema.Literals(["old-vault", "unreadable", "newer"])),
   /** Links in the bots' folders, which an export never carries. */
   links: Count,
   /** Files whose name no import takes: how many, and the first of them by path. */

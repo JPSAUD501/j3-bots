@@ -181,19 +181,9 @@ it.effect(
     Effect.gen(function* () {
       yield* oldVault(["cred_0000000000000001"]);
       const before = yield* onSecretsFile((sql) => sql`SELECT * FROM keyring`);
-      const logged: Array<string> = [];
-      const logs = Logger.layer([
-        Logger.map(Logger.formatJson, (line) => {
-          logged.push(line);
-        }),
-      ]);
-      const started = yield* Effect.exit(
-        stateNow.pipe(Effect.provide(Domain.layer.pipe(Layer.provide(logs)))),
-      );
-      assert.isTrue(Exit.isFailure(started));
-      const said = "Open it with J3 Bots 0.12 first";
-      if (Exit.isFailure(started)) assert.include(Cause.pretty(started.cause), said);
-      assert.isTrue(logged.some((line) => line.includes(said)));
+      const refused = yield* Effect.flip(stateNow.pipe(Effect.provide(Domain.layer)));
+      assert.strictEqual(refused._tag, "OldVaultUnopened");
+      assert.include(refused.message, "Open it with J3 Bots 0.12 first");
       assert.deepStrictEqual(yield* onSecretsFile((sql) => sql`SELECT * FROM keyring`), before);
       assert.isFalse(yield* (yield* FileSystem.FileSystem).exists(yield* keyFile));
     }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),

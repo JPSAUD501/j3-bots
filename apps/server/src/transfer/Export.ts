@@ -25,7 +25,7 @@ import {
   ARCHIVED_SECRETS,
   ARCHIVED_SHIPPED_SKILLS,
   type ArchivedFile,
-  type ArchivedSecrets,
+  type WrittenSecrets,
   archivable,
   BOT_FOLDERS,
   MANIFEST,
@@ -70,7 +70,7 @@ class NothingToExport extends Schema.TaggedError<NothingToExport>()("NothingToEx
 interface Exported {
   readonly file: string;
   readonly bots: number;
-  readonly secrets: ArchivedSecrets;
+  readonly secrets: WrittenSecrets;
   readonly files: number;
   readonly bytes: number;
   /** Links in the bots' own folders and the shared ones, which the archive does not carry. */
@@ -239,7 +239,7 @@ export const exportHome = Effect.fn("transfer.exportHome")(function* <E, R>(inpu
   const staging = yield* fs.makeTempDirectoryScoped({ prefix: "j3-bots-export-" });
   const copied = yield* copyDatabase(database, path.join(staging, "j3.sqlite"));
   const sealedSecrets = path.join(staging, "vault.sqlite");
-  const secrets: ArchivedSecrets = yield* exportSecrets(
+  const secrets: WrittenSecrets = yield* exportSecrets(
     path.join(home, HOME_ENTRIES.secrets),
     sealedSecrets,
     input.passphrase,

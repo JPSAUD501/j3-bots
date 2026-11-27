@@ -35,8 +35,7 @@ type Kind = Secret["kind"]["_tag"];
 
 /**
  * Adds a secret (`id` null) or changes one, on a screen of its own. While
- * secrets cannot be used it says why, or asks for the old vault's password,
- * in place of the form.
+ * secrets cannot be used it says why, in place of the form.
  */
 export function SecretFormScreen({ navigation, route }: Props) {
   const { t } = useI18n();

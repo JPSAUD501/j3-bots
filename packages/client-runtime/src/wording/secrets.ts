@@ -26,13 +26,16 @@ export const secretsFailureText = (failure: SecretsFailure, i18n: I18n): string 
 
 /**
  * What stands between the operator and their secrets, in a sentence, while
- * their state is not `ready`; null when it is.
+ * their state is not `ready`; null when it is. `old-vault` comes only from a
+ * server of 0.12 or earlier, whose own web app takes the vault's password.
  */
 export const secretsStateText = (status: SecretsStatus, i18n: I18n): string | null => {
   const { t } = i18n;
   switch (status.state) {
     case "ready":
       return null;
+    case "old-vault":
+      return t("secrets.oldVault");
     case "unreadable":
       return t("secrets.unreadable");
     case "newer":

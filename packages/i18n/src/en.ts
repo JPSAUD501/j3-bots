@@ -330,6 +330,8 @@ export const en = {
   "secrets.title": "Secrets",
   "secrets.intro":
     "Logins and keys your bots use without ever seeing them. They stay on your J3 Bots server: a bot is only told a secret’s name.",
+  "secrets.oldVault":
+    "Your secrets are in an old vault that waits for its password. Open Settings → Secrets in the web app this server serves, and type it there.",
   "secrets.unreadable":
     "Your secrets can’t be read: the key file in the server’s vault folder is missing or isn’t theirs. Put it back from a backup, or start over as the operating guide says.",
   "secrets.newer":
@@ -1314,6 +1316,8 @@ export const en = {
     "J3 Bots exported them {when}. Their server on this computer is stopped, and their data is still here.",
   "local.moved.file": "The file: {file}",
   "local.moved.leftOut": "Left out of the file:",
+  "local.moved.leftOut.secrets.old-vault":
+    "The secrets: they’re in an old vault that waits for its password, which this version of J3 Bots can’t take.",
   "local.moved.leftOut.secrets.unreadable":
     "The secrets: the key they’re sealed under is missing on this computer, or is another one.",
   "local.moved.leftOut.secrets.newer": "The secrets: a newer version of J3 Bots changed them.",
