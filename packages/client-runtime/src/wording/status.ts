@@ -12,7 +12,6 @@ import {
 import type * as DateTime from "effect/DateTime";
 import type { OpeningHold } from "../presentation/engine.ts";
 import { firstLine } from "../presentation/roster.ts";
-import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { permissionModeText } from "./details.ts";
 import { teamNoticeLine } from "./pairs.ts";
 import { timeInSentence, type TimeContext } from "./time.ts";
@@ -161,6 +160,8 @@ function previewSummary(
     }
     case "routine-change":
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
+    case "routine-run":
+      return t(current ? "routine.roster.waits" : "summary.routine", { name: text });
     case "unknown":
       return t("summary.cannotShow");
   }
@@ -240,16 +241,6 @@ export function noticeText(
         : t("notice.asksBeforeActingFullAccess", { mode });
     }
   }
-}
-
-/**
- * A turn the server reports as stalled: how long it has been quiet, from its
- * last activity, or only that it has been when the server does not say.
- */
-function stalledLine(quietSince: DateTime.Utc | null, ctx: PresentationContext): StatusLine {
-  if (quietSince === null) return { text: ctx.i18n.t("presence.stalledQuiet"), tone: "waiting" };
-  const duration = shortDuration(millisBetween(quietSince, ctx.now), ctx.i18n);
-  return { text: ctx.i18n.t("presence.stalled", { duration }), tone: "waiting" };
 }
 
 /**
@@ -347,10 +338,10 @@ function turnUnderWayLine(
       tone: "waiting",
     };
   }
-  if (state.stalled) return stalledLine(state.quietSince, ctx);
+  if (state.stalled) return { text: ctx.i18n.t("presence.stalled"), tone: "waiting" };
   return state._tag === "thinking"
     ? { text: t("presence.thinking"), tone: "default" }
-    : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
+    : { text: activityText(state, ctx.i18n), tone: "default" };
 }
 
 /**

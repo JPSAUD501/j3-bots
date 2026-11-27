@@ -4,6 +4,7 @@
  * the roster's (`orderRoster`): this only says which rows move
  * and how, so every client draws a reorder the same way.
  */
+import { stage } from "@j3-bots/design-tokens";
 
 /**
  * A row that changed place: `rise` and `sink` left the others' order, lift
@@ -180,6 +181,13 @@ export function rosterArrivals(
         : arrivals.entering,
   };
 }
+
+/**
+ * The longest a row's arrival lasts, in ms (`stage`): its light's lead, the
+ * longest it waits for its bot to land, and its light's hold and dimming.
+ * Those entering are in once it has passed.
+ */
+export const ARRIVAL_LENGTH = stage.spotLead + stage.rowLand + stage.rowHold + stage.rowDim;
 
 /** `arrivals` once those entering are in: rows like the others, which listed again just appear. */
 export const arrivalsSettled = (arrivals: RosterArrivals): RosterArrivals =>

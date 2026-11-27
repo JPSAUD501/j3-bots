@@ -15,15 +15,11 @@ export {
   type AiAction,
   aiAction,
   type AiFacts,
+  aiOnItsWay,
   aiOutage,
   type AiPlace,
   connectStepSaysProgress,
-  openAiAccount,
-  otherAiAccount,
   queuedSignIn,
-  type SignInStep,
-  signInStepAt,
-  signInSteps,
 } from "./aiAccount.ts";
 export {
   avatarBusy,
@@ -269,6 +265,7 @@ export {
   rosterTarget,
 } from "./roster.ts";
 export {
+  ARRIVAL_LENGTH,
   arrivalsSettled,
   keptRow,
   lifts,
@@ -312,6 +309,7 @@ export {
 } from "./time.ts";
 export {
   type CardEntry,
+  type TrackChangeEntry,
   type EntryPlace,
   type EventLine,
   type EventLineOpens,
@@ -340,14 +338,7 @@ export {
   type TimelineMessage,
   turnKey,
 } from "./timeline.ts";
-export {
-  foldOfTurn,
-  liveTurn,
-  type LiveTurn,
-  turnClock,
-  turnElapsed,
-  withLiveTurn,
-} from "./turn.ts";
+export { foldOfTurn, liveTurn, type LiveTurn, withLiveTurn } from "./turn.ts";
 export {
   type LittleOneState,
   littleOneDots,
@@ -423,3 +414,35 @@ export {
   type SecretRequestValues,
   secretValueTooLong,
 } from "./secretRequest.ts";
+export {
+  canReact,
+  ownReaction,
+  QUICK_REACTIONS,
+  REACTION_GROUPS,
+  reactionAfterPick,
+  type ReactionGroupId,
+  type ReactionPill,
+  reactionPills,
+} from "./reactions.ts";
+export {
+  asksYou,
+  type BotStationState,
+  type ConditionStationState,
+  currentStation,
+  inkTo,
+  keptResults,
+  type MiniMark,
+  miniRail,
+  runSteps,
+  type Station,
+  stationKey,
+  type StationOf,
+  trackAttention,
+  trackCast,
+  trackStations,
+  type TrackStatus,
+  trackStatus,
+  type TrackWindow,
+  trackWindow,
+  type YouStationState,
+} from "./routineTrack.ts";

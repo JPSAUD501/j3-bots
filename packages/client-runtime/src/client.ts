@@ -44,6 +44,7 @@ import type {
   PairSeq,
   ProviderConnectionRequest,
   ProviderId,
+  ReactionEmoji,
   Room,
   RoomId,
   RosterItem,
@@ -164,6 +165,9 @@ export interface SecretsHandle {
     secret: Secrets.NewSecret,
     request: EntryId | null,
   ) => Promise<Secrets.SecretsResult<Secret>>;
+  readonly addFromAsk: (
+    asked: Secrets.AskedValues,
+  ) => Promise<Secrets.SecretsResult<ReadonlyArray<Secret>>>;
   readonly update: (id: SecretId, changes: SecretChanges) => Promise<Secrets.SecretsResult<Secret>>;
   readonly remove: (id: SecretId) => Promise<Secrets.SecretsResult>;
   readonly setAccess: (
@@ -534,9 +538,16 @@ export interface J3Client {
   readonly deleteSection: (sectionId: SectionId) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
+  /** Sets the operator's reaction on a message, or takes it off with `null`. */
+  readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => Promise<Actions.IntentResult>;
   readonly answerCard: (
     entryId: EntryId,
     answer: Conversations.CardAnswer,
+  ) => Promise<Actions.IntentResult>;
+  /** See `Conversations.routineCard`. */
+  readonly routineCard: (
+    entryId: EntryId,
+    command: Conversations.RoutineCardCommand,
   ) => Promise<Actions.IntentResult>;
   readonly provideSecret: (
     entryId: EntryId,
@@ -884,7 +895,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     deleteSection: (sectionId) => run.promise(services.roster.deleteSection(sectionId)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
+    react: (entryId, emoji) => run.promise(conversations.react(entryId, emoji)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
+    routineCard: (entryId, command) => run.promise(conversations.routineCard(entryId, command)),
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
     stopRoom: (roomId) => run.promise(services.roster.stopRoom(roomId)),
@@ -908,6 +921,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     secrets: {
       view: services.secrets.view,
       add: (secret, request) => run.promise(services.secrets.add(secret, request)),
+      addFromAsk: (asked) => run.promise(services.secrets.addFromAsk(asked)),
       update: (id, changes) => run.promise(services.secrets.update(id, changes)),
       remove: (id) => run.promise(services.secrets.remove(id)),
       setAccess: (id, access) => run.promise(services.secrets.setAccess(id, access)),

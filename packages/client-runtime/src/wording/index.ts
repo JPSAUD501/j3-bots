@@ -83,7 +83,6 @@ export {
   type AiTone,
   connectStepText,
   type ConnectStepText,
-  signInStepLabel,
 } from "./aiAccount.ts";
 export {
   type LineName,
@@ -100,9 +99,9 @@ export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";
 export { activityTime, dividerTime, type TimeContext, timeInSentence } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
-export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
+export { type Announcement, turnAnnouncement, turnLine } from "./turn.ts";
 export { littleOneText, planStepText, planTitle } from "./plan.ts";
-export { fillDetail, stepText, workFoldTitle } from "./work.ts";
+export { fillDetail, fillText, stepDetail, stepMark, stepText, workFoldTitle } from "./work.ts";
 export {
   type ServerUpdateLine,
   serverUpdateLine,
@@ -113,3 +112,18 @@ export {
   updateResultLine,
 } from "./update.ts";
 export { lastChangeText, skillFailureText, skillScopeText, skillSourceText } from "./skills.ts";
+export {
+  botStationSub,
+  botStationTitle,
+  conditionTitle,
+  endReason,
+  failureHelp,
+  foldLine,
+  keyedRuns,
+  routineSentence,
+  type SentenceRun,
+  sentenceText,
+  stationStateText,
+  trackTag,
+  youStationLines,
+} from "./routine.ts";

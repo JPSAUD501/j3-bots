@@ -82,6 +82,7 @@ export { parseServerAddress, type ServerAddressProblem } from "./serverAddress.t
 export { Cell, type Readable, waitFor } from "./Store.ts";
 export {
   type CardAnswer,
+  type RoutineCardCommand,
   type Conversation,
   type ConversationItem,
   Conversations,
@@ -141,6 +142,7 @@ export {
   type SettingsSaves,
 } from "./stores/Settings.ts";
 export {
+  type AskedValues,
   type NewSecret,
   Secrets,
   type SecretsFailure,

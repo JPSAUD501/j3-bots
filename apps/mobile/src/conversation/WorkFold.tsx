@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {
-  liveTurn,
-  millisBetween,
-  shortDuration,
-  shownPlan,
-  turnClock,
-  turnElapsed,
-} from "@j3-bots/client-runtime/presentation";
+import { shownPlan } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useWorkSteps } from "@j3-bots/client-runtime/react";
 import {
   fillDetail,
+  fillText,
+  stepDetail,
+  stepMark,
   stepText,
-  turnLabel,
   turnLine,
   workFoldTitle,
 } from "@j3-bots/client-runtime/wording";
@@ -55,7 +50,6 @@ import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
 import { SwapText } from "../components/SwapText.tsx";
 import { enteringWhen, settleIn, useReducedMotion, useStep } from "../motion.ts";
-import { useSeconds } from "../seconds.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { useImage } from "../platform/images.ts";
@@ -83,11 +77,11 @@ export interface TurnBot {
 }
 
 /**
- * A turn's work in one row. While the turn runs: a small copy of the bot, one
- * line saying what it is doing now and the turn's clock; under it, the bot's
+ * A turn's work in one row. While the turn runs: a small copy of the bot and
+ * one line saying, in plain words, what it is doing now; under it, the bot's
  * little ones while part of the work runs in parallel, and the turn's plan as
- * a short card. When it ends, the row folds into one quiet line, "Worked for
- * 2m", that opens to every step, as the running row does once there are
+ * a short card. When it ends, the row folds into one quiet line, "Worked · 6
+ * steps", that opens to every step, as the running row does once there are
  * steps, and the plan into a line of its own, "Plan done, 4 of 4". Never opens
  * by itself; its steps are read only while it is open.
  */
@@ -146,7 +140,7 @@ export function WorkFold({
       )}
       {open && fold !== null && fold.stepCount > 0 && (
         <AnimatedView entering={opening} exiting={closing}>
-          <Steps foldId={fold.id} />
+          <Steps foldId={fold.id} working={fold.status._tag === "running"} />
         </AnimatedView>
       )}
       {live === null && plan !== null && <PlanLine plan={plan} folding={folding} />}
@@ -178,7 +172,7 @@ function EndLine({ fold }: { readonly fold: WorkFoldEntry }) {
   );
 }
 
-/** The folded line: how the turn ended and how long it worked, and how many steps. */
+/** The folded line: how the turn ended, and how many steps. */
 function FoldLine({
   fold,
   open,
@@ -222,12 +216,9 @@ function FoldLine({
 }
 
 /**
- * The running row: the bot at list size in its state, what it is doing now,
- * swapping as it moves to a new step, and the turn's clock, counted from the
- * turn's start on the server. Once there are steps, a chevron opens them.
- * TalkBack reads the line and the time so far in whole minutes, so its label
- * changes once a minute, not each tick; out of touch, only the line. The
- * header says each new line aloud.
+ * The running row: the bot at list size in its state and what it is doing
+ * now, in plain words, swapping as it moves to a new step. Once there are
+ * steps, a chevron opens them. The header says each new line aloud.
  */
 function LiveLine({
   turn,
@@ -246,29 +237,20 @@ function LiveLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const offline = useOffline();
-  const started = liveTurn(turn.bot);
-  // Out of touch, the app cannot say how long the turn has run: the clock stops showing.
-  const now = useSeconds(started !== null && !offline);
   const line = turnLine(turn.bot, offline, ctx);
-  const elapsed = started === null || offline ? null : turnElapsed(started, now);
   const chevron = useChevron(open);
   return (
     // Drawn over its little ones, which come out from behind the bot's face.
     <View style={styles.above} className="min-h-11 flex-row items-center gap-2.5">
       <View
         accessible
-        accessibilityLabel={turnLabel(line, elapsed, ctx)}
+        accessibilityLabel={line.text}
         className="min-w-0 flex-1 flex-row items-center gap-2.5"
       >
         <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} ref={face} />
         <View className="min-w-0 flex-1">
           <SwapText text={line.text} className={`text-xs ${toneClass[line.tone]}`} />
         </View>
-        {elapsed !== null && (
-          <Text face="mono" className="text-2xs text-muted-foreground" style={styles.tabular}>
-            {turnClock(elapsed)}
-          </Text>
-        )}
       </View>
       {hasSteps && (
         <PressScale
@@ -289,7 +271,6 @@ function LiveLine({
 }
 
 const styles = StyleSheet.create({
-  tabular: { fontVariant: ["tabular-nums"] },
   above: { zIndex: 1 },
 });
 
@@ -297,7 +278,14 @@ const styles = StyleSheet.create({
 const opening = FadeIn.duration(180);
 const closing = FadeOut.duration(140);
 
-function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
+/** The fold's steps. `working`: its turn has not ended (`stepText`, `stepMark`). */
+function Steps({
+  foldId,
+  working,
+}: {
+  readonly foldId: WorkFoldEntry["id"];
+  readonly working: boolean;
+}) {
   const { i18n } = usePresentation();
   const { t } = i18n;
   const state = useWorkSteps(foldId);
@@ -311,29 +299,36 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
           <View className="mt-px">
             <Icon icon={stepIcon[step.kind]} size={14} color="accent-muted-foreground" />
           </View>
-          {/* Long commands and paths wrap: every step reads in full. */}
-          {step.kind === "command" ? (
-            <Text selectable className="flex-1 text-2xs text-foreground" face="mono">
-              {step.label}
-            </Text>
-          ) : step.fill !== undefined ? (
-            <FillLine step={step} fill={step.fill} />
-          ) : step.image !== undefined ? (
-            <View className="flex-1 items-start gap-1.5">
-              <Text selectable className="text-xs text-foreground">
-                {stepText(step, i18n)}
-              </Text>
-              <StepImage id={step.image.id} />
-            </View>
+          {step.fill !== undefined ? (
+            <FillLine fill={step.fill} />
           ) : (
-            <Text selectable className="flex-1 text-xs text-foreground">
-              {stepText(step, i18n)}
-            </Text>
+            <View className="flex-1 items-start gap-1">
+              <Text selectable className="text-xs text-foreground">
+                {stepText(step, working, i18n)}
+              </Text>
+              <StepDetail step={step} />
+              {step.image !== undefined && <StepImage id={step.image.id} />}
+            </View>
           )}
-          <StepStatus step={step} />
+          <StepStatus step={step} working={working} />
         </View>
       ))}
     </View>
+  );
+}
+
+/**
+ * What a step worked on, as it was given, under its plain words: the command,
+ * the path or the search, quiet and in monospace, for whoever opened the
+ * steps to see it. Long ones wrap, so each reads in full.
+ */
+function StepDetail({ step }: { readonly step: WorkStep }) {
+  const detail = stepDetail(step);
+  if (detail === null) return null;
+  return (
+    <Text selectable face="mono" className="text-2xs text-muted-foreground">
+      {detail}
+    </Text>
   );
 }
 
@@ -385,13 +380,13 @@ function StepImage({ id }: { readonly id: WorkImageId }) {
  * A login's fill: which login and field, then where it was filled, or why it
  * was not, in the blocked tone, with the page's origin as the server checked it.
  */
-function FillLine({ step, fill }: { readonly step: WorkStep; readonly fill: CredentialFill }) {
+function FillLine({ fill }: { readonly fill: CredentialFill }) {
   const { i18n } = usePresentation();
   const detail = fillDetail(fill, i18n);
   return (
     <View className="flex-1">
       <Text selectable className="text-xs text-foreground">
-        {stepText(step, i18n)}
+        {fillText(fill, i18n)}
       </Text>
       {detail !== "" && (
         <Text
@@ -405,10 +400,10 @@ function FillLine({ step, fill }: { readonly step: WorkStep; readonly fill: Cred
   );
 }
 
-function StepStatus({ step }: { readonly step: WorkStep }) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
-  switch (step.status) {
+/** A step's mark (`stepMark`): running, done or failed, or none. */
+function StepStatus({ step, working }: { readonly step: WorkStep; readonly working: boolean }) {
+  const { t } = usePresentation().i18n;
+  switch (stepMark(step, working)) {
     case "running":
       return (
         <View className="flex-row items-center gap-1.5">
@@ -424,19 +419,12 @@ function StepStatus({ step }: { readonly step: WorkStep }) {
       );
     case "completed":
       return (
-        <View
-          accessible
-          accessibilityLabel={t("work.stepDone")}
-          className="flex-row items-center gap-1.5"
-        >
-          {step.finishedAt !== null && (
-            <Text className="text-2xs text-muted-foreground">
-              {shortDuration(millisBetween(step.startedAt, step.finishedAt), ctx.i18n)}
-            </Text>
-          )}
+        <View accessible accessibilityLabel={t("work.stepDone")}>
           <Icon icon={Check} size={14} color="accent-muted-foreground" />
         </View>
       );
+    case null:
+      return null;
   }
 }
 

@@ -427,7 +427,7 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
         }),
       )
       .pipe(Effect.mapError(unexpected));
-    const page = yield* Deferred.make<{ readonly url: string; readonly opened: boolean }>();
+    const page = yield* Deferred.make<string>();
     const tail = yield* Ref.make("");
     const printed = yield* Ref.make(false);
     // What the harness prints: kept short, in memory, for why it ended, and read for a page.
@@ -439,10 +439,9 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
           yield* Ref.update(tail, (text) => `${text}${line}\n`.slice(-TAIL_LENGTH));
           const url = pageIn(line, harness);
           if (url === null || (yield* Ref.getAndSet(printed, true))) return;
-          // The harness may also hand it to `BROWSER`, which then wins. Only
-          // where it has none to hand it to did the harness open the page.
+          // The harness may also hand it to `BROWSER`, which then wins.
           yield* Effect.sleep(PRINTED_PAGE_GRACE).pipe(
-            Effect.andThen(Deferred.succeed(page, { url, opened: pageFile === null })),
+            Effect.andThen(Deferred.succeed(page, url)),
             Effect.forkScoped,
           );
         }),
@@ -460,14 +459,16 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
             .map((line) => pageIn(line, harness))
             .find((found) => found !== null);
           if (url !== undefined && url !== null) {
-            return yield* Deferred.succeed(page, { url, opened: false });
+            return yield* Deferred.succeed(page, url);
           }
           yield* Effect.sleep(PAGE_POLL);
         }
       }).pipe(Effect.forkScoped);
     }
     yield* Deferred.await(page).pipe(
-      Effect.flatMap(({ url, opened }) => report({ _tag: "waiting-for-browser", url, opened })),
+      // The client opens it, whether or not the harness also did: whether it
+      // did, nothing here can tell (decision 0085).
+      Effect.flatMap((url) => report({ _tag: "waiting-for-browser", url, opened: false })),
       Effect.forkScoped,
     );
     const noPage = Deferred.await(page).pipe(

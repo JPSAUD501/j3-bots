@@ -24,6 +24,7 @@ import type {
   AskAnswer,
   CatchUpItem,
   OperatorMessage,
+  ReactionNews,
   RoomEntry,
   RoomWake,
   SystemEvent,
@@ -51,6 +52,8 @@ import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { reactionNews } from "../reactions/news.ts";
+import { reactionNotes } from "../reactions/notes.ts";
 import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -69,6 +72,7 @@ import {
   widestTeammate,
 } from "./envelopes.ts";
 import { Ledger, UNDELIVERED, WAKE_COLUMNS, WakeRow } from "./Ledger.ts";
+import { quietTurns } from "./quietTurns.ts";
 import {
   type Audience,
   audienceColumns,
@@ -197,9 +201,15 @@ const botWake = (
 
 /**
  * The event a system wake reports, `askName` saying whether an opening asks
- * the operator's name; any other payload on one is a bug.
+ * the operator's name and `newsOf` how the reactions on a message stand;
+ * `null` when there is nothing left to report, as for a reaction taken off
+ * meanwhile. Any other payload on one is a bug.
  */
-const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<SystemEvent> => {
+const systemEventOf = (
+  payload: WakePayload,
+  askName: boolean,
+  newsOf: (entryId: EntryId) => Effect.Effect<ReactionNews | null>,
+): Effect.Effect<SystemEvent | null> => {
   switch (payload._tag) {
     case "first-run":
       return Effect.succeed({
@@ -217,7 +227,10 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
       return Effect.succeed({
         name: "secret-ask",
         outcome: payload.outcome,
-        reference: secretReference(payload.name),
+        references: [
+          secretReference(payload.name),
+          ...(payload.alongside ?? []).map(secretReference),
+        ],
       });
     case "connector-ask":
       return Effect.succeed({
@@ -226,6 +239,10 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
         server: payload.server,
         note: payload.note,
       });
+    case "reaction":
+      return Effect.map(newsOf(payload.entryId), (news) =>
+        news === null ? null : { name: "reaction", news },
+      );
     case "message":
     case "answer":
     case "routine":
@@ -237,8 +254,11 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
   }
 };
 
-/** A catch-up note as an envelope shows it. */
-const catchUpItem = (note: CatchUpNote): CatchUpItem => {
+/**
+ * A catch-up note as an envelope shows it; reactions' notes are read as they
+ * stand when the envelope is written (`Pipeline.sinceLastTurn`).
+ */
+const catchUpItem = (note: Exclude<CatchUpNote, { readonly _tag: "reactions" }>): CatchUpItem => {
   switch (note._tag) {
     case "routine-delivered":
       return { type: "routine-delivered", routine: note.routine, at: note.at, text: note.text };
@@ -332,6 +352,7 @@ export const layer = Layer.effect(
     const attachments = yield* Attachments;
     const engineState = yield* EngineState;
     const workOf = sessionWork(sql);
+    const quiet = quietTurns(sql);
     const readiness = yield* Readiness;
     const observer = yield* Observer;
     const random = yield* SecureRandom.SecureRandom;
@@ -341,6 +362,7 @@ export const layer = Layer.effect(
 
     const zoneOf = operatorZone(settings);
     const roomOf = liveRoom(sql);
+    const notes = reactionNotes(sql, ids);
 
     // ---- Operator commands ------------------------------------------------
 
@@ -1052,6 +1074,9 @@ export const layer = Layer.effect(
         // line, and holds none of that word back.
         const { admitted } = work;
         if (admitted === null || work.unsent > 0) return null;
+        // A quiet turn takes no steer: the operator's word starts a turn of
+        // its own once it ends, one that shows its work (`quietTurns`).
+        if (yield* quiet.isQuiet(session.value.id, admitted.turnId)) return null;
         const head = pending.find((wake) => redirects(wake, admitted.audience));
         if (head === undefined) return null;
         const delivery = { _tag: "steer", turnId: admitted.turnId } as const;
@@ -1102,13 +1127,16 @@ export const layer = Layer.effect(
       const found = yield* entries.find(entryId);
       if (Option.isNone(found) || found.value.entry._tag !== "message") return null;
       const message: MessageEntry = found.value.entry;
-      return operatorMessage(
-        message.createdAt,
-        message.text,
-        message.attachments,
-        message.attachmentOffsets,
-        message.lookingAt,
-      );
+      return {
+        id: message.id,
+        ...operatorMessage(
+          message.createdAt,
+          message.text,
+          message.attachments,
+          message.attachmentOffsets,
+          message.lookingAt,
+        ),
+      } satisfies OperatorMessage;
     });
 
     const askCardOf = SqlSchema.findOneOption({
@@ -1144,6 +1172,8 @@ export const layer = Layer.effect(
         }),
       });
     });
+
+    const newsOf = reactionNews({ entries, roomOf, teammate: teammateRef });
 
     /** An urgent message, from the handoff card it put in the recipient's conversation. */
     const teammateMessageOf = Effect.fn("Pipeline.teammateMessageOf")(function* (entryId: EntryId) {
@@ -1190,10 +1220,12 @@ export const layer = Layer.effect(
       const unseen: Array<Unseen> = [];
       for (const note of yield* notesOf(botId)) {
         const value = note.note_json;
-        unseen.push({
-          item: value === null ? null : catchUpItem(value),
-          source: { _tag: "note", id: note.id },
-        });
+        let item: CatchUpItem | null = null;
+        if (value?._tag === "reactions") {
+          const news = yield* newsOf({ botId, entryId: value.entryId, forWake: false });
+          item = news === null ? null : { type: "reactions", news };
+        } else if (value !== null) item = catchUpItem(value);
+        unseen.push({ item, source: { _tag: "note", id: note.id } });
       }
       for (const message of yield* heldOf(botId)) {
         const teammate: TeammateMessage = {
@@ -1319,6 +1351,7 @@ export const layer = Layer.effect(
       if (message.author._tag === "bot") {
         return {
           author: yield* teammateRef(message.author.botId),
+          id: message.id,
           at: message.createdAt,
           text: message.text,
           mentions,
@@ -1334,6 +1367,7 @@ export const layer = Layer.effect(
       );
       return {
         author: "user",
+        id: message.id,
         at: message.createdAt,
         text: message.text,
         mentions,
@@ -1565,12 +1599,13 @@ export const layer = Layer.effect(
           ? yield* systemEventOf(
               head.payload_json,
               head.payload_json._tag === "first-run" && (yield* opensAsking(plan.botId)),
+              (entryId) => newsOf({ botId: plan.botId, entryId, forWake: true }),
             )
           : null;
       const parts = head.kind === "system" ? [] : yield* Effect.forEach(plan.wakes, partOf);
       const render = (wakes: number, seen: number): Wake | null => {
         const since = carried.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));
-        if (event !== null) return system(event, since);
+        if (head.kind === "system") return event === null ? null : system(event, since);
         return head.kind === "bot"
           ? botWake(base, since, parts.slice(0, wakes))
           : userWake(base, since, parts.slice(0, wakes));
@@ -1662,6 +1697,23 @@ export const layer = Layer.effect(
     });
 
     /**
+     * The bot's other reaction wakes become notes this dispatch carries
+     * (`docs/architecture/server.md`, Reactions): a reaction rides the turn
+     * that goes first, and never starts a quiet turn of its own just after it.
+     */
+    const reactionsRide = Effect.fn("Pipeline.reactionsRide")(function* (plan: Plan) {
+      const carried = new Set(plan.wakes.map((wake) => wake.id));
+      const riding = (yield* pendingOf(plan.botId)).flatMap((wake) =>
+        wake.payload_json._tag === "reaction" && !carried.has(wake.id)
+          ? [{ id: wake.id, entryId: wake.payload_json.entryId }]
+          : [],
+      );
+      if (riding.length === 0) return;
+      yield* ledger.cancelWakes(riding.map((wake) => wake.id));
+      for (const wake of riding) yield* notes.leave(plan.botId, wake.entryId);
+    });
+
+    /**
      * Writes the dispatch for a plan, in one transaction: its envelope, its
      * files in order, its wakes linked, and the notes and held messages the
      * envelope consumed. Nothing changes if the plan no longer holds: its
@@ -1683,6 +1735,21 @@ export const layer = Layer.effect(
           const roomed = yield* roomPlan(chosen);
           if (roomed._tag !== "plan") return roomed.result;
           const { plan, room } = roomed;
+          // A reaction taken off since its wake was written has nothing left
+          // to tell: its wake goes, and the bot's other reactions keep theirs.
+          const [head] = plan.wakes;
+          if (
+            head?.payload_json._tag === "reaction" &&
+            (yield* newsOf({
+              botId: plan.botId,
+              entryId: head.payload_json.entryId,
+              forWake: true,
+            })) === null
+          ) {
+            yield* ledger.cancelWakes(plan.wakes.map((wake) => wake.id));
+            return null;
+          }
+          yield* reactionsRide(plan);
           const fitted = yield* envelopeOf(plan, yield* sinceLastTurn(plan.botId), room);
           yield* dropUnseen(plan.botId, fitted.dropped);
           const { wake } = fitted;

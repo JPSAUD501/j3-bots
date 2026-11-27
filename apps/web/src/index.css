@@ -150,80 +150,190 @@
 }
 
 /*
- * A bot or a room new to the roster (components/RosterRow.tsx) comes down into a light of its own
- * color: a cone from above and a pool at its feet, which come up, hold and go; its name and line
- * follow it in. The fall, the landing and the antenna lighting are the avatar's own (the shared
- * frame loop); these are opacities and one transform. Under reduced motion none of it plays.
+ * A bot or a room new to the roster (components/RosterRow.tsx) arrives the way the first run's cast
+ * does: a light of its own color comes up from a lamp above its row, it comes down into it and
+ * lands, its name and line come in, and the light goes down. The row says where the arrival is
+ * (`data-arrival`): `lit` until its bot lands, then `landed`. The light is drawn like the stage's
+ * (`.stage-light`, below): a cone from the lamp, soft at its edge and thinning toward the floor,
+ * a pool at the bot's feet, the floor dark under it once it stands there, and a rim of light along
+ * its top. Everything stays within the row's own height, so nothing crosses the row above or below.
+ * The fall and the landing are the avatar's own (the shared frame loop), and `landed` comes from
+ * that landing; these are opacities and one transform. Under reduced motion the row fades in
+ * (`calm`) and none of the rest is drawn.
  */
 @layer components {
-  .row-spot {
+  .row-stage {
+    /* How far the row reaches above and below its 40 px avatar: negative, as `inset()` takes it. */
+    --row-ceiling: calc((2.5rem - var(--layout-row-pointer)) / 2);
+  }
+
+  @media (pointer: coarse) {
+    .row-stage {
+      --row-ceiling: calc((2.5rem - var(--layout-row-touch)) / 2);
+    }
+  }
+
+  :is([data-arrival="lit"], [data-arrival="landed"]) .row-stage {
+    clip-path: inset(var(--row-ceiling) -1rem);
+  }
+
+  .row-light {
+    /* On a light sidebar the lamp is the bot's own color; on a dark one, warm white taking some of it. */
+    --row-lamp: var(--row-spot);
+    --row-beam: color-mix(in oklab, var(--row-spot) 30%, var(--row-lamp));
+    /* The angle from the cone's middle to where its light ends. */
+    --row-cone: 21deg;
     position: absolute;
     z-index: -1;
-    bottom: -6%;
-    left: 50%;
-    width: 230%;
-    height: 330%;
-    translate: -50% 0;
+    inset-inline: -1rem;
+    inset-block: var(--row-ceiling);
     pointer-events: none;
-    animation: row-spot var(--row-light) var(--ease-out) both;
+    animation: row-light-in var(--row-spot-in) var(--ease-out) both;
   }
 
-  .row-spot::before,
-  .row-spot::after {
-    content: "";
+  .dark .row-light {
+    --row-lamp: oklch(0.97 0.04 85);
+  }
+
+  [data-arrival="landed"] .row-light {
+    animation: row-light-out var(--row-dim) var(--ease-out) var(--row-hold) both;
+  }
+
+  .row-beam {
+    --lit: color-mix(in oklab, var(--row-beam) 34%, transparent);
     position: absolute;
-    inset-inline: 0;
-  }
-
-  .row-spot::before {
-    inset-block: 0 8%;
-    background: linear-gradient(
-      to bottom,
-      transparent,
-      color-mix(in oklab, var(--row-spot) 30%, transparent)
+    inset: 0;
+    background: conic-gradient(
+      from 180deg at 50% -45%,
+      var(--lit) 0deg,
+      var(--lit) calc(var(--row-cone) * 0.42),
+      color-mix(in oklab, var(--lit) 72%, transparent) calc(var(--row-cone) * 0.58),
+      color-mix(in oklab, var(--lit) 36%, transparent) calc(var(--row-cone) * 0.74),
+      color-mix(in oklab, var(--lit) 10%, transparent) calc(var(--row-cone) * 0.9),
+      transparent var(--row-cone),
+      transparent calc(360deg - var(--row-cone)),
+      color-mix(in oklab, var(--lit) 10%, transparent) calc(360deg - var(--row-cone) * 0.9),
+      color-mix(in oklab, var(--lit) 36%, transparent) calc(360deg - var(--row-cone) * 0.74),
+      color-mix(in oklab, var(--lit) 72%, transparent) calc(360deg - var(--row-cone) * 0.58),
+      var(--lit) calc(360deg - var(--row-cone) * 0.42),
+      var(--lit) 360deg
     );
-    clip-path: polygon(40% 0, 60% 0, 100% 100%, 0 100%);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      #000,
+      rgb(0 0 0 / 0.6) 55%,
+      rgb(0 0 0 / 0.3) 90%
+    );
+    mask-image: linear-gradient(to bottom, #000, rgb(0 0 0 / 0.6) 55%, rgb(0 0 0 / 0.3) 90%);
   }
 
-  .row-spot::after {
-    bottom: 0;
-    height: 16%;
+  /* The pool at the bot's feet, hot at its middle, which takes the landing. */
+  .row-pool,
+  .row-shadow {
+    position: absolute;
+    left: 50%;
+    translate: -50% 50%;
     border-radius: 50%;
+  }
+
+  .row-pool {
+    bottom: calc(-1 * var(--row-ceiling));
+    width: 4rem;
+    height: 0.875rem;
     background: radial-gradient(
       closest-side,
-      color-mix(in oklab, var(--row-spot) 42%, transparent),
+      color-mix(in oklab, var(--row-lamp) 58%, transparent),
+      color-mix(in oklab, var(--row-beam) 36%, transparent) 36%,
+      color-mix(in oklab, var(--row-spot) 12%, transparent) 70%,
       transparent
     );
   }
 
-  .row-words {
-    animation: row-words var(--duration-soft) var(--ease-soft) var(--row-words) backwards;
+  [data-arrival="landed"] .row-pool {
+    animation: row-pool-land var(--duration-soft) var(--ease-soft);
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .row-spot {
-      display: none;
-    }
+  /* Where the bot stands, the floor is dark under it once it has landed. */
+  .row-shadow {
+    bottom: calc(-1 * var(--row-ceiling) + 0.0625rem);
+    width: 2.25rem;
+    height: 0.4rem;
+    opacity: 0;
+    background: radial-gradient(
+      closest-side,
+      oklch(0 0 0 / 0.42),
+      oklch(0 0 0 / 0.18) 55%,
+      transparent
+    );
+  }
+
+  [data-arrival="landed"] .row-shadow {
+    animation: row-shadow-in var(--duration-slow) var(--ease-out) both;
+  }
+
+  /* The bot in its light: a thin bright rim along its top, and a little of its color around it. */
+  [data-arrival="lit"] .row-body {
+    filter: drop-shadow(0 -1px 0.4px color-mix(in oklab, var(--row-lamp) 55%, transparent))
+      drop-shadow(0 -3px 10px color-mix(in oklab, var(--row-beam) 24%, transparent));
+  }
+
+  [data-arrival="landed"] .row-body {
+    filter: drop-shadow(0 -1px 0.4px transparent) drop-shadow(0 -3px 10px transparent);
+    transition: filter var(--row-dim) var(--ease-out) var(--row-hold);
+  }
+
+  /* Its words wait for it, then its name and its line come in as it lands, one after the other. */
+  [data-arrival="lit"] :is(.row-name, .row-line) {
+    opacity: 0;
+  }
+
+  [data-arrival="landed"] .row-name {
+    animation: row-words var(--duration-soft) var(--ease-soft) both;
+  }
+
+  [data-arrival="landed"] .row-line {
+    animation: row-words var(--duration-soft) var(--ease-soft) var(--row-gap) both;
+  }
+
+  [data-arrival="calm"] {
+    animation: row-calm var(--duration-state) var(--ease-out) both;
   }
 }
 
-@keyframes row-spot {
-  0% {
+@keyframes row-light-in {
+  from {
     opacity: 0;
   }
-  16%,
-  62% {
+}
+
+@keyframes row-light-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes row-pool-land {
+  40% {
+    scale: 1.22 1.1;
+  }
+}
+
+@keyframes row-shadow-in {
+  to {
     opacity: 1;
-  }
-  100% {
-    opacity: 0;
   }
 }
 
 @keyframes row-words {
   from {
     opacity: 0;
-    transform: translateX(-8px);
+    translate: 0 0.25rem;
+  }
+}
+
+@keyframes row-calm {
+  from {
+    opacity: 0;
   }
 }
 
@@ -622,6 +732,239 @@
       transition: opacity var(--duration-state) var(--ease-out);
     }
   }
+
+  /*
+   * The Track (RoutineTrack.tsx): a routine's stations down a rail, the line
+   * under them drawn in an SVG the rail measures. A station is its mark in a
+   * 28 px cell and its words; a lit station has a wash that reaches 8 px out
+   * on each side, in its bot's color, the waiting color or the blocked one.
+   */
+  .track-station {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    column-gap: 12px;
+    padding-block: 6px;
+    transition:
+      padding var(--duration-state) var(--ease-out),
+      opacity var(--duration-state) var(--ease-out);
+  }
+
+  .track-station::before {
+    position: absolute;
+    inset: 0 -8px;
+    z-index: -1;
+    border-radius: 14px;
+    background: var(--track-wash, transparent);
+    content: "";
+    opacity: 0;
+    transition: opacity var(--duration-state) var(--ease-out);
+  }
+
+  .track-station[data-lit] {
+    padding-block: 8px;
+  }
+
+  .track-station[data-lit]::before {
+    opacity: 1;
+  }
+
+  .track-station[data-lit="bot"] {
+    --track-wash: var(--track-lit);
+    --avatar-cutout: var(--track-lit);
+  }
+
+  .track-station[data-lit="waiting"] {
+    --track-wash: var(--waiting-surface);
+  }
+
+  .track-station[data-lit="blocked"] {
+    --track-wash: var(--blocked-surface);
+    --avatar-cutout: var(--blocked-surface);
+  }
+
+  .track-station[data-state="skipped"],
+  .track-station[data-state="not-needed"] {
+    opacity: 0.5;
+  }
+
+  .track-station[data-kind="condition"] {
+    padding-block: 5px;
+  }
+
+  .track-enter {
+    animation: track-enter var(--duration-soft) var(--ease-soft) backwards;
+  }
+
+  .track-mark {
+    position: relative;
+    display: flex;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    align-self: start;
+  }
+
+  /* The title's first line sits on the mark's middle. */
+  .track-title {
+    padding-block-start: 4px;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--muted-foreground);
+    transition: color var(--duration-state) var(--ease-out);
+  }
+
+  .track-station:is(
+      [data-state="rest"],
+      [data-state="doing"],
+      [data-state="waiting"],
+      [data-state="failed"]
+    )
+    .track-title {
+    color: var(--foreground);
+  }
+
+  .track-station:is([data-state="doing"], [data-state="waiting"], [data-state="failed"])
+    .track-title {
+    font-weight: 500;
+  }
+
+  .track-sub {
+    font-size: var(--text-2xs);
+    line-height: var(--text-2xs--line-height);
+    color: var(--muted-foreground);
+  }
+
+  .track-gate {
+    padding-block-start: 6px;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    color: var(--muted-foreground);
+  }
+
+  .track-siding {
+    margin-block-start: 2px;
+    font-size: var(--text-2xs);
+    line-height: var(--text-2xs--line-height);
+    color: var(--muted-foreground);
+    transition:
+      opacity var(--duration-state) var(--ease-out),
+      color var(--duration-state) var(--ease-out);
+  }
+
+  .track-station[data-state="passed"] .track-siding {
+    opacity: 0.45;
+  }
+
+  .track-station[data-state="stopped"] .track-siding {
+    color: var(--foreground);
+  }
+
+  .track-disc {
+    position: relative;
+    display: flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+  }
+
+  .track-disc svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .track-you {
+    background: var(--waiting-surface);
+    box-shadow: inset 0 0 0 1.5px var(--waiting);
+    color: var(--waiting);
+    transition:
+      background-color var(--duration-slow) var(--ease-out),
+      color var(--duration-slow) var(--ease-out);
+  }
+
+  .track-you[data-waiting] {
+    background: var(--waiting);
+    color: var(--surface);
+  }
+
+  /* Its ping, stepped like the avatar's: a ring that leaves the disc and fades. */
+  .track-you[data-waiting]::after {
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid var(--waiting);
+    border-radius: inherit;
+    content: "";
+    animation: track-ping 1.6s steps(12) infinite;
+  }
+
+  .track-you[data-timed-out] {
+    background: var(--muted);
+    box-shadow: none;
+    color: var(--muted-foreground);
+  }
+
+  .track-diamond {
+    width: 10px;
+    height: 10px;
+    rotate: 45deg;
+    border: 1.5px solid var(--muted-foreground);
+    border-radius: 1.5px;
+    background: var(--surface);
+    transition: background-color var(--duration-state) var(--ease-out);
+  }
+
+  .track-diamond[data-judged] {
+    background: var(--muted-foreground);
+    animation: track-diamond var(--duration-pop) var(--ease-pop);
+  }
+
+  /* The face at 22 px while it does not work, at full size while it does. */
+  .track-face {
+    position: relative;
+    display: flex;
+    scale: 0.79;
+    transition: scale var(--duration-slide) var(--ease-slide);
+  }
+
+  .track-face[data-big] {
+    scale: 1;
+  }
+
+  .track-check {
+    position: absolute;
+    inset-block-end: -3px;
+    inset-inline-end: -4px;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 0 2px var(--avatar-cutout, var(--surface));
+  }
+
+  .track-check svg {
+    stroke-width: 3.4;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .track-enter {
+      animation: appear var(--duration-state) var(--ease-out) backwards;
+    }
+
+    .track-you[data-waiting]::after {
+      inset: -3px;
+      animation: none;
+      opacity: 0.4;
+    }
+
+    .track-diamond[data-judged] {
+      animation: none;
+    }
+
+    .track-face {
+      transition: none;
+    }
+  }
 }
 
 @keyframes send-off {
@@ -675,6 +1018,31 @@
   50% {
     opacity: 0.35;
     transform: scale(0.7);
+  }
+}
+
+@keyframes track-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes track-ping {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+@keyframes track-diamond {
+  50% {
+    scale: 1.3;
   }
 }
 
@@ -1295,8 +1663,12 @@
     animation-duration: 0s !important;
   }
 
-  /* A crossfade moves nothing, so it stays: the first run's screens give way to each other. */
-  .crossfade {
+  /*
+   * A crossfade moves nothing, so it stays: the first run's screens give way to
+   * each other, and a row new to the roster fades in.
+   */
+  .crossfade,
+  [data-arrival="calm"] {
     animation-duration: var(--duration-state) !important;
   }
 }

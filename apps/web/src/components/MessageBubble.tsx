@@ -5,6 +5,7 @@ import { AppWindowIcon } from "lucide-react";
 import { type RefObject, useLayoutEffect, useRef } from "react";
 import { messageStatus } from "@j3-bots/client-runtime";
 import {
+  canReact,
   clockTime,
   type GroupPosition,
   lookingAtLine,
@@ -21,6 +22,7 @@ import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { FaceOf } from "./avatar/TeamAvatars";
 import { MessageFile } from "./FileCard";
 import { MessageText } from "./MessageText";
+import { type OnReact, ReactButton, ReactionPills, type ReactionView } from "./Reactions";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
 import { Button } from "./ui/button";
@@ -89,6 +91,13 @@ interface MessageBubbleProps {
   readonly flyFrom?: RefObject<HTMLElement | null>;
   /** What holds the bot's hello back, which a message the server says waits behind it waits for. */
   readonly openingHold?: OpeningHold | null;
+  /**
+   * Sets the operator's reaction on the message, or takes it off. Without it,
+   * or on a message from a server that has no reactions, it offers none.
+   */
+  readonly onReact?: OnReact;
+  /** The reaction bar shown open from the start, as the gallery does. */
+  readonly reactionView?: ReactionView;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left in a tint of its color. */
@@ -107,6 +116,8 @@ export function MessageBubble({
   arriving = false,
   flyFrom,
   openingHold = null,
+  onReact,
+  reactionView,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -121,6 +132,11 @@ export function MessageBubble({
   const placed =
     message.text !== "" && message.attachmentOffsets?.length === message.attachments.length
       ? message.attachmentOffsets
+      : null;
+  // A message on the server that carries its reactions takes them; one still on this device none.
+  const reacting =
+    message._tag === "message" && canReact(message) && onReact !== undefined
+      ? { reactions: message.reactions ?? [], onReact }
       : null;
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
@@ -185,7 +201,7 @@ export function MessageBubble({
       ref={target}
       tabIndex={-1}
       className={cn(
-        "flex flex-col gap-1 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "group/message flex flex-col gap-1 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         fromOperator ? "origin-bottom-right items-end" : "origin-bottom-left items-start",
         startsGroup ? "mt-3" : "mt-1",
         speaker !== null && speakerGutter,
@@ -200,48 +216,65 @@ export function MessageBubble({
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard visual={message.visual} />
       )}
-      {message.text !== "" && (
-        <div
-          ref={bubbleRef}
-          title={time}
-          className={cn(
-            "max-w-(--layout-bubble-width) rounded-bubble px-3.5 py-2 text-base pointer-coarse:text-lg",
-            fromOperator
-              ? [
-                  "origin-bottom-right bg-bubble-operator text-bubble-operator-foreground",
-                  operatorCorners[position],
-                ]
-              : [
-                  tintOf(tint),
-                  "bg-(--tint-bubble) text-bubble-bot-foreground",
-                  botCorners[position],
-                ],
-          )}
-        >
-          <MessageText
-            text={message.text}
-            mentionable={mentionable ?? []}
-            {...(placed === null
-              ? {}
-              : {
-                  placed: {
-                    files: message.attachments,
-                    offsets: placed,
-                    onOpen: onOpenAttachment,
-                  },
-                })}
+      {/* The bubble's width is set here, so the button that opens the reaction bar can stand
+          just outside it. */}
+      <div
+        className={cn(
+          "relative flex max-w-(--layout-bubble-width) flex-col gap-1 empty:hidden",
+          fromOperator ? "items-end" : "items-start",
+        )}
+      >
+        {message.text !== "" && (
+          <div
+            ref={bubbleRef}
+            title={time}
+            className={cn(
+              "max-w-full rounded-bubble px-3.5 py-2 text-base pointer-coarse:text-lg",
+              fromOperator
+                ? [
+                    "origin-bottom-right bg-bubble-operator text-bubble-operator-foreground",
+                    operatorCorners[position],
+                  ]
+                : [
+                    tintOf(tint),
+                    "bg-(--tint-bubble) text-bubble-bot-foreground",
+                    botCorners[position],
+                  ],
+            )}
+          >
+            <MessageText
+              text={message.text}
+              mentionable={mentionable ?? []}
+              {...(placed === null
+                ? {}
+                : {
+                    placed: {
+                      files: message.attachments,
+                      offsets: placed,
+                      onOpen: onOpenAttachment,
+                    },
+                  })}
+            />
+          </div>
+        )}
+        {/* Files placed in the text stand there; others follow it. */}
+        {placed === null &&
+          message.attachments.map((attachment) => (
+            <MessageFile
+              key={attachment.id}
+              attachment={attachment}
+              onOpen={() => onOpenAttachment(attachment)}
+            />
+          ))}
+        {reacting !== null && (
+          <ReactButton
+            {...reacting}
+            fromOperator={fromOperator}
+            {...(reactionView === undefined ? {} : { defaultView: reactionView })}
           />
-        </div>
-      )}
-      {/* Files placed in the text stand there; others follow it. */}
-      {placed === null &&
-        message.attachments.map((attachment) => (
-          <MessageFile
-            key={attachment.id}
-            attachment={attachment}
-            onOpen={() => onOpenAttachment(attachment)}
-          />
-        ))}
+        )}
+      </div>
+      {reacting !== null && <ReactionPills {...reacting} fromOperator={fromOperator} />}
       {fromOperator && message.lookingAt !== undefined && (
         // The window the operator wrote it over, from quick access, which went with it.
         <p className="flex max-w-(--layout-bubble-width) min-w-0 items-center gap-1 pe-1 text-2xs text-muted-foreground">

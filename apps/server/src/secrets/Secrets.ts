@@ -117,12 +117,14 @@ const ConnectorAddressJson = json(ConnectorSecret.fields.address);
 const ConnectorOAuthJson = json(ConnectorSecret.fields.oauth);
 const NamedSecretsJson = json(Schema.Array(NamedSecret));
 const CommandJson = json(ConnectorSecret.fields.command);
+const ServiceJson = json(ConnectorSecret.fields.service);
 
 const decodeName = Schema.decodeUnknownOption(SecretName);
 
 /**
  * The fields a connector's record seals, one value each. A record saved
- * before `formValues` was kept has none, which reads as no value.
+ * before `formValues` or `service` was kept has none, which reads as no
+ * value.
  */
 const CONNECTOR_FIELDS = [
   "address",
@@ -132,7 +134,14 @@ const CONNECTOR_FIELDS = [
   "env",
   "formSecrets",
   "formValues",
+  "service",
 ] as const;
+
+/** What a connector's field kept before it was sealed reads as. */
+const UNSEALED: Partial<Record<(typeof CONNECTOR_FIELDS)[number], string>> = {
+  formValues: "[]",
+  service: "null",
+};
 
 const utf8 = (text: string) => Buffer.from(text, "utf8");
 
@@ -221,10 +230,10 @@ export class Secrets extends Context.Service<
       { readonly secret: Secret; readonly created: boolean },
       Conflict | Invalid | NotFound
     >;
-    /** Which of the asks of `entries` a secret was added from. */
+    /** How many secrets were added from each of the asks of `entries` that any was. */
     readonly askedIn: (
       entries: ReadonlyArray<EntryId>,
-    ) => Effect.Effect<ReadonlySet<string>, Conflict>;
+    ) => Effect.Effect<ReadonlyMap<string, number>, Conflict>;
     readonly update: (input: {
       readonly id: SecretId;
       readonly changes: SecretChanges;
@@ -840,15 +849,16 @@ export const layer = Layer.effect(
       serial(
         Effect.gen(function* () {
           const { sql } = yield* ready;
-          if (ids.length === 0) return new Set<string>();
+          if (ids.length === 0) return new Map<string, number>();
           const rows = yield* SqlSchema.findAll({
             Request: Schema.Void,
-            Result: Schema.Struct({ asked_in: Schema.String }),
+            Result: Schema.Struct({ asked_in: Schema.String, added: Schema.Number }),
             execute: () => sql`
-              SELECT asked_in FROM records WHERE ${sql.in("asked_in", ids)}
+              SELECT asked_in, COUNT(*) AS added FROM records
+              WHERE ${sql.in("asked_in", ids)} GROUP BY asked_in
             `,
           })(undefined).pipe(Effect.orDie);
-          return new Set<string>(rows.map((row) => row.asked_in));
+          return new Map<string, number>(rows.map((row) => [row.asked_in, row.added]));
         }),
       );
 
@@ -1157,7 +1167,8 @@ export const layer = Layer.effect(
           const opened = (field: (typeof CONNECTOR_FIELDS)[number]) => {
             const row = rows.find((candidate) => candidate.field === field);
             if (row !== undefined) return Effect.map(openRow(key, row), text);
-            return field === "formValues" ? Effect.succeed("[]") : damaged(recordId, field);
+            const unsealed = UNSEALED[field];
+            return unsealed === undefined ? damaged(recordId, field) : Effect.succeed(unsealed);
           };
           const address = yield* readBack(
             recordId,
@@ -1194,6 +1205,11 @@ export const layer = Layer.effect(
             "formValues",
             Schema.decodeEffect(NamedSecretsJson)(yield* opened("formValues")),
           );
+          const service = yield* readBack(
+            recordId,
+            "service",
+            Schema.decodeEffect(ServiceJson)(yield* opened("service")),
+          );
           return Option.some<ConnectorSecret>({
             connectorId: id,
             address,
@@ -1203,6 +1219,7 @@ export const layer = Layer.effect(
             env,
             formSecrets,
             formValues,
+            service,
           });
         }),
       );
@@ -1219,6 +1236,7 @@ export const layer = Layer.effect(
           const env = yield* Schema.encodeEffect(NamedSecretsJson)(secret.env);
           const formSecrets = yield* Schema.encodeEffect(NamedSecretsJson)(secret.formSecrets);
           const formValues = yield* Schema.encodeEffect(NamedSecretsJson)(secret.formValues);
+          const service = yield* Schema.encodeEffect(ServiceJson)(secret.service);
           const rows = [
             yield* sealedRow(key, recordId, "address", utf8(address)),
             yield* sealedRow(key, recordId, "oauth", utf8(oauth)),
@@ -1227,6 +1245,7 @@ export const layer = Layer.effect(
             yield* sealedRow(key, recordId, "env", utf8(env)),
             yield* sealedRow(key, recordId, "formSecrets", utf8(formSecrets)),
             yield* sealedRow(key, recordId, "formValues", utf8(formValues)),
+            yield* sealedRow(key, recordId, "service", utf8(service)),
           ];
           const now = timeText(yield* DateTime.now);
           yield* transactional(sql)(

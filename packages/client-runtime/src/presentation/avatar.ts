@@ -471,6 +471,8 @@ const ACTS = {
     { until: 0.2, duck: 8, lid: 0.6, swell: 0.1 },
     { until: 0.8, smile: 1, lid: 0, look: [0.3, -0.2] },
   ],
+  // A routine's step it did ended: the cheek up a moment.
+  smile: [{ until: 0.9, smile: 1, lid: 0 }],
   sulk: [
     { until: 0.12, duck: 4.5, lid: 0.6, swell: 0.04 },
     { until: 0.65, lid: 0.55, look: [0.2, 0.75] },
@@ -823,6 +825,10 @@ export type AvatarPoke =
   | "gulp"
   /** One comes home having failed: it takes it in, and looks down. */
   | "sulk"
+  /** A routine's step comes to it: it stretches up to meet the light, which glows on its antenna. */
+  | "catch"
+  /** Its step of a routine ended: it smiles a moment. */
+  | "smile"
   /** It comes in from above, into its place: an entrance. */
   | "arrive"
   /** The same from just above, as into a row of a list. */
@@ -886,6 +892,10 @@ export function pokeAvatar(sim: AvatarSim, poke: AvatarPoke): AvatarSim {
       return { ...begin(sim, "gulp"), blinkAt: sim.time, litAt: sim.time + 0.05 };
     case "sulk":
       return { ...begin(sim, "sulk"), blinkAt: sim.time };
+    case "catch":
+      return { ...begin(sim, "reach"), litAt: sim.time + 0.24 };
+    case "smile":
+      return begin(sim, "smile");
     case "arrive":
     case "drop":
       return {

@@ -53,6 +53,29 @@ const OAuthTokens = Schema.Struct({
 });
 export type OAuthTokens = typeof OAuthTokens.Type;
 
+/**
+ * How a connector signs in as a service (the OAuth client credentials
+ * extension): a client the operator registered at the service, which proves
+ * itself with a client secret or by signing with its private key (RFC 7523).
+ * The client ID and the credential hold references to the operator's secrets
+ * (`${secret:<name>}`), resolved for the connector as its headers' are; the
+ * credential is exactly one. `issuer` is the authorization server the
+ * credentials were issued by, found when they were given: they are sent to
+ * it alone, never to another the connector's server names later (the MCP
+ * authorization specification's "Authorization Server Binding").
+ */
+export const ServiceCredentials = Schema.Struct({
+  issuer: Schema.String,
+  clientId: Secret,
+  credential: Schema.Union([
+    Schema.TaggedStruct("client-secret", { value: Secret }),
+    Schema.TaggedStruct("private-key", { value: Secret }),
+  ]),
+  /** The scopes asked for, space separated; null asks for what the server names, or none. */
+  scope: Schema.NullOr(Schema.String),
+});
+export type ServiceCredentials = typeof ServiceCredentials.Type;
+
 /** A header or environment variable, with its value. */
 export const NamedSecret = Schema.Struct({ name: Schema.String, value: Secret });
 export type NamedSecret = typeof NamedSecret.Type;
@@ -92,6 +115,8 @@ export const ConnectorSecret = Schema.Struct({
    * rendered again whole when one of them is given anew.
    */
   formValues: Schema.Array(NamedSecret),
+  /** How it signs in as a service, for one that does; null for any other. */
+  service: Schema.NullOr(ServiceCredentials),
 });
 export type ConnectorSecret = typeof ConnectorSecret.Type;
 

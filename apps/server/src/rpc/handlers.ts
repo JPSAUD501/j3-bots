@@ -43,6 +43,7 @@ import { SignIns } from "../providers/SignIns.ts";
 import { Harnesses, withCopies } from "../harnesses/Harnesses.ts";
 import { Network, reachableOrigins } from "../system/Network.ts";
 import { Cards } from "../turns/Cards.ts";
+import { Reactions } from "../reactions/Reactions.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
@@ -80,6 +81,7 @@ export const handlers = J3Rpcs.toLayer(
     const devices = yield* Devices;
     const skills = yield* Skills;
     const pipeline = yield* Pipeline;
+    const reactions = yield* Reactions;
     const cards = yield* Cards;
     const browserHelp = yield* BrowserHelp;
     const stops = yield* Stops;
@@ -190,6 +192,7 @@ export const handlers = J3Rpcs.toLayer(
       "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
       "message.send": (input) => pipeline.sendMessage(input),
       "message.retry": (input) => pipeline.retryMessage(input),
+      "message.react": (input) => reactions.react(input),
       "notice.retry": (input) => pipeline.retryNotice(input),
       // Help in the bot's browser is J3 Bots' own card, apart from the engine's requests.
       "card.answer": ({ answer, ...card }) => {
@@ -237,6 +240,9 @@ export const handlers = J3Rpcs.toLayer(
       "routine.delete": ({ commandId, routineId }) =>
         routines.remove({ commandId, routineId, author: operator }),
       "routine.run": (input) => routines.run(input),
+      "routine.answer": (input) => routines.answer(input),
+      "routine.retry": (input) => routines.retry(input),
+      "routine.stopRun": (input) => routines.stopRun(input),
       "memory.list": ({ scope }) => memory.list(scope),
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),
@@ -280,6 +286,7 @@ export const handlers = J3Rpcs.toLayer(
       "secrets.list": () => secrets.list,
       "secrets.reveal": ({ id, field }) => secrets.reveal({ id, field, deviceId: device.id }),
       "secrets.add": (input) => secretAsks.add(input),
+      "secrets.addFromAsk": (input) => secretAsks.addFromAsk(input),
       "secrets.update": (input) => secrets.update(input),
       "secrets.delete": ({ id }) => secrets.remove(id),
       "secrets.setAccess": ({ id, access }) => secrets.setAccess(id, access),

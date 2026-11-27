@@ -48,6 +48,18 @@ export interface AvatarHandle {
   readonly poke: (poke: AvatarPoke) => void;
 }
 
+/** An avatar's entrance, when it is more than coming in at once. */
+export interface AvatarEntrance {
+  /** It sets off this many ms after it first shows; until then it is not there. */
+  readonly delay: number;
+  /**
+   * Called once, on the frame it lands: what arrives with it can follow it,
+   * whenever the frame loop gets to draw it. Never called for an entrance
+   * that does not play, as under reduced motion.
+   */
+  readonly onLanded?: () => void;
+}
+
 export interface BotAvatarProps {
   readonly avatar: Avatar;
   /** What seeds the bot's own manner: its id, so it moves the same everywhere and on every run. */
@@ -61,10 +73,10 @@ export interface BotAvatarProps {
   readonly still?: boolean;
   /**
    * Comes in from above as it first shows: it drops into its place, lands and
-   * lights its antenna, after `delay` ms when one is given. A `still` avatar
-   * moves for its entrance and then rests.
+   * lights its antenna (`AvatarEntrance`). A `still` avatar moves for its
+   * entrance and then rests.
    */
-  readonly entrance?: boolean | { readonly delay: number };
+  readonly entrance?: boolean | AvatarEntrance;
   /**
    * Draws a band of what it sits on (`--avatar-cutout`, the page's background
    * unless set) around the body, to stand clear of what it overlaps. A status
@@ -269,6 +281,7 @@ function mountAvatar(
   size: number,
   initial: Live,
   entrance: number | null,
+  landed: () => void,
 ): { readonly controller: Controller; readonly stop: () => void } {
   let live = initial;
   let sim = createAvatar(seed, live.state);
@@ -295,8 +308,10 @@ function mountAvatar(
       urgent: () => performance.now() < asked,
       measure: () => svg.getBoundingClientRect(),
       step: (dt, near) => {
+        const entering = sim.entering;
         sim = stepAvatar(sim, dt, near);
         draw(avatarFace(sim));
+        if (entering && !sim.entering) landed();
       },
       still: drawStill,
     },
@@ -472,10 +487,17 @@ export function BotAvatar({
 
   // One sim per bot: a new seed or size starts it again. Its entrance is its first mount's alone.
   const entranceAt = useRef(entrance === false ? null : entrance === true ? 0 : entrance.delay);
+  const onLanded = typeof entrance === "object" ? entrance.onLanded : undefined;
+  const landed = useRef(onLanded);
+  useEffect(() => {
+    landed.current = onLanded;
+  }, [onLanded]);
   useEffect(() => {
     const svg = svgRef.current;
     if (svg === null) return;
-    const mounted = mountAvatar(svg, seedNumber, size, latest.current, entranceAt.current);
+    const mounted = mountAvatar(svg, seedNumber, size, latest.current, entranceAt.current, () =>
+      landed.current?.(),
+    );
     // Spent once this mount has outlived the tick it was made in: a mount React makes only to
     // take down again at once, as its development checks do, leaves the entrance for the next.
     const spent = window.setTimeout(() => {
@@ -534,7 +556,8 @@ export function roomAvatarMembers(
 
 /**
  * Two members overlapping and still: a room, idle, or asleep with the bots
- * while offline. With `entrance`, its members come in one after the other.
+ * while offline. With `entrance`, its members come in one after the other,
+ * and the room has landed once the last of them has.
  */
 export function RoomAvatar({
   members,
@@ -543,9 +566,17 @@ export function RoomAvatar({
 }: {
   readonly members: ReadonlyArray<RoomAvatarMember>;
   readonly size: number;
-  readonly entrance?: boolean;
+  readonly entrance?: boolean | AvatarEntrance;
 }) {
   const [back, front] = members;
+  const at = entrance === false ? null : entrance === true ? { delay: 0 } : entrance;
+  const memberEntrance = (index: number, last: boolean): false | AvatarEntrance =>
+    at === null
+      ? false
+      : {
+          delay: at.delay + index * stage.stagger,
+          ...(last && at.onLanded !== undefined ? { onLanded: at.onLanded } : {}),
+        };
   const part = Math.round(size * roomAvatarShare);
   const state = use(AvatarsAsleep) ? "offline" : "idle";
   return (
@@ -562,7 +593,7 @@ export function RoomAvatar({
             state={state}
             size={part}
             still
-            entrance={entrance}
+            entrance={memberEntrance(0, front === undefined)}
           />
         </span>
       )}
@@ -575,7 +606,7 @@ export function RoomAvatar({
             size={part}
             still
             cutout
-            entrance={entrance && { delay: stage.stagger }}
+            entrance={memberEntrance(1, true)}
           />
         </span>
       )}

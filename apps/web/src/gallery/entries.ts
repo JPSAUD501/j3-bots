@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * What the server does for entries, done by hand for the sample: numbering
- * them in order and cutting them down to a roster preview. Development only.
+ * them in order, cutting them down to a roster preview and setting the
+ * operator's reaction. Development only.
  */
 import {
   EntryOrder,
@@ -10,6 +11,8 @@ import {
   PREVIEW_LENGTH,
   type Entry,
   type EntryPreview,
+  type Reaction,
+  type ReactionEmoji,
 } from "@j3-bots/contracts";
 
 type WithoutOrder<T> = T extends unknown ? Omit<T, "order"> : never;
@@ -33,3 +36,19 @@ export const previewOf = (entry: Entry): EntryPreview => ({
   notice: entry._tag === "notice" ? entry.notice : null,
   createdAt: entry.createdAt,
 });
+
+/**
+ * A message's reactions once the operator's is set to `emoji`, or taken off
+ * with `null`: as on a server, a changed reaction keeps its place and a new
+ * one comes last.
+ */
+export const withOwnReaction = (
+  reactions: ReadonlyArray<Reaction>,
+  emoji: ReactionEmoji | null,
+): ReadonlyArray<Reaction> => {
+  if (emoji === null) return reactions.filter((r) => r.by._tag !== "operator");
+  const mine: Reaction = { emoji, by: { _tag: "operator" } };
+  return reactions.some((r) => r.by._tag === "operator")
+    ? reactions.map((r) => (r.by._tag === "operator" ? mine : r))
+    : [...reactions, mine];
+};

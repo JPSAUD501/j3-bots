@@ -19,7 +19,9 @@ import {
   SecretId,
   SecretName,
   secretRequestFieldId,
+  SetupPageUrl,
   SiteOrigin,
+  SkillName,
   WorkStepId,
   type ApprovalEntry,
   type Author,
@@ -35,6 +37,8 @@ import {
   type NoticeEntry,
   type QuestionEntry,
   type QuestionOption,
+  type Reaction,
+  ReactionEmoji,
   type RoutineChangeEntry,
   type Secret,
   type SecretAskEntry,
@@ -65,7 +69,9 @@ export function galleryVariants(now: DateTime.Utc) {
     name: string,
     author: Author,
     text: string,
-    extra: Partial<Pick<MessageEntry, "attachments" | "delivery" | "visual" | "lookingAt">> = {},
+    extra: Partial<
+      Pick<MessageEntry, "attachments" | "delivery" | "visual" | "lookingAt" | "reactions">
+    > = {},
   ): MessageEntry => ({
     _tag: "message",
     ...base(name, author),
@@ -76,6 +82,7 @@ export function galleryVariants(now: DateTime.Utc) {
     commandId: null,
     ...(extra.visual === undefined ? {} : { visual: extra.visual }),
     ...(extra.lookingAt === undefined ? {} : { lookingAt: extra.lookingAt }),
+    ...(extra.reactions === undefined ? {} : { reactions: extra.reactions }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -192,6 +199,34 @@ export function galleryVariants(now: DateTime.Utc) {
   const escapingVisual = message("visual-escape", scout, "Each line is what one attempt got.", {
     visual: sampleVisuals.escape,
   });
+
+  const reacted = (emoji: string, by: Reaction["by"]): Reaction => ({
+    emoji: ReactionEmoji.make(emoji),
+    by,
+  });
+  const operator = { _tag: "operator" } as const;
+  const bot = (botId: BotId) => ({ _tag: "bot", botId }) as const;
+  // The bot that reacted with 👍 has since been deleted.
+  const othersOnScout = [
+    reacted("🎉", bot(ids.wren)),
+    reacted("❤️", bot(ids.atlas)),
+    reacted("🎉", bot(ids.juniper)),
+    reacted("👍", bot(BotId.make("variant-deleted"))),
+  ];
+  const scoutNews =
+    "The Torra is in stock. The shop holds one for your test ride on Saturday at 10.";
+  /** Reactions under a message, and the bar that sets the operator's. */
+  const reactions = {
+    // 🎉 three times, the operator's among them; ❤️ and 👍 once each.
+    onBot: message("reacted", scout, scoutNews, {
+      reactions: [reacted("🎉", operator), ...othersOnScout],
+    }),
+    onOperator: message("reacted-op", { _tag: "operator" }, "Perfect, book it for me.", {
+      reactions: [reacted("👍", bot(ids.scout))],
+    }),
+    // The same message once the operator took their 🎉 off.
+    removed: message("reacted-removed", scout, scoutNews, { reactions: othersOnScout }),
+  };
 
   const embeddingVisual = message(
     "visual-embedding",
@@ -606,9 +641,36 @@ export function galleryVariants(now: DateTime.Utc) {
     _tag: "login",
     origin: SiteOrigin.make("https://billing.example.com"),
   } as const;
+  /** An ask for a service's client ID and secret together, on one card. */
+  const askValues = (name: string, status: SecretAskEntry["status"]): SecretAskEntry => ({
+    _tag: "secret-ask",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    name: "builds-client-id",
+    secret: { _tag: "value" },
+    values: [
+      {
+        id: secretRequestFieldId(0),
+        name: "builds-client-id",
+        label: "Client ID",
+        masked: false,
+      },
+      {
+        id: secretRequestFieldId(1),
+        name: "builds-client-secret",
+        label: "Client secret",
+        masked: true,
+      },
+    ],
+    setup: SetupPageUrl.make("https://builds.example.com/settings/api-clients"),
+    note: "The build server signs in a service with its own client. Make one for J3 Bots on its API clients page, and I can start builds myself.",
+    status,
+  });
   const asks: ReadonlyArray<SecretAskEntry> = [
     ask("ask-login", billing, { _tag: "pending" }),
     ask("ask-value", { _tag: "value" }, { _tag: "pending" }),
+    askValues("ask-values", { _tag: "pending" }),
+    askValues("ask-values-saved", { _tag: "saved" }),
     ask("ask-saved", billing, { _tag: "saved" }),
     ask("ask-declined", { _tag: "value" }, { _tag: "declined" }),
     ask("ask-expired", billing, { _tag: "expired" }),
@@ -848,6 +910,12 @@ export function galleryVariants(now: DateTime.Utc) {
       outcome,
     },
   });
+  /** A load of one of the sample Notion's skills, as its work step shows it. */
+  const skillStep = (name: string, status: WorkStep["status"]): WorkStep => ({
+    ...step("tool", "Used a connector's skill", status, "connector-skill"),
+    id: WorkStepId.make(`variant-skill-${name}`),
+    skill: { name: SkillName.make(name), connector: Label.make("Notion") },
+  });
   const folds: ReadonlyArray<{
     entry: WorkFoldEntry;
     steps: ReadonlyArray<WorkStep> | null;
@@ -869,15 +937,17 @@ export function galleryVariants(now: DateTime.Utc) {
           _tag: "finished",
           finishedAt: ago(1),
           ending: "completed",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: false,
         },
-        4,
+        6,
       ),
       steps: [
         step("read", "invoices/2026-03.json"),
+        step(
+          "command",
+          "Get-ChildItem -Path .\\invoices -Filter *.json |\n  Measure-Object -Property Length -Sum",
+        ),
         step("tool", "Bank statement lookup"),
+        step("delegation", "Check the March totals against the bank statement"),
         step("edit", "memory/log/2026-11.md"),
         step("other", "Wrote the summary"),
       ],
@@ -890,9 +960,6 @@ export function galleryVariants(now: DateTime.Utc) {
           _tag: "finished",
           finishedAt: ago(1),
           ending: "completed",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: false,
         },
         3,
       ),
@@ -918,18 +985,24 @@ export function galleryVariants(now: DateTime.Utc) {
     },
     {
       entry: fold(
-        "fold-background",
+        "fold-handed-off",
         {
           _tag: "finished",
           finishedAt: ago(2),
           ending: "completed",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: true,
         },
         2,
       ),
-      steps: [step("read", "invoices/2026-04.json"), step("command", "node reconcile.js --watch")],
+      // Work the turn handed off still runs: part of the finished fold, with no mark of its own.
+      steps: [
+        step("read", "invoices/2026-04.json"),
+        step("command", "node reconcile.js --watch", "running"),
+      ],
+      open: true,
+    },
+    {
+      entry: fold("fold-skills", { _tag: "running" }, 2),
+      steps: [skillStep("meeting-notes", "completed"), skillStep("project-brief", "running")],
       open: true,
     },
     {
@@ -939,9 +1012,6 @@ export function galleryVariants(now: DateTime.Utc) {
           _tag: "finished",
           finishedAt: ago(3),
           ending: "completed",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: false,
         },
         12,
       ),
@@ -955,9 +1025,6 @@ export function galleryVariants(now: DateTime.Utc) {
           _tag: "finished",
           finishedAt: ago(2),
           ending: "interrupted",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: false,
         },
         2,
       ),
@@ -971,9 +1038,6 @@ export function galleryVariants(now: DateTime.Utc) {
           _tag: "finished",
           finishedAt: ago(0),
           ending: "failed",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: false,
         },
         1,
       ),
@@ -987,9 +1051,6 @@ export function galleryVariants(now: DateTime.Utc) {
           _tag: "finished",
           finishedAt: ago(1),
           ending: "completed",
-          waitedMs: 0,
-          waitedBeforeMs: 0,
-          background: false,
         },
         5,
       ),
@@ -1193,6 +1254,7 @@ export function galleryVariants(now: DateTime.Utc) {
     visualBubbles,
     escapingVisual,
     embeddingVisual,
+    reactions,
     questions,
     approvals,
     approvalBecomingExact,

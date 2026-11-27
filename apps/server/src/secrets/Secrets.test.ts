@@ -77,6 +77,7 @@ const connectorSecret: ConnectorSecret = {
   env: [],
   formSecrets: [],
   formValues: [],
+  service: null,
 };
 
 /** The secrets' state now. */

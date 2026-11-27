@@ -3,12 +3,14 @@ import {
   AuthFailing,
   type CredentialsUnavailable,
   NeedsSignIn,
+  SecretNeeded,
   SecretsUnavailable,
 } from "@j3-bots/connectors";
 import {
   type Conflict,
   type ConnectorSignIn,
   type DeviceId,
+  type SecretName,
   type SignInRedirect,
   type SignInRedirects,
   signInCallbackPath,
@@ -34,12 +36,14 @@ import { ServerConfig } from "../../config.ts";
 import type { SignInState } from "../auth.ts";
 import { hiddenOf } from "../credentials.ts";
 import { Listener } from "../../listener.ts";
+import { fingerprintOf, serviceTokens, takesServices } from "./clientCredentials.ts";
 import { clientMetadataUrl } from "./clientMetadata.ts";
 import type {
   ConnectorId,
   ConnectorSecret,
   OAuthClient,
   OAuthTokens,
+  ServiceCredentials,
 } from "../../secrets/ConnectorSecret.ts";
 import { Secrets } from "../../secrets/Secrets.ts";
 import * as Endpoints from "./endpoints.ts";
@@ -56,6 +60,7 @@ import {
   sameIssuer,
   scopesOf,
   secureUrl,
+  signsInServicesOnly,
 } from "./protocol.ts";
 
 /** How the address a browser returned to reaches the server. */
@@ -206,6 +211,64 @@ export class ConnectorAuth extends Context.Service<
      * from here either way.
      */
     readonly disconnect: (connectorId: ConnectorId) => Effect.Effect<void, OAuthFailure>;
+    /**
+     * The authorization server a connector at `address` signs in services
+     * at, for credentials of `kind` about to be given to it: it must offer
+     * the client credentials grant and a way for the credential to prove
+     * itself, and be `issuer` when one is named. The credentials go to it
+     * alone from then on.
+     */
+    readonly serviceIssuer: (input: {
+      readonly address: URL;
+      readonly kind: ServiceCredentials["credential"]["_tag"];
+      readonly issuer: Option.Option<string>;
+    }) => Effect.Effect<string, OAuthFailure>;
+    /**
+     * Whether the connector's authorization server signs in services only,
+     * so no person's sign-in can work there: false when that can't be told.
+     */
+    readonly signsInServicesOnly: (connectorId: ConnectorId) => Effect.Effect<boolean>;
+    /**
+     * The access token for a call to a connector that signs in as a service,
+     * got with `service`, its credentials resolved, from the authorization
+     * server they were issued by, and kept until a minute before it expires.
+     * Fails `SecretNeeded` (`refused`) for `secret`, the credential's secret,
+     * once the service refused these credentials, until others are given;
+     * `AuthFailing` when the connector's server names another authorization
+     * server now (`issuer-changed`), to which nothing is sent.
+     */
+    readonly serviceToken: (input: {
+      readonly connectorId: ConnectorId;
+      readonly address: URL;
+      readonly service: ServiceCredentials;
+      readonly secret: SecretName;
+    }) => Effect.Effect<Redacted.Redacted<string>, CredentialsUnavailable>;
+    /**
+     * The connector's server refused `sent`, a service token, with this
+     * `WWW-Authenticate`: the next call gets a new one, unless another
+     * replaced it meanwhile. A second refusal is `serviceRefused`'s. A token
+     * refused for a scope it lacks (`insufficient_scope`) is dropped too, but
+     * that request fails `AuthFailing` (`scope-refused`) at once: a new token
+     * lacks it as well until the operator grants it.
+     */
+    readonly serviceRejected: (
+      connectorId: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
+      sent: Option.Option<Redacted.Redacted<string>>,
+    ) => Effect.Effect<void, AuthFailing>;
+    /**
+     * The connector's server refused `sent`, a token got just now, with this
+     * `WWW-Authenticate`: the credentials it was got with are refused until
+     * others are given, and it fails `SecretNeeded` (`refused`) for `secret`.
+     * A token that lacked a scope refuses nothing: it fails `AuthFailing`
+     * (`scope-refused`).
+     */
+    readonly serviceRefused: (input: {
+      readonly connectorId: ConnectorId;
+      readonly wwwAuthenticate: Option.Option<string>;
+      readonly sent: Option.Option<Redacted.Redacted<string>>;
+      readonly secret: SecretName;
+    }) => Effect.Effect<never, CredentialsUnavailable>;
     /** Every OAuth connector's sign-in state now, then each change. */
     readonly states: Stream.Stream<ReadonlyMap<ConnectorId, SignInState>>;
     /**
@@ -285,6 +348,24 @@ export const layer = Layer.effect(
       return generation;
     };
     const refreshers = yield* FiberMap.make<ConnectorId>();
+    /**
+     * A connector's service token, kept in memory only, with the digest of
+     * the credentials it was got with: a restart, or other credentials, get
+     * another.
+     */
+    const serviceTokensOf = new Map<
+      ConnectorId,
+      {
+        readonly fingerprint: string;
+        readonly token: Redacted.Redacted<string>;
+        readonly expiresAt: Option.Option<DateTime.Utc>;
+      }
+    >();
+    /**
+     * The digest of the credentials the service refused, by connector:
+     * nothing is asked of it with them again until others are given.
+     */
+    const refusedServices = new Map<ConnectorId, string>();
 
     const setState = (id: ConnectorId, state: Option.Option<SignInState>) =>
       SubscriptionRef.update(states, (all) => {
@@ -318,18 +399,11 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Discovery for the connector's server: its challenge, its protected
+     * Discovery for a server at `address`: its challenge, its protected
      * resource metadata, and its authorization server's metadata, checked.
      */
-    const discover = Effect.fn("ConnectorAuth.discover")(function* (id: ConnectorId) {
-      const signIn = yield* connectors.signInOf(id);
-      if (Option.isNone(signIn)) return yield* fail("unknown-connector");
-      if (signIn.value !== "oauth") return yield* fail("not-oauth");
-      // Sealed when the connector was added: typed, or given by its gallery entry's form.
-      const secret = yield* secretOf(id);
-      const address = Option.flatMap(secret, ({ address }) => Option.fromNullOr(address));
-      if (Option.isNone(address)) return yield* fail("no-address");
-      const found = secureUrl(Redacted.value(address.value));
+    const locate = Effect.fn("ConnectorAuth.locate")(function* (address: string) {
+      const found = secureUrl(address);
       if (Option.isNone(found)) return yield* fail("insecure-endpoint");
       const server = found.value;
       const challenge = yield* withHttp(Endpoints.challenge(server));
@@ -348,6 +422,31 @@ export const layer = Layer.effect(
       const scope = Option.flatMap(challenge, (found) => found.scope);
       // The resource the metadata names may be the server's or one above it.
       const resourceUri = resource.resource === "" ? canonicalResource(server) : resource.resource;
+      return {
+        server,
+        resource: resourceUri,
+        issuer,
+        metadata,
+        scopes: Option.isSome(scope) ? scopesOf(scope.value) : (resource.scopes_supported ?? []),
+      };
+    });
+
+    /** The connector's address, as its secret keeps it. */
+    const addressOf = Effect.fn("ConnectorAuth.addressOf")(function* (id: ConnectorId) {
+      // Sealed when the connector was added: typed, or given by its gallery entry's form.
+      const secret = yield* secretOf(id);
+      const address = Option.flatMap(secret, ({ address }) => Option.fromNullOr(address));
+      if (Option.isNone(address)) return yield* fail("no-address");
+      return { address: Redacted.value(address.value), secret };
+    });
+
+    /** Discovery for the connector's server, for a person's sign-in. */
+    const discover = Effect.fn("ConnectorAuth.discover")(function* (id: ConnectorId) {
+      const signIn = yield* connectors.signInOf(id);
+      if (Option.isNone(signIn)) return yield* fail("unknown-connector");
+      if (signIn.value !== "oauth") return yield* fail("not-oauth");
+      const { address, secret } = yield* addressOf(id);
+      const found = yield* locate(address);
       // It goes in the browser's address and to the authorization server: never
       // with a key the connector's form put in its address. Adding refuses
       // such a gallery entry a sign-in; this holds whatever a server names.
@@ -355,16 +454,10 @@ export const layer = Layer.effect(
         onNone: () => [],
         onSome: ({ formSecrets }) => hiddenOf(formSecrets.map((named) => named.value)),
       });
-      if (hidden.some((value) => resourceUri.includes(Redacted.value(value)))) {
+      if (hidden.some((value) => found.resource.includes(Redacted.value(value)))) {
         return yield* fail("secret-in-resource");
       }
-      return {
-        server: server,
-        resource: resourceUri,
-        issuer,
-        metadata,
-        scopes: Option.isSome(scope) ? scopesOf(scope.value) : (resource.scopes_supported ?? []),
-      };
+      return found;
     });
 
     /** The server's client metadata document for sign-ins at `issuer`, at its public origin. */
@@ -419,7 +512,8 @@ export const layer = Layer.effect(
 
     /**
      * Saves the connector's OAuth part, keeping its address, headers, command
-     * line, environment and form's secrets. `null` removes it.
+     * line, environment, form's secrets and service credentials. `null`
+     * removes it.
      */
     const saveOAuth = Effect.fn("ConnectorAuth.saveOAuth")(function* (
       id: ConnectorId,
@@ -434,14 +528,16 @@ export const layer = Layer.effect(
           env: [],
           formSecrets: [],
           formValues: [],
+          service: null,
         }),
-        onSome: ({ address, headers, command, env, formSecrets, formValues }) => ({
+        onSome: ({ address, headers, command, env, formSecrets, formValues, service }) => ({
           address,
           headers,
           command,
           env,
           formSecrets,
           formValues,
+          service,
         }),
       });
       if (
@@ -451,7 +547,8 @@ export const layer = Layer.effect(
         kept.command === null &&
         kept.env.length === 0 &&
         kept.formSecrets.length === 0 &&
-        kept.formValues.length === 0
+        kept.formValues.length === 0 &&
+        kept.service === null
       ) {
         return yield* fromSecrets(secrets.connectorSecrets.remove(id));
       }
@@ -766,6 +863,15 @@ export const layer = Layer.effect(
       }
       const generation = nextGeneration(input.connectorId);
       const found = yield* discover(input.connectorId);
+      // A person's sign-in is the code flow, which the MCP specification
+      // allows only with PKCE and S256.
+      const authorizationEndpoint = found.metadata.authorization_endpoint;
+      if (
+        authorizationEndpoint === undefined ||
+        !(found.metadata.code_challenge_methods_supported ?? []).includes("S256")
+      ) {
+        return yield* fail("pkce-unsupported");
+      }
       const redirectUri = yield* redirectUriOf(input.redirect, found.issuer);
       const client = yield* clientFor(input.connectorId, found, redirectUri);
       const granted = Option.match(yield* secretOf(input.connectorId), {
@@ -808,7 +914,7 @@ export const layer = Layer.effect(
         expiresAt,
         generation,
       });
-      const url = new URL(found.metadata.authorization_endpoint);
+      const url = new URL(authorizationEndpoint);
       url.searchParams.set("response_type", "code");
       url.searchParams.set("client_id", client.clientId);
       url.searchParams.set("redirect_uri", redirectUri);
@@ -1015,6 +1121,8 @@ export const layer = Layer.effect(
     const disconnect = Effect.fn("ConnectorAuth.disconnect")(function* (id: ConnectorId) {
       for (const [key, sign] of pending) if (sign.connectorId === id) pending.delete(key);
       stepUp.delete(id);
+      serviceTokensOf.delete(id);
+      refusedServices.delete(id);
       nextGeneration(id);
       yield* serially(id)(
         Effect.gen(function* () {
@@ -1058,6 +1166,187 @@ export const layer = Layer.effect(
       }
     });
 
+    const serviceIssuer = Effect.fn("ConnectorAuth.serviceIssuer")(function* (input: {
+      readonly address: URL;
+      readonly kind: ServiceCredentials["credential"]["_tag"];
+      readonly issuer: Option.Option<string>;
+    }) {
+      const found = yield* locate(input.address.href);
+      if (Option.isSome(input.issuer) && !sameIssuer(input.issuer.value, found.issuer)) {
+        return yield* fail("issuer-mismatch");
+      }
+      if (!takesServices(found.metadata, input.kind)) return yield* fail("grant-unsupported");
+      return found.issuer;
+    });
+
+    const servicesOnly = Effect.fn("ConnectorAuth.signsInServicesOnly")(
+      function* (id: ConnectorId) {
+        const { address } = yield* addressOf(id);
+        const found = yield* locate(address);
+        return signsInServicesOnly(found.metadata);
+      },
+      Effect.orElseSucceed(() => false),
+    );
+
+    /** What a call is told when the service refused the credentials with this digest. */
+    const refusedFor = (id: ConnectorId, fingerprint: string, secret: SecretName) => {
+      refusedServices.set(id, fingerprint);
+      serviceTokensOf.delete(id);
+      return new SecretNeeded({ secret, reason: "refused" });
+    };
+
+    /**
+     * A new service token, from the authorization server the credentials
+     * were issued by, which the connector's server must still name: one it
+     * names now in its place gets nothing.
+     */
+    const newServiceToken = Effect.fn("ConnectorAuth.newServiceToken")(function* (input: {
+      readonly connectorId: ConnectorId;
+      readonly address: URL;
+      readonly service: ServiceCredentials;
+      readonly secret: SecretName;
+    }) {
+      const fingerprint = fingerprintOf(input.service);
+      const found = yield* locate(input.address.href).pipe(
+        Effect.mapError(() => new AuthFailing({ reason: "refresh-failed" })),
+      );
+      if (!sameIssuer(found.issuer, input.service.issuer)) {
+        yield* Effect.logWarning(
+          "A connector's server names another authorization server than its credentials were issued by",
+        ).pipe(Effect.annotateLogs({ connector: input.connectorId }));
+        return yield* new AuthFailing({ reason: "issuer-changed" });
+      }
+      const scopes = input.service.scope === null ? found.scopes : scopesOf(input.service.scope);
+      const answer = yield* withHttp(
+        serviceTokens({
+          metadata: found.metadata,
+          service: input.service,
+          resource: found.resource,
+          scopes,
+        }),
+      ).pipe(
+        Effect.mapError((error) => {
+          switch (error.reason) {
+            case "invalid-client":
+            case "invalid-grant":
+            case "key-unusable":
+              return refusedFor(input.connectorId, fingerprint, input.secret);
+            case "grant-unsupported":
+              return new AuthFailing({ reason: "sign-in-unsupported" });
+            default:
+              return new AuthFailing({ reason: "refresh-failed" });
+          }
+        }),
+      );
+      const now = yield* DateTime.now;
+      const expiresAt = Option.map(answer.expiresIn, (lifetime) =>
+        DateTime.addDuration(now, lifetime),
+      );
+      refusedServices.delete(input.connectorId);
+      serviceTokensOf.set(input.connectorId, { fingerprint, token: answer.accessToken, expiresAt });
+      return answer.accessToken;
+    });
+
+    const serviceToken = Effect.fn("ConnectorAuth.serviceToken")(function* (input: {
+      readonly connectorId: ConnectorId;
+      readonly address: URL;
+      readonly service: ServiceCredentials;
+      readonly secret: SecretName;
+    }) {
+      const fingerprint = fingerprintOf(input.service);
+      const kept = Effect.gen(function* () {
+        if (refusedServices.get(input.connectorId) === fingerprint) {
+          return yield* new SecretNeeded({ secret: input.secret, reason: "refused" });
+        }
+        const cached = serviceTokensOf.get(input.connectorId);
+        const now = yield* DateTime.now;
+        const fresh =
+          cached !== undefined &&
+          cached.fingerprint === fingerprint &&
+          Option.match(cached.expiresAt, {
+            onNone: () => true,
+            onSome: (at) => DateTime.isLessThan(now, DateTime.subtractDuration(at, USE_MARGIN)),
+          });
+        return fresh ? Option.some(cached.token) : Option.none();
+      });
+      const found = yield* kept;
+      if (Option.isSome(found)) return found.value;
+      // One request for a token at a time: calls that find none wait for it.
+      return yield* serially(input.connectorId)(
+        Effect.gen(function* () {
+          const again = yield* kept;
+          if (Option.isSome(again)) return again.value;
+          return yield* newServiceToken(input);
+        }),
+      );
+    });
+
+    /**
+     * Whether a server's refusal says the token lacks a scope
+     * (`insufficient_scope`): the credentials are not what was refused, and
+     * asking again with them gets the same answer until the operator grants
+     * the client that scope at the service.
+     */
+    const lacksScope = (wwwAuthenticate: Option.Option<string>): boolean =>
+      Option.exists(Option.flatMap(wwwAuthenticate, parseBearerChallenge), ({ error }) =>
+        Option.contains(error, "insufficient_scope"),
+      );
+
+    /**
+     * Drops the kept token when it is `sent`, which the connector's server
+     * refused: the next call gets a new one. A token another call replaced
+     * meanwhile is not the one refused.
+     */
+    const dropRefused = (id: ConnectorId, sent: Option.Option<Redacted.Redacted<string>>) =>
+      Effect.sync(() => {
+        const cached = serviceTokensOf.get(id);
+        if (
+          cached !== undefined &&
+          Option.exists(sent, (token) => Redacted.value(token) === Redacted.value(cached.token))
+        ) {
+          serviceTokensOf.delete(id);
+        }
+      });
+
+    const serviceRejected = (
+      id: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
+      sent: Option.Option<Redacted.Redacted<string>>,
+    ): Effect.Effect<void, AuthFailing> =>
+      // A token lacking a scope is dropped too, so the next call's new one
+      // carries it once the operator grants it; this request fails at once.
+      lacksScope(wwwAuthenticate)
+        ? Effect.andThen(
+            dropRefused(id, sent),
+            Effect.fail(new AuthFailing({ reason: "scope-refused" })),
+          )
+        : dropRefused(id, sent);
+
+    const serviceRefused = (input: {
+      readonly connectorId: ConnectorId;
+      readonly wwwAuthenticate: Option.Option<string>;
+      readonly sent: Option.Option<Redacted.Redacted<string>>;
+      readonly secret: SecretName;
+    }) => {
+      if (lacksScope(input.wwwAuthenticate)) {
+        return Effect.andThen(
+          dropRefused(input.connectorId, input.sent),
+          Effect.fail(new AuthFailing({ reason: "scope-refused" })),
+        );
+      }
+      const cached = serviceTokensOf.get(input.connectorId);
+      const refused = Option.exists(
+        input.sent,
+        (token) => cached !== undefined && Redacted.value(token) === Redacted.value(cached.token),
+      );
+      // A token other credentials replaced meanwhile says nothing of them.
+      return Effect.fail(
+        refused && cached !== undefined
+          ? refusedFor(input.connectorId, cached.fingerprint, input.secret)
+          : new SecretNeeded({ secret: input.secret, reason: "refused" }),
+      );
+    };
+
     return ConnectorAuth.of({
       begin,
       redirectsFor,
@@ -1066,6 +1355,11 @@ export const layer = Layer.effect(
       accessToken,
       rejected,
       disconnect,
+      serviceIssuer,
+      signsInServicesOnly: servicesOnly,
+      serviceToken,
+      serviceRejected,
+      serviceRefused,
       states: SubscriptionRef.changes(states),
       signedIn: Effect.map(PubSub.subscribe(completed), Stream.fromSubscription),
     });
