@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   Attachment,
+  DIAGNOSTICS_HTTP_PATH,
+  type DiagnosticsClient,
+  DiagnosticsRequest,
   type DeviceId,
   type DeviceToken,
   HTTP_PATHS,
+  MAX_DIAGNOSTICS_SIZE,
   MAX_INLINE_IMAGE_SIZE,
   NotAuthenticated,
   type WorkImageId,
@@ -59,6 +63,7 @@ export const uploadProblem = (error: UploadRefused | NotPaired): FileProblem =>
 /** A failure the next attempt may not meet: the network, or the server for a moment. */
 class Transient extends Schema.TaggedError<Transient>()("Transient", {}) {}
 
+const encodeDiagnosticsRequest = Schema.encodeEffect(Schema.fromJsonString(DiagnosticsRequest));
 const decodeAttachment = Schema.decodeUnknownEffect(Schema.fromJsonString(Attachment));
 const isNotAuthenticated = (body: string) =>
   Option.isSome(Schema.decodeOption(Schema.fromJsonString(NotAuthenticated))(body));
@@ -102,6 +107,13 @@ export class Files extends Context.Service<
      */
     readonly workImage: (
       id: WorkImageId,
+    ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
+    /**
+     * The server's diagnostics zip, made as it is asked for, saying `client`
+     * asked: only from a server that offers one (`ServerInfo.diagnostics`).
+     */
+    readonly diagnostics: (
+      client: DiagnosticsClient,
     ) => Effect.Effect<Download, AttachmentUnavailable | NotPaired>;
   }
 >()("@j3-bots/client-runtime/files/Files") {}
@@ -196,8 +208,15 @@ export const layer = Layer.effect(
       }).pipe(Effect.raceFirst(ended(input.pairing)));
     });
 
-    /** The bytes at `path` on the server, given the time `size` bytes take to arrive. */
-    const get = Effect.fnUntraced(function* (path: string, size: number) {
+    /**
+     * The bytes the server answers `request` with, at `path`, given the time
+     * `size` bytes take to arrive.
+     */
+    const fetchBytes = Effect.fnUntraced(function* (
+      request: (url: string) => HttpClientRequest.HttpClientRequest,
+      path: string,
+      size: number,
+    ) {
       const pairing = connection.pairing.get();
       if (pairing === null) return yield* new NotPaired();
       const token = yield* connection.bearer(pairing);
@@ -206,7 +225,7 @@ export const layer = Layer.effect(
       // The deadline runs until the last byte is read, not only to the headers.
       return yield* Effect.gen(function* () {
         const response = yield* http.execute(
-          HttpClientRequest.get(url.toString()).pipe(HttpClientRequest.bearerToken(token)),
+          request(url.toString()).pipe(HttpClientRequest.bearerToken(token)),
         );
         if (!fromServer(response.url, url.pathname)) return yield* unreachable;
         switch (response.status) {
@@ -229,6 +248,10 @@ export const layer = Layer.effect(
       );
     });
 
+    /** The bytes at `path` on the server, given the time `size` bytes take to arrive. */
+    const get = (path: string, size: number) =>
+      fetchBytes((url) => HttpClientRequest.get(url), path, size);
+
     const download = Effect.fn("Files.download")(function* (attachment: Attachment) {
       return yield* get(
         `${HTTP_PATHS.attachments}/${encodeURIComponent(attachment.id)}`,
@@ -244,6 +267,17 @@ export const layer = Layer.effect(
       );
     });
 
-    return Files.of({ upload, download, workImage });
+    // Made as it is sent: it is given the time the largest the server makes takes.
+    const diagnostics = Effect.fn("Files.diagnostics")(function* (client: DiagnosticsClient) {
+      const body = yield* encodeDiagnosticsRequest({ client }).pipe(Effect.orDie);
+      return yield* fetchBytes(
+        (url) =>
+          HttpClientRequest.post(url).pipe(HttpClientRequest.bodyText(body, "application/json")),
+        DIAGNOSTICS_HTTP_PATH,
+        MAX_DIAGNOSTICS_SIZE,
+      );
+    });
+
+    return Files.of({ upload, download, workImage, diagnostics });
   }),
 );

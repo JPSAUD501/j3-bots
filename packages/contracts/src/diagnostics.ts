@@ -51,6 +51,13 @@ export type DiagnosticsClient = typeof DiagnosticsClient.Type;
 export const DiagnosticsRequest = Schema.Struct({ client: DiagnosticsClient });
 export type DiagnosticsRequest = typeof DiagnosticsRequest.Type;
 
+/**
+ * The most a diagnostics zip takes: the server keeps each log within its
+ * budget, and the zip within this, so a client gives the download the time
+ * this size takes.
+ */
+export const MAX_DIAGNOSTICS_SIZE = 24 * 1024 * 1024;
+
 /** The zip's media type, as the route answers it and a client saves it. */
 export const DIAGNOSTICS_MEDIA_TYPE = "application/zip";
 

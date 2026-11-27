@@ -71,6 +71,7 @@ import type {
   DesktopLookingAt,
   DesktopShortcut,
   DesktopUpdate,
+  DiagnosticsIntents,
   RemoteServerUpdate,
   ShellData,
   ShellIntents,
@@ -88,6 +89,7 @@ import {
 import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
+import { DiagnosticsRow } from "./Diagnostics";
 import { UpdatePromptEntryButton } from "./UpdatePrompt";
 import { WhatsNewButton } from "./WhatsNew";
 import { ShortcutSetting } from "./ShortcutSetting";
@@ -142,6 +144,7 @@ type SettingsIntents = Pick<
   | "update"
   | "serverUpdate"
   | "updatePrompt"
+  | "diagnostics"
   | "whatsNew"
   | "shortcut"
   | "lookingAt"
@@ -202,9 +205,9 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, updates only where one can be followed from here, and
- * voice only from a server that dictates, since this window has no
- * recognizer of its own.
+ * the desktop app, About only where an update can be followed or the
+ * server's diagnostics downloaded from here, and voice only from a server
+ * that dictates, since this window has no recognizer of its own.
  */
 const pagesFor = (
   intents: SettingsIntents,
@@ -219,7 +222,11 @@ const pagesFor = (
           case "where":
             return intents.server !== undefined || intents.local !== undefined;
           case "updates":
-            return intents.serverUpdate !== undefined || intents.update !== undefined;
+            return (
+              intents.serverUpdate !== undefined ||
+              intents.update !== undefined ||
+              intents.diagnostics !== undefined
+            );
           default:
             return true;
         }
@@ -599,6 +606,7 @@ function PageBody({
           app={intents.update}
           local={intents.local}
           onUpdate={intents.updatePrompt?.reopen}
+          diagnostics={intents.diagnostics}
         />
       );
   }
@@ -1414,14 +1422,17 @@ export function WhereSection({
 /**
  * What the server runs and updating it, and in the desktop app, the app's
  * version and its update. In local mode the app runs the server, so updating
- * the app updates both, and the server has no row of its own.
+ * the app updates both, and the server has no row of its own. Last, the
+ * server's diagnostics zip, from a server that makes one.
  */
 export function UpdatesSection({
   server,
   app,
   local,
   onUpdate,
+  diagnostics,
 }: {
+  diagnostics: DiagnosticsIntents | undefined;
   server: RemoteServerUpdate | undefined;
   app: DesktopUpdate | undefined;
   /** Opens the update prompt, which updates the server first and this app after it. */
@@ -1448,6 +1459,7 @@ export function UpdatesSection({
           {local?.serverUpdate !== undefined && <LocalServerUpdateLine local={local} />}
         </div>
       )}
+      {diagnostics !== undefined && <DiagnosticsRow diagnostics={diagnostics} />}
     </Section>
   );
 }

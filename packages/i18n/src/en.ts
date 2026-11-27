@@ -2079,6 +2079,27 @@ export const en = {
   "desktop.tray.phoneOn": "Phone access on",
   "settings.about": "About and updates",
 
+  "diagnostics.title": "Diagnostics",
+  "diagnostics.hint": "A file that says how the server runs, for whoever helps you with a problem.",
+  "diagnostics.download": "Download diagnostics",
+  "diagnostics.sheet.title": "Download diagnostics",
+  "diagnostics.sheet.lead":
+    "Send this file to whoever helps you. It holds only what helps them see what went wrong.",
+  "diagnostics.sheet.inside": "What’s in it",
+  "diagnostics.sheet.inside.logs": "The server’s and the engine’s logs from the last 7 days",
+  "diagnostics.sheet.inside.failures": "What failed, and when",
+  "diagnostics.sheet.inside.setup":
+    "Versions, settings, and how many bots, rooms and routines there are",
+  "diagnostics.sheet.never": "Never in it",
+  "diagnostics.sheet.never.messages": "Your messages",
+  "diagnostics.sheet.never.names": "Names of bots, rooms or people",
+  "diagnostics.sheet.never.secrets": "Passwords, keys or other secrets",
+  "diagnostics.sheet.cancel": "Cancel",
+  "diagnostics.sheet.save": "Save",
+  "diagnostics.sheet.share": "Share",
+  "diagnostics.sheet.preparing": "Preparing…",
+  "diagnostics.sheet.failed": "Couldn’t get the file from the server. Try again.",
+
   "serverUpdate.title": "The server",
   "serverUpdate.runs": "J3 Bots {version}",
   "serverUpdate.available": "J3 Bots {version} is available.",

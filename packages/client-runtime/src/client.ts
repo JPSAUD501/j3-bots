@@ -2,6 +2,8 @@
 import type {
   Attachment,
   WorkImageId,
+  DiagnosticsClient,
+  ServerInfo,
   Bot,
   Connector,
   ConnectorAppAnswer,
@@ -557,6 +559,13 @@ export interface J3Client {
   readonly download: (attachment: Attachment) => Promise<DownloadResult>;
   /** The bytes of an image a step of a bot's work looked at (`WorkStep.image`). */
   readonly workImage: (id: WorkImageId) => Promise<DownloadResult>;
+  /**
+   * What the server said of itself when this window last reached it, null
+   * before: what it offers beside the protocol (`ServerInfo`).
+   */
+  readonly server: Readable<ServerInfo | null>;
+  /** The server's diagnostics zip, saying `client` asked: only when `server` offers one. */
+  readonly downloadDiagnostics: (client: DiagnosticsClient) => Promise<DownloadResult>;
 
   readonly openBotFiles: (botId: BotId) => LoadedHandle<ReadonlyArray<BotFile>>;
   readonly openMemory: (scope: MemoryScope) => LoadedHandle<ReadonlyArray<MemoryFile>>;
@@ -1017,6 +1026,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     dismissDraftOffer: (target) => fire(services.drafts.dismiss(target)),
     download: (attachment) => run.promise(downloaded(services.files.download(attachment))),
     workImage: (id) => run.promise(downloaded(services.files.workImage(id))),
+    server: connection.server,
+    downloadDiagnostics: (client) => run.promise(downloaded(services.files.diagnostics(client))),
 
     openBotFiles: (botId) => {
       const { value, release } = hold(services.details.files(botId));

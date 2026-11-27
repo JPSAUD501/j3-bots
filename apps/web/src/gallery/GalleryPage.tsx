@@ -224,7 +224,13 @@ import { Switch } from "../components/ui/switch";
 import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
-import type { DesktopLocal, DesktopUpdate, RemoteServerUpdate } from "../shell/data";
+import type {
+  DesktopLocal,
+  DesktopUpdate,
+  DiagnosticsIntents,
+  RemoteServerUpdate,
+} from "../shell/data";
+import { DiagnosticsSheet, type DiagnosticsSheetState } from "../components/Diagnostics";
 import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
@@ -382,6 +388,7 @@ export default function GalleryPage() {
                 <WhereBotsLiveSection />
                 <PhoneAccessSection />
                 <UpdatesGallerySection />
+                <DiagnosticsGallerySection />
                 <QuickAccessSection />
                 <ShellSection />
               </div>
@@ -5618,18 +5625,71 @@ function UpdatesFrame({
   server,
   app,
   local,
+  diagnostics,
   height = 420,
 }: {
   label: string;
   server?: RemoteServerUpdate;
   app?: DesktopUpdate;
   local?: DesktopLocal;
+  diagnostics?: DiagnosticsIntents;
   height?: number;
 }) {
   return (
     <Frame label={label} width={390} height={height} padded>
-      <UpdatesSection server={server} app={app} local={local} onUpdate={nothing} />
+      <UpdatesSection
+        server={server}
+        app={app}
+        local={local}
+        onUpdate={nothing}
+        diagnostics={diagnostics}
+      />
     </Frame>
+  );
+}
+
+/** A diagnostics zip that never arrives: the gallery has no server to make one. */
+const sampleDiagnostics: DiagnosticsIntents = { save: () => Promise.resolve(false) };
+
+/** The sheet before Download diagnostics saves, as its popup shows it, in `state`. */
+function DiagnosticsSheetFrame({ label, state }: { label: string; state: DiagnosticsSheetState }) {
+  return (
+    <Frame label={label} width={390} height={460}>
+      <div className="flex h-full items-center bg-scrim p-4">
+        <div className="w-full rounded-xl border border-border bg-surface p-5 shadow-overlay">
+          <DiagnosticsSheet
+            titleId={`diagnostics-${state}`}
+            state={state}
+            onSave={nothing}
+            onCancel={nothing}
+          />
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
+function DiagnosticsGallerySection() {
+  return (
+    <Section title="Settings → About: the server's diagnostics" stacked>
+      <div className="flex flex-wrap gap-4">
+        <UpdatesFrame
+          label="In a browser, on a server that makes diagnostics"
+          server={serverUpdate(said(serverStatuses.upToDate))}
+          diagnostics={sampleDiagnostics}
+        />
+        <UpdatesFrame
+          label="On the desktop: the app's update, then diagnostics"
+          server={serverUpdate(said(serverStatuses.upToDate))}
+          app={appUpdate(appPhases.upToDate)}
+          diagnostics={sampleDiagnostics}
+          height={520}
+        />
+        <DiagnosticsSheetFrame label="The sheet: what is in it, and Save" state="ready" />
+        <DiagnosticsSheetFrame label="The sheet: the server makes the file" state="preparing" />
+        <DiagnosticsSheetFrame label="The sheet: the file did not arrive" state="failed" />
+      </div>
+    </Section>
   );
 }
 
