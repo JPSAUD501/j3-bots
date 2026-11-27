@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectionState } from "@j3-bots/client-runtime";
 import { PairingCode } from "@j3-bots/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderTestMarkup } from "../app/testRoot";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { Pairing } from "../components/Pairing";
 import { linkedCode, takePairingCode } from "./pairingLink";
@@ -53,7 +53,7 @@ describe("a page opened from a pairing link", () => {
   });
   it("starts the pairing screen with the code and the server", () => {
     const onPair = vi.fn<Parameters<typeof Pairing>[0]["onPair"]>();
-    const html = renderToStaticMarkup(
+    const html = renderTestMarkup(
       <Pairing
         reason="new"
         defaultName="Safari on iPhone"

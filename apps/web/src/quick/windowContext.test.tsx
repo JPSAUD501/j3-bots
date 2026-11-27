@@ -7,7 +7,8 @@ import type {
   QuickAccessPicture,
 } from "@j3-bots/desktop-bridge";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { createTestRoot } from "../app/testRoot";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { useWindowContext, type WindowSource } from "./windowContext";
 import { WindowChips } from "./WindowChips";
@@ -82,7 +83,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.append(container);
-  root = createRoot(container);
+  root = createTestRoot(container);
   sent = [];
   went = () => {};
 });
