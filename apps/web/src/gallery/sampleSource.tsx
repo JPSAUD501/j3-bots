@@ -989,6 +989,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     editProfile: nothing,
     freshStart: nothing,
     refreshSettings: nothing,
+    signOutSite: () => Promise.resolve(true),
     signOutBrowser: () => Promise.resolve(true),
     usageData: { sent: () => Promise.resolve(sampleSentEvents), record: () => {} },
     providerActions: sampleProviderActions,
@@ -1058,6 +1059,14 @@ function toData(state: State, secrets: SecretsView): ShellData {
       read: { _tag: "ready", value: state.recentTurns, stale: false },
       loadingMore: false,
       failed: false,
+    },
+    browserSignIns: {
+      _tag: "ready",
+      value: {
+        status: "ready",
+        sites: [{ site: "docevida.example" }, { site: "correiodobairro.example" }],
+      },
+      stale: false,
     },
     connected: true,
     signInUnencrypted: false,

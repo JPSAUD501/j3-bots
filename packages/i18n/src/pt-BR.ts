@@ -1059,8 +1059,9 @@ const sentences = {
     "O quanto cada conta de IA está perto do limite, e quais bots a usaram.",
   "settings.connectors.description":
     "Serviços que seus bots podem usar, como o Notion ou o GitHub, e as skills que eles conhecem.",
-  "settings.secrets.description":
-    "Os logins e as chaves que seus bots usam sem ver, e os sites em que o navegador deles continua conectado.",
+  "settings.secrets.description": "Os logins e as chaves que seus bots usam sem ver.",
+  "settings.siteSignIns.description":
+    "Os sites em que você entrou no navegador do J3 Bots. Seus bots também usam esses sites.",
   "settings.devices.description": "Este dispositivo, e cada um dos outros pareados com seus bots.",
   "settings.devices.paired": "Dispositivos pareados",
   "settings.thisPhone": "Este celular",
@@ -2022,17 +2023,23 @@ const sentences = {
   "memory.failedClosed": "Sua edição em {file} não foi salva. Abra o arquivo para ver o motivo.",
 
   "settings.close": "Fechar configurações",
-  "settings.botBrowser": "Navegador dos bots",
-  "settings.botBrowser.hint":
-    "O navegador dos bots continua conectado aos sites em que você entrou. Sair desconecta todos os bots.",
-  "settings.botBrowser.signOut": "Sair de todos os sites",
-  "settings.botBrowser.signOut.title": "Sair de todos os sites?",
-  "settings.botBrowser.signOut.body":
-    "O navegador esquece todos os sites em que você entrou, e as abas abertas fecham. Os bots só voltam a usar esses sites depois que você entrar de novo.",
-  "settings.botBrowser.signOut.cancel": "Agora não",
-  "settings.botBrowser.signOut.confirm": "Sair",
-  "settings.botBrowser.signOut.done": "Você saiu de todos os sites.",
-  "settings.botBrowser.signOut.failed": "O navegador não saiu dos sites. Tente de novo.",
+  "settings.siteSignIns": "Navegador",
+  "settings.siteSignIns.sites": "Sites em que você entrou",
+  "settings.siteSignIns.none":
+    "Você ainda não entrou em nenhum site. Entre num site numa aba do navegador, e seus bots também vão poder usá-lo.",
+  "settings.siteSignIns.unreadable":
+    "Não dá para abrir seus logins agora, então o navegador não está compartilhando nenhum. Se a chave dos segredos mudou, saia de todos os sites para começar de novo.",
+  "settings.siteSignIns.signOutSite": "Sair",
+  "settings.siteSignIns.signOutSite.label": "Sair de {site}",
+  "settings.siteSignIns.signOutSite.failed": "Não saiu de {site}. Tente de novo.",
+  "settings.siteSignIns.signOut": "Sair de todos os sites",
+  "settings.siteSignIns.signOut.title": "Sair de todos os sites?",
+  "settings.siteSignIns.signOut.body":
+    "O navegador esquece todos os sites em que você entrou, aqui e em todos os computadores. As abas abertas continuam abertas, sem login. Seus bots só voltam a usar esses sites depois que você entrar de novo.",
+  "settings.siteSignIns.signOut.cancel": "Agora não",
+  "settings.siteSignIns.signOut.confirm": "Sair",
+  "settings.siteSignIns.signOut.done": "Você saiu de todos os sites.",
+  "settings.siteSignIns.signOut.failed": "O navegador não saiu dos sites. Tente de novo.",
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",

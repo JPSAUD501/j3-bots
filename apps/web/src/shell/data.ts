@@ -16,6 +16,7 @@ import type {
   ServerUpdateView,
   SettingsChange,
   SettingsSaves,
+  SignInsState,
   SignInView,
   SecretsView,
   ThemesClient,
@@ -25,6 +26,7 @@ import type {
 } from "@j3-bots/client-runtime";
 import type { ConnectorsPlace, SettingsPage } from "@j3-bots/client-runtime/presentation";
 import type {
+  BrowserSite,
   ClientTelemetryEvent,
   SentTelemetryEvent,
   AvatarChoice,
@@ -203,6 +205,11 @@ export interface ShellData {
   readonly devices: ReadonlyArray<Device> | null;
   /** The turns bots spent recently, read while Settings is open. */
   readonly recentTurns: RecentTurnsState;
+  /**
+   * The sites the person is signed in to in J3 Bots' browser, followed while
+   * Settings shows its Browser page; null until they load, and meanwhile.
+   */
+  readonly browserSignIns: SignInsState | null;
   /** A connection to the server is open now. Pairing another device needs one. */
   readonly connected: boolean;
   /**
@@ -393,7 +400,9 @@ export interface ShellIntents extends TimelineIntents {
   readonly revokeDevice: (deviceId: DeviceId) => Promise<boolean>;
   /** Reads the settings again, as when Settings opens. */
   readonly refreshSettings: () => void;
-  /** Signs the bots' browser out of every site; resolves with whether it did. */
+  /** Signs J3 Bots' browser out of one site; resolves with whether it did. */
+  readonly signOutSite: (site: BrowserSite) => Promise<boolean>;
+  /** Signs J3 Bots' browser out of every site; resolves with whether it did. */
   readonly signOutBrowser: () => Promise<boolean>;
   /** Checks a provider again, updates its harness, installs J3 Bots' own copy, or cancels that (`ProviderActions`). */
   readonly providerActions: ProviderActions;
