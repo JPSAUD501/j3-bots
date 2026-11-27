@@ -29,6 +29,7 @@ import * as SQLite from "expo-sqlite";
 import { AppState } from "react-native";
 import { makeSession } from "../session.ts";
 import { phoneTimeZone } from "./timeZone.ts";
+import { forgetDocuments } from "./documents.ts";
 import { forgetImages } from "./images.ts";
 import { forgetOpenedFiles } from "./openFile.ts";
 import { endPush } from "./push.ts";
@@ -197,6 +198,7 @@ export const session = makeSession({
   forgetFiles: Effect.sync(() => {
     forgetOpenedFiles();
     forgetImages();
+    forgetDocuments();
   }),
   makePlatform,
   endPush,

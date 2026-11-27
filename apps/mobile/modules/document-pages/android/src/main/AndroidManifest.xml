@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!--
+      Draws a PDF's pages with Android's own renderer, in a process of its
+      own that Android isolates: it has no permission, no access to the app's
+      files or the network, and reads and writes only the files the app hands
+      it. A file that crashes or hangs the renderer ends that process, not the
+      app (DocumentPagesModule.kt).
+    -->
+    <service
+      android:name="dev.j3bots.documentpages.PdfPageService"
+      android:exported="false"
+      android:isolatedProcess="true"
+      android:process=":pdf_pages" />
+  </application>
+</manifest>

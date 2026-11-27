@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { documentKind } from "@j3-bots/client-runtime/documents";
 import { showsImage } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { Attachment, WorkImageId } from "@j3-bots/contracts";
@@ -9,11 +10,13 @@ import { Image, Modal, PanResponder, Pressable, StatusBar, View } from "react-na
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
+import { drawsPdfs } from "../platform/documents.ts";
 import { type ImageSource, useImage } from "../platform/images.ts";
 import { openAttachment } from "../platform/openFile.ts";
 import { Text } from "../text.tsx";
 import { useColor } from "../theme.ts";
 import { useSay } from "../toast.tsx";
+import { DocumentViewer } from "./DocumentViewer.tsx";
 
 /** Opens a file the app shows; whether it is opening, which takes no second press. */
 interface FileOpener {
@@ -25,16 +28,26 @@ interface FileOpener {
 
 const OpenerContext = createContext<FileOpener | null>(null);
 
+/** Whether the app's own viewer reads a file: a document of a kind it reads, on a phone that draws it. */
+const readsInApp = (attachment: Attachment) => {
+  const kind = documentKind(attachment);
+  return kind !== null && (kind !== "pdf" || drawsPdfs);
+};
+
 /**
  * Opens the files the app shows, in a conversation or a bot's details: an
- * image shows over everything, as large as the screen allows, and pinches or a double tap zoom it; any other file opens in
- * the system's viewer for its type, or the share sheet when no app views it.
+ * image shows over everything, as large as the screen allows, and pinches or
+ * a double tap zoom it; a document the app reads (a PDF, text, a table, a
+ * spreadsheet, a Word document or a presentation) shows over everything in
+ * the document viewer; any other file opens in the system's viewer for its
+ * type, or the share sheet when no app views it.
  */
 export function FileOpenerProvider({ children }: { readonly children: ReactNode }) {
   const { t } = useI18n();
   const client = useJ3Client();
   const say = useSay();
   const [viewing, setViewing] = useState<ImageSource | null>(null);
+  const [reading, setReading] = useState<Attachment | null>(null);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const inSystem = (attachment: Attachment) => {
     const { name, id } = attachment;
@@ -66,6 +79,7 @@ export function FileOpenerProvider({ children }: { readonly children: ReactNode 
     open: (attachment) => {
       if (busy.has(attachment.id)) return;
       if (showsImage(attachment)) setViewing({ _tag: "file", attachment });
+      else if (readsInApp(attachment)) setReading(attachment);
       else inSystem(attachment);
     },
     opening: (attachment) => busy.has(attachment.id),
@@ -88,6 +102,23 @@ export function FileOpenerProvider({ children }: { readonly children: ReactNode 
             source={viewing}
             onClose={() => setViewing(null)}
             onShare={inSystem}
+          />
+        )}
+      </Modal>
+      <Modal
+        visible={reading !== null}
+        transparent
+        statusBarTranslucent
+        navigationBarTranslucent
+        animationType="fade"
+        onRequestClose={() => setReading(null)}
+      >
+        {reading !== null && (
+          <DocumentViewer
+            key={reading.id}
+            attachment={reading}
+            onClose={() => setReading(null)}
+            onOpenElsewhere={inSystem}
           />
         )}
       </Modal>

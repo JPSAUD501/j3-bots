@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DOCUMENT_LIMITS } from "./limits.ts";
 import type { DocumentImage, DocumentImageType, Run } from "./model.ts";
-import { relationshipsOf, relationshipsPart, type XmlElement } from "./xml.ts";
+import { relationshipsOf, relationshipsPart } from "./xml.ts";
 import { resolvePart, type Zip } from "./zip.ts";
 
 /** What Word, Excel and PowerPoint files share: a main part, its relationships and pictures. */
