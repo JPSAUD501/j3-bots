@@ -138,9 +138,7 @@ export interface DraftChangedElsewhere {
 /**
  * A draft as the device keeps it: the text, the mentions picked in it, the
  * files already on the server, each placed in the text by its mark, and the
- * pairing that wrote it. A record kept before drafts held mentions reads as
- * holding none; one kept before drafts placed files, as placing them after
- * its text. Each write gives it a new
+ * pairing that wrote it. Each write gives it a new
  * `revision`, so a window can tell whether the draft is still the one it
  * read. The text is kept whatever its length: the limit of a message applies
  * when it is sent. A draft emptied or sent is kept too, empty, with a
@@ -154,7 +152,7 @@ const StoredDraft = Schema.fromJsonString(
       revision: Schema.String,
       pairing: DeviceId,
       text: Schema.String,
-      mentions: Schema.optionalKey(Schema.Array(DraftMention)),
+      mentions: Schema.Array(DraftMention),
       files: Schema.Array(Attachment),
     }),
   ),
@@ -231,7 +229,7 @@ const keptIn = (record: string | undefined, pairing: DeviceId): Kept | undefined
   const decoded = Option.getOrUndefined(decodeStored(record));
   if (decoded === undefined) return undefined;
   if (decoded.pairing !== pairing) return keptOf(empty);
-  return { text: decoded.text, mentions: decoded.mentions ?? [], files: decoded.files };
+  return { text: decoded.text, mentions: decoded.mentions, files: decoded.files };
 };
 
 /** A draft as the device keeps it, as this window shows it, its text placing each of its files. */

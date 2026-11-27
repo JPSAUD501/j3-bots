@@ -178,13 +178,12 @@ const StoredMessage = Schema.TaggedStruct("message", {
   target: EntryTarget,
   text: MessageText,
   attachments: Schema.Array(Attachment),
-  /** Missing from a message kept before messages placed their files, or sent without places. */
+  /** Missing from a message sent without places for its files. */
   attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
-  /** Missing from a message sent without its window, or kept before messages carried one. */
+  /** Missing from a message sent without its window. */
   lookingAt: Schema.optionalKey(LookingAt),
   mentions: Schema.NullOr(Mentions),
-  /** Missing from a message kept before messages kept them: it names none. */
-  labels: Schema.optionalKey(Schema.Array(MentionLabel)),
+  labels: Schema.Array(MentionLabel),
   createdAt: Schema.DateTimeUtc,
   /** Its place in the device's queue, given in the transaction that kept it. */
   sequence: NonNegativeInt,
@@ -834,7 +833,7 @@ export const layer = Layer.effect(
           : { attachmentOffsets: record.attachmentOffsets }),
         ...(record.lookingAt === undefined ? {} : { lookingAt: record.lookingAt }),
         mentions: record.mentions,
-        labels: record.labels ?? [],
+        labels: record.labels,
         createdAt: record.createdAt,
         status:
           record.status._tag === "sending" &&
