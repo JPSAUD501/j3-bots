@@ -1,6 +1,6 @@
 # 0012: The desktop renders the bundled web build and calls the server from its own origin
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

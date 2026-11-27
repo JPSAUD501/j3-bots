@@ -96,7 +96,6 @@ import {
   SignInHarness,
 } from "./provider.ts";
 import {
-  OldVaultPassword,
   Secret,
   SecretAccess,
   SecretChanges,
@@ -135,10 +134,9 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 // carry a value or a sign-in are the exceptions: what they carry must never be
 // stored, so they have no receipt (see there).
 //
-// A roster snapshot that carries `sections` comes from a server that organizes
-// the roster: sections, a bot's `sectionId` and `entries.markUnread`. A client
-// offers those only then, so it never calls them on a server that predates them
-// (docs/architecture/clients.md, "Protocol compatibility").
+// A client offers sections, a bot's `sectionId` and `entries.markUnread` only
+// once a roster snapshot carries `sections` (docs/architecture/clients.md,
+// "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
 const after = { after: Schema.NullOr(Sequence) };
@@ -822,10 +820,8 @@ export const EngineRpcs = RpcGroup.make(
    * its next periodic check, minutes away. It answers once the check ended;
    * what it found follows on `engine.subscribe`.
    * `NotFound("provider")` for a provider the server does not have, and
-   * `Conflict("engine-unavailable")` when the engine cannot take it now. New
-   * in 0.8.0, at protocol 10: a client asks it only of a server that reports
-   * an unavailable provider's `reason`, which an older one never does, and
-   * that answers it with a defect.
+   * `Conflict("engine-unavailable")` when the engine cannot take it now. A
+   * client asks it only under a provider whose `reason` the server reports.
    */
   Rpc.make("engine.recheckProvider", {
     payload: { providerId: ProviderId },
@@ -840,9 +836,8 @@ export const EngineRpcs = RpcGroup.make(
    * `NotFound("provider")` for a provider the server does not have,
    * `Conflict("provider-not-updatable")` when its `version` cannot be
    * updated, and `Conflict("engine-unavailable")` when the engine cannot
-   * take it now. New in 0.8.0, at protocol 10: a client asks it only of a
-   * server that reports a provider's `version`, which an older one never
-   * does.
+   * take it now. A client asks it only under a provider whose `version` the
+   * server reports.
    */
   Rpc.make("engine.updateProvider", {
     payload: { providerId: ProviderId },
@@ -899,14 +894,12 @@ export const SettingsRpcs = RpcGroup.make(
 
 /**
  * The entries a bot adds that notify: what it says to the operator and the
- * cards that wait on the operator. `handoff` is a server's before 0.5.0, whose
- * urgent teammate messages notified: none does now. A push of
- * each kind shows on Android in a notification channel of its own, whose id
- * is the kind, so the operator can mute or silence one kind alone.
+ * cards that wait on the operator. A push of each kind shows on Android in a
+ * notification channel of its own, whose id is the kind, so the operator can
+ * mute or silence one kind alone.
  */
 export const NotificationKind = Schema.Literals([
   "message",
-  "handoff",
   "question",
   "approval",
   "secret-request",
@@ -919,8 +912,7 @@ export type NotificationKind = typeof NotificationKind.Type;
 /**
  * Which connector card a `connector` notification is about: a connector a bot
  * called or added that needs a sign-in, or a connector's server asking the
- * operator something. Each is worded apart. A server before 0.9.0 also sent
- * `suggestion`, for a card that is gone.
+ * operator something. Each is worded apart.
  */
 export const ConnectorNotice = Schema.Literals(["sign-in", "input"]);
 export type ConnectorNotice = typeof ConnectorNotice.Type;
@@ -1020,10 +1012,9 @@ export const ClientRpcs = RpcGroup.make(
  * server's machine. A sign-in opens a page that returns to the harness on the
  * server's machine, so a client offers it only where it runs the server
  * itself: the desktop app hosting it (docs/architecture/engine.md, "Signing
- * in from the app"). Each is new in 0.3.0, at protocol 7: a client calls them
- * only on a server it runs itself, of its own release, and a server from
- * before answers each with a defect, which the client shows as the command
- * to run instead.
+ * in from the app"). A client calls them only on a server it runs itself,
+ * of its own release, and shows the command to run instead when one fails
+ * with a defect.
  */
 export const ProviderRpcs = RpcGroup.make(
   /** Where the server finds each harness, looked up again on every call. */
@@ -1058,8 +1049,8 @@ export const ProviderRpcs = RpcGroup.make(
    * Installs J3 Bots' own copy of the harness, or brings it to the version
    * the publisher lists as latest, in the background: what it does follows
    * on `engine.subscribe`, in the provider's `copy`. Answers once it started,
-   * or at once when one is under way already. A client sends it only to a
-   * server whose providers carry `copy` (new in 0.8.0, at protocol 10).
+   * or at once when one is under way already. A client sends it only under a
+   * provider that carries `copy`.
    * `Conflict("harness-not-installable")` when J3 Bots installs no copy of
    * it here: the server runs the one the operator installed, or
    * J3 Bots has no build of it for the server's system. No command id: doing
@@ -1098,25 +1089,13 @@ export const BrowserRpcs = RpcGroup.make(
  * would keep what it carries; each is safe to send again instead:
  * `secrets.add` names the secret it makes. No value they carry or answer is
  * stored outside the secrets' file, logged or kept in an error. Every request
- * but `secrets.status` and `secrets.openOldVault` fails with
- * `Conflict("secrets-unavailable")` while the state is not `ready`. A value
- * that cannot be opened or read back fails with `Conflict("secrets-damaged")`.
- * New at protocol 11, in place of the vault's requests.
+ * but `secrets.status` fails with `Conflict("secrets-unavailable")` while the
+ * state is not `ready`. A value that cannot be opened or read back fails with
+ * `Conflict("secrets-damaged")`.
  */
 export const SecretsRpcs = RpcGroup.make(
   /** The secrets' state now, then each change. */
   Rpc.make("secrets.status", { success: SecretsStatus, stream: true }),
-  /**
-   * Opens a vault from before secrets with the master password it was sealed
-   * under, once: the server keeps its key itself from then on, forgets the
-   * password, and the state becomes `ready`. A wrong password fails with
-   * `Invalid("old-vault-password")`. In `ready` it does nothing and
-   * succeeds, so a retry after a lost reply finds the work done.
-   */
-  Rpc.make("secrets.openOldVault", {
-    payload: { password: OldVaultPassword },
-    error: CommandError,
-  }),
   /** Every secret, by name, without its values. */
   Rpc.make("secrets.list", { success: Schema.Array(Secret), error: CommandError }),
   /**
@@ -1214,7 +1193,7 @@ export type ConnectorsEvent = typeof ConnectorsEvent.Type;
 /**
  * Connectors (docs/architecture/server.md, "Connectors"): the gallery to find
  * them in, and the operator's own, which every paired client may add, sign in
- * to, share among bots and remove. New in 0.4.0, at protocol 8.
+ * to, share among bots and remove.
  *
  * Nothing a connector holds leaves the server: a token, a key, a header's
  * value, a sign-in's code or `state`. What a client sends of them travels
@@ -1408,7 +1387,7 @@ export const ConnectorRpcs = RpcGroup.make(
  * (decision 0048). Each request goes out as the bot whose call opened the
  * app, through that bot's own session with the connector, checked as the
  * bot's own calls are; a client asks the operator first when the view's
- * `calls` is `ask`. New in 0.9.0: an older client never sees an app.
+ * `calls` is `ask`.
  */
 export const ConnectorAppRpcs = RpcGroup.make(
   /** The app, ready to draw. `NotFound("connector-app")` once its conversation's work is gone. */

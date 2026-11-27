@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { androidVersionCode } from "./androidVersionCode.ts";
 
-/** Each version in the order a phone must accept them as updates, across both formulas. */
+/** Each version in the order a phone must accept them as updates. */
 const releases = [
   "0.0.0",
   "0.1.0-rc.1",
@@ -38,9 +38,7 @@ describe("androidVersionCode", () => {
     expect(new Set(codes).size).toBe(codes.length);
   });
 
-  it("keeps the codes that shipped up to 0.3.0, and puts the parts in fixed places after", () => {
-    expect(androidVersionCode("0.1.0-rc.1")).toBe(10_001);
-    expect(androidVersionCode("0.3.0")).toBe(30_099);
+  it("puts each part of the version in a fixed place", () => {
     expect(androidVersionCode("0.3.1-nightly.20261124.57")).toBe(3_010_328);
     expect(androidVersionCode("1.5.0-rc.3")).toBe(105_009_003);
     expect(androidVersionCode("1.4.1")).toBe(104_019_999);
@@ -61,7 +59,6 @@ describe("androidVersionCode", () => {
       "1.100.0",
       "1.4.100",
       "21.0.0",
-      "0.3.0-nightly.20261124.57",
       "0.3.1-nightly.20251231.1",
       "0.3.1-nightly.20500822.1",
       "0.3.1-nightly.20261131.1",

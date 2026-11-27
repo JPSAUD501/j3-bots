@@ -69,11 +69,7 @@ export interface WebAiConnect extends AiConnectModel {
   readonly locations: ReadonlyArray<HarnessLocation> | null;
 }
 
-/**
- * The accounts as this screen connects them. A server that cannot run a
- * sign-in for a client, as one from before it could, is connected with the
- * command, on its machine.
- */
+/** The accounts as this screen connects them, where `connect` says they sign in. */
 export function useWebAiConnect({
   engine,
   connect,
@@ -83,12 +79,8 @@ export function useWebAiConnect({
   readonly connect: ConnectPlace;
   readonly actions: ProviderActions;
 }): WebAiConnect {
-  const offered = connect._tag === "here" ? connect.setup : undefined;
-  const unsupported =
-    offered !== undefined &&
-    [...offered.signIns.values()].some((view) => view._tag === "unsupported");
-  const setup = unsupported ? undefined : offered;
-  const place: AiPlace = setup !== undefined ? "here" : unsupported ? "server" : connect._tag;
+  const setup = connect._tag === "here" ? connect.setup : undefined;
+  const place: AiPlace = connect._tag;
   const { found } = useHarnesses(setup?.harnesses ?? noLocations, engineFindings(engine));
   const locations = found === "looking" ? null : found;
   const model = useAiConnect({

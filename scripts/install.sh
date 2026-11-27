@@ -377,7 +377,7 @@ else
     fail "Could not download $download_url/SHA256SUMS. Check the version (a pre-release by its full name, such as 0.1.0-rc.1) and the network."
   # The signature first: nothing in SHA256SUMS is read until it is checked.
   fetch "$download_url/SHA256SUMS.sig" "$work/SHA256SUMS.sig" ||
-    fail "Could not download $download_url/SHA256SUMS.sig, the signature that shows the release is J3 Bots', so nothing was installed. Releases before 0.3.1 have none: install one of those with the install.sh on its own release page. Otherwise check the network, then run this again."
+    fail "Could not download $download_url/SHA256SUMS.sig, the signature that shows the release is J3 Bots', so nothing was installed. Check the network, then run this again."
   key_name="the J3 Bots release key"
   if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then key_name="the J3 Bots release key or the mirror's key in J3_RELEASE_PUBLIC_KEY"; fi
   verify_signature "$work/SHA256SUMS" "$work/SHA256SUMS.sig" ||

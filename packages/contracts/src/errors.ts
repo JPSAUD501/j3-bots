@@ -34,7 +34,7 @@ export const Resource = Schema.Literals([
   "memory-file",
   "device",
   "attachment",
-  /** Only an answer to a request about sections names it, which an older client never makes. */
+  /** Only an answer to a request about sections names it. */
   "section",
   /** A secret, which only the secrets' requests name. */
   "secret",
@@ -42,7 +42,7 @@ export const Resource = Schema.Literals([
   "connector",
   "connector-listing",
   "sign-in",
-  /** A provider, which only `engine.recheckProvider`, new in 0.8.0, names: an older client never asks it. */
+  /** A provider, which only `engine.recheckProvider` and `engine.updateProvider` name. */
   "provider",
   /** A skill, which only skill requests name. */
   "skill",
@@ -87,8 +87,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "secrets-unavailable",
     /**
      * A value of a secret does not open under its key, or does not read as
-     * what it should be, or an old vault's key settings are out of range: the
-     * file was changed by hand or damaged. The server's log names the record
+     * what it should be: the file was changed by hand or damaged. The server's log names the record
      * and field, never the value. Restoring the file from a backup fixes it.
      */
     "secrets-damaged",
@@ -129,8 +128,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "sign-in-refused",
     /**
      * The engine cannot update this provider's harness itself, or knows no
-     * newer version of it. Only `engine.updateProvider`, new in 0.8.0,
-     * answers it.
+     * newer version of it. Only `engine.updateProvider` answers it.
      */
     "provider-not-updatable",
     /**
@@ -174,8 +172,6 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "answer-length",
     /** A dismissal of a question the harness asked: only a bot's `ask` question takes one. */
     "not-dismissible",
-    /** The password given is not the one the old vault was sealed under. */
-    "old-vault-password",
     /** A login's field for a single value, or a single value's for a login. */
     "secret-kind",
     /** The one-time code setup is neither a base32 secret nor an `otpauth://totp/` address. */

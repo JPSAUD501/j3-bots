@@ -1,6 +1,6 @@
 # 0030: A visual is part of `say`, drawn by J3 Bots' clients in a sandbox
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

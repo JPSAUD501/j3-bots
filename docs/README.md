@@ -44,11 +44,19 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [A Google connector with your own app](operations/connector-google.md) and [a Slack one](operations/connector-slack.md) (drafts): registering the app, the addresses sign-ins return to, and giving J3 Bots its client.
 - [Releasing](operations/releasing.md): cutting a release of the desktop app and the server, what the release workflow may do, signing, and trying an update or an install locally.
 - [The release notes template](releases/TEMPLATE.md): the sections every release's notes have, the order of updating, and the highlights the update prompt shows.
-- [Release notes for 0.1.0](releases/v0.1.0.md): the first release, what it contains, how to install it and what does not work yet.
-- [Release notes for 0.3.0](releases/v0.3.0.md), a draft until it is released: the bots on your own computer, what changes on updating and what does not work yet.
-- [Release notes for 0.3.1](releases/v0.3.1.md), a draft until it is released: signed releases, updates from the apps and the nightly channel, what changes on updating and what is not verified yet.
-- [Release notes for 0.4.0](releases/v0.4.0.md), a draft until it is released: the bot's browser, the vault, connectors and visuals, what changes on updating and what is not verified yet.
-- [Release notes for 0.5.0](releases/v0.5.0.md), a draft until it is released: a conversation for each pair of bots, teams bots build on your word, events as one line and the first run's motion, what changes on updating and what is not verified yet.
+- Release notes, each with what is new, what changes on updating and the known limits:
+  - [0.1.0](releases/v0.1.0.md): the first release, what it contains and how to install it.
+  - [0.3.0](releases/v0.3.0.md): the bots on your own computer, run by the desktop app.
+  - [0.3.1](releases/v0.3.1.md): signed releases, updates from the apps and the nightly channel.
+  - [0.4.0](releases/v0.4.0.md): the bot's browser, logins a bot uses without seeing them, connectors and visuals.
+  - [0.5.0](releases/v0.5.0.md): a conversation for each pair of bots, teams bots build on your word, events as one line and the first run's motion.
+  - [0.6.0](releases/v0.6.0.md): a room is a group where everyone reads, with no host.
+  - [0.7.0](releases/v0.7.0.md): a bot brings work to a room from its own conversation, and the apps update themselves as they open.
+  - [0.7.1](releases/v0.7.1.md): a bot reads its rooms from any conversation, and a room's talk among its bots is bounded by rounds.
+  - [0.8.0](releases/v0.8.0.md): from no harness to a working bot without a terminal, and people's names for bots.
+  - [0.9.0](releases/v0.9.0.md): the whole of MCP, apps drawn in the conversation and skills, Secrets with no password, updates that open in front of you, and the first run as a stage.
+  - [0.10.0](releases/v0.10.0.md): a first run for someone who has never heard of a harness, Settings that lists what the bots added, the server on Windows, and moving your bots to another server.
+  - [0.11.0](releases/v0.11.0.md): a bot's plan and its little ones, failures that say what to do, Force stop, suggested replies, pictures as photos, and quick access on the desktop.
 - [The every-surface check](operations/every-surface-check.md): the desktop app and the Android app against one server, run by hand: continuity, cards resolved across devices, the desktop's surfaces, and what it does not prove.
 
 ## Engineering

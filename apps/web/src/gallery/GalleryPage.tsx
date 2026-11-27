@@ -225,7 +225,7 @@ import {
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
-import { SAMPLE_OLD_VAULT_PASSWORD, useSampleSecrets } from "./sampleSecrets";
+import { useSampleSecrets } from "./sampleSecrets";
 import { withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
 import { galleryImage } from "./workImages";
@@ -1028,7 +1028,6 @@ const sampleNotification = (
  */
 const sampleNotifications: ReadonlyArray<Notification> = [
   sampleNotification("message", ids.scout),
-  sampleNotification("handoff", ids.wren),
   sampleNotification("question", ids.otto),
   sampleNotification("approval", ids.atlas),
   sampleNotification("secret-request", ids.iris),
@@ -1620,9 +1619,7 @@ function CardsSection() {
       <Labeled label="Approval becoming exact while it waits: the change arrives after the summary, and focus in the summary moves to it">
         <ApprovalBecomingExact />
       </Labeled>
-      <Labeled
-        label={`A bot asks for a secret: a login, a value, either while secrets wait for the old vault's password (“${SAMPLE_OLD_VAULT_PASSWORD}”); saved, declined, expired`}
-      >
+      <Labeled label="A bot asks for a secret: a login, a value, either while the secrets can’t be read; saved, declined, expired">
         <AskCards />
       </Labeled>
       <Labeled label="Connector sign-in: pending, signed in, removed">
@@ -1690,7 +1687,7 @@ function CardsSection() {
 /** A bot's ask for a secret in each state, each with secrets of its own. */
 function AskCards() {
   const ready = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
-  const oldVault = useSampleSecrets({ state: "old-vault", now: () => SAMPLE_NOW });
+  const unreadable = useSampleSecrets({ state: "unreadable", now: () => SAMPLE_NOW });
   const [login, value, values, ...closed] = variants.asks;
   if (login === undefined || value === undefined || values === undefined) return null;
   return (
@@ -1698,7 +1695,7 @@ function AskCards() {
       <SecretAskCard entry={login} secrets={ready} onDecline={nothing} />
       <SecretAskCard entry={value} secrets={ready} onDecline={nothing} />
       <SecretAskCard entry={values} secrets={ready} onDecline={nothing} />
-      <SecretAskCard entry={value} secrets={oldVault} onDecline={nothing} />
+      <SecretAskCard entry={value} secrets={unreadable} onDecline={nothing} />
       {closed.map((entry) => (
         <SecretAskCard key={entry.id} entry={entry} secrets={ready} onDecline={nothing} />
       ))}
@@ -3753,7 +3750,6 @@ function SecretsGallerySection() {
   const now = () => SAMPLE_NOW;
   const saved = useSampleSecrets({ state: "ready", now, secrets: variants.savedSecrets });
   const empty = useSampleSecrets({ state: "ready", now });
-  const oldVault = useSampleSecrets({ state: "old-vault", now, secrets: variants.savedSecrets });
   const unreadable = useSampleSecrets({ state: "unreadable", now });
   const newer = useSampleSecrets({ state: "newer", now });
   return (
@@ -3769,14 +3765,6 @@ function SecretsGallerySection() {
         </Frame>
         <Frame padded label="None saved yet; Add a secret opens the form" width={420} height={640}>
           <SecretsSection secrets={empty} />
-        </Frame>
-        <Frame
-          padded
-          label={`A vault from before secrets (the password is “${SAMPLE_OLD_VAULT_PASSWORD}”)`}
-          width={420}
-          height={420}
-        >
-          <SecretsSection secrets={oldVault} />
         </Frame>
         <Frame padded label="The key file is missing" width={420} height={200}>
           <SecretsSection secrets={unreadable} />
@@ -4690,13 +4678,13 @@ const grantedLink: Extract<LocalPairingLink, { readonly _tag: "granted" }> = {
 
 /**
  * Bots that moved from this computer the day before the sample's now,
- * leaving out their secrets, still in an old vault, and two files.
+ * leaving out their secrets, whose key was missing, and two files.
  */
 const movedAway = {
   file: "/exports/j3-bots-export-2026-11-19.tar.gz",
   at: DateTime.subtract(SAMPLE_NOW, { days: 1 }),
   leftOut: {
-    secrets: "old-vault",
+    secrets: "unreadable",
     links: 0,
     names: 2,
     firstNames: ["bots/ana/files/report\\draft.md", "shared/memory/notes\\old.md"],
@@ -5194,10 +5182,6 @@ function UpdatesGallerySection() {
           server={serverUpdate(said(s.refused))}
         />
         <UpdatesFrame
-          label="A server older than updates from the apps"
-          server={serverUpdate(serverViews.unsupported)}
-        />
-        <UpdatesFrame
           label="The app: downloading"
           app={appUpdate(appPhases.downloading)}
           height={300}
@@ -5323,13 +5307,6 @@ function UpdatesGallerySection() {
             server={desktopServer}
             mismatch={{ behind: "server", serverVersion: "0.3.1" }}
             serverUpdate={serverUpdate(said({ ...s.startedByHand, available: null }))}
-          />
-        </Frame>
-        <Frame label="Mismatch: the server predates the update routes" width={390} height={560}>
-          <Incompatible
-            server={desktopServer}
-            mismatch={{ behind: "server", serverVersion: "0.3.0" }}
-            serverUpdate={serverUpdate(serverViews.unsupported)}
           />
         </Frame>
         <Frame label="Mismatch: the app is behind, it updates in place" width={390} height={560}>

@@ -156,7 +156,6 @@ const sentences = {
   "step.tool.doing": "Usando “{label}”",
   "summary.cannotShow": "Algo que esta versão do app não consegue mostrar",
   "summary.handoffTo": "Para {name}: {text}",
-  "summary.handoffSent": "Para um colega: {text}",
   "summary.handoffFrom": "De {name}: {text}",
   "summary.routine": "Rotina: {name}",
   "summary.routineChanged": "Alterou uma rotina",
@@ -165,7 +164,6 @@ const sentences = {
   "notification.question": "Tem uma pergunta para você",
   "notification.approval": "Precisa da sua aprovação",
   "notification.secret": "Precisa de uma credencial",
-  "notification.handoff": "Mandou uma mensagem urgente a um colega",
   "notification.browserHelp": "Precisa da sua ajuda no navegador",
   "notification.browserHelpStep": "Precisa da sua ajuda no navegador: {step}",
   "notification.browserHelpStepOnSite": "Precisa da sua ajuda no navegador: {step} em {site}",
@@ -179,14 +177,12 @@ const sentences = {
   "notification.channel.question": "Perguntas",
   "notification.channel.approval": "Aprovações",
   "notification.channel.secret": "Pedidos de credencial",
-  "notification.channel.handoff": "Mensagens urgentes a colegas",
   "notification.channel.browserHelp": "Ajuda no navegador",
   "notification.channel.connector": "Conectores",
   "notification.channel.signIn": "Entradas",
 
   "time.yesterday": "Ontem",
   "time.yesterdayAt": "Ontem às {time}",
-  "time.tomorrowAt": "Amanhã às {time}",
   "time.dayAt": "{day} às {time}",
   "time.inSentence.today": "às {time}",
   "time.inSentence.yesterday": "ontem às {time}",
@@ -366,14 +362,8 @@ const sentences = {
   "secrets.title": "Segredos",
   "secrets.intro":
     "Logins e chaves que seus bots usam sem nunca ver. Eles ficam no seu servidor do J3 Bots: o bot só fica sabendo o nome do segredo.",
-  "secrets.oldVault.title": "Digite a senha do cofre uma última vez",
-  "secrets.oldVault.body":
-    "Os segredos não precisam mais de senha. Digite a senha do cofre uma vez, e o J3 Bots passa a guardar seus logins sem ela. Até lá, os bots não conseguem usá-los.",
-  "secrets.oldVault.password": "Senha do cofre",
-  "secrets.oldVault.open": "Continuar",
-  "secrets.oldVault.wrong": "Senha errada.",
-  "secrets.oldVault.forgot":
-    "Esqueceu? Os logins dele não podem ser recuperados sem ela. Para recomeçar sem segredos, siga “Recomeçar” no guia de operação.",
+  "secrets.oldVault":
+    "Seus segredos estão num cofre antigo que espera a senha dele. Abra Configurações → Segredos no app web que este servidor serve e digite a senha lá.",
   "secrets.unreadable":
     "Seus segredos não podem ser lidos: o arquivo de chave na pasta do cofre do servidor sumiu ou não é o deles. Coloque-o de volta a partir de um backup, ou recomece como diz o guia de operação.",
   "secrets.newer":
@@ -1422,7 +1412,7 @@ const sentences = {
   "local.moved.file": "O arquivo: {file}",
   "local.moved.leftOut": "Ficaram fora do arquivo:",
   "local.moved.leftOut.secrets.old-vault":
-    "Os segredos: estão num cofre antigo que espera a senha dele. Para levá-los, rode os bots aqui de novo, digite a senha em Configurações → Segredos e mova os bots outra vez.",
+    "Os segredos: estão num cofre antigo que espera a senha dele, que esta versão do J3 Bots não aceita.",
   "local.moved.leftOut.secrets.unreadable":
     "Os segredos: a chave que os protege não está neste computador, ou é outra.",
   "local.moved.leftOut.secrets.newer": "Os segredos: uma versão mais nova do J3 Bots os mudou.",
@@ -1588,8 +1578,6 @@ const sentences = {
     "Uma rotina deste modelo tem um horário que o J3 Bots não consegue seguir, então nada foi criado.",
   "template.create.noModel": "Conecte um provedor antes de criar um bot.",
   "template.create.offline": "Criar um bot exige conexão com o servidor.",
-  "template.pick": "Escolher um arquivo de modelo",
-  "template.drop": "Solte para criar um bot a partir deste modelo",
   "template.read.tooLarge": "Este arquivo é grande demais para ser um modelo.",
   "template.read.newer":
     "Este modelo foi feito por um J3 Bots mais novo. Atualize este para criar um bot a partir dele.",
@@ -1971,8 +1959,6 @@ const sentences = {
   "serverUpdate.lost":
     "A atualização não terminou. Na máquina do servidor, rode isto para ver o motivo:",
   "serverUpdate.unreachable": "Não deu para falar com o servidor para ver as atualizações.",
-  "serverUpdate.unsupported":
-    "Este servidor é anterior às atualizações pelos apps. Atualize na máquina dele:",
   "serverUpdate.unable.desktopManaged":
     "Este servidor roda dentro do app J3 Bots no computador dele. Atualizar esse app atualiza o servidor.",
   "serverUpdate.unable.startedByHand":
@@ -2302,8 +2288,6 @@ const sentences = {
   "connector.server.resources.other": "{count} recursos",
   "connector.server.prompts.one": "{count} prompt",
   "connector.server.prompts.other": "{count} prompts",
-  "connector.connect": "Conectar",
-  "connector.setUp": "Configurar",
   "connector.unsupported": "O J3 Bots ainda não consegue conectar este.",
   "connector.onComputer":
     "Este roda um comando no seu servidor. Altere ou remova pelo J3 Bots no seu computador.",
@@ -2328,7 +2312,6 @@ const sentences = {
   "connector.editCommand.saved":
     "Salvo. Ele inicia de novo com o novo comando, e uma ferramenta nova ou alterada espera por você aqui.",
   "connector.editCommand.savedValues": "Salvo. Ele inicia de novo com os novos valores.",
-  "connector.status": "Status",
   "connector.disconnect": "Desconectar",
   "connector.disconnect.title": "Desconectar {name}?",
   "connector.disconnect.body": "Os bots perdem o acesso a {name}. Sua conta lá não muda.",
@@ -2337,7 +2320,6 @@ const sentences = {
   "connector.disconnect.cancel": "Manter",
   "connector.disconnect.pending": "Desconectando…",
   "connector.disconnect.failed": "A desconexão não terminou. Tente de novo.",
-  "connector.loadFailed": "Este conector não carregou.",
   "connector.gone": "Este conector não está mais aqui.",
 
   "connect.choose": "Escolha uma opção",
@@ -2491,7 +2473,6 @@ const sentences = {
   "connectorCard.signIn": "Entrar",
   "connectorCard.signedIn": "Você entrou.",
   "connectorCard.removed": "{name} foi desconectado.",
-  "connectorCard.failed": "Isso não foi. Tente de novo.",
 
   "details.connectors": "Conectores",
   "details.noConnectors":

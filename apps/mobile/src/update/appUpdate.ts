@@ -134,7 +134,7 @@ const readAutomatic = (): boolean => {
 /**
  * At most one check of the feed in this long when the app opens or comes
  * back, besides the operator's own: six hours when the operator installs
- * updates themselves, as before; one hour when the app installs them as it
+ * updates themselves; one hour when the app installs them as it
  * opens, so coming back to it after a while finds a release out since.
  */
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
@@ -239,7 +239,7 @@ const verifiedRelease = async (
     fetchFile(download(feed, candidate.tag, SUMS_FILE)),
     fetchFile(download(feed, candidate.tag, SIGNATURE_FILE)),
   ]);
-  // Nothing signed: a release from before releases were signed.
+  // A release without its `SHA256SUMS` is refused as such.
   if (sums === null) return Result.fail("checksums-missing");
   const file = apkName(candidate.version);
   return Result.flatMap(

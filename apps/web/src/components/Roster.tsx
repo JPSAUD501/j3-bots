@@ -154,7 +154,7 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
 
 interface RosterProps {
   readonly items: ReadonlyArray<RosterItem>;
-  /** Null while the server has not said it has sections. */
+  /** Null until the roster loads. */
   readonly sections: ReadonlyArray<Section> | null;
   readonly selected: RosterItemKey | null;
   /** The link a row navigates with, such as a router link to its conversation. */

@@ -40,7 +40,6 @@ import type {
   Mentions,
   HarnessLocation,
   Notification,
-  OldVaultPassword,
   PairBotIds,
   PairSeq,
   ProviderConnectionRequest,
@@ -162,7 +161,6 @@ export const layer = SignOut.layer.pipe(
 /** The operator's secrets, with each request answered as a promise; see `Secrets.Secrets`. */
 export interface SecretsHandle {
   readonly view: Readable<Secrets.SecretsView>;
-  readonly openOldVault: (password: OldVaultPassword) => Promise<Secrets.SecretsResult>;
   readonly add: (
     secret: Secrets.NewSecret,
     request: EntryId | null,
@@ -922,7 +920,6 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     secrets: {
       view: services.secrets.view,
-      openOldVault: (password) => run.promise(services.secrets.openOldVault(password)),
       add: (secret, request) => run.promise(services.secrets.add(secret, request)),
       addFromAsk: (asked) => run.promise(services.secrets.addFromAsk(asked)),
       update: (id, changes) => run.promise(services.secrets.update(id, changes)),

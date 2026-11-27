@@ -159,7 +159,6 @@ export const en = {
   "step.tool.doing": "Using “{label}”",
   "summary.cannotShow": "Something this version of the app can’t show",
   "summary.handoffTo": "To {name}: {text}",
-  "summary.handoffSent": "To a teammate: {text}",
   "summary.handoffFrom": "From {name}: {text}",
   "summary.routine": "Routine: {name}",
   "summary.routineChanged": "Changed a routine",
@@ -168,7 +167,6 @@ export const en = {
   "notification.question": "Has a question for you",
   "notification.approval": "Needs your approval",
   "notification.secret": "Needs a credential",
-  "notification.handoff": "Sent a teammate an urgent message",
   "notification.browserHelp": "Needs your help in the browser",
   "notification.browserHelpStep": "Needs your help in the browser: {step}",
   "notification.browserHelpStepOnSite": "Needs your help in the browser: {step} on {site}",
@@ -182,14 +180,12 @@ export const en = {
   "notification.channel.question": "Questions",
   "notification.channel.approval": "Approvals",
   "notification.channel.secret": "Credential requests",
-  "notification.channel.handoff": "Urgent messages to teammates",
   "notification.channel.browserHelp": "Help in the browser",
   "notification.channel.connector": "Connectors",
   "notification.channel.signIn": "Sign-ins",
 
   "time.yesterday": "Yesterday",
   "time.yesterdayAt": "Yesterday at {time}",
-  "time.tomorrowAt": "Tomorrow at {time}",
   "time.dayAt": "{day} at {time}",
   "time.inSentence.today": "at {time}",
   "time.inSentence.yesterday": "yesterday at {time}",
@@ -371,14 +367,8 @@ export const en = {
   "secrets.title": "Secrets",
   "secrets.intro":
     "Logins and keys your bots use without ever seeing them. They stay on your J3 Bots server: a bot is only told a secret’s name.",
-  "secrets.oldVault.title": "Type your vault password one last time",
-  "secrets.oldVault.body":
-    "Secrets no longer need a password. Type your vault password once, and J3 Bots keeps your logins without it from then on. Until you do, bots can’t use them.",
-  "secrets.oldVault.password": "Vault password",
-  "secrets.oldVault.open": "Continue",
-  "secrets.oldVault.wrong": "Wrong password.",
-  "secrets.oldVault.forgot":
-    "Forgot it? The logins in it can’t be recovered without it. To start over with no secrets, follow “Start over” in the operating guide.",
+  "secrets.oldVault":
+    "Your secrets are in an old vault that waits for its password. Open Settings → Secrets in the web app this server serves, and type it there.",
   "secrets.unreadable":
     "Your secrets can’t be read: the key file in the server’s vault folder is missing or isn’t theirs. Put it back from a backup, or start over as the operating guide says.",
   "secrets.newer":
@@ -1404,7 +1394,7 @@ export const en = {
   "local.moved.file": "The file: {file}",
   "local.moved.leftOut": "Left out of the file:",
   "local.moved.leftOut.secrets.old-vault":
-    "The secrets: they’re in an old vault that waits for its password. To bring them, run the bots here again, type it in Settings → Secrets, then move them again.",
+    "The secrets: they’re in an old vault that waits for its password, which this version of J3 Bots can’t take.",
   "local.moved.leftOut.secrets.unreadable":
     "The secrets: the key they’re sealed under is missing on this computer, or is another one.",
   "local.moved.leftOut.secrets.newer": "The secrets: a newer version of J3 Bots changed them.",
@@ -1566,8 +1556,6 @@ export const en = {
     "A routine in this template has a schedule J3 Bots can’t run, so nothing was created.",
   "template.create.noModel": "Connect a provider before creating a bot.",
   "template.create.offline": "Creating a bot takes a connection to the server.",
-  "template.pick": "Choose a template file",
-  "template.drop": "Drop to create a bot from this template",
   "template.read.tooLarge": "This file is too large to be a template.",
   "template.read.newer":
     "This template was made by a newer J3 Bots. Update this one to create a bot from it.",
@@ -1938,8 +1926,6 @@ export const en = {
   "serverUpdate.working": "Updating the server…",
   "serverUpdate.lost": "The update hasn’t finished. On the server’s machine, run this to see why:",
   "serverUpdate.unreachable": "Couldn’t reach the server to see its updates.",
-  "serverUpdate.unsupported":
-    "This server is older than updates from the apps. Update it on its machine:",
   "serverUpdate.unable.desktopManaged":
     "This server runs inside the J3 Bots app on its computer. Updating that app updates it.",
   "serverUpdate.unable.startedByHand":
@@ -2265,8 +2251,6 @@ export const en = {
   "connector.server.resources.other": "{count} resources",
   "connector.server.prompts.one": "{count} prompt",
   "connector.server.prompts.other": "{count} prompts",
-  "connector.connect": "Connect",
-  "connector.setUp": "Set up",
   "connector.unsupported": "J3 Bots can't connect this one yet.",
   "connector.onComputer":
     "This one runs a command on your server. Change it or remove it from J3 Bots on your computer.",
@@ -2291,7 +2275,6 @@ export const en = {
   "connector.editCommand.saved":
     "Saved. It starts again with the new command, and a new or changed tool waits for you here.",
   "connector.editCommand.savedValues": "Saved. It starts again with the new values.",
-  "connector.status": "Status",
   "connector.disconnect": "Disconnect",
   "connector.disconnect.title": "Disconnect {name}?",
   "connector.disconnect.body": "Bots lose access to {name}. Your account there isn't changed.",
@@ -2300,7 +2283,6 @@ export const en = {
   "connector.disconnect.cancel": "Keep it",
   "connector.disconnect.pending": "Disconnecting…",
   "connector.disconnect.failed": "Disconnecting didn't finish. Try again.",
-  "connector.loadFailed": "This connector didn't load.",
   "connector.gone": "This connector isn't here any more.",
 
   "connect.choose": "Choose one",
@@ -2452,7 +2434,6 @@ export const en = {
   "connectorCard.signIn": "Sign in",
   "connectorCard.signedIn": "Signed in.",
   "connectorCard.removed": "{name} was disconnected.",
-  "connectorCard.failed": "That didn't go through. Try again.",
 
   "details.connectors": "Connectors",
   "details.noConnectors": "{name} can't use any connectors yet. Ask {name} to add one.",

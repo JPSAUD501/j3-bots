@@ -491,13 +491,10 @@ const UNKNOWN: ServerOffer = { _tag: "unknown" };
  * counts when this client can start it: a verified, newer one, on a server
  * that can update itself from a client and runs no update. A server that
  * cannot (as the one the desktop app runs, which updates with the app) is
- * current here: its Settings say why. A server from before the update routes
- * is current too, as far as this client can tell.
+ * current here: its Settings say why.
  */
 export const serverOffer = (view: ServerUpdateView): ServerOffer => {
   switch (view._tag) {
-    case "unsupported":
-      return { _tag: "current", version: null };
     case "status": {
       const { available, canUpdate, state, current } = view.status;
       if (isRunning(state)) return UNKNOWN;

@@ -31,9 +31,6 @@ import { useState, useSyncExternalStore } from "react";
 import type { SecretsAccess } from "../components/secrets/parts";
 import { writeClipboard } from "../lib/clipboard";
 
-/** The sample's old vault password, in the gallery's notes. */
-export const SAMPLE_OLD_VAULT_PASSWORD = "correct horse";
-
 /** A secret's values, as the sample keeps them in the clear. */
 export type SampleValues =
   | {
@@ -156,15 +153,6 @@ export function sampleSecrets({ state, secrets = [], onSaved, now }: Options): S
 
   return {
     view,
-    openOldVault: (password) => {
-      if (current !== "old-vault") return done(undefined);
-      if (Redacted.value(password) !== SAMPLE_OLD_VAULT_PASSWORD) {
-        return refused(new Invalid({ reason: "old-vault-password" }));
-      }
-      current = "ready";
-      changed();
-      return done(undefined);
-    },
     add: (secret, request) => {
       const closed = unavailable();
       if (closed !== null) return closed;

@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {
-  MAX_SECRET_NAME_LENGTH,
-  type SecretAccess,
-  SecretName,
-  secretReferencePattern,
-} from "@j3-bots/contracts";
+import { type SecretAccess, SecretName, secretReferencePattern } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -75,26 +70,3 @@ export const referenceText = (reference: SecretReference): string =>
  */
 export const nameFromBot = (given: string): Option.Option<SecretName> =>
   decodeName(given.trim().replace(/^secret:/, ""));
-
-/**
- * A secret's name from a login's label of before secrets ("GitHub (work)"
- * gives `github-work`): lower case, letters and digits without their accents,
- * every other run of characters one `-`, cut to the longest name. `login` when
- * nothing of it is left. `taken` names are passed over with a number after.
- */
-export const nameFromLabel = (label: string, taken: ReadonlySet<string>): SecretName => {
-  const base =
-    label
-      .normalize("NFKD")
-      .replace(/[̀-ͯ]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, MAX_SECRET_NAME_LENGTH)
-      .replace(/-+$/, "") || "login";
-  for (let n = 1; ; n += 1) {
-    const suffix = n === 1 ? "" : `-${n}`;
-    const candidate = `${base.slice(0, MAX_SECRET_NAME_LENGTH - suffix.length).replace(/-+$/, "")}${suffix}`;
-    if (!taken.has(candidate)) return SecretName.make(candidate);
-  }
-};

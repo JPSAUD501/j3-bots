@@ -115,7 +115,6 @@ export function notificationState(
     case "connector":
       return "waiting";
     case "message":
-    case "handoff":
       return "unread";
   }
 }

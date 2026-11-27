@@ -80,22 +80,31 @@ A routine, a message from another bot and a room turn follow the same path from 
 | Bot ↔ host machine | Whatever the engine's permission mode allows. J3 Bots adds no sandbox of its own. |
 | J3 Bots ↔ network | Loopback for the engine. The J3 Bots server listens where the operator configures it. Nothing leaves the machine except model traffic the harness makes and optional push notifications. |
 
-## Repository layout (planned)
+## Repository layout
 
 ```
 apps/
-  server/      the J3 Bots server
-  web/         the web client; also the desktop app's content
-  desktop/     Electron shell
-  mobile/      Expo app
+  server/           the J3 Bots server
+  web/              the web client; also the desktop app's content
+  desktop/          Electron shell, which can also run the server itself
+  mobile/           Expo app; only Android is built
 packages/
   contracts/        J3 Bots contract: schemas for RPC, entities, errors
   engine-t3/        engine adapter: the only T3-aware code
   client-runtime/   connection, state and commands shared by all clients
-  prompts/          base prompt, wake envelopes, tool descriptions, with their tests
+  connectors/       the server's MCP client for connectors, behind the SSRF guard
+  prompts/          base prompt, wake envelopes, tool descriptions, with their tests;
+                    /evals holds the one-turn prompt evals
   design-tokens/    colors, type, spacing, motion, bot palette, avatar shapes as data;
-                    /raster draws avatars as PNG
+                    /raster draws avatars and the app's icons as PNG
   i18n/             interface sentences in every language, notification wording
+  desktop-bridge/   what the desktop app's main process and the web client it hosts exchange
+  processes/        starting and stopping the programs the server runs, and file locks
+  release/          release versions, channels, keys and the signed SHA256SUMS every installer checks
+evals/              end-to-end evals against real models, run on demand
+scripts/            release builds, install.sh and repository checks
+deploy/             a container proxy for platforms that publish only containers
+release-keys/       the public keys releases are signed with
 docs/
 ```
 

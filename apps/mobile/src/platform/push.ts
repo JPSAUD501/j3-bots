@@ -75,9 +75,14 @@ const CHANNEL_NAMES = {
   approval: "notification.channel.approval",
   "secret-request": "notification.channel.secret",
   "browser-help": "notification.channel.browserHelp",
-  handoff: "notification.channel.handoff",
   connector: "notification.channel.connector",
 } as const satisfies Record<NotificationKind, KeyWith>;
+
+/**
+ * A channel the app made for a kind of push no server sends any more, gone so
+ * the system's settings don't list it.
+ */
+const RETIRED_CHANNEL = "handoff";
 
 /**
  * Creates the Android channel each kind of push shows in, its id the kind the
@@ -87,6 +92,7 @@ const CHANNEL_NAMES = {
  */
 const createChannels = async (language: Language) => {
   const { t } = createI18n(language);
+  await Notifications.deleteNotificationChannelAsync(RETIRED_CHANNEL);
   for (const kind of NotificationKind.literals) {
     await Notifications.setNotificationChannelAsync(kind, {
       name: t(CHANNEL_NAMES[kind]),

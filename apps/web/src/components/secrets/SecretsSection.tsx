@@ -3,7 +3,6 @@ import type { SecretsFailure, SecretsResult } from "@j3-bots/client-runtime";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { activityTime, secretsStateText } from "@j3-bots/client-runtime/wording";
 import {
-  OldVaultPassword,
   type Secret,
   type SecretAccess,
   type SecretField as Field,
@@ -13,9 +12,7 @@ import {
   secretReference,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 import { ChevronLeftIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useBots, useI18n, usePresentation } from "../../app/context";
@@ -40,8 +37,6 @@ import {
   useSecretsFailureText,
 } from "./parts";
 import { hideShownLater } from "./shown";
-
-const decodeOldPassword = Schema.decodeUnknownOption(OldVaultPassword);
 
 /** Runs one request at a time, saying how its last run failed. */
 function useRequest() {
@@ -86,7 +81,6 @@ export function SecretsSection({ secrets }: { readonly secrets: SecretsAccess })
 
   const body = () => {
     if (view._tag === "loading") return <SkeletonRows />;
-    if (view.status.state === "old-vault") return <OldVaultForm secrets={secrets} />;
     const blocked = secretsStateText(view.status, i18n);
     if (blocked !== null) return <p className="text-sm text-muted-foreground">{blocked}</p>;
     if (view.listFailure !== null) {
@@ -116,53 +110,6 @@ export function SecretsSection({ secrets }: { readonly secrets: SecretsAccess })
   };
 
   return <Section>{body()}</Section>;
-}
-
-/** A vault from before secrets, opened with its password typed one last time. */
-function OldVaultForm({ secrets }: { readonly secrets: SecretsAccess }) {
-  const { t } = useI18n();
-  const failureText = useSecretsFailureText();
-  const problemId = useId();
-  const [password, setPassword] = useState("");
-  const { busy, failure, run } = useRequest();
-  const typed = decodeOldPassword(Redacted.make(password));
-  return (
-    <form
-      className="flex flex-col gap-3 rounded-lg bg-surface p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (Option.isNone(typed)) return;
-        run(
-          () => secrets.intents.openOldVault(typed.value),
-          () => setPassword(""),
-        );
-      }}
-    >
-      <h4 className="text-sm font-medium">{t("secrets.oldVault.title")}</h4>
-      <p className="text-sm text-muted-foreground">{t("secrets.oldVault.body")}</p>
-      <SecretField
-        label={t("secrets.oldVault.password")}
-        value={password}
-        onChange={setPassword}
-        masked
-        autoComplete="current-password"
-        invalid={failure !== null}
-        describedBy={problemId}
-      />
-      <Problem id={problemId}>{failure === null ? null : failureText(failure)}</Problem>
-      <p className="text-xs text-muted-foreground">{t("secrets.oldVault.forgot")}</p>
-      <div className="flex justify-end">
-        <Button
-          type="submit"
-          variant="primary"
-          size="sm"
-          aria-disabled={busy || Option.isNone(typed)}
-        >
-          {t("secrets.oldVault.open")}
-        </Button>
-      </div>
-    </form>
-  );
 }
 
 /** What a secret is, in a line: "Value", or "Login" and its sites. */

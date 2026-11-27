@@ -1,6 +1,6 @@
 # Security policy
 
-J3 Bots is in its design phase, and no release is supported yet. Reports are still welcome: the code on `main` is what releases will grow from.
+The latest release is the supported one: a fix ships in a new release, not as a patch to an older one. Reports about the code on `main` are welcome too.
 
 ## Reporting a vulnerability
 
@@ -15,7 +15,7 @@ This is a project maintained in spare time. Reports are answered on a best-effor
 The code in this repository:
 
 - the J3 Bots server and its `j3-bots` command (`apps/server`);
-- the web and desktop clients (`apps/web`, `apps/desktop`);
+- the web, desktop and Android clients (`apps/web`, `apps/desktop`, `apps/mobile`);
 - the packages under `packages/`, including the engine adapter and the client contract.
 
 Examples of what matters most: a way to pair a device or use a device token without the operator, to reach the server's private state from the network, to make a bot act on text it read as if the operator had written it, or to read a credential or a pairing code that should not be readable.

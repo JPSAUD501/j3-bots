@@ -1,6 +1,6 @@
 # 0009: A wake is sent at most once, and uncertainty fails visibly
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
@@ -8,7 +8,7 @@ The engine applies a command id once and keeps its receipts for good, but its re
 
 ## Decision
 
-A wake goes back to pending only when the engine certainly applied nothing: the first send of its dispatch was refused locally, before anything was sent (`SessionBusy`, `SessionNotFound`), or a Stop fenced the dispatch before it was ever sent.
+A wake goes back to pending only when the engine certainly applied nothing: the first send of its dispatch never went out (refused locally, as `SessionBusy` or `SessionNotFound`; released because its session or the turn it would steer is gone, a room start is held for a turn slot or a usage limit, or its staging was withdrawn; or fenced by a Stop), or the engine's own reply proves nothing was applied, as `PermissionModeRefused` does in a bot's main session.
 
 Every other uncertainty is resolved by recovery, a separate call (`redispatch`) that sends the same key and skips every local check. A recovery that succeeds means accepted, with the disposition unknown; delivery comes from the events. A refusal counts only when the engine's reply names it. A recovery that gets no answer within its bound, before its session is retired or lost, or within a day fails the dispatch, and its wakes fail visibly and are never re-queued. The operator retries a failed message, or a member's failed room turn, as new wakes under a new key, and only into a room that is still active, to a bot still its member: a failed wake survives its room's archival. If the engine turns out to have applied a failed dispatch after all, it is shown delivered.
 

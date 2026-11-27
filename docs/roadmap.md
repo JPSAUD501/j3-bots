@@ -93,18 +93,18 @@ Done when a conversation started on one device continues on the others with noth
 - An app update moves the bots' data to the server it carries, and rolls back if that server never gets ready.
 - A routine missed while J3 Bots was not running runs on its return only while that is nearer than its next run ([decision 0021](decisions/0021-a-missed-routine-runs-only-while-it-is-nearer-than-the-next.md)).
 
-**Status.** Built for 0.3.0 on Linux x64 and Windows x64. On Apple silicon it is built but not offered until it has run on a Mac; an Intel Mac connects to a server only. A phone reaching these bots from outside the home network is a later step.
+**Status.** Released on Linux x64 and Windows x64. On Apple silicon it is built but not offered until it has run on a Mac; an Intel Mac connects to a server only. A phone reaching these bots from outside the home network is a later step.
 
 ## The browser, secrets and connectors
 
-Decided by the owner on 2026-11-23, after 0.3.0, for 0.4.0. The walkthrough is [A bot's browser, secrets and connectors](operations/browser-secrets-and-connectors.md); what guards each part is in [Security](architecture/security.md#the-browser-secrets-and-connectors).
+The walkthrough is [A bot's browser, secrets and connectors](operations/browser-secrets-and-connectors.md); what guards each part is in [Security](architecture/security.md#the-browser-secrets-and-connectors).
 
 - **The bot's browser.** A bot uses the engine's browser on the host only once its switch is on. The operator watches the page it works in from any client, takes control and hands it back, and a bot that meets a check, a sign-in, a second factor, a QR code or a passkey asks for help on a card instead of getting around it. One profile keeps the operator's sign-ins for every bot that has the browser.
-- **The vault.** Logins saved per site, with one-time codes, sealed on the server. A bot asks for a login on a card, and the server types a login the bot may use into its page without handing it the value. 0.4.0 sealed them under a master password held only in memory; from 0.9.0 they are Secrets, with no password ([decision 0046](decisions/0046-secrets-the-operator-types-a-bot-uses-a-reference.md)).
-- **Connectors.** MCP servers to find in a curated list and the MCP Registry, or to add by address or by command, for one bot, some or all. The server signs in, OAuth included, keeps the sign-in with the operator's secrets, renews it and makes the calls; a connector's tools follow the bot's permission mode, and a change to them waits for the operator.
+- **Secrets.** Logins saved per site, with one-time codes, and single values such as an API token, typed by the operator and sealed on the server, with no password to unlock them. A bot asks for one on a card and uses it by a reference: the server types a login the bot may use into its page, or puts a value into a connector's settings, without handing the bot the value ([decision 0046](decisions/0046-secrets-the-operator-types-a-bot-uses-a-reference.md)).
+- **Connectors.** MCP servers from a curated list and the MCP Registry, or by address or by command, for one bot, some or all. The operator asks a bot, and the bot adds one; an address in the operator's own network, or a service that needs an app the operator registers, waits on the operator's yes ([decision 0068](decisions/0068-settings-lists-what-the-bots-added.md)). The server signs in, OAuth included, keeps the sign-in with the operator's secrets, renews it and makes the calls; a connector's tools are those its server lists now, and follow the bot's permission mode.
 - **Visuals.** A chart, a table, a diagram or a mockup a bot builds, shown in its message on the web, the desktop and Android, shut in a frame with no network.
 
-**Status.** Built for 0.4.0, in review, not released. Not proven yet:
+**Status.** Released. Not proven yet:
 
 - No sign-in to a real service: every OAuth flow ran against fake authorization servers, and the Google and Slack guides are **Assumed**.
 - The browser has not been measured on a Raspberry Pi, nor run on Windows or macOS, and neither a help card nor a fill has been asked for by a real model end to end.

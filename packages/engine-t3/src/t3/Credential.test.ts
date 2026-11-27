@@ -99,10 +99,11 @@ describe("ensureCredential", () => {
   it.effect("mints again a token stored without the browser scope, asking for it", () =>
     Effect.gen(function* () {
       const cli = mintingCli("fresh");
-      // As J3 Bots before 0.4 stored it: no scopes recorded, minted without `preview:operate`.
+      // Minted before the adapter asked for `preview:operate`.
       const credential = yield* ensureWith(cli, {
         token: "older",
         expiresAt: yield* farFromExpiry,
+        scopes: ["orchestration:read", "orchestration:operate"],
       });
       assert.strictEqual(Redacted.value(credential.token), "fresh");
       const args = cli.calls.find((each) => each[2] === "issue") ?? [];

@@ -45,29 +45,22 @@ import { HOME_ENTRIES } from "../home/entries.ts";
 import { Layout } from "../Layout.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import {
-  KEY_BYTES,
-  kdfParamsInRange,
-  NONCE_BYTES,
-  openField,
-  type Sealed,
-  sealField,
-  unwrapDataKey,
-  withDerivedKey,
-} from "./crypto.ts";
+import { KEY_BYTES, NONCE_BYTES, openField, type Sealed, sealField } from "./crypto.ts";
 import {
   type ConnectorId,
   ConnectorSecret,
   connectorRecordId,
   NamedSecret,
 } from "./ConnectorSecret.ts";
-import { accessCovers, nameFromLabel, referenceText, type SecretReference } from "./references.ts";
+import { accessCovers, referenceText, type SecretReference } from "./references.ts";
 import {
   base64,
   bytesOf,
+  holdsUnopenedOldVault,
   KEY_FILE,
   keyFileText,
   keyOfText,
+  OldVaultUnopened,
   opensKeyCheck,
   openSecretsFile,
   SECRETS_FILE,
@@ -81,15 +74,6 @@ import { parseTotpSetup, TotpConfig, totpAt } from "./totp.ts";
  * same place: a connector may send it with every request.
  */
 const USE_WRITTEN_EVERY = Duration.minutes(1);
-
-const KeyringRow = Schema.Struct({
-  kdf_n: Schema.Int,
-  kdf_r: Schema.Int,
-  kdf_p: Schema.Int,
-  salt: Schema.String,
-  key_nonce: Schema.String,
-  wrapped_key: Schema.String,
-});
 
 const SealedRow = Schema.Struct({ nonce: Schema.String, sealed: Schema.String });
 
@@ -169,7 +153,7 @@ const utf8 = (text: string) => Buffer.from(text, "utf8");
 const unencodable = (what: string) =>
   Effect.die(new Error(`The secrets could not encode ${what}.`));
 
-/** What every request but the status and opening an old vault answers in a state but `ready`. */
+/** What every request but the status answers in a state but `ready`. */
 const notReady = () => new Conflict({ reason: "secrets-unavailable" });
 
 /**
@@ -205,8 +189,7 @@ export interface ReferenceStatus {
  * The operator's secrets (`docs/architecture/server.md`, "Secrets"): logins
  * and single values, sealed under a data key the server keeps in a key file
  * of its own, and a connector's secrets beside them. Nothing unlocks them:
- * they work from the server's start, except while a vault from before secrets
- * waits for its password one last time. Every value comes and goes as a
+ * they work from the server's start. Every value comes and goes as a
  * redacted type, and nothing here logs one or puts one in an error.
  */
 export class Secrets extends Context.Service<
@@ -220,14 +203,6 @@ export class Secrets extends Context.Service<
      * deleted, or given to other bots. A reveal, a fill or a use is none.
      */
     readonly referenceStatus: Stream.Stream<ReferenceStatus>;
-    /**
-     * Opens a vault from before secrets with its master password, once: the
-     * data key goes to the key file, each login gets a name, and the
-     * password's keyring is deleted. Does nothing in `ready`.
-     */
-    readonly openOldVault: (
-      password: Redacted.Redacted<string>,
-    ) => Effect.Effect<void, Conflict | Invalid>;
     readonly list: Effect.Effect<ReadonlyArray<Secret>, Conflict>;
     /** The secrets `botId` may use. */
     readonly usableBy: (botId: BotId) => Effect.Effect<ReadonlyArray<Secret>, Conflict>;
@@ -370,7 +345,7 @@ export const layer = Layer.effect(
     /**
      * Writes `key` to the key file, private to the server's user, replacing
      * any, and flushes it to the disk: what is written after it (the key
-     * check, an old vault's keyring deleted) never outlives it in a power cut.
+     * check) never outlives it in a power cut.
      */
     const writeKeyFile = (key: Uint8Array) =>
       replaceFileDurably(keyFile, keyFileText(key), 0o600).pipe(
@@ -378,15 +353,6 @@ export const layer = Layer.effect(
         Effect.provideService(Path.Path, path),
         Effect.orDie,
       );
-
-    const keyringOf = (sql: SqlClient.SqlClient) =>
-      SqlSchema.findOneOption({
-        Request: Schema.Void,
-        Result: KeyringRow,
-        execute: () => sql`
-          SELECT kdf_n, kdf_r, kdf_p, salt, key_nonce, wrapped_key FROM keyring WHERE id = 1
-        `,
-      })(undefined).pipe(Effect.orDie);
 
     const keyCheckOf = (sql: SqlClient.SqlClient) =>
       SqlSchema.findOneOption({
@@ -417,21 +383,24 @@ export const layer = Layer.effect(
     /**
      * The state at start, and the data key in `ready`:
      *
-     * - a vault from before secrets, with a keyring, waits for its password,
-     *   unless it holds nothing, when the keyring goes and a key file is made;
+     * - a vault from before secrets that holds something stops the start
+     *   (`OldVaultUnopened`); one that holds nothing goes, and a key file is
+     *   made;
      * - with a key check, the key file must hold the key it was sealed under,
      *   or the secrets are `unreadable`;
      * - with neither, nothing was ever sealed: the key file's key is used, or
      *   one is made, and the check is written.
      */
     const start = Effect.fn("Secrets.start")(function* (sql: SqlClient.SqlClient) {
-      const keyring = yield* keyringOf(sql);
-      const anything = yield* hasRecords(sql);
-      if (Option.isSome(keyring)) {
-        if (anything) return { state: "old-vault", key: null } as const;
+      if (yield* holdsUnopenedOldVault(sql).pipe(Effect.orDie)) {
+        return yield* new OldVaultUnopened();
+      }
+      const keyring = yield* sql`SELECT 1 FROM keyring LIMIT 1`.pipe(Effect.orDie);
+      if (keyring.length > 0) {
         yield* sql`DELETE FROM keyring`.pipe(Effect.orDie);
         yield* Effect.logInfo("An empty vault from before secrets was replaced by a key file");
       }
+      const anything = yield* hasRecords(sql);
       const check = yield* keyCheckOf(sql);
       const stored = yield* readKeyFile;
       if (Option.isSome(check)) {
@@ -565,85 +534,6 @@ export const layer = Layer.effect(
         `,
         { discard: true },
       ).pipe(Effect.orDie);
-
-    // ---- An old vault, opened once --------------------------------------------------
-
-    const openOldVault = (password: Redacted.Redacted<string>) =>
-      serial(
-        Effect.gen(function* () {
-          if (file._tag === "newer") return yield* notReady();
-          const current = (yield* SubscriptionRef.get(state)).state;
-          if (current === "ready") return;
-          if (current !== "old-vault") return yield* notReady();
-          const sql = file.sql;
-          const keyring = yield* keyringOf(sql);
-          if (Option.isNone(keyring)) return yield* notReady();
-          const params = { n: keyring.value.kdf_n, r: keyring.value.kdf_r, p: keyring.value.kdf_p };
-          if (!kdfParamsInRange(params)) {
-            yield* Effect.logError(
-              "The old vault's key settings are out of range: its file was changed",
-            ).pipe(Effect.annotateLogs({ n: params.n, r: params.r, p: params.p }));
-            return yield* new Conflict({ reason: "secrets-damaged" });
-          }
-          const key = yield* withDerivedKey(password, bytesOf(keyring.value.salt), params, (kek) =>
-            Effect.succeed(
-              unwrapDataKey(kek, {
-                nonce: bytesOf(keyring.value.key_nonce),
-                sealed: bytesOf(keyring.value.wrapped_key),
-              }),
-            ),
-          );
-          if (Option.isNone(key)) {
-            yield* Effect.logWarning("A wrong password was given for the old vault");
-            return yield* new Invalid({ reason: "old-vault-password" });
-          }
-          // Each login's name, opened while nothing else is written, before
-          // anything changes: a name that does not open leaves the vault as
-          // it was.
-          const logins = yield* SqlSchema.findAll({
-            Request: Schema.Void,
-            Result: Schema.Struct({ id: Schema.String }),
-            execute: () => sql`SELECT id FROM records WHERE kind = 'login' ORDER BY created_at, id`,
-          })(undefined).pipe(Effect.orDie);
-          const nameRows = yield* fieldsOf(
-            sql,
-            logins.map(({ id }) => id),
-            ["name"],
-          );
-          const taken = new Set<string>();
-          const names: Array<{ readonly id: string; readonly name: SecretName }> = [];
-          for (const { id } of logins) {
-            const row = nameRows.find((candidate) => candidate.record_id === id);
-            const label = row === undefined ? "" : text(yield* openRow(key.value, row));
-            const name = nameFromLabel(label, taken);
-            taken.add(name);
-            names.push({ id, name });
-          }
-          // The key file first: a stop between the two leaves the keyring,
-          // so the password opens it again, and the same key is written.
-          yield* writeKeyFile(key.value);
-          yield* transactional(sql)(
-            Effect.gen(function* () {
-              for (const { id, name } of names) {
-                yield* sql`UPDATE records SET name = ${name} WHERE id = ${id}`.pipe(Effect.orDie);
-              }
-              yield* sql`DELETE FROM record_fields WHERE field = 'name'`.pipe(Effect.orDie);
-              yield* writeKeyCheck(sql, key.value);
-              yield* sql`DELETE FROM keyring`.pipe(Effect.orDie);
-            }),
-          );
-          // The pages the keyring was on, as they were, are in the write-ahead
-          // log until it is written back and emptied.
-          yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`.pipe(Effect.orDie);
-          dataKey = key.value;
-          revision += 1;
-          referenceRevision += 1;
-          yield* Effect.logInfo(
-            "The old vault was opened; the server keeps its key from now on",
-          ).pipe(Effect.annotateLogs({ logins: names.length }));
-          yield* publish("ready");
-        }),
-      );
 
     // ---- Secrets ------------------------------------------------------------------
 
@@ -1387,7 +1277,6 @@ export const layer = Layer.effect(
         Stream.map(({ state, references }): ReferenceStatus => ({ state, revision: references })),
         Stream.changesWith((a, b) => a.state === b.state && a.revision === b.revision),
       ),
-      openOldVault,
       list,
       usableBy,
       named,

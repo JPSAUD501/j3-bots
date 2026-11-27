@@ -4,7 +4,6 @@ import {
   type CommandId,
   Invalid,
   keepsUtcClock,
-  NotificationSettings,
   Settings,
   type SettingsChange,
   type TimeZone,
@@ -14,7 +13,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -26,20 +24,6 @@ import { SettingsStore } from "./SettingsStore.ts";
 
 /** The changes `settings.update` may ask for. */
 export type SettingsChanges = SettingsChange;
-
-/**
- * The settings a `settings.update` receipt holds. A receipt written before
- * notifications could be turned off has no `enabled`: they were on.
- */
-const SettingsReceipt = Schema.Struct({
-  ...Settings.fields,
-  notifications: Schema.Struct({
-    ...NotificationSettings.fields,
-    enabled: NotificationSettings.fields.enabled.pipe(
-      Schema.withDecodingDefaultKey(Effect.succeed(true)),
-    ),
-  }),
-});
 
 /**
  * The operator's settings. The operator's name and time zone are part of every
@@ -160,7 +144,7 @@ export const layer = Layer.effect(
           commandId: input.commandId,
           method: "settings.update",
           payload: input.changes,
-          result: SettingsReceipt,
+          result: Settings,
           apply: save(input.changes),
         });
         yield* applied(input.changes);

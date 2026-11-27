@@ -10,11 +10,7 @@ export const secretsFailureText = (failure: SecretsFailure, i18n: I18n): string 
   const { error } = failure;
   switch (error._tag) {
     case "Invalid":
-      return error.reason === "old-vault-password"
-        ? t("secrets.oldVault.wrong")
-        : error.reason === "totp"
-          ? t("secrets.totpInvalid")
-          : t("secrets.failed");
+      return error.reason === "totp" ? t("secrets.totpInvalid") : t("secrets.failed");
     case "Conflict":
       return error.reason === "secret-name-taken"
         ? t("secrets.nameTaken")
@@ -30,8 +26,8 @@ export const secretsFailureText = (failure: SecretsFailure, i18n: I18n): string 
 
 /**
  * What stands between the operator and their secrets, in a sentence, while
- * their state is not `ready`; null when it is. `old-vault` asks for the
- * vault's password, which its own form says.
+ * their state is not `ready`; null when it is. `old-vault` comes only from a
+ * server of 0.12 or earlier, whose own web app takes the vault's password.
  */
 export const secretsStateText = (status: SecretsStatus, i18n: I18n): string | null => {
   const { t } = i18n;
@@ -39,7 +35,7 @@ export const secretsStateText = (status: SecretsStatus, i18n: I18n): string | nu
     case "ready":
       return null;
     case "old-vault":
-      return t("secrets.oldVault.body");
+      return t("secrets.oldVault");
     case "unreadable":
       return t("secrets.unreadable");
     case "newer":
