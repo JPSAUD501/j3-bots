@@ -106,7 +106,7 @@ function AccountSettings({ account }: { readonly account: SetUpAccount }) {
     <View className="gap-2 border-t border-border pt-2">
       <SwitchRow
         label={t("accounts.use", { name })}
-        {...(setup.enabled ? {} : { hint: t("accounts.off") })}
+        hint={t(setup.enabled ? "accounts.on" : "accounts.off")}
         value={setup.enabled}
         readOnly={!connected || switching === "asking"}
         onChange={(enabled) => {

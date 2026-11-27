@@ -1582,7 +1582,11 @@ const make = Effect.gen(function* () {
     updateProvider: (providerId) => command(Effect.sync(() => void updated.push(providerId))),
     setHarnessExecutable: (input) =>
       door("setHarnessExecutable", command(Effect.sync(() => void executables.push(input)))),
-    setProviders: (providers) => Effect.sync(() => void providerLists.push(providers)),
+    setProviders: (providers) =>
+      Effect.sync(() => {
+        providerLists.push(providers);
+        return true;
+      }),
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 

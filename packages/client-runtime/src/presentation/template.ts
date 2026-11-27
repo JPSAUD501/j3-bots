@@ -238,7 +238,7 @@ export interface TemplateSubmission {
 /** What the operator picked in the preview; null or off for what they left alone. */
 export interface TemplatePicks {
   readonly permissionMode: PermissionMode | null;
-  /** A level of the model shown, or null for its default. */
+  /** A level of the model the operator picked, or null for its default. */
   readonly effort: EffortLevel | null;
   readonly fast: boolean;
 }
@@ -254,7 +254,8 @@ export const templateAsksTitle = (template: BotTemplate): boolean =>
 
 /**
  * What Create sends from the preview: the model it showed, with the effort
- * and fast mode the operator picked for it, and the permission mode only
+ * and fast mode the operator picked along with it (none when the preview
+ * shows another, their pick gone from the engine), and the permission mode only
  * when they picked one. Left untouched, the mode is the server's to decide
  * as the preview did (`templatePermissionMode`), from the model's default
  * when the bot is made, never a copy of what the preview worked out before.
@@ -276,8 +277,8 @@ export const templateSubmission = (
         ? template
         : { ...template, profile: { ...template.profile, title: given } },
     model: start.model.choice,
-    ...(picks.effort === null ? {} : { effort: picks.effort }),
-    ...(picks.fast ? { fast: true } : {}),
+    ...(start.model._tag !== "picked" || picks.effort === null ? {} : { effort: picks.effort }),
+    ...(start.model._tag === "picked" && picks.fast ? { fast: true } : {}),
     ...(picks.permissionMode === null ? {} : { permissionMode: picks.permissionMode }),
   };
 };

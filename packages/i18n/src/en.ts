@@ -1891,6 +1891,7 @@ export const en = {
   "accounts.add.hint": "Each account signs in on its own, so bots can use more than one plan.",
   "accounts.use": "Use {name}",
   "accounts.off": "Turned off. Its bots wait until you turn it back on.",
+  "accounts.on": "Turning it off stops what its bots are doing right now.",
   "accounts.name": "Name",
   "accounts.name.invalid": "Give it a short name.",
   "accounts.advanced": "Advanced",
@@ -1900,7 +1901,8 @@ export const en = {
   "accounts.binaryPath.invalid":
     "Write the program’s full path, starting with / or a drive letter.",
   "accounts.launchArguments": "Launch options",
-  "accounts.launchArguments.hint": "Added each time the program starts.",
+  "accounts.launchArguments.hint":
+    "Added each time the program starts. They can change what its bots are allowed to do.",
   "accounts.launchArguments.invalid": "Keep the options on one line.",
   "accounts.home": "Sign-in folder",
   "accounts.home.hint": "J3 Bots keeps this account’s sign-in here.",

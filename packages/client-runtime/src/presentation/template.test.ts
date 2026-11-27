@@ -317,9 +317,19 @@ describe("templateStart", () => {
         "",
       ),
     ).toEqual({ template, model: gpt, effort: "high", fast: true });
-    // A pick the engine stopped offering gives way to the template's own.
+    // A pick the engine stopped offering gives way to the template's own, at
+    // its own effort and speed: the ones picked were for the other model.
     const gone = { providerId: ProviderId.make("codex"), modelId: ModelId.make("old") };
-    expect(templateStart(template, status, gone).model._tag).toBe("template");
+    const fallen = templateStart(template, status, gone);
+    expect(fallen.model._tag).toBe("template");
+    expect(
+      templateSubmission(
+        template,
+        fallen,
+        { permissionMode: null, effort: EffortLevel.make("high"), fast: true },
+        "",
+      ),
+    ).toEqual({ template, model: template.model });
   });
 
   it("creates a bot from a template with no title only once the operator gives one", () => {

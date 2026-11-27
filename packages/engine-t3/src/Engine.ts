@@ -498,11 +498,13 @@ export class Engine extends Context.Service<
      * settings as its instance (an `upsert`), and each that is gone is
      * removed, while the engine runs; one it does not run yet is given them
      * at its next start. A change of anything but a provider's name rebuilds
-     * its instance, which ends what ran on it. Never fails: an engine that
-     * could not take a change is given every provider again at its next
-     * start, and the log says which it did not take.
+     * its instance, which ends what ran on it. Never fails. Whether the
+     * engine took every change now: one it did not take is sent again while
+     * it runs, until it does, and every provider at its next start, and the
+     * log says which it did not take. A provider removed may still run until
+     * then, so its home stays until the engine took its removal.
      */
-    readonly setProviders: (providers: ReadonlyArray<ProviderInstance>) => Effect.Effect<void>;
+    readonly setProviders: (providers: ReadonlyArray<ProviderInstance>) => Effect.Effect<boolean>;
 
     /**
      * A link that opens the engine's own web interface, signed in, for setting

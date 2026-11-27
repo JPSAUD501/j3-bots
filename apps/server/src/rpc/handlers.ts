@@ -277,14 +277,18 @@ export const handlers = J3Rpcs.toLayer(
       "engine.addProvider": (input) => accounts.add(input),
       "engine.setUpProvider": ({ commandId, providerId, ...changes }) =>
         accounts.setUp({ commandId, providerId, changes }),
-      // A sign-in under way for it stops first: its home goes with it.
+      // A sign-in of an account removed stops, its home going with it: one
+      // under way, and one started before the removal was seen, which
+      // starts no more after it.
       "engine.removeProvider": (input) =>
-        Effect.flatMap(accounts.find(input.providerId), (account) =>
-          Option.match(account, {
-            onNone: () => Effect.void,
-            onSome: ({ harness }) => signIns.cancel({ harness, providerId: input.providerId }),
-          }),
-        ).pipe(Effect.andThen(accounts.remove(input))),
+        Effect.flatMap(accounts.find(input.providerId), (account) => {
+          if (Option.isNone(account) || !account.value.added) return accounts.remove(input);
+          const stop = signIns.cancel({
+            harness: account.value.harness,
+            providerId: input.providerId,
+          });
+          return stop.pipe(Effect.andThen(accounts.remove(input)), Effect.andThen(stop));
+        }),
       "usage.turns": ({ limit }) => usage.turns({ period: USAGE_PERIOD, limit }),
       "settings.get": () => settings.get,
       "settings.subscribe": () => settings.changes,

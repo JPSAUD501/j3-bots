@@ -378,9 +378,11 @@ export const layer = Layer.effect(
     /**
      * Where the server moves a bot that waits on the model it chose, decided
      * from one engine status: nowhere while the bot's own provider is ready,
-     * or while no other provider's default model is ready to take it.
-     * Otherwise to that model, and to its default permission mode when the
-     * server chose the bot's permission mode too.
+     * or while no other provider's default model is ready to take it, and
+     * nowhere from an account the operator turned off or removed: which plan
+     * a bot spends then is theirs to choose (decision 0108). Otherwise to
+     * that model, and to its default permission mode when the server chose
+     * the bot's permission mode too.
      */
     const moveIn = (
       status: EngineStatus,
@@ -388,6 +390,13 @@ export const layer = Layer.effect(
       permissionModeByServer: boolean,
     ): Option.Option<BotChanges> => {
       if (providerReady(status, bot.model.providerId)) return Option.none();
+      const own = status.providers.find((provider) => provider.id === bot.model.providerId);
+      if (
+        own === undefined ||
+        (own.status._tag === "unavailable" && own.status.reason === "disabled")
+      ) {
+        return Option.none();
+      }
       const fallback = defaultModelIn(status);
       if (
         Option.isNone(fallback) ||

@@ -1919,6 +1919,7 @@ const sentences = {
   "accounts.add.hint": "Cada conta entra separada, então os bots podem usar mais de um plano.",
   "accounts.use": "Usar {name}",
   "accounts.off": "Desligada. Os bots dela esperam até você ligar de novo.",
+  "accounts.on": "Desligar interrompe o que os bots dela estiverem fazendo agora.",
   "accounts.name": "Nome",
   "accounts.name.invalid": "Dê um nome curto.",
   "accounts.advanced": "Avançado",
@@ -1928,7 +1929,8 @@ const sentences = {
   "accounts.binaryPath.invalid":
     "Escreva o caminho completo do programa, começando com / ou com a letra do disco.",
   "accounts.launchArguments": "Opções de início",
-  "accounts.launchArguments.hint": "Adicionadas toda vez que o programa inicia.",
+  "accounts.launchArguments.hint":
+    "Adicionadas toda vez que o programa inicia. Elas podem mudar o que os bots dela podem fazer.",
   "accounts.launchArguments.invalid": "Deixe as opções numa linha só.",
   "accounts.home": "Pasta do login",
   "accounts.home.hint": "O J3 Bots guarda o login desta conta aqui.",

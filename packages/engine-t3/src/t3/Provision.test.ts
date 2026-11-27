@@ -526,11 +526,11 @@ describe("an instance added while the engine runs", () => {
           connection: { baseUrl: "http://127.0.0.1:8317", key: Redacted.make("the-key") },
         });
         yield* provision(input);
-        const added: ReadonlyArray<InstanceSpec> = input.instances.map((spec) => ({
-          ...spec,
-          instanceId: `${spec.instanceId}-work`,
-          home: `${spec.home}-work`,
-        }));
+        const added: ReadonlyArray<InstanceSpec> = input.instances.flatMap((spec) =>
+          spec.kind === "acp-local"
+            ? []
+            : [{ ...spec, instanceId: `${spec.instanceId}-work`, home: `${spec.home}-work` }],
+        );
         for (const spec of added) {
           assert.isTrue(yield* provisionInstance({ ...input, instances: added }, spec));
         }

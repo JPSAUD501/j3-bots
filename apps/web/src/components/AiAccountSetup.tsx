@@ -137,7 +137,9 @@ function AccountSetup({
           onCheckedChange={toggle}
         />
       </div>
-      {!setup.enabled && <p className="text-xs text-muted-foreground">{t("accounts.off")}</p>}
+      <p className="text-xs text-muted-foreground">
+        {t(setup.enabled ? "accounts.on" : "accounts.off")}
+      </p>
       {switching === "failed" && (
         <p role="alert" className="text-xs text-blocked">
           {t("accounts.saveFailed")}

@@ -241,6 +241,8 @@ const BATCHES_KEPT = 32;
 const STAGED_LIFETIME = Duration.hours(12);
 /** How long a provider report subscription that ended waits before it opens again. */
 const PROVIDER_RESUBSCRIBE = Duration.seconds(5);
+/** How often a provider change the engine did not take is sent again while it runs. */
+const REDELIVERY_INTERVAL = Duration.seconds(30);
 /**
  * How long `connectProviders` waits for the engine to be back after its
  * restart. Most of it is the harnesses' own start-up; one taking longer still
@@ -475,6 +477,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * writes every instance again, which settles them all.
    */
   const unsettled = yield* Ref.make<ReadonlySet<ProviderId>>(new Set());
+  /** The providers whose new settings the engine did not take, sent again until it does. */
+  const undelivered = yield* Ref.make<ReadonlySet<ProviderId>>(new Set());
+  /** The providers gone whose removal the engine did not take, sent again until it does. */
+  const unremoved = yield* Ref.make<ReadonlySet<ProviderId>>(new Set());
   const specOf = Effect.map(Ref.get(executables), (copies) =>
     instanceSpecOf(options.toolBridge, copies),
   );
@@ -558,6 +564,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const provisionEngine = Effect.gen(function* () {
     const { key, disabled } = yield* provision(yield* provisionInput);
     yield* Ref.set(unsettled, new Set());
+    yield* Ref.set(undelivered, new Set());
+    yield* Ref.set(unremoved, new Set());
     yield* Ref.set(givenKey, key);
     yield* Ref.set(provisioned, { connected: key !== null, disabled });
   }).pipe(
@@ -2798,7 +2806,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         instance: instanceEntry(path, yield* provisionInput, instance, yield* Ref.get(provisioned)),
       });
       yield* markReplaced(provider.id);
-      sent.push(instance.instanceId);
+      // One turned off runs nothing, and the engine reports it not installed.
+      if (provider.enabled) sent.push(instance.instanceId);
     }
     return { next, instanceIds: sent, providerIds: followers.map((provider) => provider.id) };
   }, provisioning.withPermits(1));
@@ -2852,25 +2861,30 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   /**
    * The providers from now on (`Engine.setProviders`): kept for every later
    * provisioning, and while the engine is ready, each new or changed one
-   * upserted and each gone removed, one mutation at a time. A mutation whose
-   * outcome is not known leaves its provider unsettled, which the next
-   * provisioning settles by writing every instance again.
+   * upserted, its home prepared first when it is new, and each gone removed,
+   * one mutation at a time. A mutation that fails is sent again at the next
+   * call, by the redelivery below every `REDELIVERY_INTERVAL`, and at the
+   * next start, which writes every instance. Answers whether the engine took
+   * every change.
    */
   const setProviders = Effect.fn("Engine.setProviders")(function* (
     next: ReadonlyArray<ProviderInstance>,
   ) {
     const before = yield* SubscriptionRef.getAndSet(providers, next);
-    if ((yield* SubscriptionRef.get(state))._tag !== "ready") return;
+    if ((yield* SubscriptionRef.get(state))._tag !== "ready") return true;
     const spec = yield* liveSpecOf;
     const input = yield* provisionInput;
     const known = new Map(before.map((provider) => [provider.id, spec(provider)] as const));
+    const notTaken = yield* Ref.get(undelivered);
+    let delivered = true;
     for (const provider of next) {
       const was = known.get(provider.id);
       const now = spec(provider);
-      if (was !== undefined && sameInstance(was, now)) continue;
-      yield* Effect.gen(function* () {
+      const resend = notTaken.has(provider.id);
+      if (was !== undefined && sameInstance(was, now) && !resend) continue;
+      const took = yield* Effect.gen(function* () {
         // A new instance's home is prepared first, as a provisioning would.
-        if (was === undefined && !(yield* provisionInstance(input, now))) {
+        if ((was === undefined || resend) && !(yield* provisionInstance(input, now))) {
           yield* Ref.update(provisioned, (state) => ({
             ...state,
             disabled: new Set([...state.disabled, now.instanceId]),
@@ -2879,6 +2893,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         const entry = instanceEntry(path, input, now, yield* Ref.get(provisioned));
         yield* mutateInstance({ operation: "upsert", instanceId: now.instanceId, instance: entry });
         if (was !== undefined && !sameRuntime(was, now)) yield* markReplaced(provider.id);
+        return true;
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
@@ -2888,25 +2903,55 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               Effect.logWarning("The engine did not take a provider's new settings", { cause }),
             ),
             Effect.annotateLogs({ providerId: provider.id }),
+            Effect.as(false),
           ),
         ),
       );
+      yield* Ref.update(undelivered, (pending) =>
+        took
+          ? new Set([...pending].filter((each) => each !== provider.id))
+          : new Set([...pending, provider.id]),
+      );
+      if (!took) delivered = false;
     }
     const kept = new Set(next.map((provider) => provider.id));
-    for (const provider of before) {
-      if (kept.has(provider.id)) continue;
-      yield* mutateInstance({
+    const gone = new Set([
+      ...before.filter((provider) => !kept.has(provider.id)).map((provider) => provider.id),
+      ...[...(yield* Ref.get(unremoved))].filter((providerId) => !kept.has(providerId)),
+    ]);
+    for (const providerId of gone) {
+      const took = yield* mutateInstance({
         operation: "remove",
-        instanceId: instanceIdFor(provider.id),
+        instanceId: instanceIdFor(providerId),
       }).pipe(
+        Effect.as(true),
         Effect.catch((cause) =>
           Effect.logWarning("The engine did not remove a provider", { cause }).pipe(
-            Effect.annotateLogs({ providerId: provider.id }),
+            Effect.annotateLogs({ providerId }),
+            Effect.as(false),
           ),
         ),
       );
+      yield* Ref.update(unremoved, (pending) =>
+        took
+          ? new Set([...pending].filter((each) => each !== providerId))
+          : new Set([...pending, providerId]),
+      );
+      if (!took) delivered = false;
     }
+    return delivered;
   }, provisioning.withPermits(1));
+
+  /**
+   * Sends the engine again what it did not take, every `REDELIVERY_INTERVAL`
+   * while it runs, so an account turned off or removed is not left running
+   * there until the next start.
+   */
+  yield* Effect.gen(function* () {
+    if ((yield* SubscriptionRef.get(state))._tag !== "ready") return;
+    if ((yield* Ref.get(undelivered)).size === 0 && (yield* Ref.get(unremoved)).size === 0) return;
+    yield* setProviders(yield* SubscriptionRef.get(providers));
+  }).pipe(Effect.repeat(Schedule.spaced(REDELIVERY_INTERVAL)), Effect.forkScoped);
 
   const consoleLink = Effect.gen(function* () {
     yield* ready;

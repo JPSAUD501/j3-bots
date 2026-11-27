@@ -168,15 +168,51 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const { providerHome } = homeLayout(path, config.home);
+    const providersFolder = path.dirname(providerHome("_"));
     const accounts = yield* SubscriptionRef.make(yield* readAccounts);
+
+    /**
+     * Removes each folder in `providers` that is no account's home, as the
+     * home of one removed, and only through J3 Bots' own folders: one a link
+     * leads elsewhere is left, with what it leads to, which is not J3 Bots'.
+     */
+    const removeStrayHomes = Effect.gen(function* () {
+      if (!(yield* fs.exists(providersFolder))) return;
+      const kept = new Set<string>(
+        (yield* SubscriptionRef.get(accounts)).map((account) => account.id),
+      );
+      const realProviders = yield* fs.realPath(providersFolder);
+      if (
+        realProviders !== path.join(yield* fs.realPath(config.home), path.basename(providersFolder))
+      ) {
+        return yield* Effect.logWarning("The AI accounts' folder leads out of J3 Bots' folder");
+      }
+      for (const name of yield* fs.readDirectory(providersFolder)) {
+        if (kept.has(name)) continue;
+        const folder = path.join(providersFolder, name);
+        if ((yield* fs.realPath(folder)) !== path.join(realProviders, name)) {
+          yield* Effect.logWarning(
+            "A removed AI account's folder leads elsewhere, so it is kept",
+          ).pipe(Effect.annotateLogs({ folder: name }));
+          continue;
+        }
+        yield* fs.remove(folder, { recursive: true, force: true });
+      }
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("A removed AI account's folder could not be removed", cause),
+      ),
+    );
+    // A removal the engine had not taken when the server stopped left its home.
+    yield* removeStrayHomes;
     // One change at a time, so the engine is given the accounts in the order they were saved.
     const lock = yield* Semaphore.make(1);
 
-    /** Reads what was saved, then has the engine run it. */
+    /** Reads what was saved, then has the engine run it: whether it took every change now. */
     const applied = Effect.gen(function* () {
       const now = yield* readAccounts;
       yield* SubscriptionRef.set(accounts, now);
-      yield* engine.setProviders(engineProviders(path, config, now));
+      return yield* engine.setProviders(engineProviders(path, config, now));
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const find = (providerId: ProviderId) =>
@@ -280,18 +316,9 @@ export const layer = Layer.effect(
               }),
             ),
           });
-          // The engine stops running it before its home, with the sign-in in it, goes.
-          yield* applied;
-          // Safe to repeat: a retry finds the folder already gone.
-          yield* fs
-            .remove(providerHome(providerId), { recursive: true, force: true })
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("A removed AI account's folder could not be removed", cause).pipe(
-                  Effect.annotateLogs({ providerId }),
-                ),
-              ),
-            );
+          // Its home, with the sign-in in it, goes once the engine no longer runs it;
+          // until then it stays, and the next start removes it.
+          if (yield* applied) yield* removeStrayHomes;
         }),
       );
     });
