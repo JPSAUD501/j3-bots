@@ -100,6 +100,7 @@ it.effect(
         title: "Delegate",
         model: stored.bot.model,
         effort: stored.bot.effort,
+        fast: stored.bot.fast,
         permissionMode: stored.bot.permissionMode,
       });
       yield* control.startEngineTurn(delegate);

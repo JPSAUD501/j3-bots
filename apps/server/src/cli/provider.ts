@@ -15,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import { missingHarnessCheck } from "../doctor/newInstall.ts";
 import { findHarness, HARNESSES } from "../engine/harnesses.ts";
 import { PROVIDER_HOMES } from "../home/entries.ts";
+import { firstAccount } from "../providers/Accounts.ts";
 import { prepareHome, signIn } from "../providers/signIn.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
@@ -201,7 +202,7 @@ const login = Command.make("login", {
   deviceAuth: deviceAuthFlag,
 }).pipe(
   Command.withDescription(
-    "Sign Claude Code or Codex in with its own account, so bots on it reach its models without a provider connection. Runs the harness's own interactive sign-in in the data directory the installed service uses (this shell's when the service is not installed), which the server must have created first, with the harness found on the PATH the service runs with. The sign-in gets the environment the engine gives harnesses, plus the terminal, language and browser variables, so this shell's other settings for the harness (such as `ANTHROPIC_*`, `OPENAI_*` or its own configuration folder) do not apply. Codex signs in in a new, empty folder, and its sign-in replaces the one in J3 Bots' home only once it succeeded. Your own sign-in and setup for that harness are neither read nor changed.",
+    "Sign the first Claude Code or Codex account in with its own account, so bots on it reach its models without a provider connection; an account added in Settings signs in from the app. Runs the harness's own interactive sign-in in the data directory the installed service uses (this shell's when the service is not installed), which the server must have created first, with the harness found on the PATH the service runs with. The sign-in gets the environment the engine gives harnesses, plus the terminal, language and browser variables, so this shell's other settings for the harness (such as `ANTHROPIC_*`, `OPENAI_*` or its own configuration folder) do not apply. Codex signs in in a new, empty folder, and its sign-in replaces the one in J3 Bots' home only once it succeeded. Your own sign-in and setup for that harness are neither read nor changed.",
   ),
   Command.withHandler(({ harness, deviceAuth }) =>
     Effect.gen(function* () {
@@ -238,7 +239,7 @@ const login = Command.make("login", {
           }, then run this again.`,
         );
       }
-      const home = yield* userFacing(prepareHome(harness, config.home));
+      const home = yield* userFacing(prepareHome(harness, config.home, firstAccount(harness)));
 
       const connection = yield* EngineLive.activeConnection(config.engineHome);
       if (connection !== null) {

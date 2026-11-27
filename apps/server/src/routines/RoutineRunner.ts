@@ -559,6 +559,7 @@ export const layer = Layer.effect(
           title: `Routine: ${attempt.name}`,
           model: found.bot.model,
           effort: found.bot.effort,
+          fast: found.bot.fast,
           permissionMode: found.bot.permissionMode,
         })
         .pipe(Effect.result);

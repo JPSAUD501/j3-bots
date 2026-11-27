@@ -125,6 +125,8 @@ export const layer = Layer.effect(
         suggestReplies: changes.suggestReplies ?? saved.suggestReplies,
         // Field by field too, so a device that changes one leaves the rest.
         voice: { ...(saved.voice ?? DEFAULT_VOICE_SETTINGS), ...changes.voice },
+        // The whole list, as the client that starred one last saw it.
+        favoriteModels: changes.favoriteModels ?? saved.favoriteModels ?? [],
         ...(saved.telemetry === undefined
           ? {}
           : {

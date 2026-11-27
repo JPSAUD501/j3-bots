@@ -42,6 +42,8 @@ import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { CredentialFills } from "../secrets/Fill.ts";
 import { Secrets } from "../secrets/Secrets.ts";
+import { EngineState } from "../engine/EngineState.ts";
+import { modelListing, modelSettingsOf } from "./models.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
@@ -109,6 +111,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sessions = yield* EngineSessions;
     const store = yield* BotStore;
+    const engineState = yield* EngineState;
     const bots = yield* Bots;
     const memory = yield* Memory;
     const rooms = yield* Rooms;
@@ -465,7 +468,7 @@ export const layer = Layer.effect(
       ),
       // A turn tool of its own: the bot is saved with the call's pin on its
       // turn, which only this service's `Bots` can do.
-      create_bot: handler(tools.create_bot.input, (input, call) =>
+      create_bot: handler(tools.create_bot.input, ({ model, ...draft }, call) =>
         Effect.gen(function* () {
           yield* requirePrimary(call.caller);
           return yield* turnTools
@@ -474,14 +477,23 @@ export const layer = Layer.effect(
               caller: call.caller,
               arguments: call.arguments,
               create: (madeBy) =>
-                bots.create({ commandId: commandIdOf(call.requestId), draft: input, madeBy }).pipe(
-                  Effect.map((bot) => bot.id),
-                  Effect.catchTags({
-                    NotFound: (error) => new TurnToolRefused({ reason: error.message }),
-                    Invalid: (error) => new TurnToolRefused({ reason: error.message }),
-                    Conflict: (error) => new TurnToolRefused({ reason: error.message }),
-                  }),
-                ),
+                bots
+                  .create({
+                    commandId: commandIdOf(call.requestId),
+                    draft: {
+                      ...draft,
+                      ...(model === undefined ? {} : modelSettingsOf(model)),
+                    },
+                    madeBy,
+                  })
+                  .pipe(
+                    Effect.map((bot) => bot.id),
+                    Effect.catchTags({
+                      NotFound: (error) => new TurnToolRefused({ reason: error.message }),
+                      Invalid: (error) => new TurnToolRefused({ reason: error.message }),
+                      Conflict: (error) => new TurnToolRefused({ reason: error.message }),
+                    }),
+                  ),
             })
             .pipe(
               Effect.catchTags({
@@ -495,15 +507,32 @@ export const layer = Layer.effect(
       update_bot: handler(tools.update_bot.input, (input, call) =>
         Effect.gen(function* () {
           yield* requirePrimary(call.caller);
-          const { id, ...profile } = input;
+          const { id, model, ...profile } = input;
           const bot = yield* bots
             .update({
               commandId: commandIdOf(call.requestId),
               botId: BotId.make(id),
-              changes: { profile },
+              changes: { profile, ...(model === undefined ? {} : modelSettingsOf(model)) },
             })
             .pipe(refuseFailure);
-          return yield* encodeJson(Profile)(bot.profile).pipe(Effect.orDie);
+          const saved = yield* encodeJson(Profile)(bot.profile).pipe(Effect.orDie);
+          return {
+            profile: saved,
+            model: {
+              account: bot.model.providerId,
+              model: bot.model.modelId,
+              effort: bot.effort,
+              fast: bot.fast,
+            },
+          } satisfies Schema.Json;
+        }),
+      ),
+      list_models: handler(tools.list_models.input, (_input, { caller }) =>
+        Effect.gen(function* () {
+          yield* requirePrimary(caller);
+          const self = yield* store.find(caller.botId);
+          if (Option.isNone(self)) return yield* new Refused({ reason: "You no longer exist." });
+          return modelListing(yield* engineState.current, self.value.bot.model);
         }),
       ),
       search_mcp_servers: handler(tools.search_mcp_servers.input, (input, call) =>

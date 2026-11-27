@@ -15,6 +15,7 @@ import {
   Invalid,
   type ModelChoice,
   modelEfforts,
+  modelOffersFast,
   NotFound,
   type PermissionMode,
   ProviderId,
@@ -74,6 +75,10 @@ export interface BotDraft {
   readonly avatar?: Avatar;
   readonly job?: string;
   readonly model?: ModelChoice;
+  /** A level of `model`; the harness's default when left out, and without a model. */
+  readonly effort?: EffortLevel | null;
+  /** Fast mode, for a `model` that has it; off when left out, and without a model. */
+  readonly fast?: boolean;
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
   /** Among the hidden conversations from the start; visible when left out. */
@@ -85,6 +90,10 @@ export interface FromTemplate {
   readonly template: BotTemplate;
   /** The operator's pick; left out, the template's where the engine offers it, or the default. */
   readonly model?: ModelChoice;
+  /** As `BotDraft`'s, for `model`; ignored without one. */
+  readonly effort?: EffortLevel | null;
+  /** As `BotDraft`'s, for `model`; ignored without one. */
+  readonly fast?: boolean;
   /** The operator's pick; left out, `templatePermissionMode`. */
   readonly permissionMode?: PermissionMode;
   readonly hidden?: boolean;
@@ -104,18 +113,30 @@ const offered = (status: EngineStatus, model: ModelChoice) =>
 const effortOffered = (status: EngineStatus, model: ModelChoice, effort: EffortLevel) =>
   (modelEfforts(status, model) ?? []).some((choice) => choice.id === effort);
 
+/** Whether the engine reports a fast mode for `model` now. */
+const fastOffered = (status: EngineStatus, model: ModelChoice) =>
+  modelOffersFast(status, model) === true;
+
 /**
  * `change` as it is saved for `bot`: a new model that the bot's effort is not
  * a level of, with no effort of its own, takes the bot back to the harness's
- * default effort, so the bot never keeps a level its model lacks.
+ * default effort, and one without a fast mode, with no fast mode of its own,
+ * turns it off, so the bot never keeps a setting its model lacks.
  */
-const withEffortFallback = (status: EngineStatus, bot: Bot, change: BotChanges): BotChanges =>
-  change.model !== undefined &&
-  change.effort === undefined &&
-  bot.effort !== null &&
-  !effortOffered(status, change.model, bot.effort)
-    ? { ...change, effort: null }
-    : change;
+const withModelFallback = (status: EngineStatus, bot: Bot, change: BotChanges): BotChanges => {
+  if (change.model === undefined) return change;
+  const effort =
+    change.effort === undefined &&
+    bot.effort !== null &&
+    !effortOffered(status, change.model, bot.effort)
+      ? { effort: null }
+      : {};
+  const fast =
+    change.fast === undefined && bot.fast && !fastOffered(status, change.model)
+      ? { fast: false }
+      : {};
+  return { ...change, ...effort, ...fast };
+};
 
 /**
  * A bot that another bot's `create_bot` makes, in the turn that called it
@@ -294,6 +315,14 @@ export const layer = Layer.effect(
       if (!effortOffered(status, model, effort)) return yield* new Invalid({ reason: "model" });
     });
 
+    /** A fast mode the engine reports for `model` now; the model's own check says why not. */
+    const checkFast = Effect.fn("Bots.checkFast")(function* (
+      status: EngineStatus,
+      model: ModelChoice,
+    ) {
+      if (!fastOffered(status, model)) return yield* new Invalid({ reason: "model" });
+    });
+
     /** Makes `botId` the one primary bot, telling subscribers about the one it replaces. */
     const makePrimary = Effect.fn("Bots.makePrimary")(function* (at: DateTime.Utc) {
       for (const previous of yield* store.clearPrimary(at)) {
@@ -410,11 +439,12 @@ export const layer = Layer.effect(
             const status = yield* engineState.current;
             const decided = yield* input.decide(before, status);
             if (Option.isNone(decided)) return before.bot;
-            const change = withEffortFallback(status, before.bot, decided.value);
+            const change = withModelFallback(status, before.bot, decided.value);
             if (change.model !== undefined) yield* checkModel(status, change.model);
             if (change.effort !== undefined && change.effort !== null) {
               yield* checkEffort(status, change.model ?? before.bot.model, change.effort);
             }
+            if (change.fast === true) yield* checkFast(status, change.model ?? before.bot.model);
             if (change.sectionId !== undefined && change.sectionId !== null) {
               yield* sections.require(change.sectionId);
             }
@@ -474,6 +504,7 @@ export const layer = Layer.effect(
         settings:
           input.changes.model !== undefined ||
           input.changes.effort !== undefined ||
+          input.changes.fast !== undefined ||
           input.changes.permissionMode !== undefined ||
           input.changes.browser !== undefined,
         // The browser's rules come and go with its switch.
@@ -585,6 +616,11 @@ export const layer = Layer.effect(
               const model = draft.model ?? Option.getOrNull(yield* input.serverModel(status));
               if (model === null) return yield* new Invalid({ reason: "model" });
               yield* checkModel(status, model);
+              // Effort and fast mode are the operator's only with the model they chose.
+              const effort = draft.model === undefined ? null : (draft.effort ?? null);
+              const fast = draft.model !== undefined && draft.fast === true;
+              if (effort !== null) yield* checkEffort(status, model, effort);
+              if (fast) yield* checkFast(status, model);
               const at = yield* DateTime.now;
               const id = BotIdSchema.make(yield* ids.make("bot"));
               yield* Ref.set(started, Option.some(id));
@@ -609,6 +645,8 @@ export const layer = Layer.effect(
                   job: draft.job ?? "",
                 },
                 model,
+                effort,
+                fast,
                 modelChooser: draft.model === undefined ? "server" : "operator",
                 permissionMode: draft.permissionMode ?? input.permissionMode(status, model),
                 permissionModeChooser: input.permissionModeChooser(draft),
@@ -754,7 +792,7 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly from: FromTemplate;
     }) => {
-      const { template, model, permissionMode, hidden } = input.from;
+      const { template, model, effort, fast, permissionMode, hidden } = input.from;
       return insert<never>({
         commandId: input.commandId,
         method: "bot.createFromTemplate",
@@ -768,6 +806,9 @@ export const layer = Layer.effect(
             job: template.profile.job,
             ...(isAvatarChoice(avatar) ? { avatar } : {}),
             ...(chosen === undefined ? {} : { model: chosen }),
+            // The operator's effort and fast mode go with their model only.
+            ...(model === undefined || effort === undefined ? {} : { effort }),
+            ...(model === undefined || fast === undefined ? {} : { fast }),
             ...(permissionMode === undefined ? {} : { permissionMode }),
             ...(hidden === undefined ? {} : { hidden }),
           };

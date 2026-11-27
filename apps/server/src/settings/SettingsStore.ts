@@ -2,6 +2,7 @@
 import {
   CloudVoiceModelId,
   Label,
+  ModelChoice,
   PositiveInt,
   type Settings,
   TimeZone,
@@ -41,9 +42,11 @@ const SettingsRow = Schema.Struct({
   voice_model: Schema.NullOr(VoiceModelId),
   voice_openrouter_model: Schema.NullOr(CloudVoiceModelId),
   telemetry: Flag,
+  favorite_models_json: json(Schema.Array(ModelChoice)),
 });
 
 const encodeWords = Schema.encodeSync(json(VoiceWords));
+const encodeFavorites = Schema.encodeSync(json(Schema.Array(ModelChoice)));
 
 /** Dictation's preferences until the operator changes them, as the migration sets them. */
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
@@ -87,7 +90,7 @@ export const layer = Layer.effect(
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
           notifications_enabled, notification_previews, update_channel, auto_update_harnesses,
           suggest_replies, voice_place, voice_language, voice_words_json, voice_remove_fillers,
-          voice_clean_up, voice_model, voice_openrouter_model, telemetry
+          voice_clean_up, voice_model, voice_openrouter_model, telemetry, favorite_models_json
         FROM settings WHERE id = 1
       `,
     });
@@ -119,6 +122,7 @@ export const layer = Layer.effect(
             openRouterModel: row.voice_openrouter_model,
           },
           telemetry: { enabled: row.telemetry, heldOff },
+          favoriteModels: row.favorite_models_json,
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (
@@ -148,6 +152,7 @@ export const layer = Layer.effect(
             voice_model = ${voice.model},
             voice_openrouter_model = ${voice.openRouterModel},
             telemetry = ${settings.telemetry?.enabled === false ? 0 : 1},
+            favorite_models_json = ${encodeFavorites(settings.favoriteModels ?? [])},
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;

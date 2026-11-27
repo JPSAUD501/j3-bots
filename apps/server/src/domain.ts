@@ -34,6 +34,7 @@ import * as Pairs from "./pairs/Pairs.ts";
 import * as MemoryFiles from "./memory/MemoryFiles.ts";
 import * as ChangeLog from "./persistence/ChangeLog.ts";
 import * as Presence from "./presence/Presence.ts";
+import * as ProviderAccounts from "./providers/Accounts.ts";
 import * as SignIns from "./providers/SignIns.ts";
 import * as PushDeliveries from "./push/PushDeliveries.ts";
 import * as PushWorker from "./push/PushWorker.ts";
@@ -178,6 +179,7 @@ export const layer = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(Devices.layer),
+  Layer.provideMerge(ProviderAccounts.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Ids.layer,

@@ -94,6 +94,18 @@ const call = (sessionId: SessionId, turnId: TurnId, tool: string, args: Schema.J
   });
 
 const decodeCreated = Schema.decodeUnknownSync(Schema.Struct({ id: BotId }));
+const decodeListing = Schema.decodeUnknownSync(
+  Schema.Struct({
+    accounts: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        state: Schema.String,
+        models: Schema.Array(Schema.Struct({ fast: Schema.Boolean })),
+      }),
+    ),
+    yours: Schema.Struct({ account: Schema.String, model: Schema.String }),
+  }),
+);
 const decodeStarted = Schema.decodeUnknownSync(Schema.Struct({ id: RoomId }));
 const decodeStatus = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.String }));
 const decodeNote = Schema.decodeUnknownSync(Schema.Struct({ note: Schema.String }));
@@ -225,6 +237,68 @@ it.effect(
       });
       const mole = decodeCreated(resultOf(yield* createIn(session, turnId, "Mole")));
       assert.deepStrictEqual(yield* modelOf(mole.id), TestDomain.DEFAULT_MODEL);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "puts a bot it makes or changes on the AI the operator asked for, from those on offer",
+  () =>
+    Effect.gen(function* () {
+      const scout = yield* primaryBot("Scout");
+      const { session, turnId } = yield* operatorAsks(scout, "Make Lia, on GPT at medium effort.");
+      const store = yield* BotStore;
+      const stored = (id: BotId) =>
+        Effect.map(store.find(id), (found) => {
+          const { model, effort, fast } = Option.getOrThrow(found).bot;
+          return { model, effort, fast };
+        });
+
+      const listed = decodeListing(resultOf(yield* call(session, turnId, "list_models", {})));
+      assert.deepStrictEqual(
+        listed.accounts.map((account) => [account.id, account.state, account.models[0]?.fast]),
+        [
+          [TestDomain.DEFAULT_MODEL.providerId, "ready", true],
+          [TestDomain.OTHER_PROVIDER_MODEL.providerId, "ready", false],
+        ],
+      );
+      assert.deepStrictEqual(listed.yours, {
+        account: TestDomain.DEFAULT_MODEL.providerId,
+        model: TestDomain.DEFAULT_MODEL.modelId,
+      });
+
+      const lia = decodeCreated(
+        resultOf(
+          yield* call(session, turnId, "create_bot", {
+            name: "Lia",
+            model: { account: "codex", model: "gpt", effort: "medium" },
+          }),
+        ),
+      );
+      assert.deepStrictEqual(yield* stored(lia.id), {
+        model: TestDomain.OTHER_PROVIDER_MODEL,
+        effort: "medium",
+        fast: false,
+      });
+
+      // An effort left out goes back to the account's default.
+      yield* call(session, turnId, "update_bot", {
+        id: lia.id,
+        model: { account: "claude", model: "opus", fast: true },
+      });
+      assert.deepStrictEqual(yield* stored(lia.id), {
+        model: TestDomain.DEFAULT_MODEL,
+        effort: null,
+        fast: true,
+      });
+
+      // A fast mode the model lacks is refused, and nothing changes.
+      refusalOf(
+        yield* call(session, turnId, "update_bot", {
+          id: lia.id,
+          model: { account: "codex", model: "gpt", fast: true },
+        }),
+      );
+      assert.deepStrictEqual((yield* stored(lia.id)).model, TestDomain.DEFAULT_MODEL);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

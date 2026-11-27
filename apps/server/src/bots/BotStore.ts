@@ -36,6 +36,7 @@ const BotRow = Schema.Struct({
   provider_id: ProviderId,
   model_id: ModelId,
   effort: Schema.NullOr(EffortLevel),
+  fast: Flag,
   permission_mode: PermissionMode,
   is_primary: Flag,
   pinned: Flag,
@@ -87,6 +88,7 @@ const toStored = (
     ...(row.made_by === null ? {} : { madeBy: { by: row.made_by, botId: row.made_by_bot_id } }),
     model: { providerId: row.provider_id, modelId: row.model_id },
     effort: row.effort,
+    fast: row.fast,
     permissionMode: row.permission_mode,
     primary: row.is_primary,
     pinned: row.pinned,
@@ -122,6 +124,10 @@ export interface NewBot {
   readonly profile: Profile;
   readonly model: ModelChoice;
   readonly modelChooser: Chooser;
+  /** A level of `model`, or null for the harness's default (`Bot.effort`). */
+  readonly effort: EffortLevel | null;
+  /** Fast mode, for a `model` that has it (`Bot.fast`). */
+  readonly fast: boolean;
   readonly permissionMode: PermissionMode;
   readonly permissionModeChooser: Chooser;
   readonly primary: boolean;
@@ -141,6 +147,8 @@ export interface BotChanges {
   readonly model?: ModelChoice;
   /** A level of the bot's model, or null for the harness's default (`Bot.effort`). */
   readonly effort?: EffortLevel | null;
+  /** Fast mode, for the bot's model (`Bot.fast`). */
+  readonly fast?: boolean;
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
   readonly pinned?: boolean;
@@ -152,7 +160,7 @@ export interface BotChanges {
 }
 
 const SELECT = `
-  SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id, effort,
+  SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id, effort, fast,
     permission_mode, is_primary, pinned, hidden, made_by_bot_id, made_by, visibility_by_operator,
     browser,
     section_id, workspace_path, workspace_root, engine_project_id, created_at
@@ -230,13 +238,14 @@ export const layer = Layer.effect(
       const at = timeText(bot.at);
       yield* sql`
         INSERT INTO bots (
-          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id, effort, fast,
           model_by_server, permission_mode, permission_mode_by_server, is_primary, hidden,
           made_by_bot_id, made_by, visibility_by_operator, workspace_path, created_at, updated_at
         ) VALUES (
           ${bot.id}, ${bot.profile.name}, ${bot.profile.title}, ${bot.profile.avatar.shape},
           ${bot.profile.avatar.color}, ${bot.profile.job}, ${bot.model.providerId},
-          ${bot.model.modelId}, ${bot.modelChooser === "server" ? 1 : 0}, ${bot.permissionMode},
+          ${bot.model.modelId}, ${bot.effort}, ${bot.fast ? 1 : 0},
+          ${bot.modelChooser === "server" ? 1 : 0}, ${bot.permissionMode},
           ${bot.permissionModeChooser === "server" ? 1 : 0}, ${bot.primary ? 1 : 0},
           ${bot.hidden ? 1 : 0}, ${bot.madeBy}, ${bot.madeBy === null ? "operator" : "bot"},
           ${bot.madeBy === null ? 1 : 0},
@@ -267,6 +276,7 @@ export const layer = Layer.effect(
         columns["model_by_server"] = chooser === "server" ? 1 : 0;
       }
       if (changes.effort !== undefined) columns["effort"] = changes.effort;
+      if (changes.fast !== undefined) columns["fast"] = changes.fast ? 1 : 0;
       if (changes.permissionMode !== undefined) {
         columns["permission_mode"] = changes.permissionMode;
         columns["permission_mode_by_server"] = chooser === "server" ? 1 : 0;

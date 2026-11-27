@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type HarnessLocation,
-  ProviderId,
+  type ProviderId,
   type ProviderSignInStatus,
   SignInHarness,
 } from "@j3-bots/contracts";
@@ -20,6 +20,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ServerConfig } from "../config.ts";
 import { findHarness, HARNESSES } from "../engine/harnesses.ts";
 import { Host } from "../system/Host.ts";
+import { firstAccount, ProviderAccounts } from "./Accounts.ts";
 import { prepareHome, SignInFailed, signIn } from "./signIn.ts";
 
 /** Whether a sign-in has ended: nothing follows these. */
@@ -32,30 +33,39 @@ interface Running {
 }
 
 /**
- * The sign-ins clients start (`provider.signIn`): each harness's own, run by
- * the server with no terminal for J3 Bots' home for it, as
- * `j3-bots provider login` runs it in one. At most one per harness at a time,
- * which every client that asks follows. A sign-in belongs to the server, not
+ * The sign-ins clients start (`provider.signIn`): each AI account's harness's
+ * own, run by the server with no terminal for the account's home, as
+ * `j3-bots provider login` runs it in one for the first account of a harness.
+ * At most one per account at a time, which every client that asks follows. A sign-in belongs to the server, not
  * to the socket that started it: it keeps running when that socket closes,
  * so a window that reconnects follows it again, until it ends, is cancelled
  * or times out.
  */
+/** The account a client names: one of `harness`'s, its first when `providerId` is left out. */
+export interface SignInAccount {
+  readonly harness: SignInHarness;
+  readonly providerId?: ProviderId | undefined;
+}
+
+const providerOf = (account: SignInAccount): ProviderId =>
+  account.providerId ?? firstAccount(account.harness);
+
 export class SignIns extends Context.Service<
   SignIns,
   {
     /** Where the server finds each harness, on the `PATH` it runs them with, looked up now. */
     readonly locations: Effect.Effect<ReadonlyArray<HarnessLocation>>;
     /**
-     * The harness's sign-in under way, or with `start` a new one, else the
+     * The account's sign-in under way, or with `start` a new one, else the
      * last one's ending: where it stands, then each change, ending with the
      * change that ends it. Nothing when none ran and `start` is false.
      */
     readonly follow: (
-      harness: SignInHarness,
+      account: SignInAccount,
       start: boolean,
     ) => Stream.Stream<ProviderSignInStatus>;
-    /** Stops the harness's sign-in under way, if any, and waits until it stopped. */
-    readonly cancel: (harness: SignInHarness) => Effect.Effect<void>;
+    /** Stops the account's sign-in under way, if any, and waits until it stopped. */
+    readonly cancel: (account: SignInAccount) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/providers/SignIns") {}
 
@@ -65,12 +75,13 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig;
     const host = yield* Host;
     const engine = yield* Engine;
+    const accounts = yield* ProviderAccounts;
     const context = yield* Effect.context<
       Host | FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
     >();
     const scope = yield* Effect.scope;
-    // Each harness's latest sign-in, under way or ended.
-    const latest = new Map<SignInHarness, Running>();
+    // Each account's latest sign-in, under way or ended.
+    const latest = new Map<ProviderId, Running>();
     const lock = yield* Semaphore.make(1);
 
     /**
@@ -78,21 +89,31 @@ export const layer = Layer.effect(
      * again: the engine's own check comes minutes later otherwise.
      */
     const run = Effect.fn("SignIns.run")(function* (
-      harness: SignInHarness,
+      providerId: ProviderId,
       report: (status: ProviderSignInStatus) => Effect.Effect<void>,
     ) {
+      const account = yield* accounts.find(providerId);
+      if (Option.isNone(account)) {
+        return yield* new SignInFailed({
+          reason: "unexpected",
+          message: "The server has no such AI account",
+        });
+      }
+      const { harness, binaryPath } = account.value;
       const facts = HARNESSES[harness];
       const found = yield* findHarness(harness, Option.none(), config.home);
-      if (Option.isNone(found.executable)) {
+      // The executable the operator chose for the account, else the one its engine instance runs.
+      const executable = binaryPath ?? Option.getOrNull(found.executable);
+      if (executable === null) {
         return yield* new SignInFailed({
           reason: "not-installed",
           message: `${facts.executable} is not on the server's PATH, and J3 Bots installed no copy of it`,
         });
       }
-      const home = yield* prepareHome(harness, config.home);
+      const home = yield* prepareHome(harness, config.home, providerId);
       yield* signIn({
         harness,
-        executable: found.executable.value,
+        executable,
         home,
         environment: { ...(yield* Effect.sync(() => process.env)), PATH: found.searchPath },
         deviceAuth: false,
@@ -100,7 +121,7 @@ export const layer = Layer.effect(
         io: { _tag: "app", report },
       });
       yield* engine
-        .recheckProvider(ProviderId.make(harness))
+        .recheckProvider(providerId)
         .pipe(
           Effect.catch((error) =>
             Effect.logInfo("The engine could not check a provider again after its sign-in", error),
@@ -109,17 +130,17 @@ export const layer = Layer.effect(
       return yield* engine.connectedEndpoint;
     });
 
-    const start = Effect.fnUntraced(function* (harness: SignInHarness) {
+    const start = Effect.fnUntraced(function* (providerId: ProviderId) {
       const status = yield* SubscriptionRef.make<ProviderSignInStatus>({ _tag: "starting" });
       const report = (next: ProviderSignInStatus) => SubscriptionRef.set(status, next);
-      yield* Effect.logInfo("A provider sign-in started").pipe(Effect.annotateLogs({ harness }));
-      const fiber = yield* run(harness, report).pipe(
+      yield* Effect.logInfo("A provider sign-in started").pipe(Effect.annotateLogs({ providerId }));
+      const fiber = yield* run(providerId, report).pipe(
         Effect.matchEffect({
           onSuccess: (endpoint) => report({ _tag: "succeeded", endpoint }),
           // What the harness printed is never logged: only why it ended.
           onFailure: (error) =>
             Effect.logInfo("A provider sign-in ended without signing in", error.message).pipe(
-              Effect.annotateLogs({ harness, reason: error.reason }),
+              Effect.annotateLogs({ providerId, reason: error.reason }),
               Effect.andThen(report({ _tag: "failed", reason: error.reason })),
             ),
         }),
@@ -128,22 +149,23 @@ export const layer = Layer.effect(
         Effect.forkIn(scope),
       );
       const entry = { status, fiber };
-      latest.set(harness, entry);
+      latest.set(providerId, entry);
       return entry;
     });
 
-    const follow = (harness: SignInHarness, startOne: boolean) =>
+    const follow = (account: SignInAccount, startOne: boolean) =>
       Stream.unwrap(
         lock.withPermits(1)(
           Effect.gen(function* () {
-            const current = latest.get(harness);
+            const providerId = providerOf(account);
+            const current = latest.get(providerId);
             const underWay =
               current !== undefined && !signInEnded(yield* SubscriptionRef.get(current.status));
             const entry =
               underWay || (!startOne && current !== undefined)
                 ? current
                 : startOne
-                  ? yield* start(harness)
+                  ? yield* start(providerId)
                   : undefined;
             return entry === undefined
               ? Stream.empty
@@ -152,8 +174,9 @@ export const layer = Layer.effect(
         ),
       );
 
-    const cancel = Effect.fn("SignIns.cancel")(function* (harness: SignInHarness) {
-      const current = yield* lock.withPermits(1)(Effect.sync(() => latest.get(harness)));
+    const cancel = Effect.fn("SignIns.cancel")(function* (account: SignInAccount) {
+      const providerId = providerOf(account);
+      const current = yield* lock.withPermits(1)(Effect.sync(() => latest.get(providerId)));
       if (current !== undefined) yield* Fiber.interrupt(current.fiber);
     });
 

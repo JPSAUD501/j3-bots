@@ -7,7 +7,6 @@ import {
   type HarnessOutcome,
   type HarnessTask,
   isNewerHarness,
-  ProviderId,
   type SignInHarness,
   SignInHarness as SignInHarnessSchema,
 } from "@j3-bots/contracts";
@@ -32,6 +31,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ServerConfig } from "../config.ts";
 import { Layout } from "../Layout.ts";
+import { ProviderAccounts } from "../providers/Accounts.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
@@ -87,14 +87,14 @@ const WAIT_STEP = Duration.seconds(30);
 export interface ProviderWork {
   /** Runs `effect` with no bot's first send going out meanwhile (`SendPause.paused`). */
   readonly paused: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
-  /** How many bots on `providerId` have work running in the engine now. */
-  readonly running: (providerId: ProviderId) => Effect.Effect<number>;
+  /** How many bots on an account that runs J3 Bots' copy of `harness` have work running in the engine now. */
+  readonly running: (harness: SignInHarness) => Effect.Effect<number>;
   /**
-   * Has the engine release each session it has open on `providerId`, which
-   * starts its harness again, and resumes its conversation, at its next
-   * turn: true once every one was.
+   * Has the engine release each session it has open on an account that runs
+   * J3 Bots' copy of `harness`, which starts the harness again, and resumes
+   * its conversation, at its next turn: true once every one was.
    */
-  readonly release: (providerId: ProviderId) => Effect.Effect<boolean>;
+  readonly release: (harness: SignInHarness) => Effect.Effect<boolean>;
 }
 
 export class Harnesses extends Context.Service<
@@ -316,11 +316,10 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
     before: Option.Option<InstalledCopy>,
     automatic: boolean,
   ) {
-    const providerId = ProviderId.make(harness);
     const layout = layoutOf(harness);
     const putBack = engine
       .setHarnessExecutable({
-        providerId,
+        harness,
         executable: Option.match(before, {
           onNone: () => null,
           onSome: (previous) => previous.executable,
@@ -355,10 +354,10 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
     const switchNow = Effect.gen(function* () {
       const why = yield* unwanted(harness, before, automatic);
       if (Option.isSome(why)) return { _tag: "unwanted", why: why.value } as const;
-      if ((yield* options.work.running(providerId)) > 0) return { _tag: "waiting" } as const;
+      if ((yield* options.work.running(harness)) > 0) return { _tag: "waiting" } as const;
       const taken = yield* engine
         .setHarnessExecutable({
-          providerId,
+          harness,
           executable: copy.executable,
           version: copy.version,
         })
@@ -386,7 +385,7 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
       if (stranded.get(harness)?.version === copy.version) stranded.delete(harness);
       yield* update(harness, (slot) => ({ ...slot, installed: Option.some(copy), task: null }));
       // For an update, still with first sends held: no turn reaches a session on the copy before.
-      const released = yield* options.work.release(providerId);
+      const released = yield* options.work.release(harness);
       return { _tag: "switched", released } as const;
     });
     // An update holds every bot's first send while it switches, so none
@@ -721,7 +720,7 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
  * distributions, probe and operator's own of `HarnessSources`, the
  * `autoUpdateHarnesses` setting, and a switch that
  * holds bots' first sends, counts the bots whose work runs in a session on
- * the provider, and has the engine release that provider's sessions.
+ * an account that runs the copy, and has the engine release those sessions.
  */
 export const layer = Layer.effect(
   Harnesses,
@@ -732,6 +731,7 @@ export const layer = Layer.effect(
     const pause = yield* SendPause;
     const runningWork = yield* RunningWork;
     const engine = yield* Engine;
+    const accounts = yield* ProviderAccounts;
     return yield* make({
       home,
       platform: sources.platform,
@@ -741,9 +741,17 @@ export const layer = Layer.effect(
       autoUpdate: settings.changes.pipe(Stream.map((saved) => saved.autoUpdateHarnesses)),
       work: {
         paused: pause.paused,
-        running: (providerId) => Effect.map(runningWork.botsOn(providerId), (bots) => bots.length),
-        release: Effect.fn("Harnesses.release")(function* (providerId: ProviderId) {
-          const sessions = yield* runningWork.sessionsOn(providerId);
+        running: Effect.fn("Harnesses.running")(function* (harness: SignInHarness) {
+          const each = yield* Effect.forEach(yield* accounts.following(harness), (providerId) =>
+            runningWork.botsOn(providerId),
+          );
+          return each.reduce((sum, bots) => sum + bots.length, 0);
+        }),
+        release: Effect.fn("Harnesses.release")(function* (harness: SignInHarness) {
+          const sessions = (yield* Effect.forEach(
+            yield* accounts.following(harness),
+            (providerId) => runningWork.sessionsOn(providerId),
+          )).flat();
           const each = yield* Effect.forEach(sessions, (sessionId) =>
             engine.configureSession({ sessionId, reloadTools: true }).pipe(
               Effect.as(true),
@@ -764,16 +772,18 @@ export const layer = Layer.effect(
 /**
  * `status` with each harness's copy (`EngineStatus.harnesses`), whatever the
  * engine's state, and each Claude Code and Codex provider with its harness's
- * copy (`ProviderStatus.copy`). One that runs J3 Bots' own copy leaves out the
- * engine's `version` and `update`: that copy is updated by J3 Bots, never by
- * the engine's update, which would run the harness's own updater on it.
+ * copy (`ProviderStatus.copy`), but one that runs an executable the operator
+ * chose for it (`ProviderSetup.binaryPath`), which keeps what the engine says
+ * of it. One that runs J3 Bots' own copy leaves out the engine's `version`
+ * and `update`: that copy is updated by J3 Bots, never by the engine's
+ * update, which would run the harness's own updater on it.
  */
 export const withCopies = (status: EngineStatus, copies: HarnessCopies): EngineStatus => ({
   ...status,
   harnesses: copies,
   providers: status.providers.map((provider) => {
-    const harness = HARNESS_IDS.find((id) => id === provider.id);
-    if (harness === undefined) return provider;
+    const { harness } = provider;
+    if (harness === "other" || (provider.setup?.binaryPath ?? null) !== null) return provider;
     const copy = copies[harness];
     if (copy.source !== "j3") return { ...provider, copy };
     const { version: _version, update: _update, ...rest } = provider;
