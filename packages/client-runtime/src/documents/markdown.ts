@@ -258,13 +258,107 @@ function inline(text: string): Array<Run> {
   return runs;
 }
 
-const LINK = /^!?\[((?:\\.|[^\]\\])*)\]\(\s*<?[^\s)>]*>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/;
-const AUTOLINK = /^<((?:https?|mailto):[^\s>]+)>/i;
+// What follows a link's text: its address in parentheses, perhaps in angle
+// brackets, and perhaps a title. Matched where the text's `]` is.
+const LINK_TARGET = /\(\s*<?[^\s)>]*>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/y;
+// An address in angle brackets; it cannot hold another `<`, so each `<` scans only up to the next.
+const AUTOLINK = /<((?:https?|mailto):[^\s<>]+)>/iy;
 
 /** Whether `char` is a letter or a digit, which an underscore inside a word does not emphasize. */
 const wordy = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}]/u.test(char);
 
+/** Whether `char` is one a backslash escapes. */
+const escapable = (char: string | undefined) => char !== undefined && /[!-/:-@[-`{-~]/.test(char);
+
+/**
+ * What a text's spans are found with, worked out once per text so that
+ * reading it takes time in proportion to its length, whatever it holds: a
+ * file of a thousand `[` or `*` with nothing to close them costs no more than
+ * any other.
+ */
+class Closers {
+  /** For each position, the next `]` not escaped at or after it; the text's length if none. */
+  private readonly brackets: Int32Array;
+  /** Where each marker can close emphasis, in order. */
+  private readonly emphasis = new Map<string, ReadonlyArray<number>>();
+  /** The end of a link's target after the `]` at a position, or -1 when none follows. */
+  private readonly targets = new Map<number, number>();
+  /** For each run of backticks, the first position from which it has no closing run. */
+  private readonly unclosedTicks = new Map<string, number>();
+
+  private readonly text: string;
+
+  constructor(text: string) {
+    this.text = text;
+    const { length } = text;
+    const escaped = new Uint8Array(length);
+    for (let at = 1; at < length; at++) {
+      escaped[at] = text[at - 1] === "\\" && escaped[at - 1] === 0 && escapable(text[at]) ? 1 : 0;
+    }
+    this.brackets = new Int32Array(length + 1);
+    this.brackets[length] = length;
+    for (let at = length - 1; at >= 0; at--) {
+      this.brackets[at] =
+        text[at] === "]" && escaped[at] === 0 ? at : (this.brackets[at + 1] ?? length);
+    }
+  }
+
+  /** The text of a link whose `[` is at `open`, and where the link ends; null when it is no link. */
+  link(open: number): { readonly text: string; readonly end: number } | null {
+    const close = this.brackets[open + 1] ?? this.text.length;
+    if (close >= this.text.length) return null;
+    let end = this.targets.get(close);
+    if (end === undefined) {
+      LINK_TARGET.lastIndex = close + 1;
+      end = LINK_TARGET.test(this.text) ? LINK_TARGET.lastIndex : -1;
+      this.targets.set(close, end);
+    }
+    return end < 0 ? null : { text: this.text.slice(open + 1, close), end };
+  }
+
+  /** Where the code span opened by `ticks` at `from` closes, or -1. */
+  code(ticks: string, from: number): number {
+    if (from >= (this.unclosedTicks.get(ticks) ?? Number.POSITIVE_INFINITY)) return -1;
+    const end = this.text.indexOf(ticks, from);
+    if (end < 0) this.unclosedTicks.set(ticks, from);
+    return end;
+  }
+
+  /**
+   * Where emphasis opened with `marker`, whose text starts at `from`, closes:
+   * after text, not after a space or a backslash, nor before a letter for
+   * `_`; a single marker never closes inside a run of them.
+   */
+  closing(marker: string, from: number): number {
+    let places = this.emphasis.get(marker);
+    if (places === undefined) {
+      const found: Array<number> = [];
+      for (let at = this.text.indexOf(marker, 1); at > 0; at = this.text.indexOf(marker, at + 1)) {
+        const before = this.text[at - 1];
+        const after = this.text[at + marker.length];
+        if (marker.length === 1 && (after === marker || before === marker)) continue;
+        if (before !== undefined && /\s/.test(before)) continue;
+        if (before === "\\") continue;
+        if (marker[0] === "_" && wordy(after)) continue;
+        found.push(at);
+      }
+      places = found;
+      this.emphasis.set(marker, places);
+    }
+    // The first place after at least one character of text.
+    let low = 0;
+    let high = places.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((places[middle] ?? 0) > from) high = middle;
+      else low = middle + 1;
+    }
+    return places[low] ?? -1;
+  }
+}
+
 function spans(text: string, style: Style, runs: Array<Run>): void {
+  const closers = new Closers(text);
   let plain = "";
   const flush = () => {
     addRun(runs, plain, style);
@@ -273,36 +367,42 @@ function spans(text: string, style: Style, runs: Array<Run>): void {
   let at = 0;
   while (at < text.length) {
     const char = text[at] ?? "";
-    const rest = text.slice(at);
-    if (char === "\\" && at + 1 < text.length && /[!-/:-@[-`{-~]/.test(text[at + 1] ?? "")) {
+    if (char === "\\" && escapable(text[at + 1])) {
       plain += text[at + 1];
       at += 2;
       continue;
     }
     if (char === "`") {
-      const ticks = /^`+/.exec(rest)?.[0] ?? "`";
-      const end = text.indexOf(ticks, at + ticks.length);
+      let count = 1;
+      while (text[at + count] === "`") count++;
+      const ticks = "`".repeat(count);
+      const end = closers.code(ticks, at + count);
       if (end > 0) {
         flush();
-        addRun(runs, text.slice(at + ticks.length, end).trim(), { ...style, code: true });
-        at = end + ticks.length;
+        addRun(runs, text.slice(at + count, end).trim(), { ...style, code: true });
+        at = end + count;
         continue;
       }
+      // An unclosed run of backticks is text, all of it.
+      plain += ticks;
+      at += count;
+      continue;
     }
     if (char === "[" || (char === "!" && text[at + 1] === "[")) {
-      const link = LINK.exec(rest);
+      const link = closers.link(char === "!" ? at + 1 : at);
       if (link !== null) {
         flush();
-        spans(link[1] ?? "", style, runs);
-        at += link[0].length;
+        spans(link.text, style, runs);
+        at = link.end;
         continue;
       }
     }
     if (char === "<") {
-      const link = AUTOLINK.exec(rest);
+      AUTOLINK.lastIndex = at;
+      const link = AUTOLINK.exec(text);
       if (link !== null) {
         plain += link[1];
-        at += link[0].length;
+        at = AUTOLINK.lastIndex;
         continue;
       }
     }
@@ -314,7 +414,7 @@ function spans(text: string, style: Style, runs: Array<Run>): void {
         !/\s/.test(text[at + marker.length] ?? "") &&
         !(char === "_" && wordy(text[at - 1])) &&
         (char !== "~" || double);
-      const end = opens ? closingOf(text, marker, at + marker.length) : -1;
+      const end = opens ? closers.closing(marker, at + marker.length) : -1;
       if (end > 0) {
         flush();
         const inner = text.slice(at + marker.length, end);
@@ -331,22 +431,4 @@ function spans(text: string, style: Style, runs: Array<Run>): void {
     at++;
   }
   flush();
-}
-
-/** Where emphasis opened with `marker` closes: after text, not after a space, nor before a letter for `_`. */
-function closingOf(text: string, marker: string, from: number): number {
-  for (let at = text.indexOf(marker, from + 1); at > 0; at = text.indexOf(marker, at + 1)) {
-    const before = text[at - 1];
-    const after = text[at + marker.length];
-    // A single marker is no close of a double one's half: `**a*` closes nothing at `*`.
-    if (marker.length === 1 && after === marker) {
-      at++;
-      continue;
-    }
-    if (before !== undefined && /\s/.test(before)) continue;
-    if (before === "\\") continue;
-    if (marker[0] === "_" && wordy(after)) continue;
-    return at;
-  }
-  return -1;
 }

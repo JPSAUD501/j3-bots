@@ -46,13 +46,33 @@ const unescapeXml = (text: string): string =>
       })
     : text;
 
-const ATTRIBUTE = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+const isSpace = (char: string) => char === " " || char === "\t" || char === "\n" || char === "\r";
 
+/**
+ * The attributes of a tag, from what follows its name: `name="value"` or
+ * `name='value'`, apart by white space. Read in one pass, so a tag of any
+ * length costs its length; anything else in it makes the part unreadable.
+ */
 function attributesOf(source: string): ReadonlyMap<string, string> {
   const attributes = new Map<string, string>();
-  for (const match of source.matchAll(ATTRIBUTE)) {
-    const [, name, double, single] = match;
-    if (name !== undefined) attributes.set(name, unescapeXml(double ?? single ?? ""));
+  let at = 0;
+  const skipSpace = () => {
+    while (at < source.length && isSpace(source.charAt(at))) at += 1;
+  };
+  for (skipSpace(); at < source.length; skipSpace()) {
+    const nameStart = at;
+    while (at < source.length && source.charAt(at) !== "=" && !isSpace(source.charAt(at))) at += 1;
+    const name = source.slice(nameStart, at);
+    skipSpace();
+    if (name === "" || source.charAt(at) !== "=") throw new Refused({ reason: "unreadable" });
+    at += 1;
+    skipSpace();
+    const quote = source.charAt(at);
+    if (quote !== '"' && quote !== "'") throw new Refused({ reason: "unreadable" });
+    const end = source.indexOf(quote, at + 1);
+    if (end < 0) throw new Refused({ reason: "unreadable" });
+    attributes.set(name, unescapeXml(source.slice(at + 1, end)));
+    at = end + 1;
   }
   return attributes;
 }

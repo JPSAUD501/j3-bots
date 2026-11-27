@@ -191,6 +191,15 @@ describe("Word documents", () => {
     expect(readDocument("word", bytes, "en")).toEqual({ _tag: "unreadable" });
   });
 
+  it("reads a tag of any length in time, and refuses one that is no well-formed tag", () => {
+    // A small file whose one tag runs on with no attribute value.
+    const bytes = zip({
+      "word/document.xml": `<w:document><w:body><w:p ${"a".repeat(200_000)}></w:p></w:body></w:document>`,
+    });
+    expect(bytes.length).toBeLessThan(10 * 1024);
+    expect(readDocument("word", bytes, "en")).toEqual({ _tag: "unreadable" });
+  });
+
   it("stops unpacking a part past the limit, however small the file", () => {
     const bomb = zip({ "word/document.xml": new Uint8Array(DOCUMENT_LIMITS.partBytes + 1) });
     expect(bomb.length).toBeLessThan(200 * 1024);
@@ -280,6 +289,13 @@ describe("Excel workbooks", () => {
       (_, at) => `<row r="${at + 1}"><c r="A${at + 1}"><v>${at}</v></c></row>`,
     ).join("");
     const [sheet] = sheetsOf(read("sheet", workbook({ Long: rows })));
+    expect(sheet?.rows.length).toBe(DOCUMENT_LIMITS.rows);
+    expect(sheet?.cut).toBe(true);
+  });
+
+  it("counts every row toward the limit, however the file numbers them", () => {
+    const rows = `<row r="1"><c r="A1"><v>1</v></c></row>`.repeat(DOCUMENT_LIMITS.rows + 500);
+    const [sheet] = sheetsOf(read("sheet", workbook({ Same: rows })));
     expect(sheet?.rows.length).toBe(DOCUMENT_LIMITS.rows);
     expect(sheet?.cut).toBe(true);
   });
@@ -416,6 +432,20 @@ describe("Markdown files", () => {
       "rule",
       "<script>alert(1)</script>",
     ]);
+  });
+
+  it("reads a paragraph full of marks that close nothing as its text, in time", () => {
+    // Each would take minutes were every mark to look for its close through the rest.
+    for (const text of [
+      `${"[".repeat(200_000)}](`,
+      "a *".repeat(70_000),
+      "<http:".repeat(40_000),
+    ]) {
+      const [block] = blocksOf(read("markdown", strToU8(text)));
+      expect(block?._tag === "paragraph" && block.runs.map((run) => run.text).join("")).toBe(
+        text.trim(),
+      );
+    }
   });
 });
 

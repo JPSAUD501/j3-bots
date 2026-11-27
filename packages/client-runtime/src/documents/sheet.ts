@@ -84,7 +84,9 @@ function readWorksheet(
       switch (event.name) {
         case "row": {
           const number = Number(event.attributes.get("r"));
-          const at = Number.isInteger(number) && number >= 1 ? number - 1 : nextRow;
+          // Rows come in order; one numbered at or before the last is taken as the next,
+          // so every row read counts toward the limit.
+          const at = Number.isInteger(number) && number - 1 >= nextRow ? number - 1 : nextRow;
           if (at >= DOCUMENT_LIMITS.rows) {
             cut = true;
             return finish(name, rows, columns, cut);
