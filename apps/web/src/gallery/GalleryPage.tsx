@@ -1304,6 +1304,9 @@ const revealIn =
     Promise.resolve(entries.some((entry) => entry.id === entryId) ? "shown" : "missing");
 const notSubmitting = () => false;
 
+/** The connector apps' samples quote nothing, and offer no Reply or Quote. */
+const appSampleQuotes = { reveal: revealIn([]), drafting: null };
+
 function BubblesSection() {
   const gallerySecrets = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
   const { bubbles, visualBubbles, escapingVisual, embeddingVisual } = variants;
@@ -2074,6 +2077,7 @@ function StagedConversation({
                 onOpenPair={nothing}
                 onOpenRoom={nothing}
                 onOpenBot={nothing}
+                quotes={appSampleQuotes}
               />
             </AppStageProvider>
           </div>
@@ -2101,6 +2105,7 @@ function ConnectorAppsSection() {
         onOpenPair={nothing}
         onOpenRoom={nothing}
         onOpenBot={nothing}
+        quotes={appSampleQuotes}
       />
     </div>
   );
