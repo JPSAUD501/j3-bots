@@ -25,17 +25,6 @@ export function activityTime(at: DateTime.Utc, ctx: TimeContext): string {
   return formatAt(at, ctx, sameYear ? { month: "short", day: "numeric" } : { dateStyle: "medium" });
 }
 
-/** When something will happen: "8:47 AM", "Tomorrow at 8:47 AM", "Monday at 8:47 AM". */
-export function upcomingTime(at: DateTime.Utc, ctx: TimeContext): string {
-  const days = -calendarDaysAgo(at, ctx);
-  const time = clockTime(at, ctx);
-  if (days <= 0) return time;
-  if (days === 1) return ctx.i18n.t("time.tomorrowAt", { time });
-  if (days < 7)
-    return ctx.i18n.t("time.dayAt", { day: formatAt(at, ctx, { weekday: "long" }), time });
-  return fullTime(at, ctx);
-}
-
 /**
  * A moment inside a sentence, past or future: "at 8:47 AM", "yesterday at 4:12
  * PM", "tomorrow at 8:47 AM", "Monday at 8:47 AM", "on Nov 13, 2026, 4:12 PM".

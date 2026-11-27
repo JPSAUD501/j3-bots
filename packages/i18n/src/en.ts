@@ -179,7 +179,6 @@ export const en = {
 
   "time.yesterday": "Yesterday",
   "time.yesterdayAt": "Yesterday at {time}",
-  "time.tomorrowAt": "Tomorrow at {time}",
   "time.dayAt": "{day} at {time}",
   "time.inSentence.today": "at {time}",
   "time.inSentence.yesterday": "yesterday at {time}",

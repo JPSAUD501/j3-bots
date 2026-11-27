@@ -4,10 +4,7 @@ import {
   type BotId,
   type Entry,
   type EntryPreview,
-  entryText,
-  foldEnding,
   type FailureClass,
-  type MessageEntry,
   type Room,
   type RoomId,
   type RosterItem,
@@ -253,31 +250,6 @@ function stalledLine(quietSince: DateTime.Utc | null, ctx: PresentationContext):
   if (quietSince === null) return { text: ctx.i18n.t("presence.stalledQuiet"), tone: "waiting" };
   const duration = shortDuration(millisBetween(quietSince, ctx.now), ctx.i18n);
   return { text: ctx.i18n.t("presence.stalled", { duration }), tone: "waiting" };
-}
-
-/**
- * A card in one line, as the roster says it: "Asks: …" while the bot waits on
- * it, "Asked: …" once it does not. `owner` is the bot whose conversation it
- * is, `null` in a room.
- */
-export function entrySummary(
-  entry: Exclude<Entry, MessageEntry>,
-  ctx: PresentationContext,
-  { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
-): string {
-  return previewSummary(
-    {
-      kind: entry._tag,
-      author: entry.author,
-      text: entryText(entry),
-      recipientId: entry._tag === "handoff" ? entry.recipientId : null,
-      step: null,
-      ending: foldEnding(entry),
-      notice: entry._tag === "notice" ? entry.notice : null,
-    },
-    ctx,
-    { owner, current },
-  );
 }
 
 /**

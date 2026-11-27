@@ -64,7 +64,6 @@ export {
   messageProblemText,
 } from "./message.ts";
 export {
-  entrySummary,
   heldHelloText,
   type LineTone,
   memberList,
@@ -99,13 +98,7 @@ export {
 export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
 export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";
-export {
-  activityTime,
-  dividerTime,
-  type TimeContext,
-  timeInSentence,
-  upcomingTime,
-} from "./time.ts";
+export { activityTime, dividerTime, type TimeContext, timeInSentence } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
 export { littleOneText, planStepText, planTitle } from "./plan.ts";

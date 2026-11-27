@@ -176,7 +176,6 @@ const sentences = {
 
   "time.yesterday": "Ontem",
   "time.yesterdayAt": "Ontem às {time}",
-  "time.tomorrowAt": "Amanhã às {time}",
   "time.dayAt": "{day} às {time}",
   "time.inSentence.today": "às {time}",
   "time.inSentence.yesterday": "ontem às {time}",
