@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/server";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { EVENTS_EXTENSION } from "../events.ts";
 
 /**
  * A fictional notes app's MCP server, built on the MCP SDK's own server so
@@ -43,7 +44,8 @@ const answered = (responses: Readonly<Record<string, unknown>> | undefined, key:
 /** The page `approve` asks the operator to open. */
 export const APPROVAL_URL = "https://approve.notes.example/flow/7";
 
-export const notesServer = (): McpServer => {
+/** Given `events`, it says it offers events (MCP's Events extension), which its HTTP fake serves. */
+export const notesServer = (options: { readonly events?: boolean } = {}): McpServer => {
   const server = new McpServer(
     { name: "Fake Notes", version: "1.4.0" },
     {
@@ -52,6 +54,7 @@ export const notesServer = (): McpServer => {
         resources: { listChanged: true },
         prompts: { listChanged: true },
         logging: {},
+        ...(options.events === true ? { extensions: { [EVENTS_EXTENSION]: {} } } : {}),
       },
       // Its tools hold for a minute, unless it says they changed.
       cacheHints: { "tools/list": { ttlMs: 60_000, cacheScope: "public" } },

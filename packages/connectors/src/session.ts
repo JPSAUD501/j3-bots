@@ -63,16 +63,32 @@ import {
   type UrlPolicy,
 } from "./guard.ts";
 import {
-  CALL_TAG,
-  DetailedTask,
+  EVENTS_EXTENSION,
+  EventsRefused,
+  type EventType,
+  eventNameHeader,
+  eventsPageOf,
+  eventTypesOf,
+  type Occurrence,
+  type PollAnswer,
+  paramHeaders,
+  pollAnswerOf,
+  refusalOf,
+  type StreamFrame,
+  streamFrameOf,
+  type SubscribeAnswer,
+  subscribeAnswerOf,
+} from "./events.ts";
+import {
+  type ExtensionTap,
+  type ProgressStep,
   RawRequestClosed,
   RawRequestError,
-  TASKS_EXTENSION,
-  type Task,
-  type ProgressStep,
-  type TaskTap,
+  type RawMethod,
+  type StreamCancel,
   tapTransport,
-} from "./tasks.ts";
+} from "./tap.ts";
+import { CALL_TAG, DetailedTask, TASKS_EXTENSION, type Task } from "./tasks.ts";
 import { codePointsEnd } from "./text.ts";
 
 /**
@@ -253,6 +269,8 @@ export interface ServerInfo {
     readonly prompts: boolean;
     /** Whether it may run a call as a task (the Tasks extension). */
     readonly tasks: boolean;
+    /** Whether it can tell of events (the Events extension). */
+    readonly events: boolean;
   };
 }
 
@@ -302,6 +320,65 @@ export interface McpSession {
     uri: string,
     maxBytes: number,
   ) => Effect.Effect<Schema.Json | null, ConnectorFailure>;
+  /**
+   * The events its server can tell of (MCP's Events extension), when it says
+   * it can; null when it does not, and nothing of the extension is sent to it.
+   */
+  readonly events: McpEvents | null;
+}
+
+/** Which event a subscription asks its server for, with which arguments. */
+export interface EventRequest {
+  readonly type: EventType;
+  readonly arguments: Schema.JsonObject;
+}
+
+/** Where a subscription starts: after `cursor`, or from now when null, replaying no further back than `maxAgeMs`. */
+export interface EventPosition {
+  readonly cursor: string | null;
+  readonly maxAgeMs: number;
+}
+
+/**
+ * A server's events, as `events.ts` reads them: an occurrence's payload has
+ * the connector's secrets taken out, and is otherwise the server's, untrusted.
+ * A refusal the extension defines fails with {@link EventsRefused}.
+ */
+export interface McpEvents {
+  /** Every event its server offers, cleaned; those J3 Bots cannot subscribe to are left out. */
+  readonly list: Effect.Effect<ReadonlyArray<EventType>, ConnectorFailure | EventsRefused>;
+  /** Asks once for what happened since the position (`events/poll`). */
+  readonly poll: (
+    input: EventRequest & EventPosition & { readonly maxEvents: number },
+  ) => Effect.Effect<PollAnswer, ConnectorFailure | EventsRefused>;
+  /**
+   * Holds the event's stream open (`events/stream`), giving each of its
+   * frames to `frame`, in order, as they arrive. It succeeds when the server
+   * closes the stream, fails with {@link EventsRefused} when it ends the
+   * subscription, and with `Unreachable` when nothing arrives for three of
+   * its heartbeats. Interrupting it cancels the stream.
+   */
+  readonly stream: (
+    input: EventRequest & EventPosition & { readonly heartbeatMs: number },
+    frame: (frame: StreamFrame) => Effect.Effect<void>,
+  ) => Effect.Effect<void, ConnectorFailure | EventsRefused>;
+  /**
+   * Has the server post the event to `url`, signed with `secret`, for about
+   * `ttlMs` (`events/subscribe`); asking again with the same event,
+   * arguments and address renews it.
+   */
+  readonly subscribe: (
+    input: EventRequest &
+      EventPosition & {
+        readonly url: string;
+        readonly secret: Redacted.Redacted<string>;
+        readonly ttlMs: number;
+      },
+  ) => Effect.Effect<SubscribeAnswer, ConnectorFailure | EventsRefused>;
+  /** Stops the server posting the event to `url` (`events/unsubscribe`). */
+  readonly unsubscribe: (
+    input: EventRequest & { readonly url: string },
+  ) => Effect.Effect<void, ConnectorFailure | EventsRefused>;
 }
 
 /** Headers the transport sets itself, or that would change how a request is framed: never taken from the store. */
@@ -448,11 +525,11 @@ const signingFetch =
       const current = await run(credentials.current);
       flight?.sent.push(current);
       seen(current);
-      const response = await guarded(input, {
-        ...init,
-        signal,
-        headers: signed(init?.headers, current),
-      });
+      const headers = signed(init?.headers, current);
+      // The SDK names the request in `Mcp-Name` only for the core methods it knows.
+      const name = eventNameHeader(init?.body);
+      if (Option.isSome(name)) headers.set("mcp-name", name.value);
+      const response = await guarded(input, { ...init, signal, headers });
       return { response, sent: current };
     };
     const first = await attempt();
@@ -529,8 +606,16 @@ export const request = <A>(
   deadline: Duration.Duration,
   send: (signal: AbortSignal) => Promise<A>,
   context: { readonly budget?: Budget; readonly hooks?: CallHooks } = {},
-): Effect.Effect<Sent<A>, ConnectorFailure> =>
-  Effect.tryPromise({
+): Effect.Effect<Sent<A>, ConnectorFailure> => requestWith(deadline, send, context, failureOf);
+
+/** {@link request}, its failure read by `caught`; with no deadline when `deadline` is null. */
+const requestWith = <A, E>(
+  deadline: Duration.Duration | null,
+  send: (signal: AbortSignal) => Promise<A>,
+  context: { readonly budget?: Budget; readonly hooks?: CallHooks },
+  caught: (error: unknown) => E,
+): Effect.Effect<Sent<A>, E | TimedOut> => {
+  const sent = Effect.tryPromise({
     try: (signal) => {
       const flight: InFlight = {
         signal,
@@ -542,8 +627,23 @@ export const request = <A>(
         .run(flight, () => send(signal))
         .then((value) => ({ value, sent: flight.sent }));
     },
-    catch: failureOf,
-  }).pipe(Effect.timeoutOrElse({ duration: deadline, orElse: () => Effect.fail(new TimedOut()) }));
+    catch: caught,
+  });
+  return deadline === null
+    ? sent
+    : sent.pipe(
+        Effect.timeoutOrElse({ duration: deadline, orElse: () => Effect.fail(new TimedOut()) }),
+      );
+};
+
+/** What an events request failed with: the extension's refusal, when it is one, or a connector's failure. */
+const eventFailureOf = (error: unknown): ConnectorFailure | EventsRefused => {
+  if (!isRawRequestError(error)) return failureOf(error);
+  return Option.match(refusalOf(error.code, error.data), {
+    onNone: () => failureOf(error),
+    onSome: (reason) => new EventsRefused({ reason }),
+  });
+};
 
 /** Beyond any deadline here, so the SDK's own timer never fires first. */
 export const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
@@ -710,8 +810,9 @@ const cut = (text: string, max: number): { readonly text: string; readonly cut: 
 
 /**
  * The client a session speaks through, with what J3 Bots offers a server:
- * elicitation, in both modes, tasks, and showing a tool's app as an HTML
- * document of the MCP Apps extension (decision 0048). Never sampling or roots.
+ * elicitation, in both modes, tasks, events (decision 0088), and showing a
+ * tool's app as an HTML document of the MCP Apps extension (decision 0048).
+ * Never sampling or roots.
  */
 export const makeClient = (
   setup: ClientSetup,
@@ -728,6 +829,7 @@ export const makeClient = (
       elicitation: { form: {}, url: {} },
       extensions: {
         [TASKS_EXTENSION]: {},
+        [EVENTS_EXTENSION]: {},
         [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
       },
     },
@@ -760,8 +862,12 @@ const MAX_LOG_LINES_PER_MINUTE = 30;
 /** The longest log line kept, in characters. */
 const MAX_LOG_CHARACTERS = 500;
 
-/** How often a task is asked how it is doing, unless its server says otherwise, and the bounds on what it says. */
-const TASK_POLL = { default: 2_000, min: 500, max: 10_000 };
+/**
+ * How often a task is asked how it is doing unless its server says, and the
+ * least time between two asks whatever it says. A longer interval it asks
+ * for is kept: the task's deadline still bounds the wait.
+ */
+const TASK_POLL = { default: 2_000, min: 500 };
 
 const decodeResourceContents = Schema.decodeUnknownResult(Schema.Array(ResourceContents));
 const decodeCallResult = Schema.decodeUnknownResult(CallResult);
@@ -852,11 +958,17 @@ export const openSession = (
     );
 
     const address = addressValues(options.url);
-    return sessionOf(client, transport, limits, context, (sent) =>
-      scrubberOf(
-        [...sentValues([...sent, ...recent]), ...address],
-        sentSecrets([...sent, ...recent]),
-      ),
+    return sessionOf(
+      client,
+      transport,
+      limits,
+      context,
+      (sent) =>
+        scrubberOf(
+          [...sentValues([...sent, ...recent]), ...address],
+          sentSecrets([...sent, ...recent]),
+        ),
+      "abort",
     );
   });
 
@@ -866,8 +978,9 @@ type Calls = Set<InFlight>;
 /**
  * What a session does once its client is connected, over any transport:
  * list the server's tools, resources and prompts, call a tool, read a
- * resource and get a prompt. `scrub` gives what to take out of the server's
- * text, from the credentials each request was sent with.
+ * resource and get a prompt, and follow its events. `scrub` gives what to
+ * take out of the server's text, from the credentials each request was sent
+ * with; `cancel`, how an event stream is ended on this transport.
  */
 export const sessionOf = (
   client: Client,
@@ -875,13 +988,14 @@ export const sessionOf = (
   limits: SessionLimits,
   context: Context.Context<never>,
   scrub: (sent: ReadonlyArray<CallCredentials>) => (text: string) => string,
+  cancel: StreamCancel,
 ): McpSession => {
   const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);
   const calls: Calls = new Set();
   const callsByTag = new Map<string, InFlight>();
   /** Where each tagged call that asked for its progress takes it. */
   const progressByTag = new Map<string, (step: ProgressStep) => void>();
-  const tap: TaskTap = tapTransport(
+  const tap: ExtensionTap = tapTransport(
     transport,
     (tag, deliver) => {
       const flight = callsByTag.get(tag);
@@ -957,6 +1071,7 @@ export const sessionOf = (
       resources: capabilities?.resources !== undefined,
       prompts: capabilities?.prompts !== undefined,
       tasks: capabilities?.extensions?.[TASKS_EXTENSION] !== undefined,
+      events: capabilities?.extensions?.[EVENTS_EXTENSION] !== undefined,
     },
   };
 
@@ -1071,7 +1186,7 @@ export const sessionOf = (
   };
 
   const taskRequest = (
-    method: "tasks/get" | "tasks/update" | "tasks/cancel",
+    method: Extract<RawMethod, `tasks/${string}`>,
     params: Readonly<Record<string, unknown>>,
   ) => request(limits.listDeadline, (signal) => tap.request(method, params, signal));
 
@@ -1089,8 +1204,7 @@ export const sessionOf = (
   ) {
     const report = progressTo(hooks);
     const answered = new Set<string>();
-    const pollMs = (t: Task) =>
-      Math.min(TASK_POLL.max, Math.max(TASK_POLL.min, t.pollIntervalMs ?? TASK_POLL.default));
+    const pollMs = (t: Task) => Math.max(TASK_POLL.min, t.pollIntervalMs ?? TASK_POLL.default);
     const loop = Effect.gen(function* () {
       let current: DetailedTask = task;
       for (;;) {
@@ -1102,12 +1216,10 @@ export const sessionOf = (
         }
         switch (current.status) {
           case "completed": {
-            if (current.result !== undefined) {
-              const decoded = decodeCallResult(current.result);
-              if (Result.isFailure(decoded)) return yield* new NotMcp();
-              return decoded.success;
-            }
-            break;
+            // A completed task carries its result: one without is not an answer.
+            const decoded = decodeCallResult(current.result);
+            if (Result.isFailure(decoded)) return yield* new NotMcp();
+            return decoded.success;
           }
           case "failed":
           case "cancelled":
@@ -1321,5 +1433,174 @@ export const sessionOf = (
     readResource,
     readAppResource,
     getPrompt,
+    events: info.offers.events ? eventsOf(tap, limits, scrub, cancel) : null,
   };
+};
+
+/** The most events one poll asks for. */
+const POLL_MAX_EVENTS = 50;
+
+/**
+ * A session's events, spoken on its tap: only made for a server that says
+ * it offers them.
+ */
+const eventsOf = (
+  tap: ExtensionTap,
+  limits: SessionLimits,
+  scrub: (sent: ReadonlyArray<CallCredentials>) => (text: string) => string,
+  cancel: StreamCancel,
+): McpEvents => {
+  const send = <A>(
+    method: Extract<RawMethod, `events/${string}`>,
+    params: Readonly<Record<string, unknown>>,
+    decode: (value: unknown) => Option.Option<A>,
+    headers: Readonly<Record<string, string>> = {},
+  ) =>
+    requestWith(
+      limits.listDeadline,
+      (signal) => tap.request(method, params, signal, headers),
+      {},
+      eventFailureOf,
+    ).pipe(
+      Effect.flatMap((answer) =>
+        Option.match(decode(answer.value), {
+          onNone: () => Effect.fail(new NotMcp()),
+          onSome: (value) => Effect.succeed({ value, sent: answer.sent }),
+        }),
+      ),
+    );
+
+  /** An occurrence with the connector's secrets taken out of its payload, should its server echo one. */
+  const scrubbed = (occurrence: Occurrence, clean: (text: string) => string): Occurrence => {
+    const data = scrubbedJson(occurrence.data, clean);
+    return {
+      ...occurrence,
+      data: typeof data === "object" && data !== null && !isJsonArray(data) ? data : {},
+    };
+  };
+
+  const subscription = (input: EventRequest) => ({
+    name: input.type.name,
+    arguments: input.arguments,
+  });
+
+  const list: McpEvents["list"] = Effect.gen(function* () {
+    const listed: Array<unknown> = [];
+    const sent: Array<CallCredentials> = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < limits.maxListPages; page++) {
+      const answer = yield* send(
+        "events/list",
+        cursor === undefined ? {} : { cursor },
+        eventsPageOf,
+      );
+      listed.push(...answer.value.events);
+      sent.push(...answer.sent);
+      cursor = answer.value.nextCursor;
+      if (cursor === undefined) break;
+    }
+    return eventTypesOf(listed, scrub(sent));
+  });
+
+  const poll: McpEvents["poll"] = (input) =>
+    send(
+      "events/poll",
+      {
+        ...subscription(input),
+        cursor: input.cursor,
+        maxAgeMs: input.maxAgeMs,
+        maxEvents: Math.min(input.maxEvents, POLL_MAX_EVENTS),
+      },
+      pollAnswerOf,
+      paramHeaders(input.type, input.arguments),
+    ).pipe(
+      Effect.map((answer) => {
+        const clean = scrub(answer.sent);
+        return {
+          ...answer.value,
+          events: answer.value.events.map((occurrence) => scrubbed(occurrence, clean)),
+        };
+      }),
+    );
+
+  const stream: McpEvents["stream"] = Effect.fn("McpSession.eventStream")(function* (input, frame) {
+    const queue = yield* Queue.unbounded<StreamFrame, Cause.Done>();
+    const clean = scrub([]);
+    /** How many of its notifications arrived, and the heartbeat it was granted. */
+    let heard = 0;
+    let heartbeatMs = input.heartbeatMs;
+    const opened = requestWith(
+      null,
+      (signal) =>
+        tap.stream(
+          {
+            ...subscription(input),
+            cursor: input.cursor,
+            maxAgeMs: input.maxAgeMs,
+            heartbeatMs: input.heartbeatMs,
+          },
+          signal,
+          (method, params) => {
+            heard += 1;
+            const read = streamFrameOf(method, params);
+            if (Option.isNone(read)) return;
+            const one = read.value;
+            if (one._tag === "active" && one.heartbeatMs !== null && one.heartbeatMs > 0) {
+              heartbeatMs = one.heartbeatMs;
+            }
+            Queue.offerUnsafe(
+              queue,
+              one._tag === "event" ? { ...one, occurrence: scrubbed(one.occurrence, clean) } : one,
+            );
+          },
+          cancel,
+          paramHeaders(input.type, input.arguments),
+        ),
+      {},
+      eventFailureOf,
+    ).pipe(Effect.ensuring(Queue.end(queue)));
+    const delivered = Stream.fromQueue(queue).pipe(
+      Stream.runForEach((each) =>
+        each._tag === "terminated"
+          ? Effect.fail(new EventsRefused({ reason: each.reason }))
+          : frame(each),
+      ),
+    );
+    /** A stream silent for three heartbeats is dead, counted from its opening. */
+    const watched = Effect.gen(function* () {
+      for (;;) {
+        const before = heard;
+        yield* Effect.sleep(Duration.millis(heartbeatMs * 3));
+        if (heard === before) return yield* new Unreachable({ reason: "closed" });
+      }
+    });
+    yield* Effect.raceFirst(
+      Effect.all([opened, delivered], { concurrency: "unbounded", discard: true }),
+      watched,
+    );
+  });
+
+  const subscribe: McpEvents["subscribe"] = (input) =>
+    send(
+      "events/subscribe",
+      {
+        ...subscription(input),
+        delivery: { mode: "webhook", url: input.url, secret: Redacted.value(input.secret) },
+        cursor: input.cursor,
+        maxAgeMs: input.maxAgeMs,
+        ttlMs: input.ttlMs,
+      },
+      subscribeAnswerOf,
+      paramHeaders(input.type, input.arguments),
+    ).pipe(Effect.map((answer) => answer.value));
+
+  const unsubscribe: McpEvents["unsubscribe"] = (input) =>
+    send(
+      "events/unsubscribe",
+      { ...subscription(input), delivery: { url: input.url } },
+      () => Option.some(undefined),
+      paramHeaders(input.type, input.arguments),
+    ).pipe(Effect.asVoid);
+
+  return { list, poll, stream, subscribe, unsubscribe };
 };

@@ -151,11 +151,11 @@ export const cleanTitle = (text: string | undefined): string | null => {
   return line === "" ? null : cap(line, MAX_TITLE_CHARACTERS);
 };
 
-/** JSON with every object's keys in order, so equal values have one text. */
 const isJsonArray = (value: Schema.JsonArray | Schema.JsonObject): value is Schema.JsonArray =>
   Array.isArray(value);
 
-const canonical = (value: Schema.Json): string => {
+/** JSON with every object's keys in order, so equal values have one text. */
+export const canonical = (value: Schema.Json): string => {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (isJsonArray(value)) return `[${value.map(canonical).join(",")}]`;
   const object = value;
@@ -168,7 +168,7 @@ const canonical = (value: Schema.Json): string => {
  * a model reads those too; undefined when cleaning would change a key, which
  * a call names its arguments by.
  */
-const cleanObject = (
+export const cleanObject = (
   object: Schema.JsonObject,
   clean: (text: string) => string,
 ): Schema.JsonObject | undefined => {
