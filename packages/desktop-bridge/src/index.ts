@@ -30,6 +30,7 @@ import * as Schema from "effect/Schema";
 
 export { BRIDGE_KEY, type DesktopBridge, IPC_CHANNELS } from "./channels.ts";
 export { AppLink, AppLinkUrl } from "./link.ts";
+export * from "./recording.ts";
 // The server, as the desktop app keeps it: the origin the contract defines.
 export { ServerOrigin } from "@j3-bots/contracts";
 
@@ -692,6 +693,8 @@ export type Destination = typeof Destination.Type;
  * `composer`, `next`, `previous`, `stop` and `closeDetails`: the shell's
  * keyboard shortcuts, by name. `open`: a place the operator chose in the
  * tray or in quick access, under the pairing whose roster listed it.
+ * `record`: the sheet that starts a screen recording, on that conversation
+ * or room, asked for from quick access or a bot's offer (`RecordingOpen`).
  */
 export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("focus", {}),
@@ -701,6 +704,7 @@ export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("stop", {}),
   Schema.TaggedStruct("closeDetails", {}),
   Schema.TaggedStruct("open", { target: Destination, pairing: DeviceId }),
+  Schema.TaggedStruct("record", { target: EntryTarget, pairing: DeviceId }),
 ]);
 export type ShellCommand = typeof ShellCommand.Type;
 
@@ -1007,5 +1011,19 @@ export const HostedBridge = Schema.Struct({
   exportLocal: Callable,
   runHereAgain: Callable,
   deleteLocalData: Callable,
+  recordingCheck: Callable,
+  recordingAccess: Callable,
+  startRecording: Callable,
+  openRecorder: Callable,
+  onRecording: Callable,
+  readRecording: Callable,
+  releaseRecording: Callable,
+  recorderJob: Callable,
+  recorderStarted: Callable,
+  recorderChunk: Callable,
+  recorderFrame: Callable,
+  recorderControl: Callable,
+  recorderFailed: Callable,
+  onRecorderCue: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;
