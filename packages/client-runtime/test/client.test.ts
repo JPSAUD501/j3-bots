@@ -13,6 +13,7 @@ import {
   J3Rpcs,
   MemoryPath,
   ModelId,
+  MAX_ATTACHMENT_NAME_LENGTH,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
@@ -70,7 +71,7 @@ import {
 } from "../src/stores/Conversations.ts";
 import { Details, memorySaveKey } from "../src/stores/Details.ts";
 import { Devices } from "../src/stores/Devices.ts";
-import { Drafts } from "../src/stores/Drafts.ts";
+import { Drafts, type WindowContext } from "../src/stores/Drafts.ts";
 import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import { Settings } from "../src/stores/Settings.ts";
@@ -2091,6 +2092,51 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         Effect.provide(client(first.credential, { ...device, window: device.unannounced })),
       );
     }),
+  );
+
+  it.effect(
+    "keeps another tab's change made while Send waited on the window that goes with it",
+    () =>
+      Effect.gen(function* () {
+        const device = TestPlatform.makeDevice();
+        const first = yield* Effect.gen(function* () {
+          yield* pairAndConnect;
+          const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Rivals") };
+          return { target, credential: yield* savedCredential };
+        }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+        const key = targetKey(first.target);
+
+        yield* Effect.gen(function* () {
+          const one = yield* Drafts;
+          yield* Effect.gen(function* () {
+            const two = yield* Drafts;
+            yield* two.setText(first.target, "written in two");
+            yield* whenStored(device.storage, "drafts", key, holds("written in two"));
+            const window = yield* Deferred.make<WindowContext>();
+            const sending = yield* two
+              .send(first.target, undefined, Deferred.await(window))
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            yield* waitFor(two.state, (state) => state.get(key)?.sending === true);
+
+            yield* one.setText(first.target, "written in one meanwhile");
+            yield* waitFor(
+              two.state,
+              (state) => state.get(key)?.text === "written in one meanwhile",
+            );
+            // A picture the message cannot take: nothing goes, and what one wrote stays.
+            yield* Deferred.succeed(window, {
+              lookingAt: { app: "Example Browser" },
+              picture: {
+                name: `${"x".repeat(MAX_ATTACHMENT_NAME_LENGTH)}.jpg`,
+                body: new Blob([new Uint8Array([0xff, 0xd8])], { type: "image/jpeg" }),
+              },
+            });
+            assert.strictEqual(yield* Fiber.join(sending), "changed-elsewhere");
+            assert.strictEqual(two.state.get().get(key)?.text, "written in one meanwhile");
+            yield* whenStored(device.storage, "drafts", key, holds("written in one meanwhile"));
+          }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }),
   );
 
   it.effect("sends nothing when another tab's change replaces the draft while Send waits", () =>

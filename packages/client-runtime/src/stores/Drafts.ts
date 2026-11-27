@@ -1021,13 +1021,25 @@ export const layer = Layer.effect(
       if (context === undefined && text === "" && drafted.length === 0) return "empty";
       const pressed: Draft = { ...draft, sending: true };
       show(key, pressed);
+      // The pairing the draft is sent under, as the draft's files uploaded for it.
+      const sentUnder = followed.get();
+      // Whether this window still shows the draft as Send held it: an empty
+      // one, which goes only with a picture, is shown as no draft at all.
+      const held = () => (state.get().get(key) ?? null) === (isEmpty(pressed) ? null : pressed);
+      /**
+       * Nothing went: the draft is back as it was pressed, unless another
+       * window's change replaced it meanwhile, which then stays.
+       */
+      const giveBack = <R extends DraftSendResult>(result: R): R | "changed-elsewhere" => {
+        if (!held()) return "changed-elsewhere";
+        show(key, draft);
+        return result;
+      };
       const beside = context === undefined ? undefined : yield* context;
+      if (followed.get() !== sentUnder) return giveBack("changed-elsewhere");
       const picture = beside?.picture;
       // The window alone is no message: it goes with words or files.
-      if (text === "" && drafted.length === 0 && picture === undefined) {
-        show(key, draft);
-        return "empty";
-      }
+      if (text === "" && drafted.length === 0 && picture === undefined) return giveBack("empty");
       const local =
         picture === undefined
           ? null
@@ -1038,20 +1050,14 @@ export const layer = Layer.effect(
             };
       // Checked before it uploads, so a picture the message cannot take is never stored.
       if (local !== null && admitFiles(drafted, [local])[0] !== null) {
-        show(key, draft);
-        return "picture-failed";
+        return giveBack("picture-failed");
       }
-      // The picture uploads for the pairing the draft is sent under, as the draft's files did.
-      const uploadFor = followed.get();
-      if (picture !== undefined && uploadFor === null) {
-        show(key, draft);
-        return "not-kept";
-      }
+      if (picture !== undefined && sentUnder === null) return giveBack("not-kept");
       const uploaded =
-        picture === undefined || local === null || uploadFor === null
+        picture === undefined || local === null || sentUnder === null
           ? null
           : yield* files
-              .upload({ pairing: uploadFor, ...local, body: picture.body, onProgress: () => {} })
+              .upload({ pairing: sentUnder, ...local, body: picture.body, onProgress: () => {} })
               .pipe(
                 // The draft waits on it: offline, or too slow for one
                 // transfer of its size, it fails and the draft is back.
@@ -1059,10 +1065,7 @@ export const layer = Layer.effect(
                 Effect.option,
                 Effect.map(Option.flatten),
               );
-      if (uploaded !== null && Option.isNone(uploaded)) {
-        show(key, draft);
-        return "picture-failed";
-      }
+      if (uploaded !== null && Option.isNone(uploaded)) return giveBack("picture-failed");
       // The picture follows the draft's files, after the text.
       const attachments = uploaded === null ? drafted : [...drafted, uploaded.value];
       const placedAt =
@@ -1071,7 +1074,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           // A sending draft takes no change, so only another window's change
           // replaces it, and the notice of that change says why nothing went.
-          if (state.get().get(key) !== pressed) return "changed-elsewhere";
+          if (!held()) return "changed-elsewhere";
           const pairing = followed.get();
           // The pairing changed since Send was pressed: this draft goes with
           // the pairing that ended, and nothing of it was kept.

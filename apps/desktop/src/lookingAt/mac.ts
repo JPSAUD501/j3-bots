@@ -33,15 +33,19 @@ ObjC.import("CoreGraphics");
 function run(argv) {
   const own = Number(argv[0]);
   const withTitle = argv[1] === "title";
-  const listed = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
-  for (const window of listed) {
-    const bounds = window.kCGWindowBounds || {};
-    if (window.kCGWindowLayer !== 0 || window.kCGWindowOwnerPID === own) continue;
-    if (window.kCGWindowAlpha === 0 || !(bounds.Width > 1 && bounds.Height > 1)) continue;
+  const listed = ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0));
+  if (!listed) return "null";
+  // Each window's fields one by one: a title is never read unless asked for.
+  const field = (window, key) => ObjC.deepUnwrap(window.objectForKey(key));
+  for (let at = 0; at < listed.count; at++) {
+    const window = listed.objectAtIndex(at);
+    if (field(window, "kCGWindowLayer") !== 0 || field(window, "kCGWindowOwnerPID") === own) continue;
+    const bounds = field(window, "kCGWindowBounds") || {};
+    if (field(window, "kCGWindowAlpha") === 0 || !(bounds.Width > 1 && bounds.Height > 1)) continue;
     return JSON.stringify({
-      number: window.kCGWindowNumber,
-      app: window.kCGWindowOwnerName || null,
-      title: withTitle ? window.kCGWindowName || null : null,
+      number: field(window, "kCGWindowNumber"),
+      app: field(window, "kCGWindowOwnerName") || null,
+      title: withTitle ? field(window, "kCGWindowName") || null : null,
     });
   }
   return "null";

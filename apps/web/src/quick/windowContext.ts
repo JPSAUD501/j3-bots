@@ -52,6 +52,8 @@ export function useWindowContext(app: WindowSource) {
   // What sending reads, which an answer that arrives between renders already changed.
   const current = useRef<Held | null>(null);
   const latest = useRef(0);
+  // The showing whose window the operator took off: nothing of it goes.
+  const removed = useRef<number | null>(null);
   const update = (change: (before: Held | null) => Held | null) => {
     const next = change(current.current);
     current.current = next;
@@ -126,7 +128,10 @@ export function useWindowContext(app: WindowSource) {
     else take(now.opening);
   };
   const intents: WindowChipsIntents = {
-    removeWindow: () => update(() => null),
+    removeWindow: () => {
+      removed.current = current.current?.opening ?? null;
+      update(() => null);
+    },
     turnPictureOn,
     turnPictureOff: () => {
       const now = current.current;
@@ -156,14 +161,15 @@ export function useWindowContext(app: WindowSource) {
 
   /**
    * What goes with a message sent now: what the chips show as Send is
-   * pressed, with a picture being taken once it is. Shown again meanwhile,
-   * the window pressed on goes, without a picture; taken off, nothing does.
+   * pressed, with a picture being taken once it is. Put away or shown
+   * again meanwhile, the window pressed on goes, without a picture; taken
+   * off, nothing does.
    */
   const context = async (pressed: Held): Promise<WindowContext | undefined> => {
     if (pressed.picture._tag === "taking") await pressed.picture.done;
-    if (latest.current !== pressed.opening) return { lookingAt: pressed.window.lookingAt };
+    if (removed.current === pressed.opening) return undefined;
     const now = current.current;
-    if (now === null) return undefined;
+    if (now?.opening !== pressed.opening) return { lookingAt: pressed.window.lookingAt };
     const { lookingAt } = now.window;
     return now.picture._tag === "on"
       ? {
