@@ -355,8 +355,11 @@ export type SystemEvent =
        * or it waited too long.
        */
       readonly outcome: "saved" | "declined" | "expired";
-      /** The reference the bot names the secret by (`secret:<name>`), saved or not. */
-      readonly reference: string;
+      /**
+       * The references the bot names the secrets by (`secret:<name>`), saved
+       * or not: one, or each of the values it asked for together.
+       */
+      readonly references: readonly [string, ...Array<string>];
     }
   | {
       readonly name: "connector-ask";
@@ -488,7 +491,7 @@ const SECRET_ASK_LINES: {
   readonly [O in Extract<SystemEvent, { readonly name: "secret-ask" }>["outcome"]]: string;
 } = {
   saved:
-    "Your user saved the secret you asked for. You never see its value: use it by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
+    "Your user saved what you asked for. You never see a value: use each by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
   declined:
     "Your user declined to give the secret you asked for. Do not ask again on your own, and do not look for it elsewhere. Finish what does not need it, then end with a `say` with `done: true` that tells your user what it still blocks.",
   expired:
@@ -976,7 +979,9 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       if (event.name === "browser-help" && event.site !== null) {
         w.empty("browser-tab", [["site", event.site]]);
       }
-      if (event.name === "secret-ask") w.empty("secret", [["reference", event.reference]]);
+      if (event.name === "secret-ask") {
+        for (const reference of event.references) w.empty("secret", [["reference", reference]]);
+      }
       if (event.name === "connector-ask") {
         w.empty("server", [
           ["name", event.server],

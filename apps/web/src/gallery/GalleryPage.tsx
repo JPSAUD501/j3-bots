@@ -1614,12 +1614,13 @@ function CardsSection() {
 function AskCards() {
   const ready = useSampleSecrets({ state: "ready", now: () => SAMPLE_NOW });
   const oldVault = useSampleSecrets({ state: "old-vault", now: () => SAMPLE_NOW });
-  const [login, value, ...closed] = variants.asks;
-  if (login === undefined || value === undefined) return null;
+  const [login, value, values, ...closed] = variants.asks;
+  if (login === undefined || value === undefined || values === undefined) return null;
   return (
     <div className="flex flex-col gap-3">
       <SecretAskCard entry={login} secrets={ready} onDecline={nothing} />
       <SecretAskCard entry={value} secrets={ready} onDecline={nothing} />
+      <SecretAskCard entry={values} secrets={ready} onDecline={nothing} />
       <SecretAskCard entry={value} secrets={oldVault} onDecline={nothing} />
       {closed.map((entry) => (
         <SecretAskCard key={entry.id} entry={entry} secrets={ready} onDecline={nothing} />

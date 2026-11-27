@@ -81,5 +81,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0083](0083-only-the-engine-notices-a-person-can-act-on-show.md) | Only the engine notices a person can act on show | Accepted |
 | [0085](0085-signing-in-is-one-row-and-the-browser-opens-by-itself.md) | Signing in is one row, and the browser opens by itself | Accepted |
 | [0089](0089-a-connectors-skills-load-through-j3-tools.md) | A connector's skills load through J3 Bots' own tools | Accepted |
+| [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

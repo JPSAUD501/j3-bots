@@ -20,7 +20,7 @@ import {
 } from "./base.ts";
 import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
+import { ConnectorGlyph, ConnectorId, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
 import { RoutineRun, RoutineStep, RoutineTrigger } from "./routine.ts";
@@ -564,13 +564,35 @@ export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
 /** The most characters a bot's note on an ask for a secret holds. */
 export const MAX_SECRET_ASK_NOTE_LENGTH = 500;
 
+/** The fewest and the most values one ask for secrets takes on its card. */
+export const MIN_SECRET_ASK_VALUES = 2;
+export const MAX_SECRET_ASK_VALUES = 4;
+
+/**
+ * One of the values a bot asks for together, each saved as a single value
+ * under its own name: a service's client ID and its client secret, say.
+ */
+export const SecretAskValue = Schema.Struct({
+  /** Its place on the card, `field-1` for the first, which the answer names it by. */
+  id: SecretRequestFieldId,
+  /** The name it is saved under, which the bot names it by (`secret:<name>`). */
+  name: Label,
+  /** What the operator reads above its input, such as "Client ID". */
+  label: Label,
+  /** Whether what is typed is hidden. False shows it, as for an identifier that is not secret. */
+  masked: Schema.Boolean,
+});
+export type SecretAskValue = typeof SecretAskValue.Type;
+
 /**
  * A bot asks the operator for a secret: a login for a site, or a single value
- * such as a token. The client sends what the operator types with
- * `secrets.add`, naming this card, straight to the server: it never passes
- * through the bot, and this entry has no field for it. Saving, declining
- * (`card.answer` with `dismiss`) or expiring closes it and wakes the bot with
- * the outcome, and once saved, with the secret's reference.
+ * such as a token, or a few values that go together, each saved as a single
+ * value. The client sends what the operator types with `secrets.add`
+ * (`secrets.addFromAsk` for an ask with `values`), naming this card, straight
+ * to the server: it never passes through the bot, and this entry has no field
+ * for it. Saving, declining (`card.answer` with `dismiss`) or expiring closes
+ * it and wakes the bot with the outcome, and once saved, with the secrets'
+ * references.
  */
 export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   ...entry,
@@ -578,7 +600,8 @@ export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   /**
    * The name the secret is saved under, which the bot asked for and names
    * it by (`secret:<name>`). A save-login card from before secrets shows the
-   * name it was saved under, or its site.
+   * name it was saved under, or its site. For an ask with `values`, the
+   * first value's.
    */
   name: Label,
   secret: Schema.Union([
@@ -586,6 +609,23 @@ export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
     Schema.TaggedStruct("login", { origin: SiteOrigin }),
     Schema.TaggedStruct("value", {}),
   ]),
+  /**
+   * The values asked for together, in order, for a `value` ask that takes
+   * several on one card; absent for an ask for one secret. A client that
+   * does not know it shows one input, and the server refuses that answer
+   * (`Invalid("answer")`).
+   */
+  values: Schema.optionalKey(
+    Schema.Array(SecretAskValue).check(
+      Schema.isMinLength(MIN_SECRET_ASK_VALUES),
+      Schema.isMaxLength(MAX_SECRET_ASK_VALUES),
+    ),
+  ),
+  /**
+   * Where the service issues what is asked for, when the bot knows it, which
+   * the card links to: a page of the service's own settings, say.
+   */
+  setup: Schema.optionalKey(SetupPageUrl),
   /** Why the bot needs it, in its own words. */
   note: Schema.String.check(Schema.isMaxLength(MAX_SECRET_ASK_NOTE_LENGTH)),
   status: Schema.Union([

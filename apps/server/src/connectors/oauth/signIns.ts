@@ -113,6 +113,8 @@ export const layer = Layer.effect(
           if (open.some((card) => card.conversation_bot_id === input.botId)) return;
           const connector = yield* store.get(input.connectorId);
           if (Option.isNone(connector)) return;
+          // The bot asks for the service's credentials instead (`add_mcp_server`'s note).
+          if (yield* auth.signsInServicesOnly(input.connectorId)) return;
           yield* entries.append({
             target: { _tag: "conversation", botId: input.botId },
             entry: {
@@ -158,9 +160,33 @@ export const layer = Layer.effect(
       });
     }, Effect.mapError(toCommandError));
 
+    const useServiceCredentials = Effect.fn("ConnectorSignIns.useServiceCredentials")(function* (
+      id: ConnectorId,
+    ) {
+      yield* auth
+        .disconnect(id)
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("A connector's sign-in could not be ended").pipe(
+              Effect.annotateLogs({ connector: id, reason: error.reason }),
+            ),
+          ),
+        );
+      yield* close(id, "signed-in");
+    });
+
+    const serviceIssuer = (input: Parameters<typeof auth.serviceIssuer>[0]) =>
+      auth.serviceIssuer(input).pipe(Effect.mapError(toCommandError));
+
     return ConnectorSignIns.of({
       accessToken: auth.accessToken,
       rejected: auth.rejected,
+      serviceIssuer,
+      useServiceCredentials,
+      signsInServicesOnly: auth.signsInServicesOnly,
+      serviceToken: auth.serviceToken,
+      serviceRejected: auth.serviceRejected,
+      serviceRefused: auth.serviceRefused,
       needed,
       disconnect,
       useOperatorClient,

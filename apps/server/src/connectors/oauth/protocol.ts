@@ -220,7 +220,8 @@ export type ProtectedResourceMetadata = typeof ProtectedResourceMetadata.Type;
  */
 export const AuthorizationServerMetadata = Schema.Struct({
   issuer: Schema.String,
-  authorization_endpoint: Schema.String,
+  /** Absent at a server whose grants never use it, as one that signs in services only (RFC 8414 §2). */
+  authorization_endpoint: Schema.optionalKey(Schema.String),
   token_endpoint: Schema.String,
   registration_endpoint: Schema.optionalKey(Schema.String),
   revocation_endpoint: Schema.optionalKey(Schema.String),
@@ -228,11 +229,31 @@ export const AuthorizationServerMetadata = Schema.Struct({
   response_types_supported: Schema.optionalKey(Strings),
   code_challenge_methods_supported: Schema.optionalKey(Strings),
   token_endpoint_auth_methods_supported: Schema.optionalKey(Strings),
+  /** The algorithms it takes a client's signed assertion in (RFC 8414 §2, RFC 7523). */
+  token_endpoint_auth_signing_alg_values_supported: Schema.optionalKey(Strings),
+  /** The grants it offers; RFC 8414 §2 makes `authorization_code` and `implicit` the default. */
+  grant_types_supported: Schema.optionalKey(Strings),
   authorization_response_iss_parameter_supported: Schema.optionalKey(Schema.Boolean),
   /** Whether it takes the address of a client metadata document as a client id. */
   client_id_metadata_document_supported: Schema.optionalKey(Schema.Boolean),
 });
 export type AuthorizationServerMetadata = typeof AuthorizationServerMetadata.Type;
+
+/**
+ * The grants a server offers, as its metadata lists them or RFC 8414 §2's
+ * default when it lists none.
+ */
+export const grantsOf = (metadata: AuthorizationServerMetadata): ReadonlyArray<string> =>
+  metadata.grant_types_supported ?? ["authorization_code", "implicit"];
+
+/**
+ * Whether the server signs in services only: it offers the client
+ * credentials grant and not the code grant a person signs in with.
+ */
+export const signsInServicesOnly = (metadata: AuthorizationServerMetadata): boolean => {
+  const grants = grantsOf(metadata);
+  return grants.includes("client_credentials") && !grants.includes("authorization_code");
+};
 
 /** How a client authenticates at the token endpoint (RFC 7591 §2). */
 export const AuthMethod = Schema.Literals(["none", "client_secret_post", "client_secret_basic"]);

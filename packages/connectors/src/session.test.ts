@@ -12,6 +12,7 @@ import { MCP_APP_MIME_TYPE, MCP_APPS_EXTENSION } from "@j3-bots/contracts";
 import { NeedsSignIn } from "./errors.ts";
 import type { UrlPolicy } from "./guard.ts";
 import {
+  CLIENT_CREDENTIALS_EXTENSION,
   type CallCredentials,
   type ConnectorCredentials,
   DEFAULT_SESSION_LIMITS,
@@ -283,6 +284,8 @@ describe("openSession", () => {
         extensions: {
           [TASKS_EXTENSION]: {},
           [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+          // A connector's server may sign J3 Bots in as a service, with credentials the operator gave.
+          [CLIENT_CREDENTIALS_EXTENSION]: {},
           [SKILLS_EXTENSION]: {},
         },
       });
