@@ -11,6 +11,7 @@ import type {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -43,6 +44,9 @@ export type RosterFrame =
       /** Every section, when the sections changed. */
       readonly sections?: ReadonlyArray<Section>;
     };
+
+const itemKey = (item: RosterItem) =>
+  item._tag === "bot" ? `bot:${item.bot.id}` : `room:${item.room.id}`;
 
 const createdAtOf = (item: RosterItem) =>
   item._tag === "bot" ? item.bot.createdAt : item.room.createdAt;
@@ -154,7 +158,12 @@ export const layer = Layer.effect(
         const sectionsNow = yield* sections.list;
         // The activity each active room was last sent with, to this subscriber.
         const sentActivity = new Map<RoomId, RoomActivity>();
+        // Each item as this subscriber last got it. A change signals a bot or a
+        // room whenever anything of it may have changed, as every event of a
+        // turn does; an item that comes out as it was sent is not sent again.
+        const lastSent = new Map<string, RosterItem>();
         const sent = (item: RosterItem) => {
+          lastSent.set(itemKey(item), item);
           if (item._tag !== "room") return item;
           if (item.room.status === "active") {
             const { work, answering, memberWork, forceStop } = item.room;
@@ -162,6 +171,14 @@ export const layer = Layer.effect(
           } else sentActivity.delete(item.room.id);
           return item;
         };
+        /** The items that differ from what this subscriber last got, recorded as sent. */
+        const unsent = (items: ReadonlyArray<RosterItem>) =>
+          items
+            .filter((item) => {
+              const before = lastSent.get(itemKey(item));
+              return before === undefined || !Equal.equals(before, item);
+            })
+            .map(sent);
 
         /**
          * The rooms whose activity changed for this subscriber, among the
@@ -176,7 +193,7 @@ export const layer = Layer.effect(
             const before = sentActivity.get(roomId);
             if (before !== undefined && sameActivity(before, activity)) continue;
             const room = yield* rooms.find(roomId);
-            if (Option.isSome(room)) changed.push(sent(yield* roomItem(room.value)));
+            if (Option.isSome(room)) changed.push(yield* roomItem(room.value));
           }
           return changed;
         });
@@ -198,11 +215,12 @@ export const layer = Layer.effect(
             if (Option.isSome(room)) {
               return {
                 _tag: "changed",
-                upsert: [sent(yield* roomItem(room.value))],
+                upsert: unsent([yield* roomItem(room.value)]),
                 remove: [],
               } satisfies RosterFrame;
             }
             sentActivity.delete(scope.roomId);
+            lastSent.delete(`room:${scope.roomId}`);
             return {
               _tag: "changed",
               upsert: [],
@@ -211,6 +229,7 @@ export const layer = Layer.effect(
           }
           const bot = yield* bots.find(scope.botId);
           if (Option.isNone(bot)) {
+            lastSent.delete(`bot:${scope.botId}`);
             return {
               _tag: "changed",
               upsert: [],
@@ -219,7 +238,7 @@ export const layer = Layer.effect(
           }
           return {
             _tag: "changed",
-            upsert: [yield* botItem(bot.value.bot), ...(yield* roomsOfBot(bot.value.bot))],
+            upsert: unsent([yield* botItem(bot.value.bot), ...(yield* roomsOfBot(bot.value.bot))]),
             remove: [],
           } satisfies RosterFrame;
         });
@@ -239,6 +258,13 @@ export const layer = Layer.effect(
                 scope._tag !== "routines",
             ),
             Stream.mapEffect(changedOf),
+            Stream.filter(
+              (frame) =>
+                frame._tag !== "changed" ||
+                frame.upsert.length > 0 ||
+                frame.remove.length > 0 ||
+                frame.sections !== undefined,
+            ),
           ),
         );
       }),
