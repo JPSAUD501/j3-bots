@@ -2129,6 +2129,12 @@ const sentences = {
   "updateNotice.open": "Abre a atualização.",
   "updateNotice.openSettings": "Abre as atualizações nas Configurações.",
   "updateNotice.ok": "OK",
+  "whatsNew.title": "Novidades",
+  "whatsNew.description": "O que você pode fazer agora, a cada atualização do J3 Bots.",
+  "whatsNew.mark": "Novo na {version}",
+  "whatsNew.release": "J3 Bots {version}",
+  "whatsNew.open": "Abre as novidades.",
+  "whatsNew.close": "Fechar",
   "updatePrompt.title": "O J3 Bots {version} chegou",
   "updatePrompt.titleApp": "O J3 Bots {version} está pronto para este app",
   "updatePrompt.plan.serverThenApp":
