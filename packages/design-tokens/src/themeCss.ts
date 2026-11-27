@@ -5,8 +5,8 @@
  * Android app draws with no CSS and says so where a theme is chosen.
  */
 
-/** The most characters a theme's `css` holds. */
-export const THEME_CSS_MAX_LENGTH = 50_000;
+/** The most characters a theme's `css` holds: what fits one `theme_save` call with the rest of the theme. */
+export const THEME_CSS_MAX_LENGTH = 8_000;
 
 /**
  * The selectors theme CSS may rely on. Every other class name is a utility

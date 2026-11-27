@@ -120,7 +120,7 @@ export const ThemeLibrary = Schema.Struct({
 export type ThemeLibrary = typeof ThemeLibrary.Type;
 
 /** The most bytes a theme's background image takes. */
-export const MAX_THEME_BACKGROUND_SIZE = 8 * 1024 * 1024;
+export const MAX_THEME_BACKGROUND_SIZE = 4 * 1024 * 1024;
 
 const command = { commandId: CommandId };
 
