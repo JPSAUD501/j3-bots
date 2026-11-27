@@ -383,7 +383,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
        * the NSIS installer starts it on Windows, and `restartApp` starts an
        * AppImage, which electron-updater replaced. The server this computer
        * runs is stopped first, as T3 Code's desktop stops its own (read at
-       * db51b671, `apps/desktop/src/updates/DesktopUpdates.ts`). A failure is
+       * bc0f04d, `apps/desktop/src/updates/DesktopUpdates.ts`). A failure is
        * dispatched as an `error` before `quitAndInstall` returns, and the app
        * stays, with the server started again.
        */

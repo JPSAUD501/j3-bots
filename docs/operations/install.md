@@ -88,7 +88,7 @@ With `--no-service`, nothing runs yet: start the server in a terminal with `j3-b
 ✓ Snapshot        None yet: `j3-bots update` copies the databases before it changes release.
 ✓ Server          J3 Bots 0.0.0 is running at http://0.0.0.0:3737.
 ✓ Ports           The running server listens on http://0.0.0.0:3737, the bot tools on 3739, and the engine answers on 3738.
-✓ Engine          T3 Code 0.1.11 is running.
+✓ Engine          T3 Code 0.1.13 is running.
 ✗ Claude Code     Claude Code has no way to reach its models yet: no provider connection is stored, and it is not signed in inside its J3 Bots home.
                   Fix: Either connect an endpoint that serves its models, such as a proxy in front of your subscriptions, with `j3-bots provider connect`, which restarts the engine; or sign Claude Code in with its own account with `j3-bots provider login claude-code`.
 ✗ Codex           Codex has no way to reach its models yet: no provider connection is stored, and it is not signed in inside its J3 Bots home.

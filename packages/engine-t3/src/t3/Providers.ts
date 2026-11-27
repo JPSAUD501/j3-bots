@@ -56,7 +56,7 @@ const ReportedProviders = ForwardCompatibleArray(ReportedProvider);
 
 /**
  * The engine's config stream event (`ServerConfigStreamEvent`, **Read** at
- * `db51b67`, `server.ts`), member for member, with the two that carry the
+ * `bc0f04d`, `server.ts`), member for member, with the two that carry the
  * provider list reading it as `ReportedProvider`s.
  */
 export const ConfigStreamEvent = Schema.Union([
@@ -85,7 +85,7 @@ export const SubscribeServerConfigRpc = WsSubscribeServerConfigRpc.setSuccess(
  * The providers the engine reports, from a config stream event: the whole
  * list, on a snapshot or a status change. Other events say nothing about
  * them. The adapter subscribes without `providerStatusDeltas`, so the engine
- * sends every change as a whole list (**Read** at `db51b67`, `rpc.ts`,
+ * sends every change as a whole list (**Read** at `bc0f04d`, `rpc.ts`,
  * `WsSubscribeServerConfigRpc`).
  */
 export const providersOfEvent = (
@@ -115,7 +115,7 @@ const unavailable = (reason: UnavailableReason, detail?: string) =>
  * Codex instance before its first check since the engine started: enabled,
  * not installed, a `warning` and its sign-in `unknown`. A check that does not
  * find the harness reports an `error` instead, and one that finds it signed
- * out reports `unauthenticated`. **Read** at `59651c1`,
+ * out reports `unauthenticated`. **Read** at `bc0f04d`,
  * `makePendingClaudeProvider` in `ClaudeProvider.ts` and
  * `makePendingCodexProvider` in `CodexProvider.ts`, published first by
  * `makeManagedServerProvider` in `provider-core/src/server/managedProvider.ts`.
@@ -134,12 +134,12 @@ const notCheckedYet = (provider: ProviderInstance, engine: ReportedProvider) =>
  * first check under way. The engine starts that check in the background once
  * it is ready and ignores its failure: a check that fails or dies leaves the
  * placeholder until the periodic refresh, five minutes later by default and
- * only when something asks for it (**Read** at `59651c1`,
+ * only when something asks for it (**Read** at `bc0f04d`,
  * `makeManagedServerProvider` in `provider-core/src/server/managedProvider.ts`,
  * `DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL` in `contracts/src/settings.ts`).
  * A check that ends takes at most 45 seconds: Claude Code's version check
  * allows 20 and its capabilities probe 25, Codex's probe 20 (**Read** at
- * `59651c1`, `ClaudeProvider.ts` and `CodexProvider.ts`). Past the budget, the
+ * `bc0f04d`, `ClaudeProvider.ts` and `CodexProvider.ts`). Past the budget, the
  * placeholder is `unavailable` without `checking`.
  */
 export const FIRST_CHECK_BUDGET = Duration.seconds(90);
@@ -147,7 +147,7 @@ export const FIRST_CHECK_BUDGET = Duration.seconds(90);
 /**
  * The version number in a version the engine reports: the whole of it, as
  * Codex's (the part of its user agent after the slash, **Read** at
- * `59651c1`, `CodexProvider.ts`), or the first `x.y.z` in it, with its
+ * `bc0f04d`, `CodexProvider.ts`), or the first `x.y.z` in it, with its
  * prerelease, as in what `claude --version` prints.
  */
 export const versionNumberIn = (reported: string | null | undefined): string | null =>
@@ -195,7 +195,7 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
  * What the engine words a check of Claude Code or Codex with when it did not
  * answer in time: "Timed out while checking Codex app-server provider
  * status." and "Claude Agent CLI is installed but failed to run. Timed out
- * while running command." (**Read** at `59651c1`, `CodexProvider.ts` and
+ * while running command." (**Read** at `bc0f04d`, `CodexProvider.ts` and
  * `ClaudeProvider.ts`). The engine reports no other sign of it.
  */
 const TIMED_OUT = /\btimed out\b/i;
@@ -235,7 +235,7 @@ export const checkTimedOut = (
  * - an instance the engine could not create at all (`availability:
  *   "unavailable"`, which it reports neither installed nor enabled), as for
  *   settings it cannot read or a driver that failed to start: `failed`
- *   (**Read** at `59651c1`, `unavailableProviderSnapshot.ts`), checked
+ *   (**Read** at `bc0f04d`, `unavailableProviderSnapshot.ts`), checked
  *   before the instance's own `enabled`;
  * - not found, which the engine reports as not installed: `not-installed`;
  * - missing from the engine's list, as before it was provisioned or when its
@@ -244,10 +244,10 @@ export const checkTimedOut = (
  *   Code and Codex to an endpoint (an ACP agent has no such command, and is
  *   `failed`);
  * - in error, as a check that found the harness but could not run it, or
- *   timed out (**Read** at `59651c1`, `ClaudeProvider.ts`): `failed`;
+ *   timed out (**Read** at `bc0f04d`, `ClaudeProvider.ts`): `failed`;
  * - otherwise `ready`. A harness reached through an endpoint's key reports
  *   its sign-in as `unknown` or authenticated; its first turn says whether
- *   the key works. **Read** at `db51b67`, `ServerProvider` in `server.ts`.
+ *   the key works. **Read** at `bc0f04d`, `ServerProvider` in `server.ts`.
  *
  * The engine's own words go with `not-installed` and `failed` as `detail`,
  * cut to what J3 Bots holds: its `message`, or for an instance it could not
@@ -317,7 +317,7 @@ const resetOf = (text: string): DateTime.Utc | null => {
 /**
  * The usage windows the engine reports for an instance, in its order (by
  * kind, then id), with their labels as it words them: percent used, 0 to 100,
- * and the reset when it gives one (**Read** at `db51b67`,
+ * and the reset when it gives one (**Read** at `bc0f04d`,
  * `ServerProviderUsageLimits` in `providerUsageLimits.ts`). The windows it
  * kept after a failed check count; an instance it reads no usage for, as one
  * reached through a provider connection, has none (**Verified** on release
@@ -349,7 +349,7 @@ const versionLabel = (version: string | null | undefined): string | null =>
 
 /**
  * The version of the harness the engine found, on the terms T3 Code's own
- * client offers an update in its settings (**Read** at `59651c1`,
+ * client offers an update in its settings (**Read** at `bc0f04d`,
  * `isProviderSettingsUpdateCandidate` in
  * `apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts`): a
  * newer version is shown only when the engine reports the installed one
@@ -399,7 +399,7 @@ const updateDetail = (message: string | null | undefined) =>
 
 /**
  * The update last asked for, from the engine's `updateState` (**Read** at
- * `59651c1`, `ServerProviderUpdateState` in `contracts/src/server.ts`, set by
+ * `bc0f04d`, `ServerProviderUpdateState` in `contracts/src/server.ts`, set by
  * `ProviderMaintenanceRunner.updateProvider`): `queued` and `running` are
  * `running`; `succeeded`, which the engine also reports for a harness that
  * was already up to date, is `updated`; `unchanged`, which it reports when

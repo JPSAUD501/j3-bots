@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // The engine's limits on the files one message carries and on each upload.
-// **Read** at `db51b67`: `packages/contracts/src/chatAttachment.ts`
+// **Read** at `bc0f04d`: `packages/contracts/src/chatAttachment.ts`
 // (`PROVIDER_SEND_TURN_*`, `getProviderAttachmentLimitError`) and
 // `packages/contracts/src/assets.ts` (`AttachmentCreateUploadUrlInput`: a
 // trimmed name of 1 to 255 characters, a trimmed media type of 1 to 100, one of

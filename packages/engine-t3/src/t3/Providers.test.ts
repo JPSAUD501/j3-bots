@@ -208,7 +208,7 @@ describe("providerStatuses", () => {
   });
 
   it("reports the usage windows the engine reports, as percent used with their resets", () => {
-    // As Claude Code's probe reports a subscription (**Read** at `db51b67`,
+    // As Claude Code's probe reports a subscription (**Read** at `bc0f04d`,
     // `claudeUsageResponseToLimits`): a five-hour and a weekly window, and a
     // weekly one for a single model with no reset given.
     const status = statusOf(claude, {
@@ -258,7 +258,7 @@ describe("providerStatuses", () => {
 
   it("keeps the windows the engine kept after a failed check", () => {
     // The engine merges a turn's rate-limit updates into limits whose last
-    // probe failed, and keeps them marked unavailable (**Read** at `db51b67`,
+    // probe failed, and keeps them marked unavailable (**Read** at `bc0f04d`,
     // `applyUsageLimitsUpdate`).
     const status = statusOf(claude, {
       usageLimits: {

@@ -7,7 +7,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 // What the engine's headless browser needs from a Linux host, found the way
-// the engine's own `t3 browser setup` finds it (**Read** at `59651c1`,
+// the engine's own `t3 browser setup` finds it (**Read** at `bc0f04d`,
 // `apps/server/src/preview/PreviewBrowserHost.ts` and
 // `apps/server/src/cli/browser.ts`). Nothing here changes the host. The fix is
 // not that command: run as root, it would run the engine's executable, which
@@ -191,22 +191,46 @@ export const setupOf = (input: {
 /** The profile `setupOf` writes, line by line. */
 export const apparmorProfile = APPARMOR_PROFILE_LINES;
 
-/** The downloaded browser, if any: `tools/chrome-headless-shell/<platform>/<version>/` under the engine's data directory. */
+/**
+ * The browser release the pinned engine runs: it starts exactly this version,
+ * downloading it on first use, and keeps the one it replaced beside it
+ * (**Read** at `bc0f04d`, `apps/server/src/preview/PreviewBrowser.ts`,
+ * `VERSION` and `installedExecutable`). Moves with the pin
+ * (docs/architecture/engine.md, "Upgrading the engine").
+ */
+const ENGINE_BROWSER_VERSION = "158.0.8127.88";
+
+/**
+ * The folder the engine keeps its Linux browser in for a processor
+ * architecture, as Chrome for Testing names its builds; none for one the
+ * browser has no build for (**Read** at `bc0f04d`,
+ * `apps/server/src/preview/PreviewBrowser.ts`, `chromePlatform`).
+ */
+export const browserPlatformOf = (arch: string): string | undefined =>
+  arch === "x64" ? "linux64" : arch === "arm64" ? "linux-arm64" : undefined;
+
+/**
+ * The browser the engine runs, if it is downloaded:
+ * `tools/chrome-headless-shell/<platform>/<version>/` under the engine's data
+ * directory, for this machine's architecture. Another version there is one
+ * the engine kept from before, which it no longer starts.
+ */
 const installedBrowser = Effect.fn("engine.installedBrowser")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = path.join(home, "tools", "chrome-headless-shell");
-  const list = (folder: string) =>
-    fs.readDirectory(folder).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-  for (const platform of yield* list(root)) {
-    for (const version of yield* list(path.join(root, platform))) {
-      const executable = path.join(root, platform, version, "chrome-headless-shell");
-      if (yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false))) {
-        return Option.some(executable);
-      }
-    }
-  }
-  return Option.none<string>();
+  const platform = browserPlatformOf(process.arch);
+  if (platform === undefined) return Option.none<string>();
+  const executable = path.join(
+    home,
+    "tools",
+    "chrome-headless-shell",
+    platform,
+    ENGINE_BROWSER_VERSION,
+    "chrome-headless-shell",
+  );
+  return (yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)))
+    ? Option.some(executable)
+    : Option.none<string>();
 });
 
 /**

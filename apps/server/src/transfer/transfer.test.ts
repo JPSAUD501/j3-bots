@@ -21,7 +21,8 @@ import * as Schema from "effect/Schema";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
-import { homeLayout } from "../home/entries.ts";
+import { claimEngineRelease } from "../engine/EngineRelease.ts";
+import { HOME_ENTRIES, homeLayout } from "../home/entries.ts";
 import { Routines } from "../routines/Routines.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import * as TestDatabase from "../testing/database.ts";
@@ -94,11 +95,20 @@ const entriesOf = (file: string) =>
     ),
   );
 
-/** The mark an import of the archive at `file` leaves while it puts it in place. */
-const markOf = (file: string) =>
+/**
+ * The mark an import of the archive at `file` leaves while it puts it in
+ * place, with the home's record of its engine release when it had one.
+ */
+const markOf = (
+  file: string,
+  engineRelease?: { readonly version: string; readonly recorded_at: string },
+) =>
   Effect.gen(function* () {
     const [manifest] = yield* entriesOf(file);
-    return JSON.stringify({ archive: sha256(manifest?.bytes ?? new Uint8Array()) });
+    return JSON.stringify({
+      archive: sha256(manifest?.bytes ?? new Uint8Array()),
+      ...(engineRelease === undefined ? {} : { engineRelease }),
+    });
   });
 
 /**
@@ -365,10 +375,12 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const from = yield* populatedHome;
+      yield* claimEngineRelease("0.1.11").pipe(Effect.provide(serverAt(from.home)));
       const file = path.join(yield* fs.makeTempDirectoryScoped(), "export.tar.gz");
       yield* exportTo(from.home, file);
 
       const to = yield* populatedHome;
+      yield* claimEngineRelease("0.1.13").pipe(Effect.provide(serverAt(to.home)));
       const refused = yield* Effect.exit(importFrom(to.home, file));
       assert.deepInclude(failedWith(refused), { _tag: "HomeInUse", bots: 1, secrets: true });
 
@@ -381,6 +393,10 @@ it.effect(
           bots.map(({ id }) => id),
           [from.ana],
         );
+        // The home keeps its engine's data, so the newest engine that ran on it
+        // stays recorded, and an older one is still refused there.
+        const older = yield* Effect.flip(claimEngineRelease("0.1.11"));
+        assert.strictEqual(older._tag, "EngineDataNewer");
       }).pipe(Effect.provide(serverAt(to.home)));
       assert.isFalse(yield* fs.exists(homeLayout(path, to.home).workspace(to.ana)));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -434,6 +450,35 @@ it.effect(
         reason: "damaged",
       });
       assert.isFalse(yield* fs.exists(path.join(to, "j3.sqlite")));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  { timeout: MOVE_TIMEOUT },
+);
+
+it.effect(
+  "keeps the home's engine release when an import stopped after it removed the home's database",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const from = yield* populatedHome;
+      const file = path.join(yield* fs.makeTempDirectoryScoped(), "export.tar.gz");
+      yield* exportTo(from.home, file);
+
+      // Stopped between removing the home's database and moving the export's into its place.
+      const to = yield* populatedHome;
+      const mark = yield* markOf(file, {
+        version: "0.1.13",
+        recorded_at: "2026-11-26T12:00:00.000Z",
+      });
+      yield* fs.makeDirectory(path.dirname(importMark(path, to.home)), { recursive: true });
+      yield* fs.writeFileString(importMark(path, to.home), mark);
+      yield* fs.remove(path.join(to.home, HOME_ENTRIES.database));
+
+      yield* importFrom(to.home, file);
+      const older = yield* Effect.flip(claimEngineRelease("0.1.11")).pipe(
+        Effect.provide(serverAt(to.home)),
+      );
+      assert.strictEqual(older._tag, "EngineDataNewer");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   { timeout: MOVE_TIMEOUT },
 );

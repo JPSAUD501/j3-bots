@@ -100,6 +100,16 @@ describe("engineAnswersOf", () => {
     );
   });
 
+  it("keeps an answer to a question whose id is `__proto__`", () => {
+    // An ACP form's field names are its question ids, and any name is one.
+    const proto = { ...colour, id: "__proto__" };
+    const answered = engineAnswersOf(
+      [proto],
+      answers({ "question-1": { optionIds: [], text: "Green" } }),
+    );
+    assert.deepStrictEqual(answered && Object.entries(answered), [["__proto__", "Green"]]);
+  });
+
   it("refuses answers that do not fit the questions", () => {
     assert.isUndefined(
       engineAnswersOf(
@@ -156,7 +166,7 @@ describe("a start the engine queues behind another turn", () => {
 
   // The pinned engine creates the queued run, with no item for its message,
   // and records the message as `queued_turn` only when the run leaves the queue
-  // (**Read** at `db51b67`, `Orchestrator.ts`, L8012-8060 and L3035-3097).
+  // (**Read** at `bc0f04d`, `Orchestrator.ts`, L8285-8337 and L3133-3195).
   it("is queued from its run, before the engine records its message", () => {
     const mirror = emptyMirror();
     mirror.runs.set(running.id, running);
@@ -446,7 +456,7 @@ const pendingIn = (
 });
 const NONE = pendingIn([]);
 describe("backgroundWorkOf", () => {
-  // The engine's rule (**Read** at `db51b67`, `derivePendingBackgroundWork`).
+  // The engine's rule (**Read** at `bc0f04d`, `derivePendingBackgroundWork`).
   it("counts live work left by an ended run, as the engine's stop does", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
@@ -479,7 +489,7 @@ describe("backgroundWorkOf", () => {
   });
 
   // Each piece goes to the run the engine gives it: a task's stamped run, an
-  // item's own (**Read** at `db51b67`, `ProjectionStore.ts`, L936-954).
+  // item's own (**Read** at `bc0f04d`, `ProjectionStore.ts`, L955-972).
   it("attributes each piece of work to the turn that started it, in the order they ran", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
@@ -505,7 +515,7 @@ describe("backgroundWorkOf", () => {
 
   // Claude Code reports a monitor the agent awaits as a task of its provider
   // thread, with no run: the engine's projection stamps the run that reported
-  // it (**Read** at `db51b67`, `ProjectionStore.ts`, L936-954; the
+  // it (**Read** at `bc0f04d`, `ProjectionStore.ts`, L955-972; the
   // `claude_background_monitor_wake` fixture).
   it("counts a task that holds the agent's completion as the turn's hand-off", () => {
     const mirror = emptyMirror();
@@ -638,10 +648,10 @@ describe("backgroundWorkOf", () => {
 
   // The engine's stop fires when its rule counts work, which reads the active
   // provider thread's tasks, and interrupts the latest run's provider thread
-  // (**Read** at `db51b67`, `Orchestrator.ts`, L14141-14178, L13560-13581). A
+  // (**Read** at `bc0f04d`, `Orchestrator.ts`, L14692-14731, L14111-14132). A
   // fresh-context start reports its new provider thread with no thread event,
   // and the projection makes any reported one active unless it only reserves
-  // a seat (`ProjectionStore.ts`, L1142-1150).
+  // a seat (`ProjectionStore.ts`, L1172-1180).
   it("counts as stoppable the latest run's provider thread's tasks, when the stop fires", () => {
     const mirror = emptyMirror();
     applyEvent(
@@ -677,7 +687,7 @@ describe("backgroundWorkOf", () => {
   // A fresh-context start queued behind a turn leaves the old provider session
   // running while it has background work; its provider thread reports the task
   // until it ends, and the engine's stop does not reach it (**Read** at
-  // `db51b67`, `Orchestrator.ts`, L2765-2808, L13642-13692; the testkit's
+  // `bc0f04d`, `Orchestrator.ts`, L2851-2894, L14193-14243; the testkit's
   // "Fresh context with an old session's background task").
   it("reports a task an old provider session still runs after a fresh context, out of the stop's reach", () => {
     const mirror = emptyMirror();
@@ -726,7 +736,7 @@ describe("backgroundWorkOf", () => {
   });
 
   // The engine binds a session to the thread only when it is attached
-  // (**Read** at `db51b67`, `ProjectionStore.ts`, L2773-2826).
+  // (**Read** at `bc0f04d`, `ProjectionStore.ts`, L2879-2932).
   it("drops an old provider session's work once it is detached, also after a late update", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, event("thread.created", appThread));
@@ -751,7 +761,7 @@ describe("backgroundWorkOf", () => {
   });
 
   // Follow-ups can share a child thread, and the engine's rule counts agents,
-  // one per child thread (**Read** at `db51b67`,
+  // one per child thread (**Read** at `bc0f04d`,
   // `orchestrationV2PendingBackgroundWork.ts`, L318-326). Each follow-up is
   // still the work of the turn that sent it.
   it("keeps every turn that sent a follow-up to a shared child thread", () => {
@@ -769,9 +779,9 @@ describe("backgroundWorkOf", () => {
 
   // The engine's stop fires on its rule's list, which reads the active
   // provider thread's tasks and the live items before it keeps one subagent
-  // per child thread (**Read** at `db51b67`,
+  // per child thread (**Read** at `bc0f04d`,
   // `orchestrationV2PendingBackgroundWork.ts`, L289-326; `Orchestrator.ts`,
-  // L14165-14178).
+  // L14718-14731).
   it("counts a live subagent item as firing the stop, though another provider thread lists its child thread first", () => {
     const mirror = emptyMirror();
     applyEvent(
@@ -819,7 +829,7 @@ describe("backgroundWorkOf", () => {
   });
 
   // The stream sends a dynamic tool input above 16 KiB as `{summary, truncated}`
-  // (**Read** at `db51b67`, `WireProjection.ts`, `summarizeDynamicValue`).
+  // (**Read** at `bc0f04d`, `WireProjection.ts`, `summarizeDynamicValue`).
   it("asks the item fetched whole whether a tool the stream summarized is persistent", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
@@ -858,7 +868,7 @@ describe("backgroundWorkOf", () => {
 });
 
 // A wake's run opens with a message the engine records in the same command
-// (**Read** at `db51b67`, `Orchestrator.ts`, L8114 with L8184).
+// (**Read** at `bc0f04d`, `Orchestrator.ts`, L8387 with L8461).
 describe("the cause of a turn the engine started on its own", () => {
   const wakeMessage = (delegatedBy?: string) =>
     event("message.updated", {
@@ -942,7 +952,7 @@ describe("the cause of a turn the engine started on its own", () => {
   });
 
   // The engine creates the queued run before it records the run's message
-  // (**Read** at `db51b67`, `Orchestrator.ts`, L8128 and L8184).
+  // (**Read** at `bc0f04d`, `Orchestrator.ts`, L8401 and L8461).
   it("tells a wake queued behind another turn by its origin from the queue on", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
@@ -972,7 +982,7 @@ describe("the cause of a turn the engine started on its own", () => {
   });
 
   // A steering restart moves the run's `userMessageId` to the steer, on the
-  // same run (**Read** at `db51b67`, `Orchestrator.ts`, L6805-6815).
+  // same run (**Read** at `bc0f04d`, `Orchestrator.ts`, L7028-7038).
   it("keeps its origin when a steer restarts the turn", () => {
     const { mirror, view } = startedWake("run-1");
     applyEvent(mirror, steerItem);
@@ -992,7 +1002,7 @@ describe("the cause of a turn the engine started on its own", () => {
 
   // A snapshot has no run's first record: the opening is the user message
   // under the run that no message item carries, the one the notification
-  // item stands for (**Read** at `db51b67`, `notification.ts`, L229-253).
+  // item stands for (**Read** at `bc0f04d`, `notification.ts`, L229-253).
   it("keeps its origin in a snapshot taken after a steer restarted the turn", () => {
     const steerMessage = {
       ...wakeMessage().payload,
@@ -1035,8 +1045,8 @@ describe("the cause of a turn the engine started on its own", () => {
 });
 
 // The engine's stop is acknowledged once queued; its interrupt can still fail
-// and leave the tool running (**Read** at `db51b67`, `Orchestrator.ts`,
-// L14183-14212). The engine's shell row lists it, from the stored input, for
+// and leave the tool running (**Read** at `bc0f04d`, `Orchestrator.ts`,
+// L14736-14765). The engine's shell row lists it, from the stored input, for
 // as long as it runs and is not persistent.
 describe("workInShell", () => {
   const settled = { activeRunId: null, status: "completed" } as const;
@@ -1113,7 +1123,7 @@ describe("what a Stop leaves to run", () => {
     assert.isTrue(nothingToStop(mirror, at));
   });
 
-  it("counts a thread the engine deleted as gone, though its record stays", () => {
+  it("counts a thread its stream says the engine deleted as gone", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, event("thread.created", appThread));
     assert.isFalse(isDeleted(mirror));
@@ -1122,7 +1132,8 @@ describe("what a Stop leaves to run", () => {
   });
 
   // The archive's dispatch writes `thread.archived` before the cancels of the
-  // turns still queued (**Read** at `59651c1`, `Orchestrator.ts`).
+  // turns still queued (**Read** at `bc0f04d`, `Orchestrator.ts`, L5680-5688,
+  // L5762-5790).
   it("ends an archived session's stream after its queued turns' cancels, with a run still starting", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, event("thread.created", appThread));
@@ -1144,7 +1155,7 @@ describe("what a Stop leaves to run", () => {
 
 // The pinned ACP adapter records a call the agent reported without
 // arguments as `{}`, then records it again with them once it runs (**Read**
-// at `db51b67`, `provider-acp/src/server/adapter.ts`, L4657-4658, L4711).
+// at `bc0f04d`, `provider-acp/src/server/adapter.ts`, L5699-5700, L5852).
 describe("a `j3` call recorded before its arguments", () => {
   const say = (input: unknown, status: string) =>
     item({ id: "item-say", type: "dynamic_tool", toolName: "j3.say", input, status });
@@ -1387,8 +1398,8 @@ describe("a `j3` call that manages MCP servers or skills", () => {
 
 describe("a turn the engine ran on recovered context", () => {
   // The engine records a `handoff` item in the run when the provider could not
-  // resume its own conversation (**Read** at `db51b67`,
-  // `ProviderTurnStartService.ts`, "Recovered context").
+  // resume its own conversation (**Read** at `bc0f04d`,
+  // `ProviderTurnStartService.ts`, L2008, "Recovered context").
   const handoff = item({
     id: "item-handoff",
     type: "handoff",
@@ -1463,7 +1474,7 @@ describe("a turn told after it ran", () => {
 });
 
 // Claude Code's own tools reach the engine as dynamic tools, titled by the
-// adapter (**Read** in T3 Code at `59651c17`, `ClaudeAdapterV2.ts`,
+// adapter (**Read** in T3 Code at `bc0f04d`, `ClaudeAdapterV2.ts`,
 // `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS` and `formatReadToolLabel`).
 describe("a Claude Code tool's step", () => {
   const steps = (events: ReadonlyArray<EventBody>) =>
@@ -1508,8 +1519,8 @@ describe("a Claude Code tool's step", () => {
       [{ kind: "tool", tool: null, label: "Skill: release-notes" }],
     );
   });
-  // The engine names the image a `Read` looked at (**Read** at `59651c1`,
-  // `ClaudeAdapterV2.ts` L7287); the server reads it, so it travels with the step.
+  // The engine names the image a `Read` looked at (**Read** at `bc0f04d`,
+  // `ClaudeAdapterV2.ts` L7928); the server reads it, so it travels with the step.
   it("carries the path of an image it looked at, with the step", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1, { providerInstanceId: "claudeAgent" }));
@@ -1575,7 +1586,7 @@ describe("what a running turn takes from outside it", () => {
 
   /**
    * The engine's record of a report it steered into `run-2`, at `status`: a
-   * notice, not a user message (**Read** at `59651c1`, `notificationTurnItem`).
+   * notice, not a user message (**Read** at `bc0f04d`, `notificationTurnItem`).
    */
   const steeredIn = (messageId: string, status: string) =>
     item({
@@ -1589,7 +1600,7 @@ describe("what a running turn takes from outside it", () => {
       status,
     });
 
-  // **Read** at `59651c1`, `Orchestrator.ts`, L7631-7673: the engine steers a
+  // **Read** at `bc0f04d`, `Orchestrator.ts`, L7890-7936: the engine steers a
   // completion into whatever run is running.
   it("tells a delegated task's result steered into another turn once that turn ends with it", () => {
     const mirror = emptyMirror();
@@ -1612,7 +1623,7 @@ describe("what a running turn takes from outside it", () => {
   });
 
   // The engine runs a report whose hand-over failed as a run of its own
-  // (**Read** at `59651c1`, `EffectWorker.ts`, L362-420), and that run is
+  // (**Read** at `bc0f04d`, `EffectWorker.ts`, L366-423), and that run is
   // where the report is answered.
   it("tells no result the engine runs as a turn of its own after the turn it landed in", () => {
     // The engine sends it again as the turn ends, and its message moves there.
@@ -1687,7 +1698,7 @@ describe("what a running turn takes from outside it", () => {
     });
 
   // The engine steers a delegated task's notice as it does its completion
-  // (**Read** at `59651c1`, `Orchestrator.ts`, L7631-7673).
+  // (**Read** at `bc0f04d`, `Orchestrator.ts`, L7890-7936).
   it("tells a delegated task's question steered into another turn, by the turn that delegated it", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("completed", 1));
@@ -1745,7 +1756,7 @@ describe("what a running turn takes from outside it", () => {
     events.flatMap((body) => (body._tag === "steer-taken" ? [[body.key, body.turnId]] : []));
 
   // The engine requeues only a steer whose record still waits (**Read** at
-  // `59651c1`, `Orchestrator.ts`, `requeueUnreadSteers`).
+  // `bc0f04d`, `Orchestrator.ts`, `requeueUnreadSteers`).
   it("tells a steer taken once its record no longer waits, while the turn runs, on Codex", () => {
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
@@ -1769,8 +1780,8 @@ describe("what a running turn takes from outside it", () => {
 
   // The engine records a steer as handed over before Claude has it, and
   // Claude's driver then holds it waiting until Claude echoes it (**Read** at
-  // `59651c1`, `Orchestrator.ts` L6442-6470, `ClaudeAdapterV2.ts` L14061,
-  // L9366).
+  // `bc0f04d`, `Orchestrator.ts` L6660-6688, `ClaudeAdapterV2.ts` L15191,
+  // L10171).
   it("tells a steer taken on Claude Code only once Claude echoed it", () => {
     const claude: Providers = {
       modelOf: () => null,
@@ -2065,7 +2076,7 @@ describe("a turn's plan and little ones", () => {
 describe("a provider the engine retries", () => {
   // The engine records a failure it retries as an error item with the attempt
   // it is on, running while it retries, completed once an attempt succeeds,
-  // failed once it gives up (**Read** at `59651c1`, T3 Code's `session-logic.ts`,
+  // failed once it gives up (**Read** at `bc0f04d`, T3 Code's `session-logic.ts`,
   // `providerErrorPresentation`).
   const retryItem = (status: string) =>
     item({

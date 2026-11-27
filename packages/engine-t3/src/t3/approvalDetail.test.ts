@@ -103,12 +103,14 @@ const approval = (nativeId: string, fields: Record<string, unknown>, driver = "c
 };
 
 describe("approvalOf", () => {
-  it("shows the held command exactly and keeps the escalation's reason apart", () => {
+  it("shows the held command exactly, with the escalation's reason and where it runs apart", () => {
     const command = "pnpm db:migrate --env staging --to 0042";
     const asks = request("cmd-1");
+    // Codex's prompt is the command, then the directory and the host it reaches.
     const asked = approval("cmd-1", {
       requestKind: "command",
-      prompt: "Needs network access to reach the staging database",
+      prompt: `${command}\ncwd /work/site\nnetwork https db.staging.example`,
+      reason: "Needs network access to reach the staging database",
     });
     const held = item("cmd-1", { type: "command_execution", input: command });
     assert.deepStrictEqual(approvalOf(asked, asks, [asked, held], none), {
@@ -116,7 +118,8 @@ describe("approvalOf", () => {
       kind: "command",
       action: command,
       detail: null,
-      reason: "Needs network access to reach the staging database",
+      reason:
+        "Needs network access to reach the staging database\n\ncwd /work/site\nnetwork https db.staging.example",
       exact: true,
       sessionGrant: { covers: "every-command" },
     });
@@ -185,6 +188,9 @@ describe("approvalOf", () => {
     assert.strictEqual(shown.exact, true);
     // The prompt was the command itself, so it is no reason.
     assert.strictEqual(shown.reason, null);
+    // Nor is the command again when its directory follows it.
+    const where = approval("cmd-2", { requestKind: "command", prompt: `${command}\ncwd /work` });
+    assert.strictEqual(approvalOf(where, asks, [held, where], none).reason, "cwd /work");
   });
 
   it("calls a file change known only by its paths a summary", () => {

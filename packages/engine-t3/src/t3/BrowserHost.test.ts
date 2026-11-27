@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- the printed command is run by a real shell, as the administrator's would run it.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { apparmorProfile, missingLibrariesOf, setupOf } from "./BrowserHost.ts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import {
+  apparmorProfile,
+  browserPlatformOf,
+  inspectBrowserHost,
+  missingLibrariesOf,
+  setupOf,
+} from "./BrowserHost.ts";
 
 describe("the browser's host setup", () => {
   it("writes, through sudo tee, exactly the profile it shows", () => {
@@ -71,4 +81,40 @@ describe("the browser's host setup", () => {
     assert.deepStrictEqual(missingLibrariesOf("libnss3.so", ldd), ["libnss3.so", "libgbm.so.1"]);
     assert.deepStrictEqual(missingLibrariesOf("$(reboot).so", ""), []);
   });
+
+  const platform = browserPlatformOf(process.arch);
+  it.effect.skipIf(process.platform === "win32" || platform === undefined)(
+    "checks the browser the engine runs, not one it kept from before, for another processor, or another left there",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const other = platform === "linux64" ? "linux-arm64" : "linux64";
+        const browser = (version: string, script: string, built = platform ?? "") =>
+          Effect.gen(function* () {
+            const folder = path.join(home, "tools", "chrome-headless-shell", built, version);
+            yield* fs.makeDirectory(folder, { recursive: true });
+            const executable = path.join(folder, "chrome-headless-shell");
+            yield* fs.writeFileString(executable, `#!/bin/sh\n${script}\n`);
+            yield* fs.chmod(executable, 0o755);
+          });
+        const broken =
+          "echo 'chrome-headless-shell: error while loading shared libraries: libold.so.1: cannot open shared object file' >&2; exit 127";
+        // Only the one the engine kept from before, and its own built for another
+        // processor: the engine downloads the one it runs on first use.
+        yield* browser("157.0.8075.62", broken);
+        yield* browser("158.0.8127.88", broken, other);
+        const before = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        assert.isFalse(before.downloaded);
+        assert.deepStrictEqual(before.missingLibraries, []);
+
+        // Once it has, that one is checked, whatever else is there.
+        yield* browser("158.0.8127.88", "echo 'Google Chrome for Testing 158.0.8127.88'");
+        yield* browser("159.0.8200.10", broken);
+        const needs = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        assert.isTrue(needs.downloaded);
+        assert.deepStrictEqual(needs.missingLibraries, []);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

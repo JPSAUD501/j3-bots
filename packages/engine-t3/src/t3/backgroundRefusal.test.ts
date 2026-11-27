@@ -4,7 +4,7 @@ import { CommandId, OrchestrationV2DispatchCommandError } from "@t3tools/contrac
 import * as Schema from "effect/Schema";
 import { isBackgroundWorkRefusal } from "./backgroundRefusal.ts";
 
-// The engine's words at the pin (**Read** at `db51b67`): the orchestrator's
+// The engine's words at the pin (**Read** at `bc0f04d`): the orchestrator's
 // refusal of a settings change, and the Claude adapter's own.
 const ORCHESTRATOR =
   "The current session is still running background agents or commands, and this change would end them. Wait for them to finish, or press Stop, then try again.";

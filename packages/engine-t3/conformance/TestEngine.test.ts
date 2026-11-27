@@ -51,6 +51,15 @@ const REQUESTS = {
   }),
 };
 
+/** The scripted agent's secret asked for as one field: its card is labelled as the field. */
+const FIELD_SECRET = request({
+  _tag: "secret",
+  label: "Token",
+  reason: "The conformance suite asks for a secret.",
+  url: null,
+  placeholder: null,
+});
+
 const bench = Layer.effect(
   Bench,
   Effect.gen(function* () {
@@ -93,8 +102,13 @@ const bench = Layer.effect(
           return Effect.void;
         case "approval":
         case "question":
-        case "secret":
           return holdOn(sessionId, turnId, REQUESTS[act._tag]);
+        case "secret":
+          return holdOn(
+            sessionId,
+            turnId,
+            act.field === undefined ? REQUESTS.secret : FIELD_SECRET,
+          );
         case "speak":
           return control
             .hostSpeech({ sessionId, turnId, text: act.text })

@@ -119,13 +119,22 @@ const passes = (name: string, platform: string) =>
  * The environment the engine starts with on `platform`: the allowed part of
  * the server's. The engine passes its environment on to every harness it
  * starts, so a bot's harness is configured only by what J3 Bots provisions.
+ *
+ * `T3CODE_FEATURE_FLAGS` is set, empty: the engine turns on T3 Code's
+ * feature flags from it, and when its own environment lacks the variable it
+ * copies the one the server user's login shell exports, which is meant for
+ * their own T3 Code (**Read** at `bc0f04d`, `os-jank.ts`
+ * `applyLoginShellEnvironment`, `FeatureFlags.ts` `parseList`). Empty, it is
+ * present, so nothing is copied, and it names no flag.
  */
 export const engineEnvironment = (
   parent: Readonly<Record<string, string | undefined>>,
   platform: string,
-): Record<string, string> =>
-  Object.fromEntries(
+): Record<string, string> => ({
+  ...Object.fromEntries(
     Object.entries(parent).flatMap(([name, value]) =>
       value === undefined || !passes(name, platform) ? [] : [[name, value]],
     ),
-  );
+  ),
+  T3CODE_FEATURE_FLAGS: "",
+});

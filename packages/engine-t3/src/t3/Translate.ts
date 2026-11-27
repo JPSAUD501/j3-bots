@@ -250,7 +250,7 @@ const isThread = Schema.is(OrchestrationV2AppThread);
 /**
  * The run that delegated the task a message reports on, if it is one: a
  * completion names it (`delegatedCompletion.parentRunId`); a notice of a
- * delegated task, such as its question (**Read** at `59651c1`,
+ * delegated task, such as its question (**Read** at `bc0f04d`,
  * `DelegatedTaskQuestionReactor.ts`, `wakeParent`, L35-61), names only the
  * task, whose `subagent` item is in the run that delegated it.
  */
@@ -277,10 +277,12 @@ interface DelegatedResultRecord {
  * one that delegated the task (`delegatorOf`): its completion or a notice the
  * engine steered into a running run, which is not that run's opening
  * message. The engine steers either so whenever a run of the session runs as
- * it arrives, whichever run delegated the task (**Read** at `59651c1`,
- * `Orchestrator.ts`, L7631-7673). One that opens a run of its own names the
+ * it arrives, whichever run delegated the task (**Read** at `bc0f04d`,
+ * `Orchestrator.ts`, L7890-7936). One that opens a run of its own names the
  * delegating run as that run's origin instead (`causeOf`), and one steered
- * into the delegating run reaches it there.
+ * into the delegating run reaches it there. A steer the running turn declines
+ * comes back as a queued run that opens with the same message
+ * (`EffectWorker.ts`, L366-423), so it is answered there.
  */
 const delegatedResultOf = (
   message: Message,
@@ -300,9 +302,9 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
     case "run.created":
     case "run.updated":
       // The first record of a run carries the message it opened with: the
-      // engine creates it with that message (**Read** at `db51b67`,
-      // `Orchestrator.ts`, L8019, L8458, L9270) and a steering restart moves
-      // `userMessageId` to the steer later, on the same run (L6805-6815). A
+      // engine creates it with that message (**Read** at `bc0f04d`,
+      // `Orchestrator.ts`, L8292, L8735, L9556) and a steering restart moves
+      // `userMessageId` to the steer later, on the same run (L7028-7038). A
       // run the mirror had from a snapshot already has its opening, if any.
       if (!mirror.runs.has(event.payload.id)) {
         mirror.openings.set(event.payload.id, event.payload.userMessageId);
@@ -328,8 +330,8 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       //
       // The provider thread the event reports becomes the thread's active
       // one, unless it only reserves a seat for a queued run, as the engine's
-      // projection applies it (**Read** at `db51b67`, `ProjectionStore.ts`,
-      // L1142-1150): a fresh-context start switches it so, with no thread
+      // projection applies it (**Read** at `bc0f04d`, `ProjectionStore.ts`,
+      // L1172-1182): a fresh-context start switches it so, with no thread
       // event, and the engine's stop fires only for the active one's tasks or
       // live items (`backgroundWorkOf`).
       if (
@@ -349,12 +351,12 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       // As for a provider thread: only `backgroundWorkOf` reads it. The
       // engine's stored projection binds a session to the thread when it is
       // attached and unbinds it when it is detached; an update changes only
-      // its status (**Read** at `db51b67`, `ProjectionStore.ts`, L2773-2826).
+      // its status (**Read** at `bc0f04d`, `ProjectionStore.ts`, L2879-2932).
       // The engine reads a thread's sessions through those bindings: the
       // records a command such as the stop starts from, the snapshots
-      // (`readCanonicalProjection`, L4312-4335) and recovery (L5705-5720).
+      // (`readCanonicalProjection`, L4411-4434) and recovery (L5822-5837).
       // Its in-memory projector upserts a session on an update too
-      // (`applyToProjection`, L1129-1134), but it only folds a command's own
+      // (`applyToProjection`, L1159-1164), but it only folds a command's own
       // events onto the records that command read from the store, so the
       // bindings are what the next command sees, and the adapter follows
       // them: an update for a session not attached, such as a late one after
@@ -371,9 +373,9 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       return false;
     case "message.updated": {
       // The engine records a run's opening message in the command that
-      // creates the run, after `run.created` (**Read** at `db51b67`,
-      // `Orchestrator.ts`: the queued run at L8128 and its message at L8184,
-      // a start at L8617 and L8669, L9643 and L9691), so a turn's origin is
+      // creates the run, after `run.created` (**Read** at `bc0f04d`,
+      // `Orchestrator.ts`: the queued run at L8401 and its message at L8461,
+      // a start at L8893 and L8945, L9930 and L9978), so a turn's origin is
       // known before it can start, though not yet when the run is created
       // queued. Only the run's opening message counts: a delegated
       // completion steered into a running run is not that run's cause.
@@ -407,9 +409,9 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
  * The provider thread with each of its tasks attributed to the run it first
  * appeared under, as the engine's projection stamps it: an adapter resends its
  * whole roster without runs, so a task keeps the run it had, and a new one
- * takes the run of the event that reported it (**Read** at `db51b67`,
- * `ProjectionStore.ts`, `attributePendingBackgroundTasks`, L936-954, applied
- * at L1153-1159). The stream carries the event as the adapter reported it; a
+ * takes the run of the event that reported it (**Read** at `bc0f04d`,
+ * `ProjectionStore.ts`, `attributePendingBackgroundTasks`, L955-972, applied
+ * at L1183-1189). The stream carries the event as the adapter reported it; a
  * snapshot carries the stamped thread.
  */
 const attributeTasks = (
@@ -436,11 +438,12 @@ export const isRetired = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.archivedAt !== null;
 
 /**
- * Whether the engine deleted the session's thread: the engine's word that the
- * session is gone, as `isMissingThread` is for a thread it has no record of.
- * A deletion keeps the thread's projection and only stamps `deletedAt` on it,
- * in the `thread.deleted` event too, so a read still succeeds (**Read** at
- * `db51b67`, `ThreadDeletion.ts`, L56-66).
+ * Whether the engine deleted the session's thread, as its stream's
+ * `thread.deleted` event stamps `deletedAt`: the engine's word that the
+ * session is gone. A read of a deleted thread fails as one the engine has no
+ * record of (`isMissingThread`), and the deletion purges its history
+ * (**Read** at `bc0f04d`, `orchestration-v2/ProjectionStore.ts`
+ * `getThreadSnapshotWindow`, `ThreadDeletion.ts`).
  */
 export const isDeleted = (mirror: Mirror) =>
   mirror.thread !== undefined && mirror.thread.deletedAt !== null;
@@ -452,7 +455,7 @@ export const isDeleted = (mirror: Mirror) =>
  * `thread.archived` first, then a `run.updated` that cancels each turn still
  * queued or preparing; a turn already starting or running gets no end from
  * it, only perhaps from its provider session's detach (**Read** at
- * `59651c1`, `Orchestrator.ts`, the `thread.archive` dispatch). So an
+ * `bc0f04d`, `Orchestrator.ts`, the `thread.archive` dispatch). So an
  * archived session's stream ends once none of its turns waits, after the
  * cancels are told, and whatever is still open there ends with it.
  */
@@ -474,7 +477,7 @@ export const isEnded = (run: Run) => ENDED.has(run.status);
 
 /**
  * Whether the run's provider turn started. A run is `starting` before that,
- * with no `startedAt`, and can still fail there (**Read** at `db51b67`,
+ * with no `startedAt`, and can still fail there (**Read** at `bc0f04d`,
  * `Orchestrator.ts`).
  */
 const hasStarted = (run: Run) =>
@@ -528,7 +531,7 @@ const openingFromItems = (items: ReadonlyArray<Item>, run: Run): string | undefi
  * The message a run opened with, in a snapshot, where the run's first record
  * is not to be had: from its items, or else the user message the engine
  * records under the run that none of its message items carries, the one a
- * notification item stands for (**Read** at `db51b67`, `notification.ts`,
+ * notification item stands for (**Read** at `bc0f04d`, `notification.ts`,
  * `notificationTurnItem`, L229-253).
  */
 const snapshotOpening = (
@@ -559,13 +562,13 @@ const openingMessageOf = (mirror: Mirror, run: Run): string | undefined =>
  * it at once. It creates such a run `queued`, with no item for its message,
  * where a start it begins at once is `starting` from the outset; it records
  * the message, marked `queued_turn`, only as the run leaves the queue (**Read**
- * at `db51b67`, `Orchestrator.ts`: the queued run at L8012-8060, the start at
- * L8451-8461, the promotion at L3035-3097). A follow-up the engine queues for
+ * at `bc0f04d`, `Orchestrator.ts`: the queued run at L8285-8337, the start at
+ * L8728-8738, the promotion at L3133-3195). A follow-up the engine queues for
  * an unread steer reuses the steer's item, marked `queued_turn` at once
- * (L8192-8215). A run cancelled while it waited keeps neither mark: the engine
- * clears its queue position (L1216-1231), and its message was never recorded,
+ * (L8469-8492). A run cancelled while it waited keeps neither mark: the engine
+ * clears its queue position (L1248-1263), and its message was never recorded,
  * which a start the engine begins at once always is, in the same command
- * (L8555-8690).
+ * (L8831-8966).
  */
 const wasQueued = (mirror: Mirror, run: Run) => {
   if (run.status === "queued") return true;
@@ -578,7 +581,7 @@ const wasQueued = (mirror: Mirror, run: Run) => {
 /**
  * A run that carries a steer the engine keeps aside until its target run's
  * provider turn starts. When the target starts, the engine cancels the carrier
- * and steers its message into the target (**Read** at `db51b67`,
+ * and steers its message into the target (**Read** at `bc0f04d`,
  * `Orchestrator.ts`, `queued-message.promote-to-steer`); when a Stop reaches
  * the target first, the steer is dropped. Either way the carrier is no turn,
  * and its cancellation is the steer's, reported as the steer's settlement. It
@@ -645,7 +648,7 @@ const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
 /**
  * J3 Bots' class of a provider failure. A Claude Code turn the API refused for
  * its sign-in (HTTP 401) is recorded as a `provider_error` with code
- * `api_error_401` (**Read** at `59651c1`, `ClaudeAdapterV2.ts`, the result's
+ * `api_error_401` (**Read** at `bc0f04d`, `ClaudeAdapterV2.ts`, the result's
  * failure): the operator's next step is to sign in again, as for a
  * `permission_error`.
  */
@@ -664,9 +667,9 @@ const errorsOf = (mirror: Mirror, run: Run) =>
 
 /**
  * The failure the engine holds against the run: the latest failed error item
- * of its root node, by update time. **Read** at `db51b67`, `ProjectionStore.ts`
- * (`getLimitRecoveryCandidates`) and `Orchestrator.ts`
- * (`latestRootProviderFailure`).
+ * of its root node, by update time. **Read** at `bc0f04d`, `ProjectionStore.ts`
+ * (`getLimitRecoveryCandidates`) and `shared/src/orchestrationV2ThreadError.ts`
+ * (`latestRootProviderFailureItem`), which `Orchestrator.ts` applies.
  */
 const rootFailureOf = (mirror: Mirror, run: Run): ErrorItem | undefined =>
   errorsOf(mirror, run)
@@ -712,7 +715,7 @@ const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "runn
  * Whether the engine is trying the run's provider again after a failure: an
  * error item of the run that carries a retry and is still running. It
  * completes once an attempt succeeds and fails once the engine gives up
- * (**Read** at `59651c1`, T3 Code's client, `session-logic.ts`,
+ * (**Read** at `bc0f04d`, T3 Code's client, `session-logic.ts`,
  * `providerErrorPresentation`).
  */
 const isRetrying = (mirror: Mirror, run: Run) =>
@@ -726,7 +729,7 @@ const INTERRUPTIBLE_RUN: ReadonlySet<Run["status"]> = new Set(["preparing", "sta
  * interruptible, else the latest one that was not only queued. Its stop is
  * ignored once the engine marks its interrupt request unresponsive, until a
  * result of the interrupt is recorded; on a run that has ended, it is the stop
- * of the background work the run left. **Read** at `59651c1`,
+ * of the background work the run left. **Read** at `bc0f04d`,
  * `packages/client-runtime/src/state/threadExecution.ts`, `presentRunStop`, and
  * `ThreadManagementService.ts`, `forceStopThread`, which picks the same run.
  */
@@ -750,7 +753,7 @@ const stopIgnoredRun = (mirror: Mirror): Run | undefined => {
 /**
  * Whether the engine ran the turn in a fresh provider conversation seeded with
  * its own summary of the old one: the run carries a `handoff` item. At
- * `db51b67` the engine records one when the provider fails to resume its
+ * `bc0f04d` the engine records one when the provider fails to resume its
  * native session (`ProviderTurnStartService.ts`, "Recovered context"), and when
  * a thread moves to another provider or imports another thread's context
  * (`Orchestrator.ts`), which J3 Bots never asks for. **Read**.
@@ -760,13 +763,13 @@ const hasRecoveredContext = (mirror: Mirror, run: Run) =>
 
 /**
  * A task the provider reports that holds the agent's completion: the agent
- * resumes when it ends. The engine's rule (**Read** at `db51b67`,
+ * resumes when it ends. The engine's rule (**Read** at `bc0f04d`,
  * `orchestrationV2PendingBackgroundWork.ts`, `backgroundWorkHoldsCompletion`,
  * L102-121): one the agent marked awaited (`contracts/orchestrationV2.ts`,
- * L1107-1111), or a subagent or background task. A command or a monitor
+ * L1197-1201), or a subagent or background task. A command or a monitor
  * holds only when awaited: it is as often a dev server or its watchdog as a
  * wait. Claude Code wakes the session when a background shell or a monitor
- * ends, awaited or not (**Read**, `ClaudeAdapterV2.ts`, L6207-6208; the
+ * ends, awaited or not (**Read**, `ClaudeAdapterV2.ts`, L6780-6781; the
  * `claude_background_task_wake` and `claude_background_monitor_wake`
  * fixtures), so one not awaited may still bring a background turn.
  */
@@ -809,7 +812,7 @@ const BACKGROUND_ITEM: ReadonlySet<Item["type"]> = new Set([
 
 /**
  * The stream's stand-in for a dynamic tool input above 16 KiB, which drops
- * the input's `persistent` flag. **Read** at `db51b67`, `WireProjection.ts`,
+ * the input's `persistent` flag. **Read** at `bc0f04d`, `WireProjection.ts`,
  * `summarizeDynamicValue` (L29, L69-107) as `projectTurnItemForWire` applies
  * it to a dynamic tool (L190-197).
  */
@@ -820,7 +823,7 @@ const isSummarizedInput = (input: unknown) =>
 
 /**
  * How a live dynamic tool counts in the engine's rule. One the agent keeps
- * running on purpose never counts (**Read** at `db51b67`,
+ * running on purpose never counts (**Read** at `bc0f04d`,
  * `orchestrationV2PendingBackgroundWork.ts`, `pendingBackgroundTurnItems`,
  * L242-258). For an input the stream summarized, the adapter's read of the
  * item tells (`toolPersistence.ts`): until a read settles it, the tool is
@@ -903,7 +906,7 @@ export interface MirroredWork {
 
 /**
  * The engine's id of the pending task a live item is listed as (**Read** at
- * `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * `bc0f04d`, `orchestrationV2PendingBackgroundWork.ts`,
  * `nativeTaskIdFromTurnItem`, L234-240): the provider's id of the item, or the
  * item's own.
  */
@@ -950,14 +953,14 @@ export const liveProviderSessions = (mirror: Mirror): ReadonlyArray<string> =>
  * provider thread per session and the session has no background work: a
  * queued fresh start leaves a busy session running, as one a schedule sends
  * does, and any other start the engine would begin at once is refused
- * (**Read** at `db51b67`, `Orchestrator.ts`, `sessionsReleasedByFreshContext`,
- * L1520-1533, applied at L2765-2808 and L8325-8345; the testkit's "Fresh
+ * (**Read** at `bc0f04d`, `Orchestrator.ts`, `sessionsReleasedByFreshContext`,
+ * L1563-1576, applied at L2851-2894 and L8602-8622; the testkit's "Fresh
  * context with an old session's background task"). The old provider thread
  * keeps reporting its tasks until they end, or until archiving the thread
- * detaches every session (L4713-4736). So its tasks count while it is one of
+ * detaches every session (L4869-4892). So its tasks count while it is one of
  * the thread's own conversations, not a subagent's, and its provider session
  * is one the engine keeps: bound to the thread, as a released one is
- * detached in the same command (L3285-3296, L8701-8712), and neither stopped
+ * detached in the same command (L3383-3394, L8977-8988), and neither stopped
  * nor failed, as the engine judges a session it could still release.
  */
 const isKeptProviderThread = (mirror: Mirror, thread: ProviderThread) => {
@@ -995,12 +998,12 @@ interface PendingEntry {
  * own rule counts work: with no run active and the latest run settled, a task
  * the active provider thread reports, every provider thread's while it has
  * none, or a live command, dynamic tool or subagent item outside a
- * rolled-back run (**Read** at `db51b67`, `orchestrationV2PendingBackgroundWork.ts`,
+ * rolled-back run (**Read** at `bc0f04d`, `orchestrationV2PendingBackgroundWork.ts`,
  * `derivePendingBackgroundWork`, L261-330, and `pendingBackgroundTurnItems`,
  * L243-258). It then interrupts the latest run's provider thread, and another
  * provider thread only at the provider turn of a live item, an interrupt
  * that lands only after the stop answered (`Orchestrator.ts`,
- * `dispatchThreadStop`, L14141-14178; `dispatchRunInterrupt`, L13560-13692).
+ * `dispatchThreadStop`, L14692-14731; `dispatchRunInterrupt`, L14111-14243).
  * The work it ends is that thread's tasks and the live items, whichever run
  * started them; the active provider thread decides only whether it fires,
  * and a late report from an old provider thread can make that one active.
@@ -1115,13 +1118,13 @@ export const reportedWorkOf = (
  * the engine's own projection of the thread's pending work: the shell row
  * `getThreadFamily` returns, whose `pendingBackgroundTasks` the engine derives
  * by the same rule over the stored items, inputs whole (**Read** at
- * `db51b67`, `ProjectionStore.ts:9050-9064`, from
- * `selectShellPendingTurnItemRows` at `:8609-8623`;
+ * `bc0f04d`, `ProjectionStore.ts:9287-9301`, from
+ * `selectShellPendingTurnItemRows` at `:8817-8831`;
  * `orchestrationV2PendingBackgroundWork.ts:243-258`). A tool it lists is
  * pending; one it does not list ended, or runs on purpose. The shell lists
  * nothing while its own run gate holds (`derivePendingBackgroundWork`,
  * L270-285): a run active, or a latest run, which it picks by its own rule
- * (`ProjectionStore.ts:8237-8264`), that has not settled. It cannot say then,
+ * (`ProjectionStore.ts:8425-8452`), that has not settled. It cannot say then,
  * and neither can a shell that is missing: the tools count as pending, and a
  * Stop waits on them, sending fresh rounds, until a later read can say.
  */
@@ -1152,7 +1155,7 @@ const completedMillis = (run: Run) =>
 /**
  * The run the engine's usage-limit recovery looks at: of the runs that
  * executed, one that has not ended, else the one that ended last. **Read** at
- * `db51b67`, `ProjectionStore.ts`, `getLimitRecoveryCandidates`
+ * `bc0f04d`, `ProjectionStore.ts`, `getLimitRecoveryCandidates`
  * (`latestExecutedRun`).
  */
 const latestExecutedRun = (mirror: Mirror): Run | undefined =>
@@ -1171,7 +1174,7 @@ const MAX_OVERDUE_ARM = Duration.days(1);
 
 /**
  * The resume the engine will start on its own for an ended run, by its rule
- * for a usage limit (**Read** at `db51b67`: `ProjectionStore.ts`,
+ * for a usage limit (**Read** at `bc0f04d`: `ProjectionStore.ts`,
  * `getLimitRecoveryCandidates`, and `UsageLimitRecoveryWorker.ts`,
  * `limitRecoveryCommand`): the run is the thread's latest executed run and
  * failed, its root failure is a usage limit whose reset comes after the run
@@ -1244,7 +1247,7 @@ type DynamicTool = Extract<Item, { type: "dynamic_tool" }>;
 
 /**
  * How each harness names a `j3` tool on the engine's item: `mcp__j3__say` on
- * Claude Code, `j3.say` on Codex and on ACP agents (**Read** at `db51b67`,
+ * Claude Code, `j3.say` on Codex and on ACP agents (**Read** at `bc0f04d`,
  * `ensureToolCallStarted`; the ACP form **Verified** on the engine's own MCP
  * server).
  */
@@ -1363,8 +1366,8 @@ const stepOf = (item: Item): EngineStep | undefined => {
     finishedAt: LIVE_ITEM.has(item.status) ? null : (item.completedAt ?? item.updatedAt),
     // The path the harness read the image from, as it gave it: Claude Code's
     // and an ACP agent's `Read` of an image file, Codex's `imageView` (**Read**
-    // at `59651c1`, `ClaudeAdapterV2.ts` L7287, `CodexAdapterV2.ts` L5819,
-    // `provider-acp/src/server/adapter.ts` L4734).
+    // at `bc0f04d`, `ClaudeAdapterV2.ts` L7928, `CodexAdapterV2.ts` L6224,
+    // `provider-acp/src/server/adapter.ts` L2175).
     ...(item.type === "dynamic_tool" && item.viewedImagePath !== undefined
       ? { viewedImage: item.viewedImagePath }
       : {}),
@@ -1403,9 +1406,9 @@ const PLAN_STATUS: Record<TodoList["steps"][number]["status"], PlanStepStatus> =
  * The turn's plan: the latest list of what is left to do its harness kept in
  * the run. Each list the harness writes is a `todo_list` item, which the
  * engine records with the plan it updates (`plan.updated`) and in the same
- * run (**Read** at `59651c1`: `ClaudeAdapterV2.ts`,
- * `emitClaudePlanProjection`, L8437-8566; `CodexAdapterV2.ts`,
- * `buildTodoListArtifacts`, L4619-4697; the ACP, Cursor and OpenCode
+ * run (**Read** at `bc0f04d`: `ClaudeAdapterV2.ts`,
+ * `emitClaudePlanProjection`, L9090-9212; `CodexAdapterV2.ts`,
+ * `buildTodoListArtifacts`, L4980-5058; the ACP, Cursor and OpenCode
  * adapters alike). The latest item by ordinal is the plan that stands, as the
  * engine's own client picks it, since the plans' ids cannot order the
  * replacements within a run (`ProjectionStore.ts`, L4045-4070). A subagent's
@@ -1454,10 +1457,10 @@ const CLAUDE_CODE = "claudeAgent";
 /**
  * Whether the item's title describes the subagent. Only Claude Code's does:
  * it is the subagent's short description (`task_started`'s `description`,
- * **Read** at `59651c1`, `ClaudeAdapterV2.ts` L11522-11545). A Codex
- * subagent's title is its agent path, a name (`CodexAdapterV2.ts` L3643),
+ * **Read** at `bc0f04d`, `ClaudeAdapterV2.ts` L12359-12382). A Codex
+ * subagent's title is its agent path, a name (`CodexAdapterV2.ts` L4002),
  * and a delegated task's is the bot's own title for it, else a thread title
- * the engine makes up with a count (`Orchestrator.ts` L9860-9865).
+ * the engine makes up with a count (`Orchestrator.ts` L10147-10152).
  */
 const describedByTitle = (item: Subagent) =>
   item.origin === "provider_native" && item.driver === CLAUDE_CODE;
@@ -1486,7 +1489,7 @@ const littleOneOf = (item: Subagent): LittleOne => {
 /**
  * The turn's plan and its little ones. The engine records every subagent of
  * a run as an item of that run, a nested one too: Claude Code's runs in the
- * same run, under the subagent that started it (**Read** at `59651c1`,
+ * same run, under the subagent that started it (**Read** at `bc0f04d`,
  * `ClaudeAdapterV2.ts`, `updateClaudeSubagentNode`), so they are flattened
  * into the turn's. A Codex child's own subagents are items of the child's
  * thread, which J3 Bots does not follow.
@@ -1549,7 +1552,7 @@ const positionOf = (id: string, pattern: RegExp): number | undefined => {
 
 /**
  * What the engine takes for an option: its value, or its label when it has
- * none, exactly as the engine's own client sends it. **Read** at `db51b67`,
+ * none, exactly as the engine's own client sends it. **Read** at `bc0f04d`,
  * `packages/client-runtime/src/state/pendingUserInput.ts`
  * (`resolvePendingUserInputOptionValue`).
  */
@@ -1586,14 +1589,17 @@ const questionRequestOf = (item: UserInputRequest): EngineRequest | undefined =>
  * the caller's bug. A typed answer is sent alone, as the engine's own client
  * sends it; a question that takes several choices gets the list of their
  * values, one that takes one choice the value itself. A question with neither
- * is left unanswered. **Read** at `db51b67`, `pendingUserInput.ts`
+ * is left unanswered; a card has none, since it takes an answer to every
+ * question. The result holds each question id as its own key, `__proto__`
+ * included. **Read** at `bc0f04d`,
+ * `packages/client-runtime/src/state/pendingUserInput.ts`
  * (`resolvePendingUserInputAnswer`).
  */
 export const engineAnswersOf = (
   questions: ReadonlyArray<EngineQuestion>,
   answers: QuestionAnswers,
 ): Record<string, string | ReadonlyArray<string>> | undefined => {
-  const result: Record<string, string | ReadonlyArray<string>> = {};
+  const result: Array<readonly [string, string | ReadonlyArray<string>]> = [];
   for (const [cardId, answer] of Object.entries(answers)) {
     const position = positionOf(cardId, QUESTION_ID);
     const question = position === undefined ? undefined : questions[position];
@@ -1601,7 +1607,7 @@ export const engineAnswersOf = (
     const typed = answer.text?.trim() ?? "";
     if (typed.length > 0) {
       if (question.allowCustomAnswer === false) return undefined;
-      result[question.id] = typed;
+      result.push([question.id, typed]);
       continue;
     }
     const values: Array<string> = [];
@@ -1613,11 +1619,11 @@ export const engineAnswersOf = (
     }
     const [single, ...others] = values;
     if (single === undefined) continue;
-    if (question.multiSelect === true) result[question.id] = values;
-    else if (others.length === 0) result[question.id] = single;
+    if (question.multiSelect === true) result.push([question.id, values]);
+    else if (others.length === 0) result.push([question.id, single]);
     else return undefined;
   }
-  return result;
+  return Object.fromEntries(result);
 };
 
 /** Where the engine takes the answer to a request. */
@@ -1628,7 +1634,12 @@ type AnswerTarget =
       readonly requestId: string;
       readonly questions: ReadonlyArray<EngineQuestion>;
     }
-  | { readonly _tag: "secret"; readonly turnItemId: string };
+  | {
+      readonly _tag: "secret";
+      readonly turnItemId: string;
+      /** The name the value is saved under, when the request asked for it as its one field. */
+      readonly field: string | null;
+    };
 
 /** A request item, its state, and what the operator sees of it. */
 export interface RequestState {
@@ -1718,22 +1729,32 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         closed: runtimeClose(mirror.requests.get(item.requestId), item),
       };
     }
-    case "secret_request":
+    case "secret_request": {
+      // A card takes one value. A request for several has none, and is left to
+      // time out (docs/architecture/engine.md, "The adapter's interface"); one asked for as a
+      // single field is the card's value, labelled as the field and saved under its name, as
+      // the engine's own client labels it (**Read** at bc0f04d,
+      // `client-runtime/src/secretRequest.ts`).
+      const fields = item.fields ?? [];
+      if (fields.length > 1) return undefined;
+      const field = fields[0];
+      const placeholder = field === undefined ? item.placeholder : field.placeholder;
       return {
         requestId: RequestId.make(localIdFor(item.id)),
-        answerTo: { _tag: "secret", turnItemId: item.id },
+        answerTo: { _tag: "secret", turnItemId: item.id, field: field?.name ?? null },
         turnId,
         openedAt,
         request: {
           _tag: "secret",
-          label: label(item.label, "Secret"),
+          label: label(field?.label ?? item.label, "Secret"),
           reason: item.reason.slice(0, 2000),
           url: item.url?.slice(0, 2000) ?? null,
-          placeholder: item.placeholder === undefined ? null : label(item.placeholder, "Secret"),
+          placeholder: placeholder === undefined ? null : label(placeholder, "Secret"),
         },
         heldCall: null,
         closed: secretClose(item),
       };
+    }
     default:
       return undefined;
   }
@@ -1881,7 +1902,7 @@ type Settlement =
 
 /**
  * How a steer settled, once its target run has ended, from the engine's own
- * record of it. **Read** at `db51b67`, `Orchestrator.ts`, `requeueUnreadSteers`:
+ * record of it. **Read** at `bc0f04d`, `Orchestrator.ts`, `requeueUnreadSteers`:
  * once the run settles, the engine takes a steer whose item is still pending as
  * unread. It marks it cancelled if Stop reached the run, and otherwise queues
  * it as a run of its own, opened with the steer's message. Any other item
@@ -2085,7 +2106,7 @@ const liveBackground = (mirror: Mirror): ReadonlySet<string> =>
  * `moved` says a turn started or finished in this batch.
  *
  * The engine answers a resume with a new hold, before any turn starts, while a
- * replaced provider session still runs background work (**Read** at `db51b67`,
+ * replaced provider session still runs background work (**Read** at `bc0f04d`,
  * `Orchestrator.ts`, `startNextQueuedRun`). The engine learns that from the
  * provider process (`sessionHasBackgroundWork`), which is not on the wire, so
  * such a hold is reported once some of the background work live when it began
@@ -2146,8 +2167,8 @@ export interface Providers {
    * Whether the instance's provider tells the engine when it has read a steer.
    * Claude Code's does: the engine records a steer as `completed` as it hands
    * it over, the driver marks it `pending` and then `completed` again once the
-   * model echoes it (**Read** at `59651c1`, `Orchestrator.ts` L6442-6470,
-   * `ClaudeAdapterV2.ts` L14061 and L9366). The others leave the engine's
+   * model echoes it (**Read** at `bc0f04d`, `Orchestrator.ts` L6660-6688,
+   * `ClaudeAdapterV2.ts` L15191 and L10171). The others leave the engine's
    * first record standing.
    */
   readonly echoesSteers: (instanceId: Run["providerInstanceId"]) => boolean;
@@ -2181,10 +2202,10 @@ const isTaken = (mirror: Mirror, providers: Providers, steer: SteerRecord): bool
 /**
  * Whether a report the engine steered into another run stayed there: that run
  * has ended, and no run opens with the report. The engine runs a report whose
- * hand-over failed as a run of its own (**Read** at `59651c1`,
- * `EffectWorker.ts`, L362-420), and that run is where it is answered. It
- * records the report in the run as a `notification` item, which it never
- * requeues as it does an unread steer (`requeueUnreadSteers` takes only
+ * hand-over failed, or that the running turn declined, as a run of its own
+ * (**Read** at `bc0f04d`, `EffectWorker.ts`, L366-423), and that run is where
+ * it is answered. It records the report in the run as a `notification` item,
+ * which it never requeues as it does an unread steer (`requeueUnreadSteers` takes only
  * `user_message` items; `notificationTurnItem` in
  * `packages/provider-core/src/server/notification.ts`, L229-253), so one the
  * provider never took stayed too, and is brought back.
@@ -2574,9 +2595,9 @@ export const queuedRuns = (mirror: Mirror) =>
  * The session's runs the engine can still run: those waiting in its queue,
  * steers kept aside included, and those preparing, starting or running. These
  * are the runs a Stop ends: the engine's stop interrupts the latest one
- * preparing, starting or running and holds the queue (**Read** at `db51b67`,
- * `Orchestrator.ts`, `dispatchThreadStop`, L14165-14169, and
- * `holdStoppedThread`, L13115-13161), and the adapter cancels each waiting
+ * preparing, starting or running and holds the queue (**Read** at `bc0f04d`,
+ * `Orchestrator.ts`, `dispatchThreadStop`, L14718-14722, and
+ * `holdStoppedThread`, L13666-13712), and the adapter cancels each waiting
  * one. A run the engine starts, or queues, on its own (a provider
  * notification, a background task's completion, a scheduled task) is among
  * them as soon as the engine created it, before any event tells of it as a
@@ -2616,6 +2637,6 @@ export const nothingToStop = (mirror: Mirror, now: DateTime.Utc): boolean => {
 /**
  * Whether the engine holds the session's queue: its waiting runs do not start
  * on their own. The engine marks each waiting run, not the thread (**Read** at
- * `db51b67`, `OrchestrationV2Run.queueHeld`).
+ * `bc0f04d`, `OrchestrationV2Run.queueHeld`).
  */
 const isQueueHeld = (mirror: Mirror) => queuedRuns(mirror).some((run) => run.queueHeld === true);

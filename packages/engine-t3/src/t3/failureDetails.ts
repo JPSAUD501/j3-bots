@@ -8,7 +8,7 @@ const REDACTED = "[redacted]";
  * Shapes of a credential in an error's text, each with what stays of it: an
  * authorization header's scheme, a field's name, a URL's scheme and host.
  * The engine's contract has the provider redact credentials before it records
- * a failure (**Read** at `59651c1`, `orchestrationV2.ts`,
+ * a failure (**Read** at `bc0f04d`, `orchestrationV2.ts`,
  * `OrchestrationV2ProviderFailure`); this is the second guard, for a provider
  * that did not.
  */

@@ -4,10 +4,12 @@ import { engineFolders } from "./PrivateFiles.ts";
 
 // What an update of J3 Bots copies of the engine's own state before it starts
 // a release pinned to another engine, and puts back if that release never
-// becomes ready. The engine's migrations go forward only: once a newer engine
-// has opened its database, an older one refuses it (docs/architecture/engine.md).
+// becomes ready. The engine's migrations go forward only, and an older engine
+// starts on a database a newer one migrated all the same, then fails on what
+// it cannot read (docs/architecture/engine.md, "Upgrading the engine"). So the
+// state an older engine runs on is always the copy from before the update.
 
-/** The engine's database, in its `userdata` folder (**Read** at `db51b67`: `apps/server/src/config.ts:146-151`). */
+/** The engine's database, in its `userdata` folder (**Read** at `bc0f04d`: `apps/server/src/config.ts:150-154`). */
 const DATABASE = "statev2.sqlite";
 
 /**

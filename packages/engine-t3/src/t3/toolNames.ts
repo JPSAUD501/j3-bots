@@ -14,7 +14,8 @@ type NamedTool = Exclude<WorkTool, "background-task" | "plan">;
  * The engine's own tool server, as the harnesses name its tools:
  * `mcp__t3-code__delegate_task` on Claude Code, `t3-code.delegate_task` on
  * Codex and on ACP agents. **Verified** on `0.1.11`: a step of the scripted
- * agent's `delegate_task` call carried `t3-code.delegate_task`.
+ * agent's `delegate_task` call carried `t3-code.delegate_task`; the code it
+ * rests on is unchanged at `bc0f04d`.
  */
 const ENGINE_TOOL_SERVER = "t3-code";
 
@@ -137,7 +138,7 @@ interface Native {
 
 /**
  * The harnesses' own tools that reach the engine as plain tool calls, by
- * their bare names. Claude Code's are **Read** in T3 Code at `59651c17`
+ * their bare names. Claude Code's are **Read** in T3 Code at `bc0f04d`
  * (`ClaudeAdapterV2.ts`, `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS`): `Read`, `Grep`,
  * `Glob`, `LS` and `TaskStop` arrive as dynamic tools, with the call's input.
  * Codex's `view_image`, and `WebFetch` from an agent that reports it as a
@@ -159,10 +160,10 @@ const nativeTools: ReadonlyMap<string, Native> = new Map([
  * or of a task the engine delegates, each a little one of the turn (decision
  * 0070). The engine records the plan as a `todo_list` item and each subagent
  * and delegated task as a `subagent` item of the same run, which the adapter
- * reads instead (**Read** at `59651c1`: `ClaudeAdapterV2.ts`, a `TodoWrite`
- * call L11735 and `task_started` L11500-11545; `CodexAdapterV2.ts`,
- * `turn/plan/updated` L4951; `Orchestrator.ts`, a delegated task's item
- * L9923-9946). Claude Code's `Agent` call reaches the engine as no item of
+ * reads instead (**Read** at `bc0f04d`: `ClaudeAdapterV2.ts`, a `TodoWrite`
+ * call L12595 and `task_started` L12337-12382; `CodexAdapterV2.ts`,
+ * `turn/plan/updated` L5317; `Orchestrator.ts`, a delegated task's item
+ * L10210-10233). Claude Code's `Agent` call reaches the engine as no item of
  * its own, and `Task` is its older name; Codex's `update_plan` is
  * **Assumed** to reach it as a tool call, if at all.
  */

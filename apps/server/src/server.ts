@@ -14,6 +14,7 @@ import * as ServerConfig from "./config.ts";
 import * as OAuthEndpoints from "./connectors/oauth/endpoints.ts";
 import * as McpRegistry from "./connectors/sources/Registry.ts";
 import * as Domain from "./domain.ts";
+import { claimEngineRelease } from "./engine/EngineRelease.ts";
 import { engineProviders } from "./engine/providers.ts";
 import { ownExecutables } from "./harnesses/layout.ts";
 import * as HarnessSources from "./harnesses/sources.ts";
@@ -47,11 +48,12 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
 /**
  * The engine, run under `<J3_HOME>/engine`, writing only where the home's
  * containment check allows, with the Claude Code and Codex instances of
- * `engineProviders`. Each harness starts this package's `j3` bridge as the bot
- * tools' MCP server, pointed at the tool endpoint on loopback with the key it
- * signs its requests with, Codex takes
- * the base prompt as it changes, and both list the shared skills, among them
- * the ones J3 Bots ships, installed here first.
+ * `engineProviders`, once the database shows no newer engine ran on its data
+ * (`claimEngineRelease`). Each harness starts this package's `j3` bridge as
+ * the bot tools' MCP server, pointed at the tool endpoint on loopback with the
+ * key it signs its requests with, Codex takes the base prompt as it changes,
+ * and both list the shared skills, among them the ones J3 Bots ships,
+ * installed here first.
  */
 const engine = Layer.unwrap(
   Effect.gen(function* () {
@@ -66,6 +68,9 @@ const engine = Layer.unwrap(
     // The copies J3 Bots installed of the harnesses, which the engine runs from its start.
     const executables = yield* ownExecutables(config.home);
     const bridgeKey = yield* BridgeKey.BridgeKey;
+    // An engine build under test is not the pinned release, which is then
+    // neither checked nor recorded.
+    if (Option.isNone(config.engineBinary)) yield* claimEngineRelease(EngineLive.pinnedRelease);
     return EngineLive.layer({
       home: config.engineHome,
       port: config.enginePort,

@@ -14,7 +14,7 @@ import * as Rpc from "effect/rpc/Rpc";
  * The engine's `server.getConfig`, read only for the runtime-mode ceiling of
  * an administrator's policy. The config's `managedPolicy` is the summary the
  * orchestrator takes its ceiling from: both are the settings service's
- * `managedPolicy`, read once when the engine starts (**Read** at `59651c1`,
+ * `managedPolicy`, read once when the engine starts (**Read** at `bc0f04d`,
  * `ws.ts` `loadServerConfig`, `Orchestrator.ts` `runtimeModeCeiling`). The
  * rest of the config is left unread, so no change to it costs this read.
  */

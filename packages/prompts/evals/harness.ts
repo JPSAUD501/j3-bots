@@ -120,7 +120,7 @@ const HOST_TOOL = "run_command";
 
 /**
  * The engine's tool for a secret, as far as these scenarios need it. At the
- * engine's pinned commit (Read, T3 Code 59651c1,
+ * engine's pinned commit (Read, T3 Code bc0f04d,
  * `apps/server/src/mcp/OrchestratorMcpService.ts`, `request_secret`), a
  * `value` the user pasted is saved to a file only its owner can read, and the
  * result names that file; a `value` with `delivery: "secretRef"` is refused.

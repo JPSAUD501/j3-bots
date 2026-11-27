@@ -99,7 +99,7 @@ export class RoomStates extends Context.Service<
  * ignores, `ignoredTurnId`, answers in the room, or the room's own Stop went
  * to the session, `sessionId`, and is not settled. An idle session's stop
  * reaches the engine's latest turn, which can be another audience's while
- * work the room's turn left goes on (**Read** at `59651c1`, `Orchestrator.ts`,
+ * work the room's turn left goes on (**Read** at `bc0f04d`, `Orchestrator.ts`,
  * `dispatchRunInterrupt`). A room's Stop that still waits for another
  * audience's turn to end has asked the engine nothing, so a stop the session
  * ignores meanwhile is not the room's. Each is a column or a value.

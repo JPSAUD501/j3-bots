@@ -164,12 +164,20 @@ const BlobRow = Schema.Struct({ sha256: Schema.String, storage_path: Schema.Stri
 const decodeBlobs = Schema.decodeUnknownEffect(Schema.Array(BlobRow));
 const IdRow = Schema.Struct({ id: Schema.String });
 const decodeIds = Schema.decodeUnknownEffect(Schema.Array(IdRow));
+const EngineReleaseRow = Schema.Struct({ version: Schema.String, recorded_at: Schema.String });
+type EngineReleaseRow = typeof EngineReleaseRow.Type;
+const decodeEngineReleases = Schema.decodeUnknownEffect(Schema.Array(EngineReleaseRow));
 
 /**
  * What the mark says: the archive being put in place, by its manifest's
- * SHA-256, which names the SHA-256 of every file after it.
+ * SHA-256, which names the SHA-256 of every file after it, and the home's
+ * record of the newest engine that ran on its engine data, which the import
+ * carries into the new database. Kept here too, since the old database is
+ * removed before the new one is moved into its place.
  */
-const MarkJson = Schema.fromJsonString(Schema.Struct({ archive: Schema.String }));
+const MarkJson = Schema.fromJsonString(
+  Schema.Struct({ archive: Schema.String, engineRelease: Schema.optional(EngineReleaseRow) }),
+);
 const decodeMark = Schema.decodeUnknownOption(MarkJson);
 const encodeMark = Schema.encodeEffect(MarkJson);
 
@@ -292,6 +300,23 @@ const botsIn = Effect.fn("transfer.botsIn")(function* (file: string) {
   return counted?.n ?? 0;
 }, Effect.scoped);
 
+/**
+ * The newest engine release the database at `file` records as run on its
+ * home's engine data (`engine/EngineRelease.ts`); none when it records none.
+ */
+const engineReleaseIn = Effect.fn("transfer.engineReleaseIn")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) return Option.none<EngineReleaseRow>();
+  const sql = yield* openDatabase(file);
+  const [table] =
+    yield* sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'engine_release'`;
+  if (table === undefined) return Option.none<EngineReleaseRow>();
+  const rows = yield* decodeEngineReleases(
+    yield* sql`SELECT version, recorded_at FROM engine_release WHERE id = 1`,
+  ).pipe(Effect.orDie);
+  return Option.fromNullishOr(rows[0]);
+}, Effect.scoped);
+
 /** The place an attachment's bytes are kept, named by its SHA-256 (`attachments/Attachments.ts`). */
 const isBlobPath = (sha256: string, storagePath: string) =>
   /^[0-9a-f]{64}$/.test(sha256) && storagePath === `${sha256.slice(0, 2)}/${sha256}`;
@@ -300,12 +325,19 @@ const isBlobPath = (sha256: string, storagePath: string) =>
  * The export's database at `file`, checked, migrated to this release and
  * pointed at `home`: each bot's workspace there, found again when it is
  * provisioned, no engine project, a new secret for each webhook, every
- * session in an engine this home does not have, and no paired device. A bot
+ * session in an engine this home does not have, the home's own record of the
+ * engine releases that ran on its engine data (`engineRelease`), and no
+ * paired device. A bot
  * whose id is no folder's name, or an attachment kept anywhere but under its
  * digest, refuses the archive: each becomes a path in the home.
  */
 const readyDatabase = Effect.fn("transfer.readyDatabase")(
-  function* (file: string, home: string, archive: string) {
+  function* (
+    file: string,
+    home: string,
+    archive: string,
+    engineRelease: Option.Option<EngineReleaseRow>,
+  ) {
     const path = yield* Path.Path;
     const sql = yield* openDatabase(file);
     const damaged = (detail: string) =>
@@ -348,6 +380,15 @@ const readyDatabase = Effect.fn("transfer.readyDatabase")(
         INSERT INTO engine_instance (id, instance_id, recorded_at) VALUES (1, NULL, ${now})
         ON CONFLICT (id) DO UPDATE SET instance_id = NULL, recorded_at = excluded.recorded_at
       `;
+        // Nor did its engine's data come: the home keeps its own, and with it
+        // the record of the newest engine that ran on it, so no older one starts there.
+        yield* sql`DELETE FROM engine_release`;
+        if (Option.isSome(engineRelease)) {
+          yield* sql`
+          INSERT INTO engine_release (id, version, recorded_at)
+          VALUES (1, ${engineRelease.value.version}, ${engineRelease.value.recorded_at})
+        `;
+        }
       }),
     );
     // One file, no log beside it, to be moved into place.
@@ -520,15 +561,20 @@ export const importHome = Effect.fn("transfer.importHome")(function* <E, R>(inpu
   // export is replaced only when asked.
   const marked = yield* fs.readFileString(mark).pipe(Effect.option);
   const finishing = Option.isSome(marked);
-  const sameArchive = Option.exists(
-    Option.flatMap(marked, decodeMark),
-    ({ archive }) => archive === identity,
-  );
+  const markSays = Option.flatMap(marked, decodeMark);
+  const sameArchive = Option.exists(markSays, ({ archive }) => archive === identity);
   if (finishing && !sameArchive && !input.replace) {
     return yield* new AnotherImportUnfinished({ home });
   }
   const vault = path.join(home, HOME_ENTRIES.secrets);
   const bots = yield* botsIn(path.join(home, HOME_ENTRIES.database));
+  // An import that stopped may have removed the home's database already: its mark has the record.
+  const markedRelease = Option.flatMap(markSays, ({ engineRelease }) =>
+    Option.fromNullishOr(engineRelease),
+  );
+  const engineRelease = Option.isSome(markedRelease)
+    ? markedRelease
+    : yield* engineReleaseIn(path.join(home, HOME_ENTRIES.database));
   const secrets = (yield* secretsAtHome(vault))._tag !== "none";
   const files = yield* homeHoldsFiles(home);
   if ((bots > 0 || secrets || files) && !input.replace && !finishing) {
@@ -564,9 +610,21 @@ export const importHome = Effect.fn("transfer.importHome")(function* <E, R>(inpu
         Effect.sync(() => key.fill(0)),
       );
     }
-    const count = yield* readyDatabase(path.join(staging, ARCHIVED_DATABASE), home, file);
+    const count = yield* readyDatabase(
+      path.join(staging, ARCHIVED_DATABASE),
+      home,
+      file,
+      engineRelease,
+    );
 
-    yield* replaceFileDurably(mark, yield* encodeMark({ archive: identity }), 0o600);
+    yield* replaceFileDurably(
+      mark,
+      yield* encodeMark({
+        archive: identity,
+        ...(Option.isSome(engineRelease) ? { engineRelease: engineRelease.value } : {}),
+      }),
+      0o600,
+    );
     yield* putInPlace(home, staging);
     yield* fs.remove(mark);
     yield* flushFolder(path.dirname(mark));

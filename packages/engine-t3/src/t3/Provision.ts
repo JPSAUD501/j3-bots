@@ -71,7 +71,7 @@ export interface ProvisionInput {
  * replaces both at once and a write cut short leaves the one before it whole.
  * It is the single source of what every provisioning writes. The engine never
  * reads it: it reads and removes only the secrets its settings name (**Read**
- * at `db51b67`, `serverSettings.ts`).
+ * at `bc0f04d`, `serverSettings.ts`).
  */
 const StoredConnection = Schema.Struct({ baseUrl: Schema.String, key: Schema.String });
 type StoredConnection = typeof StoredConnection.Type;
@@ -153,7 +153,7 @@ const ENGINE_SETTINGS = {
   // The engine looks up each harness's latest release, which the operator's
   // update needs (`server.updateProvider`). Set, not left to the default, so
   // an engine settings file an earlier J3 Bots wrote with it off is turned
-  // back on. **Read** at `59651c1`, `enrichProviderSnapshotWithVersionAdvisory`
+  // back on. **Read** at `bc0f04d`, `enrichProviderSnapshotWithVersionAdvisory`
   // in `provider-core/src/server/maintenanceResolver.ts`.
   enableProviderUpdateChecks: true,
   // A bot's session must never be settled: a settled thread loses usage-limit
@@ -165,14 +165,14 @@ const ENGINE_SETTINGS = {
   autoResumeLimitedThreads: true,
   // A turn an engine restart cuts short stays ended (`interrupted`): the engine
   // arms no restart continuation, whose pending state it never reports over
-  // the socket J3 Bots reads. **Read** at `db51b67`, `RestartContinuation.ts`.
+  // the socket J3 Bots reads. **Read** at `bc0f04d`, `RestartContinuation.ts`.
   continueThreadsAfterServerUpdate: false,
   // Also drops the engine's device instructions from every session.
   enableAgentDeviceAccess: false,
   // The engine's browser acts with the operator's signed-in sites, so no bot
   // has it unless the operator turned it on for that bot, which sets it in
   // the bot's project (`BrowserAccess.ts`). The engine's default is on.
-  // **Read** at `59651c1`, `contracts/src/settings.ts`.
+  // **Read** at `bc0f04d`, `contracts/src/settings.ts`.
   enableAgentBrowserAccess: false,
 } as const;
 
@@ -193,10 +193,11 @@ export const driverOf = (harness: "claude-code" | "codex") => DRIVERS[harness];
  * probe runs the harness on the server user's own `~/.claude` and `~/.codex`,
  * which it creates and writes. So J3 Bots names every one of them, turned
  * off, and the engine checks and runs only J3 Bots' own instances. **Read**
- * at `59651c1`, `deriveProviderInstanceConfigMap` in
+ * at `bc0f04d`, `deriveProviderInstanceConfigMap` in
  * `ProviderInstanceRegistryHydration.ts` and `BUILT_IN_DRIVERS` in
  * `builtInDrivers.ts` (the ACP registry has no default instance); **Verified**
- * on `0.1.11` (`docs/architecture/engine.md#isolation`).
+ * on `0.1.11` (`docs/architecture/engine.md#isolation`), and the code it rests
+ * on is unchanged at `bc0f04d`.
  */
 const ENGINE_DEFAULT_INSTANCES = [
   "codex",
@@ -227,7 +228,7 @@ const codexProcessHome = (path: Path.Path, input: ProvisionInput, instanceId: st
     ? undefined
     : path.join(engineFolders(path, input.home).codexHomes, instanceId);
 
-/** Where the engine's secret store keeps one instance variable. **Read** at `db51b67`, `settingsSecrets.ts`. */
+/** Where the engine's secret store keeps one instance variable. **Read** at `bc0f04d`, `settingsSecrets.ts`. */
 const secretFileName = (instanceId: string, variable: string) =>
   `provider-env-${Base64Url.encode(instanceId)}-${Base64Url.encode(variable)}.bin`;
 
@@ -312,7 +313,7 @@ const instanceVariables = (
 /**
  * The executable a Claude Code or Codex instance runs, when J3 Bots installed
  * it: the engine's `binaryPath`, which it runs in place of the command on its
- * `PATH` (**Read** at `59651c1`, `ClaudeSettings` and `CodexSettings` in
+ * `PATH` (**Read** at `bc0f04d`, `ClaudeSettings` and `CodexSettings` in
  * `contracts/src/settings.ts`).
  */
 const binaryPath = (spec: { readonly executable: string | undefined }) =>

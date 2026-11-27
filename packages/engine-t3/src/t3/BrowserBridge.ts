@@ -43,8 +43,8 @@ import { baseUrl } from "./Supervisor.ts";
 // connection to the engine's preview stream per viewer. Listing and following
 // tabs needs `orchestration:read`; acting on one needs `preview:operate` in
 // the engine credential (`Credential.ts`), without which the engine silently
-// drops a viewer's input. **Read** at `59651c1`,
-// `apps/server/src/auth/RpcAuthorization.ts` L208-217 and
+// drops a viewer's input. **Read** at `bc0f04d`,
+// `apps/server/src/auth/RpcAuthorization.ts` L229-238 and
 // `preview/ServerBrowserStream.ts` L74-77.
 
 type EngineRpc = Effect.Success<ReturnType<typeof makeEngineRpc>>;
@@ -189,7 +189,7 @@ export type BrowserStart =
  * `viewer`, telling `report` what it shows of the browser's start. The engine
  * attaches a viewer only to a tab it started the browser for, and otherwise
  * closes the stream for what the host lacks when that is the cause (**Read**
- * at `59651c1`, `preview/ServerBrowserStream.ts` L85-127): so the first output
+ * at `bc0f04d`, `preview/ServerBrowserStream.ts` L85-127): so the first output
  * is a start, and a `setup-needed` close is the host's failure, by its type.
  */
 export const reportingStart = Effect.fnUntraced(function* (

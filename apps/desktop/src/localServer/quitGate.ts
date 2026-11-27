@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Holding the app's quit until the server it runs has stopped, as T3 Code's
-// desktop holds `before-quit` for its own (MIT; read at db51b671,
+// desktop holds `before-quit` for its own (MIT; read at bc0f04d,
 // `apps/desktop/src/app/DesktopLifecycle.ts`): Quit from the tray or the menu,
 // the system shutting down, an update. The first request is held while the
 // server stops; once it has, the app quits for real.

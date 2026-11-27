@@ -21,7 +21,7 @@ import { boundedCommand } from "./Command.ts";
 // signals: its command line comes from the system's process table through
 // PowerShell, and the only stop it has is to end the process and every one it
 // started (`taskkill /T /F`). T3 Code has no other way to be asked to stop
-// there: it stops on SIGTERM and SIGINT only (**Read** at `59651c1`,
+// there: it stops on SIGTERM and SIGINT only (**Read** at `bc0f04d`,
 // `apps/server/src/cli/server.ts` and `launcherWatch.ts`), and Windows sends
 // neither to a process without a console window. Its state is SQLite, which
 // survives a process ended mid-write.

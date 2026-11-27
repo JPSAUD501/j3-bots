@@ -9,7 +9,7 @@ import * as Rpc from "effect/rpc/Rpc";
 // reads it when it starts a thread's provider session: a project with
 // `enableAgentBrowserAccess: true` gets the `preview` capability on that
 // session's tool credential, and with it the browser tools; one without gets
-// none (**Read** at `59651c1`, `ProviderSessionManager.ts`,
+// none (**Read** at `bc0f04d`, `ProviderSessionManager.ts`,
 // `agentAccessSettings` and `prepareMcpSession`). A provider session that is
 // already running keeps the tools it started with until it is replaced.
 
@@ -44,7 +44,7 @@ export const GetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
  * replies (`promptSuggestionsEnabled`), each of which needs `settings:write`;
  * or one provider instance, replaced whole by the entry
  * provisioning writes for it (`instanceEntry`), with an empty patch, which
- * needs `providers:manage` (**Read** at `59651c1`, `RpcAuthorization.ts`,
+ * needs `providers:manage` (**Read** at `bc0f04d`, `RpcAuthorization.ts`,
  * `requiredScopesForSettingsUpdate`). Its answer, the whole settings, is
  * left unread.
  */

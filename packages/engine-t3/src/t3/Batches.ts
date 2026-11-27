@@ -7,7 +7,7 @@ import { copyMirror, copyView, type Mirror, type View } from "./Translate.ts";
 // What an `events` stream emitted, kept so a cursor can resume it by replay.
 // The engine replays entities as they are after a sequence, not what changed,
 // so the events after a cursor follow only from what the stream had told at it
-// (**Read** at `db51b67`, `ws.ts`, `subscribeThread`: replay coalesces the
+// (**Read** at `bc0f04d`, `ws.ts`, `subscribeThread`: replay coalesces the
 // events after `afterSequence`).
 
 /**

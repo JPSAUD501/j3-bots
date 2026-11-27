@@ -25,7 +25,7 @@ const HARNESS_LABELS = { "claude-code": "Claude Code", codex: "Codex" } as const
  * not installed yet. J3 Bots installs a missing harness itself as the server
  * starts (docs/decisions/0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md),
  * and the engine lists Claude Code's catalog even before it is there
- * (**Read** at `59651c1`, `checkClaudeProviderStatus` in `ClaudeProvider.ts`),
+ * (**Read** at `bc0f04d`, `checkClaudeProviderStatus` in `ClaudeProvider.ts`),
  * so the operator's first bot is made while its AI still downloads, and says
  * hello once it runs. One the engine found and cannot run, as a harness that
  * failed to start or a provider turned off, never: a bot put on it would

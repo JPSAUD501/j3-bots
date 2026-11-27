@@ -11,9 +11,12 @@ import { EngineTabId, SessionId } from "../ids.ts";
 // The engine's preview stream, `/api/preview-stream/ws`, as J3 Bots reads and
 // writes it. Its JSON frames are untyped on the engine's side, so every frame
 // is decoded here, and one this file does not know, or that does not decode,
-// is dropped. **Read** at `59651c1`, `apps/server/src/preview/ServerBrowser.ts`
+// is dropped. **Read** at `bc0f04d`, `apps/server/src/preview/ServerBrowser.ts`
 // (`ServerBrowserViewerOutput`, `dispatchViewerInput`, `attachViewer`) and
-// `ServerBrowserStream.ts`.
+// `ServerBrowserStream.ts`. Among the frames dropped are `selectMenu` and
+// `selectMenuClosed`: the engine keeps a native `<select>` from opening its
+// own menu under a viewer's press and offers the viewer the options instead,
+// to be answered with a `selectMenu` input, which this file does not send.
 
 /** The stream's route. */
 export const PREVIEW_STREAM_PATH = "/api/preview-stream/ws";
@@ -190,7 +193,7 @@ export const tabOf = (
 };
 
 /**
- * The page a snapshot says its tab shows. **Read** at `59651c1`,
+ * The page a snapshot says its tab shows. **Read** at `bc0f04d`,
  * `contracts/src/preview.ts` (`PreviewNavStatus`): `Success` carries the
  * address the tab committed to; `Loading`, the one it is loading.
  */

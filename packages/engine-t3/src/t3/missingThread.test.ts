@@ -4,7 +4,7 @@ import { OrchestrationV2GetThreadProjectionError, ThreadId } from "@t3tools/cont
 import * as Schema from "effect/Schema";
 import { isMissingThread } from "./missingThread.ts";
 
-// The engine's errors under the names it gives them (**Read** at `db51b67`,
+// The engine's errors under the names it gives them (**Read** at `bc0f04d`,
 // `ProjectionStore.ts` and `Orchestrator.ts`): a read of a thread fails with
 // the orchestrator's error, caused by the projection store's.
 class ProjectionStoreThreadNotFoundError extends Schema.TaggedError<ProjectionStoreThreadNotFoundError>()(

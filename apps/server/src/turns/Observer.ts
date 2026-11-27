@@ -1593,7 +1593,7 @@ export const layer = Layer.effect(
      * end: it is dropped. One asked for this turn stays when the engine no
      * longer reports the stop ignored: the Stop that comes with a Force stop
      * asks the engine again, which clears its mark until its wait runs out
-     * once more (**Read** at `59651c1`, `Orchestrator.ts`,
+     * once more (**Read** at `bc0f04d`, `Orchestrator.ts`,
      * `dispatchRunInterrupt`). The turn's end drops it (`finishTurn`), and so
      * does the engine taking it (`Stops`).
      */

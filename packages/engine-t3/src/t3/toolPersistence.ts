@@ -31,7 +31,7 @@ export const hasPersistentFlag = (input: unknown) =>
 
 /**
  * What `getTurnItem` ends a dynamic tool input with when it cut it short.
- * **Read** at `db51b67`, `WireProjection.ts`: it cuts a string input, or any
+ * **Read** at `bc0f04d`, `WireProjection.ts`: it cuts a string input, or any
  * other input's JSON text, at 256 KiB (`MAX_ON_DEMAND_BYTES`, L30-31;
  * `boundDynamicValue`, L212-224; `projectTurnItemForDetail`, L255-266).
  */

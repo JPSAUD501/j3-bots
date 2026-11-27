@@ -3,6 +3,7 @@ import { assert } from "@effect/vitest";
 import type { Vitest } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { type DispatchDisposition, Engine } from "../src/Engine.ts";
 import type { SessionEvent } from "../src/events.ts";
@@ -523,6 +524,35 @@ export const scenarios = (it: Methods) => {
       assert.strictEqual(opened.open.request._tag, "secret");
       assert.strictEqual(closed.resolution, "declined");
       assert.strictEqual(again._tag, "RequestClosed");
+      assert.deepStrictEqual(end.outcome, { _tag: "completed" });
+    }),
+  );
+
+  it.effect("saves a secret asked for as one named field under its name", () =>
+    Effect.gen(function* () {
+      const engine = yield* Engine;
+      const bench = yield* Bench;
+      const act = { _tag: "secret", field: "token" } as const;
+      const { sessionId, events, key } = yield* session("secret-field");
+      const running = yield* dispatchTurn({
+        ...(yield* start(key("secret-field"), act)),
+        sessionId,
+      });
+      yield* events.next("turn-started");
+      yield* bench.perform({ sessionId, turnId: running.turnId, act });
+      const opened = yield* events.next("request-opened");
+
+      yield* engine.respondSecret({
+        sessionId,
+        requestId: opened.open.requestId,
+        answer: { _tag: "provide", value: Redacted.make("example-token") },
+      });
+      const closed = yield* events.next("request-closed");
+      const end = yield* finished(events, running.turnId);
+
+      // The card is labelled as the field the value is saved under.
+      assert.deepInclude(opened.open.request, { _tag: "secret", label: "Token" });
+      assert.strictEqual(closed.resolution, "provided");
       assert.deepStrictEqual(end.outcome, { _tag: "completed" });
     }),
   );

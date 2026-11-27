@@ -11,7 +11,7 @@ import * as Probe from "./probe.ts";
 // the system's bare PATH, without what the shell profile adds (nvm, fnm,
 // ~/.local/bin, Homebrew). So the login shell is asked, as T3 Code's desktop
 // asks it (MIT; re-implemented from `apps/desktop/src/shell/DesktopShellEnvironment.ts`,
-// read at db51b671): an interactive login shell prints PATH between two
+// read at bc0f04d): an interactive login shell prints PATH between two
 // markers, whatever else its profile prints; on Windows, PowerShell with the
 // operator's profile and without it. Folders where the harnesses' own
 // installers put them are added after, for a profile that does not.
@@ -100,7 +100,9 @@ const outputOf = (command: string, args: ReadonlyArray<string>, env: Record<stri
   Probe.outputOf(command, args, { deadline: PROBE_DEADLINE, env });
 
 const unixProbe = `printf '%s' '${START}'; printf '%s' "$PATH"; printf '%s' '${END}'`;
-const windowsProbe = `Write-Output '${START}'; Write-Output $env:PATH; Write-Output '${END}'`;
+// Redirected, PowerShell writes in the console's code page, which mangles a
+// folder with a letter outside it; it is told to write UTF-8, which is read.
+const windowsProbe = `try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}; Write-Output '${START}'; Write-Output $env:PATH; Write-Output '${END}'`;
 
 /** The PATH `shell`, started as an interactive login shell, sets up. */
 const loginShellPath = (shell: string, env: Record<string, string>) =>

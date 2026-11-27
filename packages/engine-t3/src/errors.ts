@@ -31,7 +31,7 @@ export class EngineUnavailable extends Schema.TaggedError<EngineUnavailable>()(
  * tell them apart. A dispatch is resolved with `Engine.redispatch` under the
  * same key. Every other keyed command is resolved by sending it again with the
  * same key and input. A command without a key is idempotent by nature, except
- * `respondSecret`: see there. **Read** at `db51b67`: `apps/server/src/ws.ts`
+ * `respondSecret`: see there. **Read** at `bc0f04d`: `apps/server/src/ws.ts`
  * (`OrchestrationV2DispatchCommandError`, `cause: Schema.Defect()`), Effect's
  * `Schema.Defect` encoding `{name, message, cause?}`.
  */
@@ -93,7 +93,7 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
  * provider session it would replace still runs background work (a delegated
  * agent, a command left running) that the change would end. That change was
  * not applied. It is taken once the background work ends, or after a Stop
- * ended it. **Read** at `db51b67`, `Orchestrator.ts` (L4744-4757): a Claude
+ * ended it. **Read** at `bc0f04d`, `Orchestrator.ts` (L4900-4913): a Claude
  * Code session cannot change its permission mode in place, so the change
  * replaces its provider session, and the engine refuses that while the
  * session has background work.
@@ -128,7 +128,7 @@ export class BackgroundWorkRunning extends Schema.TaggedError<BackgroundWorkRunn
  * usable; and `ThreadManagementProviderInstanceDisabledError`, which is
  * indeterminate. `OrchestratorThreadAboveModeLimitError` (the dispatch mode
  * limit) binds only agent and MCP callers, never `/ws`.
- * **Read** at `db51b67`: `Orchestrator.ts` (`dispatchWithReceiptEffect`,
+ * **Read** at `bc0f04d`: `Orchestrator.ts` (`dispatchWithReceiptEffect`,
  * `replayCommandReceipt`), `ThreadMessageIntake.ts` (`dispatchCommand`),
  * `ThreadManagementService.ts` (`assertDispatchTargetEnabled`),
  * `DispatchModeLimit.ts`.
@@ -151,9 +151,9 @@ export class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("Di
  * found its rejected receipt (`OrchestratorCommandPreviouslyRejectedError`),
  * as for `DispatchRejected`; the engine keeps that receipt for good, so the
  * key is spent. A refusal while nothing targeted can run is moot and counts
- * as done. **Read** at `db51b67`, `Orchestrator.ts`: a refusal while planning
- * commits a rejected receipt (L16018-16034), and a resend replays it
- * (`replayCommandReceipt`, L15867-15877).
+ * as done. **Read** at `bc0f04d`, `Orchestrator.ts`: a refusal while planning
+ * commits a rejected receipt (L16678-16694), and a resend replays it
+ * (`replayCommandReceipt`, L16527-16537).
  *
  * The caller stops the session again with a fresh key.
  */
@@ -171,7 +171,8 @@ export class StopRejected extends Schema.TaggedError<StopRejected>()("StopReject
  * (`OrchestratorCommandPreviouslyRejectedError`), as for `DispatchRejected`.
  * The engine keeps that receipt for good, so the key is spent: sending it
  * again is refused again (**Verified** on `0.1.11` with a refused dismissal:
- * its resend was "previously rejected"). **Read** at `59651c1`,
+ * its resend was "previously rejected"; the code it rests on is unchanged at
+ * `bc0f04d`). **Read** at `bc0f04d`,
  * `Orchestrator.ts` (`dispatchRuntimeRequestRespond`): the engine refuses an
  * answer to an open request it cannot deliver, one whose provider session is
  * gone or that it marked `not_resumable`; a question answered by a later
@@ -196,11 +197,12 @@ export class AnswerRejected extends Schema.TaggedError<AnswerRejected>()("Answer
  * opened. The adapter reports it only once a resend of the key found its
  * rejected receipt (`OrchestratorCommandPreviouslyRejectedError`), as for
  * `DispatchRejected`, so the key is spent: sent again, it is refused again
- * (**Verified** on `0.1.11`, in the conformance suite). The engine plans a new
+ * (**Verified** on `0.1.11`, in the conformance suite; the code it rests on is
+ * unchanged at `bc0f04d`). The engine plans a new
  * thread by checking only that its id is free, which the key's own thread id
  * is unless another client took it, so what it refuses is otherwise a
  * projection read that failed while planning: a cause that passes. **Read**
- * at `59651c1`, `Orchestrator.ts` (`dispatchThreadCreate`, and
+ * at `bc0f04d`, `Orchestrator.ts` (`dispatchThreadCreate`, and
  * `dispatchWithReceiptEffect`, which commits a rejected receipt for every
  * error while planning).
  *
@@ -225,14 +227,15 @@ export class OpenRejected extends Schema.TaggedError<OpenRejected>()("OpenReject
  * with it. The engine checks it after the receipt lookup and records no
  * receipt for it, since the mode can be changed, so the key is not spent, and
  * a refusal on a resend proves the key was not applied before either
- * (**Read** at `59651c1`, `Orchestrator.ts` `dispatchWithReceiptEffect`, and
+ * (**Read** at `bc0f04d`, `Orchestrator.ts` `dispatchWithReceiptEffect`, and
  * `DispatchModeLimit.ts` `runtimeModeCeilingRefusal`, which refuses a
  * `thread.created` or a `thread.runtime-mode-updated` above the ceiling, and
  * a `run.created` or `run-attempt.created` in a thread above it). The engine
  * reads the policy once, when it starts, so the same mode is refused until the
  * caller asks for a lower one or the engine starts again under another policy
  * (**Verified** on `0.1.11`, in the conformance suite, under a policy that
- * limits threads to Supervised). The dispatch-mode limit
+ * limits threads to Supervised; the code it rests on is unchanged at
+ * `bc0f04d`). The dispatch-mode limit
  * (`OrchestratorThreadAboveModeLimitError`) is refused the same way, and
  * binds only the engine's agent and MCP callers, never `/ws`.
  *
@@ -261,7 +264,7 @@ export class PermissionModeRefused extends Schema.TaggedError<PermissionModeRefu
  * session is neither archived nor gone. Nothing was archived. The engine
  * refuses an archive while the thread has delegated tasks running, and the
  * Stop before it only queues their end, so an archive sent at once can meet
- * them still running (**Read** at `59651c1`, `Orchestrator.ts`,
+ * them still running (**Read** at `bc0f04d`, `Orchestrator.ts`,
  * `dispatchThreadMutation` and `dispatchThreadStop`). Every retirement sends
  * keys of its own.
  *
