@@ -80,6 +80,7 @@ import {
 } from "./model.ts";
 import { type NoticeRetry, notices } from "./notices.ts";
 import { routineSpeech } from "./routineSpeech.ts";
+import { quietTurns } from "./quietTurns.ts";
 import { saidInConversation } from "./saidInConversation.ts";
 import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { rotationRequests } from "./rotationRequests.ts";
@@ -112,8 +113,13 @@ const TurnRow = Schema.Struct({
   outcome_json: Schema.NullOr(json(TurnOutcome)),
   work_fold_entry_id: Schema.NullOr(EntryId),
   background_pending: Flag,
+  quiet: Flag,
 });
 type TurnRow = typeof TurnRow.Type;
+
+/** Whether a dispatch's wakes are all reactions', which make its turn quiet (`quietTurns`). */
+const onlyReactions = (wakes: ReadonlyArray<WakeRow>): boolean =>
+  wakes.length > 0 && wakes.every((wake) => wake.payload_json._tag === "reaction");
 
 const TurnKey = Schema.Struct({ sessionId: SessionRowId, turnId: TurnId });
 
@@ -363,6 +369,7 @@ export const layer = Layer.effect(
     const { sessionLost, sessionArchived } = sessionLoss(sql, entries, ledger, workSteps, signals);
     const { requestRotation } = rotationRequests(sql, signals);
     const records = sessionRecords(sql, entries, workSteps);
+    const quiet = quietTurns(sql);
     const { endTurn, followBackground, closeCard } = records;
 
     /**
@@ -419,7 +426,7 @@ export const layer = Layer.effect(
       Result: TurnRow,
       execute: ({ sessionId, turnId }) => sql`
         SELECT engine_turn_id, audience, audience_room_id, started_at, finished_at, outcome_json,
-          work_fold_entry_id, background_pending
+          work_fold_entry_id, background_pending, quiet
         FROM turns WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
       `,
     });
@@ -440,7 +447,7 @@ export const layer = Layer.effect(
       Result: TurnRow,
       execute: (sessionId) => sql`
         SELECT engine_turn_id, audience, audience_room_id, started_at, finished_at, outcome_json,
-          work_fold_entry_id, background_pending
+          work_fold_entry_id, background_pending, quiet
         FROM turns WHERE session_id = ${sessionId} AND finished_at IS NULL
       `,
     });
@@ -617,6 +624,9 @@ export const layer = Layer.effect(
       // The turn whose work this one goes on with: it speaks to that turn's
       // audience, and counts its hops and its Stops with it.
       let origin: TurnId | null = null;
+      // A turn a reaction alone started is quiet (`quietTurns`), and so is
+      // its continuation while it is.
+      let silent = false;
       if (cause._tag === "dispatch") {
         const dispatch = yield* keyed(session.id, cause.key);
         if (Option.isSome(dispatch)) {
@@ -624,6 +634,7 @@ export const layer = Layer.effect(
           fencedBy = dispatch.value.fenced_by_stop_id;
           origin = yield* resultOrigin(session.id, dispatch.value.id);
           yield* ledger.deliver(dispatch.value.id, turnId);
+          silent = onlyReactions(yield* ledger.wakesOf(dispatch.value.id));
         }
       } else if (cause._tag === "continuation") {
         // One link of the chain: the dispatch and its audience move to this turn.
@@ -631,6 +642,7 @@ export const layer = Layer.effect(
         if (Option.isSome(previous)) {
           audience = audienceOf(previous.value);
           origin = cause.turnId;
+          silent = previous.value.quiet;
         }
         yield* followLink(session.id, turnId, cause.turnId);
       } else if (cause.origin !== null) {
@@ -647,10 +659,10 @@ export const layer = Layer.effect(
       yield* sql`
         INSERT INTO turns (
           session_id, engine_turn_id, audience, audience_room_id, origin_turn_id, started_at,
-          last_activity_at
+          last_activity_at, quiet
         ) VALUES (
           ${session.id}, ${turnId}, ${columns.audience}, ${columns.roomId}, ${origin},
-          ${timeText(at)}, ${timeText(at)}
+          ${timeText(at)}, ${timeText(at)}, ${silent ? 1 : 0}
         )
       `;
       // The turn's room may be gone: a deleted room's work keeps its id, which
@@ -897,6 +909,14 @@ export const layer = Layer.effect(
       // that failed is tried again, and the run's history shows it. Nobody
       // waits on it in the conversation.
       if (carried.some((wake) => wake.kind === "routine")) return;
+      // A quiet turn leaves no trace, how it ended neither (`quietTurns`).
+      if (
+        onlyReactions(carried) &&
+        (dispatch.engine_turn_id === null ||
+          (yield* quiet.isQuiet(dispatch.session_id, dispatch.engine_turn_id)))
+      ) {
+        return;
+      }
       // What the operator stopped needs no notice and no follow-up, also when
       // the turn ended on its own before the Stop's interrupt reached it.
       if (yield* stops.covers(session.bot_id, audience, dispatch.seq)) return;
@@ -1136,8 +1156,11 @@ export const layer = Layer.effect(
     ) {
       const turn = yield* turnOf(session.id, turnId);
       if (Option.isNone(turn)) return;
-      // A routine run works out of the operator's sight: its turn has no fold.
-      if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
+      // A routine run works out of the operator's sight: its turn has no fold;
+      // neither has a quiet turn, while it is.
+      if (session.purpose === "side" || turn.value.quiet) {
+        return yield* touchActivity(session.id, turnId, at);
+      }
       const foldId = yield* foldOf(session, turn.value);
       // The path of an image the step looked at stays here: the step names it by an id.
       const { viewedImage, ...shown } = engineStep;
@@ -1212,7 +1235,7 @@ export const layer = Layer.effect(
       if (turn.value.audience === "conversation") {
         const foldId =
           turn.value.work_fold_entry_id ??
-          (work === null ? null : yield* foldOf(session, turn.value));
+          (work === null || turn.value.quiet ? null : yield* foldOf(session, turn.value));
         const fold = foldId === null ? Option.none() : yield* entries.find(foldId);
         if (
           Option.isSome(fold) &&
@@ -1267,6 +1290,7 @@ export const layer = Layer.effect(
       `;
       if (fresh.length === 0) return;
       yield* touchActivity(session.id, speech.turnId, speech.at);
+      yield* quiet.spoke(session.id, speech.turnId);
       const turn = yield* turnOf(session.id, speech.turnId);
       const audience = Option.match(turn, { onNone: () => conversation, onSome: audienceOf });
       // Speech replayed after its room was archived reaches nobody.

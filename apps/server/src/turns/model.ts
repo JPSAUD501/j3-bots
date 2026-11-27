@@ -190,6 +190,12 @@ export const WakePayload = Schema.Union([
    * of the room the bot has not seen, this one among them.
    */
   Schema.TaggedStruct("room", { entryId: EntryId, reason: RoomReason }),
+  /**
+   * The operator reacted to this bot's message (`entryId`): a `system` wake
+   * for the message's audience, whose quiet turn reads the reactions on it as
+   * they stand when it is dispatched (`reactions/Reactions.ts`).
+   */
+  Schema.TaggedStruct("reaction", { entryId: EntryId }),
 ]);
 export type WakePayload = typeof WakePayload.Type;
 
@@ -209,6 +215,12 @@ export const CatchUpNote = Schema.Union([
       Schema.Struct({ field: Schema.Literals(["name", "title", "job"]), value: Schema.String }),
     ),
   }),
+  /**
+   * Reactions on a message of the bot's conversation or of a room it is in
+   * changed: its next envelope tells them as they stand then, or nothing once
+   * none is left but its own. One per bot and message while it waits.
+   */
+  Schema.TaggedStruct("reactions", { entryId: EntryId }),
   /** The bot's main session was replaced; `digest` is what the new one is told of the conversation. */
   Schema.TaggedStruct("session-rotated", {
     digest: Schema.Array(

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import type { BotId, EntryId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,6 +64,11 @@ export interface LookingAtRef {
 }
 
 export interface OperatorMessage {
+  /**
+   * The message's id, which `react` names it by. Left out only where there
+   * is none yet: a size check before the message is written.
+   */
+  readonly id?: EntryId;
   readonly at: DateTime.Utc;
   readonly text: string;
   readonly attachments: ReadonlyArray<AttachmentRef>;
@@ -125,7 +130,32 @@ export type CatchUpItem =
    * The bot's working session was replaced since its last turn; `digest`
    * holds the recent conversation for the new one, oldest first.
    */
-  | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> };
+  | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> }
+  /** Reactions on a message changed since the bot's last turn: how they stand now. */
+  | { readonly type: "reactions"; readonly news: ReactionNews };
+
+/** Whoever wrote a message or reacted to one, as an envelope names them. */
+export type ReactionWho = "user" | "you" | TeammateRef;
+
+/**
+ * The reactions on one message as they stand, with the start of the message
+ * they are on: enough to know which it is without the conversation at hand.
+ */
+export interface ReactionNews {
+  /** The room the message is in; `null` for the bot's own conversation. */
+  readonly room: { readonly id: RoomId; readonly name: string } | null;
+  readonly message: {
+    readonly id: EntryId;
+    readonly from: ReactionWho;
+    /** Its start, cut to a few hundred characters. */
+    readonly excerpt: string;
+  };
+  /** In the order each reactor first reacted; never empty. */
+  readonly reactions: readonly [
+    { readonly from: ReactionWho; readonly emoji: string },
+    ...Array<{ readonly from: ReactionWho; readonly emoji: string }>,
+  ];
+}
 
 /**
  * One message of a session digest: who wrote it, its text, the names of its
@@ -165,6 +195,8 @@ export type RoomMentions = ReadonlyArray<string> | "everyone";
 export type RoomEntry =
   | {
       readonly author: "user";
+      /** The message's id, which `react` names it by; left out as for `OperatorMessage`. */
+      readonly id?: EntryId;
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
@@ -173,6 +205,8 @@ export type RoomEntry =
     }
   | {
       readonly author: TeammateRef;
+      /** The message's id, which `react` names it by; left out as for `OperatorMessage`. */
+      readonly id?: EntryId;
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
@@ -335,6 +369,15 @@ export type SystemEvent =
       readonly server: string;
       /** What comes next for a server added, or why one failed; null otherwise. */
       readonly note: string | null;
+    }
+  | {
+      readonly name: "reaction";
+      /**
+       * Your user reacted to a message of the bot's, and these are the
+       * reactions on it as they stand: a light signal, which the bot answers
+       * only when the reaction answers something it offered.
+       */
+      readonly news: ReactionNews;
     };
 
 export interface SystemWake extends WakeBase {
@@ -472,6 +515,15 @@ const CONNECTOR_ASK_LINES: {
     "Your ask to add the MCP server named below closed without an answer: it waited too long, or J3 Bots restarted while it waited. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on it, and that you will continue when they tell you to.",
 };
 
+/**
+ * What a `reaction` event says, and what to do: a reaction is a light signal,
+ * not a message. The bot answers it only when it answers an offer of the
+ * bot's and the bot knows that emoji as a yes there; otherwise the turn ends
+ * without a word, which leaves nothing in the conversation.
+ */
+export const REACTION_LINE =
+  "Your user reacted to a message of yours; the reactions on it as they stand now follow. A reaction is a light signal, not a message: by default, end your turn without a word and without a reaction. Act only if it answers something you offered there and your instructions or memory say that emoji means yes to it (they may have told you, say, that a 👍 on an offer of yours means go ahead): then say in a few words that you are on it, do it, and deliver the result with `say` as usual. Never treat it as approval for anything else.";
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -493,6 +545,8 @@ const eventLine = (event: SystemEvent): string => {
       return SECRET_ASK_LINES[event.outcome];
     case "connector-ask":
       return CONNECTOR_ASK_LINES[event.outcome];
+    case "reaction":
+      return REACTION_LINE;
   }
 };
 
@@ -643,6 +697,37 @@ const writeProfileChanges = (w: EnvelopeWriter, changes: ReadonlyArray<ProfileCh
   for (const change of changes) w.block("field", [["name", change.field]], change.value);
 };
 
+/** Who wrote or reacted, as attributes: you, your user, or a teammate by name and id. */
+const whoAttributes = (who: ReactionWho): Attributes =>
+  typeof who === "string"
+    ? [["from", who]]
+    : [
+        ["from", who.name],
+        ["from-id", who.id],
+      ];
+
+/**
+ * The reactions on one message as they stand: the message by its id, the room
+ * it is in, and its start as a quote, which is never a request; then each
+ * reaction.
+ */
+const writeReactionNews = (w: EnvelopeWriter, news: ReactionNews): void => {
+  w.open("reactions", [
+    ["message", news.message.id],
+    ["room", news.room?.name ?? null],
+    ["room-id", news.room?.id ?? null],
+  ]);
+  w.data([["source", "quote"], ...whoAttributes(news.message.from)], news.message.excerpt);
+  for (const reaction of news.reactions) {
+    w.empty("reaction", [...whoAttributes(reaction.from), ["emoji", reaction.emoji]]);
+  }
+  w.close("reactions");
+};
+
+/** The line before reactions that changed since the bot's last turn. */
+const REACTIONS_SINCE_LINE =
+  "Reactions on this message changed since your last turn; they stand now as follows:";
+
 const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>): void => {
   if (items.length === 0) return;
   w.open("since-last-turn");
@@ -687,6 +772,10 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
           );
           if (message.lookingAt !== null) writeLookingAt(w, message.lookingAt);
         }
+        break;
+      case "reactions":
+        w.line(REACTIONS_SINCE_LINE);
+        writeReactionNews(w, item.news);
         break;
     }
   }
@@ -766,7 +855,16 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       for (const message of wake.messages) {
         // Times tell coalesced messages apart; a single one was sent at the wake's time.
         const at = wake.messages.length > 1 ? w.time(message.at) : null;
-        writeOperatorMessage(w, [["at", at]], message.text, message.attachments, message.lookingAt);
+        writeOperatorMessage(
+          w,
+          [
+            ["id", message.id ?? null],
+            ["at", at],
+          ],
+          message.text,
+          message.attachments,
+          message.lookingAt,
+        );
       }
       return;
     case "room": {
@@ -794,6 +892,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           writeOperatorMessage(
             w,
             [
+              ["id", entry.id ?? null],
               ["at", w.time(entry.at)],
               ["to", to],
             ],
@@ -805,6 +904,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
           w.data(
             [
               ["source", "room"],
+              ["id", entry.id ?? null],
               ["from", entry.author.name],
               ["from-id", entry.author.id],
               ["at", w.time(entry.at)],
@@ -889,6 +989,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ]);
       }
       if (event.name === "delegated-result") w.data([["source", "delegated-task"]], event.text);
+      if (event.name === "reaction") writeReactionNews(w, event.news);
       return;
     }
   }

@@ -60,6 +60,7 @@ import {
   MessageText,
   PREVIEW_LENGTH,
   QuestionAnswers,
+  ReactionEmoji,
   ReceivedEntry,
   SecretRequestAnswer,
   WorkStep,
@@ -372,6 +373,24 @@ export const EntryRpcs = RpcGroup.make(
    */
   Rpc.make("message.retry", {
     payload: { ...command, entryId: EntryId },
+    error: CommandError,
+  }),
+  /**
+   * Sets the operator's reaction on a message, any author's, replacing the
+   * one they had there; `null` takes it off. It sets a state, so sending it
+   * again changes nothing more, and it takes no command id. A reaction on a
+   * bot's message reaches that bot as a light signal, a few seconds later,
+   * with whatever the operator left there by then
+   * (`docs/architecture/server.md`, Reactions).
+   *
+   * New in 0.13.0, within protocol 11: a client calls it only on a message
+   * that carries `reactions`, which a server that has it always sends. Fails
+   * with `Invalid("reaction")` when `emoji` is not one emoji or the entry is
+   * not a message, with `NotFound("entry")` for an entry that does not exist,
+   * and with `Conflict("room-archived")` in an archived room.
+   */
+  Rpc.make("message.react", {
+    payload: { entryId: EntryId, emoji: Schema.NullOr(ReactionEmoji) },
     error: CommandError,
   }),
 );

@@ -250,7 +250,7 @@ export const sessionRecords = (
    * the turn records its outcome, and its work fold ends with it. A turn
    * stopped or failed before its first step still says how it ended, in a
    * fold of no steps; one that completed leaves only its reply, and a
-   * routine's turn none. `background`: work the turn handed off still runs.
+   * routine's turn or a quiet one none. `background`: work the turn handed off still runs.
    */
   const endTurn = Effect.fn("sessionRecords.endTurn")(function* (
     session: FoldSession,
@@ -259,12 +259,16 @@ export const sessionRecords = (
     at: DateTime.Utc,
     background: boolean,
   ) {
-    yield* sql`
+    const [ended] = yield* sql<{ readonly quiet: number }>`
       UPDATE turns SET finished_at = ${timeText(at)}, outcome_json = ${yield* encodeOutcome(outcome)}
       WHERE session_id = ${session.id} AND engine_turn_id = ${turn.engine_turn_id}
+      RETURNING quiet
     `;
+    // A quiet turn tells nothing of how it ended (`quietTurns`).
     const tellsItsEnd =
-      (outcome._tag === "interrupted" || outcome._tag === "failed") && session.purpose === "main";
+      (outcome._tag === "interrupted" || outcome._tag === "failed") &&
+      session.purpose === "main" &&
+      ended?.quiet !== 1;
     const foldId =
       turn.work_fold_entry_id ??
       (tellsItsEnd ? yield* foldOf(session, turn, { _tag: "running" }) : null);

@@ -115,6 +115,8 @@ export type ActionState =
 export const cardAction = (entryId: EntryId) => `card:${entryId}`;
 /** Retrying a failed message or a failed turn. */
 export const retryAction = (entryId: EntryId) => `retry:${entryId}`;
+/** Setting or taking off the operator's reaction on a message. */
+export const reactAction = (entryId: EntryId) => `react:${entryId}`;
 export const stopAction = (botId: BotId) => `stop:${botId}`;
 /** Stopping the work addressed to a room. */
 export const roomStopAction = (roomId: RoomId) => `room-stop:${roomId}`;

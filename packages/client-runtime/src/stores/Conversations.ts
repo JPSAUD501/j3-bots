@@ -17,6 +17,7 @@ import {
   MessageText,
   NonNegativeInt,
   type QuestionAnswers,
+  type ReactionEmoji,
   type ReceivedEntry,
   RoomId,
   type SecretRequestAnswer,
@@ -48,6 +49,7 @@ import {
   cardAction,
   type IntentFailure,
   type IntentResult,
+  reactAction,
   retryAction,
 } from "../intents/Actions.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError, WindowLocks } from "../ports.ts";
@@ -463,6 +465,12 @@ export class Conversations extends Context.Service<
     readonly discard: (commandId: CommandId) => Effect.Effect<void, LocalStorageError>;
     readonly retryMessage: (entryId: EntryId) => Effect.Effect<IntentResult>;
     readonly retryNotice: (entryId: EntryId) => Effect.Effect<IntentResult>;
+    /**
+     * Sets the operator's reaction on a message, replacing theirs, or takes it
+     * off with `null`. Offered only for a message that carries `reactions`:
+     * a server that sends them takes `message.react`.
+     */
+    readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => Effect.Effect<IntentResult>;
     readonly answerCard: (entryId: EntryId, answer: CardAnswer) => Effect.Effect<IntentResult>;
     readonly provideSecret: (entryId: EntryId, answer: SecretAnswer) => Effect.Effect<IntentResult>;
     /**
@@ -1579,6 +1587,14 @@ export const layer = Layer.effect(
       );
     });
 
+    // No command id: it sets a state, which sending again leaves as it is.
+    const react = (entryId: EntryId, emoji: ReactionEmoji | null) =>
+      actions.run(
+        reactAction(entryId),
+        entryId,
+        connection.call((client) => client["message.react"]({ entryId, emoji })),
+      );
+
     const answerCard = Effect.fn("Conversations.answerCard")(function* (
       entryId: EntryId,
       answer: CardAnswer,
@@ -1675,6 +1691,7 @@ export const layer = Layer.effect(
       discard,
       retryMessage,
       retryNotice,
+      react,
       answerCard,
       provideSecret,
       withSendingPaused,

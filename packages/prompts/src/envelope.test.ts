@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import { BotId, EntryId, RoomId, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -44,6 +44,11 @@ const botId = (id: string) => Schema.decodeSync(BotId)(id);
 const wakesWith = (s: string): ReadonlyArray<Wake> => {
   const teammate = { id: botId("pixel"), name: s, title: s };
   const message = { from: teammate, at: now, text: s, urgent: true };
+  const news = {
+    room: { id: Schema.decodeSync(RoomId)("launch"), name: s },
+    message: { id: Schema.decodeSync(EntryId)("entry_offer"), from: teammate, excerpt: s },
+    reactions: [{ from: teammate, emoji: s }] as const,
+  };
   const base = {
     at: now,
     timeZone,
@@ -55,6 +60,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         type: "session-rotated" as const,
         digest: [{ from: "user" as const, text: s, files: [s], lookingAt: { app: s, title: s } }],
       },
+      { type: "reactions" as const, news },
     ],
   };
   return [
@@ -126,6 +132,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
     },
     { ...base, kind: "system", event: { name: "browser-help", outcome: "done", site: s } },
     { ...base, kind: "system", event: { name: "delegated-result", text: s } },
+    { ...base, kind: "system", event: { name: "reaction", news } },
   ];
 };
 
