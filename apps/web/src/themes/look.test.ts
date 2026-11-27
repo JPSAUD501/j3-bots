@@ -4,7 +4,8 @@ import { themeChoices } from "@j3-bots/client-runtime/presentation";
 import { BotId, ThemeId, type ThemeLibrary } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { drawLook, holdOwnCss, lookOf, OWN_CSS_MEDIA, THEME_ROOT } from "./look";
+import { drawLook, holdOwnCss, OWN_CSS_MEDIA, THEME_ROOT } from "./look";
+import { lookOf } from "./lookOf";
 
 const own = `[data-slot="bubble"] { border-radius: 4px; }`;
 

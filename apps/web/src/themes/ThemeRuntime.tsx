@@ -4,7 +4,8 @@ import type { Palette } from "@j3-bots/design-tokens";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
 import { showLook, usePreferences } from "../preferences/preferences";
 import type { ThemesIntents, ThemesView } from "../shell/data";
-import { applyBackground, lookOf } from "./look";
+import { applyBackground } from "./look";
+import { lookOf } from "./lookOf";
 
 /**
  * Each picture a theme names, as a URL this page can draw, by theme and
