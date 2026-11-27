@@ -26,14 +26,13 @@ export const LOOK_KEY = "j3:theme-look";
 const STYLE_ID = "j3-theme";
 
 /**
- * A theme as the page draws it: its id, its stylesheet, its canvas in each
- * appearance, and what the desktop app's windows fill with before a page
- * paints, in each.
+ * A theme as the page draws it: its id, its stylesheet, and its canvas and
+ * surface in each appearance as `#rrggbb`, which the browser's own chrome and
+ * the desktop app's windows fill with before a page paints.
  */
 const ThemeLook = Schema.Struct({
   id: Schema.String,
   css: Schema.String,
-  canvas: Schema.Struct({ light: Schema.String, dark: Schema.String }),
   window: ThemeWindowColors,
 });
 export type ThemeLook = typeof ThemeLook.Type;
@@ -52,7 +51,6 @@ export function lookOf(choice: ThemeChoice, withCss: boolean): ThemeLook | null 
   return {
     id: choice.id,
     css: `${renderThemeColorsCss(palettes, THEME_ROOT)}\n${own}`,
-    canvas: { light: palettes.light.background, dark: palettes.dark.background },
     window: {
       light: {
         background: hexColor(palettes.light.background),

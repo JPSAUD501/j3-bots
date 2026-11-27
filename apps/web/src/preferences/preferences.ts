@@ -73,7 +73,10 @@ function compute(): Preferences {
  * each system appearance; with one chosen, both give its canvas.
  */
 function applyThemeColor({ appearance, theme }: Preferences) {
-  const canvas = look?.canvas ?? { light: colors.background.light, dark: colors.background.dark };
+  const canvas = {
+    light: look?.window.light.background ?? colors.background.light,
+    dark: look?.window.dark.background ?? colors.background.dark,
+  };
   for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
     const own = meta.media.includes("dark") ? "dark" : "light";
     meta.content = canvas[appearance === "system" ? own : theme];

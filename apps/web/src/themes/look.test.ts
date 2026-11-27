@@ -33,8 +33,7 @@ describe("the look a page draws for a theme", () => {
     expect(withCss?.css).toContain(`${THEME_ROOT}.dark {`);
     expect(withCss?.css).toContain(own);
     expect(colorsOnly?.css).not.toContain(own);
-    expect(withCss?.canvas.dark).toBe("#101418");
-    // The desktop app fills its window with it before the page paints, as hex.
+    // The browser's chrome and the desktop app's window fill with it before the page paints.
     expect(withCss?.window.dark.background).toBe("#101418");
   });
 
