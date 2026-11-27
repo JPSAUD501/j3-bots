@@ -206,7 +206,7 @@ Any app on the phone can open the share sheet (`ShareActivity` is exported, as a
 - **Nothing is left behind.** The share's folder is deleted as the sheet closes, sent or not; a folder left by a process that ended mid-share is deleted with the next share. The upload reads each copy, never the sender's original.
 - **Types are labels.** The media type is the one the sender's provider reports, normalized as for a file picked in the composer, and the server checks each file as for any other upload.
 - **A Direct Share shortcut only picks a bot.** The shortcut a share came through names the bot to preselect; a sending app can name any, and the operator still sees the bot and presses Send. A bot it names that is not offered is never swapped for another: the operator picks one.
-- **Each sheet answers for itself.** Every sheet open has a key of its own, which its JavaScript names on every call, so a sheet left open over one app never sends, closes or reads the share of another.
+- **Each sheet answers for itself.** Every sheet open has a key of its own, which its JavaScript names on every call, so a sheet left open over one app never sends, closes or reads the share of another. Back reaches the sheet it was pressed in the same way, never the app's shared back handling, which would go to whichever window listened last.
 
 The home-screen widget shows, to anyone who sees the home screen, the names of the bots and routines the operator put there, whether a bot is working or waiting, and the start of a routine's last result: the operator chooses what each widget shows. What it shows is kept in the app's private storage; the widget's receiver is not exported, and its setup, which Android requires to be, only configures a widget of the app's own.
 

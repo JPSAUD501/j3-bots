@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Cell } from "@j3-bots/client-runtime";
-import { openTemplateChunks, type TemplateRead } from "@j3-bots/client-runtime/presentation";
+import {
+  openTemplateChunks,
+  type TemplateRead,
+  templateFileTooLarge,
+} from "@j3-bots/client-runtime/presentation";
 import { useReadable } from "@j3-bots/client-runtime/react";
 import * as DocumentPicker from "expo-document-picker";
 import { File, type FileHandle, FileMode } from "expo-file-system";
@@ -28,6 +32,8 @@ export const openTemplateAt = async (uri: string, size?: number | null): Promise
 };
 
 const readAt = async (uri: string, size: number | null): Promise<TemplateRead> => {
+  // Not even opened: a share's copy of a file over the limit was not kept.
+  if (size !== null && templateFileTooLarge(size)) return { _tag: "too-large" };
   let handle: FileHandle;
   try {
     handle = new File(uri).open(FileMode.ReadOnly);

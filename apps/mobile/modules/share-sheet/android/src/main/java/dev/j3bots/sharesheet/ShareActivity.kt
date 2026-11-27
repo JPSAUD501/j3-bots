@@ -2,6 +2,7 @@
 package dev.j3bots.sharesheet
 
 import android.os.Bundle
+import androidx.activity.OnBackPressedCallback
 import androidx.core.view.WindowCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -17,7 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Each sheet has a key of its own, handed to its JavaScript as the root's
  * `sheet` property, by which every call names the sheet it comes from: a
  * sheet left open over one app is still the one its own buttons close after
- * another app opened a second.
+ * another app opened a second. Back is the sheet's own too: it goes to the
+ * JavaScript as the sheet's `onBack`, never as React Native's back press,
+ * which the runtime every window shares hands to the last that listened.
  *
  * It reads the share once, when the sheet asks (`take`), copying each file
  * into a folder of its own (ShareIntake), and deletes that folder when it
@@ -43,6 +46,16 @@ class ShareActivity : ReactActivity() {
     // Nothing is restored: a share is read from the intent that opened it.
     super.onCreate(null)
     open[key] = WeakReference(this)
+    // Added after React Native's own, so it is the one that hears Back.
+    onBackPressedDispatcher.addCallback(
+      this,
+      object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+          val tell = back
+          if (tell == null) finish() else tell(key)
+        }
+      },
+    )
   }
 
   /**
@@ -80,6 +93,9 @@ class ShareActivity : ReactActivity() {
   companion object {
     /** The sheets open now, by key. */
     private val open = ConcurrentHashMap<String, WeakReference<ShareActivity>>()
+
+    /** Tells the JavaScript that Back was pressed in the sheet a key names (ShareSheetModule). */
+    @Volatile internal var back: ((String) -> Unit)? = null
 
     /** The sheet `key` names, while it is open. */
     internal fun byKey(key: String): ShareActivity? = open[key]?.get()

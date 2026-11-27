@@ -17,8 +17,17 @@ class HomeWidgetModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
+  private val back: (String) -> Unit = { setup -> sendEvent("onBack", mapOf("setup" to setup)) }
+
   override fun definition() = ModuleDefinition {
     Name("HomeWidget")
+
+    /** Back was pressed in widget setup `setup`. */
+    Events("onBack")
+
+    OnCreate { WidgetSetupActivity.back = back }
+
+    OnDestroy { if (WidgetSetupActivity.back === back) WidgetSetupActivity.back = null }
 
     /**
      * What the widgets on home screens show: for each, `{ kind, botId }` or

@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.OnBackPressedCallback
 import androidx.core.view.WindowCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -23,7 +24,8 @@ import java.util.concurrent.ConcurrentHashMap
  * Until a choice is made the result is "cancelled", so a widget being added
  * is not placed when the operator backs out. Each setup has a key of its own,
  * handed to its JavaScript as the root's `setup` property, by which every
- * call names the setup it comes from.
+ * call names the setup it comes from, and Back goes to it alone as its
+ * `onBack`, as in the share sheet (ShareActivity).
  */
 class WidgetSetupActivity : ReactActivity() {
   /** The widget being set up, or null when Android named none of the app's widgets. */
@@ -48,6 +50,16 @@ class WidgetSetupActivity : ReactActivity() {
     widgetId = given.takeIf { provider == ComponentName(this, BotWidgetProvider::class.java) }
     setResult(Activity.RESULT_CANCELED, resultFor(given))
     open[key] = WeakReference(this)
+    // Added after React Native's own, so it is the one that hears Back.
+    onBackPressedDispatcher.addCallback(
+      this,
+      object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+          val tell = back
+          if (tell == null) finish() else tell(key)
+        }
+      },
+    )
   }
 
   /**
@@ -76,6 +88,9 @@ class WidgetSetupActivity : ReactActivity() {
   companion object {
     /** The setups open now, by key. */
     private val open = ConcurrentHashMap<String, WeakReference<WidgetSetupActivity>>()
+
+    /** Tells the JavaScript that Back was pressed in the setup a key names (HomeWidgetModule). */
+    @Volatile internal var back: ((String) -> Unit)? = null
 
     /** The setup `key` names, while it is open. */
     internal fun byKey(key: String): WidgetSetupActivity? = open[key]?.get()

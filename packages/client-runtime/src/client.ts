@@ -393,8 +393,8 @@ export interface J3Client {
    * upload waits for the server as the composer's does. `onProgress` hears
    * the bytes sent of all the files. Aborting `signal` while files upload
    * stops it, and what was uploaded until then is never sent; once
-   * `onSending` is heard, the message is the outbox's, and aborting only stops
-   * waiting for the server's answer. `refused` names the first file the
+   * `onSending` is heard, the message is the outbox's, which sends it, and
+   * aborting only stops waiting for the server's answer. `refused` names the first file the
    * server would not take, with the composer's reason; nothing was sent.
    */
   readonly sendWithFiles: (
@@ -404,8 +404,8 @@ export interface J3Client {
       readonly files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>;
       readonly onProgress: (sent: number, total: number) => void;
       /**
-       * Every file is uploaded and the message is handed to the outbox, which
-       * sends it on its own from then on: aborting `signal` no longer stops it.
+       * Every file is uploaded and the outbox keeps the message, which it
+       * sends on its own from then on: aborting `signal` no longer stops it.
        */
       readonly onSending: () => void;
     },
@@ -762,9 +762,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       before += file.body.size;
       input.onProgress(before, total);
     }
-    input.onSending();
     return yield* conversations
-      .send({ target: input.target, text: input.text, attachments })
+      .send({ target: input.target, text: input.text, attachments, onKept: input.onSending })
       .pipe(
         Effect.catchTag("InvalidMessage", ({ problem }) =>
           Effect.succeed({ _tag: "invalid", problem } satisfies SendWithFilesResult),

@@ -4,7 +4,7 @@ import { J3ClientProvider, useReadable, useRoutines } from "@j3-bots/client-runt
 import type { BotId } from "@j3-bots/contracts";
 import { motion } from "@j3-bots/design-tokens";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, BackHandler, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { ChoiceRow } from "../components/form.tsx";
@@ -69,13 +69,8 @@ function WidgetSetup({ setup }: { readonly setup: string }) {
     else if (step._tag === "bot") setStep({ _tag: "kind" });
     else setOpen(false);
   }, [step, saving]);
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      back();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [back]);
+  // Back in this setup, and no other window's: the runtime is the app's.
+  useEffect(() => homeWidget?.onBack(setup, back), [setup, back]);
 
   const choose = (target: WidgetTarget) => {
     if (homeWidget === null || saving) return;

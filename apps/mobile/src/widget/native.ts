@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, RoutineId } from "@j3-bots/contracts";
-import { requireOptionalNativeModule } from "expo";
+import { type NativeModule, requireOptionalNativeModule } from "expo";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { WidgetSnapshot } from "./snapshot.ts";
 
@@ -15,7 +16,7 @@ const WidgetTarget = Schema.Union([
 ]);
 export type WidgetTarget = typeof WidgetTarget.Type;
 
-interface HomeWidgetModule {
+declare class HomeWidgetModule extends NativeModule<{ onBack: (event: unknown) => void }> {
   targets(): Promise<unknown>;
   write(snapshot: string, faces: string): Promise<void>;
   choose(setup: string, target: string): Promise<void>;
@@ -44,9 +45,12 @@ export interface HomeWidgetNative {
   readonly close: (setup: string) => void;
   /** Opens the app, on `link` when one is given, and closes the setup. */
   readonly openApp: (setup: string, link: string | null) => void;
+  /** Calls `listener` each time Back is pressed in setup `setup`, until the returned function is called. */
+  readonly onBack: (setup: string, listener: () => void) => () => void;
 }
 
 const decodeTargets = Schema.decodeUnknownSync(Schema.Array(WidgetTarget));
+const decodeBack = Schema.decodeUnknownOption(Schema.Struct({ setup: Schema.String }));
 
 export const homeWidget: HomeWidgetNative | null =
   module === null
@@ -57,4 +61,10 @@ export const homeWidget: HomeWidgetNative | null =
         choose: (setup, target) => module.choose(setup, JSON.stringify(target)),
         close: (setup) => module.close(setup),
         openApp: (setup, link) => module.openApp(setup, link),
+        onBack: (setup, listener) => {
+          const subscription = module.addListener("onBack", (event) => {
+            if (Option.exists(decodeBack(event), (back) => back.setup === setup)) listener();
+          });
+          return () => subscription.remove();
+        },
       };

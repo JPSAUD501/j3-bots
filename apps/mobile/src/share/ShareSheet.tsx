@@ -11,7 +11,7 @@ import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wor
 import { type BotId, MAX_ATTACHMENTS_PER_MESSAGE } from "@j3-bots/contracts";
 import { motion } from "@j3-bots/design-tokens";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, BackHandler, ScrollView, ToastAndroid, View } from "react-native";
+import { ActivityIndicator, ScrollView, ToastAndroid, View } from "react-native";
 import { KeyboardProvider, KeyboardStickyView } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
@@ -118,13 +118,8 @@ function ShareSheet({ sheet }: { readonly sheet: string }) {
     };
   }, [sheet]);
 
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      close();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [close]);
+  // Back in this sheet, and no other window's: the runtime is the app's.
+  useEffect(() => shareSheet?.onBack(sheet, close), [sheet, close]);
 
   const body = (() => {
     if (taken._tag === "reading" || state._tag === "starting") return <Waiting />;

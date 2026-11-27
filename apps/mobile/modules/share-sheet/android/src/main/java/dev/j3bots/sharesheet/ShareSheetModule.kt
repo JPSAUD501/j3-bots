@@ -18,8 +18,17 @@ class ShareSheetModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
+  private val back: (String) -> Unit = { sheet -> sendEvent("onBack", mapOf("sheet" to sheet)) }
+
   override fun definition() = ModuleDefinition {
     Name("ShareSheet")
+
+    /** Back was pressed in share sheet `sheet`. */
+    Events("onBack")
+
+    OnCreate { ShareActivity.back = back }
+
+    OnDestroy { if (ShareActivity.back === back) ShareActivity.back = null }
 
     /**
      * The share sheet `sheet` was opened with, read and copied once

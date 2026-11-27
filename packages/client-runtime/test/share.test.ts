@@ -71,6 +71,12 @@ const stopped = () => {
   return stopping.signal;
 };
 
+/** A signal aborted the moment the share is handed over, as a sheet closed right then. */
+const lettingGo = () => {
+  const letGo = new AbortController();
+  return { signal: letGo.signal, onSending: () => letGo.abort() };
+};
+
 /** The share's message, sent or on its way; the bot's own hello is not it. */
 const isTheShare = (item: ConversationItem) =>
   (item._tag === "message" || item._tag === "outgoing") && item.text === "Have a look";
@@ -140,6 +146,32 @@ it.layer(server, { excludeTestServices: true })("sending a share", (it) => {
       const conversation = app.openConversation(target);
       const loaded = yield* waitFor(conversation.state, (state) => state.phase === "ready");
       assert.isFalse(loaded.items.some(isTheShare));
+      conversation.release();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends the message once it is handed over, even if the sheet then lets go", () =>
+    Effect.gen(function* () {
+      const { app, target } = yield* pairedApp();
+      const letGo = lettingGo();
+      yield* Effect.promise(() =>
+        app.sendWithFiles(
+          {
+            target,
+            text: "Have a look",
+            files,
+            onProgress: () => undefined,
+            onSending: letGo.onSending,
+          },
+          letGo.signal,
+        ),
+      );
+
+      const conversation = app.openConversation(target);
+      const shown = yield* waitFor(conversation.state, (state) =>
+        state.items.some((item) => item._tag === "message" && isTheShare(item)),
+      );
+      assert.strictEqual(shown.items.filter(isTheShare).length, 1);
       conversation.release();
     }).pipe(Effect.scoped),
   );

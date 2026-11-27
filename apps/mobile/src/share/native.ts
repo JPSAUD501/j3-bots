@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE } from "@j3-bots/contracts";
-import { requireOptionalNativeModule } from "expo";
+import { type NativeModule, requireOptionalNativeModule } from "expo";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 // The share sheet's module (modules/share-sheet), on Android only. What it
@@ -34,7 +35,7 @@ const Incoming = Schema.Struct({
 });
 export type Incoming = typeof Incoming.Type;
 
-interface ShareSheetModule {
+declare class ShareSheetModule extends NativeModule<{ onBack: (event: unknown) => void }> {
   take(sheet: string, limit: number, most: number): Promise<unknown>;
   close(sheet: string): void;
   openApp(sheet: string, link: string | null): void;
@@ -69,9 +70,12 @@ export interface ShareSheetNative {
   readonly setShortcuts: (bots: ReadonlyArray<ShortcutBot>) => Promise<void>;
   /** Tells Android a share went to `botId`. */
   readonly reportShared: (botId: string) => Promise<void>;
+  /** Calls `listener` each time Back is pressed in sheet `sheet`, until the returned function is called. */
+  readonly onBack: (sheet: string, listener: () => void) => () => void;
 }
 
 const decodeIncoming = Schema.decodeUnknownSync(Schema.NullOr(Incoming));
+const decodeBack = Schema.decodeUnknownOption(Schema.Struct({ sheet: Schema.String }));
 
 export const shareSheet: ShareSheetNative | null =
   module === null
@@ -85,4 +89,10 @@ export const shareSheet: ShareSheetNative | null =
         openApp: (sheet, link) => module.openApp(sheet, link),
         setShortcuts: (bots) => module.setShortcuts(JSON.stringify(bots)),
         reportShared: (botId) => module.reportShared(botId),
+        onBack: (sheet, listener) => {
+          const subscription = module.addListener("onBack", (event) => {
+            if (Option.exists(decodeBack(event), (back) => back.sheet === sheet)) listener();
+          });
+          return () => subscription.remove();
+        },
       };
