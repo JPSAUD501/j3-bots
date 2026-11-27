@@ -64,7 +64,12 @@ import { AttachmentUnavailable, Files } from "../src/files/Files.ts";
 import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
 import { FILE_MARK } from "../src/files/placed.ts";
-import { passageOf, type QuotableMessage, replyTo } from "../src/presentation/quotes.ts";
+import {
+  passageOf,
+  type QuotableMessage,
+  replyTo,
+  withComment,
+} from "../src/presentation/quotes.ts";
 import { waitFor } from "../src/Store.ts";
 import {
   type CardAnswer,
@@ -125,8 +130,9 @@ class Taps extends Context.Service<
     readonly silentReacts: { count: number };
     /**
      * Whether the roster answers as a server from before conversation
-     * mentions, quotes and screen recordings does, its snapshot without
-     * `conversationMentions`, `quotes` and `screenRecordings`.
+     * mentions, quotes, their comments and screen recordings does, its
+     * snapshot without `conversationMentions`, `quotes`, `quoteComments`
+     * and `screenRecordings`.
      */
     readonly olderRoster: { value: boolean };
   }
@@ -257,6 +263,7 @@ const tapped = Layer.mergeAll(
             const {
               conversationMentions: _,
               quotes: _quotes,
+              quoteComments: _comments,
               screenRecordings: _recordings,
               ...older
             } = frame;
@@ -1634,7 +1641,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   );
 
   it.effect(
-    "offers `@` in a bot's conversation, Reply and Quote, and recording the screen, only once the server says it takes them",
+    "offers `@` in a bot's conversation, Reply and Quote, a comment on a quote, and recording the screen, only once the server says it takes them",
     () =>
       Effect.gen(function* () {
         const { olderRoster } = yield* Taps;
@@ -1644,6 +1651,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* waitFor(roster.state, (state) => state._tag === "ready");
         assert.isFalse(roster.conversationMentions.get());
         assert.isFalse(roster.quotes.get());
+        assert.isFalse(roster.quoteComments.get());
         assert.isFalse(roster.screenRecordings.get());
 
         // The server is updated: the snapshot of the next connection says it takes them.
@@ -1651,6 +1659,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* (yield* TestPlatform.TestNetwork).dropSockets;
         yield* waitFor(roster.conversationMentions, (takes) => takes);
         yield* waitFor(roster.quotes, (takes) => takes);
+        yield* waitFor(roster.quoteComments, (takes) => takes);
         yield* waitFor(roster.screenRecordings, (takes) => takes);
       }).pipe(Effect.provide(client())),
   );
@@ -1676,59 +1685,75 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     }).pipe(Effect.provide(client())),
   );
 
-  it.effect("sends a draft's reply and passages with it, and the next draft quotes nothing", () =>
-    Effect.gen(function* () {
-      yield* pairAndConnect;
-      const { sends } = yield* Taps;
-      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Wren") };
-      const conversation = yield* (yield* Conversations).open(target);
-      const drafts = yield* Drafts;
-      const said = "Two options: alpha, or beta.";
-      yield* drafts.setText(target, said);
-      assert.strictEqual(yield* drafts.send(target), "sent");
-      yield* Queue.take(sends);
-      const first = yield* waitFor(conversation.state, (state) =>
-        state.items.some((item) => item._tag === "message" && item.text === said),
-      );
-      const source = first.items.find(
-        (item): item is QuotableMessage => item._tag === "message" && item.text === said,
-      );
-      if (source === undefined) return assert.fail("The message to quote did not arrive");
+  it.effect(
+    "sends a draft's reply and passages with it, a passage's comment too, and the next draft quotes nothing",
+    () =>
+      Effect.gen(function* () {
+        yield* pairAndConnect;
+        const { sends } = yield* Taps;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Wren") };
+        const conversation = yield* (yield* Conversations).open(target);
+        const drafts = yield* Drafts;
+        const said = "Two options: alpha, or beta.";
+        yield* drafts.setText(target, said);
+        assert.strictEqual(yield* drafts.send(target), "sent");
+        yield* Queue.take(sends);
+        const first = yield* waitFor(conversation.state, (state) =>
+          state.items.some((item) => item._tag === "message" && item.text === said),
+        );
+        const source = first.items.find(
+          (item): item is QuotableMessage => item._tag === "message" && item.text === said,
+        );
+        if (source === undefined) return assert.fail("The message to quote did not arrive");
 
-      const start = said.indexOf("beta");
-      const passage = passageOf(source, start - 1, start + "beta".length);
-      if (passage === null || passage === "too-long") return assert.fail("No passage");
-      assert.strictEqual(yield* drafts.quote(target, passage), "added");
-      assert.strictEqual(yield* drafts.quote(target, replyTo(source)), "added");
-      yield* drafts.setText(target, "The second.");
-      // The reply goes first, whatever the order they were added in.
-      assert.deepStrictEqual(
-        drafts.state
-          .get()
-          .get(targetKey(target))
-          ?.quotes.map((quote) => quote.quoted._tag),
-        ["message", "passage"],
-      );
-      assert.strictEqual(yield* drafts.send(target), "sent");
-      yield* Queue.take(sends);
+        const start = said.indexOf("beta");
+        const passage = passageOf(source, start - 1, start + "beta".length);
+        if (passage === null || passage === "too-long") return assert.fail("No passage");
+        assert.strictEqual(yield* drafts.quote(target, passage), "added");
+        assert.strictEqual(yield* drafts.quote(target, replyTo(source)), "added");
+        yield* drafts.setText(target, "The second.");
+        // The reply goes first, whatever the order they were added in.
+        assert.deepStrictEqual(
+          drafts.state
+            .get()
+            .get(targetKey(target))
+            ?.quotes.map((quote) => quote.quoted._tag),
+          ["message", "passage"],
+        );
+        assert.strictEqual(yield* drafts.send(target), "sent");
+        yield* Queue.take(sends);
 
-      const sent = yield* waitFor(conversation.state, (state) =>
-        state.items.some((item) => item._tag === "message" && item.text === "The second."),
-      );
-      const reply = sent.items.find(
-        (item) => item._tag === "message" && item.text === "The second.",
-      );
-      assert.deepStrictEqual(
-        reply?._tag === "message"
-          ? reply.quotes?.map((quote) => [quote.entryId, quote.quoted])
-          : undefined,
-        [
-          [source.id, { _tag: "message", opening: said, more: false }],
-          [source.id, { _tag: "passage", text: "beta" }],
-        ],
-      );
-      assert.isUndefined(drafts.state.get().get(targetKey(target)));
-    }).pipe(Effect.provide(client())),
+        const sent = yield* waitFor(conversation.state, (state) =>
+          state.items.some((item) => item._tag === "message" && item.text === "The second."),
+        );
+        const reply = sent.items.find(
+          (item) => item._tag === "message" && item.text === "The second.",
+        );
+        assert.deepStrictEqual(
+          reply?._tag === "message"
+            ? reply.quotes?.map((quote) => [quote.entryId, quote.quoted])
+            : undefined,
+          [
+            [source.id, { _tag: "message", opening: said, more: false }],
+            [source.id, { _tag: "passage", text: "beta" }],
+          ],
+        );
+        assert.isUndefined(drafts.state.get().get(targetKey(target)));
+
+        // The operator's comment on a passage goes with it, and stays with the message.
+        assert.strictEqual(yield* drafts.quote(target, withComment(passage, "Why this?")), "added");
+        yield* drafts.setText(target, "Tell me more.");
+        assert.strictEqual(yield* drafts.send(target), "sent");
+        yield* Queue.take(sends);
+        yield* waitFor(conversation.state, (state) =>
+          state.items.some(
+            (item) =>
+              item._tag === "message" &&
+              item.text === "Tell me more." &&
+              item.quotes?.[0]?.comment === "Why this?",
+          ),
+        );
+      }).pipe(Effect.provide(client())),
   );
 
   it.effect("goes offline when the platform loses the network, though the socket still works", () =>

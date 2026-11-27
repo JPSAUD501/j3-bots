@@ -28,6 +28,7 @@ export interface ComposerSource {
     | "draftNotSaved"
     | "conversationMentions"
     | "quotes"
+    | "quoteComments"
   >;
   readonly intents: Pick<
     ShellIntents,
@@ -75,6 +76,7 @@ export function useComposerSource(
   const notSaved = useReadable(j3.draftsNotSaved);
   const conversationMentions = useReadable(j3.conversationMentions);
   const quotes = useReadable(j3.quotes);
+  const quoteComments = useReadable(j3.quoteComments);
   const settings = useReadable(j3.settings);
   const dictation = useDictationSource({
     voice: j3.voice,
@@ -98,6 +100,7 @@ export function useComposerSource(
       draftNotSaved: (asked) => notSaved.has(targetKey(asked)),
       conversationMentions,
       quotes,
+      quoteComments,
     },
     intents: {
       setDraftText: j3.setDraftText,

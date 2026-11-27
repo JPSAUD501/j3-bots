@@ -417,6 +417,8 @@ export interface J3Client {
   readonly conversationMentions: Readable<boolean>;
   /** See `Roster.quotes`: whether Reply and Quote are offered. */
   readonly quotes: Readable<boolean>;
+  /** See `Roster.quoteComments`: whether a quoted passage takes a comment. */
+  readonly quoteComments: Readable<boolean>;
   /** See `Roster.screenRecordings`: whether recording the screen is offered. */
   readonly screenRecordings: Readable<boolean>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
@@ -947,6 +949,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     sections: services.roster.sections,
     conversationMentions: services.roster.conversationMentions,
     quotes: services.roster.quotes,
+    quoteComments: services.roster.quoteComments,
     screenRecordings: services.roster.screenRecordings,
     pairs: services.pairs.state,
     engine: services.engine.state,

@@ -12,6 +12,7 @@ import {
   type MentionOption,
   namedMentions,
   standingMentions,
+  withComment,
 } from "@j3-bots/client-runtime/presentation";
 import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
@@ -153,6 +154,7 @@ export function Composer({
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
   const { uploading, sendable, problem } = draftReadiness(text, files);
+  const comments = useReadable(client.quoteComments);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;
   const uploaded = useMemo(
@@ -358,6 +360,24 @@ export function Composer({
       ? null
       : messageProblemText(problem, i18n);
 
+  // What the composer says inside itself, the most pressing first (decision 0106): nothing
+  // shows under it. A file that cannot go was said as it failed; its chip marks it.
+  const notes: ReadonlyArray<{
+    readonly key: string;
+    readonly text: string;
+    readonly tone: "blocked" | "muted";
+  }> = [
+    ...(alert === null ? [] : [{ key: "alert", text: alert, tone: "blocked" } as const]),
+    ...(failures.length > 0
+      ? [{ key: "failures", text: failuresText, tone: "blocked" } as const]
+      : []),
+    ...(cut ? [{ key: "cut", text: t("prompt.cut"), tone: "muted" } as const] : []),
+    // Quiet: it clears by itself once the device keeps the draft.
+    ...(notSaved
+      ? [{ key: "notSaved", text: t("composer.notSaved"), tone: "muted" } as const]
+      : []),
+  ];
+
   // A ready file opens; one still uploading, or that failed, has nothing to open yet.
   const openFile = (key: string) => {
     const file = files.find((held) => held.key === key);
@@ -401,17 +421,40 @@ export function Composer({
           }}
         />
       )}
-      <DraftQuotes
-        quotes={draft.quotes}
-        frozen={frozen}
-        onRemove={(index) => client.unquoteInDraft(target, index)}
-      />
       <AnimatedView
         // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
         style={[settled, focused ? { borderColor: tint.color } : undefined]}
         className="rounded-composer border border-input bg-surface"
       >
+        {/* What the composer says about the draft: inside it, over the text, never under it. */}
+        {notes.length > 0 && (
+          <View className="px-3 pt-1.5">
+            {notes.map((note) => (
+              <Text
+                key={note.key}
+                numberOfLines={2}
+                accessibilityLiveRegion={note.key === "alert" ? "assertive" : "polite"}
+                className={`text-xs ${note.tone === "blocked" ? "text-blocked" : "text-muted-foreground"}`}
+              >
+                {note.text}
+              </Text>
+            ))}
+          </View>
+        )}
         {dictation !== null && <DictationNotice dictation={dictation} />}
+        <DraftQuotes
+          quotes={draft.quotes}
+          frozen={frozen}
+          onRemove={(index) => client.unquoteInDraft(target, index)}
+          onComment={
+            comments
+              ? (index, comment) => {
+                  const quote = draft.quotes[index];
+                  if (quote !== undefined) client.quoteInDraft(target, withComment(quote, comment));
+                }
+              : undefined
+          }
+        />
         <View className="flex-row items-end">
           <PressScale
             depth="round"
@@ -498,17 +541,6 @@ export function Composer({
           },
         ]}
       />
-      {cut && <Text className="px-3 text-xs text-muted-foreground">{t("prompt.cut")}</Text>}
-      {/* Quiet: it clears by itself once the device keeps the draft. */}
-      {notSaved && (
-        <Text className="px-3 text-xs text-muted-foreground">{t("composer.notSaved")}</Text>
-      )}
-      {failures.length > 0 && <Text className="px-3 text-xs text-blocked">{failuresText}</Text>}
-      {alert !== null && (
-        <Text accessibilityLiveRegion="assertive" className="px-3 text-xs text-blocked">
-          {alert}
-        </Text>
-      )}
     </View>
   );
 }

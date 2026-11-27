@@ -305,6 +305,14 @@ const sentences = {
   "quote.goToYours": "Ir para a sua mensagem",
   "quote.missing": "Esta mensagem não está mais aqui.",
   "quote.unreachable": "Não deu para encontrar esta mensagem. Tente mais tarde.",
+  "quote.quoting": "Citando {name}",
+  "quote.drafted": "O que a sua mensagem cita",
+  "quote.comment.add": "Adicionar um comentário",
+  "quote.comment.edit": "Editar o seu comentário",
+  "quote.comment.label": "Seu comentário sobre este trecho",
+  "quote.comment.placeholder": "Adicione um comentário (opcional)",
+  "quote.comment.save": "Salvar",
+  "quote.comment.cancel": "Cancelar",
   "quote.sheet.title": "Selecione o que citar",
   "quote.sheet.hint": "Toque e segure o texto, depois arraste para selecionar.",
 
@@ -2330,6 +2338,7 @@ const sentences = {
   "whatsNew.release": "J3 Bots {version}",
   "whatsNew.open": "Abre as novidades.",
   "whatsNew.close": "Fechar",
+  "whatsNew.see": "Ver as novidades",
   "updatePrompt.title": "O J3 Bots {version} chegou",
   "updatePrompt.titleApp": "O J3 Bots {version} está pronto para este app",
   "updatePrompt.plan.serverThenApp":

@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { quoteText, replyIn } from "@j3-bots/client-runtime/presentation";
-import type { Bot, MessageQuote } from "@j3-bots/contracts";
-import { Reply, X } from "lucide-react-native";
+import { quoteText } from "@j3-bots/client-runtime/presentation";
+import { type Bot, MAX_QUOTE_COMMENT_LENGTH, type MessageQuote } from "@j3-bots/contracts";
+import { type LucideIcon, Pencil, Quote, Reply, X } from "lucide-react-native";
 import { useState } from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { Sheet } from "../components/Sheet.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
-import { Text } from "../text.tsx";
-import { useQuoting } from "./Quotes.tsx";
+import { Text, TextInput } from "../text.tsx";
 import { useColor } from "../theme.ts";
-import { useBotInk } from "./tint.ts";
+import { Button } from "../ui.tsx";
+import { useQuoting } from "./Quotes.tsx";
 
 /** What tells a message's quotes apart: a message is quoted whole once, and each passage of it once. */
 const quoteKey = (quote: MessageQuote) =>
@@ -36,10 +37,13 @@ function AuthorLine({
   name,
   bot,
   quoteIsBot,
+  className,
 }: {
   readonly name: string;
   readonly bot: Bot | null;
   readonly quoteIsBot: boolean;
+  /** The name's text color. */
+  readonly className: string;
 }) {
   return (
     <View className="flex-row items-center gap-1.5">
@@ -50,7 +54,7 @@ function AuthorLine({
           <View className="rounded-pill bg-muted" style={{ width: FACE, height: FACE }} />
         )
       )}
-      <Text numberOfLines={1} className="shrink text-xs font-medium text-foreground">
+      <Text numberOfLines={1} className={`shrink text-xs font-medium ${className}`}>
         {name}
       </Text>
     </View>
@@ -58,48 +62,55 @@ function AuthorLine({
 }
 
 /**
- * The messages a sent message quotes, above its words: each a small card
- * with who wrote it and the passage, or the start of the message, on two
- * lines at most, edged in its author's color. A tap reads the conversation
- * back to the message and shows it; one no longer there, or that could not be
- * read, says so in the card, and the second can be tapped again.
+ * What a sent message quotes, at the top of its bubble, before its words:
+ * each a quiet block of the bubble's own ink, with who wrote it and the
+ * passage, or the start of the message, on two lines at most, and under a
+ * passage the operator's comment on it (decision 0106). No colored edge: the
+ * block reads in the operator's bubble and a bot's alike. A tap reads the
+ * conversation back to the message and shows it; one no longer there, or
+ * that could not be read, says so in the block, and the second can be
+ * tapped again.
  */
-export function QuoteCards({
+export function BubbleQuotes({
   quotes,
-  side,
-  maxWidth,
+  ink,
 }: {
   readonly quotes: ReadonlyArray<MessageQuote>;
-  readonly side: "start" | "end";
-  readonly maxWidth: number;
+  /** The bubble's text color class, which the blocks and comments take. */
+  readonly ink: "text-bubble-operator-foreground" | "text-bubble-bot-foreground";
 }) {
   if (quotes.length === 0) return null;
   return (
-    <View
-      style={{ maxWidth }}
-      className={`gap-1 self-stretch ${side === "end" ? "items-end" : "items-start"}`}
-    >
+    <View className="gap-1.5">
       {quotes.map((quote) => (
-        <QuoteCard key={quoteKey(quote)} quote={quote} maxWidth={maxWidth} />
+        <View key={quoteKey(quote)} className="gap-1">
+          <QuoteBlock quote={quote} ink={ink} />
+          {quote.comment !== undefined && (
+            <Text selectable className={`text-base ${ink}`}>
+              {quote.comment}
+            </Text>
+          )}
+        </View>
       ))}
     </View>
   );
 }
 
-function QuoteCard({
+function QuoteBlock({
   quote,
-  maxWidth,
+  ink,
 }: {
   readonly quote: MessageQuote;
-  readonly maxWidth: number;
+  readonly ink: "text-bubble-operator-foreground" | "text-bubble-bot-foreground";
 }) {
   const { t } = usePresentation().i18n;
   const quoting = useQuoting();
   const author = useAuthor()(quote);
-  // Edged in its author's color: a bot's own, the accent for the operator, muted for a bot gone.
-  const ink = useBotInk(author.bot?.profile.avatar ?? null);
-  const accent = useColor("accent-accent");
-  const edge = quote.author._tag === "operator" ? accent : ink;
+  const color = useColor(
+    ink === "text-bubble-operator-foreground"
+      ? "accent-bubble-operator-foreground"
+      : "accent-bubble-bot-foreground",
+  );
   const [lost, setLost] = useState<"missing" | "unreachable" | null>(null);
   const [going, setGoing] = useState(false);
   const words = quoteText(quote);
@@ -130,13 +141,22 @@ function QuoteCard({
       accessibilityValue={{ text: shown }}
       accessibilityState={{ busy: going, disabled: lost === "missing" }}
       onPress={go}
-      style={{ maxWidth, borderStartColor: edge }}
-      className="gap-0.5 rounded-lg border border-s-4 border-border bg-surface px-2.5 py-1.5 active:bg-muted"
+      className="gap-0.5 overflow-hidden rounded-lg px-2.5 py-1.5"
     >
-      <AuthorLine name={author.name} bot={author.bot} quoteIsBot={quote.author._tag === "bot"} />
+      {/* The bubble's ink, faint, under the block: the same in any bubble and theme. */}
+      <View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { backgroundColor: color, opacity: 0.09 }]}
+      />
+      <AuthorLine
+        name={author.name}
+        bot={author.bot}
+        quoteIsBot={quote.author._tag === "bot"}
+        className={ink}
+      />
       <Text
         numberOfLines={2}
-        className={`text-sm ${lost === null ? "text-muted-foreground" : "text-blocked"}`}
+        className={`text-sm ${ink} ${lost === null ? "opacity-75" : "italic opacity-75"}`}
       >
         {shown}
       </Text>
@@ -145,97 +165,165 @@ function QuoteCard({
 }
 
 /**
- * What the draft quotes, over the composer: the reply as a strip that says
- * whom it answers, with the start of the message on one line, then each
- * passage as a compact chip with its author and the passage on two lines.
- * Each has an × that takes it out, unless the draft takes no change.
+ * What the draft quotes, inside the composer above its text: each a compact
+ * chip, a reply's arrow or a passage's quote mark, its author's face (or
+ * "You"), and the start of what it quotes on one line, then a pencil on a
+ * passage for the operator's comment, where the server takes one
+ * (`onComment`), and an × that takes it out. The draft takes no change while
+ * it is `frozen`.
  */
 export function DraftQuotes({
   quotes,
   frozen,
   onRemove,
+  onComment,
 }: {
   readonly quotes: ReadonlyArray<MessageQuote>;
   readonly frozen: boolean;
   /** Takes the quote at `index` of `quotes` out of the draft. */
   readonly onRemove: (index: number) => void;
+  /** Sets the operator's comment on the passage at `index`; empty takes it off. */
+  readonly onComment: ((index: number, comment: string) => void) | undefined;
 }) {
   const { t } = usePresentation().i18n;
   const authorOf = useAuthor();
+  const [editing, setEditing] = useState<number | null>(null);
   if (quotes.length === 0) return null;
-  const reply = replyIn(quotes);
-  const passages = quotes.flatMap((quote, index) =>
-    quote.quoted._tag === "passage" ? [{ quote, index }] : [],
-  );
+  const edited = editing === null ? undefined : quotes[editing];
   return (
-    <View className="gap-1.5">
-      {reply !== null && (
-        <View className="flex-row items-center gap-2 rounded-lg border border-border bg-surface ps-3">
-          <Icon icon={Reply} size={16} color="accent-muted-foreground" />
-          <View className="min-w-0 flex-1 py-1.5">
-            <Text numberOfLines={1} className="text-xs font-medium text-foreground">
-              {reply.author._tag === "operator"
-                ? t("quote.replyingToYou")
-                : t("quote.replyingTo", { name: authorOf(reply).name })}
-            </Text>
-            <Text numberOfLines={1} className="text-sm text-muted-foreground">
-              {quoteText(reply) === "" ? t("quote.files") : quoteText(reply)}
-            </Text>
-          </View>
-          <RemoveButton
-            label={t("quote.cancelReply")}
-            disabled={frozen}
-            onPress={() => onRemove(quotes.indexOf(reply))}
-          />
-        </View>
-      )}
-      {passages.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          // A tap on × takes the quote out without closing the keyboard.
-          keyboardShouldPersistTaps="always"
-          contentContainerClassName="gap-1.5"
-        >
-          {passages.map(({ quote, index }) => {
-            const author = authorOf(quote);
-            return (
-              <View
-                key={quoteKey(quote)}
-                className="w-56 flex-row items-start rounded-lg border border-border bg-surface ps-2.5"
-              >
-                <View className="min-w-0 flex-1 gap-0.5 py-1.5">
-                  <AuthorLine
-                    name={author.name}
-                    bot={author.bot}
-                    quoteIsBot={quote.author._tag === "bot"}
-                  />
-                  <Text numberOfLines={2} className="text-sm text-muted-foreground">
-                    {quoteText(quote)}
-                  </Text>
-                </View>
-                <RemoveButton
-                  label={t("quote.remove")}
-                  disabled={frozen}
-                  onPress={() => onRemove(index)}
+    <>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        // A tap on a chip's buttons does its work without closing the keyboard.
+        keyboardShouldPersistTaps="always"
+        accessibilityLabel={t("quote.drafted")}
+        contentContainerClassName="gap-1 px-1 pt-1"
+      >
+        {quotes.map((quote, index) => {
+          const author = authorOf(quote);
+          const reply = quote.quoted._tag === "message";
+          const words = quoteText(quote) === "" ? t("quote.files") : quoteText(quote);
+          const what = reply
+            ? quote.author._tag === "operator"
+              ? t("quote.replyingToYou")
+              : t("quote.replyingTo", { name: author.name })
+            : t("quote.quoting", { name: author.name });
+          return (
+            <View
+              key={quoteKey(quote)}
+              accessible={false}
+              className="h-9 flex-row items-center gap-1 rounded-md bg-muted ps-2"
+            >
+              <Icon icon={reply ? Reply : Quote} size={14} color="accent-muted-foreground" />
+              {author.bot === null ? (
+                <Text className="text-xs font-medium text-foreground">{author.name}</Text>
+              ) : (
+                <BotAvatar
+                  avatar={author.bot.profile.avatar}
+                  seed={author.bot.id}
+                  state="idle"
+                  size={FACE}
+                  still
                 />
-              </View>
-            );
-          })}
-        </ScrollView>
-      )}
+              )}
+              <Text
+                numberOfLines={1}
+                accessibilityLabel={`${what}: ${words}`}
+                style={{ maxWidth: 180 }}
+                className="text-xs text-foreground"
+              >
+                {words}
+              </Text>
+              {onComment !== undefined && !reply && (
+                <ChipButton
+                  icon={Pencil}
+                  label={
+                    quote.comment === undefined ? t("quote.comment.add") : t("quote.comment.edit")
+                  }
+                  disabled={frozen}
+                  marked={quote.comment !== undefined}
+                  onPress={() => setEditing(index)}
+                />
+              )}
+              <ChipButton
+                icon={X}
+                label={reply ? t("quote.cancelReply") : t("quote.remove")}
+                disabled={frozen}
+                marked={false}
+                onPress={() => onRemove(index)}
+              />
+            </View>
+          );
+        })}
+      </ScrollView>
+      <Sheet
+        open={edited !== undefined}
+        title={t("quote.comment.label")}
+        onClose={() => setEditing(null)}
+      >
+        {edited !== undefined && editing !== null && onComment !== undefined && (
+          <CommentForm
+            passage={quoteText(edited)}
+            initial={edited.comment ?? ""}
+            onSave={(comment) => {
+              onComment(editing, comment);
+              setEditing(null);
+            }}
+          />
+        )}
+      </Sheet>
+    </>
+  );
+}
+
+/** The operator's comment on a passage they quote, under the passage it is on: optional words, and Save. */
+function CommentForm({
+  passage,
+  initial,
+  onSave,
+}: {
+  readonly passage: string;
+  readonly initial: string;
+  /** The words as written; empty takes a comment off. */
+  readonly onSave: (comment: string) => void;
+}) {
+  const { t } = usePresentation().i18n;
+  const [text, setText] = useState(initial);
+  return (
+    <View className="gap-3">
+      <Text numberOfLines={3} className="text-sm text-muted-foreground">
+        “{passage}”
+      </Text>
+      <TextInput
+        // The sheet opened to write it: it takes the focus.
+        autoFocus
+        multiline
+        value={text}
+        maxLength={MAX_QUOTE_COMMENT_LENGTH}
+        placeholder={t("quote.comment.placeholder")}
+        accessibilityLabel={t("quote.comment.label")}
+        onChangeText={setText}
+        className="max-h-40 min-h-20 rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground"
+      />
+      <Button label={t("quote.comment.save")} variant="primary" onPress={() => onSave(text)} />
     </View>
   );
 }
 
-/** The × that takes a quote out of the draft, in a full touch box. */
-function RemoveButton({
+/** One of a chip's buttons, in a full touch box: its pencil, or its ×. */
+function ChipButton({
+  icon,
   label,
   disabled,
+  marked,
   onPress,
 }: {
+  readonly icon: LucideIcon;
   readonly label: string;
   readonly disabled: boolean;
+  /** A comment is there: the pencil is drawn in the text's color. */
+  readonly marked: boolean;
   readonly onPress: () => void;
 }) {
   return (
@@ -245,9 +333,14 @@ function RemoveButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
       onPress={disabled ? undefined : onPress}
-      className="size-11 items-center justify-center rounded-full active:bg-muted"
+      hitSlop={6}
+      className="size-8 items-center justify-center rounded-full active:bg-muted-strong"
     >
-      <Icon icon={X} size={16} color="accent-muted-foreground" />
+      <Icon
+        icon={icon}
+        size={15}
+        color={marked ? "accent-foreground" : "accent-muted-foreground"}
+      />
     </PressScale>
   );
 }

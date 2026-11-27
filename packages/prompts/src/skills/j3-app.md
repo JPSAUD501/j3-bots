@@ -57,7 +57,7 @@ Ten pages, each saying in one line what it holds:
 - **Secrets:** saved logins and values, which bots may use each, and the bots' browser with its sign-ins.
 - **Devices:** this device, every paired one, pairing another, and signing out.
 - **Where your bots live:** in the desktop app, on this computer or on a server; in the Android app, the server it uses, and "Change server". A browser has no such page. Bots run on a computer, never on the phone.
-- **About and updates:** the versions running, the Stable or Nightly channel, and "Update now"; in the desktop app and on Android, "Update automatically".
+- **About and updates:** the versions running, the Stable or Nightly channel, and "Update now"; in the desktop app and on Android, "Update automatically"; and "What's new", what each release lets people do. While a release's news is unread, a "New in" row also shows at the foot of the list of bots on a computer, and a line over it on Android.
 
 When a release is out, every paired app opens a dialog with what is new, "Update now" and "Later". "Update now" updates the server first, then that app.
 

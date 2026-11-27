@@ -62,10 +62,21 @@ import {
 import { FileKindIcon } from "./FileCard";
 import { MentionChip, RoomMentionChip } from "./MentionChip";
 import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./PromptPicker";
-import { DraftQuotes } from "./Quotes";
+import { DraftQuoteChips } from "./Quotes";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+
+/**
+ * A line the composer shows inside itself, over the text: a problem in the
+ * `blocked` tone, or a quiet state. Whatever a composer has to say goes here
+ * (decision 0106), never under it.
+ */
+interface ComposerNote {
+  readonly key: string;
+  readonly text: string;
+  readonly tone: "blocked" | "muted";
+}
 
 /**
  * The send button's three looks: nothing to send yet, a message ready to go,
@@ -126,6 +137,12 @@ interface ComposerProps {
   readonly quotes?: ReadonlyArray<MessageQuote>;
   /** Takes the quote at `index` out of the draft. */
   readonly onUnquote?: (index: number) => void;
+  /**
+   * Sets the operator's comment on the passage the draft quotes at `index`
+   * (decision 0106); empty takes it off. Without it, as facing a server that
+   * takes no comments, a passage offers none.
+   */
+  readonly onCommentQuote?: (index: number, comment: string) => void;
   /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
   readonly sending?: boolean;
   /**
@@ -204,13 +221,13 @@ export function focusAtEnd(field: HTMLElement | null) {
  * picked, pasted or dropped upload at once and stand in the text as chips:
  * where the caret was, or where they were dropped. A chip shows its image or
  * its kind, and its name; it is deleted as one character, and a click opens
- * its file once uploaded. A file that cannot go says why below the composer.
+ * its file once uploaded. A file that cannot go says why inside the composer.
  * The message goes once every file has uploaded. Where dictation exists, a
  * microphone stands beside Send (`useDictation`): while it records, it opens
  * into a capsule with the time and the voice's level, the field still takes
  * typing, and Escape cancels it; the words land where the caret was, and
  * nothing it hears is sent by itself. Why it gave no words shows inside the
- * composer, over the text. A message over a limit
+ * composer, over the text, with Set up where that fixes it. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, or the drafts load or could not be read, the field stays
  * focused but read-only, and attaching and removing files show as
@@ -218,7 +235,7 @@ export function focusAtEnd(field: HTMLElement | null) {
  * composer asks for them again. A draft that could not be
  * read says so above the composer, with a way to read it again: once read, the
  * focus returns to the field; read in vain, it says so again. A draft the
- * device could not keep says so quietly below the composer until it is kept. Text
+ * device could not keep says so quietly inside the composer until it is kept. Text
  * replaced in another tab is offered back above the composer until the operator
  * restores or dismisses it; either way the focus returns to the field. The
  * field draws no ring of its own: while anything in it has focus, the composer
@@ -226,8 +243,7 @@ export function focusAtEnd(field: HTMLElement | null) {
  * `@` opens a list of the members and `@everyone` above the composer: arrow keys
  * move through it, keeping the active option in view, Enter or Tab picks, so
  * a second Enter sends, Escape closes it until the next `@`, and a tap picks
- * without taking the focus from the field. Only a pick mentions a member; a
- * quiet line under the composer says who the message wakes. In a bot's
+ * without taking the focus from the field. Only a pick mentions a member. In a bot's
  * conversation, `/` opens the prompts its connectors offer the same way; a
  * prompt with arguments asks for them above the composer, and what its server
  * writes becomes the draft, which the operator reads and sends as their own.
@@ -235,9 +251,14 @@ export function focusAtEnd(field: HTMLElement | null) {
  * is empty and no list is open, with Use beside it: Use, or Tab, puts it in
  * the draft with the caret after it, to send or change; Escape sets it aside
  * until a later answer brings another.
- * It leaves as soon as the operator types. What the draft quotes shows above
- * the field: its reply as a strip, each passage as a chip, each with a way
- * out, after which the focus returns to the field.
+ * It leaves as soon as the operator types. What the draft quotes shows inside
+ * the composer, above the text, each as a chip with a way out, after which
+ * the focus returns to the field; a passage's pencil takes a comment on it.
+ *
+ * Nothing shows under the composer (decision 0106): what it has to say about
+ * the draft (a file that cannot go, a limit, dictation, a draft not kept)
+ * is a quiet line inside it, over the text, and its words are announced as
+ * they were before. Typing goes on meanwhile.
  */
 export function Composer({
   draftKey,
@@ -248,6 +269,7 @@ export function Composer({
   files = [],
   quotes = [],
   onUnquote,
+  onCommentQuote,
   sending = false,
   loading = false,
   unread,
@@ -433,6 +455,23 @@ export function Composer({
         ]
       : [],
   );
+  // Files just dropped and not taken come first: the operator is waiting on them now.
+  const alert = notTaken
+    ? t("composer.waitToAttach")
+    : problem === null
+      ? null
+      : messageProblemText(problem, i18n);
+  // What the composer says inside itself, the most pressing first. A file that cannot go is
+  // announced once, above; its chip marks it.
+  const notes: ReadonlyArray<ComposerNote> = [
+    ...(alert === null ? [] : [{ key: "alert", text: alert, tone: "blocked" } as const]),
+    ...failures.map((failure) => ({ ...failure, tone: "blocked" }) as const),
+    ...(prompt.cut ? [{ key: "cut", text: t("prompt.cut"), tone: "muted" } as const] : []),
+    // Quiet: it clears by itself once the device keeps the draft.
+    ...(notSaved
+      ? [{ key: "notSaved", text: t("composer.notSaved"), tone: "muted" } as const]
+      : []),
+  ];
   return (
     <form
       className="flex flex-col gap-1.5"
@@ -532,21 +571,46 @@ export function Composer({
           onCancel={prompt.cancel}
         />
       )}
-      {onUnquote !== undefined && (
-        <DraftQuotes
-          quotes={quotes}
-          unavailable={frozen}
-          onRemove={(index) => {
-            onUnquote(index);
-            focusField();
-          }}
-        />
-      )}
       <div
         ref={boxRef}
-        className="flex flex-col rounded-composer border border-input bg-surface p-1 shadow-raised transition-[border-color,box-shadow] duration-(--duration-state) focus-within:border-(--tint) focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--tint)_22%,transparent)]"
+        className="flex min-w-0 flex-col rounded-composer border border-input bg-surface p-1 shadow-raised transition-[border-color,box-shadow] duration-(--duration-state) focus-within:border-(--tint) focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--tint)_22%,transparent)]"
       >
+        {/* What the composer says about the draft: inside it, over the text, never under it. */}
+        {notes.length > 0 && (
+          <ul aria-hidden className="flex flex-col px-2 pt-1 text-xs">
+            {notes.map((note) => (
+              <li
+                key={note.key}
+                title={note.text}
+                className={cn(
+                  "truncate tabular-nums",
+                  note.tone === "blocked" ? "text-blocked" : "text-muted-foreground",
+                )}
+              >
+                {note.text}
+              </li>
+            ))}
+          </ul>
+        )}
         {dictation.offered && <DictationNotice dictation={dictation} />}
+        {onUnquote !== undefined && (
+          <DraftQuoteChips
+            quotes={quotes}
+            unavailable={frozen}
+            onRemove={(index) => {
+              onUnquote(index);
+              focusField();
+            }}
+            onComment={
+              onCommentQuote === undefined
+                ? undefined
+                : (index, comment) => {
+                    onCommentQuote(index, comment);
+                    focusField();
+                  }
+            }
+          />
+        )}
         <div className="flex items-end gap-1">
           {onAttachFiles && (
             <>
@@ -733,33 +797,13 @@ export function Composer({
       <span id={suggestionId} hidden>
         {offered !== null && t("composer.suggestion", { text: offered })}
       </span>
-      {prompt.cut && (
-        <p role="status" className="px-3 text-xs text-muted-foreground">
-          {t("prompt.cut")}
-        </p>
-      )}
-      {/* Quiet: it clears by itself once the device keeps the draft. */}
-      {notSaved && (
-        <p role="status" className="px-3 text-xs text-muted-foreground">
-          {t("composer.notSaved")}
-        </p>
-      )}
-      <p role="alert" className="px-3 text-xs text-blocked empty:hidden">
-        {/* Files just dropped and not taken come first: the operator is waiting on them now. */}
-        {notTaken
-          ? t("composer.waitToAttach")
-          : problem === null
-            ? null
-            : messageProblemText(problem, i18n)}
+      {/* The notes' words, announced as they come: a problem at once, the rest politely. */}
+      <p role="status" className="sr-only">
+        {notes.flatMap((note) => (note.tone === "muted" ? [note.text] : [])).join(" ")}
       </p>
-      {/* Each file that cannot go, which its chip marks, says why. Announced once, above. */}
-      {failures.length > 0 && (
-        <ul aria-hidden className="flex flex-col px-3 text-xs text-blocked">
-          {failures.map((failure) => (
-            <li key={failure.key}>{failure.text}</li>
-          ))}
-        </ul>
-      )}
+      <p role="alert" className="sr-only">
+        {alert}
+      </p>
     </form>
   );
 }
