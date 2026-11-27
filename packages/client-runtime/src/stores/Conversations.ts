@@ -1587,13 +1587,39 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * The operator's picks on each message, sent one after another: a request
+     * a closed socket left unanswered is sent again on the next, and must
+     * never land after a newer pick. A pick a newer one replaced while it
+     * waited is not sent at all.
+     */
+    const picks = new Map<EntryId, { latest: number; readonly lock: Semaphore.Semaphore }>();
+
     // Not an action that waits for its message to change: it sets a state, so
-    // each pick is sent as made, and one that changed nothing (as another
-    // device made the same) leaves the next pick free.
-    const react = (entryId: EntryId, emoji: ReactionEmoji | null) =>
-      connection
-        .call((client) => client["message.react"]({ entryId, emoji }))
-        .pipe(Effect.exit, Effect.map(intentResult));
+    // a pick that changed nothing (as another device made the same) leaves
+    // the next one free.
+    const react = (entryId: EntryId, emoji: ReactionEmoji | null): Effect.Effect<IntentResult> =>
+      Effect.suspend(() => {
+        const line = picks.get(entryId) ?? { latest: 0, lock: Semaphore.makeUnsafe(1) };
+        picks.set(entryId, line);
+        const pick = ++line.latest;
+        const send = Effect.suspend(() =>
+          pick === line.latest
+            ? connection
+                .call((client) => client["message.react"]({ entryId, emoji }))
+                .pipe(Effect.exit, Effect.map(intentResult))
+            : Effect.succeed<IntentResult>({ _tag: "done", value: undefined }),
+        );
+        return line.lock
+          .withPermits(1)(send)
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (pick === line.latest) picks.delete(entryId);
+              }),
+            ),
+          );
+      });
 
     const answerCard = Effect.fn("Conversations.answerCard")(function* (
       entryId: EntryId,
