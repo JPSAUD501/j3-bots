@@ -57,7 +57,7 @@ const work: TurnWork = {
   },
 };
 
-const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
+const fold = (turn: TurnWork, live: boolean, ended = !live): WorkFoldEntry => ({
   _tag: "work-fold",
   id: EntryId.make("fold"),
   order: EntryOrder.make(10),
@@ -67,7 +67,7 @@ const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
   stepCount: 3,
   apps: [],
   work: turn,
-  status: live
+  status: !ended
     ? { _tag: "running" }
     : {
         _tag: "finished",
@@ -79,7 +79,7 @@ const fold = (turn: TurnWork, live: boolean): WorkFoldEntry => ({
 /** Scout after its reply: its turn is over, whatever its little ones still do. */
 const resting = { ...scout, state: { _tag: "idle" } } as const;
 
-const row = (turn: TurnWork, live: boolean) =>
+const row = (turn: TurnWork, live: boolean, ended = !live) =>
   renderToStaticMarkup(
     <RosterProvider
       roster={[
@@ -94,7 +94,7 @@ const row = (turn: TurnWork, live: boolean) =>
       engine={null}
     >
       <WorkFold
-        fold={fold(turn, live)}
+        fold={fold(turn, live, ended)}
         live={live ? { bot: scout, lastEntry: null } : null}
         steps={null}
         onOpenChange={() => {}}
@@ -124,6 +124,12 @@ describe("a turn's row", () => {
     expect(html).toContain("Checking prices");
     expect(html).toContain("Looking into support");
     expect(html).toContain("+3 more");
+  });
+
+  it("keeps the family when the bot's state tells of the turn's end before its fold does", () => {
+    const html = row(work, false, false);
+    expect(html).toContain("Working");
+    expect(html).toContain("Checking prices");
   });
 
   it("folds an ended turn into its line once none of its little ones works", () => {
