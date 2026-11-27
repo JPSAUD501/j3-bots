@@ -85,6 +85,7 @@ it.layer(server, { excludeTestServices: true })("sending a share", (it) => {
     Effect.gen(function* () {
       const { app, target } = yield* pairedApp();
       const progress: Array<readonly [number, number]> = [];
+      let handedOver = false;
       const sent = yield* Effect.promise(() =>
         app.sendWithFiles(
           {
@@ -92,6 +93,9 @@ it.layer(server, { excludeTestServices: true })("sending a share", (it) => {
             text: "Have a look",
             files,
             onProgress: (done, total) => progress.push([done, total]),
+            onSending: () => {
+              handedOver = true;
+            },
           },
           going(),
         ),
@@ -99,6 +103,7 @@ it.layer(server, { excludeTestServices: true })("sending a share", (it) => {
       if (sent._tag !== "done") return yield* Effect.die(`Not sent: ${sent._tag}`);
       const total = files.reduce((sum, file) => sum + file.body.size, 0);
       assert.deepStrictEqual(progress.at(-1), [total, total]);
+      assert.isTrue(handedOver);
 
       const conversation = app.openConversation(target);
       const shown = yield* waitFor(conversation.state, (state) =>
@@ -120,7 +125,13 @@ it.layer(server, { excludeTestServices: true })("sending a share", (it) => {
       const { app, target } = yield* pairedApp(refusingUploads);
       const sent = yield* Effect.promise(() =>
         app.sendWithFiles(
-          { target, text: "Have a look", files, onProgress: () => undefined },
+          {
+            target,
+            text: "Have a look",
+            files,
+            onProgress: () => undefined,
+            onSending: () => undefined,
+          },
           going(),
         ),
       );
@@ -138,7 +149,13 @@ it.layer(server, { excludeTestServices: true })("sending a share", (it) => {
       const { app, target } = yield* pairedApp();
       const sent = yield* Effect.promise(() =>
         app.sendWithFiles(
-          { target, text: "Have a look", files, onProgress: () => undefined },
+          {
+            target,
+            text: "Have a look",
+            files,
+            onProgress: () => undefined,
+            onSending: () => undefined,
+          },
           stopped(),
         ),
       );

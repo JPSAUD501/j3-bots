@@ -1256,6 +1256,11 @@ const sentences = {
   "share.unreadable": "Não foi possível ler o que foi compartilhado.",
   "share.leftBehind.one": "{count} arquivo não pôde ser lido e fica de fora.",
   "share.leftBehind.other": "{count} arquivos não puderam ser lidos e ficam de fora.",
+  "share.beyond.one":
+    "Mais {count} arquivo fica de fora: uma mensagem leva no máximo {most} arquivos.",
+  "share.beyond.other":
+    "Mais {count} arquivos ficam de fora: uma mensagem leva no máximo {most} arquivos.",
+  "share.pickBot": "Escolha um bot para enviar",
   "share.bots": "Bots",
   "share.line": "Escreva uma mensagem",
   "share.linePlaceholder": "Opcional",

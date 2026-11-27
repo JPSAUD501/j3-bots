@@ -18,32 +18,33 @@ class ShareSheetModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
-  private fun sheet(): ShareActivity? = ShareActivity.current?.get()
-
   override fun definition() = ModuleDefinition {
     Name("ShareSheet")
 
     /**
-     * The share the sheet was opened with, read and copied once (ShareIntake),
-     * each file at most `limit` + 1 bytes; null when no share sheet is open.
+     * The share sheet `sheet` was opened with, read and copied once
+     * (ShareIntake): its first `most` files, each at most `limit` + 1 bytes;
+     * null when that sheet is no longer open.
      */
-    AsyncFunction("take") { limit: Double -> sheet()?.take(limit.toLong()) }
+    AsyncFunction("take") { sheet: String, limit: Double, most: Int ->
+      ShareActivity.byKey(sheet)?.take(limit.toLong(), most)
+    }
 
-    /** Closes the share sheet, deleting the share's copies. */
-    Function("close") {
-      sheet()?.let { activity -> activity.runOnUiThread { activity.finish() } }
+    /** Closes share sheet `sheet`, deleting its share's copies. */
+    Function("close") { sheet: String ->
+      ShareActivity.byKey(sheet)?.let { activity -> activity.runOnUiThread { activity.finish() } }
     }
 
     /**
      * Opens the app, on `link` when one is given, as a new task over the app
-     * that shared, then closes the share sheet.
+     * that shared, then closes share sheet `sheet`.
      */
-    Function("openApp") { link: String? ->
+    Function("openApp") { sheet: String, link: String? ->
       val app = context
       val intent =
         if (link == null) app.packageManager.getLaunchIntentForPackage(app.packageName)
         else Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(app.packageName)
-      val activity = sheet()
+      val activity = ShareActivity.byKey(sheet)
       if (intent != null) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         (activity ?: app).startActivity(intent)

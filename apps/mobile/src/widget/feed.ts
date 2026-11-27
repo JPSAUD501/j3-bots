@@ -18,6 +18,7 @@ import {
 import {
   snapshotKey,
   unpairedSnapshot,
+  WORKING_HOLDS,
   type WidgetFace,
   type WidgetSnapshot,
   widgetFaces,
@@ -169,17 +170,22 @@ const followClient = (
     timer = null;
     const snapshot = snapshotNow();
     if (snapshot === null) return;
-    const key = snapshotKey(snapshot);
+    const roster = client.roster.get();
+    const faces = widgetFaces(feed.targets(), roster._tag === "ready" ? roster.value : []);
+    const key = snapshotKey(snapshot, faces);
     if (feed.isWritten(key)) return;
     feed.written(key);
-    const roster = client.roster.get();
-    const faces = faceImages(
-      widgetFaces(feed.targets(), roster._tag === "ready" ? roster.value : []),
-    );
-    widgets.write(snapshot, faces).catch(() => feed.written(""));
+    widgets.write(snapshot, faceImages(faces)).catch(() => feed.written(""));
   }
 
-  const stops = [client.roster.subscribe(schedule), client.connection.subscribe(schedule)];
+  // A bot at work for long, with nothing new heard, is still at work: told
+  // again before a widget would let that go.
+  const again = setInterval(schedule, WORKING_HOLDS / 3);
+  const stops = [
+    client.roster.subscribe(schedule),
+    client.connection.subscribe(schedule),
+    () => clearInterval(again),
+  ];
   hold();
   schedule();
   return {
@@ -238,7 +244,7 @@ export const keepWidgetsFed = (session: Session): void => {
   };
   const writeUnpaired = () => {
     const snapshot = unpairedSnapshot(wordsNow().base);
-    const key = snapshotKey(snapshot);
+    const key = snapshotKey(snapshot, []);
     if (key === written) return;
     written = key;
     widgets.write(snapshot, {}).catch(() => {

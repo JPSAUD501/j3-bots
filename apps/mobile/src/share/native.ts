@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MAX_ATTACHMENT_SIZE } from "@j3-bots/contracts";
+import { MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE } from "@j3-bots/contracts";
 import { requireOptionalNativeModule } from "expo";
 import * as Schema from "effect/Schema";
 
@@ -29,13 +29,15 @@ const Incoming = Schema.Struct({
   files: Schema.Array(IncomingFile),
   /** Files the module could not read, or would not: one named by a path, or of the app's own. */
   unreadable: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  /** Files past the most one message carries, which were not read. */
+  beyond: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 });
 export type Incoming = typeof Incoming.Type;
 
 interface ShareSheetModule {
-  take(limit: number): Promise<unknown>;
-  close(): void;
-  openApp(link: string | null): void;
+  take(sheet: string, limit: number, most: number): Promise<unknown>;
+  close(sheet: string): void;
+  openApp(sheet: string, link: string | null): void;
   setShortcuts(bots: string): Promise<void>;
   reportShared(botId: string): Promise<void>;
 }
@@ -51,14 +53,18 @@ export interface ShortcutBot {
   readonly link: string;
 }
 
-/** What the app asks of Android for sharing; null where the module is absent (iOS, the web gallery). */
+/**
+ * What the app asks of Android for sharing; null where the module is absent
+ * (iOS, the web gallery). `sheet` is the key Android gave the sheet's root
+ * (`ShareRoot`'s `sheet` property): each call is about that sheet alone.
+ */
 export interface ShareSheetNative {
-  /** The share the sheet was opened with, its files copied; null when no sheet is open. */
-  readonly take: () => Promise<Incoming | null>;
+  /** The share sheet `sheet` was opened with, its files copied; null once it is closed. */
+  readonly take: (sheet: string) => Promise<Incoming | null>;
   /** Closes the sheet; the share's copies go with it. */
-  readonly close: () => void;
+  readonly close: (sheet: string) => void;
   /** Opens the app, on `link` when one is given, and closes the sheet. */
-  readonly openApp: (link: string | null) => void;
+  readonly openApp: (sheet: string, link: string | null) => void;
   /** Makes `bots` Direct Share's targets, in order. */
   readonly setShortcuts: (bots: ReadonlyArray<ShortcutBot>) => Promise<void>;
   /** Tells Android a share went to `botId`. */
@@ -71,9 +77,12 @@ export const shareSheet: ShareSheetNative | null =
   module === null
     ? null
     : {
-        take: async () => decodeIncoming(await module.take(MAX_ATTACHMENT_SIZE)),
-        close: () => module.close(),
-        openApp: (link) => module.openApp(link),
+        take: async (sheet) =>
+          decodeIncoming(
+            await module.take(sheet, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE),
+          ),
+        close: (sheet) => module.close(sheet),
+        openApp: (sheet, link) => module.openApp(sheet, link),
         setShortcuts: (bots) => module.setShortcuts(JSON.stringify(bots)),
         reportShared: (botId) => module.reportShared(botId),
       };

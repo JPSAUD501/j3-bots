@@ -21,11 +21,13 @@ import java.util.UUID
  * share sheet, read once, and copied: the app never keeps the URI or reads a
  * path another app names. A `file:` URI, which would name one, is refused,
  * and so is a URI of one of the app's own providers, which another app could
- * otherwise use to have the app send its own files. A copy stops one byte
+ * otherwise use to have the app send its own files. Only as many files as
+ * one message takes are copied; the rest are counted. A copy stops one byte
  * past `limit`, the largest file the server takes, so a file over it is said
- * to be too large without being read whole. The folder goes when the sheet
- * closes (ShareActivity), and a folder an ended process left behind goes with
- * the next share (`sweep`).
+ * to be too large without being read whole, and that copy is deleted at once:
+ * what the share holds on the phone is at most what one message can carry.
+ * The folder goes when the sheet closes (ShareActivity), and a folder an
+ * ended process left behind goes with the next share (`sweep`).
  */
 internal class ShareIntake private constructor(private val folder: File) {
   fun delete() {
@@ -34,10 +36,11 @@ internal class ShareIntake private constructor(private val folder: File) {
   }
 
   /** The share `intent` carries, for the JavaScript side (src/share/native.ts). */
-  fun read(context: Context, intent: Intent, limit: Long): Map<String, Any?> {
+  fun read(context: Context, intent: Intent, limit: Long, most: Int): Map<String, Any?> {
     var unreadable = 0
+    val streams = streamsOf(intent)
     val files =
-      streamsOf(intent).mapIndexedNotNull { index, uri ->
+      streams.take(most).mapIndexedNotNull { index, uri ->
         val copy = copy(context, uri, intent.type, index, limit)
         if (copy == null) unreadable += 1
         copy
@@ -51,6 +54,7 @@ internal class ShareIntake private constructor(private val folder: File) {
       "botId" to ShareShortcuts.botOf(intent.getStringExtra(EXTRA_SHORTCUT_ID)),
       "files" to files,
       "unreadable" to unreadable,
+      "beyond" to (streams.size - most).coerceAtLeast(0),
     )
   }
 
@@ -103,6 +107,8 @@ internal class ShareIntake private constructor(private val folder: File) {
       target.delete()
       return null
     }
+    // Too large to send: only its size is kept, to say so.
+    if (size > limit) target.delete()
     val type = resolver.getType(uri) ?: sharedType?.takeUnless { it.contains('*') }
     return mapOf(
       "uri" to Uri.fromFile(target).toString(),
@@ -112,8 +118,13 @@ internal class ShareIntake private constructor(private val folder: File) {
     )
   }
 
+  /**
+   * Whether `uri` is one of the app's own providers' (or names none). An
+   * authority may carry a user, as `10@authority`, which the resolver drops
+   * before it opens the provider, so it is dropped here before the lookup.
+   */
   private fun ownProvider(context: Context, uri: Uri): Boolean {
-    val authority = uri.authority ?: return true
+    val authority = uri.authority?.substringAfterLast('@') ?: return true
     return context.packageManager.resolveContentProvider(authority, 0)?.packageName == context.packageName
   }
 

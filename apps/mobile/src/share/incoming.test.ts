@@ -9,6 +9,7 @@ const incoming = (given: Partial<Incoming>): Incoming => ({
   botId: null,
   files: [],
   unreadable: 0,
+  beyond: 0,
   ...given,
 });
 

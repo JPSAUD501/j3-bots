@@ -32,20 +32,24 @@ type Step =
   | { readonly _tag: "bot"; readonly for: WidgetTarget["kind"] }
   | { readonly _tag: "routine"; readonly botId: BotId; readonly name: string };
 
-/** The setup's root, registered as `J3WidgetSetup` (index.ts). */
-export function WidgetSetupRoot() {
+/**
+ * The setup's root, registered as `J3WidgetSetup` (index.ts). `setup` is the
+ * key Android gave this setup (WidgetSetupActivity), which every call names.
+ */
+export function WidgetSetupRoot({ setup }: { readonly setup?: unknown }) {
   const { language } = usePreferences();
   const i18n = useMemo(() => i18nFor(language), [language]);
+  if (typeof setup !== "string") return null;
   return (
     <I18nContext value={i18n}>
       <SafeAreaProvider>
-        <WidgetSetup />
+        <WidgetSetup setup={setup} />
       </SafeAreaProvider>
     </I18nContext>
   );
 }
 
-function WidgetSetup() {
+function WidgetSetup({ setup }: { readonly setup: string }) {
   const { t } = useI18n();
   const reduced = useReducedMotion();
   const state = useReadable(session.state);
@@ -55,9 +59,9 @@ function WidgetSetup() {
 
   useEffect(() => {
     if (open) return;
-    const timer = setTimeout(() => homeWidget?.close(), reduced ? 0 : motion.state);
+    const timer = setTimeout(() => homeWidget?.close(setup), reduced ? 0 : motion.state);
     return () => clearTimeout(timer);
-  }, [open, reduced]);
+  }, [open, reduced, setup]);
 
   const back = useCallback(() => {
     if (saving) return;
@@ -78,7 +82,7 @@ function WidgetSetup() {
     const widgets = homeWidget;
     setSaving(true);
     void widgets
-      .choose(target)
+      .choose(setup, target)
       .then(() =>
         Promise.race([
           refreshWidgets(),
@@ -98,10 +102,17 @@ function WidgetSetup() {
 
   const body = (() => {
     if (state._tag === "starting") return <Waiting />;
-    if (state._tag !== "open") return <NotPaired />;
+    if (state._tag !== "open") return <NotPaired setup={setup} />;
     return (
       <J3ClientProvider client={state.client}>
-        <Choice client={state.client} step={step} go={setStep} choose={choose} saving={saving} />
+        <Choice
+          setup={setup}
+          client={state.client}
+          step={step}
+          go={setStep}
+          choose={choose}
+          saving={saving}
+        />
       </J3ClientProvider>
     );
   })();
@@ -133,7 +144,7 @@ function Waiting() {
   );
 }
 
-function NotPaired() {
+function NotPaired({ setup }: { readonly setup: string }) {
   const { t } = useI18n();
   return (
     <View className="gap-4 py-2">
@@ -141,13 +152,14 @@ function NotPaired() {
       <Button
         variant="primary"
         label={t("share.openApp")}
-        onPress={() => homeWidget?.openApp(null)}
+        onPress={() => homeWidget?.openApp(setup, null)}
       />
     </View>
   );
 }
 
 function Choice(props: {
+  readonly setup: string;
   readonly client: J3Client;
   readonly step: Step;
   readonly go: (step: Step) => void;
@@ -161,7 +173,7 @@ function Choice(props: {
     () => (roster._tag === "ready" ? shareBots(roster.value, null) : []),
     [roster],
   );
-  if (connection._tag === "unpaired") return <NotPaired />;
+  if (connection._tag === "unpaired") return <NotPaired setup={props.setup} />;
   const { step } = props;
   switch (step._tag) {
     case "kind":

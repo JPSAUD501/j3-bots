@@ -8,7 +8,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { J3ClientProvider, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
-import type { BotId } from "@j3-bots/contracts";
+import { type BotId, MAX_ATTACHMENTS_PER_MESSAGE } from "@j3-bots/contracts";
 import { motion } from "@j3-bots/design-tokens";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, BackHandler, ScrollView, ToastAndroid, View } from "react-native";
@@ -46,6 +46,7 @@ type Taken =
       readonly shared: Shared;
       readonly botId: string | null;
       readonly leftBehind: number;
+      readonly beyond: number;
     };
 
 const takenOf = (incoming: Incoming | null): Taken => {
@@ -53,39 +54,43 @@ const takenOf = (incoming: Incoming | null): Taken => {
   const leftBehind = incoming?.unreadable ?? 0;
   return shared === null || incoming === null
     ? { _tag: "unreadable", leftBehind }
-    : { _tag: "shared", shared, botId: incoming.botId, leftBehind };
+    : { _tag: "shared", shared, botId: incoming.botId, leftBehind, beyond: incoming.beyond };
 };
 
-/** Closes the sheet once its panel has left, as `Sheet` lets its window go. */
-function useClosing(): { readonly open: boolean; readonly close: () => void } {
+/** Closes sheet `sheet` once its panel has left, as `Sheet` lets its window go. */
+function useClosing(sheet: string): { readonly open: boolean; readonly close: () => void } {
   const reduced = useReducedMotion();
   const [open, setOpen] = useState(true);
   useEffect(() => {
     if (open) return;
-    const timer = setTimeout(() => shareSheet?.close(), reduced ? 0 : motion.state);
+    const timer = setTimeout(() => shareSheet?.close(sheet), reduced ? 0 : motion.state);
     return () => clearTimeout(timer);
-  }, [open, reduced]);
+  }, [open, reduced, sheet]);
   return useMemo(() => ({ open, close: () => setOpen(false) }), [open]);
 }
 
-/** The share sheet's root, registered as `J3Share` (index.ts). */
-export function ShareRoot() {
+/**
+ * The share sheet's root, registered as `J3Share` (index.ts). `sheet` is the
+ * key Android gave this sheet (ShareActivity), which every call names.
+ */
+export function ShareRoot({ sheet }: { readonly sheet?: unknown }) {
   const { language } = usePreferences();
   const i18n = useMemo(() => i18nFor(language), [language]);
+  if (typeof sheet !== "string") return null;
   return (
     <I18nContext value={i18n}>
       <SafeAreaProvider>
         <KeyboardProvider>
-          <ShareSheet />
+          <ShareSheet sheet={sheet} />
         </KeyboardProvider>
       </SafeAreaProvider>
     </I18nContext>
   );
 }
 
-function ShareSheet() {
+function ShareSheet({ sheet }: { readonly sheet: string }) {
   const { t } = useI18n();
-  const { open, close } = useClosing();
+  const { open, close } = useClosing(sheet);
   const [taken, setTaken] = useState<Taken>({ _tag: "reading" });
   const state = useReadable(session.state);
 
@@ -93,14 +98,14 @@ function ShareSheet() {
     if (shareSheet === null) return;
     let live = true;
     shareSheet
-      .take()
+      .take(sheet)
       .then(async (incoming) => {
         const next = takenOf(incoming);
         // A template file shared on its own opens in the app, to make a bot from.
         const template = next._tag === "shared" ? sharedTemplate(next.shared) : null;
         if (template !== null) {
           await openTemplateAt(template.uri, template.size);
-          shareSheet?.openApp(null);
+          shareSheet?.openApp(sheet, null);
           return;
         }
         if (live) setTaken(next);
@@ -111,7 +116,7 @@ function ShareSheet() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [sheet]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -132,14 +137,16 @@ function ShareSheet() {
         />
       );
     }
-    if (state._tag !== "open") return <NotPaired />;
+    if (state._tag !== "open") return <NotPaired sheet={sheet} />;
     return (
       <J3ClientProvider client={state.client}>
         <Sending
+          sheet={sheet}
           client={state.client}
           shared={taken.shared}
           through={taken.botId}
           leftBehind={taken.leftBehind}
+          beyond={taken.beyond}
           close={close}
         />
       </J3ClientProvider>
@@ -182,26 +189,33 @@ function Notice(props: {
   );
 }
 
-function NotPaired() {
+function NotPaired({ sheet }: { readonly sheet: string }) {
   const { t } = useI18n();
   return (
     <Notice
       text={t("share.notPaired")}
-      action={{ label: t("share.openApp"), onPress: () => shareSheet?.openApp(null) }}
+      action={{ label: t("share.openApp"), onPress: () => shareSheet?.openApp(sheet, null) }}
     />
   );
 }
 
-/** Where sending stands. */
+/**
+ * Where sending stands. While its files upload, Stop ends it; once the
+ * message is handed to the outbox it goes on its own, and only waiting for
+ * the server's answer is left.
+ */
 type Send =
   | { readonly _tag: "editing"; readonly problem: string | null }
-  | { readonly _tag: "sending"; readonly sent: number; readonly total: number };
+  | { readonly _tag: "uploading"; readonly sent: number; readonly total: number }
+  | { readonly _tag: "handed" };
 
 function Sending(props: {
+  readonly sheet: string;
   readonly client: J3Client;
   readonly shared: Shared;
   readonly through: string | null;
   readonly leftBehind: number;
+  readonly beyond: number;
   readonly close: () => void;
 }) {
   const i18n = useI18n();
@@ -218,7 +232,7 @@ function Sending(props: {
   const stopping = useRef<AbortController | null>(null);
   useEffect(() => () => stopping.current?.abort(), []);
 
-  if (connection._tag === "unpaired") return <NotPaired />;
+  if (connection._tag === "unpaired") return <NotPaired sheet={props.sheet} />;
   if (roster._tag !== "ready") return <Waiting />;
   if (bots.length === 0) {
     return (
@@ -228,16 +242,19 @@ function Sending(props: {
       />
     );
   }
-  // The bot the share came through by Direct Share, else the one offered first.
-  const bot = bots.find((item) => item.bot.id === (picked ?? props.through)) ?? bots[0] ?? null;
-  if (bot === null) return null;
+  // The bot picked, else the one the share came through by Direct Share, else
+  // the one offered first. A bot asked for that is no longer there is never
+  // swapped for another: the operator picks again.
+  const asked = picked ?? props.through;
+  const bot =
+    asked === null ? (bots[0] ?? null) : (bots.find((item) => item.bot.id === asked) ?? null);
   const message = sharedMessage(props.shared, line);
-  const name = bot.bot.profile.name;
 
-  const start = () => {
+  const start = (bot: BotItem) => {
+    const name = bot.bot.profile.name;
     const controller = new AbortController();
     stopping.current = controller;
-    setSend({ _tag: "sending", sent: 0, total: 0 });
+    setSend({ _tag: "uploading", sent: 0, total: 0 });
     void props.client
       .sendWithFiles(
         {
@@ -251,7 +268,8 @@ function Sending(props: {
               file.size,
             ),
           })),
-          onProgress: (sent, total) => setSend({ _tag: "sending", sent, total }),
+          onProgress: (sent, total) => setSend({ _tag: "uploading", sent, total }),
+          onSending: () => setSend({ _tag: "handed" }),
         },
         controller.signal,
       )
@@ -297,9 +315,9 @@ function Sending(props: {
       });
   };
 
-  const sending = send._tag === "sending";
+  const sending = send._tag !== "editing";
   const percent =
-    send._tag === "sending" && send.total > 0
+    send._tag === "uploading" && send.total > 0
       ? new Intl.NumberFormat(i18n.locale, { style: "percent" }).format(send.sent / send.total)
       : null;
   const nothing = message.text === "" && message.uploads.length === 0;
@@ -322,6 +340,9 @@ function Sending(props: {
         </Body>
       ))}
       {props.leftBehind > 0 && <Body>{plural("share.leftBehind", props.leftBehind)}</Body>}
+      {props.beyond > 0 && (
+        <Body>{plural("share.beyond", props.beyond, { most: MAX_ATTACHMENTS_PER_MESSAGE })}</Body>
+      )}
       {send._tag === "editing" && send.problem !== null && (
         <Text accessibilityLiveRegion="polite" role="alert" className="text-sm text-blocked">
           {send.problem}
@@ -336,16 +357,20 @@ function Sending(props: {
         </View>
       )}
       <View className="flex-row gap-2">
-        {sending ? (
+        {send._tag === "uploading" ? (
           <Button label={t("share.stop")} onPress={() => stopping.current?.abort()} grow />
-        ) : (
+        ) : send._tag === "handed" ? null : (
           <>
             <Button label={t("share.cancel")} onPress={props.close} grow />
             <Button
               variant="primary"
-              label={t("share.send", { name })}
-              onPress={start}
-              disabled={nothing}
+              label={
+                bot === null ? t("share.pickBot") : t("share.send", { name: bot.bot.profile.name })
+              }
+              onPress={() => {
+                if (bot !== null) start(bot);
+              }}
+              disabled={nothing || bot === null}
               grow
             />
           </>
@@ -375,10 +400,10 @@ function Summary({ shared }: { readonly shared: Shared }) {
   );
 }
 
-/** The bots to send to, as a row of faces with their names, one picked. */
+/** The bots to send to, as a row of faces with their names, one picked or none. */
 function BotChoice(props: {
   readonly bots: ReadonlyArray<BotItem>;
-  readonly picked: BotItem;
+  readonly picked: BotItem | null;
   readonly onPick: (botId: BotId) => void;
   readonly disabled: boolean;
 }) {
@@ -393,7 +418,7 @@ function BotChoice(props: {
         accessibilityRole="radiogroup"
       >
         {props.bots.map((item) => {
-          const selected = item.bot.id === props.picked.bot.id;
+          const selected = item.bot.id === props.picked?.bot.id;
           return (
             <PressScale
               key={item.bot.id}

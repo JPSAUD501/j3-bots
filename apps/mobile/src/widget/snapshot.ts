@@ -223,17 +223,29 @@ export const unpairedSnapshot = (base: {
   readonly words: WidgetWords;
 }): WidgetSnapshot => ({ ...base, paired: false, bots: {}, routines: {} });
 
+/** How long the app's word that a bot works stands, in ms: a widget lets it go after. */
+export const WORKING_HOLDS = 30 * 60 * 1000;
+
 /**
- * What tells `snapshot` from another: all it shows, without when the app
- * learned each bot's state, which alone is no news.
+ * What tells one write to the widgets from another: all a snapshot shows,
+ * and the faces it is drawn with. When the app learned a bot's state is no
+ * news, except for a bot at work, which a widget shows as quiet once that is
+ * `WORKING_HOLDS` old: it is news again every third of that.
  */
-export const snapshotKey = (snapshot: WidgetSnapshot): string =>
+export const snapshotKey = (snapshot: WidgetSnapshot, faces: ReadonlyArray<WidgetFace>): string =>
   JSON.stringify({
     ...snapshot,
     bots: Object.fromEntries(
       Object.entries(snapshot.bots).map(([id, bot]) => [
         id,
-        bot.gone ? bot : { ...bot, learnedAt: 0 },
+        bot.gone
+          ? bot
+          : {
+              ...bot,
+              learnedAt:
+                bot.light === "working" ? Math.floor(bot.learnedAt / (WORKING_HOLDS / 3)) : 0,
+            },
       ]),
     ),
+    faces,
   });

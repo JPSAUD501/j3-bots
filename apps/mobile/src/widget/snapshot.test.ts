@@ -19,6 +19,7 @@ import {
   RESULT_LENGTH,
   resultStart,
   snapshotKey,
+  WORKING_HOLDS,
   type WidgetFacts,
   type WidgetWords,
   widgetSnapshot,
@@ -233,14 +234,41 @@ describe("resultStart", () => {
 });
 
 describe("snapshotKey", () => {
+  const at = (now: number, state: BotState) =>
+    widgetSnapshot([botTarget], facts({ now, roster: [bot(state)] }), base);
+
   it("tells snapshots apart by what they show, not by when a state was learned", () => {
-    const at = (now: number, state: BotState) =>
-      widgetSnapshot([botTarget], facts({ now, roster: [bot(state)] }), base);
     const first = at(1, { _tag: "idle" });
     const later = at(2, { _tag: "idle" });
     const blocked = at(2, { _tag: "blocked", failure: "provider-error", retryAt: null });
     if (first === null || later === null || blocked === null) throw new Error("no snapshot");
-    expect(snapshotKey(later)).toBe(snapshotKey(first));
-    expect(snapshotKey(blocked)).not.toBe(snapshotKey(first));
+    expect(snapshotKey(later, [])).toBe(snapshotKey(first, []));
+    expect(snapshotKey(blocked, [])).not.toBe(snapshotKey(first, []));
+  });
+
+  it("tells a bot's work apart once a widget would take it as old", () => {
+    const working: BotState = {
+      _tag: "thinking",
+      since: DateTime.makeUnsafe(0),
+      stalled: false,
+      quietSince: null,
+      typing: false,
+      retrying: false,
+    };
+    const first = at(0, working);
+    const soon = at(60_000, working);
+    const long = at(WORKING_HOLDS / 2, working);
+    if (first === null || soon === null || long === null) throw new Error("no snapshot");
+    expect(snapshotKey(soon, [])).toBe(snapshotKey(first, []));
+    expect(snapshotKey(long, [])).not.toBe(snapshotKey(first, []));
+  });
+
+  it("tells a new face apart", () => {
+    const snapshot = at(1, { _tag: "idle" });
+    if (snapshot === null) throw new Error("no snapshot");
+    const face = { botId: ada, avatar: { shape: "dome", color: "cobalt" }, state: "idle" } as const;
+    expect(
+      snapshotKey(snapshot, [{ ...face, avatar: { shape: "dome", color: "coral" } }]),
+    ).not.toBe(snapshotKey(snapshot, [face]));
   });
 });

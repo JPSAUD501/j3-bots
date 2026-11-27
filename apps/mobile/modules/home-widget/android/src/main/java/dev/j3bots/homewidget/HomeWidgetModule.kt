@@ -17,8 +17,6 @@ class HomeWidgetModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
-  private fun setup(): WidgetSetupActivity? = WidgetSetupActivity.current?.get()
-
   override fun definition() = ModuleDefinition {
     Name("HomeWidget")
 
@@ -53,23 +51,20 @@ class HomeWidgetModule : Module() {
       BotWidgetProvider.redraw(context)
     }
 
-    /** Whether a setup is open for one of the app's widgets. */
-    Function("settingUp") { setup()?.widgetId != null }
+    /** Gives the widget setup `setup` is for `target` (JSON `{ kind, botId, routineId? }`); the setup stays open. */
+    AsyncFunction("choose") { setup: String, target: String -> WidgetSetupActivity.byKey(setup)?.choose(JSONObject(target)) }
 
-    /** Gives the widget being set up `target` (JSON `{ kind, botId, routineId? }`); its setup stays open. */
-    AsyncFunction("choose") { target: String -> setup()?.choose(JSONObject(target)) }
+    /** Closes setup `setup`: without a choice, the widget is not placed. */
+    Function("close") { setup: String -> WidgetSetupActivity.byKey(setup)?.close() }
 
-    /** Closes the setup: without a choice, the widget is not placed. */
-    Function("close") { setup()?.close() }
-
-    /** Opens the app, on `link` when one is given, then closes the setup. */
-    Function("openApp") { link: String? ->
+    /** Opens the app, on `link` when one is given, then closes setup `setup`. */
+    Function("openApp") { setup: String, link: String? ->
       val app = context
       val intent =
         if (link == null) app.packageManager.getLaunchIntentForPackage(app.packageName)
         else Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(app.packageName)
       if (intent != null) app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-      setup()?.close()
+      WidgetSetupActivity.byKey(setup)?.close()
     }
   }
 }

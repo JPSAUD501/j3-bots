@@ -54,7 +54,7 @@ class BotWidgetProvider : AppWidgetProvider() {
       for (id in ids(context)) manager.updateAppWidget(id, views(context, store, manager, id))
     }
 
-    fun views(context: Context, store: WidgetStore, manager: AppWidgetManager, id: Int): RemoteViews {
+    internal fun views(context: Context, store: WidgetStore, manager: AppWidgetManager, id: Int): RemoteViews {
       val snapshot = store.snapshot()
       val words = snapshot?.optJSONObject("words") ?: JSONObject()
       val target = store.target(id) ?: return message(context, words.optString("notSetUp"), null, setUp(context, id))

@@ -8,8 +8,11 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.core.view.WindowCompat
 import com.facebook.react.ReactActivity
+import com.facebook.react.ReactActivityDelegate
 import org.json.JSONObject
 import java.lang.ref.WeakReference
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Where a widget is given what it shows: Android opens it as the widget is
@@ -18,14 +21,23 @@ import java.lang.ref.WeakReference
  * (`J3WidgetSetup`, src/widget/WidgetSetup.tsx) in a translucent window.
  *
  * Until a choice is made the result is "cancelled", so a widget being added
- * is not placed when the operator backs out.
+ * is not placed when the operator backs out. Each setup has a key of its own,
+ * handed to its JavaScript as the root's `setup` property, by which every
+ * call names the setup it comes from.
  */
 class WidgetSetupActivity : ReactActivity() {
   /** The widget being set up, or null when Android named none of the app's widgets. */
   internal var widgetId: Int? = null
     private set
 
+  private val key: String = UUID.randomUUID().toString()
+
   override fun getMainComponentName(): String = "J3WidgetSetup"
+
+  override fun createReactActivityDelegate(): ReactActivityDelegate =
+    object : ReactActivityDelegate(this@WidgetSetupActivity, this@WidgetSetupActivity.mainComponentName) {
+      override fun getLaunchOptions(): Bundle = Bundle().apply { putString("setup", key) }
+    }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -35,7 +47,7 @@ class WidgetSetupActivity : ReactActivity() {
     val provider = AppWidgetManager.getInstance(this).getAppWidgetInfo(given)?.provider
     widgetId = given.takeIf { provider == ComponentName(this, BotWidgetProvider::class.java) }
     setResult(Activity.RESULT_CANCELED, resultFor(given))
-    current = WeakReference(this)
+    open[key] = WeakReference(this)
   }
 
   /**
@@ -57,12 +69,15 @@ class WidgetSetupActivity : ReactActivity() {
   private fun resultFor(id: Int) = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
 
   override fun onDestroy() {
-    if (current?.get() === this) current = null
+    open.remove(key)
     super.onDestroy()
   }
 
   companion object {
-    /** The setup showing now, if any. */
-    @Volatile internal var current: WeakReference<WidgetSetupActivity>? = null
+    /** The setups open now, by key. */
+    private val open = ConcurrentHashMap<String, WeakReference<WidgetSetupActivity>>()
+
+    /** The setup `key` names, while it is open. */
+    internal fun byKey(key: String): WidgetSetupActivity? = open[key]?.get()
   }
 }

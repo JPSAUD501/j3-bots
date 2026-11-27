@@ -391,8 +391,10 @@ export interface J3Client {
    * Uploads `files` one after another and then sends `text` with them as one
    * message, outside any draft: what a share from another app does. Each
    * upload waits for the server as the composer's does. `onProgress` hears
-   * the bytes sent of all the files. Aborting `signal` stops it, and what
-   * was uploaded until then is never sent. `refused` names the first file the
+   * the bytes sent of all the files. Aborting `signal` while files upload
+   * stops it, and what was uploaded until then is never sent; once
+   * `onSending` is heard, the message is the outbox's, and aborting only stops
+   * waiting for the server's answer. `refused` names the first file the
    * server would not take, with the composer's reason; nothing was sent.
    */
   readonly sendWithFiles: (
@@ -401,6 +403,11 @@ export interface J3Client {
       readonly text: string;
       readonly files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>;
       readonly onProgress: (sent: number, total: number) => void;
+      /**
+       * Every file is uploaded and the message is handed to the outbox, which
+       * sends it on its own from then on: aborting `signal` no longer stops it.
+       */
+      readonly onSending: () => void;
     },
     signal: AbortSignal,
   ) => Promise<SendWithFilesResult>;
@@ -721,6 +728,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     readonly text: string;
     readonly files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>;
     readonly onProgress: (sent: number, total: number) => void;
+    readonly onSending: () => void;
   }) {
     const pairing = connection.pairing.get();
     if (pairing === null) {
@@ -754,6 +762,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       before += file.body.size;
       input.onProgress(before, total);
     }
+    input.onSending();
     return yield* conversations
       .send({ target: input.target, text: input.text, attachments })
       .pipe(
