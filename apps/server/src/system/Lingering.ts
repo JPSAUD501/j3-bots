@@ -24,12 +24,19 @@ declare global {
   }
 }
 
-/** An address a socket is bound or connected to, as Node's diagnostic report gives it. */
-const Endpoint = Schema.Struct({
+/** An address a TCP or UDP socket is bound or connected to, as Node's diagnostic report gives it. */
+const SocketAddress = Schema.Struct({
   ip4: Schema.optionalKey(Schema.String),
   ip6: Schema.optionalKey(Schema.String),
   port: Schema.Number,
 });
+
+/**
+ * Where a handle listens or goes: a socket's address, or a pipe's path (a
+ * Unix socket, or a named pipe on Windows), which the report gives as its
+ * name alone.
+ */
+const Endpoint = Schema.Union([SocketAddress, Schema.String]);
 
 /** One libuv handle of the report: what it is, and what says which one. */
 const Handle = Schema.Struct({
@@ -48,7 +55,9 @@ const Report = Schema.Struct({ libuv: Schema.Array(Handle) });
 const decodeReport = Schema.decodeUnknownOption(Report);
 
 const address = (endpoint: typeof Endpoint.Type) =>
-  `${endpoint.ip4 ?? (endpoint.ip6 === undefined ? "?" : `[${endpoint.ip6}]`)}:${endpoint.port}`;
+  typeof endpoint === "string"
+    ? endpoint
+    : `${endpoint.ip4 ?? (endpoint.ip6 === undefined ? "?" : `[${endpoint.ip6}]`)}:${endpoint.port}`;
 
 /**
  * `handle` in a few words: its kind, and where it goes or listens, its
