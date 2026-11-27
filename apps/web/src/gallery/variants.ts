@@ -135,6 +135,12 @@ export function galleryVariants(now: DateTime.Utc) {
       failure: { _tag: "unexpected" },
     }),
     unrecorded: outgoing("unrecorded", "And November", { _tag: "unrecorded" }),
+    // A reply its turn ends on while three of its little ones still work.
+    handOff: message(
+      "hand-off",
+      scout,
+      "I’ve split into three to go through the vendors. I’ll put it all in one comparison.",
+    ),
     bot: message(
       "bot",
       scout,

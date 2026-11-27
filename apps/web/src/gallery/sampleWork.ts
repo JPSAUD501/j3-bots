@@ -150,6 +150,45 @@ export const playedTurn: ReadonlyArray<PlayedBeat> = [
   },
 ];
 
+/**
+ * A turn that hands its little ones off: it splits into three, replies and
+ * ends while they still work, and they come home one by one after its reply,
+ * the last of them failing (decision 0095).
+ */
+export const playedHandOff: ReadonlyArray<PlayedBeat> = [
+  { at: 0, work: { plan: null, littleOnes: none }, live: true, doing: "Reading the brief" },
+  {
+    at: 1200,
+    work: { plan: null, littleOnes: sampleLittleOnes(["working", "working", "working"]) },
+    live: true,
+    doing: "Comparing the three vendors",
+  },
+  {
+    at: 4600,
+    work: { plan: null, littleOnes: sampleLittleOnes(["working", "working", "working"]) },
+    live: false,
+    doing: "",
+  },
+  {
+    at: 7600,
+    work: { plan: null, littleOnes: sampleLittleOnes(["done", "working", "working"]) },
+    live: false,
+    doing: "",
+  },
+  {
+    at: 9600,
+    work: { plan: null, littleOnes: sampleLittleOnes(["done", "done", "working"]) },
+    live: false,
+    doing: "",
+  },
+  {
+    at: 11_800,
+    work: { plan: null, littleOnes: sampleLittleOnes(["done", "done", "failed"]) },
+    live: false,
+    doing: "",
+  },
+];
+
 /** One beat of the room the gallery plays: a member's work from `at` ms on, null once its turn there is over. */
 export interface PlayedRoomBeat {
   readonly at: number;

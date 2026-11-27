@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { shownPlan } from "@j3-bots/client-runtime/presentation";
-import { useJ3Client, useWorkSteps } from "@j3-bots/client-runtime/react";
+import { useJ3Client, useTurnRow, useWorkSteps } from "@j3-bots/client-runtime/react";
 import {
   fillDetail,
   fillText,
+  type StatusLine,
   stepDetail,
   stepMark,
   stepText,
@@ -80,10 +81,12 @@ export interface TurnBot {
  * A turn's work in one row. While the turn runs: a small copy of the bot and
  * one line saying, in plain words, what it is doing now; under it, the bot's
  * little ones while part of the work runs in parallel, and the turn's plan as
- * a short card. When it ends, the row folds into one quiet line, "Worked · 6
- * steps", that opens to every step, as the running row does once there are
- * steps, and the plan into a line of its own, "Plan done, 4 of 4". Never opens
- * by itself; its steps are read only while it is open.
+ * a short card. When it ends, the plan folds into a line of its own, "Plan
+ * done, 4 of 4", and the row into one quiet line, "Worked · 6 steps", that
+ * opens to every step, as the running row does once there are steps. Little
+ * ones the turn handed off keep the bot's face and the row's "Working" until
+ * the last is home (decision 0095). Never opens by itself; its steps are read
+ * only while it is open.
  */
 export function WorkFold({
   fold,
@@ -95,10 +98,13 @@ export function WorkFold({
   readonly live: TurnBot | null;
 }) {
   const [open, setOpen] = useState(false);
-  // The row folds into its line once the turn it showed ends; one that was over when it mounted is just there.
+  // The plan folds into its line once the turn it showed ends; one that was over when it mounted is just there.
   const [wasLive, setWasLive] = useState(live !== null);
   if (live !== null && !wasLive) setWasLive(true);
-  const folding = live === null && wasLive;
+  const turnEnded = live === null && wasLive;
+  // The row keeps the bot's face while its turn runs and while little ones it handed off are out.
+  const row = useTurnRow(fold, live !== null);
+  const { folding } = row;
   const toggle = () => setOpen((was) => !was);
   // The turn's plan and little ones, and the bot whose they are: the one at work, or the fold's author.
   const face = useRef<AvatarHandle>(null);
@@ -109,9 +115,11 @@ export function WorkFold({
   const plan = shownPlan(work);
   return (
     <View className="mt-2 px-4">
-      {live !== null ? (
-        <LiveLine
-          turn={live}
+      {row.shape !== "folded" && author !== undefined ? (
+        <FaceLine
+          bot={author}
+          lastEntry={live?.lastEntry ?? null}
+          running={live !== null}
           hasSteps={fold !== null && fold.stepCount > 0}
           open={open}
           onToggle={toggle}
@@ -126,13 +134,14 @@ export function WorkFold({
           )}
         </AnimatedView>
       ) : null}
-      {/* For a turn seen running, and through its end, so the block it took closes instead of jumping shut. */}
-      {author !== undefined && wasLive && (
+      {/* For a row seen with the bot's face, and through its fold, so the block it took closes instead of jumping shut. */}
+      {author !== undefined && (row.shape !== "folded" || folding) && (
         <LittleOnes
           littleOnes={work?.littleOnes ?? null}
-          live={live !== null}
+          live={row.shape !== "folded"}
           avatar={author.profile.avatar}
           face={face}
+          onDrawn={row.drawn}
         />
       )}
       {live !== null && plan !== null && (
@@ -143,7 +152,7 @@ export function WorkFold({
           <Steps foldId={fold.id} working={fold.status._tag === "running"} />
         </AnimatedView>
       )}
-      {live === null && plan !== null && <PlanLine plan={plan} folding={folding} />}
+      {live === null && plan !== null && <PlanLine plan={plan} folding={turnEnded} />}
     </View>
   );
 }
@@ -216,18 +225,26 @@ function FoldLine({
 }
 
 /**
- * The running row: the bot at list size in its state and what it is doing
- * now, in plain words, swapping as it moves to a new step. Once there are
- * steps, a chevron opens them. The header says each new line aloud.
+ * The row with the bot's face: the bot at list size in its state, and a line
+ * beside it. While its turn runs, what it is doing now, in plain words,
+ * swapping as it moves to a new step; once the turn has ended with little ones
+ * it handed off still out, that it is working. Once there are steps, a chevron
+ * opens them. The header says each new line aloud.
  */
-function LiveLine({
-  turn,
+function FaceLine({
+  bot,
+  lastEntry,
+  running,
   hasSteps,
   open,
   onToggle,
   face,
 }: {
-  readonly turn: TurnBot;
+  readonly bot: Bot;
+  /** The bot's latest entry, so its avatar speaks while a message of its own arrives. */
+  readonly lastEntry: EntryPreview | null;
+  /** Whether its turn runs, so the line says what the bot does now. */
+  readonly running: boolean;
   readonly hasSteps: boolean;
   readonly open: boolean;
   readonly onToggle: () => void;
@@ -237,7 +254,9 @@ function LiveLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const offline = useOffline();
-  const line = turnLine(turn.bot, offline, ctx);
+  const line: StatusLine = running
+    ? turnLine(bot, offline, ctx)
+    : { text: t("presence.working"), tone: "default" };
   const chevron = useChevron(open);
   return (
     // Drawn over its little ones, which come out from behind the bot's face.
@@ -247,7 +266,7 @@ function LiveLine({
         accessibilityLabel={line.text}
         className="min-w-0 flex-1 flex-row items-center gap-2.5"
       >
-        <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} ref={face} />
+        <LiveBotAvatar bot={bot} lastEntry={lastEntry} size={24} ref={face} />
         <View className="min-w-0 flex-1">
           <SwapText text={line.text} className={`text-xs ${toneClass[line.tone]}`} />
         </View>

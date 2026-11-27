@@ -30,6 +30,7 @@ import {
   type ProviderStatus,
   type Bot,
   type BrowserTabRef,
+  type MessageEntry,
   type Room,
   RoomId,
   type RosterItem,
@@ -217,8 +218,10 @@ import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleEfforts, sampleTeam } from "./sample";
 import {
   longPlan,
+  playedHandOff,
   playedRoom,
   playedTurn,
+  type PlayedBeat,
   sampleLittleOnes,
   samplePlan,
   unnamedLittleOne,
@@ -1884,42 +1887,63 @@ const foldWith = (id: string, work: TurnWork, live = true): WorkFoldEntry | null
 };
 
 /**
- * One turn played from its first step to its end: the plan moves on, the bot
- * splits into three little ones, one fails, they go home, and the turn folds
- * into its two lines. Replay starts it again.
+ * One turn played from its first step to its end, from `beats`, with `reply`
+ * under its row once the turn is over. Replay starts it again.
  */
-function PlayedTurn() {
+function PlayedTurn({
+  beats,
+  reply = null,
+}: {
+  readonly beats: ReadonlyArray<PlayedBeat>;
+  readonly reply?: MessageEntry | null;
+}) {
   const [run, setRun] = useState(0);
   return (
     <div className="flex min-h-64 max-w-(--layout-text-column) flex-col items-start gap-2">
       <Button variant="outline" size="sm" onClick={() => setRun(run + 1)}>
         Replay
       </Button>
-      <PlayedOnce key={run} />
+      <PlayedOnce key={run} beats={beats} reply={reply} />
     </div>
   );
 }
 
 /** The turn played once, from its first beat, on its own timers. */
-function PlayedOnce() {
+function PlayedOnce({
+  beats,
+  reply,
+}: {
+  readonly beats: ReadonlyArray<PlayedBeat>;
+  readonly reply: MessageEntry | null;
+}) {
   const [beat, setBeat] = useState(0);
   useEffect(() => {
-    const timers = playedTurn.map((played, index) =>
-      window.setTimeout(() => setBeat(index), played.at),
-    );
+    const timers = beats.map((played, index) => window.setTimeout(() => setBeat(index), played.at));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, []);
-  const played = playedTurn[beat];
+  }, [beats]);
+  const played = beats[beat];
   if (played === undefined) return null;
   const working = played.work.littleOnes.ones.filter((one) => one.status === "working").length;
   return (
-    <WorkFold
-      fold={foldWith("fold-played", played.work, played.live)}
-      live={played.live ? { bot: scoutWorking(played.doing, working), lastEntry: null } : null}
-      steps={null}
-      onOpenChange={nothing}
-      onOpenImage={nothing}
-    />
+    <div className="flex w-full flex-col">
+      <WorkFold
+        fold={foldWith("fold-played", played.work, played.live)}
+        live={played.live ? { bot: scoutWorking(played.doing, working), lastEntry: null } : null}
+        steps={null}
+        onOpenChange={nothing}
+        onOpenImage={nothing}
+      />
+      {!played.live && reply !== null && (
+        <div className="arrive mt-3">
+          <MessageBubble
+            message={reply}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1983,7 +2007,10 @@ function PlanAndLittleOnesSection() {
   return (
     <Section title="A turn's plan and its little ones">
       <Labeled label="A turn played whole: the plan moves on, the bot splits into three, one fails, they go home, and the turn folds. Hover a little one for its line in full">
-        <PlayedTurn />
+        <PlayedTurn beats={playedTurn} />
+      </Labeled>
+      <Labeled label="Work handed off: the bot splits into three and replies while they still work; they stay under its face, the row says it is working, and it folds once the last is home">
+        <PlayedTurn beats={playedHandOff} reply={variants.bubbles.handOff} />
       </Labeled>
       <Labeled label="The plan while the turn runs: its first step, half way, a long plan around where the bot is">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
@@ -2004,6 +2031,26 @@ function PlanAndLittleOnesSection() {
           })}
           {turn("fold-little-one", { plan: null, littleOnes: sampleLittleOnes(["working"]) })}
           {turn("fold-little-unnamed", { plan: null, littleOnes: unnamedLittleOne })}
+        </div>
+      </Labeled>
+      <Labeled label="A reply with its little ones still out: the turn is over, and the three it handed off still work under the bot's face">
+        <div className="flex max-w-(--layout-text-column) flex-col">
+          {turn(
+            "fold-handed-off",
+            {
+              plan: null,
+              littleOnes: sampleLittleOnes(["working", "working", "working"]),
+            },
+            false,
+          )}
+          <div className="mt-3">
+            <MessageBubble
+              message={variants.bubbles.handOff}
+              position="single"
+              onOpenAttachment={nothing}
+              onRetry={nothing}
+            />
+          </div>
         </div>
       </Labeled>
       <Labeled label="Once the turn is over: the plan done, a plan a stopped turn left half way, and no line for a plan of one step">

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, WorkFoldEntry } from "@j3-bots/contracts";
 import { liveTurn } from "../presentation/turn.ts";
+import { littleOnesOut } from "../presentation/turnWork.ts";
 import { presenceLine, type PresentationContext, type StatusLine } from "./status.ts";
 import { workFoldTitle } from "./work.ts";
 
@@ -44,7 +45,8 @@ export function turnAnnouncement(
     return { key: "offline", text: turnLine(bot, true, ctx).text, ending: false };
   }
   if (state._tag === "idle" && ended !== null) {
-    return ended.status._tag === "running"
+    // Little ones the turn handed off keep its row working: it ends once they are home.
+    return ended.status._tag === "running" || littleOnesOut(ended)
       ? { key: `ending-${ended.id}`, text: "", ending: false }
       : { key: `ended-${ended.id}`, text: workFoldTitle(ended, ctx), ending: true };
   }

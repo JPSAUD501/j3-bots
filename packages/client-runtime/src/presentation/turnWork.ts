@@ -8,12 +8,14 @@
  */
 import type {
   BotId,
+  BotState,
   LittleOne,
   LittleOnes,
   Plan,
   PlanStep,
   Room,
   TurnWork,
+  WorkFoldEntry,
 } from "@j3-bots/contracts";
 
 /** The most little ones a client draws; the rest are told as "+N". */
@@ -64,6 +66,20 @@ export const shownLittleOnes = (littleOnes: LittleOnes | null): ShownLittleOnes 
     .slice(0, MAX_SHOWN_LITTLE_ONES);
   return { shown, more: Math.max(0, littleOnes.working - shown.length) };
 };
+
+/**
+ * Whether a turn that has ended still has little ones at work: work it handed
+ * off goes on after the bot's reply, and its row keeps them under the bot's
+ * face until the last is home (decision 0095).
+ */
+export const littleOnesOut = (fold: WorkFoldEntry | null): boolean =>
+  fold !== null && fold.status._tag === "finished" && (fold.work?.littleOnes.working ?? 0) > 0;
+
+/**
+ * How many of a bot's little ones are at work, in the turn under way and
+ * those its ended turns handed off, whatever it does now.
+ */
+export const littleOnesAtWork = (state: BotState): number => state.littleOnes ?? 0;
 
 /**
  * For a bot whose state counts its little ones at work (the roster's dots):
