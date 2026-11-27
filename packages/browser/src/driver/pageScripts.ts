@@ -9,16 +9,19 @@
 //
 // The page's own names are declared here, for this module alone: the few parts of the DOM
 // these functions use. A program that imports the driver, such as the server's, has no DOM
-// library, and must not get one, since its `fetch` and its streams are Node's.
+// library, and must not get one, since its `fetch` and its streams are Node's. A program
+// that has one, or has empty stand-ins for its names, gives Playwright's handles element
+// types of its own; so a function an element is passed to takes it as unknown and checks
+// it with these names, in the page.
 
 /** The parts of a DOM node these functions use. */
-export interface PageNode {
+interface PageNode {
   readonly isConnected: boolean;
   getRootNode(): PageNode;
 }
 
 /** The parts of a DOM element these functions use: what every element has, SVG's too. */
-export interface PageElement extends PageNode {
+interface PageElement extends PageNode {
   readonly tagName: string;
   readonly shadowRoot: PageShadowRoot | null;
   closest(selectors: string): PageElement | null;
@@ -81,6 +84,7 @@ interface PageClass<T> {
 
 declare const document: PageDocument;
 declare const Document: PageClass<PageDocument>;
+declare const Element: PageClass<PageElement>;
 declare const ShadowRoot: PageClass<PageShadowRoot>;
 declare const HTMLElement: PageClass<PageHTMLElement>;
 declare const HTMLInputElement: PageClass<PageInputElement>;
@@ -99,7 +103,7 @@ declare const scrollBy: (x: number, y: number) => void;
  * Focuses the target, or the element in focus when there is none, if it
  * takes typed text, and says whether focus is now in it.
  */
-export const focusTextTarget = (target: PageElement | null): boolean => {
+export const focusTextTarget = (target: unknown): boolean => {
   const nonText = [
     "button",
     "checkbox",
@@ -112,6 +116,7 @@ export const focusTextTarget = (target: PageElement | null): boolean => {
     "reset",
     "submit",
   ];
+  if (target !== null && !(target instanceof Element)) return false;
   let element = target ?? document.activeElement;
   if (target === null) {
     while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
@@ -136,7 +141,8 @@ export const focusTextTarget = (target: PageElement | null): boolean => {
 };
 
 /** Whether the target is, or labels, a picker or slider, which takes its value only from fill. */
-export const isValueOnlyInput = (target: PageElement): boolean => {
+export const isValueOnlyInput = (target: unknown): boolean => {
+  if (!(target instanceof Element)) return false;
   const label = target.closest("label");
   const element =
     target instanceof HTMLLabelElement
@@ -150,7 +156,7 @@ export const isValueOnlyInput = (target: PageElement): boolean => {
 
 /** A `<select>`'s options, or null for any other element. */
 export const selectOptions = (
-  element: PageElement,
+  element: unknown,
 ): ReadonlyArray<{ readonly value: string; readonly label: string }> | null =>
   element instanceof HTMLSelectElement
     ? Array.from(element.options, ({ value, label }) => ({ value, label: label.trim() }))
@@ -196,8 +202,8 @@ export const scrollPage = ([x, y]: readonly [number, number]): void => {
   scrollBy(x, y);
 };
 
-export const scrollElement = (element: PageElement, [x, y]: readonly [number, number]): void => {
-  element.scrollBy(x, y);
+export const scrollElement = (element: unknown, [x, y]: readonly [number, number]): void => {
+  if (element instanceof Element) element.scrollBy(x, y);
 };
 
 export const documentState = () => ({
@@ -212,7 +218,8 @@ export const viewportSize = () => ({
 });
 
 /** Whether the element is still in its document. */
-export const isConnected = (element: PageElement): boolean => element.isConnected;
+export const isConnected = (element: unknown): boolean =>
+  element instanceof Element && element.isConnected;
 
 // ---------------------------------------------------------------------------
 // Typing a saved login. These run in an isolated world of the page's top frame,
