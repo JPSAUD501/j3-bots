@@ -62,12 +62,9 @@ const ExportKdf = Schema.Struct({
 export const ArchivedSecrets = Schema.Union([
   /** None: nothing was ever saved. */
   Schema.TaggedStruct("none", {}),
-  /**
-   * Left out, since they could not be read: an old vault that waits for its
-   * password, a key file missing or holding another key, or a newer release's.
-   */
+  /** Left out, since they could not be read: a key file missing or holding another key, or a newer release's. */
   Schema.TaggedStruct("left-out", {
-    reason: Schema.Literals(["old-vault", "unreadable", "newer"]),
+    reason: Schema.Literals(["unreadable", "newer"]),
   }),
   /** In `vault/vault.sqlite`, every value sealed under the key `kdf` derives from the passphrase. */
   Schema.TaggedStruct("sealed", {

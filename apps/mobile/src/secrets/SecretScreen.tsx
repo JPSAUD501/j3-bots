@@ -101,7 +101,7 @@ export function SecretScreen({ navigation, route }: Props) {
     return (
       <ScrollView className="flex-1 bg-background" keyboardShouldPersistTaps="handled">
         <Section>
-          <SecretsGate view={view} secrets={secrets} />
+          <SecretsGate view={view} />
         </Section>
       </ScrollView>
     );

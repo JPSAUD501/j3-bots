@@ -12,7 +12,7 @@ import { readySecrets, SecretsGate } from "./SecretsForms.tsx";
 
 /**
  * Settings' Secrets page: the way to the secrets, with how many there are;
- * while they cannot be used, why, or the old vault's password in place.
+ * while they cannot be used, why.
  */
 export function SecretsSection() {
   const { t, plural } = useI18n();
@@ -23,7 +23,7 @@ export function SecretsSection() {
   const count = ready?.secrets?.length ?? null;
   return (
     <Section open>
-      <SecretsGate view={view} secrets={secrets} />
+      <SecretsGate view={view} />
       {ready !== null && (
         <PressScale
           depth="row"

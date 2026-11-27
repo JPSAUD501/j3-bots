@@ -48,7 +48,7 @@ export function SecretsScreen({ navigation }: Props) {
     >
       <Section>
         <Quiet>{t("secrets.intro")}</Quiet>
-        <SecretsGate view={view} secrets={secrets} />
+        <SecretsGate view={view} />
       </Section>
       {ready !== null && (
         <Section

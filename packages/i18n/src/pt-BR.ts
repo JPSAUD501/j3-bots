@@ -328,14 +328,6 @@ const sentences = {
   "secrets.title": "Segredos",
   "secrets.intro":
     "Logins e chaves que seus bots usam sem nunca ver. Eles ficam no seu servidor do J3 Bots: o bot só fica sabendo o nome do segredo.",
-  "secrets.oldVault.title": "Digite a senha do cofre uma última vez",
-  "secrets.oldVault.body":
-    "Os segredos não precisam mais de senha. Digite a senha do cofre uma vez, e o J3 Bots passa a guardar seus logins sem ela. Até lá, os bots não conseguem usá-los.",
-  "secrets.oldVault.password": "Senha do cofre",
-  "secrets.oldVault.open": "Continuar",
-  "secrets.oldVault.wrong": "Senha errada.",
-  "secrets.oldVault.forgot":
-    "Esqueceu? Os logins dele não podem ser recuperados sem ela. Para recomeçar sem segredos, siga “Recomeçar” no guia de operação.",
   "secrets.unreadable":
     "Seus segredos não podem ser lidos: o arquivo de chave na pasta do cofre do servidor sumiu ou não é o deles. Coloque-o de volta a partir de um backup, ou recomece como diz o guia de operação.",
   "secrets.newer":
@@ -1343,8 +1335,6 @@ const sentences = {
     "O J3 Bots os exportou {when}. O servidor deles neste computador está parado, e os dados continuam aqui.",
   "local.moved.file": "O arquivo: {file}",
   "local.moved.leftOut": "Ficaram fora do arquivo:",
-  "local.moved.leftOut.secrets.old-vault":
-    "Os segredos: estão num cofre antigo que espera a senha dele. Para levá-los, rode os bots aqui de novo, digite a senha em Configurações → Segredos e mova os bots outra vez.",
   "local.moved.leftOut.secrets.unreadable":
     "Os segredos: a chave que os protege não está neste computador, ou é outra.",
   "local.moved.leftOut.secrets.newer": "Os segredos: uma versão mais nova do J3 Bots os mudou.",

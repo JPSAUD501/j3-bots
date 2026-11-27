@@ -85,7 +85,6 @@ import {
   SignInHarness,
 } from "./provider.ts";
 import {
-  OldVaultPassword,
   Secret,
   SecretAccess,
   SecretChanges,
@@ -1021,25 +1020,13 @@ export const BrowserRpcs = RpcGroup.make(
  * would keep what it carries; each is safe to send again instead:
  * `secrets.add` names the secret it makes. No value they carry or answer is
  * stored outside the secrets' file, logged or kept in an error. Every request
- * but `secrets.status` and `secrets.openOldVault` fails with
- * `Conflict("secrets-unavailable")` while the state is not `ready`. A value
- * that cannot be opened or read back fails with `Conflict("secrets-damaged")`.
- * New at protocol 11, in place of the vault's requests.
+ * but `secrets.status` fails with `Conflict("secrets-unavailable")` while the
+ * state is not `ready`. A value that cannot be opened or read back fails with
+ * `Conflict("secrets-damaged")`.
  */
 export const SecretsRpcs = RpcGroup.make(
   /** The secrets' state now, then each change. */
   Rpc.make("secrets.status", { success: SecretsStatus, stream: true }),
-  /**
-   * Opens a vault from before secrets with the master password it was sealed
-   * under, once: the server keeps its key itself from then on, forgets the
-   * password, and the state becomes `ready`. A wrong password fails with
-   * `Invalid("old-vault-password")`. In `ready` it does nothing and
-   * succeeds, so a retry after a lost reply finds the work done.
-   */
-  Rpc.make("secrets.openOldVault", {
-    payload: { password: OldVaultPassword },
-    error: CommandError,
-  }),
   /** Every secret, by name, without its values. */
   Rpc.make("secrets.list", { success: Schema.Array(Secret), error: CommandError }),
   /**

@@ -173,8 +173,6 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "answer-length",
     /** A dismissal of a question the harness asked: only a bot's `ask` question takes one. */
     "not-dismissible",
-    /** The password given is not the one the old vault was sealed under. */
-    "old-vault-password",
     /** A login's field for a single value, or a single value's for a login. */
     "secret-kind",
     /** The one-time code setup is neither a base32 secret nor an `otpauth://totp/` address. */

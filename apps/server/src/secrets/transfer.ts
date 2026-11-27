@@ -29,8 +29,10 @@ import {
   bytesOf,
   KEY_FILE,
   keyFileText,
+  holdsUnopenedOldVault,
   keyOfText,
   newerThanThisRelease,
+  OldVaultUnopened,
   opensKeyCheck,
   SECRETS_FILE,
   sealedOfText,
@@ -54,9 +56,9 @@ const EXPORT_KDF: KdfParams = { n: 2 ** 17, r: 8, p: 1 };
 export const PASSPHRASE_MIN_LENGTH = 8;
 
 /** What a home's secrets are, for an export. */
-export type SecretsAtHome =
+type SecretsAtHome =
   | { readonly _tag: "none" }
-  | { readonly _tag: "left-out"; readonly reason: "old-vault" | "unreadable" | "newer" }
+  | { readonly _tag: "left-out"; readonly reason: "unreadable" | "newer" }
   | { readonly _tag: "ready"; readonly records: number };
 
 /** The passphrase typed for the import is not the export's. */
@@ -131,7 +133,7 @@ const inspect = Effect.fn("secrets.inspect")(function* (
 ): Effect.fn.Return<
   | Exclude<SecretsAtHome, { readonly _tag: "ready" }>
   | { readonly _tag: "ready"; readonly records: number; readonly key: Buffer },
-  SqlError.SqlError | Migrator.MigrationError | PlatformError.PlatformError,
+  SqlError.SqlError | Migrator.MigrationError | PlatformError.PlatformError | OldVaultUnopened,
   FileSystem.FileSystem | Path.Path | Scope.Scope
 > {
   const fs = yield* FileSystem.FileSystem;
@@ -145,10 +147,7 @@ const inspect = Effect.fn("secrets.inspect")(function* (
   const [counted] = yield* sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM records`;
   const records = counted?.n ?? 0;
   if (records === 0) return { _tag: "none" };
-  const keyring = yield* sql`SELECT 1 FROM keyring`;
-  if (keyring.length > 0) {
-    return { _tag: "left-out", reason: "old-vault" };
-  }
+  if (yield* holdsUnopenedOldVault(sql)) return yield* new OldVaultUnopened();
   const unreadable = { _tag: "left-out", reason: "unreadable" } as const;
   if (!(yield* hasTable(sql, "key_check"))) return unreadable;
   const [check] = yield* sql<{ readonly nonce: string; readonly sealed: string }>`
@@ -162,14 +161,14 @@ const inspect = Effect.fn("secrets.inspect")(function* (
   return { _tag: "ready", records, key: key.value };
 });
 
-/** What the secrets in `folder` are, for an export: whether there are any, and whether they can be read. */
-export const secretsAtHome = (folder: string) =>
+/** Whether the home whose secrets are in `folder` holds any, read or not. */
+export const holdsSecrets = (folder: string) =>
   inspect(folder).pipe(
-    Effect.map((found): SecretsAtHome => {
-      if (found._tag !== "ready") return found;
-      found.key.fill(0);
-      return { _tag: "ready", records: found.records };
+    Effect.map((found) => {
+      if (found._tag === "ready") found.key.fill(0);
+      return found._tag !== "none";
     }),
+    Effect.catchTag("OldVaultUnopened", () => Effect.succeed(true)),
     Effect.scoped,
     Effect.orDie,
   );
@@ -177,8 +176,7 @@ export const secretsAtHome = (folder: string) =>
 /**
  * Every value in the secrets' database `sql`, opened under `from` and sealed
  * again under `to` with a fresh nonce, and the key check written for `to`, in
- * one transaction. An old vault's keyring goes with it: nothing in the copy
- * is sealed under a password any more.
+ * one transaction.
  */
 const resealAll = Effect.fn("secrets.resealAll")(function* (
   sql: SqlClient.SqlClient,
@@ -210,7 +208,6 @@ const resealAll = Effect.fn("secrets.resealAll")(function* (
       }
       const check = sealKeyCheck(to, yield* randomBuffer(NONCE_BYTES));
       yield* sql`UPDATE key_check SET nonce = ${check.nonce}, sealed = ${check.sealed} WHERE id = 1`;
-      yield* sql`DELETE FROM keyring`;
     }),
   );
   // What was overwritten leaves no page behind.
@@ -235,7 +232,8 @@ const asCopy = (sql: SqlClient.SqlClient) =>
  * yet, every value sealed again under the key `passphrase` gives with a fresh
  * salt, and answers how the key is derived. Asks for the passphrase, saying
  * how many secrets it seals, only when there is something to seal; secrets
- * that cannot be read are left out.
+ * that cannot be read are left out. A vault from before secrets that was
+ * never opened stops the export (`OldVaultUnopened`).
  */
 export const exportSecrets = Effect.fn("secrets.exportSecrets")(
   function* <E, R>(

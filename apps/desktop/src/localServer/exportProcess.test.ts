@@ -33,7 +33,7 @@ process.stdin.on("data", (chunk) => {
   if (passphrase !== "say nothing") {
     fs.writeFileSync(report, JSON.stringify({
       bots: 2,
-      secrets: { _tag: "left-out", reason: "old-vault" },
+      secrets: { _tag: "left-out", reason: "unreadable" },
       linksLeftOut: 1,
       namesLeftOut: Array.from({ length: 25 }, (_, i) => "bots/ana/files/a\\\\" + i),
       attachmentsMissing: 0,
@@ -83,7 +83,7 @@ it.effect("gives the export its home and the passphrase, and says what it left o
     );
     assert.deepStrictEqual(
       { ...leftOut, firstNames: leftOut.firstNames.length },
-      { secrets: "old-vault", links: 1, names: 25, firstNames: 20, attachmentsMissing: 0 },
+      { secrets: "unreadable", links: 1, names: 25, firstNames: 20, attachmentsMissing: 0 },
     );
     assert.strictEqual(leftOut.firstNames[0], "bots/ana/files/a\\0");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

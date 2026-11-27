@@ -20,7 +20,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -28,18 +27,11 @@ import * as Domain from "../domain.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot } from "../testing/turns.ts";
 import { ConnectorId, type ConnectorSecret, connectorRecordId } from "./ConnectorSecret.ts";
-import {
-  OLD_VAULT_PASSWORD as PASSWORD,
-  oldVault,
-  onSecretsFile,
-  sealed,
-  secretsFolder,
-} from "../testing/secrets.ts";
+import { oldVault, onSecretsFile, sealed, secretsFolder } from "../testing/secrets.ts";
 import { referencesIn } from "./references.ts";
 import { Secrets } from "./Secrets.ts";
 import { KEY_FILE } from "./store.ts";
 
-const WRONG = Redacted.make("incorrect horse battery");
 const DEVICE = DeviceId.make("device-laptop");
 
 const idOf = (n: number) => SecretId.make(`sec_${String(n).padStart(16, "0")}`);
@@ -184,90 +176,30 @@ it.effect("keeps secrets sealed under the key file's key, open from the server's
 );
 
 it.effect(
-  "opens a vault from before secrets with its password once, and never asks for it again",
+  "refuses to start over a vault from before secrets that holds something, and changes nothing",
   () =>
     Effect.gen(function* () {
-      // A bot of the server's, made before the old vault is put in place of
-      // the secrets its start made.
-      const bot = yield* createBot("Ana").pipe(Effect.provide(Domain.layer));
-      yield* (yield* FileSystem.FileSystem).remove(yield* secretsFolder, { recursive: true });
-      const { wrappedKey } = yield* oldVault([
-        {
-          id: "cred_0000000000000001",
-          label: "Example (work)",
-          password: "hunter2",
-          bots: [bot.id],
-        },
-        { id: "cred_0000000000000002", label: "Example work", password: "other", bots: [] },
+      yield* oldVault(["cred_0000000000000001"]);
+      const before = yield* onSecretsFile((sql) => sql`SELECT * FROM keyring`);
+      const logged: Array<string> = [];
+      const logs = Logger.layer([
+        Logger.map(Logger.formatJson, (line) => {
+          logged.push(line);
+        }),
       ]);
-
-      yield* Effect.gen(function* () {
-        const secrets = yield* Secrets;
-        assert.strictEqual(yield* stateNow, "old-vault");
-        // Until then nothing can be read, by a client or for a bot.
-        assert.strictEqual(refusal(yield* Effect.exit(secrets.list)), "secrets-unavailable");
-        assert.strictEqual(
-          refusal(
-            yield* Effect.exit(
-              secrets.referenceValues({
-                references: [{ name: name("example-work"), field: null }],
-                users: onlyBots(bot.id),
-              }),
-            ),
-          ),
-          "unavailable",
-        );
-        assert.strictEqual(
-          refusal(yield* Effect.exit(secrets.openOldVault(WRONG))),
-          "old-vault-password",
-        );
-        assert.strictEqual(yield* stateNow, "old-vault");
-
-        yield* secrets.openOldVault(PASSWORD);
-        assert.strictEqual(yield* stateNow, "ready");
-        // A retry after a lost reply finds the work done.
-        yield* secrets.openOldVault(PASSWORD);
-      }).pipe(Effect.provide(Domain.layer));
-
-      // From the next start on, no password: the key file opens it.
-      yield* Effect.gen(function* () {
-        const secrets = yield* Secrets;
-        assert.strictEqual(yield* stateNow, "ready");
-        const listed = yield* secrets.list;
-        assert.deepStrictEqual(
-          listed.map((secret) => `${secret.id} ${secret.name}`),
-          ["cred_0000000000000001 example-work", "cred_0000000000000002 example-work-2"],
-        );
-        assert.deepStrictEqual(
-          listed.map((secret) => secret.access),
-          [onlyBots(bot.id), onlyBots()],
-        );
-        const password = yield* secrets.reveal({
-          id: SecretId.make("cred_0000000000000001"),
-          field: "password",
-          deviceId: DEVICE,
-        });
-        assert.strictEqual(Redacted.value(password), "hunter2");
-      }).pipe(Effect.provide(Domain.layer));
-
-      // Nothing of the password is left, nor any sealed name: the keyring's
-      // bytes are gone from the files too, not only from its table.
-      assert.deepStrictEqual(yield* onSecretsFile((sql) => sql`SELECT * FROM keyring`), []);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const folder = yield* secretsFolder;
-      for (const file of yield* fs.readDirectory(folder)) {
-        const bytes = yield* fs.readFile(path.join(folder, file));
-        assert.notInclude(Buffer.from(bytes).toString("latin1"), wrappedKey, file);
-      }
-      assert.deepStrictEqual(
-        yield* onSecretsFile((sql) => sql`SELECT * FROM record_fields WHERE field = 'name'`),
-        [],
+      const started = yield* Effect.exit(
+        stateNow.pipe(Effect.provide(Domain.layer.pipe(Layer.provide(logs)))),
       );
+      assert.isTrue(Exit.isFailure(started));
+      const said = "Open it with J3 Bots 0.12 first";
+      if (Exit.isFailure(started)) assert.include(Cause.pretty(started.cause), said);
+      assert.isTrue(logged.some((line) => line.includes(said)));
+      assert.deepStrictEqual(yield* onSecretsFile((sql) => sql`SELECT * FROM keyring`), before);
+      assert.isFalse(yield* (yield* FileSystem.FileSystem).exists(yield* keyFile));
     }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
-it.effect("replaces an empty vault from before secrets without asking for its password", () =>
+it.effect("replaces an empty vault from before secrets with a key file", () =>
   Effect.gen(function* () {
     yield* oldVault([]);
     yield* Effect.gen(function* () {

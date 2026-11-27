@@ -24,9 +24,9 @@ const EXPORT = "/exports/j3-bots-export.tar.gz";
 /** The bots' data on this computer, which deleting it deletes. */
 const DATA = "/data/server/home";
 const PASSPHRASE = Redacted.make("a long passphrase for the move");
-/** What an export left out: the secrets, which wait for an old vault's password. */
+/** What an export left out: the secrets, whose key was missing. */
 const LEFT_OUT = {
-  secrets: "old-vault",
+  secrets: "unreadable",
   links: 1,
   names: 0,
   firstNames: [],

@@ -161,13 +161,13 @@ describe("the screen once the bots moved", () => {
     render(
       moved({
         ...nothing,
-        secrets: "old-vault",
+        secrets: "unreadable",
         names: 21,
         firstNames: Array.from({ length: 20 }, (_, i) => `bots/ana/files/a\\${i}`),
       }),
     );
     expect(document.body.textContent).toContain("Left out of the file:");
-    expect(document.body.textContent).toContain("they’re in an old vault");
+    expect(document.body.textContent).toContain("the key they’re sealed under is missing");
     expect(document.body.textContent).toContain("21 files whose name has a \\ in it");
     expect(document.body.textContent).toContain("bots/ana/files/a\\19");
     expect(document.body.textContent).toContain("and 1 more");

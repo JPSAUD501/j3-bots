@@ -2,7 +2,6 @@
 import {
   type CommandError,
   type EntryId,
-  type OldVaultPassword,
   type Secret,
   type SecretAccess,
   type SecretChanges,
@@ -47,7 +46,7 @@ export type SecretsView =
 
 /** Why a request about secrets did not take effect. */
 export type SecretsFailure =
-  /** The server refused it, with its reason: a name taken, a wrong old-vault password. */
+  /** The server refused it, with its reason: a name taken, a one-time code setup it can't read. */
   | { readonly _tag: "refused"; readonly error: CommandError }
   | { readonly _tag: "not-paired" }
   /** The server failed unexpectedly. Its cause is in the server's log. */
@@ -79,8 +78,6 @@ export class Secrets extends Context.Service<
   Secrets,
   {
     readonly view: Readable<SecretsView>;
-    /** Opens a vault from before secrets with its password, typed one last time. */
-    readonly openOldVault: (password: OldVaultPassword) => Effect.Effect<SecretsResult>;
     /** Adds a secret; with `request`, it answers that bot's ask for it. */
     readonly add: (
       secret: NewSecret,
@@ -210,9 +207,6 @@ export const layer = Layer.effect(
 
     return Secrets.of({
       view,
-      openOldVault: Effect.fn("Secrets.openOldVault")(function* (password: OldVaultPassword) {
-        return yield* request((client) => client["secrets.openOldVault"]({ password }));
-      }),
       add: Effect.fn("Secrets.add")(function* (secret: NewSecret, entry: EntryId | null) {
         const id = yield* newId;
         return yield* request((client) => client["secrets.add"]({ id, ...secret, request: entry }));

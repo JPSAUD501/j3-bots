@@ -14,7 +14,7 @@ export const ExportReport = Schema.Struct({
     Schema.TaggedStruct("sealed", { records: NonNegativeInt }),
     /** Why they stayed behind: as `ArchivedSecrets` says it. */
     Schema.TaggedStruct("left-out", {
-      reason: Schema.Literals(["old-vault", "unreadable", "newer"]),
+      reason: Schema.Literals(["unreadable", "newer"]),
     }),
   ]),
   /** Links in the bots' folders and the shared ones. */

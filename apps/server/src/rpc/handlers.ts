@@ -277,7 +277,6 @@ export const handlers = J3Rpcs.toLayer(
       "browser.subscribe": ({ botId }) => browserTabs.subscribe(botId, device.id),
       // The secrets' requests carry or answer values: none is logged, and none has a receipt.
       "secrets.status": () => secrets.status,
-      "secrets.openOldVault": ({ password }) => secrets.openOldVault(password),
       "secrets.list": () => secrets.list,
       "secrets.reveal": ({ id, field }) => secrets.reveal({ id, field, deviceId: device.id }),
       "secrets.add": (input) => secretAsks.add(input),

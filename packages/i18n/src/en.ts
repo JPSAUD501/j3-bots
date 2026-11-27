@@ -333,14 +333,6 @@ export const en = {
   "secrets.title": "Secrets",
   "secrets.intro":
     "Logins and keys your bots use without ever seeing them. They stay on your J3 Bots server: a bot is only told a secret’s name.",
-  "secrets.oldVault.title": "Type your vault password one last time",
-  "secrets.oldVault.body":
-    "Secrets no longer need a password. Type your vault password once, and J3 Bots keeps your logins without it from then on. Until you do, bots can’t use them.",
-  "secrets.oldVault.password": "Vault password",
-  "secrets.oldVault.open": "Continue",
-  "secrets.oldVault.wrong": "Wrong password.",
-  "secrets.oldVault.forgot":
-    "Forgot it? The logins in it can’t be recovered without it. To start over with no secrets, follow “Start over” in the operating guide.",
   "secrets.unreadable":
     "Your secrets can’t be read: the key file in the server’s vault folder is missing or isn’t theirs. Put it back from a backup, or start over as the operating guide says.",
   "secrets.newer":
@@ -1325,8 +1317,6 @@ export const en = {
     "J3 Bots exported them {when}. Their server on this computer is stopped, and their data is still here.",
   "local.moved.file": "The file: {file}",
   "local.moved.leftOut": "Left out of the file:",
-  "local.moved.leftOut.secrets.old-vault":
-    "The secrets: they’re in an old vault that waits for its password. To bring them, run the bots here again, type it in Settings → Secrets, then move them again.",
   "local.moved.leftOut.secrets.unreadable":
     "The secrets: the key they’re sealed under is missing on this computer, or is another one.",
   "local.moved.leftOut.secrets.newer": "The secrets: a newer version of J3 Bots changed them.",
