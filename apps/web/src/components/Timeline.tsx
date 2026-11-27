@@ -11,6 +11,7 @@ import type {
   EntryId,
   ListingRef,
   QuestionAnswers,
+  ReactionEmoji,
   Room,
   RoomId,
   RoutineId,
@@ -66,6 +67,8 @@ export interface TimelineIntents {
   readonly declineSecretAsk: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
+  /** Sets the operator's reaction on a message, or takes it off with `null`. */
+  readonly react: (entryId: EntryId, emoji: ReactionEmoji | null) => void;
   /**
    * Sends again a message this device could not send, with `mentions` in
    * place of its own when given.
@@ -271,6 +274,7 @@ export function Timeline({
                 mentionable={highlighted(message.mentions, [])}
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
+                onReact={(emoji) => intents.react(message.id, emoji)}
                 submitting={submitting(message.id)}
                 openingHold={openingHold}
               />

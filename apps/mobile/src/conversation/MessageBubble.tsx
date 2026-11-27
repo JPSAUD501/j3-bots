@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { messageStatus } from "@j3-bots/client-runtime";
 import {
+  canReact,
   type GroupPosition,
   lookingAtLine,
   type MentionName,
@@ -10,7 +11,17 @@ import {
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
 import type { Avatar, BotId } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { use, useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  type ComponentRef,
+  type ReactNode,
+  type Ref,
+  use,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import { AccessibilityInfo, Pressable, View } from "react-native";
 import Animated, {
   Easing,
@@ -19,11 +30,13 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
+import { feelLongPress } from "../platform/haptics.ts";
 import { Text } from "../text.tsx";
 import { usePresentation } from "../presentation.tsx";
 
 import { MessageFile } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
+import { ReactionPills, type ReactionTarget, useReacting } from "./Reactions.tsx";
 import { Speaker, speakerGutter } from "./Speaker.tsx";
 import { VisualCard } from "./VisualCard.tsx";
 import { AnimatedView } from "./animated.ts";
@@ -44,6 +57,9 @@ const botCorners = {
   middle: "rounded-l-sm",
   last: "rounded-l-sm",
 } as const satisfies Record<GroupPosition, string>;
+
+/** The style of a view Reanimated draws, as a message's words take as they arrive. */
+type AnimatedStyle = ComponentProps<typeof Animated.View>["style"];
 
 /** How long a bot's text takes to show as it arrives: longer for more, within reason. */
 const revealTime = (text: string) => Math.min(1100, Math.max(320, text.length * 6));
@@ -124,8 +140,11 @@ function LineAction(props: {
 /**
  * One message: the operator's on the right and dark, a bot's on the left and
  * light, a bot's with the visual it showed, if any, above its words. Under
- * each of the operator's messages, how it fares; one that failed offers Send
- * again, and one this device could not send offers Delete too.
+ * it, its reactions. Under each of the operator's messages, how it fares; one
+ * that failed offers Send again, and one this device could not send offers
+ * Delete too. A long press on a message the server keeps with its reactions
+ * opens the quick bar to react to it, over its words drawn again, where they
+ * can be selected.
  */
 export function MessageBubble({
   message,
@@ -187,44 +206,63 @@ export function MessageBubble({
   const bubble = useTint(tint).bubble;
   const motion = useArrival(arriving, fromOperator, message.text);
   const bubbleWidth = speaker === null ? widths.bubble : Math.max(0, widths.bubble - speakerGutter);
+  const reacting = useReacting();
+  const reactable =
+    message._tag === "message" && message.reactions !== undefined && canReact(message)
+      ? { entryId: message.id, reactions: message.reactions }
+      : null;
+  const side = fromOperator ? "end" : "start";
+  const messageView = useRef<ComponentRef<typeof Pressable>>(null);
+  const wordsView = useRef<ComponentRef<typeof View>>(null);
+  // The bubble with the message's words, which a long press draws again over the quick bar's scrim.
+  const words = (
+    selectable: boolean,
+    style: AnimatedStyle,
+    ref?: Ref<ComponentRef<typeof View>>,
+  ): ReactNode =>
+    message.text !== "" && (
+      <View
+        ref={ref}
+        style={
+          fromOperator
+            ? { maxWidth: bubbleWidth }
+            : { maxWidth: bubbleWidth, backgroundColor: bubble }
+        }
+        className={`rounded-bubble px-3.5 py-2 ${
+          fromOperator ? `bg-bubble-operator ${operatorCorners[position]}` : botCorners[position]
+        }`}
+      >
+        <Animated.View style={style}>
+          <MessageText
+            text={message.text}
+            mentionable={mentionable}
+            selectable={selectable}
+            className={
+              fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground"
+            }
+            {...(placed === null
+              ? {}
+              : {
+                  placed: {
+                    files: message.attachments,
+                    offsets: placed,
+                    color: fromOperator
+                      ? "accent-bubble-operator-foreground"
+                      : "accent-bubble-bot-foreground",
+                  },
+                })}
+          />
+        </Animated.View>
+      </View>
+    );
+  // Where a long press reacts, the words are selected in the bubble drawn again over the bar's
+  // scrim, so selecting and reacting never answer the same press.
   const said = (
     <>
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard id={message.id} visual={message.visual} />
       )}
-      {message.text !== "" && (
-        <View
-          style={
-            fromOperator
-              ? { maxWidth: bubbleWidth }
-              : { maxWidth: bubbleWidth, backgroundColor: bubble }
-          }
-          className={`rounded-bubble px-3.5 py-2 ${
-            fromOperator ? `bg-bubble-operator ${operatorCorners[position]}` : botCorners[position]
-          }`}
-        >
-          <Animated.View style={motion.words}>
-            <MessageText
-              text={message.text}
-              mentionable={mentionable}
-              className={
-                fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground"
-              }
-              {...(placed === null
-                ? {}
-                : {
-                    placed: {
-                      files: message.attachments,
-                      offsets: placed,
-                      color: fromOperator
-                        ? "accent-bubble-operator-foreground"
-                        : "accent-bubble-bot-foreground",
-                    },
-                  })}
-            />
-          </Animated.View>
-        </View>
-      )}
+      {words(reactable === null, motion.words, wordsView)}
       {/* Files placed in the text stand there; others follow it. */}
       {placed === null &&
         message.attachments.map((attachment) => (
@@ -232,19 +270,66 @@ export function MessageBubble({
         ))}
     </>
   );
+  const openBar = () => {
+    if (reactable === null) return;
+    feelLongPress();
+    messageView.current?.measureInWindow((x, y, width, height) => {
+      const open = (preview: ReactionTarget["preview"]) =>
+        reacting.open({ ...reactable, anchor: { x, y, width, height }, side, preview });
+      const shown = wordsView.current;
+      if (shown === null) {
+        open(null);
+        return;
+      }
+      shown.measureInWindow((atX, atY, atWidth, atHeight) =>
+        open({
+          at: { x: atX, y: atY, width: atWidth, height: atHeight },
+          content: words(true, null),
+        }),
+      );
+    });
+  };
+  const body =
+    reactable === null ? (
+      said
+    ) : (
+      <Pressable
+        ref={messageView}
+        accessibilityActions={[{ name: "longpress", label: t("reaction.add") }]}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === "longpress") openBar();
+        }}
+        onLongPress={openBar}
+        className={`gap-1 self-stretch ${fromOperator ? "items-end" : "items-start"}`}
+      >
+        {said}
+      </Pressable>
+    );
+  const pills = reactable !== null && (
+    <ReactionPills
+      entryId={reactable.entryId}
+      reactions={reactable.reactions}
+      side={side}
+      maxWidth={bubbleWidth}
+    />
+  );
   return (
     <AnimatedView
       style={[motion.row, { transformOrigin: fromOperator ? "right bottom" : "left bottom" }]}
       className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-2" : "mt-0.5"}`}
     >
       {speaker === null ? (
-        said
+        <>
+          {body}
+          {pills}
+        </>
       ) : (
         // One child of the row, so its gap stays out of the speaker's name and face, and as wide
         // as the row, so a visual stretches across it as in a bot's own conversation.
         <View className="self-stretch">
           <Speaker botId={speaker} position={position}>
-            {said}
+            {body}
+            {pills}
           </Speaker>
         </View>
       )}

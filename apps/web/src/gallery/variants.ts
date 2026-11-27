@@ -35,6 +35,8 @@ import {
   type NoticeEntry,
   type QuestionEntry,
   type QuestionOption,
+  type Reaction,
+  ReactionEmoji,
   type RoutineChangeEntry,
   type Secret,
   type SecretAskEntry,
@@ -65,7 +67,9 @@ export function galleryVariants(now: DateTime.Utc) {
     name: string,
     author: Author,
     text: string,
-    extra: Partial<Pick<MessageEntry, "attachments" | "delivery" | "visual" | "lookingAt">> = {},
+    extra: Partial<
+      Pick<MessageEntry, "attachments" | "delivery" | "visual" | "lookingAt" | "reactions">
+    > = {},
   ): MessageEntry => ({
     _tag: "message",
     ...base(name, author),
@@ -76,6 +80,7 @@ export function galleryVariants(now: DateTime.Utc) {
     commandId: null,
     ...(extra.visual === undefined ? {} : { visual: extra.visual }),
     ...(extra.lookingAt === undefined ? {} : { lookingAt: extra.lookingAt }),
+    ...(extra.reactions === undefined ? {} : { reactions: extra.reactions }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -192,6 +197,34 @@ export function galleryVariants(now: DateTime.Utc) {
   const escapingVisual = message("visual-escape", scout, "Each line is what one attempt got.", {
     visual: sampleVisuals.escape,
   });
+
+  const reacted = (emoji: string, by: Reaction["by"]): Reaction => ({
+    emoji: ReactionEmoji.make(emoji),
+    by,
+  });
+  const operator = { _tag: "operator" } as const;
+  const bot = (botId: BotId) => ({ _tag: "bot", botId }) as const;
+  // The bot that reacted with 👍 has since been deleted.
+  const othersOnScout = [
+    reacted("🎉", bot(ids.wren)),
+    reacted("❤️", bot(ids.atlas)),
+    reacted("🎉", bot(ids.juniper)),
+    reacted("👍", bot(BotId.make("variant-deleted"))),
+  ];
+  const scoutNews =
+    "The Torra is in stock. The shop holds one for your test ride on Saturday at 10.";
+  /** Reactions under a message, and the bar that sets the operator's. */
+  const reactions = {
+    // 🎉 three times, the operator's among them; ❤️ and 👍 once each.
+    onBot: message("reacted", scout, scoutNews, {
+      reactions: [reacted("🎉", operator), ...othersOnScout],
+    }),
+    onOperator: message("reacted-op", { _tag: "operator" }, "Perfect, book it for me.", {
+      reactions: [reacted("👍", bot(ids.scout))],
+    }),
+    // The same message once the operator took their 🎉 off.
+    removed: message("reacted-removed", scout, scoutNews, { reactions: othersOnScout }),
+  };
 
   const embeddingVisual = message(
     "visual-embedding",
@@ -1193,6 +1226,7 @@ export function galleryVariants(now: DateTime.Utc) {
     visualBubbles,
     escapingVisual,
     embeddingVisual,
+    reactions,
     questions,
     approvals,
     approvalBecomingExact,
