@@ -933,7 +933,8 @@ export const en = {
   "details.browser": "Browser",
   "details.browser.use": "Can browse the web",
   "details.browser.hint":
-    "Uses a browser of its own. When a site asks to sign in, {name} calls you.",
+    "Uses the bots’ shared browser. When a site asks to sign in, {name} calls you.",
+  "details.browser.offStops": "Turning it off now stops what {name} is doing.",
   "details.browser.setup": "The browser needs setting up first.",
   "details.browser.howToFix": "How to fix it",
   "details.browser.failed": "{name}’s browser setting wasn’t saved. Try again.",
@@ -1265,9 +1266,10 @@ export const en = {
   "providers.endpoint.applied": "Connected: bots reach their models through {baseUrl}.",
   "providers.endpoint.stored":
     "The connection to {baseUrl} is saved. J3 Bots is restarting with it.",
-  "providers.endpoint.workRunning.one": "{count} bot has work running, and connecting stops it.",
+  "providers.endpoint.workRunning.one":
+    "{count} bot has work running, and connecting restarts J3 Bots, which stops it.",
   "providers.endpoint.workRunning.other":
-    "{count} bots have work running, and connecting stops it.",
+    "{count} bots have work running, and connecting restarts J3 Bots, which stops it.",
   "providers.endpoint.restartAnyway": "Restart anyway",
   "providers.endpoint.refused":
     "The connection was refused, so it wasn’t saved. The server’s log says why.",
@@ -1792,7 +1794,7 @@ export const en = {
   "template.create.body":
     "This is everything {name} will be and do. Nothing is created until you choose Create.",
   "template.create.untrusted":
-    "This file came from outside J3 Bots. What it says goes only into the new bot, never into your other bots, your memory or your files.",
+    "This file came from outside J3 Bots. What it says goes only into the new bot, never into your memory or files. Your other bots see the new one as a teammate, by its name, title and job.",
   "template.create.submit": "Create {name}",
   "template.create.creating": "Creating…",
   "template.create.cancel": "Cancel",

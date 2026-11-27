@@ -463,6 +463,11 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="text-base text-foreground">{t("details.browser.use")}</Text>
         <Text className="text-sm text-muted-foreground">{t("details.browser.hint", { name })}</Text>
+        {bot.browser && botStop(bot) !== "hidden" && (
+          <Text className="text-sm text-muted-foreground">
+            {t("details.browser.offStops", { name })}
+          </Text>
+        )}
         {bot.browser && needsSetup && (
           <View className="items-start">
             <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>

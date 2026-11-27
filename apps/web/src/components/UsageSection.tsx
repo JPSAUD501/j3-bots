@@ -106,7 +106,7 @@ export function UsageSection({
 
 /**
  * What the counts cover and when they were read, in one line, then what reads
- * more: "Load earlier turns", or "Try again" after a read failed.
+ * more: "Load earlier tasks", or "Try again" after a read failed.
  */
 function TurnsFooter({
   recent,

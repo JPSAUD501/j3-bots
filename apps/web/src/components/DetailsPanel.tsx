@@ -489,6 +489,11 @@ export function BotDetails({
               {t("details.browser.use")}
             </label>
             <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
+            {bot.browser && stop !== "hidden" && (
+              <p className="text-xs text-muted-foreground">
+                {t("details.browser.offStops", { name })}
+              </p>
+            )}
             {bot.browser && browserHost?._tag === "setup-required" && (
               <p className="mt-1 text-xs text-blocked">
                 {t("details.browser.setup")}{" "}

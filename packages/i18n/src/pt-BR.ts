@@ -932,7 +932,9 @@ const sentences = {
   "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
   "details.browser": "Navegador",
   "details.browser.use": "Pode navegar na internet",
-  "details.browser.hint": "Usa um navegador próprio. Quando um site pedir login, {name} te chama.",
+  "details.browser.hint":
+    "Usa o navegador dos bots, o mesmo para todos. Quando um site pedir login, {name} te chama.",
+  "details.browser.offStops": "Desligar agora interrompe o que {name} está fazendo.",
   "details.browser.setup": "O navegador precisa ser configurado antes.",
   "details.browser.howToFix": "Como resolver",
   "details.browser.failed": "A configuração do navegador de {name} não foi salva. Tente de novo.",
@@ -1278,9 +1280,9 @@ const sentences = {
   "providers.endpoint.stored":
     "A conexão com {baseUrl} foi salva. O J3 Bots está reiniciando com ela.",
   "providers.endpoint.workRunning.one":
-    "{count} bot tem trabalho em andamento, e conectar interrompe esse trabalho.",
+    "{count} bot tem trabalho em andamento, e conectar reinicia o J3 Bots, o que interrompe esse trabalho.",
   "providers.endpoint.workRunning.other":
-    "{count} bots têm trabalho em andamento, e conectar interrompe esse trabalho.",
+    "{count} bots têm trabalho em andamento, e conectar reinicia o J3 Bots, o que interrompe esse trabalho.",
   "providers.endpoint.restartAnyway": "Reiniciar mesmo assim",
   "providers.endpoint.refused":
     "A conexão foi recusada, então não foi salva. O log do servidor diz por quê.",
@@ -1819,7 +1821,7 @@ const sentences = {
   "template.create.body":
     "Isto é tudo o que {name} vai ser e fazer. Nada é criado até você tocar em Criar.",
   "template.create.untrusted":
-    "Este arquivo veio de fora do J3 Bots. O que ele diz vai só para o bot novo, nunca para os seus outros bots, a sua memória ou os seus arquivos.",
+    "Este arquivo veio de fora do J3 Bots. O que ele diz vai só para o bot novo, nunca para a sua memória ou os seus arquivos. Os seus outros bots veem o novo como colega, pelo nome, cargo e função.",
   "template.create.submit": "Criar {name}",
   "template.create.creating": "Criando…",
   "template.create.cancel": "Cancelar",
