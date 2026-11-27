@@ -1457,3 +1457,38 @@ it.effect(
       );
     }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("moves dictation off the server's own model, keeping a provider chosen", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    /** Where dictation runs, and with which provider, after an update from `place`. */
+    const after = (place: string) =>
+      Effect.gen(function* () {
+        const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* migrate(migrationsThrough(66));
+          yield* sql`UPDATE settings SET voice_place = ${place}`;
+          yield* migrate(migrationsThrough(67));
+        }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+        return yield* Effect.gen(function* () {
+          const voice = (yield* (yield* SettingsStore.SettingsStore).get).voice;
+          return [voice?.place, voice?.provider];
+        }).pipe(
+          Effect.provide(
+            SettingsStore.layer.pipe(
+              Layer.provide(Sqlite.layer),
+              Layer.provide(Layer.succeed(ServerConfig, config)),
+              Layer.provide(TestTelemetry.configLayer),
+            ),
+          ),
+        );
+      });
+
+    assert.deepStrictEqual(yield* after("server"), ["automatic", null]);
+    assert.deepStrictEqual(yield* after("openrouter"), ["openrouter", "openrouter"]);
+    assert.deepStrictEqual(yield* after("device"), ["device", null]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

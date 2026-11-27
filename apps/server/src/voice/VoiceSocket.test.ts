@@ -8,11 +8,9 @@ import {
   SecretId,
   SocketTicketGrant,
   type VoiceClientFrame,
-  VoiceModelId,
   VoiceServerFrame,
   type VoiceSettingsChange,
 } from "@j3-bots/contracts";
-import { TEST_SPEECH_MODELS, TestSpeechControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -34,9 +32,11 @@ import * as Http from "../http.ts";
 import { Secrets } from "../secrets/Secrets.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import * as Ports from "../system/Ports.ts";
+import { TestCloudSpeech } from "../testing/cloudSpeech.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
 import * as RefusedNames from "../web/RefusedNames.ts";
+import { CloudSpeechFailed } from "./CloudSpeech.ts";
 import { cloudKeySecret, Voice, type VoiceLink } from "./Voice.ts";
 import * as VoiceSocket from "./VoiceSocket.ts";
 
@@ -89,8 +89,7 @@ const open = (query: string, headers: Readonly<Record<string, string>> = {}) =>
       start: send(JSON.stringify({ type: "start" })),
       startTranscript: send(JSON.stringify({ type: "start", transcript: true })),
       audio: send(audio()),
-      finish: (draft?: { text: string; start: number; end: number }) =>
-        send(JSON.stringify(draft === undefined ? { type: "finish" } : { type: "finish", draft })),
+      finish: send(JSON.stringify({ type: "finish" })),
       hangUp: writer.write(new Socket.CloseEvent(1000)).pipe(Effect.orDie),
     };
   });
@@ -121,9 +120,9 @@ const ticketFor = (token: string) =>
 let scenes = 0;
 
 /**
- * A paired device, with the dictation preferences `voice` and the small
- * streaming model installed, which the server uses unless `voice` says
- * otherwise.
+ * A paired device, with the dictation preferences `voice`: OpenAI chosen,
+ * with its key saved, unless `voice` says otherwise. Every provider answers
+ * "Hello there." until the test says otherwise.
  */
 const scene = (voice: VoiceSettingsChange = {}) =>
   Effect.gen(function* () {
@@ -134,22 +133,14 @@ const scene = (voice: VoiceSettingsChange = {}) =>
     yield* (yield* SettingsService).update({
       commandId: CommandId.make(`voice-${n}`),
       changes: {
-        voice: {
-          place: "automatic",
-          language: "auto",
-          words: [],
-          cleanUp: false,
-          model: null,
-          ...voice,
-        },
+        voice: { place: "automatic", provider: "openai", language: "auto", words: [], ...voice },
       },
     });
-    const speech = yield* TestSpeechControl;
-    yield* speech.markInstalled(TEST_SPEECH_MODELS.streaming);
-    yield* speech.failWith(null);
-    yield* speech.scriptWords([]);
+    yield* (yield* Voice).setCloudKey("openai", Redacted.make("sk-test-voice"));
+    const cloud = yield* TestCloudSpeech;
+    yield* cloud.answer(() => Effect.succeed("Hello there."));
     return {
-      speech,
+      cloud,
       deviceId: paired.deviceId,
       bearer: { authorization: `Bearer ${paired.token}` },
       token: paired.token,
@@ -177,254 +168,184 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
     }),
   );
 
-  it.effect("passes a ticket's recording to the engine and answers the words as they come", () =>
+  it.effect("sends a ticket's whole recording to the provider chosen, with its key", () =>
     Effect.gen(function* () {
-      const { speech, token } = yield* scene({ language: "pt", words: ["Wren"] });
-      yield* speech.scriptWords([
-        { committed: "", tentative: "olá" },
-        { committed: "olá", tentative: "Wr" },
-        { committed: "olá", tentative: "Wr" },
-        { committed: "olá Wren", tentative: "" },
-      ]);
-      yield* speech.scriptText({ finished: "Olá, Wren." });
+      const { cloud, token } = yield* scene({ language: "pt", words: ["Wren"] });
+      yield* cloud.answer(() => Effect.succeed("Olá, Wren."));
+      const before = cloud.heard.length;
       const ticket = encodeURIComponent(yield* ticketFor(token));
       const client = yield* open(`?ticket=${ticket}`);
 
       yield* client.start;
-      const stream = yield* speech.nextStream;
-      assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: true }));
+      assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: false }));
       for (let piece = 0; piece < 4; piece++) yield* client.audio;
-      assert.deepStrictEqual(
-        yield* client.next,
-        frame({ type: "words", committed: "", tentative: "olá" }),
-      );
-      assert.deepStrictEqual(
-        yield* client.next,
-        frame({ type: "words", committed: "olá", tentative: "Wr" }),
-      );
-      // The third piece heard nothing new, so nothing was sent for it.
-      assert.deepStrictEqual(
-        yield* client.next,
-        frame({ type: "words", committed: "olá Wren", tentative: "" }),
-      );
-      yield* client.finish();
+      yield* client.finish;
       assert.deepStrictEqual(yield* client.next, frame({ type: "done", text: "Olá, Wren." }));
       assert.deepStrictEqual(yield* client.next, { _tag: "closed", code: 1000 });
-
-      assert.deepStrictEqual(stream.options, {
-        language: "pt",
-        words: ["Wren"],
-        removeFillers: true,
-      });
-      assert.strictEqual((yield* stream.fed).length, 4);
-      assert.isTrue(yield* stream.finished);
-      yield* stream.released;
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("drops the recording when the client hangs up, and takes the next one", () =>
-    Effect.gen(function* () {
-      const { speech, bearer } = yield* scene();
-      const first = yield* open("", bearer);
-      yield* first.start;
-      const dropped = yield* speech.nextStream;
-      yield* first.next;
-      yield* first.audio;
-      yield* first.hangUp;
-      yield* dropped.released;
-      assert.isFalse(yield* dropped.finished);
-
-      const second = yield* open("", bearer);
-      yield* second.start;
-      yield* speech.nextStream;
-      assert.deepStrictEqual(yield* second.next, frame({ type: "listening", live: true }));
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("answers busy to a second dictation while one runs", () =>
-    Effect.gen(function* () {
-      const { speech, bearer } = yield* scene();
-      const first = yield* open("", bearer);
-      yield* first.start;
-      yield* speech.nextStream;
-      yield* first.next;
-
-      const second = yield* open("", bearer);
-      yield* second.start;
-      assert.deepStrictEqual(yield* second.next, frame({ type: "failed", reason: "busy" }));
-      assert.deepStrictEqual(yield* second.next, { _tag: "closed", code: 1000 });
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("has the AI tidy the words when the operator asked, with the draft around them", () =>
-    Effect.gen(function* () {
-      const { speech, bearer } = yield* scene({ cleanUp: true });
-      yield* speech.scriptText({ finished: "eggs milk", tidied: "Eggs and milk." });
-      const client = yield* open("", bearer);
-      yield* client.start;
-      yield* speech.nextStream;
-      yield* client.next;
-      yield* client.audio;
-      yield* client.finish({ text: "Buy: ", start: 5, end: 5 });
-      // Nothing was heard for the piece: no words frame comes.
-      assert.deepStrictEqual(yield* client.next, frame({ type: "tidying" }));
-      assert.deepStrictEqual(yield* client.next, frame({ type: "done", text: "Eggs and milk." }));
-      assert.deepStrictEqual(yield* speech.tidyRequests, [
-        { text: "eggs milk", draft: { text: "Buy: " } },
+      assert.deepStrictEqual(cloud.heard.slice(before), [
+        { provider: "openai", key: "sk-test-voice", model: null, bytes: 64_000, language: "pt" },
       ]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "answers a transcript's words with the audio they were heard in, and never tidies them",
-    () =>
-      Effect.gen(function* () {
-        // The operator asked for the tidy-up, which is for the composer only.
-        const { speech, bearer } = yield* scene({ cleanUp: true });
-        yield* speech.scriptWords([
-          { committed: "", tentative: "" },
-          { committed: "", tentative: "open" },
-          { committed: "open", tentative: "the" },
-          { committed: "open the invoices", tentative: "" },
-        ]);
-        yield* speech.scriptText({ finished: "open the invoices", tidied: "Open the invoices." });
-        const tidiedBefore = (yield* speech.tidyRequests).length;
-        const client = yield* open("", bearer);
-        yield* client.startTranscript;
-        yield* speech.nextStream;
-        assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: true }));
-        for (let piece = 0; piece < 4; piece++) yield* client.audio;
-        // Each piece is a quarter second; the first heard nothing.
-        assert.deepStrictEqual(
-          yield* client.next,
-          frame({ type: "words", committed: "", tentative: "open", heardMs: 500 }),
-        );
-        assert.deepStrictEqual(
-          yield* client.next,
-          frame({ type: "words", committed: "open", tentative: "the", heardMs: 750 }),
-        );
-        assert.deepStrictEqual(
-          yield* client.next,
-          frame({ type: "words", committed: "open the invoices", tentative: "", heardMs: 1000 }),
-        );
-        yield* client.finish();
-        assert.deepStrictEqual(
-          yield* client.next,
-          frame({ type: "done", text: "open the invoices" }),
-        );
-        assert.strictEqual((yield* speech.tidyRequests).length, tidiedBefore);
-      }).pipe(Effect.scoped),
+  it.effect("takes a recording from each device at once", () =>
+    Effect.gen(function* () {
+      const { bearer } = yield* scene();
+      const first = yield* open("", bearer);
+      const second = yield* open("", bearer);
+      yield* first.start;
+      yield* second.start;
+      assert.deepStrictEqual(yield* first.next, frame({ type: "listening", live: false }));
+      assert.deepStrictEqual(yield* second.next, frame({ type: "listening", live: false }));
+      yield* second.audio;
+      yield* second.finish;
+      assert.deepStrictEqual(yield* second.next, frame({ type: "done", text: "Hello there." }));
+    }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "sends a cloud provider the whole recording with the saved key, and keeps none in the engine",
-    () =>
-      Effect.gen(function* () {
-        const { speech, bearer } = yield* scene({ place: "openai" });
-        const voice = yield* Voice;
+  it.effect("sends nothing when the client hangs up, and takes the next one", () =>
+    Effect.gen(function* () {
+      const { cloud, bearer } = yield* scene();
+      const before = cloud.heard.length;
+      const first = yield* open("", bearer);
+      yield* first.start;
+      yield* first.next;
+      yield* first.audio;
+      yield* first.hangUp;
 
-        const keyless = yield* open("", bearer);
-        yield* keyless.start;
-        assert.deepStrictEqual(yield* keyless.next, frame({ type: "failed", reason: "cloud-key" }));
+      const second = yield* open("", bearer);
+      yield* second.start;
+      assert.deepStrictEqual(yield* second.next, frame({ type: "listening", live: false }));
+      yield* second.audio;
+      yield* second.finish;
+      yield* second.next;
+      assert.strictEqual(cloud.heard.length, before + 1);
+    }).pipe(Effect.scoped),
+  );
 
-        yield* voice.setCloudKey("openai", Redacted.make("sk-test-voice"));
-        const keys = yield* voice.cloudKeys.pipe(
-          Stream.filter((now) => now.openai),
-          Stream.runHead,
-        );
-        assert.deepStrictEqual(
-          Option.map(keys, (now) => now.xai),
-          Option.some(false),
-        );
-        const saved = yield* (yield* Secrets).named(cloudKeySecret("openai"));
-        assert.deepStrictEqual(
-          Option.map(saved, (secret) => secret.access),
-          Option.some({ _tag: "bots" as const, botIds: [] }),
-        );
+  it.effect("uses the place's provider on every device when the place is one", () =>
+    Effect.gen(function* () {
+      const { cloud, bearer } = yield* scene({ place: "xai" });
+      yield* (yield* Voice).setCloudKey("xai", Redacted.make("xai-test-voice"));
+      const before = cloud.heard.length;
+      const client = yield* open("", bearer);
+      yield* client.startTranscript;
+      yield* client.next;
+      yield* client.audio;
+      yield* client.finish;
+      assert.deepStrictEqual(yield* client.next, frame({ type: "done", text: "Hello there." }));
+      assert.deepStrictEqual(
+        cloud.heard.slice(before).map((heard) => [heard.provider, heard.key]),
+        [["xai", "xai-test-voice"]],
+      );
+      yield* (yield* Voice).setCloudKey("xai", null);
+    }).pipe(Effect.scoped),
+  );
 
-        yield* speech.scriptText({ cloud: "Hello from the cloud." });
-        const client = yield* open("", bearer);
-        yield* client.start;
-        assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: false }));
-        yield* client.audio;
-        yield* client.audio;
-        yield* client.finish();
-        assert.deepStrictEqual(
-          yield* client.next,
-          frame({ type: "done", text: "Hello from the cloud." }),
-        );
-        assert.deepStrictEqual(yield* speech.cloudRequests, [
-          { provider: "openai", model: null, bytes: 32_000 },
-        ]);
-        assert.deepStrictEqual(
-          (yield* speech.cloudKeys).get("openai"),
-          null,
-          "The engine's copy of the key is removed once the recording is transcribed.",
-        );
+  it.effect("says why the provider gave no words", () =>
+    Effect.gen(function* () {
+      const { cloud, bearer } = yield* scene();
+      yield* cloud.answer(() => Effect.fail(new CloudSpeechFailed({ reason: "limit" })));
+      const client = yield* open("", bearer);
+      yield* client.start;
+      yield* client.next;
+      yield* client.audio;
+      yield* client.finish;
+      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "cloud-limit" }));
+    }).pipe(Effect.scoped),
+  );
 
-        yield* voice.setCloudKey("openai", null);
-        assert.isTrue(Option.isNone(yield* (yield* Secrets).named(cloudKeySecret("openai"))));
-      }).pipe(Effect.scoped),
+  it.effect("asks for a provider and its key before it records", () =>
+    Effect.gen(function* () {
+      const { bearer } = yield* scene({ provider: null });
+      const none = yield* open("", bearer);
+      yield* none.start;
+      assert.deepStrictEqual(yield* none.next, frame({ type: "failed", reason: "cloud-key" }));
+
+      yield* scene({ provider: "xai" });
+      const keyless = yield* open("", bearer);
+      yield* keyless.start;
+      assert.deepStrictEqual(yield* keyless.next, frame({ type: "failed", reason: "cloud-key" }));
+
+      yield* scene({ place: "device" });
+      const onDevice = yield* open("", bearer);
+      yield* onDevice.start;
+      assert.deepStrictEqual(
+        yield* onDevice.next,
+        frame({ type: "failed", reason: "unavailable" }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("saves a provider's key as a secret no bot may use, and removes it", () =>
+    Effect.gen(function* () {
+      yield* scene();
+      const voice = yield* Voice;
+      const keys = yield* voice.cloudKeys.pipe(
+        Stream.filter((now) => now.openai),
+        Stream.runHead,
+      );
+      assert.deepStrictEqual(
+        Option.map(keys, (now) => now.xai),
+        Option.some(false),
+      );
+      const saved = yield* (yield* Secrets).named(cloudKeySecret("openai"));
+      assert.deepStrictEqual(
+        Option.map(saved, (secret) => secret.access),
+        Option.some({ _tag: "bots" as const, botIds: [] }),
+      );
+      yield* voice.setCloudKey("openai", null);
+      assert.isTrue(Option.isNone(yield* (yield* Secrets).named(cloudKeySecret("openai"))));
+    }).pipe(Effect.scoped),
   );
 
   it.effect("asks for OpenRouter's model before it records", () =>
     Effect.gen(function* () {
-      const { bearer } = yield* scene({ place: "openrouter", openRouterModel: null });
+      const { bearer } = yield* scene({ provider: "openrouter", openRouterModel: null });
+      yield* (yield* Voice).setCloudKey("openrouter", Redacted.make("or-test-voice"));
       const client = yield* open("", bearer);
       yield* client.start;
       assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "cloud-model" }));
+      yield* (yield* Voice).setCloudKey("openrouter", null);
     }).pipe(Effect.scoped),
   );
 
   it.effect("ends a dictation when its device is revoked", () =>
     Effect.gen(function* () {
-      const { speech, bearer, deviceId } = yield* scene();
+      const { bearer, deviceId } = yield* scene();
       const client = yield* open("", bearer);
       yield* client.start;
-      const stream = yield* speech.nextStream;
       yield* client.next;
       yield* (yield* DeviceAuth).revoke(deviceId);
       assert.deepStrictEqual(yield* client.next, { _tag: "closed", code: 1008 });
-      yield* stream.released;
     }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "ends a recording whose client went silent without hanging up, and takes the next one",
-    () =>
-      Effect.gen(function* () {
-        const { speech } = yield* scene();
-        const voice = yield* Voice;
-        const silent = yield* fakeLink;
-        const dictation = yield* voice.dictate(silent.link).pipe(Effect.forkScoped);
-        yield* silent.say({ type: "start" });
-        const stream = yield* speech.nextStream;
-        assert.deepStrictEqual(yield* silent.next, { type: "listening", live: true });
-        yield* silent.say(audio());
-        // As a laptop put to sleep: no more audio, and no close.
-        for (let second = 0; second < 30 && dictation.pollUnsafe() === undefined; second++) {
-          yield* TestClock.adjust("1 second");
-        }
-        yield* Fiber.join(dictation);
-        yield* stream.released;
-        assert.isFalse(yield* stream.finished);
-
-        const next = yield* fakeLink;
-        yield* voice.dictate(next.link).pipe(Effect.forkScoped);
-        yield* next.say({ type: "start" });
-        yield* speech.nextStream;
-        assert.deepStrictEqual(yield* next.next, { type: "listening", live: true });
-      }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
+  it.effect("ends a recording whose client went silent without hanging up", () =>
+    Effect.gen(function* () {
+      const { cloud } = yield* scene();
+      const before = cloud.heard.length;
+      const voice = yield* Voice;
+      const silent = yield* fakeLink;
+      const dictation = yield* voice.dictate(silent.link).pipe(Effect.forkScoped);
+      yield* silent.say({ type: "start" });
+      assert.deepStrictEqual(yield* silent.next, { type: "listening", live: false });
+      yield* silent.say(audio());
+      // As a laptop put to sleep: no more audio, and no close.
+      for (let second = 0; second < 30 && dictation.pollUnsafe() === undefined; second++) {
+        yield* TestClock.adjust("1 second");
+      }
+      yield* Fiber.join(dictation);
+      assert.strictEqual(cloud.heard.length, before);
+    }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
   );
 
   it.effect(
     "waits for the first piece while the operator answers the browser's microphone prompt",
     () =>
       Effect.gen(function* () {
-        const { speech } = yield* scene({ place: "openai" });
+        yield* scene();
         const voice = yield* Voice;
-        yield* voice.setCloudKey("openai", Redacted.make("sk-test-voice"));
-        yield* speech.scriptText({ cloud: "Allowed at last." });
         const client = yield* fakeLink;
         yield* voice.dictate(client.link).pipe(Effect.forkScoped);
         yield* client.say({ type: "start" });
@@ -432,33 +353,29 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
         yield* TestClock.adjust("20 seconds");
         yield* client.say(audio());
         yield* client.say({ type: "finish" });
-        assert.deepStrictEqual(yield* client.next, { type: "done", text: "Allowed at last." });
-        yield* voice.setCloudKey("openai", null);
+        assert.deepStrictEqual(yield* client.next, { type: "done", text: "Hello there." });
       }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
   );
 
-  it.effect(
-    "sends nothing to a cloud provider whose key was removed while the operator spoke",
-    () =>
-      Effect.gen(function* () {
-        const { speech, bearer } = yield* scene({ place: "openai" });
-        const voice = yield* Voice;
-        yield* voice.setCloudKey("openai", Redacted.make("sk-test-voice"));
-        const before = (yield* speech.cloudRequests).length;
-        const client = yield* open("", bearer);
-        yield* client.start;
-        assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: false }));
-        yield* client.audio;
-        yield* voice.setCloudKey("openai", null);
-        yield* client.finish();
-        assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "cloud-key" }));
-        assert.strictEqual((yield* speech.cloudRequests).length, before);
-      }).pipe(Effect.scoped),
+  it.effect("sends nothing to a provider whose key was removed while the operator spoke", () =>
+    Effect.gen(function* () {
+      const { cloud, bearer } = yield* scene();
+      const voice = yield* Voice;
+      const before = cloud.heard.length;
+      const client = yield* open("", bearer);
+      yield* client.start;
+      assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: false }));
+      yield* client.audio;
+      yield* voice.setCloudKey("openai", null);
+      yield* client.finish;
+      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "cloud-key" }));
+      assert.strictEqual(cloud.heard.length, before);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("leaves alone a secret the operator made under a cloud key's name", () =>
     Effect.gen(function* () {
-      const { bearer } = yield* scene({ place: "xai" });
+      const { bearer } = yield* scene({ provider: "xai" });
       const voice = yield* Voice;
       const secrets = yield* Secrets;
       const name = cloudKeySecret("xai");
@@ -490,88 +407,6 @@ it.layer(server, { excludeTestServices: true })("voice socket", (it) => {
         Option.map(kept, (secret) => secret.access),
         Option.some({ _tag: "every-bot" as const }),
       );
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("says the server cannot recognize speech on a system the engine has none for", () =>
-    Effect.gen(function* () {
-      const { speech, bearer } = yield* scene();
-      yield* speech.setSupport("unsupported");
-      const voice = yield* Voice;
-      assert.deepStrictEqual(
-        yield* voice.status.pipe(Stream.runHead),
-        Option.some({ _tag: "unavailable" as const, reason: "platform" as const }),
-      );
-      const client = yield* open("", bearer);
-      yield* client.start;
-      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "unavailable" }));
-      yield* speech.setSupport("supported");
-    }).pipe(Effect.scoped),
-  );
-});
-
-// A server of its own, so no model is installed yet.
-it.layer(server, { excludeTestServices: true })("voice socket on first use", (it) => {
-  it.effect("never downloads the model for a recording's transcript", () =>
-    Effect.gen(function* () {
-      const { bearer } = yield* scene({
-        model: VoiceModelId.make(TEST_SPEECH_MODELS.buffered),
-      });
-      const client = yield* open("", bearer);
-      yield* client.startTranscript;
-      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "unavailable" }));
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("says the model could not be installed when its download fails", () =>
-    Effect.gen(function* () {
-      const { speech, bearer } = yield* scene({
-        model: VoiceModelId.make(TEST_SPEECH_MODELS.buffered),
-      });
-      const client = yield* open("", bearer);
-      yield* client.start;
-      const install = yield* speech.nextInstall;
-      yield* client.next;
-      yield* install.end("failed");
-      assert.deepStrictEqual(yield* client.next, frame({ type: "failed", reason: "install" }));
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("installs the model on first use, saying how far it got, then listens", () =>
-    Effect.gen(function* () {
-      const { speech, bearer } = yield* scene({
-        model: VoiceModelId.make(TEST_SPEECH_MODELS.buffered),
-      });
-      const voice = yield* Voice;
-      const client = yield* open("", bearer);
-      yield* client.start;
-      const install = yield* speech.nextInstall;
-      assert.strictEqual(install.modelId, TEST_SPEECH_MODELS.buffered);
-      assert.deepStrictEqual(
-        yield* client.next,
-        frame({ type: "installing", received: 0, total: 1_600_000_000 }),
-      );
-      yield* install.progress(400_000_000);
-      assert.deepStrictEqual(
-        yield* client.next,
-        frame({ type: "installing", received: 400_000_000, total: 1_600_000_000 }),
-      );
-      // Every device sees the download, not only the one dictating.
-      const status = yield* voice.status.pipe(Stream.runHead);
-      assert.deepStrictEqual(
-        Option.map(status, (now) => (now._tag === "available" ? now.installing : null)),
-        Option.some({
-          modelId: VoiceModelId.make(TEST_SPEECH_MODELS.buffered),
-          received: 400_000_000,
-          total: 1_600_000_000,
-        }),
-      );
-      // Audio sent while it downloads is dropped: none of it was heard.
-      yield* client.audio;
-      yield* install.end("installed");
-      yield* speech.nextStream;
-      assert.deepStrictEqual(yield* client.next, frame({ type: "listening", live: false }));
-      assert.strictEqual(yield* speech.selected, TEST_SPEECH_MODELS.buffered);
     }).pipe(Effect.scoped),
   );
 });

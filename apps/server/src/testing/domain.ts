@@ -23,6 +23,7 @@ import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SuggestReplies from "../settings/SuggestReplies.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
+import * as TestCloudSpeech from "./cloudSpeech.ts";
 import * as TestDiskSpace from "./diskSpace.ts";
 import * as TestOAuth from "./oauth.ts";
 import * as TestHarnesses from "./harnesses.ts";
@@ -150,7 +151,6 @@ const engineWith = (starting: StartingStatuses) =>
       Layer.mergeAll(
         TestEngine.layer,
         TestEngine.browserLayer,
-        TestEngine.speechLayer,
         testProviders(starting),
       ),
     ),
@@ -169,7 +169,8 @@ const noRepositories = Layer.succeed(
 
 /**
  * The database `database` gives, the home, the engine, its providers as
- * `starting` says, a fake authorization server for connectors' sign-ins,
+ * `starting` says, a fake authorization server for connectors' sign-ins, cloud
+ * providers that answer dictation in memory (`TestCloudSpeech`),
  * harness sources with nothing to install, and a disk whose free space the
  * test sets (`TestDiskSpace`).
  */
@@ -184,6 +185,7 @@ const storesOver = (
       Layer.provide(SettingsStore.layer),
     ),
     TestOAuth.layer,
+    TestCloudSpeech.layer,
     TestHarnesses.layer,
     TestDiskSpace.layer,
     repositories,
