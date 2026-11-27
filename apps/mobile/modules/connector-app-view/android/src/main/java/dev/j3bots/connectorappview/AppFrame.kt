@@ -33,9 +33,10 @@ import kotlin.math.roundToInt
 import org.json.JSONObject
 
 /**
- * The longest message the app may pass to the host, as the page's relay
- * answers a longer one (`CONNECTOR_APP_BRIDGE_MAX_LENGTH`): the most files
- * one download may offer, 16 MiB as base64, with room for the request around them.
+ * The longest message the app may pass to the host, as every client takes
+ * (`MAX_CONNECTOR_APP_MESSAGE_LENGTH`), and the page's relay answers a longer
+ * request itself: the most files one download may offer, 16 MiB as base64,
+ * with room for the request around them.
  */
 private const val MAX_MESSAGE_LENGTH = 24 * 1024 * 1024
 

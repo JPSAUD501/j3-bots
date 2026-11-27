@@ -132,11 +132,13 @@ const attributeValue = (text: string): string =>
   text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 /**
- * The longest message, as JSON, that Android's bridge takes from an app: the
- * most files one `ui/download-file` may offer (16 MiB) as base64, with room
- * for the request around them. Android's side drops a longer one unread.
+ * The longest request an app may send, as JSON, on every client: the most
+ * files one `ui/download-file` may offer (16 MiB) as base64, with room for
+ * the request around them. Android's bridge takes no longer message, so every
+ * client refuses a longer request alike, as too large, even one whose content
+ * is within its own bounds but grows past this as JSON, as text full of tabs does.
  */
-const CONNECTOR_APP_BRIDGE_MAX_LENGTH = 24 * 1024 * 1024;
+const MAX_CONNECTOR_APP_MESSAGE_LENGTH = 24 * 1024 * 1024;
 
 /** The extension's code for a request the host turned down. */
 const DENIED = -32000;
@@ -145,10 +147,10 @@ const DENIED = -32000;
 const TOO_LARGE = "The request or its answer is too large to pass on.";
 
 // Passes on what the app's frame sends, from that frame's window alone, to
-// the WebView's bridge as JSON; a request too long for the bridge is answered
-// here, as the host answers one too large, so the app does not wait on it.
+// the WebView's bridge as JSON; a request longer than any client takes is
+// answered here, as the host answers it, so the app does not wait on it.
 // Gives the app what the app's side hands `deliver`, as the web client would post it.
-const RELAY = `(function(){var f=document.getElementById("app"),b=window[${JSON.stringify(CONNECTOR_APP_BRIDGE)}];window.addEventListener("message",function(e){if(e.source!==f.contentWindow||!b)return;var t;try{t=JSON.stringify(e.data);}catch(x){return;}if(typeof t!=="string")return;if(t.length>${CONNECTOR_APP_BRIDGE_MAX_LENGTH}){var d=e.data;if(d&&d.id!==undefined&&typeof d.method==="string")f.contentWindow.postMessage({jsonrpc:"2.0",id:d.id,error:{code:${DENIED},message:${JSON.stringify(TOO_LARGE)}}},"*");return;}b.postMessage(t);});window.deliver=function(t){f.contentWindow.postMessage(JSON.parse(t),"*");};})();`;
+const RELAY = `(function(){var f=document.getElementById("app"),b=window[${JSON.stringify(CONNECTOR_APP_BRIDGE)}];window.addEventListener("message",function(e){if(e.source!==f.contentWindow||!b)return;var t;try{t=JSON.stringify(e.data);}catch(x){return;}if(typeof t!=="string")return;if(t.length>${MAX_CONNECTOR_APP_MESSAGE_LENGTH}){var d=e.data;if(d&&d.id!==undefined&&typeof d.method==="string")f.contentWindow.postMessage({jsonrpc:"2.0",id:d.id,error:{code:${DENIED},message:${JSON.stringify(TOO_LARGE)}}},"*");return;}b.postMessage(t);});window.deliver=function(t){f.contentWindow.postMessage(JSON.parse(t),"*");};})();`;
 
 /**
  * The page a WebView loads to show `document`, as `connectorAppDocument`
@@ -839,7 +841,12 @@ export const connectorAppHost = (options: ConnectorAppHostOptions): ConnectorApp
     }
     const asRequest = decodeRequest(data);
     if (Option.isSome(asRequest)) {
-      return request(asRequest.value.id, asRequest.value.method, asRequest.value.params);
+      const { id, method, params } = asRequest.value;
+      // As Android's relay answers it, so every client refuses the same requests.
+      if (JSON.stringify(data).length > MAX_CONNECTOR_APP_MESSAGE_LENGTH) {
+        return error(id, DENIED, TOO_LARGE);
+      }
+      return request(id, method, params);
     }
     const asNotification = decodeNotification(data);
     if (Option.isSome(asNotification)) {

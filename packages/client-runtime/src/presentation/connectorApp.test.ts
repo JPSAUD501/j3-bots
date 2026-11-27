@@ -558,6 +558,29 @@ describe("connectorAppHost", () => {
     assert.strictEqual(connectorAppFileName("..\\..\\"), "download");
   });
 
+  it("refuses, on every client alike, a download within its bytes that grows past what Android's bridge takes as JSON", async () => {
+    const offered: Array<ReadonlyArray<ConnectorAppDownload>> = [];
+    const { host, sent, answered } = hosted({
+      download: (files) => {
+        offered.push(files);
+        return Promise.resolve(true);
+      },
+    });
+    // 15 MiB of tabs is within a download's 16 MiB, but each is two characters as JSON.
+    const text = "\t".repeat(15 * 1024 * 1024);
+    host.receive(
+      request(1, "ui/download-file", {
+        contents: [{ type: "resource", resource: { uri: "file:///tabs.tsv", text } }],
+      }),
+    );
+    await answered(1);
+    assert.strictEqual(offered.length, 0);
+    assert.deepNestedInclude(answerTo(sent, 1), {
+      "error.code": -32000,
+      "error.message": "The request or its answer is too large to pass on.",
+    });
+  });
+
   it("answers a method it does not know as unknown", () => {
     const { host, sent } = hosted();
     host.receive(request(1, "sampling/createMessage", {}));
