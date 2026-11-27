@@ -86,19 +86,17 @@ deb:
 
 mac:
   target: [dmg, zip]
-  # Asked the first time a screen recording takes the microphone.
-  extendInfo:
-    NSMicrophoneUsageDescription: J3 Bots records your voice while you record your screen for a bot.
   category: public.app-category.productivity
   icon: ../../packages/design-tokens/generated/icons/mac.png
   # Ad hoc: no Developer ID, which Apple Silicon still needs to run the app at all.
   identity: "-"
   artifactName: J3-Bots-${version}-${arch}-unsigned.${ext}
-  # Dictation hears the microphone: macOS asks the operator once, in these
-  # words, and the hardened runtime needs the audio-input entitlement, which
-  # the app and the helper that captures audio both carry.
+  # Dictation and screen recording hear the microphone: macOS asks the
+  # operator once, in these words, and the hardened runtime needs the
+  # audio-input entitlement, which the app and the helper that captures audio
+  # both carry.
   extendInfo:
-    NSMicrophoneUsageDescription: J3 Bots hears your voice only while you dictate, to write it into your message.
+    NSMicrophoneUsageDescription: J3 Bots hears your voice only while you dictate a message or record your screen for a bot.
   entitlements: entitlements.mac.plist
   entitlementsInherit: entitlements.mac.plist
   # Apple Silicon only: no runtime is built for Intel Macs, where the app only
