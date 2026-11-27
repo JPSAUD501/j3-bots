@@ -21,6 +21,7 @@ import {
   GaugeIcon,
   KeyRoundIcon,
   type LucideIcon,
+  MicIcon,
   MonitorSmartphoneIcon,
   PaletteIcon,
   PlugIcon,
@@ -110,14 +111,14 @@ import {
 } from "./LocalMode";
 import { PairingQr } from "./PairingQr";
 import { PhoneAccessSetting } from "./PhoneAccess";
-import { Section } from "./SettingsSection";
+import { Section, SwitchRow } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
+import { VoiceSection } from "./VoiceSettings";
 import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
-import { Switch } from "./ui/switch";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
 
@@ -146,6 +147,7 @@ type SettingsIntents = Pick<
   | "lookingAt"
   | "providerSetup"
   | "secrets"
+  | "voice"
 >;
 
 type SettingsData = Pick<
@@ -188,6 +190,7 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
   you: UserRoundIcon,
   notifications: BellIcon,
   appearance: PaletteIcon,
+  voice: MicIcon,
   providers: CpuIcon,
   usage: GaugeIcon,
   connectors: PlugIcon,
@@ -199,13 +202,20 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, and updates only where one can be followed from here.
+ * the desktop app, updates only where one can be followed from here, and
+ * voice only from a server that dictates, since this window has no
+ * recognizer of its own.
  */
-const pagesFor = (intents: SettingsIntents): ReadonlyArray<ReadonlyArray<SettingsPage>> =>
+const pagesFor = (
+  intents: SettingsIntents,
+  data: SettingsData,
+): ReadonlyArray<ReadonlyArray<SettingsPage>> =>
   settingsGroups
     .map((group) =>
       group.filter((page) => {
         switch (page) {
+          case "voice":
+            return intents.voice !== undefined && data.settings?.voice != null;
           case "where":
             return intents.server !== undefined || intents.local !== undefined;
           case "updates":
@@ -297,7 +307,7 @@ export function SettingsPanel({
   readonly wide: boolean;
 }) {
   const { t } = useI18n();
-  const groups = pagesFor(intents);
+  const groups = pagesFor(intents, data);
   const page =
     data.settingsPage !== null && groups.some((group) => group.includes(data.settingsPage!))
       ? data.settingsPage
@@ -506,6 +516,16 @@ function PageBody({
       );
     case "appearance":
       return <AppearanceSection />;
+    case "voice":
+      return intents.voice === undefined ? null : (
+        <VoiceSection
+          settings={data.settings}
+          save={data.settingsSaves.voice}
+          connected={data.connected}
+          onSave={intents.updateSettings}
+          voice={intents.voice}
+        />
+      );
     case "providers":
       return (
         <EngineSection
@@ -1009,43 +1029,6 @@ function HarnessSwitch({
           save.changes[setting] !== undefined &&
           t("settings.saveFailed")}
       </p>
-    </div>
-  );
-}
-
-/** A setting that is on or off: its name and what it does, beside the switch. */
-function SwitchRow({
-  label,
-  hint,
-  checked,
-  readOnly,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  readOnly: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  const labelId = useId();
-  const hintId = useId();
-  return (
-    <div className="flex items-start gap-3">
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span id={labelId} className="text-sm">
-          {label}
-        </span>
-        <span id={hintId} className="text-2xs text-muted-foreground">
-          {hint}
-        </span>
-      </span>
-      <Switch
-        checked={checked}
-        readOnly={readOnly}
-        aria-labelledby={labelId}
-        aria-describedby={hintId}
-        onCheckedChange={onChange}
-      />
     </div>
   );
 }

@@ -2,10 +2,9 @@
 import type { WhatsNewRelease } from "./types.ts";
 
 // What 0.14.0 lets people do. Written so far for what has merged; before the
-// release, add an entry each for the work still under way: MCP Apps shown in
-// the bot's reply, with fullscreen and picture-in-picture, and dictating a
-// message with the microphone. docs/operations/releasing.md says how an entry
-// is written.
+// release, add the entry for MCP Apps shown in the bot's reply, with
+// fullscreen and picture-in-picture. docs/operations/releasing.md says how an
+// entry is written.
 
 export const v0_14_0: WhatsNewRelease = {
   version: "0.14.0",
@@ -40,6 +39,22 @@ export const v0_14_0: WhatsNewRelease = {
         en: "Reply is beside React on a message; on Android you can also swipe a message to the right. To quote, select words in a message and press Quote; on Android, use Quote part in the message’s menu.",
         "pt-BR":
           "Responder fica ao lado de Reagir numa mensagem; no Android você também pode deslizar a mensagem para a direita. Para citar, selecione palavras numa mensagem e toque em Citar; no Android, use Citar trecho no menu da mensagem.",
+      },
+    },
+    {
+      title: {
+        en: "Dictate your message",
+        "pt-BR": "Dite sua mensagem",
+      },
+      body: {
+        en: "Talk instead of typing: what you say becomes the text of your message, and nothing is sent until you send it. Your voice becomes text on your own computer or phone, unless you choose an online service for it.",
+        "pt-BR":
+          "Fale em vez de digitar: o que você diz vira o texto da sua mensagem, e nada é enviado até você enviar. Sua voz vira texto no seu próprio computador ou celular, a não ser que você escolha um serviço online para isso.",
+      },
+      where: {
+        en: "Tap the microphone beside the send button, and tap it again when you’re done. On a computer, Ctrl+Shift+Space does the same (⇧⌘Space on a Mac). Language, words to spell right and where your voice becomes text are in Settings → Voice.",
+        "pt-BR":
+          "Toque no microfone ao lado do botão de enviar e toque de novo quando terminar. No computador, Ctrl+Shift+Space faz o mesmo (⇧⌘Space no Mac). O idioma, as palavras para escrever certo e onde sua voz vira texto ficam em Configurações → Voz.",
       },
     },
     {

@@ -5,6 +5,7 @@ export {
   type SkillsClient,
   type ConversationHandle,
   createJ3Client,
+  type DictationHandle,
   type DownloadResult,
   type J3Client,
   layer,
@@ -17,6 +18,7 @@ export {
   type SendWithFilesResult,
   type ServerUpdateStart,
   type UsageHandle,
+  type VoiceClient,
   type WorkStepsHandle,
 } from "./client.ts";
 export {
@@ -166,6 +168,14 @@ export {
   turnsNotRead,
   Usage,
 } from "./stores/Usage.ts";
+export {
+  type Dictation,
+  type DictationFailure,
+  type DictationState,
+  type HeardWords,
+  isOver as dictationIsOver,
+  Voice,
+} from "./stores/Voice.ts";
 export { WorkSteps, type WorkStepsState } from "./stores/WorkSteps.ts";
 export {
   behind,

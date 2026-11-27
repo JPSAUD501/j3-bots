@@ -105,6 +105,16 @@ export {
 } from "./schedule.ts";
 export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";
+export {
+  CLOUD_PROVIDER_NAMES,
+  dictationBlockWords,
+  dictationFailureWords,
+  dictationStateWords,
+  languageName,
+  sizeWords,
+  voiceModelWords,
+  voicePlaceWords,
+} from "./voice.ts";
 export { activityTime, dividerTime, type TimeContext, timeInSentence } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLine } from "./turn.ts";

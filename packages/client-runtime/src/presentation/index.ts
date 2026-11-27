@@ -300,6 +300,14 @@ export { type Shared, type SharedFile, type SharedMessage, sharedMessage } from 
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export { providersNeedYou, type SettingsPage, settingsGroups } from "./settingsPages.ts";
 export {
+  type DeviceRecognizer,
+  type DictationBlock,
+  type DictationPath,
+  dictationPath,
+  levelOf,
+  placeHeard,
+} from "./dictation.ts";
+export {
   isTemplateFileName,
   openTemplateChunks,
   openTemplateFile,

@@ -689,14 +689,12 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
 
   return {
     /**
-     * Whether a page may have the microphone or the screens: the app's own
-     * page may have a microphone (the sheet's level meter); only the
-     * recorder's control may have the screens, while it records. Electron
-     * names no type for a screen's capture (`chromeMediaSource: "desktop"`),
-     * so a request is a microphone's only when it names audio and nothing else.
+     * Whether `contents` may have the screens: only the recorder's control,
+     * while it records. Electron names no type for a screen's capture
+     * (`chromeMediaSource: "desktop"`), so every other page has the
+     * microphone alone (`grants` in `permissions.ts`).
      */
-    allowsMedia: (contents: WebContents, mediaTypes: ReadonlyArray<string>) =>
-      (mediaTypes.length > 0 && mediaTypes.every((type) => type === "audio")) ||
-      (live !== null && !live.pill.isDestroyed() && contents === live.pill.webContents),
+    capturesScreens: (contents: WebContents) =>
+      live !== null && !live.pill.isDestroyed() && contents === live.pill.webContents,
   };
 });

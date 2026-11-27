@@ -43,6 +43,7 @@ import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
 import * as MediaSocket from "./browser/MediaSocket.ts";
+import * as VoiceSocket from "./voice/VoiceSocket.ts";
 import * as OAuthCallback from "./connectors/oauth/callback.ts";
 import * as OAuthClientMetadata from "./connectors/oauth/clientMetadata.ts";
 import * as EventWebhook from "./routines/eventWebhook.ts";
@@ -456,11 +457,12 @@ export const routes = Layer.mergeAll(
   OAuthClientMetadata.route,
 );
 
-/** Every route, the RPC and media sockets and the web client: what clients are served. */
+/** Every route, the RPC, media and voice sockets and the web client: what clients are served. */
 export const app = Layer.mergeAll(
   routes,
   RpcSocket.layer(J3Rpcs, Rpc.handlers),
   MediaSocket.route,
+  VoiceSocket.route,
   WebClient.layer,
 );
 

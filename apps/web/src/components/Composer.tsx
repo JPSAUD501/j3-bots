@@ -2,7 +2,6 @@
 import type { Attachment, Avatar, MessageQuote, SuggestedReply } from "@j3-bots/contracts";
 import {
   ArrowUpIcon,
-  MicIcon,
   MonitorDotIcon,
   PaperclipIcon,
   PlusIcon,
@@ -49,6 +48,7 @@ import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { useAttachmentImage } from "./attachmentImages";
 import { BotAvatar, RoomAvatar, type RoomAvatarMember } from "./avatar/BotAvatar";
+import { DictationButton, type DictationSource, useDictation } from "./Dictation";
 import {
   ChipField,
   dropOffset,
@@ -151,8 +151,8 @@ interface ComposerProps {
   /** `+`'s menu is open as the composer first shows, as the gallery shows it. */
   readonly addMenuOpen?: boolean;
   readonly onSend: () => void;
-  /** Without it, the trailing button is always Send. */
-  readonly onDictate?: () => void;
+  /** Dictation, where the server offers it: a microphone beside Send. */
+  readonly dictation?: DictationSource | undefined;
   /**
    * Text the operator wrote here was replaced in another tab, and can come
    * back. `revision` changes whenever newer text is replaced, which is
@@ -200,8 +200,10 @@ export function focusAtEnd(field: HTMLElement | null) {
  * where the caret was, or where they were dropped. A chip shows its image or
  * its kind, and its name; it is deleted as one character, and a click opens
  * its file once uploaded. A file that cannot go says why below the composer.
- * The message goes once every file has uploaded. With nothing to send, the
- * trailing button dictates where dictation exists. A message over a limit
+ * The message goes once every file has uploaded. Where dictation exists, a
+ * microphone stands beside Send (`useDictation`): while it runs, the field
+ * shows the words where the caret was and takes no edit, and Escape cancels
+ * it; nothing it hears is sent by itself. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, or the drafts load or could not be read, the field stays
  * focused but read-only, and attaching and removing files show as
@@ -249,7 +251,7 @@ export function Composer({
   onRecordScreen,
   addMenuOpen = false,
   onSend,
-  onDictate,
+  dictation: dictationSource,
   replaced,
   inputRef,
   mentionable,
@@ -264,9 +266,24 @@ export function Composer({
   const waitingId = useId();
   const suggestionId = useId();
   const label = t("composer.label", { name: recipient });
-  const { empty, uploading, sendable, problem } = draftReadiness(value, files);
-  // The draft takes no change while it is handed over, loads, or could not be read.
-  const frozen = sending || loading || unread !== undefined;
+  const { uploading, sendable, problem } = draftReadiness(value, files);
+  // The field's selection as the operator last left it: what an edit replaces,
+  // where files attached go, and where dictated words go.
+  const selection = useRef<readonly [number, number] | null>(null);
+  // Without a change the draft can take now, nothing starts dictating.
+  const settled = !sending && !loading && unread === undefined;
+  const dictation = useDictation({
+    source: dictationSource,
+    draftKey,
+    value,
+    mentions,
+    field: fieldRef,
+    selection: () => selection.current,
+    available: settled,
+    onValueChange: (text, moved) => onValueChange(text, moved),
+  });
+  // The draft takes no change while it is handed over, loads, could not be read, or is dictated into.
+  const frozen = !settled || dictation.running;
   // Files the draft already held when shown appear in place; only those attached since arrive.
   const restored = useRestored(
     draftKey,
@@ -296,9 +313,6 @@ export function Composer({
       play(boxRef.current, [{ transform: "scale(0.97)" }, { transform: "none" }], springs.pop);
     }
   }, [sending]);
-  // The field's selection as the operator last left it: what an edit replaces,
-  // and where files attached go.
-  const selection = useRef<readonly [number, number] | null>(null);
   const remember = (element: HTMLElement) => {
     selection.current = fieldSelection(element) ?? selection.current;
   };
@@ -335,6 +349,7 @@ export function Composer({
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
     setNotTaken(false);
+    dictation.edited();
     const edit: FieldInput = {
       before: value,
       after: change.text,
@@ -417,6 +432,9 @@ export function Composer({
       onSubmit={(event) => {
         event.preventDefault();
         send();
+      }}
+      onKeyDown={(event) => {
+        dictation.onKeyDown(event);
       }}
       onDragOver={(event) => {
         if (onAttachFiles && event.dataTransfer.types.includes("Files")) event.preventDefault();
@@ -570,7 +588,7 @@ export function Composer({
         )}
         <ChipField
           ref={fieldRef}
-          value={value}
+          value={dictation.preview?.text ?? value}
           chips={files.map((file) => ({
             key: file.key,
             content: (
@@ -583,7 +601,22 @@ export function Composer({
               />
             ),
           }))}
-          runs={mentionRuns(value, mentions, mentionable)}
+          runs={[
+            ...(dictation.preview === null
+              ? mentionRuns(value, mentions, mentionable)
+              : mentionRuns(dictation.preview.text, dictation.preview.mentions, mentionable)),
+            ...(dictation.preview?.open == null
+              ? []
+              : [
+                  {
+                    ...dictation.preview.open,
+                    // Words still open to change: lighter than the settled ones, which are the text's own.
+                    content: (
+                      <span className="text-muted-foreground">{dictation.preview.open.text}</span>
+                    ),
+                  },
+                ]),
+          ]}
           readOnly={frozen}
           onChange={follow}
           onSelect={(event) => {
@@ -656,6 +689,7 @@ export function Composer({
           {...mention.fieldProps}
           {...prompt.fieldProps}
           data-composer=""
+          data-dictating={dictation.running ? "" : undefined}
           className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
         />
         {offered !== null && (
@@ -674,36 +708,23 @@ export function Composer({
             </Kbd>
           </Button>
         )}
-        {empty && onDictate && !sending ? (
-          <Button
-            variant="ghost-muted"
-            size="icon-pill"
-
-            onClick={onDictate}
-            aria-label={t("composer.dictate")}
-          >
-            <MicIcon />
-          </Button>
-        ) : (
-          <Button
-            type="submit"
-            variant="ghost"
-            size="icon-pill"
-            data-send={sendState}
-            className={sendButton}
-            aria-disabled={!ready}
-            aria-label={t("composer.send")}
-            aria-describedby={uploading ? waitingId : undefined}
-          >
-            {/* Keyed by its state, so the arrow pops in when the message can go and flies off with it. */}
-            <ArrowUpIcon
-              key={sendState}
-              className={
-                sendState === "ready" ? "pop-in" : sendState === "sending" ? "send-off" : ""
-              }
-            />
-          </Button>
-        )}
+        {dictation.offered && <DictationButton dictation={dictation} unavailable={!settled} />}
+        <Button
+          type="submit"
+          variant="ghost"
+          size="icon-pill"
+          data-send={sendState}
+          className={sendButton}
+          aria-disabled={!ready}
+          aria-label={t("composer.send")}
+          aria-describedby={uploading ? waitingId : undefined}
+        >
+          {/* Keyed by its state, so the arrow pops in when the message can go and flies off with it. */}
+          <ArrowUpIcon
+            key={sendState}
+            className={sendState === "ready" ? "pop-in" : sendState === "sending" ? "send-off" : ""}
+          />
+        </Button>
       </div>
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
@@ -711,6 +732,10 @@ export function Composer({
       <span id={suggestionId} hidden>
         {offered !== null && t("composer.suggestion", { text: offered })}
       </span>
+      {/* What dictation is doing while that is not plain from the words arriving. */}
+      <p role="status" className="px-3 text-xs text-muted-foreground tabular-nums empty:hidden">
+        {dictation.status}
+      </p>
       {prompt.cut && (
         <p role="status" className="px-3 text-xs text-muted-foreground">
           {t("prompt.cut")}
@@ -726,9 +751,7 @@ export function Composer({
         {/* Files just dropped and not taken come first: the operator is waiting on them now. */}
         {notTaken
           ? t("composer.waitToAttach")
-          : problem === null
-            ? null
-            : messageProblemText(problem, i18n)}
+          : (dictation.problem ?? (problem === null ? null : messageProblemText(problem, i18n)))}
       </p>
       {/* Each file that cannot go, which its chip marks, says why. Announced once, above. */}
       {failures.length > 0 && (

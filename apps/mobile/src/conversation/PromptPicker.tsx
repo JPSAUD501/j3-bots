@@ -5,6 +5,7 @@ import {
   promptOptions,
   promptQuery,
 } from "@j3-bots/client-runtime/presentation";
+import type { IntentResult } from "@j3-bots/client-runtime";
 import { useConnectors, useJ3Client } from "@j3-bots/client-runtime/react";
 import type { BotId } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useState } from "react";
@@ -79,7 +80,8 @@ export function usePromptPicker({
       setChosen({ prompt, drafts, writing: false, failed: false, tried: true });
       return;
     }
-    setChosen({ prompt, drafts, writing: true, failed: false, tried: true });
+    const writing: ChosenPrompt = { prompt, drafts, writing: true, failed: false, tried: true };
+    setChosen(writing);
     void client.connectors
       .renderPrompt({
         botId,
@@ -87,15 +89,23 @@ export function usePromptPicker({
         name: prompt.name,
         arguments: given,
       })
-      .then((result) => {
-        if (result._tag === "failed") {
-          setChosen({ prompt, drafts, writing: false, failed: true, tried: true });
-          return;
-        }
-        setChosen(null);
-        onWritten(result.value.text, result.value.cut);
-      });
+      .then((result) => written(writing, result));
   };
+  // An answer for a prompt cancelled, or left for another conversation, writes nothing.
+  const written = useEffectEvent(
+    (
+      asked: ChosenPrompt,
+      result: IntentResult<{ readonly text: string; readonly cut: boolean }>,
+    ) => {
+      if (chosen !== asked) return;
+      if (result._tag === "failed") {
+        setChosen({ ...asked, writing: false, failed: true });
+        return;
+      }
+      setChosen(null);
+      onWritten(result.value.text, result.value.cut);
+    },
+  );
 
   return {
     options: query === null ? [] : promptOptions(query, prompts),

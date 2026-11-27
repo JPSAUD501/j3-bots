@@ -52,6 +52,7 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
   type WebContents,
 } from "electron";
 import { secretClipboard } from "@j3-bots/client-runtime/presentation";
@@ -74,6 +75,7 @@ import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
+import { grants, holds } from "./permissions.ts";
 import * as QuickAccess from "./quickAccess.ts";
 import * as Recorder from "./recording/recorder.ts";
 import * as SignInRelay from "./signInRelay.ts";
@@ -92,13 +94,6 @@ const APP_ORIGIN = appOrigin(app.isPackaged);
 const SCHEME = schemeOf(APP_ORIGIN);
 /** Links to the app, taken from as early as the system hands them over. */
 const links = AppLinks.start(SCHEME);
-
-/**
- * What a page may ask for: showing notifications, writing to the clipboard,
- * and the microphone and screens a screen recording takes, which the
- * recorder allows only as it says (`allowsMedia`).
- */
-const PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write", "media"]);
 
 // Before `ready`, as Electron requires. `standard` and `secure` make the page
 // a secure context with a real origin, so Web Locks, BroadcastChannel and
@@ -577,21 +572,28 @@ const program = Effect.gen(function* () {
 
   // The app's page only, never a frame in it: a bot's visual and a
   // connector's app are on the app's scheme, though sandboxed.
-  // Media only as the recorder allows it, once it runs.
-  let allowsMedia: (contents: WebContents, mediaTypes: ReadonlyArray<string>) => boolean = () =>
-    false;
-  session.defaultSession.setPermissionRequestHandler((contents, permission, grant, details) =>
-    grant(
-      PERMISSIONS.has(permission) &&
-        details.isMainFrame &&
-        isAppUrl(details.requestingUrl, APP_ORIGIN) &&
-        (permission !== "media" ||
-          allowsMedia(contents, "mediaTypes" in details ? (details.mediaTypes ?? []) : [])),
-    ),
-  );
+  // The screens go only to the recorder's control, while it records.
+  let capturesScreens: (contents: WebContents) => boolean = () => false;
+  session.defaultSession.setPermissionRequestHandler((contents, permission, grant, details) => {
+    const microphone = grants(permission, "mediaTypes" in details ? details.mediaTypes : undefined);
+    const granted =
+      (microphone || (permission === "media" && capturesScreens(contents))) &&
+      details.isMainFrame &&
+      isAppUrl(details.requestingUrl, APP_ORIGIN);
+    // macOS asks the operator itself, once, before the app hears the
+    // microphone; a refusal there reaches the page as one here.
+    if (granted && microphone && permission === "media" && process.platform === "darwin") {
+      systemPreferences.askForMediaAccess("microphone").then(grant, () => grant(false));
+      return;
+    }
+    grant(granted);
+  });
   session.defaultSession.setPermissionCheckHandler(
-    (_contents, permission, requestingOrigin, details) =>
-      PERMISSIONS.has(permission) && details.isMainFrame && isAppUrl(requestingOrigin, APP_ORIGIN),
+    (contents, permission, requestingOrigin, details) =>
+      (holds(permission, details.mediaType) ||
+        (permission === "media" && contents !== null && capturesScreens(contents))) &&
+      details.isMainFrame &&
+      isAppUrl(requestingOrigin, APP_ORIGIN),
   );
   app.on("web-contents-created", (_event, contents) => lockNavigation(contents));
 
@@ -745,7 +747,7 @@ const program = Effect.gen(function* () {
     sendCommand,
     folder: path.join(app.getPath("userData"), "recordings"),
   });
-  allowsMedia = recorder.allowsMedia;
+  capturesScreens = recorder.capturesScreens;
   yield* Menus.serve({
     window,
     appearance,

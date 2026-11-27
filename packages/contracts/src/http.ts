@@ -104,6 +104,15 @@ export const HTTP_PATHS = {
    * read why an upgrade was refused. `BROWSER_CLOSE_CODES` lists the rest.
    */
   browser: "/api/browser/ws",
+  /**
+   * The voice socket, for one dictation on the server (decision 0096):
+   * `VoiceClientFrame` and `VoiceServerFrame` as JSON text, the audio as
+   * binary frames. The upgrade carries the device token as a bearer or a
+   * ticket, as the RPC socket's does; one without a valid credential is
+   * answered 401 and never becomes a socket. A server whose settings carry
+   * `voice` serves it; an older one answers 404.
+   */
+  voice: "/api/voice/ws",
 } as const;
 
 /**

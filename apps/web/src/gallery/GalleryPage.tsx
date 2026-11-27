@@ -216,6 +216,9 @@ import { UsageSection } from "../components/UsageSection";
 import { SecretAskCard } from "../components/SecretAskCard";
 import { SecretsSection } from "../components/secrets/SecretsSection";
 import { WorkFold } from "../components/WorkFold";
+import type { DictationSource } from "../components/Dictation";
+import { VoiceSection } from "../components/VoiceSettings";
+import { sampleDictation, sampleVoice } from "./sampleVoice";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Confirm } from "../components/ui/confirm";
@@ -2775,6 +2778,8 @@ function ComposerDemo({
   mentions: initialMentions = [],
   suggestion = null,
   quotes: initialQuotes = [],
+  dictation,
+  dictating = false,
 }: {
   initial: string;
   recipient: string;
@@ -2792,51 +2797,61 @@ function ComposerDemo({
   mentions?: ReadonlyArray<DraftMention>;
   /** A reply the AI suggests. */
   suggestion?: SuggestedReply | null;
+  /** Dictation: a microphone beside Send. */
+  dictation?: DictationSource;
+  /** The microphone is pressed as the frame shows, so it shows dictation under way. */
+  dictating?: boolean;
 }) {
   const draftKey = useId();
+  const frame = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (dictating) frame.current?.querySelector<HTMLElement>("[data-dictation]")?.click();
+  }, [dictating]);
   const [value, setValue] = useState(initial);
   const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>(initialMentions);
   const [files, setFiles] = useState(initialFiles);
   const [replaced, setReplaced] = useState(initialReplaced);
   const [quotes, setQuotes] = useState(initialQuotes);
   return (
-    <Composer
-      draftKey={draftKey}
-      recipient={recipient}
-      value={value}
-      mentions={mentions}
-      onValueChange={(text, picked) => {
-        setValue(text);
-        setMentions(picked);
-      }}
-      files={files}
-      quotes={quotes}
-      onUnquote={(index) => setQuotes((current) => current.toSpliced(index, 1))}
-      sending={sending}
-      notSaved={notSaved}
-      onAttachFiles={nothing}
-      onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
-      onSend={() => {
-        setValue("");
-        setMentions([]);
-      }}
-      onDictate={nothing}
-      {...(mentionable === undefined ? {} : { mentionable })}
-      suggestion={suggestion}
-      {...(replaced === null
-        ? {}
-        : {
-            replaced: {
-              revision: 1,
-              onRestore: () => {
-                setValue(replaced);
-                setMentions([]);
-                setReplaced(null);
+    <div ref={frame}>
+      <Composer
+        draftKey={draftKey}
+        recipient={recipient}
+        value={value}
+        mentions={mentions}
+        onValueChange={(text, picked) => {
+          setValue(text);
+          setMentions(picked);
+        }}
+        files={files}
+        quotes={quotes}
+        onUnquote={(index) => setQuotes((current) => current.toSpliced(index, 1))}
+        sending={sending}
+        notSaved={notSaved}
+        onAttachFiles={nothing}
+        onDetachFile={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
+        onSend={() => {
+          setValue("");
+          setMentions([]);
+        }}
+        dictation={dictation}
+        {...(mentionable === undefined ? {} : { mentionable })}
+        suggestion={suggestion}
+        {...(replaced === null
+          ? {}
+          : {
+              replaced: {
+                revision: 1,
+                onRestore: () => {
+                  setValue(replaced);
+                  setMentions([]);
+                  setReplaced(null);
+                },
+                onDismiss: () => setReplaced(null),
               },
-              onDismiss: () => setReplaced(null),
-            },
-          })}
-    />
+            })}
+      />
+    </div>
   );
 }
 
@@ -2899,6 +2914,78 @@ function ComposerSection() {
           />
         </div>
       </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Dictation: at rest, the microphone beside Send" width={440} height={120}>
+          <div className="p-3">
+            <ComposerDemo
+              initial=""
+              recipient={team.bots.scout.profile.name}
+              dictation={sampleDictation()}
+            />
+          </div>
+        </Frame>
+        <Frame
+          label="Dictation: getting ready the first time, the model downloading"
+          width={440}
+          height={120}
+        >
+          <div className="p-3">
+            <ComposerDemo
+              initial="Remind me to "
+              recipient={team.bots.scout.profile.name}
+              dictation={sampleDictation({
+                state: { _tag: "installing", received: 312_000_000, total: 751_000_000 },
+              })}
+              dictating
+            />
+          </div>
+        </Frame>
+        <Frame
+          label="Dictation: listening, settled words in the text's color, open ones lighter, and the level"
+          width={440}
+          height={120}
+        >
+          <div className="p-3">
+            <ComposerDemo
+              initial="Hi Atlas,"
+              recipient={team.bots.atlas.profile.name}
+              dictation={sampleDictation({
+                state: {
+                  _tag: "listening",
+                  live: true,
+                  committed: "book the venue for the fourteenth",
+                  tentative: "and ask about park",
+                },
+              })}
+              dictating
+            />
+          </div>
+        </Frame>
+        <Frame label="Dictation: the microphone not allowed" width={440} height={140}>
+          <div className="p-3">
+            <ComposerDemo
+              initial=""
+              recipient={team.bots.scout.profile.name}
+              dictation={sampleDictation({ refusedFor: "denied" })}
+              dictating
+            />
+          </div>
+        </Frame>
+        <Frame
+          label="Dictation: a page on plain http, where a press explains"
+          width={440}
+          height={160}
+        >
+          <div className="p-3">
+            <ComposerDemo
+              initial=""
+              recipient={team.bots.scout.profile.name}
+              dictation={sampleDictation({ reach: { _tag: "blocked", block: "insecure-page" } })}
+              dictating
+            />
+          </div>
+        </Frame>
+      </div>
       <Labeled label="Composer offering a reply the AI suggests after the bot answered: faint in place of the placeholder, with Use (and Tab where there is a keyboard). Use or Tab puts it in the draft to send or change, typing hides it, Escape sets it aside">
         <div className="flex max-w-(--layout-text-column) flex-col gap-3">
           <ComposerDemo
@@ -4300,6 +4387,32 @@ function SettingsPagesSection() {
         <SettingsFrame label="Wide: devices, with signing out ruled off" wide page="devices" />
         <SettingsFrame label="Phone: the list, an update waiting" wide={false} />
         <SettingsFrame label="Phone: a page, with Back" wide={false} page="appearance" />
+        <SettingsFrame label="Wide: voice, dictation's settings" wide page="voice" height={900} />
+        <Frame
+          padded
+          label="Voice with OpenRouter: its key, saved, and its model"
+          width={480}
+          height={760}
+        >
+          <VoiceSection
+            settings={{
+              ...team.settings,
+              voice: {
+                place: "openrouter",
+                language: "pt",
+                words: ["J3 Bots"],
+                removeFillers: true,
+                cleanUp: true,
+                model: null,
+                openRouterModel: null,
+              },
+            }}
+            save={{ _tag: "idle" }}
+            connected
+            onSave={nothing}
+            voice={sampleVoice}
+          />
+        </Frame>
       </div>
     </Section>
   );

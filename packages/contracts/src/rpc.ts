@@ -5,6 +5,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import { AttachmentOffsets, BotFile, MessageAttachments } from "./attachment.ts";
 import { SkillRpcs } from "./skill.ts";
+import { VoiceRpcs } from "./voice.ts";
 import {
   AttachmentId,
   BotId,
@@ -1501,4 +1502,5 @@ export const J3Rpcs = RosterRpcs.merge(
   ConnectorRpcs,
   ConnectorAppRpcs,
   SkillRpcs,
+  VoiceRpcs,
 );

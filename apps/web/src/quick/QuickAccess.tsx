@@ -72,6 +72,7 @@ export type QuickAccessIntents = TimelineIntents &
     | "dismissDraftOffer"
     | "connectorPrompts"
     | "renderPrompt"
+    | "dictation"
     | "loadOlder"
     | "revealEntry"
     | "markRead"
@@ -261,11 +262,14 @@ export function QuickAccess({
   // Escape in the composer closes quick access before the composer takes it
   // to set a suggested reply aside, which it would nearly every time: the
   // suggestion is there whenever the bot has answered. A list open on the
-  // composer, of members or of prompts, still takes its own Escape.
+  // composer, of members or of prompts, still takes its own Escape, and so
+  // does a dictation under way, which it cancels.
   const onEscapeFirst = useEffectEvent((event: KeyboardEvent) => {
     const field = composerRef.current;
     if (!shown || event.key !== "Escape" || event.isComposing || event.target !== field) return;
-    if (field?.getAttribute("aria-expanded") === "true") return;
+    if (field?.getAttribute("aria-expanded") === "true" || field?.hasAttribute("data-dictating")) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     onClose();
@@ -482,7 +486,8 @@ export function QuickAccess({
                   target={target}
                   recipient={name}
                   data={data}
-                  intents={intents}
+                  // Put away, it hears nothing: a dictation under way is cancelled.
+                  intents={shown ? intents : { ...intents, dictation: undefined }}
                   addressing={addressing}
                   mentionable={mentionable}
                   suggestion={offeredReply(bot.suggestedReply, view.items)}

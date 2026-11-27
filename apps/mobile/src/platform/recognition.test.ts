@@ -1,24 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { hear, heardText, nothingHeard, recognitionPlace } from "./recognition.ts";
+import { hear, heardWords, nothingHeard, recognizerLocale } from "./recognition.ts";
 
-describe("recognitionPlace", () => {
-  it("runs on the device only when the language's model is installed there", () => {
-    const installed = ["en-US", "pt-BR"];
-    assert.strictEqual(recognitionPlace("pt-br", installed), "device");
-    assert.strictEqual(recognitionPlace("pt-PT", installed), "online");
+describe("recognizerLocale", () => {
+  it("hears the phone's own language, in the locale the phone is set to", () => {
+    const installed = ["en-US", "pt-PT", "pt-BR"];
+    assert.strictEqual(recognizerLocale("auto", ["pt-BR", "en-US"], installed), "pt-BR");
+    assert.strictEqual(recognizerLocale("auto", ["en-GB"], installed), "en-US");
+    assert.strictEqual(recognizerLocale("en", ["pt-BR"], installed), "en-US");
+  });
+
+  it("finds nothing when the language is not installed on the phone", () => {
+    assert.strictEqual(recognizerLocale("auto", ["es-ES"], ["en-US"]), null);
+    assert.strictEqual(recognizerLocale("pt", ["pt-BR"], []), null);
+    assert.strictEqual(recognizerLocale("auto", [], ["en-US"]), null);
   });
 });
 
-describe("heardText", () => {
-  it("keeps every finished utterance and follows the one still being heard", () => {
+describe("heardWords", () => {
+  it("settles every finished utterance and leaves the one still heard open", () => {
     let heard = hear(nothingHeard, "hello there", true);
     heard = hear(heard, "how", false);
-    assert.strictEqual(heardText(heard), "hello there how");
+    assert.deepStrictEqual(heardWords(heard), { committed: "hello there", tentative: "how" });
     heard = hear(heard, "how are you ", false);
-    assert.strictEqual(heardText(heard), "hello there how are you");
     heard = hear(heard, "how are you", true);
     heard = hear(heard, "", true);
-    assert.strictEqual(heardText(heard), "hello there how are you");
+    assert.deepStrictEqual(heardWords(heard), {
+      committed: "hello there how are you",
+      tentative: "",
+    });
   });
 });

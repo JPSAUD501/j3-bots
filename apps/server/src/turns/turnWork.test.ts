@@ -18,11 +18,13 @@ import * as TestDomain from "../testing/domain.ts";
 import { finish, member, operatorWrites, roomWith, to } from "../testing/rooms.ts";
 import {
   awaitEntry,
+  backgroundCheckDue,
   conversation,
   createBot,
   engineSession,
   eventually,
   nextTurn,
+  saysDone,
   sendToBot,
   turnEnded,
   until,
@@ -330,12 +332,15 @@ it.effect("ends as failed a little one whose turn the engine no longer counts an
     yield* control.startBackgroundWork({ sessionId, turnId: first });
     yield* control.finishTurn({ sessionId, turnId: first, outcome: { _tag: "completed" } });
     yield* turnEnded(bot.id);
+    // The report its end makes due still lists its work.
+    yield* until(Effect.map(backgroundCheckDue(bot.id), (due) => !due));
 
     // Its work ends without a word of the little one, and the next turn's
-    // end brings a report that lists no work of the first turn's.
+    // end brings a report that lists no work of the first turn's. That turn
+    // answers, so no wake about an undelivered answer runs in its place.
     yield* control.endBackgroundWork(sessionId);
     yield* sendToBot(bot.id, "What is left today?");
-    const second = yield* nextTurn(bot.id, first);
+    const second = yield* saysDone(bot.id, first);
     yield* TestClock.adjust("1 minute");
     yield* control.finishTurn({ sessionId, turnId: second, outcome: { _tag: "completed" } });
 

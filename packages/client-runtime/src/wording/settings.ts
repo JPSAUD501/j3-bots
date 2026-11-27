@@ -9,6 +9,7 @@ const words: Record<SettingsPage, { readonly title: KeyWith; readonly descriptio
     description: "settings.notifications.description",
   },
   appearance: { title: "settings.appearance", description: "settings.appearance.description" },
+  voice: { title: "settings.voice", description: "settings.voice.description" },
   providers: { title: "settings.providers", description: "settings.providers.description" },
   usage: { title: "settings.usage", description: "settings.usage.description" },
   connectors: { title: "settings.connectors", description: "settings.connectors.description" },
