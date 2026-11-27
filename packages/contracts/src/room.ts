@@ -28,7 +28,8 @@ export const ROOM_CLOSING_ROUND = 3;
 /**
  * A bot's room message of a round past this one is posted but wakes nobody,
  * and the room shows one `chain-stopped` notice (`room`), until the operator's
- * word reaches it again (`ROOM_CLOSING_ROUND`).
+ * word reaches it again (`ROOM_CLOSING_ROUND`). A room of bots only, which
+ * their word never reaches, pauses there for good (`room-paused`).
  */
 export const ROOM_QUIET_ROUND = 4;
 
@@ -52,6 +53,14 @@ const roomFields = {
    * predates it.
    */
   hidden: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  /**
+   * A room of bots only (decision 0103): a bot started it without the
+   * operator, who reads it as they read a teammate conversation and never
+   * writes in it, reacts in it or answers a question from it. Its rounds
+   * count from its kickoff, and past `ROOM_QUIET_ROUND` it pauses. Absent
+   * from a server that predates it, whose rooms all have the operator in them.
+   */
+  botsOnly: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtc,
 };
 

@@ -754,6 +754,8 @@ const sentences = {
   "teamLine.roomStartedGone": "{bot} criou uma sala",
   "teamLine.madeForRoom": "Criado por {bot} para {room}",
   "teamLine.madeForRoomGone": "Criado por {bot} para uma sala",
+  "teamLine.roomPaused": "{room} pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
+  "teamLine.roomPausedGone": "Uma sala pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
 
   "routine.paused": "Pausada",
   "routine.waiting": "Esperando {connector} responder",

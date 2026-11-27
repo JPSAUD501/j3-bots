@@ -5,15 +5,26 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Flag } from "../persistence/columns.ts";
 
-/** An active room as routing reads it: who is in it, in member order. */
+/**
+ * An active room as routing reads it: who is in it, in member order, whether
+ * it is of bots only, and the bot that started it while that bot exists.
+ */
 export interface LiveRoom {
   readonly id: RoomId;
   readonly name: string;
   readonly members: ReadonlyArray<BotId>;
+  readonly botsOnly: boolean;
+  readonly madeBy: BotId | null;
 }
 
-const RoomRow = Schema.Struct({ id: RoomId, name: Schema.String });
+const RoomRow = Schema.Struct({
+  id: RoomId,
+  name: Schema.String,
+  bots_only: Flag,
+  made_by_bot_id: Schema.NullOr(BotId),
+});
 
 /**
  * The room, if it is active, read in the caller's transaction straight from
@@ -25,7 +36,7 @@ export const liveRoom = (sql: SqlClient.SqlClient) => {
     Request: RoomId,
     Result: RoomRow,
     execute: (id) => sql`
-      SELECT id, name FROM rooms WHERE id = ${id} AND status = 'active'
+      SELECT id, name, bots_only, made_by_bot_id FROM rooms WHERE id = ${id} AND status = 'active'
     `,
   });
   const members = SqlSchema.findAll({
@@ -40,6 +51,8 @@ export const liveRoom = (sql: SqlClient.SqlClient) => {
       return Option.some({
         id: found.value.id,
         name: found.value.name,
+        botsOnly: found.value.bots_only,
+        madeBy: found.value.made_by_bot_id,
         members: (yield* members(roomId)).map((row) => row.bot_id),
       });
     }).pipe(Effect.orDie);

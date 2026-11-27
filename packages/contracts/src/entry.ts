@@ -1138,6 +1138,13 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      * room `roomId`, where it opens instead of greeting here.
      */
     Schema.TaggedStruct("made-for-room", { botId: BotId, roomId: RoomId }),
+    /**
+     * Room `roomId`, of bots only, paused: its bots answered each other
+     * `ROOM_QUIET_ROUND` rounds since its kickoff, and their messages there
+     * wake nobody from then on. Bot `botId`, which started it, was told in its
+     * own conversation. Shown in the room and in that conversation.
+     */
+    Schema.TaggedStruct("room-paused", { botId: BotId, roomId: RoomId }),
     AsksBeforeActing,
   ] as const;
 

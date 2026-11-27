@@ -237,6 +237,7 @@ export function noticeText(
       });
     case "room-started":
     case "made-for-room":
+    case "room-paused":
       return teamNoticeLine(notice, ctx).text;
     case "asks-before-acting": {
       const mode = permissionModeText(notice.permissionMode, ctx.i18n).name;

@@ -28,9 +28,11 @@ export type BotMessageRouted =
   /** The members it wakes have their wakes, unless the work that spoke was stopped. */
   | { readonly _tag: "routed" }
   /**
-   * It is of a round past `ROOM_QUIET_ROUND`, so none was written.
+   * It is of a round past `ROOM_QUIET_ROUND`, so none was written. In a room
+   * of bots only, which the operator's word never reaches again, the room
+   * has paused (`paused`).
    */
-  | { readonly _tag: "quiet" };
+  | { readonly _tag: "quiet"; readonly paused: boolean };
 
 /**
  * Whose word a bot's room message carries, which decides its round
@@ -76,8 +78,12 @@ export interface SpeakingTurn {
  * since that word. Past `ROOM_QUIET_ROUND` a bot's message wakes
  * nobody, and the first such message shows one `chain-stopped` notice; from
  * then on no bot's message there wakes anyone, whatever its round, until
- * their word reaches the room again. Each wake is a `room` wake for the
- * room, written in the caller's transaction, the one that writes the message.
+ * their word reaches the room again. A room of bots only (decision 0103)
+ * counts from its kickoff, which their word never follows: the first such
+ * message pauses it instead, with a `room-paused` notice there and in the
+ * conversation of the bot that started it, which a `room-paused` wake tells.
+ * Each wake is written in the caller's transaction, the one that writes the
+ * message.
  */
 export class RoomRouting extends Context.Service<
   RoomRouting,
@@ -204,6 +210,45 @@ export const layer = Layer.effect(
       return { round: (round ?? 0) + 1, from };
     }, Effect.orDie);
 
+    /**
+     * A room of bots only paused: the room says so, and so does the
+     * conversation of the bot that started it, which is woken there to tell
+     * the operator. The wake is the speaking turn's work, as the message's
+     * wakes would have been, so a Stop of that work, or of the room, drops it.
+     * A starter since deleted is told nothing.
+     */
+    const pause = Effect.fn("RoomRouting.pause")(function* (input: {
+      readonly room: LiveRoom;
+      readonly botId: BotId;
+      readonly turn: SpeakingTurn;
+      readonly seq: DispatchSeq | null;
+      readonly stopped: boolean;
+    }) {
+      const { madeBy } = input.room;
+      if (madeBy === null) return;
+      const notice = { _tag: "room-paused", botId: madeBy, roomId: input.room.id } as const;
+      yield* notify(input.botId, { _tag: "room", roomId: input.room.id }, notice, null);
+      yield* notify(madeBy, { _tag: "conversation" }, notice, null);
+      if (input.stopped) return;
+      yield* wakes.record([
+        {
+          botId: madeBy,
+          kind: "system",
+          audience: { _tag: "conversation" },
+          payload: { _tag: "room-paused", roomId: input.room.id },
+          sourceEntryId: null,
+          hops: 0,
+          retryOf: null,
+          cause: {
+            _tag: "teammate",
+            senderId: input.botId,
+            audience: input.turn.audience,
+            seq: input.seq,
+          },
+        },
+      ]);
+    });
+
     const operatorMessage = Effect.fn("RoomRouting.operatorMessage")(function* (input: {
       readonly room: ActiveRoom;
       readonly message: MessageEntry;
@@ -243,9 +288,12 @@ export const layer = Layer.effect(
         const quiet = yield* quietBefore(input.room.id, from, input.message);
         if (quiet || round > ROOM_QUIET_ROUND) {
           if (!quiet) {
-            yield* notify(input.botId, audience, { _tag: "chain-stopped", limit: "room" }, null);
+            if (input.room.botsOnly) yield* pause(input);
+            else {
+              yield* notify(input.botId, audience, { _tag: "chain-stopped", limit: "room" }, null);
+            }
           }
-          return { _tag: "quiet" } as const;
+          return { _tag: "quiet", paused: input.room.botsOnly } as const;
         }
       }
       if (input.stopped) return { _tag: "routed" } as const;
