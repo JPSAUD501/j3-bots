@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -30,6 +31,13 @@ import { containedFile, INDEX, isBuilt } from "./built.ts";
 // is the file served. No second parser reads the target, so the file checked
 // is always the file sent, and a link inside the build never publishes a file
 // outside it.
+//
+// Text files (scripts, styles, pages, the manifest) are sent compressed to a
+// browser that takes it, Brotli or gzip, as `Accept-Encoding` asks: the
+// client's first load is about a third of its size gzipped. A compressed
+// response says so in `Vary`, and its validator is weak, which a browser
+// sends back and a 304 still answers. Nothing the client's files hold is
+// secret, so compression reveals nothing (BREACH).
 
 /** Vite names every file under `assets/` by its content hash, so it never changes. */
 const IMMUTABLE = "public, max-age=31536000, immutable";
@@ -215,7 +223,7 @@ export const routes = (root: string) =>
           }
         }
       });
-      return HttpRouter.add("GET", "/*", handler);
+      return HttpRouter.add("GET", "/*", handler.pipe(HttpMiddleware.compression()));
     }),
   );
 
