@@ -36,8 +36,8 @@ What was open:
   - the routine runs dialog, whose parent lets go of the runs it reads only once the dialog has finished closing, which a dialog still on its way would never tell it;
   - a connector's app block, a few kilobytes whose late arrival would shift the timeline as it draws.
 - **Results:**
-  - The app's first load went from 782.7 KiB to 680.5 KiB gzipped, quick access from 614.2 KiB to 586.9 KiB, and the screen recorder from 368.0 KiB to 332.2 KiB.
-  - Over the network that is 2,504.4 KiB before, uncompressed, against 680.5 KiB after.
+  - The app's first load went from 783.4 KiB to 682.4 KiB gzipped, quick access from 614.7 KiB to 586.8 KiB, and the screen recorder from 368.3 KiB to 332.3 KiB.
+  - Over the network that is 2,506.8 KiB before, uncompressed, against 682.4 KiB after.
   - The app now fetches about thirty files where it fetched nine. Over HTTP/1.1 on a slow link that costs some latency. Grouping chunks by hand was tried and dropped: the bundler then merged the catalogs back into shared chunks, or grew the recorder's load.
 
 ### Compression

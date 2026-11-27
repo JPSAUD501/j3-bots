@@ -63,11 +63,11 @@ The figures behind the budgets, before and after the changes of decision 0105 on
 
 | Window | Before | After |
 | --- | --- | --- |
-| `app` | 782.7 KiB (2,504.4 KiB) | 680.5 KiB (2,112.5 KiB) |
-| `quick` | 614.2 KiB (1,959.9 KiB) | 586.9 KiB (1,819.5 KiB) |
-| `record` | 368.0 KiB (1,210.3 KiB) | 332.2 KiB (1,067.6 KiB) |
+| `app` | 783.4 KiB (2,506.8 KiB) | 682.4 KiB (2,119.9 KiB) |
+| `quick` | 614.7 KiB (1,961.8 KiB) | 586.8 KiB (1,820.5 KiB) |
+| `record` | 368.3 KiB (1,211.5 KiB) | 332.3 KiB (1,068.2 KiB) |
 
-Before, the server sent these files uncompressed, so their raw size is what crossed the network: 2,504.4 KiB for the app, against 680.5 KiB after.
+Before, the server sent these files uncompressed, so their raw size is what crossed the network: 2,506.8 KiB for the app, against 682.4 KiB after.
 
 **One turn on the socket.** 28,663 B before, when 9 of the roster's 21 frames repeated the frame before them. 18,749 B after.
 
