@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import { engineEnvironment } from "./Command.ts";
 
-it("starts the engine with only what a process needs to run and reach the network, and no T3 Code flag", () => {
+it("starts the engine with only what a process needs to run and reach the network, no T3 Code flag, and T3 Code's telemetry off", () => {
   assert.deepStrictEqual(
     engineEnvironment(
       {
@@ -21,6 +21,10 @@ it("starts the engine with only what a process needs to run and reach the networ
         NODE_OPTIONS: "--require /home/sam/hook.js",
         GITHUB_TOKEN: "token",
         T3CODE_FEATURE_FLAGS: "secret_providers",
+        T3CODE_TELEMETRY_ENABLED: "true",
+        T3CODE_OTEL_SDK_DISABLED: "false",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.lan:4318",
+        DO_NOT_TRACK: "0",
         UNSET: undefined,
       },
       "linux",
@@ -35,6 +39,9 @@ it("starts the engine with only what a process needs to run and reach the networ
       NODE_EXTRA_CA_CERTS: "/etc/ssl/lan.pem",
       // Present and empty, so the engine copies no flag from the login shell.
       T3CODE_FEATURE_FLAGS: "",
+      // T3 Code's analytics, relay tracing and OpenTelemetry export, off whatever the server's environment says.
+      T3CODE_TELEMETRY_ENABLED: "false",
+      T3CODE_OTEL_SDK_DISABLED: "true",
     },
   );
 });
@@ -57,6 +64,7 @@ it("on Windows, passes what a program there needs to start, whatever the case of
         CODEX_HOME: "C:\\Users\\sam\\.codex",
         NODE_OPTIONS: "--require C:\\Users\\sam\\hook.js",
         HOME: "C:\\Users\\sam",
+        t3code_telemetry_enabled: "true",
       },
       "win32",
     ),
@@ -71,6 +79,8 @@ it("on Windows, passes what a program there needs to start, whatever the case of
       "ProgramFiles(x86)": "C:\\Program Files (x86)",
       https_proxy: "http://proxy.lan:3128",
       T3CODE_FEATURE_FLAGS: "",
+      T3CODE_TELEMETRY_ENABLED: "false",
+      T3CODE_OTEL_SDK_DISABLED: "true",
     },
   );
 });
