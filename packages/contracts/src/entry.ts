@@ -543,7 +543,7 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   exact: Schema.Boolean,
   /**
-   * What "Allow for session" would allow from then on, when the card offers
+   * What "Don’t ask again" would allow from then on, when the card offers
    * it: only when `exact`, and the provider takes such a grant for this
    * approval and its scope is known. Null otherwise, and always for a summary,
    * since a grant allows again what nobody has seen exactly.
