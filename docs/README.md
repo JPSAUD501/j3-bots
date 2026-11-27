@@ -59,6 +59,10 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
   - [0.9.0](releases/v0.9.0.md): the whole of MCP, apps drawn in the conversation and skills, Secrets with no password, updates that open in front of you, and the first run as a stage.
   - [0.10.0](releases/v0.10.0.md): a first run for someone who has never heard of a harness, Settings that lists what the bots added, the server on Windows, and moving your bots to another server.
   - [0.11.0](releases/v0.11.0.md): a bot's plan and its little ones, failures that say what to do, Force stop, suggested replies, pictures as photos, and quick access on the desktop.
+  - [0.12.0](releases/v0.12.0.md): routines that pass from bot to bot and wait for your yes, documents in the app's own viewer, and an effort beside each bot's model.
+  - [0.13.0](releases/v0.13.0.md): signing in to an AI in one row, reactions, a bot's work in plain words, and sharing to a bot from Android.
+  - [0.14.0](releases/v0.14.0.md): replies, quotes and mentions, dictation, recording the screen for a bot, a connector's app in the reply, and usage data you can turn off.
+  - [0.15.0](releases/v0.15.0.md): a bot's card, titles under names, rooms of bots only, AI accounts and one model picker, themes, dictation through your own service, and the browser on for new bots.
 - [The every-surface check](operations/every-surface-check.md): the desktop app and the Android app against one server, run by hand: continuity, cards resolved across devices, the desktop's surfaces, and what it does not prove.
 
 ## Engineering
