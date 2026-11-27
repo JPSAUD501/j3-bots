@@ -75,6 +75,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0077](0077-the-engine-moves-to-t3-code-0-1-13-and-no-older-engine-starts-on-its-data.md) | The engine moves to T3 Code 0.1.13, and no older engine starts on its data | Accepted |
 | [0078](0078-documents-open-in-a-viewer-of-the-apps-own.md) | Documents open in a viewer of the app's own, read on the client | Accepted |
 | [0079](0079-quick-access-brings-the-window-the-operator-was-in.md) | Quick access brings the window the operator was in | Accepted |
+| [0080](0080-a-routines-steps-are-each-bots-own-turns-driven-by-j3-bots.md) | A routine's steps are each bot's own turns, driven by J3 Bots | Accepted |
 | [0081](0081-one-secret-card-asks-for-every-value-at-once.md) | One secret card asks for every value a request needs, at once | Accepted |
 | [0082](0082-a-bots-effort-sits-beside-its-model-and-the-default-is-the-harnesss-own.md) | A bot's effort sits beside its model, and the default is the harness's own | Accepted |
 | [0083](0083-only-the-engine-notices-a-person-can-act-on-show.md) | Only the engine notices a person can act on show | Accepted |

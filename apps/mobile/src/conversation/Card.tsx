@@ -6,10 +6,14 @@ import { BrowserHelpCard } from "./BrowserHelpCard.tsx";
 import { ConnectorAskCard } from "./ConnectorAskCard.tsx";
 import { ConnectorAuthCard, ConnectorInputCard } from "./ConnectorCards.tsx";
 import { QuestionCard } from "./QuestionCard.tsx";
+import { RoutineChangeCard, RoutineRunCard } from "./RoutineTrack.tsx";
 import { SecretAskCard } from "./SecretAskCard.tsx";
 import { SecretRequestCard } from "./SecretRequestCard.tsx";
 
-/** The entries that are cards: what the bot asks of the operator. Notices have a line of their own. */
+/**
+ * The entries that are cards: what the bot asks of the operator, and a
+ * routine's track. Notices have a line of their own.
+ */
 export type CardEntry = Exclude<TimelineCard, NoticeEntry>;
 
 /** One card of the conversation. Each answers through the runtime itself. */
@@ -38,5 +42,9 @@ export function Card({
       return <ConnectorInputCard entry={entry} />;
     case "connector-ask":
       return <ConnectorAskCard entry={entry} />;
+    case "routine-change":
+      return <RoutineChangeCard entry={entry} />;
+    case "routine-run":
+      return <RoutineRunCard entry={entry} />;
   }
 }

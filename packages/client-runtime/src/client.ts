@@ -540,6 +540,11 @@ export interface J3Client {
     entryId: EntryId,
     answer: Conversations.CardAnswer,
   ) => Promise<Actions.IntentResult>;
+  /** See `Conversations.routineCard`. */
+  readonly routineCard: (
+    entryId: EntryId,
+    command: Conversations.RoutineCardCommand,
+  ) => Promise<Actions.IntentResult>;
   readonly provideSecret: (
     entryId: EntryId,
     answer: Conversations.SecretAnswer,
@@ -887,6 +892,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
+    routineCard: (entryId, command) => run.promise(conversations.routineCard(entryId, command)),
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
     stopRoom: (roomId) => run.promise(services.roster.stopRoom(roomId)),

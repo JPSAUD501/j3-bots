@@ -243,6 +243,38 @@ export interface RoutineRunSummary {
     | { readonly type: "skipped" };
 }
 
+/** What an earlier step of the run reported, for the steps after it. */
+export interface EarlierStep {
+  readonly bot: string;
+  readonly action: string;
+  readonly result: string;
+  readonly handoff: string | null;
+}
+
+/**
+ * The step of a routine with several steps that a wake runs (decision 0080).
+ * The routine's `instruction` is then this step's brief.
+ */
+export interface RoutineStepWake {
+  /** Among the routine's bot steps, from 1. */
+  readonly number: number;
+  readonly of: number;
+  readonly action: string;
+  /** Oldest first: what every earlier bot step of this run reported. */
+  readonly earlier: ReadonlyArray<EarlierStep>;
+  /** The yes your user gave right before this step, with what it asked and their note. */
+  readonly approved: { readonly question: string; readonly note: string | null } | null;
+  /**
+   * What follows the step before the next bot step, which its report decides:
+   * a condition it judges, a yes it asks (every run, or only when `onlyIf`
+   * holds). Null on the last step.
+   */
+  readonly next: {
+    readonly condition: string | null;
+    readonly yes: { readonly onlyIf: string | null } | null;
+  } | null;
+}
+
 export interface RoutineWake extends WakeBase {
   readonly kind: "routine";
   readonly routine: {
@@ -251,6 +283,8 @@ export interface RoutineWake extends WakeBase {
     readonly trigger: RoutineTrigger;
     readonly instruction: string;
   };
+  /** A step of a routine with several steps; absent for a one-step routine's run. */
+  readonly step?: RoutineStepWake;
   /**
    * The run this attempt belongs to: the same in every attempt of the run,
    * and in no other run. A run uses it as the key of "this occurrence".
@@ -357,6 +391,10 @@ export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string 
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };
 
+/** The closing line of a wake for a step of a routine with several steps. */
+export const ROUTINE_STEP_CLOSING_LINE =
+  "Nobody is waiting: send no progress message. Do your step as its instruction says, from what the earlier steps handed you. `say` to your user only what the instruction asks you to tell them. Read every date against the time the run was due: `due` above, or the time above when there is none. Your last call is one `finish_step`, never alongside another call: its result line, what the next steps need, and what `next` above asks of your report. When you cannot do the step, call it with `blocked` and say in its result what stops it. Then end your turn.";
+
 /**
  * A room envelope's closing line, by why the bot was woken: how far the
  * member goes, and, for one not addressed, that a member's message asks less
@@ -397,7 +435,9 @@ const closingLine = (wake: Wake): string =>
         ROOM_CLOSING_LINES[wake.reason],
         ...(wake.closing ? [ROOM_CLOSING_NOTE] : []),
       ].join(" ")
-    : CLOSING_LINES[wake.kind];
+    : wake.kind === "routine" && wake.step !== undefined
+      ? ROUTINE_STEP_CLOSING_LINE
+      : CLOSING_LINES[wake.kind];
 
 const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
 
@@ -596,6 +636,55 @@ export const titleOf = (ref: TeammateRef): string | null => (ref.title === "" ? 
 
 export const mentionsOf = (mentions: RoomMentions): string | null =>
   mentions === "everyone" ? "everyone" : mentions.length === 0 ? null : mentions.join(", ");
+
+/**
+ * A step's place in its run: what the earlier steps reported, as data since
+ * bots wrote it, the yes it follows, and what its report must decide.
+ */
+const writeStep = (w: EnvelopeWriter, step: RoutineStepWake): void => {
+  w.open("step", [
+    ["number", String(step.number)],
+    ["of", String(step.of)],
+    ["action", step.action],
+  ]);
+  for (const [index, earlier] of step.earlier.entries()) {
+    w.open("earlier-step", [
+      ["number", String(index + 1)],
+      ["bot", earlier.bot],
+      ["action", earlier.action],
+    ]);
+    w.data([["source", "routine-step"]], earlier.result);
+    if (earlier.handoff !== null) w.data([["source", "routine-step-handoff"]], earlier.handoff);
+    w.close("earlier-step");
+  }
+  if (step.approved !== null) {
+    w.open("answer", [["choice", "yes"]]);
+    w.data([["source", "routine-step"]], step.approved.question);
+    if (step.approved.note !== null) w.inline("message", [["from", "user"]], step.approved.note);
+    w.close("answer");
+  }
+  const next = step.next;
+  if (next === null) {
+    w.empty("next", [["after", "nothing: this is the last step"]]);
+  } else {
+    w.empty("next", [
+      ["condition", next.condition],
+      ["condition-report", next.condition === null ? null : "goOn: whether it holds"],
+      ["yes", next.yes === null ? null : next.yes.onlyIf === null ? "every run" : "only if"],
+      ["yes-only-if", next.yes?.onlyIf ?? null],
+      [
+        "yes-report",
+        next.yes === null
+          ? null
+          : next.yes.onlyIf === null
+            ? "ask: the question and its two choices"
+            : "ask, only when yes-only-if holds",
+      ],
+      ["after", "the next step"],
+    ]);
+  }
+  w.close("step");
+};
 
 const writeTeammateMessage = (w: EnvelopeWriter, message: TeammateMessage): void =>
   w.data(
@@ -837,7 +926,13 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ["due", due?.iso ?? null],
         ["due-weekday", due?.weekday ?? null],
       ]);
+      if (wake.step !== undefined) writeStep(w, wake.step);
       w.block("instruction", [], routine.instruction);
+      if (wake.step !== undefined && wake.step.number > 1) {
+        w.close("routine");
+        if (wake.triggerData !== null) w.data([["source", "webhook"]], wake.triggerData);
+        return;
+      }
       w.open("recent-runs");
       if (wake.recentRuns.length === 0 && !wake.recentRunsLeftOut) {
         w.line("None: this is the first run.");
