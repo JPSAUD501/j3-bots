@@ -34,6 +34,7 @@ import {
 import type { Appearance } from "./appearance.ts";
 import { commandSender } from "./commands.ts";
 import { onWayland } from "./displayServer.ts";
+import type { Opener } from "./quickAccess.ts";
 import { DesktopSettings } from "./settings.ts";
 import { makeTrayState, type TrayView } from "./trayState.ts";
 
@@ -77,7 +78,7 @@ interface Options {
   /** Restores, shows and focuses the window. */
   readonly bringForward: () => void;
   /** What the global shortcut does: opens quick access, or closes it. */
-  readonly toggleQuickAccess: () => void;
+  readonly toggleQuickAccess: (from: Opener) => void;
   /** The server this computer runs, in local mode, now and as it changes; `null` in any other. */
   readonly localServer: Stream.Stream<LocalServerState | null>;
   /** Phone access to that server, now and as it changes. */
@@ -121,7 +122,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
       /** Whether the system took `accelerator`; a malformed one throws, which is a refusal. */
       const register = (accelerator: Accelerator) => {
         try {
-          return globalShortcut.register(accelerator, toggleQuickAccess);
+          return globalShortcut.register(accelerator, () => toggleQuickAccess("shortcut"));
         } catch {
           return false;
         }
@@ -160,7 +161,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
             // in front: where it was refused, and on Wayland, where the
             // desktop may refuse it without telling the app.
             registerAccelerator: shortcut.state !== "registered",
-            click: toggleQuickAccess,
+            click: () => toggleQuickAccess("menu"),
           },
           { type: "separator" },
           {

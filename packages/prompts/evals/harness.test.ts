@@ -37,7 +37,9 @@ const conversation: Wake = {
   sinceLastTurn: [],
   kind: "user",
   answer: null,
-  messages: [{ at, text: "Check the docs build every weekday at 8.", attachments: [] }],
+  messages: [
+    { at, text: "Check the docs build every weekday at 8.", attachments: [], lookingAt: null },
+  ],
 };
 
 const decodeInput = Schema.decodeUnknownSync(tools.set_routine.input, DECODE_OPTIONS);

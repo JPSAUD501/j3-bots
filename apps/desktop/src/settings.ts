@@ -65,8 +65,12 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * quits, on until the operator turns it off, and the export the bots on this
  * computer moved away with (`moved`), while their data is still here and
  * their server stays stopped, and where quick access was last put on each
- * display it was dragged on, the latest last (`quickAccess`). None is a
- * secret.
+ * display it was dragged on, the latest last (`quickAccess`), and what
+ * quick access reads of the window in front as it opens: its title, on
+ * until the operator turns it off (`windowTitle`), and a picture of it for
+ * every message, off until the operator turns it on (`windowPicture`), and
+ * whether macOS has asked the operator for Screen Recording on the app's
+ * behalf (`screenAsked`), which it does only once. None is a secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -81,6 +85,9 @@ export const Settings = Schema.Struct({
   automaticUpdates: Schema.Boolean,
   moved: Schema.NullOr(MovedAway),
   quickAccess: Schema.Array(QuickAccessPlace),
+  windowTitle: Schema.Boolean,
+  windowPicture: Schema.Boolean,
+  screenAsked: Schema.Boolean,
 });
 export type Settings = typeof Settings.Type;
 
@@ -97,6 +104,9 @@ const EMPTY: Settings = {
   automaticUpdates: true,
   moved: null,
   quickAccess: [],
+  windowTitle: true,
+  windowPicture: false,
+  screenAsked: false,
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -140,6 +150,9 @@ export const decodeSettings = (
     automaticUpdates,
     moved,
     quickAccess,
+    windowTitle,
+    windowPicture,
+    screenAsked,
   } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
@@ -158,6 +171,9 @@ export const decodeSettings = (
   const keptAutomaticUpdates = decodeFlag(automaticUpdates);
   const keptMoved = decodeMoved(moved);
   const keptQuickAccess = decodeQuickAccess(quickAccess);
+  const keptWindowTitle = decodeFlag(windowTitle);
+  const keptWindowPicture = decodeFlag(windowPicture);
+  const keptScreenAsked = decodeFlag(screenAsked);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -179,6 +195,11 @@ export const decodeSettings = (
   }
   if (moved !== undefined && moved !== null && Option.isNone(keptMoved)) dropped.push("moved");
   if (quickAccess !== undefined && Option.isNone(keptQuickAccess)) dropped.push("quickAccess");
+  if (windowTitle !== undefined && Option.isNone(keptWindowTitle)) dropped.push("windowTitle");
+  if (windowPicture !== undefined && Option.isNone(keptWindowPicture)) {
+    dropped.push("windowPicture");
+  }
+  if (screenAsked !== undefined && Option.isNone(keptScreenAsked)) dropped.push("screenAsked");
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -195,6 +216,9 @@ export const decodeSettings = (
       automaticUpdates: Option.getOrElse(keptAutomaticUpdates, () => EMPTY.automaticUpdates),
       moved: Option.getOrNull(keptMoved),
       quickAccess: Option.getOrElse(keptQuickAccess, () => EMPTY.quickAccess),
+      windowTitle: Option.getOrElse(keptWindowTitle, () => EMPTY.windowTitle),
+      windowPicture: Option.getOrElse(keptWindowPicture, () => EMPTY.windowPicture),
+      screenAsked: Option.getOrElse(keptScreenAsked, () => EMPTY.screenAsked),
     },
     dropped,
   };

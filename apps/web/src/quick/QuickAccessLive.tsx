@@ -26,6 +26,7 @@ import { useSavesUnderWay } from "../live/savesUnderWay";
 import { useWorkFolds } from "../live/workFolds";
 import type { ConversationView } from "../shell/data";
 import { QuickAccess, type QuickAccessData, type QuickAccessIntents } from "./QuickAccess";
+import { useWindowContext } from "./windowContext";
 
 /**
  * Marks the page as quick access's for as long as it is one: its background
@@ -113,6 +114,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   const cards = useCardIntents(j3, say, origin, false);
   const submitting = useCardSubmitting();
   const composer = useComposerSource(j3, say);
+  const windowContext = useWindowContext(app);
   // A restart into an update waits for what this page still saves, as for the main window's.
   useReportSaving(useSavesUnderWay(j3));
 
@@ -137,6 +139,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   useEffect(
     () =>
       app.quickAccess.onCue((cue) => {
+        if (cue._tag === "seen") return;
         setShown(cue._tag === "open");
         if (cue._tag === "open") setAsked(cue.opening);
       }),
@@ -195,6 +198,13 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   const intents: QuickAccessIntents = {
     ...cards,
     ...composer.intents,
+    // The window the operator was in goes with what they send from here.
+    sendDraft: (asked, addressing) => {
+      const going = windowContext.send();
+      void composer.send(asked, addressing, going.context).then((result) => {
+        if (result === "sent") going.sent();
+      });
+    },
     openWorkFold: folds.open,
     closeWorkFold: folds.close,
     openAttachment: attachments.open,
@@ -236,6 +246,11 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
           onClose={() => setShown(false)}
           onLeft={() => app.quickAccess.hide(asked)}
           overlay={toast}
+          window={
+            windowContext.view === null
+              ? null
+              : { view: windowContext.view, intents: windowContext.intents }
+          }
         />,
       )}
       {folds.readers}

@@ -50,6 +50,7 @@ import {
 import type {
   LocalPairingLink,
   LocalServerState,
+  LookingAtSettings,
   PhoneAccess,
   ServerUpdate,
   UseThisComputerResult,
@@ -108,6 +109,7 @@ import {
 } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { QuickAccess } from "../quick/QuickAccess";
+import type { PictureChip, WindowChipsView } from "../quick/WindowChips";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -134,6 +136,7 @@ import {
 import { ServerAddress } from "../components/ServerAddress";
 import type { DesktopPhone, DesktopSystem } from "../shell/data";
 import {
+  LookingAtSetting,
   SettingsButton,
   SettingsPanel,
   UpdatesSection,
@@ -1251,10 +1254,16 @@ function BubblesSection() {
   const { t } = useI18n();
   return (
     <Section title="Bubbles">
-      <Labeled label="Single bubbles, with no tightened corner: the operator, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, answered with no record on this device, a bot with code, a bot with files, a bot with a picture, shown as a photo">
+      <Labeled label="Single bubbles, with no tightened corner: the operator, the operator from quick access with the window they wrote over, queued, cancelled, refused, perhaps delivered, being sent again, on its way from this device, not sent from it, answered with no record on this device, a bot with code, a bot with files, a bot with a picture, shown as a photo">
         <div className="flex flex-col gap-2">
           <MessageBubble
             message={bubbles.operator}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+          <MessageBubble
+            message={bubbles.lookingAt}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
@@ -4926,18 +4935,64 @@ function UpdatesGallerySection() {
  * desktop behind its corners and its shadow. "Shortcut" does what the global
  * shortcut does.
  */
+/** A picture of a window, as quick access takes one: a sample drawn for the gallery. */
+const WINDOW_PICTURE = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">
+    <rect width="640" height="400" rx="10" fill="#f6f7f9"/>
+    <rect width="640" height="40" rx="10" fill="#e3e6eb"/>
+    <rect y="30" width="640" height="10" fill="#e3e6eb"/>
+    <circle cx="22" cy="20" r="6" fill="#c9ced6"/><circle cx="42" cy="20" r="6" fill="#c9ced6"/>
+    <rect x="80" y="12" width="360" height="16" rx="8" fill="#fff"/>
+    <rect x="40" y="72" width="260" height="22" rx="4" fill="#3b4252"/>
+    <rect x="40" y="112" width="540" height="10" rx="5" fill="#c9ced6"/>
+    <rect x="40" y="132" width="500" height="10" rx="5" fill="#c9ced6"/>
+    <rect x="40" y="152" width="420" height="10" rx="5" fill="#c9ced6"/>
+    <rect x="40" y="196" width="560" height="160" rx="8" fill="#fff" stroke="#e3e6eb"/>
+    <rect x="64" y="222" width="120" height="12" rx="6" fill="#7aa874"/>
+    <rect x="64" y="250" width="480" height="10" rx="5" fill="#dfe3e8"/>
+    <rect x="64" y="270" width="440" height="10" rx="5" fill="#dfe3e8"/>
+  </svg>`,
+)}`;
+
+const GALLERY_WINDOW = { app: "Example Browser", title: "Invoice 2026-031 · Paid" } as const;
+
+/** What the chips of a frame show, which a tap changes as quick access would. */
+function useGalleryWindow(initial: WindowChipsView | null) {
+  const [view, setView] = useState(initial);
+  const picture = (next: PictureChip) =>
+    setView((before) => (before === null ? null : { ...before, picture: next }));
+  return view === null
+    ? null
+    : {
+        view,
+        intents: {
+          removeWindow: () => setView(null),
+          turnPictureOn: () => picture({ _tag: "on", url: WINDOW_PICTURE }),
+          turnPictureOff: () => picture({ _tag: "off" }),
+          allowScreen: () => picture({ _tag: "on", url: WINDOW_PICTURE }),
+          notNow: () => picture({ _tag: "off" }),
+        },
+      };
+}
+
 function QuickAccessFrame({
   label,
   botId,
   solid = false,
+  window: seen = null,
+  preview,
 }: {
   label: string;
   botId: BotId;
   solid?: boolean;
+  /** The window the shortcut was pressed over, as its chips start. */
+  window?: WindowChipsView | null;
+  preview?: "window" | "picture";
 }) {
   const source = useSampleSource();
   const [shown, setShown] = useState(true);
   const [asked, setAsked] = useState(0);
+  const chips = useGalleryWindow(seen);
   const row = source.data.roster?.flatMap((item) =>
     item._tag === "bot" && item.bot.id === botId ? [item] : [],
   )[0];
@@ -4965,6 +5020,11 @@ function QuickAccessFrame({
             onOpenRoom={() => {}}
             onClose={() => setShown(false)}
             onLeft={() => {}}
+            window={
+              chips === null
+                ? null
+                : { ...chips, ...(preview === undefined ? {} : { initialPreview: preview }) }
+            }
           />
         )}
       </Frame>
@@ -4982,6 +5042,28 @@ function QuickAccessFrame({
   );
 }
 
+/** What quick access reads, as the settings show it, changed in place as the app would. */
+function LookingAtFrame({ label, initial }: { label: string; initial: LookingAtSettings }) {
+  const [settings, setSettings] = useState(initial);
+  const answer = (next: LookingAtSettings) => {
+    setSettings(next);
+    return Promise.resolve(next);
+  };
+  return (
+    <Frame label={label} width={420} height={300}>
+      <div className="p-4">
+        <LookingAtSetting
+          lookingAt={{
+            settings,
+            change: (change) => answer({ ...settings, ...change }),
+            askScreenAccess: () => answer({ ...settings, screen: "granted" }),
+          }}
+        />
+      </div>
+    </Frame>
+  );
+}
+
 function QuickAccessSection() {
   return (
     <Section title="Quick access (desktop app)">
@@ -4996,9 +5078,60 @@ function QuickAccessSection() {
         />
         <QuickAccessFrame label="A bot at rest, with nothing said yet" botId={ids.moss} />
         <QuickAccessFrame
+          label="Opened over another app: its name and window title above the composer, the picture off"
+          botId={ids.moss}
+          window={{ lookingAt: GALLERY_WINDOW, picture: { _tag: "off" } }}
+        />
+        <QuickAccessFrame
+          label="The window chip tapped: what the bot gets, whole"
+          botId={ids.moss}
+          window={{ lookingAt: GALLERY_WINDOW, picture: { _tag: "off" } }}
+          preview="window"
+        />
+        <QuickAccessFrame
+          label="The picture turned on, tapped: what goes with the message"
+          botId={ids.moss}
+          window={{ lookingAt: GALLERY_WINDOW, picture: { _tag: "on", url: WINDOW_PICTURE } }}
+          preview="picture"
+        />
+        <QuickAccessFrame
+          label="Taking the picture"
+          botId={ids.moss}
+          window={{ lookingAt: GALLERY_WINDOW, picture: { _tag: "taking" } }}
+        />
+        <QuickAccessFrame
+          label="No picture could be taken: a tap tries again"
+          botId={ids.moss}
+          window={{ lookingAt: GALLERY_WINDOW, picture: { _tag: "failed" } }}
+        />
+        <QuickAccessFrame
+          label="macOS: the picture needs Screen Recording, asked as the operator turns it on; the title too, so the app shows alone"
+          botId={ids.moss}
+          window={{ lookingAt: { app: "Example Browser" }, picture: { _tag: "asking" } }}
+        />
+        <QuickAccessFrame
+          label="Where no picture can be taken (Linux without a compositor): the app and title alone"
+          botId={ids.moss}
+          window={{ lookingAt: GALLERY_WINDOW, picture: { _tag: "none" } }}
+        />
+        <QuickAccessFrame
           label="Where the window is not see-through (Linux without a compositor): the card fills it, square"
           botId={ids.scout}
           solid
+        />
+      </div>
+      <div className="mt-6 flex flex-wrap gap-4">
+        <LookingAtFrame
+          label="Settings: what quick access reads of the window in front, the title on and the picture off"
+          initial={{ reach: "window", title: true, pictureByDefault: false, screen: "not-needed" }}
+        />
+        <LookingAtFrame
+          label="Settings on macOS, before Screen Recording is allowed"
+          initial={{ reach: "window", title: true, pictureByDefault: false, screen: "needed" }}
+        />
+        <LookingAtFrame
+          label="Settings on Wayland, where no app sees another's window"
+          initial={{ reach: "none", title: true, pictureByDefault: false, screen: "not-needed" }}
         />
       </div>
     </Section>

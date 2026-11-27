@@ -11,6 +11,7 @@ import {
   EntryId,
   type EntryOrder,
   EntryTarget,
+  LookingAt,
   Mentions,
   type MessageEntry,
   MessageText,
@@ -97,6 +98,8 @@ export interface OutgoingMessage {
   readonly attachments: ReadonlyArray<Attachment>;
   /** Where the operator placed each file in `text`; left out, they follow it. */
   readonly attachmentOffsets?: ReadonlyArray<number>;
+  /** The window the operator was looking at, from quick access. */
+  readonly lookingAt?: LookingAt;
   readonly mentions: Mentions | null;
   /**
    * The name each member it mentions had when the operator picked it, so
@@ -177,6 +180,8 @@ const StoredMessage = Schema.TaggedStruct("message", {
   attachments: Schema.Array(Attachment),
   /** Missing from a message kept before messages placed their files, or sent without places. */
   attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
+  /** Missing from a message sent without its window, or kept before messages carried one. */
+  lookingAt: Schema.optionalKey(LookingAt),
   mentions: Schema.NullOr(Mentions),
   /** Missing from a message kept before messages kept them: it names none. */
   labels: Schema.optionalKey(Schema.Array(MentionLabel)),
@@ -409,6 +414,7 @@ export class Conversations extends Context.Service<
       readonly attachments?: ReadonlyArray<Attachment>;
       /** Where each file stands in `text`; left out, they follow it. */
       readonly attachmentOffsets?: ReadonlyArray<number>;
+      readonly lookingAt?: LookingAt;
       readonly mentions?: Mentions;
       /** The names the members mentioned had when picked. */
       readonly labels?: ReadonlyArray<MentionLabel>;
@@ -429,6 +435,7 @@ export class Conversations extends Context.Service<
         readonly text: string;
         readonly attachments?: ReadonlyArray<Attachment>;
         readonly attachmentOffsets?: ReadonlyArray<number>;
+        readonly lookingAt?: LookingAt;
         readonly mentions?: Mentions;
         readonly labels?: ReadonlyArray<MentionLabel>;
       },
@@ -827,6 +834,7 @@ export const layer = Layer.effect(
         ...(record.attachmentOffsets === undefined
           ? {}
           : { attachmentOffsets: record.attachmentOffsets }),
+        ...(record.lookingAt === undefined ? {} : { lookingAt: record.lookingAt }),
         mentions: record.mentions,
         labels: record.labels ?? [],
         createdAt: record.createdAt,
@@ -1137,6 +1145,7 @@ export const layer = Layer.effect(
         ...(due.message.attachmentOffsets === undefined
           ? {}
           : { attachmentOffsets: due.message.attachmentOffsets }),
+        ...(due.message.lookingAt === undefined ? {} : { lookingAt: due.message.lookingAt }),
         ...(due.message.mentions === null ? {} : { mentions: due.message.mentions }),
       }).pipe(
         Effect.exit,
@@ -1390,6 +1399,7 @@ export const layer = Layer.effect(
       readonly text: string;
       readonly attachments?: ReadonlyArray<Attachment>;
       readonly attachmentOffsets?: ReadonlyArray<number>;
+      readonly lookingAt?: LookingAt;
       readonly mentions?: Mentions;
       readonly labels?: ReadonlyArray<MentionLabel>;
     }) {
@@ -1405,6 +1415,7 @@ export const layer = Layer.effect(
         ...(input.attachmentOffsets === undefined || attachments.length === 0
           ? {}
           : { attachmentOffsets: input.attachmentOffsets }),
+        ...(input.lookingAt === undefined ? {} : { lookingAt: input.lookingAt }),
         mentions: input.mentions ?? null,
         labels: input.labels ?? [],
         createdAt: yield* DateTime.now,

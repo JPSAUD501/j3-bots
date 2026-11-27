@@ -9,6 +9,7 @@ import {
   EntryId,
   type EntryTarget,
   Invalid,
+  type LookingAt,
   type Mentions,
   type MessageEntry,
   NotFound,
@@ -244,7 +245,13 @@ const catchUpItem = (note: CatchUpNote): CatchUpItem => {
     case "profile-changed":
       return { type: "profile-changed", changes: note.changes };
     case "session-rotated":
-      return { type: "session-rotated", digest: note.digest };
+      return {
+        type: "session-rotated",
+        digest: note.digest.map((message) => ({
+          ...message,
+          lookingAt: message.lookingAt ?? null,
+        })),
+      };
   }
 };
 
@@ -281,6 +288,8 @@ export class Pipeline extends Context.Service<
       /** Where the operator placed each file in `text`; left out, they follow it. */
       readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly mentions?: Mentions;
+      /** The window the operator was looking at, from quick access. */
+      readonly lookingAt?: LookingAt;
     }) => Effect.Effect<EntryId, NotFound | Conflict | Invalid>;
     /** Sends a failed message again, as new wakes, to the recipients it failed for. */
     readonly retryMessage: (input: {
@@ -498,6 +507,7 @@ export const layer = Layer.effect(
       readonly attachments: ReadonlyArray<AttachmentId>;
       readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly mentions?: Mentions;
+      readonly lookingAt?: LookingAt;
     }) {
       const { commandId, ...payload } = input;
       return yield* receipts.once({
@@ -525,7 +535,7 @@ export const layer = Layer.effect(
           // room at its widest, which it may be by then.
           const at = yield* DateTime.now;
           const base = { at, timeZone: yield* zoneOf };
-          const message = operatorMessage(at, input.text, files, placed);
+          const message = operatorMessage(at, input.text, files, placed, input.lookingAt);
           const alone: Wake | null =
             room === undefined
               ? userWake(base, [], [{ _tag: "message", message }])
@@ -550,6 +560,7 @@ export const layer = Layer.effect(
                           ? "everyone"
                           : (input.mentions?.ids ?? []).map((id) => widestTeammate(id).name),
                       attachments: message.attachments,
+                      lookingAt: message.lookingAt,
                     },
                   ],
                 };
@@ -571,6 +582,7 @@ export const layer = Layer.effect(
               text: input.text,
               attachments: files,
               ...(placed === undefined ? {} : { attachmentOffsets: placed }),
+              ...(input.lookingAt === undefined ? {} : { lookingAt: input.lookingAt }),
               mentions: input.mentions ?? { _tag: "bots", ids: [] },
               delivery:
                 behind?.unsent === true
@@ -1095,6 +1107,7 @@ export const layer = Layer.effect(
         message.text,
         message.attachments,
         message.attachmentOffsets,
+        message.lookingAt,
       );
     });
 
@@ -1312,17 +1325,20 @@ export const layer = Layer.effect(
           files: message.attachments.map((file) => file.name),
         } satisfies RoomEntry;
       }
+      const { attachments, lookingAt } = operatorMessage(
+        message.createdAt,
+        message.text,
+        message.attachments,
+        message.attachmentOffsets,
+        message.lookingAt,
+      );
       return {
         author: "user",
         at: message.createdAt,
         text: message.text,
         mentions,
-        attachments: operatorMessage(
-          message.createdAt,
-          message.text,
-          message.attachments,
-          message.attachmentOffsets,
-        ).attachments,
+        attachments,
+        lookingAt,
       } satisfies RoomEntry;
     });
 

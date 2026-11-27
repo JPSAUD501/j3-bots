@@ -66,8 +66,8 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       {
         type: "session-rotated",
         digest: [
-          { from: "user", text: "text", files: [] },
-          { from: "you", text: "text", files: ["a.pdf"] },
+          { from: "user", text: "text", files: [], lookingAt: { app: "app", title: "text" } },
+          { from: "you", text: "text", files: ["a.pdf"], lookingAt: null },
         ],
       },
     ],
@@ -81,11 +81,13 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
         at,
         text: "text",
         attachments: [{ name: "a.pdf", path: "files/a.pdf", mediaType: "x", offset: null }],
+        lookingAt: null,
       },
       {
         at,
         text: "text text",
         attachments: [{ name: "a.png", path: "files/a.png", mediaType: "x", offset: 4 }],
+        lookingAt: { app: "App", title: "Title" },
       },
     ],
   },
@@ -109,7 +111,14 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     newcomer: true,
     omitted: 1,
     entries: [
-      { author: "user", at, text: "text", mentions: "everyone", attachments: [] },
+      {
+        author: "user",
+        at,
+        text: "text",
+        mentions: "everyone",
+        attachments: [],
+        lookingAt: { app: "App", title: null },
+      },
       { author: teammate, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
     ],
   },

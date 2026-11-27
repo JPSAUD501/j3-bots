@@ -83,6 +83,22 @@ export const IPC_CHANNELS = {
    * window at that conversation, and hides quick access. Not answered.
    */
   quickAccessOpenMain: "j3bots:quick-access-open-main",
+  /**
+   * `QuickAccessPictureRequest`, from the quick access window's page only:
+   * takes a picture of the window that was in front as that showing opened.
+   * Answers `QuickAccessPicture`.
+   */
+  quickAccessPicture: "j3bots:quick-access-picture",
+  /** Answers `LookingAtSettings`. */
+  lookingAt: "j3bots:looking-at",
+  /** `LookingAtChange`, answered with `LookingAtSettings`. */
+  setLookingAt: "j3bots:set-looking-at",
+  /**
+   * Asks the system for the permission that reading windows needs (macOS:
+   * Screen Recording), and opens where the operator gives it. Answers
+   * `LookingAtSettings`.
+   */
+  askScreenAccess: "j3bots:ask-screen-access",
   /** Answers `ShortcutStatus`. */
   shortcut: "j3bots:shortcut",
   /** `ShortcutRequest`, answered with `ShortcutChange`. */
@@ -194,6 +210,12 @@ export interface DesktopBridge {
   readonly hideQuickAccess: (request: unknown) => void;
   /** Shows the main window at a conversation, and hides quick access (a `QuickAccessOpen`). */
   readonly openFromQuickAccess: (request: unknown) => void;
+  /** A picture of the window that was in front (a `QuickAccessPictureRequest`). */
+  readonly quickAccessPicture: (request: unknown) => Promise<unknown>;
+  readonly lookingAt: () => Promise<unknown>;
+  /** Changes what quick access reads of the window in front (a `LookingAtChange`). */
+  readonly setLookingAt: (request: unknown) => Promise<unknown>;
+  readonly askScreenAccess: () => Promise<unknown>;
   readonly shortcutStatus: () => Promise<unknown>;
   readonly setShortcut: (accelerator: string) => Promise<unknown>;
   readonly useThisComputer: () => Promise<unknown>;

@@ -19,6 +19,8 @@ import {
   LocalExportResult,
   LocalPairingLink,
   LocalServerState,
+  type LookingAtChange,
+  LookingAtSettings,
   ModeChange,
   type MovedAway,
   UseThisComputerResult,
@@ -28,6 +30,7 @@ import {
   PhoneAccess,
   PhoneAccessChange,
   QuickAccessCue,
+  QuickAccessPicture,
   ShellCommand,
   ShortcutChange,
   ShortcutStatus,
@@ -146,6 +149,12 @@ export interface Desktop {
   readonly shortcutStatus: () => Promise<ShortcutStatus | null>;
   /** Changes the global shortcut; `null` when the app gave no answer the page understands. */
   readonly setShortcut: (accelerator: string) => Promise<ShortcutChange | null>;
+  /** What quick access reads of the window in front; `null` when the app gave no answer the page understands. */
+  readonly lookingAt: () => Promise<LookingAtSettings | null>;
+  /** Changes what quick access reads of the window in front, answering what it reads now. */
+  readonly setLookingAt: (change: LookingAtChange) => Promise<LookingAtSettings | null>;
+  /** Asks the system to let the app read windows (macOS: Screen Recording), answering what it reads now. */
+  readonly askScreenAccess: () => Promise<LookingAtSettings | null>;
   /** Whether this computer can run the bots itself. */
   readonly localAvailable: boolean;
   /** In local mode, the server this computer runs as the page loaded; `null` otherwise. */
@@ -252,8 +261,9 @@ interface DesktopQuickAccess {
    */
   readonly report: (available: boolean) => void;
   /**
-   * Calls `listener` each time the app shows the window (`open`) or asks the
-   * page to go out before it hides it (`leave`); answers a function that stops it.
+   * Calls `listener` each time the app shows the window (`open`), asks the
+   * page to go out before it hides it (`leave`), or read the window that
+   * was in front as it opened (`seen`); answers a function that stops it.
    */
   readonly onCue: (listener: (cue: QuickAccessCue) => void) => () => void;
   /**
@@ -264,6 +274,11 @@ interface DesktopQuickAccess {
   readonly hide: (opening: number) => void;
   /** Shows the main window at `target`, under `pairing`, and hides quick access. */
   readonly openInMain: (target: Destination, pairing: DeviceId) => void;
+  /**
+   * A picture of the window that was in front as showing `opening` opened;
+   * `failed` when the app gave no answer the page understands.
+   */
+  readonly picture: (opening: number) => Promise<QuickAccessPicture>;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -279,6 +294,8 @@ const decodeCommand = Schema.decodeUnknownOption(ShellCommand);
 const decodeCue = Schema.decodeUnknownOption(QuickAccessCue);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
 const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
+const decodeLookingAt = Schema.decodeUnknownOption(LookingAtSettings);
+const decodePicture = Schema.decodeUnknownOption(QuickAccessPicture);
 const decodeTheme = Schema.decodeUnknownOption(Theme);
 const decodeModeChange = Schema.decodeUnknownOption(ModeChange);
 const decodeUseThisComputer = Schema.decodeUnknownOption(UseThisComputerResult);
@@ -392,6 +409,9 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     },
     shortcutStatus: () => ask(() => bridge.shortcutStatus(), decodeShortcut),
     setShortcut: (accelerator) => ask(() => bridge.setShortcut(accelerator), decodeShortcutChange),
+    lookingAt: () => ask(() => bridge.lookingAt(), decodeLookingAt),
+    setLookingAt: (change) => ask(() => bridge.setLookingAt(change), decodeLookingAt),
+    askScreenAccess: () => ask(() => bridge.askScreenAccess(), decodeLookingAt),
     checkForUpdates: () => {
       bridge.checkForUpdates();
     },
@@ -485,6 +505,10 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
       openInMain: (target, pairing) => {
         bridge.openFromQuickAccess({ target, pairing });
       },
+      picture: (opening) =>
+        ask(() => bridge.quickAccessPicture({ opening }), decodePicture).then(
+          (picture): QuickAccessPicture => picture ?? { _tag: "failed" },
+        ),
     },
   }),
 });

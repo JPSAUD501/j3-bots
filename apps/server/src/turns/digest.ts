@@ -43,8 +43,17 @@ export const conversationDigest = (entries: ReadonlyArray<Entry>): Digest => {
       from: entry.author._tag === "operator" ? "user" : "you",
       text: shortened(entry.text, MESSAGE_CHARACTERS),
       files: entry.attachments.map((file) => file.name),
+      lookingAt:
+        entry.lookingAt === undefined
+          ? null
+          : { app: entry.lookingAt.app, title: entry.lookingAt.title ?? null },
     };
-    const size = message.text.length + message.files.reduce((sum, name) => sum + name.length, 0);
+    const size =
+      message.text.length +
+      message.files.reduce((sum, name) => sum + name.length, 0) +
+      (message.lookingAt === null
+        ? 0
+        : message.lookingAt.app.length + (message.lookingAt.title?.length ?? 0));
     if (length + size > DIGEST_CHARACTERS) {
       full = true;
       break;

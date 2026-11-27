@@ -67,6 +67,7 @@ import {
 import type {
   DesktopLocal,
   DesktopServer,
+  DesktopLookingAt,
   DesktopShortcut,
   DesktopUpdate,
   RemoteServerUpdate,
@@ -140,6 +141,7 @@ type SettingsIntents = Pick<
   | "serverUpdate"
   | "updatePrompt"
   | "shortcut"
+  | "lookingAt"
   | "providerSetup"
   | "secrets"
 >;
@@ -552,6 +554,7 @@ function PageBody({
             desktop={intents.server !== undefined || intents.local !== undefined}
             unencrypted={data.signInUnencrypted}
             shortcut={intents.shortcut}
+            lookingAt={intents.lookingAt}
           />
           <DevicesSection
             devices={data.devices}
@@ -1564,6 +1567,64 @@ function AppearanceSection() {
 }
 
 /**
+ * What quick access reads of the app the operator was in as they opened it:
+ * the window's title, on until they turn it off, and a picture of it on
+ * every message, off until they turn it on. On macOS both need Screen
+ * Recording, which a line here asks for until it is allowed; a desktop that
+ * gives no app another's window says so instead.
+ */
+export function LookingAtSetting({ lookingAt }: { lookingAt: DesktopLookingAt }) {
+  const { t } = useI18n();
+  const [changing, setChanging] = useState(false);
+  const { settings } = lookingAt;
+  const change = (asked: Promise<unknown>) => {
+    setChanging(true);
+    void asked.finally(() => setChanging(false));
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs">{t("settings.lookingAt")}</p>
+      {settings.reach === "none" ? (
+        <p className="text-xs text-pretty text-muted-foreground">{t("settings.lookingAt.none")}</p>
+      ) : (
+        <>
+          <SwitchRow
+            label={t("settings.lookingAt.title")}
+            hint={t("settings.lookingAt.title.hint")}
+            checked={settings.title}
+            readOnly={changing}
+            onChange={(title) => change(lookingAt.change({ title }))}
+          />
+          <SwitchRow
+            label={t("settings.lookingAt.picture")}
+            hint={t("settings.lookingAt.picture.hint")}
+            checked={settings.pictureByDefault}
+            readOnly={changing}
+            onChange={(pictureByDefault) => change(lookingAt.change({ pictureByDefault }))}
+          />
+          {settings.screen === "needed" && (
+            <div className="flex flex-col items-start gap-2">
+              <p className="text-xs text-pretty text-muted-foreground">
+                {t("settings.lookingAt.screen")}
+              </p>
+              <Button
+                size="sm"
+                aria-disabled={changing}
+                onClick={() => {
+                  if (!changing) change(lookingAt.askScreenAccess());
+                }}
+              >
+                {t("quickAccess.screen.allow")}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * What holds for this device alone, in the `desktop` app: its global
  * `shortcut`, and that its sign-in is stored `unencrypted` when it is, as
  * that is less safe than the operator would expect. Nothing in a browser.
@@ -1572,16 +1633,19 @@ function ThisDeviceSection({
   desktop,
   unencrypted,
   shortcut,
+  lookingAt,
 }: {
   desktop: boolean;
   unencrypted: boolean;
   shortcut: DesktopShortcut | undefined;
+  lookingAt: DesktopLookingAt | undefined;
 }) {
   const { t } = useI18n();
   if (shortcut === undefined && !unencrypted) return null;
   return (
     <Section title={t(desktop ? "settings.thisDevice" : "settings.browser")}>
       {shortcut !== undefined && <ShortcutSetting shortcut={shortcut} />}
+      {lookingAt !== undefined && <LookingAtSetting lookingAt={lookingAt} />}
       {unencrypted && (
         <p className="text-xs text-muted-foreground">{t("settings.thisDevice.unencrypted")}</p>
       )}

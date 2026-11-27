@@ -83,6 +83,19 @@ Only the second row was checked on a running system: the solid window, by the de
 
 Where the window was last put is kept per screen in the app's settings file, `<userData>/desktop.json`, under `quickAccess`. Deleting that entry puts it back in the corner.
 
+### The window you were in
+
+Pressed over another app, the shortcut reads that app's window and shows it as chips above the message box ([Experience](../product/experience.md#a-quick-word-with-the-primary-bot)). The two switches in Settings → Devices → This device are kept in the same file, as `windowTitle` (on unless set to `false`) and `windowPicture` (off unless set to `true`); on macOS, `screenAsked` records that macOS already asked for Screen Recording, which it does once.
+
+| Where | What is read |
+| --- | --- |
+| Linux on X11 | The active window's app, by the name its desktop entry gives in the app's language, and its title, by the app itself over the display. A picture only while a compositing manager runs. |
+| Linux on Wayland, or with no `DISPLAY` | Nothing: no chip shows, and Settings says why. Under `--ozone-platform=x11` the app reads through Xwayland, which sees only other Xwayland windows. |
+| macOS | The frontmost window of another app. Its title and a picture need System Settings → Privacy & Security → Screen Recording to allow J3 Bots; without it, the chip names the app alone. Settings says when it is not allowed and opens that page. macOS may need J3 Bots started again after a change there. |
+| Windows | The foreground window, through Windows PowerShell 5.1 from `System32`. The first press after the app starts, or after ten idle minutes, starts it, so its chips show a moment late, from the window just under quick access; it then stays for ten minutes. A policy that stops Windows PowerShell or `Add-Type` stops the chips, and nothing else. |
+
+Only the X11 read was checked on a running system, under Xvfb without a compositing manager; the rest follows each system's documentation ([Clients: Desktop](../architecture/clients.md#desktop) marks each).
+
 ## The server the desktop app runs
 
 When the desktop app runs the bots on this computer, it runs the server itself, as a child of the app, instead of the service ([Clients: Desktop](../architecture/clients.md#desktop)). Nothing of it is installed: no unit, no `j3-bots` command, no `~/.j3-bots`. Its files are under the app's profile, `<userData>`: `~/.config/J3 Bots` on Linux, `%APPDATA%\J3 Bots` on Windows, `~/Library/Application Support/J3 Bots` on macOS (`J3 Bots Development` for a development build).

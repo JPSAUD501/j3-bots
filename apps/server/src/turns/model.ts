@@ -216,6 +216,10 @@ export const CatchUpNote = Schema.Union([
         from: Schema.Literals(["user", "you"]),
         text: Schema.String,
         files: Schema.Array(Schema.String),
+        // The window the operator wrote it over; absent from a note kept before it was told.
+        lookingAt: Schema.optionalKey(
+          Schema.NullOr(Schema.Struct({ app: Schema.String, title: Schema.NullOr(Schema.String) })),
+        ),
       }),
     ),
   }),

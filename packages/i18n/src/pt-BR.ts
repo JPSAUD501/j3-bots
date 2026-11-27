@@ -188,6 +188,7 @@ const sentences = {
   "conversation.openDetails": "Mostrar detalhes de {name}",
   "conversation.details": "Detalhes",
 
+  "message.lookingAt": "Vendo {window}",
   "message.queued": "Na fila",
   "message.waitingForModel": "Enviada assim que a IA for conectada",
   "message.waitingForReset": "Enviada quando o limite de uso renovar",
@@ -1733,12 +1734,48 @@ const sentences = {
     "Este desktop não deixa apps usarem um atalho fora da própria janela, então {shortcut} só abre o acesso rápido com o J3 Bots em primeiro plano.",
   "settings.shortcut.requested":
     "No Wayland, é o seu desktop que decide se o J3 Bots pode usar {shortcut}, e ele pode recusar sem avisar o J3 Bots. Se pressionar o atalho fora do J3 Bots não fizer nada, o seu desktop não permitiu; ele continua funcionando com o J3 Bots em primeiro plano.",
+  "settings.lookingAt": "Quando você abre o acesso rápido sobre outro app",
+  "settings.lookingAt.title": "Incluir o título da janela",
+  "settings.lookingAt.title.hint":
+    "O acesso rápido mostra o app em que você estava, e o título da janela dele, acima da sua mensagem. Ele vai com a sua mensagem, a menos que você o tire.",
+  "settings.lookingAt.picture": "Adicionar uma imagem da janela",
+  "settings.lookingAt.picture.hint":
+    "Uma imagem da janela em que você estava vai com cada mensagem do acesso rápido. Desligado, você ainda pode adicionar uma a uma única mensagem.",
+  "settings.lookingAt.screen":
+    "O macOS precisa que você permita o J3 Bots em Gravação de Tela antes que o acesso rápido possa ler o título de uma janela ou tirar uma imagem dela.",
+  "settings.lookingAt.none":
+    "Este desktop não deixa apps verem as janelas de outros apps, então o acesso rápido não mostra o app em que você estava.",
   "desktop.menu.app": "J3 Bots",
   "desktop.menu.show": "Mostrar o J3 Bots",
   "desktop.menu.quickAccess": "Acesso rápido",
   "quickAccess.label": "Acesso rápido a {name}",
   "quickAccess.openConversation": "Abrir conversa",
   "quickAccess.close": "Fechar o acesso rápido",
+  "quickAccess.window.label": "O que vai com a sua mensagem",
+  "quickAccess.window.show": "Ver o que {name} recebe sobre {app}",
+  "quickAccess.window.remove": "Não enviar {app}",
+  "quickAccess.window.app": "App",
+  "quickAccess.window.title": "Janela",
+  "quickAccess.window.hint":
+    "{name} recebe isto com a sua mensagem, para saber o que você estava olhando.",
+  "quickAccess.picture.off": "Imagem da janela",
+  "quickAccess.picture.add": "Adicionar uma imagem de {app}",
+  "quickAccess.picture.taking": "Tirando a imagem…",
+  "quickAccess.picture.on": "Imagem",
+  "quickAccess.picture.show": "Ver a imagem de {app}",
+  "quickAccess.picture.remove": "Não enviar a imagem",
+  "quickAccess.picture.failed": "Sem imagem. Tente de novo",
+  "quickAccess.picture.hint": "{name} recebe esta imagem com a sua mensagem.",
+  "quickAccess.picture.name": "Imagem de {app}",
+  "quickAccess.picture.notSent":
+    "A imagem não pôde ir com a sua mensagem, então nada foi enviado. Tente de novo, ou tire a imagem.",
+  "quickAccess.screen.title": "Deixe o J3 Bots ver a janela",
+  "quickAccess.screen.body":
+    "Para tirar uma imagem de uma janela ou ler o título dela, o macOS precisa que você permita o J3 Bots em Gravação de Tela. O J3 Bots só olha quando você pressiona o atalho, e só tira uma imagem quando você pede.",
+  "quickAccess.screen.allow": "Permitir nos Ajustes do Sistema",
+  "quickAccess.screen.notNow": "Agora não",
+  "quickAccess.screen.reopen":
+    "Depois de permitir, o macOS pode pedir para você fechar e abrir o J3 Bots de novo.",
   "desktop.menu.hide": "Ocultar o J3 Bots",
   "desktop.menu.hideOthers": "Ocultar os outros",
   "desktop.menu.showAll": "Mostrar todos",

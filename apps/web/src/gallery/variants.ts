@@ -64,7 +64,7 @@ export function galleryVariants(now: DateTime.Utc) {
     name: string,
     author: Author,
     text: string,
-    extra: Partial<Pick<MessageEntry, "attachments" | "delivery" | "visual">> = {},
+    extra: Partial<Pick<MessageEntry, "attachments" | "delivery" | "visual" | "lookingAt">> = {},
   ): MessageEntry => ({
     _tag: "message",
     ...base(name, author),
@@ -74,6 +74,7 @@ export function galleryVariants(now: DateTime.Utc) {
     delivery: extra.delivery ?? { _tag: "delivered" },
     commandId: null,
     ...(extra.visual === undefined ? {} : { visual: extra.visual }),
+    ...(extra.lookingAt === undefined ? {} : { lookingAt: extra.lookingAt }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -99,6 +100,10 @@ export function galleryVariants(now: DateTime.Utc) {
       { _tag: "operator" },
       "Can you check whether the invoice from March was paid?",
     ),
+    // Sent from quick access, over the window it names.
+    lookingAt: message("looking-at", { _tag: "operator" }, "Is this the one we were waiting for?", {
+      lookingAt: { app: "Example Browser", title: "Invoice 2026-031 · Paid" },
+    }),
     pending: message("pending", { _tag: "operator" }, "And April’s too, while you’re at it", {
       delivery: { _tag: "pending" },
     }),

@@ -54,6 +54,7 @@ import {
   BrowserHelpEntry,
   EntryPreview,
   EntryTarget,
+  LookingAt,
   Mentions,
   MessageText,
   PREVIEW_LENGTH,
@@ -268,6 +269,12 @@ export const EntryRpcs = RpcGroup.make(
        */
       attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
       mentions: Schema.optionalKey(Mentions),
+      /**
+       * The window the operator was looking at, from quick access: the
+       * message keeps it, and its bot reads it beside the message, marked as
+       * what it is. A server that predates it ignores it.
+       */
+      lookingAt: Schema.optionalKey(LookingAt),
     },
     success: EntryId,
     error: CommandError,

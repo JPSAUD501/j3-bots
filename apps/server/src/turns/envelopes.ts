@@ -2,6 +2,7 @@
 import {
   type Attachment,
   BotId,
+  type LookingAt,
   MAX_ID_LENGTH,
   MAX_LABEL_LENGTH,
   MAX_ROOM_MEMBERS,
@@ -115,13 +116,15 @@ export const roomName = (rooms: Rooms["Service"], roomId: RoomId | null) =>
 
 /**
  * An operator's message as an envelope shows it: each file where `offsets`
- * places it in the text, or, without them, after the text.
+ * places it in the text, or, without them, after the text, and the window
+ * the operator was looking at, when it went with the message.
  */
 export const operatorMessage = (
   at: DateTime.Utc,
   text: string,
   files: ReadonlyArray<Attachment>,
   offsets?: ReadonlyArray<number>,
+  lookingAt?: LookingAt,
 ): OperatorMessage => ({
   at,
   text,
@@ -131,6 +134,8 @@ export const operatorMessage = (
     mediaType: file.mediaType,
     offset: offsets?.[index] ?? null,
   })),
+  lookingAt:
+    lookingAt === undefined ? null : { app: lookingAt.app, title: lookingAt.title ?? null },
 });
 
 /**

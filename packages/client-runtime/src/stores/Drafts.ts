@@ -4,6 +4,7 @@ import {
   BotId,
   DeviceId,
   type EntryTarget,
+  type LookingAt,
   type Mentions,
   NonNegativeInt,
 } from "@j3-bots/contracts";
@@ -22,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
+import { transferDeadline } from "../connection/http.ts";
 import { Files, uploadProblem } from "../files/Files.ts";
 import {
   admitFiles,
@@ -86,6 +88,16 @@ export interface Addressing {
   readonly labels: ReadonlyArray<MentionLabel>;
 }
 
+/**
+ * What quick access sends beside a draft, as its chips showed it at Send:
+ * the window the operator was looking at, and a picture of that window,
+ * which uploads only then and goes after the draft's files.
+ */
+export interface WindowContext {
+  readonly lookingAt?: LookingAt;
+  readonly picture?: { readonly name: string; readonly body: Blob };
+}
+
 /** What `send` did with the draft. */
 export type DraftSendResult =
   /** It is on its way, through the outbox. */
@@ -96,6 +108,11 @@ export type DraftSendResult =
   | "not-ready"
   /** The message breaks a limit of `message.send`, which says which; the draft stays as it is. */
   | MessageProblem
+  /**
+   * The picture of `WindowContext` could not go with the message: it would
+   * break a limit of the message, or did not upload. Nothing was sent.
+   */
+  | "picture-failed"
   /** The device could not keep the message, so it stays in the draft. */
   | "not-kept"
   /**
@@ -314,9 +331,16 @@ export class Drafts extends Context.Service<
      * second finds the draft already on its way. What goes is the draft as it
      * was at the call, or nothing. The transaction claims the draft as this
      * window last read or wrote it, so two windows never send it twice.
-     * Without `addressing` the message mentions nobody.
+     * Without `addressing` the message mentions nobody. `context` is what
+     * goes beside the draft: it is waited for once the draft is held as on
+     * its way, so nothing typed meanwhile goes with it, and it is never kept
+     * with the draft.
      */
-    readonly send: (target: EntryTarget, addressing?: Addressing) => Effect.Effect<DraftSendResult>;
+    readonly send: (
+      target: EntryTarget,
+      addressing?: Addressing,
+      context?: Effect.Effect<WindowContext | undefined>,
+    ) => Effect.Effect<DraftSendResult>;
     /**
      * Each draft another window sent or changed while this one was changing
      * or sending it. Nothing this window held was written: it now shows the
@@ -978,7 +1002,11 @@ export const layer = Layer.effect(
         }).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
 
-    const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, addressing?: Addressing) {
+    const send = Effect.fn("Drafts.send")(function* (
+      target: EntryTarget,
+      addressing?: Addressing,
+      context?: Effect.Effect<WindowContext | undefined>,
+    ) {
       const key = targetKey(target);
       // What the operator pressed Send on, captured at the press.
       const draft = state.get().get(key) ?? empty;
@@ -989,15 +1017,64 @@ export const layer = Layer.effect(
       if (draft.files.some((file) => file._tag !== "ready")) return "not-ready";
       // Every file is uploaded: each mark places one of `attachments`, in order.
       const { text, offsets } = placedMessage(draft.text);
-      const { files: attachments } = keptOf(draft);
-      if (text === "" && attachments.length === 0) return "empty";
+      const { files: drafted } = keptOf(draft);
+      if (context === undefined && text === "" && drafted.length === 0) return "empty";
       const pressed: Draft = { ...draft, sending: true };
       show(key, pressed);
+      // The pairing the draft is sent under, as the draft's files uploaded for it.
+      const sentUnder = followed.get();
+      // Whether this window still shows the draft as Send held it: an empty
+      // one, which goes only with a picture, is shown as no draft at all.
+      const held = () => (state.get().get(key) ?? null) === (isEmpty(pressed) ? null : pressed);
+      /**
+       * Nothing went: the draft is back as it was pressed, unless another
+       * window's change replaced it meanwhile, which then stays.
+       */
+      const giveBack = <R extends DraftSendResult>(result: R): R | "changed-elsewhere" => {
+        if (!held()) return "changed-elsewhere";
+        show(key, draft);
+        return result;
+      };
+      const beside = context === undefined ? undefined : yield* context;
+      if (followed.get() !== sentUnder) return giveBack("changed-elsewhere");
+      const picture = beside?.picture;
+      // The window alone is no message: it goes with words or files.
+      if (text === "" && drafted.length === 0 && picture === undefined) return giveBack("empty");
+      const local =
+        picture === undefined
+          ? null
+          : {
+              name: picture.name,
+              mediaType: normalizeMediaType(picture.body.type),
+              size: picture.body.size,
+            };
+      // Checked before it uploads, so a picture the message cannot take is never stored.
+      if (local !== null && admitFiles(drafted, [local])[0] !== null) {
+        return giveBack("picture-failed");
+      }
+      if (picture !== undefined && sentUnder === null) return giveBack("not-kept");
+      const uploaded =
+        picture === undefined || local === null || sentUnder === null
+          ? null
+          : yield* files
+              .upload({ pairing: sentUnder, ...local, body: picture.body, onProgress: () => {} })
+              .pipe(
+                // The draft waits on it: offline, or too slow for one
+                // transfer of its size, it fails and the draft is back.
+                Effect.timeoutOption(transferDeadline(local.size, policy.requestTimeout)),
+                Effect.option,
+                Effect.map(Option.flatten),
+              );
+      if (uploaded !== null && Option.isNone(uploaded)) return giveBack("picture-failed");
+      // The picture follows the draft's files, after the text.
+      const attachments = uploaded === null ? drafted : [...drafted, uploaded.value];
+      const placedAt =
+        uploaded === null || drafted.length === 0 ? offsets : [...offsets, text.length];
       return yield* locked(
         Effect.gen(function* () {
           // A sending draft takes no change, so only another window's change
           // replaces it, and the notice of that change says why nothing went.
-          if (state.get().get(key) !== pressed) return "changed-elsewhere";
+          if (!held()) return "changed-elsewhere";
           const pairing = followed.get();
           // The pairing changed since Send was pressed: this draft goes with
           // the pairing that ended, and nothing of it was kept.
@@ -1020,7 +1097,8 @@ export const layer = Layer.effect(
                 target,
                 text,
                 attachments,
-                ...(attachments.length === 0 ? {} : { attachmentOffsets: offsets }),
+                ...(drafted.length === 0 ? {} : { attachmentOffsets: placedAt }),
+                ...(beside?.lookingAt === undefined ? {} : { lookingAt: beside.lookingAt }),
                 ...addressing,
               },
               {

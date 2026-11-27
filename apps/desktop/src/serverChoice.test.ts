@@ -335,6 +335,9 @@ describe("the settings file", () => {
     automaticUpdates: true,
     moved: null,
     quickAccess: [],
+    windowTitle: true,
+    windowPicture: false,
+    screenAsked: false,
   } as const;
   const NONE = {
     mode: null,
@@ -346,6 +349,9 @@ describe("the settings file", () => {
     automaticUpdates: true,
     moved: null,
     quickAccess: [],
+    windowTitle: true,
+    windowPicture: false,
+    screenAsked: false,
   } as const;
 
   it("reads the server, the window, the shortcut, the appearance, starting with the system, phone access, the update channel and updating by itself each on its own", () => {
@@ -455,6 +461,9 @@ describe("the settings file", () => {
         automaticUpdates: true,
         moved: null,
         quickAccess: [],
+        windowTitle: true,
+        windowPicture: false,
+        screenAsked: false,
       },
     );
   });

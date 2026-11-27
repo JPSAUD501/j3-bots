@@ -6,7 +6,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { compositingManagerRuns, cookieFor, parseDisplay } from "./compositing.ts";
+import { compositingManagerRuns } from "./compositing.ts";
+import { cookieFor, parseDisplay } from "./x11.ts";
 
 const COOKIE = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
 const ATOM = 0x1a2;

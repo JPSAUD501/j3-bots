@@ -54,6 +54,8 @@ import type {
   Accelerator,
   LocalExportResult,
   LocalPairingLink,
+  LookingAtChange,
+  LookingAtSettings,
   MovedAway,
   UseThisComputerResult,
   PhoneAccess,
@@ -333,6 +335,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly updatePrompt?: UpdatePromptIntents;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
   readonly shortcut?: DesktopShortcut;
+  /** In the desktop app, what quick access reads of the window in front. Absent in a browser. */
+  readonly lookingAt?: DesktopLookingAt;
   /**
    * In the desktop app, while the bots live on this computer: signing the
    * providers in from here. Absent elsewhere, where the command connects them.
@@ -420,6 +424,15 @@ export interface DesktopPhone {
   readonly set: (on: boolean, stopWork: boolean) => Promise<PhoneAccessChange | null>;
   /** A pairing code for a phone; `unlock` lifts the lock wrong codes set first. */
   readonly pairingLink: (unlock: boolean) => Promise<LocalPairingLink | null>;
+}
+
+/** What quick access reads of the window the operator was in as they opened it. */
+export interface DesktopLookingAt {
+  readonly settings: LookingAtSettings;
+  /** Changes it; `null` when the app gave no answer the page understands. */
+  readonly change: (change: LookingAtChange) => Promise<LookingAtSettings | null>;
+  /** Asks macOS for Screen Recording, where the operator allows it. */
+  readonly askScreenAccess: () => Promise<LookingAtSettings | null>;
 }
 
 /** The desktop app's global shortcut, which shows it with the cursor in the composer. */

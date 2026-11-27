@@ -1135,7 +1135,16 @@ const roomWake: Wake = {
   closing: false,
   newcomer: false,
   omitted: 0,
-  entries: [{ author: "user", at, text: ROOM_ASKED, mentions: ["Juniper"], attachments: [] }],
+  entries: [
+    {
+      author: "user",
+      at,
+      text: ROOM_ASKED,
+      mentions: ["Juniper"],
+      attachments: [],
+      lookingAt: null,
+    },
+  ],
 };
 
 /** The kickoff of a room Ana started with Juniper, made for it: her first word anywhere. */
@@ -1239,8 +1248,13 @@ const startWake: Wake = {
   kind: "user",
   answer: null,
   messages: [
-    { at: todayAt(9, 40), text: "ok, start the test in the group", attachments: [] },
-    { at, text: "send them a message there", attachments: [] },
+    {
+      at: todayAt(9, 40),
+      text: "ok, start the test in the group",
+      attachments: [],
+      lookingAt: null,
+    },
+    { at, text: "send them a message there", attachments: [], lookingAt: null },
   ],
 };
 
@@ -1431,11 +1445,12 @@ const changedMind: Wake = {
   kind: "user",
   answer: null,
   messages: [
-    { at: todayAt(9, 40), text: "is the docs build green?", attachments: [] },
+    { at: todayAt(9, 40), text: "is the docs build green?", attachments: [], lookingAt: null },
     {
       at,
       text: "actually never mind the build. how many pull requests are open on acme/docs?",
       attachments: [],
+      lookingAt: null,
     },
   ],
 };

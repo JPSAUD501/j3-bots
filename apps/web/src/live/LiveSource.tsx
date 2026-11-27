@@ -146,6 +146,7 @@ import { updatable, useDesktopUpdate, useLaunchUpdate, useReportSaving } from ".
 import { useRemoteServerUpdate } from "./serverUpdate";
 import { useUpdatePrompt } from "./updatePrompt";
 import {
+  useDesktopLookingAt,
   useDesktopShortcut,
   useReportAppearance,
   useReportLanguage,
@@ -949,6 +950,7 @@ function LiveShell({
   // The way back to the update prompt after "Later", in the roster's footer.
   const updatePrompt = useUpdatePrompt(false);
   const shortcut = useDesktopShortcut();
+  const lookingAt = useDesktopLookingAt();
   useReportSaving(useSavesUnderWay(j3));
   const openMemoryKey =
     memoryView === null ? null : memorySaveKey(memoryScopeOf(memoryView), memoryView.path);
@@ -1559,6 +1561,7 @@ function LiveShell({
     ...(update === undefined ? {} : { update }),
     updatePrompt: { entry: updatePrompt.entry, reopen: updatePrompt.reopen },
     ...(shortcut === undefined ? {} : { shortcut }),
+    ...(lookingAt === undefined ? {} : { lookingAt }),
     ...(providerSetup === undefined ? {} : { providerSetup }),
   };
 

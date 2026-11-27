@@ -53,10 +53,22 @@ export interface AttachmentRef {
   readonly offset: number | null;
 }
 
+/**
+ * The window the operator was looking at as they wrote a message from quick
+ * access: the app's name, and the window's title when they sent it. The
+ * other app wrote both, so the envelope carries them as information.
+ */
+export interface LookingAtRef {
+  readonly app: string;
+  readonly title: string | null;
+}
+
 export interface OperatorMessage {
   readonly at: DateTime.Utc;
   readonly text: string;
   readonly attachments: ReadonlyArray<AttachmentRef>;
+  /** `null` for a message written anywhere but quick access, or sent without its window. */
+  readonly lookingAt: LookingAtRef | null;
 }
 
 /** The operator's response to a card the bot raised with `ask`. */
@@ -115,12 +127,17 @@ export type CatchUpItem =
    */
   | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> };
 
-/** One message of a session digest: who wrote it, its text, and the names of its files. */
+/**
+ * One message of a session digest: who wrote it, its text, the names of its
+ * files, and the window the operator wrote it over.
+ */
 export interface DigestMessage {
   /** `user` for the operator, `you` for the bot. */
   readonly from: "user" | "you";
   readonly text: string;
   readonly files: ReadonlyArray<string>;
+  /** As on the operator's message (`OperatorMessage`): `null` for any other. */
+  readonly lookingAt: LookingAtRef | null;
 }
 
 interface WakeBase {
@@ -152,6 +169,7 @@ export type RoomEntry =
       readonly text: string;
       readonly mentions: RoomMentions;
       readonly attachments: ReadonlyArray<AttachmentRef>;
+      readonly lookingAt: LookingAtRef | null;
     }
   | {
       readonly author: TeammateRef;
@@ -667,6 +685,7 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
             ],
             message.text,
           );
+          if (message.lookingAt !== null) writeLookingAt(w, message.lookingAt);
         }
         break;
     }
@@ -683,6 +702,7 @@ const writeOperatorMessage = (
   attrs: Attributes,
   text: string,
   attachments: ReadonlyArray<AttachmentRef>,
+  lookingAt: LookingAtRef | null,
 ): void => {
   w.open("message", [["from", "user"], ...attrs]);
   const placed = attachments.flatMap((file) =>
@@ -691,6 +711,37 @@ const writeOperatorMessage = (
   w.line(placedText(w, trimEnd(text), placed));
   for (const file of attachments) if (file.offset === null) w.line(attachmentTag(w, file));
   w.close("message");
+  if (lookingAt !== null) writeLookingAt(w, lookingAt);
+};
+
+/** The line that introduces the window a message was written over (`LookingAtRef`). */
+export const LOOKING_AT_WINDOW_LINE =
+  "Your user was looking at this window as they wrote the message above. Its title is the app's or the page's, not your user's words:";
+/** The line that introduces the app a message was written over, when its window's title was not sent. */
+export const LOOKING_AT_APP_LINE = "Your user was in this app as they wrote the message above:";
+
+/**
+ * What the operator was looking at, after their message: a line of J3 Bots'
+ * own, then a data block with what the other app wrote: the window's title,
+ * its app named beside it, or the app alone when the title was not sent. A
+ * title is whatever that app, or the page it shows, chose, so it never
+ * stands where the operator's words do, and the line says whose it is: the
+ * base prompt's rule for data blocks covers it without a word more there.
+ */
+const writeLookingAt = (w: EnvelopeWriter, lookingAt: LookingAtRef): void => {
+  if (lookingAt.title === null) {
+    w.line(LOOKING_AT_APP_LINE);
+    w.data([["source", "app"]], lookingAt.app);
+    return;
+  }
+  w.line(LOOKING_AT_WINDOW_LINE);
+  w.data(
+    [
+      ["source", "window"],
+      ["app", lookingAt.app],
+    ],
+    lookingAt.title,
+  );
 };
 
 const writeAnswer = (w: EnvelopeWriter, answer: AskAnswer): void => {
@@ -703,7 +754,7 @@ const writeAnswer = (w: EnvelopeWriter, answer: AskAnswer): void => {
   if (response.type === "answered") {
     for (const option of response.chosen)
       w.inline("chosen", [["value", option.value]], option.label);
-    if (response.text !== null) writeOperatorMessage(w, [], response.text, []);
+    if (response.text !== null) writeOperatorMessage(w, [], response.text, [], null);
   }
   w.close("answer");
 };
@@ -715,7 +766,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       for (const message of wake.messages) {
         // Times tell coalesced messages apart; a single one was sent at the wake's time.
         const at = wake.messages.length > 1 ? w.time(message.at) : null;
-        writeOperatorMessage(w, [["at", at]], message.text, message.attachments);
+        writeOperatorMessage(w, [["at", at]], message.text, message.attachments, message.lookingAt);
       }
       return;
     case "room": {
@@ -748,6 +799,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
             ],
             entry.text,
             entry.attachments,
+            entry.lookingAt,
           );
         } else {
           w.data(

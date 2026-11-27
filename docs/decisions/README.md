@@ -72,5 +72,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0073](0073-a-suggested-reply-follows-what-the-operator-saw.md) | A suggested reply follows what the operator saw, in the bot's own conversation only | Accepted |
 | [0075](0075-a-bot-sends-a-picture-as-a-photo-and-shows-what-it-looked-at-in-its-work.md) | A bot sends a picture as a photo, and shows an image it looked at in that step of its work | Accepted |
 | [0076](0076-the-brand-mark-is-j3-with-a-bots-light.md) | The brand mark is "j3", with a bot's light on | Accepted |
+| [0079](0079-quick-access-brings-the-window-the-operator-was-in.md) | Quick access brings the window the operator was in | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.
