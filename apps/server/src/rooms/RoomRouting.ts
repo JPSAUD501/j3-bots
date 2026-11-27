@@ -60,8 +60,8 @@ export interface SpeakingTurn {
  * Who a room message wakes (`docs/architecture/server.md`, Rooms), the
  * operator's message and a bot's alike: the members it mentions; mentioning
  * nobody, the member it replies to; or every member but its author when it
- * mentions nobody else or everyone. Every member
- * reads it in its next envelope either way.
+ * mentions nobody else or everyone. Every member reads it in its next
+ * envelope either way.
  *
  * Each message takes a round, kept with its entry (`entries.room_round`). The
  * operator's word is round 0: their message, a bot's kickoff, or a request of

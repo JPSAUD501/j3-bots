@@ -199,8 +199,8 @@ export function Quotes({
  * draft takes.
  *
  * Android selects only in a field that is enabled, so the field is one that
- * opens no keyboard, hides its caret and puts back the message's words if
- * anything changes them.
+ * opens no keyboard, hides its caret and offers no menu to paste or cut
+ * with, and it holds the message's words as its value.
  */
 function PassagePicker({
   target,
@@ -230,6 +230,7 @@ function PassagePicker({
         scrollEnabled={false}
         showSoftInputOnFocus={false}
         caretHidden
+        contextMenuHidden
         accessibilityLabel={t("quote.sheet.title")}
         onSelectionChange={({ nativeEvent }) => setSelection(nativeEvent.selection)}
         className="rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground"

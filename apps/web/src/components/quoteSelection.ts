@@ -82,17 +82,34 @@ function offsetAt(root: HTMLElement, node: Node, offset: number, side: Side): nu
 }
 
 /**
+ * Whether `range` ends past `root` with nothing more selected than space, as
+ * a triple click on a message's last paragraph does, which ends where what
+ * follows the text starts.
+ */
+function endsJustPast(root: HTMLElement, range: Range): boolean {
+  if (root.contains(range.endContainer)) return false;
+  const past = root.ownerDocument.createRange();
+  past.setStartAfter(root);
+  past.setEnd(range.endContainer, range.endOffset);
+  return past.toString().trim() === "";
+}
+
+/**
  * The passage `range` selects when it lies within one message's text, as
  * `[start, end)` of that text; null when it spans two messages, lies outside
  * a message's text, or selects none of it.
  */
 export function selectedPassage(range: Range): SelectedPassage | null {
   const root = textRootOf(range.startContainer);
-  if (root === null || textRootOf(range.endContainer) !== root) return null;
+  if (root === null) return null;
+  const toEnd = endsJustPast(root, range);
+  if (!toEnd && textRootOf(range.endContainer) !== root) return null;
   const messageId = root.getAttribute(QUOTE_TEXT);
   if (messageId === null) return null;
   const start = offsetAt(root, range.startContainer, range.startOffset, "start");
-  const end = offsetAt(root, range.endContainer, range.endOffset, "end");
+  const end = toEnd
+    ? offsetAt(root, root, root.childNodes.length, "end")
+    : offsetAt(root, range.endContainer, range.endOffset, "end");
   if (start === null || end === null || end <= start) return null;
   return { messageId, start, end };
 }

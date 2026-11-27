@@ -104,18 +104,14 @@ export const takesReply = (quotes: ReadonlyArray<MessageQuote>) =>
   replyIn(quotes) !== null || quotes.length < MAX_QUOTES;
 
 /**
- * What a quote's card reads: the passage, or the start of the message, as
- * one line of words with the marks that set code apart left out, and `…`
- * where the message went on. Empty for a message of files alone.
+ * What a quote's card reads, as one line: the passage as the operator picked
+ * it, or the start of the message as its bubble shows it, with the marks
+ * that set code apart left out, and `…` where the message went on. Empty for
+ * a message of files alone.
  */
 export const quoteText = (quote: MessageQuote): string => {
-  const words = (text: string) =>
-    text
-      .replace(/```[\w+-]*/g, " ")
-      .replace(/`([^`\n]+)`/g, "$1")
-      .replace(/\s+/g, " ")
-      .trim();
-  return quote.quoted._tag === "passage"
-    ? words(quote.quoted.text)
-    : `${words(quote.quoted.opening)}${quote.quoted.more ? "…" : ""}`;
+  const line = (text: string) => text.replace(/\s+/g, " ").trim();
+  if (quote.quoted._tag === "passage") return line(quote.quoted.text);
+  const shown = quote.quoted.opening.replace(/```[\w+-]*/g, " ").replace(/`([^`\n]+)`/g, "$1");
+  return `${line(shown)}${quote.quoted.more ? "…" : ""}`;
 };

@@ -64,8 +64,11 @@ describe("quotes", () => {
     expect(passageOf(long, 0, long.text.length)).toBe("too-long");
   });
 
-  it("reads a quote as words: code marks left out, and … where the message went on", () => {
-    expect(quoteText(passage(plans, "careful one with `tests`"))).toBe("careful one with tests");
+  it("reads a passage as picked, and a reply's start as its bubble shows it, … where it went on", () => {
+    expect(quoteText(passage(plans, "careful one with `tests`"))).toBe("careful one with `tests`");
+    const fence = message("fence", "Open the block with ```json\nand close it.");
+    expect(quoteText(passage(fence, "```json"))).toBe("```json");
+    expect(quoteText(replyTo(plans))).toBe("Two plans: a quick one, or a careful one with tests.");
     const long = message("long", `${"word ".repeat(100)}end`);
     expect(quoteText(replyTo(long))).toMatch(/^word word .*…$/u);
     expect(quoteText(replyTo(notes))).toBe("Notes for later.");

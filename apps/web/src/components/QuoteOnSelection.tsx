@@ -170,9 +170,10 @@ export function QuoteOnSelection({
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => {
         if (passage === "too-long" || refusal !== null) return;
-        onQuote(passage);
+        // Let go of the selection before the composer takes the focus, so its caret stays.
         document.getSelection()?.removeAllRanges();
         setPicked(null);
+        onQuote(passage);
       }}
       className={cn(
         "pop-in fixed z-50 inline-flex h-8 max-w-[min(20rem,calc(100vw-1rem))] cursor-pointer items-center gap-1.5 rounded-pill border border-border bg-surface px-3 text-xs font-medium text-foreground shadow-overlay outline-none hover:bg-muted focus-visible:outline-2 focus-visible:outline-accent",

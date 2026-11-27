@@ -123,6 +123,18 @@ describe("a selection of a message's text", () => {
     expect(quoted(text, range)).toBe("Another");
   });
 
+  it("takes the last paragraph whole when a triple click ends where what follows starts", () => {
+    const text = "One line.\n\nThe last one.";
+    show({ m1: text, m2: "Next message" });
+    const last = find("The last one.");
+    const next = find("Next message");
+    const range = document.createRange();
+    range.setStart(last.node, last.at);
+    // Before the next message's words: nothing of it is selected.
+    range.setEnd(next.node, 0);
+    expect(quoted(text, range)).toBe("The last one.");
+  });
+
   it("quotes nothing across two messages", () => {
     show({ m1: "Booked it", m2: "Thanks a lot" });
     expect(selectedPassage(select("Booked", "Thanks"))).toBeNull();
