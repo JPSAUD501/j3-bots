@@ -200,6 +200,63 @@ const sentences = {
   "message.offer.recordScreen": "Gravar a tela",
   "message.offer.recordScreen.elsewhere":
     "Para gravar a tela, abra o app J3 Bots no seu computador.",
+
+  "recordSheet.title": "Gravar a tela",
+  "recordSheet.what.everything":
+    "O J3 Bots grava todas as suas telas, a sua voz, as teclas que você aperta e onde você clica, até você parar.",
+  "recordSheet.what.screenAndVoice":
+    "O J3 Bots grava todas as suas telas e a sua voz até você parar. Este sistema não deixa apps lerem as suas teclas e cliques.",
+  "recordSheet.where":
+    "Depois, ela vai na sua mensagem para {name} como um arquivo, e a IA de {name} olha para ela. Nada sai deste computador até você enviar.",
+  "recordSheet.passwords.hidden":
+    "Quando você digita uma senha, fica só que você digitou uma. Pause para esconder qualquer outra coisa: nada é gravado enquanto está pausado.",
+  "recordSheet.passwords.pause":
+    "Este sistema não avisa quando uma senha é digitada, então pause antes de digitar uma. Nada é gravado enquanto está pausado.",
+  "recordSheet.pauseHides":
+    "Pause para esconder qualquer coisa: nada é gravado enquanto está pausado.",
+  "recordSheet.microphone": "Microfone",
+  "recordSheet.microphone.default": "Padrão do sistema",
+  "recordSheet.microphone.none": "Sem microfone",
+  "recordSheet.microphone.unnamed": "Microfone {number}",
+  "recordSheet.microphone.failed":
+    "O J3 Bots não consegue usar este microfone. Escolha outro, ou permita nas configurações do sistema.",
+  "recordSheet.access": "O macOS precisa da sua permissão antes.",
+  "recordSheet.access.screen": "Gravação de Tela, para gravar as suas telas",
+  "recordSheet.access.keys": "Acessibilidade, para ler as suas teclas e cliques",
+  "recordSheet.access.open": "Abrir Ajustes",
+  "recordSheet.access.granted": "Permitido",
+  "recordSheet.access.after":
+    "Depois, volte aqui. O macOS pode pedir para abrir o J3 Bots de novo.",
+  "recordSheet.lowSpace":
+    "O disco deste computador está quase cheio. A gravação para sozinha antes de encher.",
+  "recordSheet.busy": "Outra gravação já está em andamento.",
+  "recordSheet.space": "Não há espaço livre no disco para gravar. Libere espaço e tente de novo.",
+  "recordSheet.failed": "A gravação não conseguiu começar.",
+  "recordSheet.start": "Começar a gravar",
+  "recordSheet.cancel": "Cancelar",
+  "recordSheet.countdown": "Gravando em {count}",
+
+  "recorder.starting": "Começando…",
+  "recorder.finishing": "Salvando…",
+  "recorder.recording": "Gravando",
+  "recorder.paused": "Pausada",
+  "recorder.voice": "Nível do microfone",
+  "recorder.lowSpace": "O disco está quase cheio: a gravação para sozinha antes de encher",
+  "recorder.pause": "Pausar",
+  "recorder.resume": "Continuar",
+  "recorder.stop": "Parar",
+  "recorder.discard": "Descartar",
+  "recorder.keep": "Manter",
+
+  "recording.fileName": "Gravação de tela {date}.zip",
+  "recording.failed.screen": "A gravação parou: o J3 Bots não conseguiu gravar a tela.",
+  "recording.failed.microphone": "A gravação parou: o J3 Bots não conseguiu usar o microfone.",
+  "recording.failed.encoder": "A gravação parou: o J3 Bots não conseguiu codificá-la.",
+  "recording.failed.space": "A gravação parou: o disco está cheio.",
+  "recording.failed.storage": "O J3 Bots não conseguiu salvar a gravação.",
+  "recording.interrupted":
+    "Uma gravação que parou antes de você foi salva, e está na sua mensagem para {name}.",
+
   "message.queued": "Na fila",
   "message.waitingForModel": "Enviada assim que a IA for conectada",
   "message.waitingForReset": "Enviada quando o limite de uso renovar",
@@ -826,6 +883,8 @@ const sentences = {
   "composer.attach": "Anexar um arquivo",
   "composer.attach.photos": "Fotos e vídeos",
   "composer.attach.files": "Arquivos",
+  "composer.add": "Adicionar à mensagem",
+  "composer.recordScreen": "Gravar a tela",
   "composer.dictate": "Ditar uma mensagem",
   "composer.send": "Enviar mensagem",
   "composer.suggestion": "Resposta sugerida: {text}",

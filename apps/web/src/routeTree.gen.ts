@@ -11,6 +11,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as RecordRouteImport } from './routes/record'
 import { Route as QuickRouteImport } from './routes/quick'
 import { Route as GalleryRouteImport } from './routes/gallery'
 import { Route as AppRouteImport } from './routes/_app'
@@ -19,6 +20,11 @@ import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
 import { Route as AppBotsBotIdRouteImport } from './routes/_app/bots.$botId'
 import { Route as AppPairsABRouteImport } from './routes/_app/pairs.$a.$b'
 
+const RecordRoute = RecordRouteImport.update({
+  id: '/record',
+  path: '/record',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const QuickRoute = QuickRouteImport.update({
   id: '/quick',
   path: '/quick',
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/gallery': typeof GalleryRoute
   '/quick': typeof QuickRoute
+  '/record': typeof RecordRoute
   '/bots/$botId': typeof AppBotsBotIdRoute
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
   '/pairs/$a/$b': typeof AppPairsABRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/gallery': typeof GalleryRoute
   '/quick': typeof QuickRoute
+  '/record': typeof RecordRoute
   '/': typeof AppIndexRoute
   '/bots/$botId': typeof AppBotsBotIdRoute
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/gallery': typeof GalleryRoute
   '/quick': typeof QuickRoute
+  '/record': typeof RecordRoute
   '/_app/': typeof AppIndexRoute
   '/_app/bots/$botId': typeof AppBotsBotIdRoute
   '/_app/rooms/$roomId': typeof AppRoomsRoomIdRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
     | '/'
     | '/gallery'
     | '/quick'
+    | '/record'
     | '/bots/$botId'
     | '/rooms/$roomId'
     | '/pairs/$a/$b'
@@ -93,6 +103,7 @@ export interface FileRouteTypes {
   to:
     | '/gallery'
     | '/quick'
+    | '/record'
     | '/'
     | '/bots/$botId'
     | '/rooms/$roomId'
@@ -102,6 +113,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/gallery'
     | '/quick'
+    | '/record'
     | '/_app/'
     | '/_app/bots/$botId'
     | '/_app/rooms/$roomId'
@@ -112,10 +124,18 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   GalleryRoute: typeof GalleryRoute
   QuickRoute: typeof QuickRoute
+  RecordRoute: typeof RecordRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/record': {
+      id: '/record'
+      path: '/record'
+      fullPath: '/record'
+      preLoaderRoute: typeof RecordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/quick': {
       id: '/quick'
       path: '/quick'
@@ -188,6 +208,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   GalleryRoute: GalleryRoute,
   QuickRoute: QuickRoute,
+  RecordRoute: RecordRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

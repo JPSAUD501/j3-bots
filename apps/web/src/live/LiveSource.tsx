@@ -154,6 +154,7 @@ import {
   useReportTray,
 } from "./desktopMenus";
 import { type Desktop, desktop, systemOf } from "./desktop";
+import { useScreenRecordings } from "./recordings";
 import {
   asksSilently,
   localScreen,
@@ -1146,12 +1147,44 @@ function LiveShell({
   // window still follows the pairing whose roster listed it; its menus and
   // its shortcut ask the shell for the shell's own actions.
   useReportTray(roster, pairing);
+  const recordings = useScreenRecordings({
+    j3,
+    app: desktop,
+    pairing,
+    recipientOf: (asked) => {
+      for (const row of roster ?? []) {
+        if (asked._tag === "room" && row._tag === "room" && row.room.id === asked.roomId) {
+          return { name: row.room.name, face: null };
+        }
+        if (asked._tag === "conversation" && row._tag === "bot" && row.bot.id === asked.botId) {
+          const { bot } = row;
+          return { name: bot.profile.name, face: { avatar: bot.profile.avatar, seed: bot.id } };
+        }
+      }
+      return null;
+    },
+    openTarget,
+    say,
+  });
+  const recordFrom = useEffectEvent((asked: EntryTarget) => recordings.recordScreen?.(asked));
   useEffect(
     () =>
       desktop?.onCommand((command) => {
-        if (command._tag !== "open") runShellAction(command._tag);
-        else if (command.pairing === pairing && j3.pairing.get() === pairing) {
-          openTarget(command.target);
+        switch (command._tag) {
+          case "open":
+            if (command.pairing === pairing && j3.pairing.get() === pairing) {
+              openTarget(command.target);
+            }
+            return;
+          // From quick access: the sheet opens over the conversation it records for.
+          case "record":
+            if (command.pairing === pairing && j3.pairing.get() === pairing) {
+              openTarget(command.target);
+              recordFrom(command.target);
+            }
+            return;
+          default:
+            runShellAction(command._tag);
         }
       }),
     [j3, pairing],
@@ -1418,6 +1451,7 @@ function LiveShell({
 
   const intents: ShellIntents = {
     ...cards,
+    ...(recordings.recordScreen === undefined ? {} : { recordScreen: recordings.recordScreen }),
     // The viewer opens over the bot's conversation, on the tab the address names.
     openBrowser: (botId, tab) =>
       void navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
@@ -1596,6 +1630,7 @@ function LiveShell({
   return (
     <ShellSourceProvider source={{ data, intents, browser: j3 }}>
       {attachments.host(children)}
+      {recordings.sheet}
       {folds.readers}
       <NewBotDialog
         bots={bots}

@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Attachment, Avatar, MessageQuote, SuggestedReply } from "@j3-bots/contracts";
-import { ArrowUpIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
+import {
+  ArrowUpIcon,
+  MicIcon,
+  MonitorDotIcon,
+  PaperclipIcon,
+  PlusIcon,
+  UsersIcon,
+  XIcon,
+} from "lucide-react";
 import {
   type KeyboardEvent,
   type RefObject,
@@ -56,6 +64,7 @@ import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./Prom
 import { DraftQuotes } from "./Quotes";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 
 /**
  * The send button's three looks: nothing to send yet, a message ready to go,
@@ -134,6 +143,13 @@ interface ComposerProps {
   readonly onDetachFile?: (key: string) => void;
   /** Opens a file of the draft the server already holds. */
   readonly onOpenFile?: (attachment: Attachment) => void;
+  /**
+   * Opens the sheet that records the screen for this draft (decision 0098):
+   * `+` then offers it beside files. Only the desktop app records.
+   */
+  readonly onRecordScreen?: () => void;
+  /** `+`'s menu is open as the composer first shows, as the gallery shows it. */
+  readonly addMenuOpen?: boolean;
   readonly onSend: () => void;
   /** Without it, the trailing button is always Send. */
   readonly onDictate?: () => void;
@@ -230,6 +246,8 @@ export function Composer({
   onAttachFiles,
   onDetachFile,
   onOpenFile,
+  onRecordScreen,
+  addMenuOpen = false,
   onSend,
   onDictate,
   replaced,
@@ -505,18 +523,38 @@ export function Composer({
       >
         {onAttachFiles && (
           <>
-            <Button
-              variant="ghost-muted"
-              size="icon-pill"
-
-              onClick={() => {
-                if (!frozen) pickerRef.current?.click();
-              }}
-              aria-disabled={frozen}
-              aria-label={t("composer.attach")}
-            >
-              <PlusIcon />
-            </Button>
+            {onRecordScreen === undefined ? (
+              <Button
+                variant="ghost-muted"
+                size="icon-pill"
+                onClick={() => {
+                  if (!frozen) pickerRef.current?.click();
+                }}
+                aria-disabled={frozen}
+                aria-label={t("composer.attach")}
+              >
+                <PlusIcon />
+              </Button>
+            ) : (
+              <Menu defaultOpen={addMenuOpen}>
+                <MenuTrigger
+                  disabled={frozen}
+                  render={
+                    <Button variant="ghost-muted" size="icon-pill" aria-label={t("composer.add")} />
+                  }
+                >
+                  <PlusIcon />
+                </MenuTrigger>
+                <MenuPopup>
+                  <MenuItem icon={<PaperclipIcon />} onClick={() => pickerRef.current?.click()}>
+                    {t("composer.attach.files")}
+                  </MenuItem>
+                  <MenuItem icon={<MonitorDotIcon />} onClick={onRecordScreen}>
+                    {t("composer.recordScreen")}
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            )}
             <input
               ref={pickerRef}
               type="file"

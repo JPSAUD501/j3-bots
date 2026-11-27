@@ -1813,3 +1813,28 @@ html[data-quick][data-quick-out] [data-base-ui-portal] {
     opacity: 0;
   }
 }
+
+/*
+ * The recorder's floating control (the desktop app's window at `/record`,
+ * `record/`): its page is see-through around the control, which sits in the
+ * room the window leaves for its shadow, or the control's own color where
+ * the window cannot be see-through.
+ */
+html[data-recorder="clear"],
+html[data-recorder="clear"] body {
+  background: transparent;
+}
+
+html[data-recorder="clear"] body {
+  padding: 8px;
+}
+
+html[data-recorder="solid"],
+html[data-recorder="solid"] body {
+  height: 100%;
+  background: var(--surface);
+}
+
+html[data-recorder="solid"] #root {
+  height: 100%;
+}
