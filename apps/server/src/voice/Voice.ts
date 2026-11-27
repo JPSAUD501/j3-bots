@@ -56,6 +56,9 @@ import { Host } from "../system/Host.ts";
 /** The most audio one dictation takes, in bytes. */
 const MAX_AUDIO_BYTES = MAX_VOICE_SECONDS * VOICE_SAMPLE_RATE * 4;
 
+/** Bytes of audio in a millisecond: 32-bit samples at `VOICE_SAMPLE_RATE`. */
+const BYTES_PER_MS = (VOICE_SAMPLE_RATE * 4) / 1000;
+
 /**
  * Hosts with this much memory or less unload the model soon after its last
  * use, so it does not sit beside the bots: a 4 or 8 GB board.
@@ -485,30 +488,48 @@ export const layer = Layer.effect(
       removeFillers: voice.removeFillers,
     });
 
-    /** The engine's local model, live: words as they are heard. */
+    /**
+     * The engine's local model, live: words as they are heard, with how much
+     * audio they were heard in when they are a `transcript`'s.
+     */
     const onServer = Effect.fn("Voice.onServer")(function* (
       link: VoiceLink,
       inbox: Queue.Dequeue<VoiceClientFrame | Uint8Array, Cause.Done>,
       voice: VoiceSettings,
+      transcript: boolean,
     ) {
       const support = yield* speech.support.pipe(Effect.mapError(failureOf));
       if (support._tag === "unsupported") return yield* refuse("unavailable");
       const model = chosenModel(yield* speech.models.pipe(Effect.mapError(failureOf)), voice);
       if (Option.isNone(model)) return yield* refuse("unavailable");
-      if (!model.value.installed || support.modelId !== model.value.id) {
+      if (transcript && !model.value.installed) {
+        // A recording never starts the model's download: that is dictation's to ask for.
+        return yield* refuse("unavailable");
+      }
+      if (transcript && support.modelId !== model.value.id) {
+        // Installed, so this only makes it the engine's: nothing to show meanwhile.
+        yield* ensureInstalled(model.value).pipe(Effect.mapError(failureOf));
+      } else if (!model.value.installed || support.modelId !== model.value.id) {
         if (!(yield* prepare(link, inbox, model.value))) return { text: "", draft: undefined };
       }
       yield* speech.keepLoaded(keepLoaded).pipe(Effect.mapError(failureOf));
       const stream = yield* speech.openStream(optionsOf(voice)).pipe(Effect.mapError(failureOf));
       yield* link.send({ type: "listening", live: model.value.streaming });
       let last = { committed: "", tentative: "" };
+      // The engine answers each piece once it has heard it, in order.
+      let heard = 0;
       const draft = yield* listen(inbox, true, (pcm) =>
         stream.feed(pcm).pipe(
           Effect.mapError(failureOf),
           Effect.flatMap((words) => {
+            heard += pcm.byteLength;
             if (sameWords(words, last)) return Effect.void;
             last = words;
-            return link.send({ type: "words", ...words });
+            return link.send(
+              transcript
+                ? { type: "words", ...words, heardMs: Math.round(heard / BYTES_PER_MS) }
+                : { type: "words", ...words },
+            );
           }),
         ),
       );
@@ -567,15 +588,17 @@ export const layer = Layer.effect(
     const run = Effect.fn("Voice.run")(function* (
       link: VoiceLink,
       inbox: Queue.Dequeue<VoiceClientFrame | Uint8Array, Cause.Done>,
+      transcript: boolean,
     ) {
       const voice = voiceOf(yield* settings.get);
       if (voice.place === "device") return yield* refuse("unavailable");
       const provider = cloudProviderOf(voice.place);
       const heard =
         provider === null
-          ? yield* onServer(link, inbox, voice)
+          ? yield* onServer(link, inbox, voice, transcript)
           : yield* inCloud(link, inbox, provider, voice);
-      const text = yield* tidied(link, heard.text, voice, heard.draft);
+      // A transcript keeps the words as they were said, where they were said.
+      const text = transcript ? heard.text : yield* tidied(link, heard.text, voice, heard.draft);
       yield* link.send({ type: "done", text });
     });
 
@@ -586,7 +609,7 @@ export const layer = Layer.effect(
         const first = yield* Queue.take(inbox).pipe(Effect.mapError(() => new HungUp()));
         if (first instanceof Uint8Array || first.type !== "start") return;
         const ran = yield* lock.withPermitsIfAvailable(1)(
-          run(link, inbox).pipe(
+          run(link, inbox, first.transcript === true).pipe(
             Effect.catchTag("Refused", (refused) =>
               link.send({ type: "failed", reason: refused.reason }),
             ),

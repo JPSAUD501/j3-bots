@@ -45,6 +45,14 @@ export interface HeardWords {
  */
 export type DictationFailure = VoiceFailure | "unknown" | "unreachable" | "not-paired";
 
+/**
+ * For a transcript (`Voice.transcribe`), how much of the audio the engine
+ * had taken, in ms, when it heard the words held: absent before any word.
+ */
+interface HeardIn {
+  readonly heardMs?: number;
+}
+
 /** One dictation on the server, from the first frame to its end. */
 export type DictationState =
   /** The socket is opening, or the server is loading the model. */
@@ -55,9 +63,9 @@ export type DictationState =
    * Audio is taken. `live`: words come while the operator speaks; otherwise
    * they come once they stop.
    */
-  | ({ readonly _tag: "listening"; readonly live: boolean } & HeardWords)
+  | ({ readonly _tag: "listening"; readonly live: boolean } & HeardWords & HeardIn)
   /** The operator stopped; the server is working out the last words. */
-  | ({ readonly _tag: "finishing" } & HeardWords)
+  | ({ readonly _tag: "finishing" } & HeardWords & HeardIn)
   /** The AI is tidying up what was heard. */
   | ({ readonly _tag: "tidying" } & HeardWords)
   | { readonly _tag: "done"; readonly text: string }
@@ -107,7 +115,12 @@ export const nextState = (now: DictationState, frame: VoiceServerFrame): Dictati
       return { _tag: "listening", live: frame.live, committed: "", tentative: "" };
     case "words":
       return now._tag === "listening" || now._tag === "finishing"
-        ? { ...now, committed: frame.committed, tentative: frame.tentative }
+        ? {
+            ...now,
+            committed: frame.committed,
+            tentative: frame.tentative,
+            ...(frame.heardMs === undefined ? {} : { heardMs: frame.heardMs }),
+          }
         : now;
     case "tidying":
       return { _tag: "tidying", ...heardIn(now) };
@@ -140,6 +153,13 @@ export class Voice extends Context.Service<
     ) => Effect.Effect<IntentResult>;
     /** Starts a dictation on the server. */
     readonly dictate: Effect.Effect<Dictation, never, Scope.Scope>;
+    /**
+     * Starts writing down a piece of a screen recording's voice on the
+     * server: a dictation whose words say how much audio they were heard in
+     * (`heardMs`) and are never tidied. Only for a server whose roster
+     * snapshot carries `recordingTranscripts`.
+     */
+    readonly transcribe: Effect.Effect<Dictation, never, Scope.Scope>;
   }
 >()("@j3-bots/client-runtime/stores/Voice") {}
 
@@ -177,7 +197,7 @@ export const layer = Layer.effect(
         .call((client) => client["voice.setCloudKey"]({ provider, key }))
         .pipe(Effect.exit, Effect.map(intentResult));
 
-    const dictate = Effect.gen(function* () {
+    const open = Effect.fnUntraced(function* (transcript: boolean) {
       const state = new Cell<DictationState>({ _tag: "connecting" });
       /** Writes on the open socket; false once it is closed. */
       let write: ((data: string | Uint8Array) => Effect.Effect<boolean>) | null = null;
@@ -198,7 +218,9 @@ export const layer = Layer.effect(
             Effect.as(true),
             Effect.orElseSucceed(() => false),
           );
-        yield* write(encodeClientFrame({ type: "start" }));
+        yield* write(
+          encodeClientFrame(transcript ? { type: "start", transcript: true } : { type: "start" }),
+        );
         while (!isOver(state.get())) {
           for (const message of yield* reader.pull) {
             if (typeof message !== "string") continue;
@@ -239,7 +261,12 @@ export const layer = Layer.effect(
           if (!isOver(now)) state.set({ _tag: "done", text: "" });
           return;
         }
-        state.set({ _tag: "finishing", committed: now.committed, tentative: now.tentative });
+        state.set({
+          _tag: "finishing",
+          committed: now.committed,
+          tentative: now.tentative,
+          ...(now.heardMs === undefined ? {} : { heardMs: now.heardMs }),
+        });
         const sent =
           write !== null &&
           (yield* write(
@@ -257,7 +284,8 @@ export const layer = Layer.effect(
       models,
       cloudModels,
       setCloudKey,
-      dictate,
+      dictate: open(false),
+      transcribe: open(true),
     });
   }),
 );

@@ -1794,6 +1794,17 @@ const recordingFile: DraftFile = {
   sent: 150_000_000,
 };
 
+/** The same zip just after Stop, its voice being written down before it uploads. */
+const transcribingFile: DraftFile = {
+  _tag: "uploading",
+  key: "recording",
+  name: "Screen recording 2026-11-20 14.32.zip",
+  mediaType: "application/zip",
+  size: 412_000_000,
+  sent: 0,
+  transcribing: 0.4,
+};
+
 function ScreenRecordingSection() {
   const scoutName = team.bots.scout.profile.name;
   const draftKey = useId();
@@ -1850,7 +1861,12 @@ function ScreenRecordingSection() {
           <PillFrame label="Saving" phase="finishing" />
         </div>
       </Labeled>
-      <Labeled label="Stopped: the recording's zip in the composer, uploading">
+      <Labeled label="Stopped: the recording's zip in the composer, its voice being written down first (hover for how far), then uploading">
+        <div className="max-w-(--layout-text-column)">
+          <ComposerDemo initial="" recipient={scoutName} files={[transcribingFile]} />
+        </div>
+      </Labeled>
+      <Labeled label="Uploading, once its transcript is in it, or it goes without one">
         <div className="max-w-(--layout-text-column)">
           <ComposerDemo initial="" recipient={scoutName} files={[recordingFile]} />
         </div>

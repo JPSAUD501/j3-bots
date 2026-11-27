@@ -1311,6 +1311,7 @@ export const en = {
   "composer.stillUploading": "Files are still uploading",
   "composer.file.uploading": "Uploading, {percent}",
   "composer.file.uploadingUnmeasured": "Uploading…",
+  "composer.file.transcribing": "Writing down what you said, {percent}",
   "composer.file.remove": "Remove {name}",
   "composer.file.failed": "{name} can’t be sent: {reason}",
   "composer.file.empty": "The file is empty",
