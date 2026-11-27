@@ -149,7 +149,14 @@ export const makeFakePageHost = (
           tabs: [...tabs.values()].filter((tab) => !tab.private).map((tab) => tab.state),
         }),
       ),
-      events: Stream.fromPubSub(events),
+      // Recorded once subscribed, so a test that waits for the call loses no event.
+      events: Stream.unwrap(
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(events);
+          yield* record("host.events");
+          return Stream.fromSubscription(subscription);
+        }),
+      ),
       open: (input) =>
         record("tab.open", input.tab).pipe(
           Effect.andThen(
@@ -252,15 +259,15 @@ export const makeFakePageHost = (
       screencast: ({ tab }) =>
         Stream.unwrap(
           Effect.gen(function* () {
-            yield* record("tab.screencast", tab);
             yield* find(tab);
             return Stream.callback<number, BrowserHostError>((queue) =>
               Effect.acquireRelease(
+                // Recorded once watching, so a test that waits for the call loses no picture.
                 Effect.sync(() => {
                   const set = watchers.get(tab) ?? new Set();
                   set.add(queue);
                   watchers.set(tab, set);
-                }),
+                }).pipe(Effect.andThen(record("tab.screencast", tab))),
                 () => Effect.sync(() => watchers.get(tab)?.delete(queue)),
               ),
             ).pipe(

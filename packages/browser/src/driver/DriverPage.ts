@@ -35,6 +35,17 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { CDPSession, Dialog, Frame, Locator, Page, Request } from "playwright-core";
 import { addressOf } from "./address.ts";
+import {
+  documentState,
+  editableAt,
+  focusTextTarget,
+  isValueOnlyInput,
+  pageHasText,
+  scrollElement,
+  scrollPage,
+  selectOptions,
+  viewportSize,
+} from "./pageScripts.ts";
 import { hostErrorOf } from "./errors.ts";
 import { FramesChanged, openReaders, type FrameReader } from "./frames.ts";
 import {
@@ -124,6 +135,7 @@ const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
 const TARGET_COUNT_MS = 250;
 const WAIT_POLL_MS = 100;
+const UNRESPONSIVE_SCRIPT_MS = 1_000;
 const MAX_SCREENSHOT_WIDTH = 1280;
 const MAX_TARGET_CHARS = 200;
 const TYPE_PIECE = 64;
@@ -157,7 +169,7 @@ const NET_ERROR_CODES: Readonly<Record<string, number>> = {
 };
 
 /** Chromium's net error in a failure's text, with its code. */
-export const parseNetError = (errorText: string) => {
+const parseNetError = (errorText: string) => {
   // Names can hold digits, as in ERR_HTTP2_PROTOCOL_ERROR.
   const description = /ERR_[A-Z\d_]+/.exec(errorText)?.[0] ?? errorText;
   return { description, code: NET_ERROR_CODES[description] ?? -2 };
@@ -173,61 +185,6 @@ const isOptions = Schema.is(
   Schema.NullOr(Schema.Array(Schema.Struct({ value: Schema.String, label: Schema.String }))),
 );
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
-
-const DOCUMENT_SCRIPT = `({ title: document.title, loading: document.readyState !== "complete" })`;
-const VIEWPORT_SCRIPT = `({ width: innerWidth, height: innerHeight, ratio: devicePixelRatio })`;
-
-// Run in the page's main world: they must not reference module scope.
-const FOCUS_SCRIPT = `(target) => {
-  let element = target ?? document.activeElement;
-  if (target == null) {
-    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
-    // Focus inside a frame cannot be checked from here, and an editable frame would pass as editable.
-    if (element && ["IFRAME", "FRAME", "FENCEDFRAME", "OBJECT", "EMBED"].includes(element.tagName)) return false;
-  }
-  if (element == null) return false;
-  const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
-  const textControl = element.tagName === "TEXTAREA" || (element.tagName === "INPUT" && !nonText.includes(element.type ?? "text"));
-  if (!(textControl || element.isContentEditable) || element.disabled || element.readOnly) return false;
-  element.focus?.();
-  const active = element.getRootNode().activeElement;
-  return active != null && (active === element || element.contains(active));
-}`;
-
-// Pickers and sliders take a value such as 2026-01-31 only from fill.
-const VALUE_ONLY_SCRIPT = `(target) => {
-  const element = target.tagName === "INPUT" ? target : target.closest("label")?.control;
-  return element?.tagName === "INPUT" && ["color", "date", "datetime-local", "month", "range", "time", "week"].includes(element.type ?? "");
-}`;
-
-const SELECT_OPTIONS_SCRIPT = `(element) => element.tagName === "SELECT"
-  ? Array.from(element.options, ({ value, label }) => ({ value, label: label.trim() }))
-  : null`;
-
-const PROBE_SCRIPT = `([x, y]) => {
-  let element = document.elementFromPoint(x, y);
-  while (element?.shadowRoot) {
-    const inner = element.shadowRoot.elementFromPoint(x, y);
-    if (inner == null || inner === element) break;
-    element = inner;
-  }
-  if (element == null) return false;
-  const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
-  const field = element.closest("input, textarea, [contenteditable]") ?? element;
-  if (field.isContentEditable) return true;
-  if (field.tagName === "TEXTAREA") return !field.disabled && !field.readOnly;
-  return field.tagName === "INPUT" && !nonText.includes(field.type ?? "text") && !field.disabled && !field.readOnly;
-}`;
-
-const TEXT_SCRIPT = `(text) => (document.body?.innerText ?? "").includes(text)`;
-const SCROLL_PAGE_SCRIPT = `([x, y]) => scrollBy(x, y)`;
-const SCROLL_ELEMENT_SCRIPT = `(element, [x, y]) => element.scrollBy(x, y)`;
-
-const WAIT_UNTIL: Record<BrowserReadiness, "load" | "domcontentloaded" | "commit"> = {
-  load: "load",
-  domContentLoaded: "domcontentloaded",
-  none: "commit",
-};
 
 const isFramesChanged = Schema.is(FramesChanged);
 
@@ -307,7 +264,7 @@ export const makeDriverPage = (options: {
       // A page that waits on a dialog runs no script: read nothing from it.
       const document =
         dialog === undefined
-          ? yield* attempt(() => page.evaluate(DOCUMENT_SCRIPT)).pipe(
+          ? yield* attempt(() => page.evaluate(documentState)).pipe(
               Effect.timeoutOption(1_000),
               Effect.map(Option.filter(isDocumentState)),
               Effect.orElseSucceed(Option.none),
@@ -315,7 +272,13 @@ export const makeDriverPage = (options: {
           : Option.none();
       return {
         tab,
-        url: url === "about:blank" ? "" : withoutDataPayload(url),
+        // Chromium's error page stands at an address of its own; the tab is still at the one that failed.
+        url:
+          url === "about:blank"
+            ? ""
+            : url.startsWith("chrome-error://")
+              ? (loadError?.url ?? "")
+              : withoutDataPayload(url),
         title: Option.match(document, { onNone: () => "", onSome: (read) => read.title }),
         loading: Option.match(document, { onNone: () => true, onSome: (read) => read.loading }),
         loadError,
@@ -380,7 +343,7 @@ export const makeDriverPage = (options: {
       Effect.map(Clock.currentTimeMillis, (now) => Math.max(1, deadline - now));
 
     const viewport = Effect.gen(function* () {
-      const read: unknown = yield* attempt(() => page.evaluate(VIEWPORT_SCRIPT));
+      const read: unknown = yield* attempt(() => page.evaluate(viewportSize));
       return isViewport(read) ? read : { width: 1280, height: 800, ratio: 1 };
     });
 
@@ -517,7 +480,7 @@ export const makeDriverPage = (options: {
             if (locator !== undefined && action.clear === true) {
               const timeout = yield* remaining(deadline);
               const valueOnly = yield* attempt(() =>
-                locator.evaluate(VALUE_ONLY_SCRIPT, undefined, { timeout }),
+                locator.evaluate(isValueOnlyInput, undefined, { timeout }),
               );
               if (valueOnly === true) {
                 yield* attempt(() => locator.fill(action.text, { timeout }));
@@ -530,13 +493,13 @@ export const makeDriverPage = (options: {
             }
             const timeout = yield* remaining(deadline);
             const focused = yield* locator === undefined
-              ? attempt(() => page.evaluate(FOCUS_SCRIPT, null)).pipe(
+              ? attempt(() => page.evaluate(focusTextTarget, null)).pipe(
                   Effect.timeoutOrElse({
                     duration: timeout,
                     orElse: () => Effect.succeed(false),
                   }),
                 )
-              : attempt(() => locator.evaluate(FOCUS_SCRIPT, undefined, { timeout }));
+              : attempt(() => locator.evaluate(focusTextTarget, undefined, { timeout }));
             if (focused !== true) return yield* notTextField();
             if (action.clear === true) {
               yield* attempt(() => page.keyboard.press("ControlOrMeta+A"));
@@ -549,7 +512,7 @@ export const makeDriverPage = (options: {
             const locator = yield* locate(action.locator);
             const timeout = action.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS;
             const read: unknown = yield* attempt(() =>
-              locator.evaluate(SELECT_OPTIONS_SCRIPT, undefined, { timeout }),
+              locator.evaluate(selectOptions, undefined, { timeout }),
             );
             const options = isOptions(read) ? read : null;
             if (options === null)
@@ -597,12 +560,12 @@ export const makeDriverPage = (options: {
             const x = action.deltaX ?? 0;
             const y = action.deltaY ?? 0;
             if (action.locator === undefined) {
-              yield* attempt(() => page.evaluate(SCROLL_PAGE_SCRIPT, [x, y]));
+              yield* attempt(() => page.evaluate(scrollPage, [x, y] as const));
               return {};
             }
             const locator = yield* locate(action.locator);
             yield* attempt(() =>
-              locator.evaluate(SCROLL_ELEMENT_SCRIPT, [x, y], {
+              locator.evaluate(scrollElement, [x, y] as const, {
                 timeout: DEFAULT_BROWSER_TIMEOUT_MS,
               }),
             );
@@ -873,8 +836,7 @@ export const makeDriverPage = (options: {
         Effect.timeoutOrElse({
           duration: timeoutMs,
           orElse: () =>
-            attempt(() => cdp.send("Runtime.terminateExecution")).pipe(
-              Effect.ignore,
+            terminate.pipe(
               Effect.andThen(
                 Effect.fail(
                   new BrowserHostError({
@@ -916,7 +878,7 @@ export const makeDriverPage = (options: {
         if (locator !== undefined && (yield* attempt(() => locator.count())) === 0) return false;
         if (text !== undefined) {
           // A navigation can destroy the context mid-check; that counts as not yet.
-          const found = yield* attempt(() => page.evaluate(TEXT_SCRIPT, text)).pipe(
+          const found = yield* attempt(() => page.evaluate(pageHasText, text)).pipe(
             Effect.orElseSucceed(() => false),
           );
           if (found !== true) return false;
@@ -940,6 +902,22 @@ export const makeDriverPage = (options: {
       );
     });
 
+    /**
+     * Stops a script that keeps the page from answering. A renderer blocked
+     * on something else may never acknowledge the stop, so it is not awaited.
+     */
+    const terminate = Effect.sync(() => {
+      void cdp.send("Runtime.terminateExecution").catch(() => undefined);
+    });
+    const stopStuckScript = Effect.fn("stopStuckScript")(function* (deadline: number) {
+      const budget = Math.min(UNRESPONSIVE_SCRIPT_MS, (yield* remaining(deadline)) / 2);
+      const answered = yield* attempt(() => cdp.send("Runtime.evaluate", { expression: "0" })).pipe(
+        Effect.ignore,
+        Effect.timeoutOption(budget),
+      );
+      if (Option.isNone(answered)) yield* terminate;
+    });
+
     const navigate = Effect.fn("navigate")(function* (
       to: BrowserNavigation,
       options: {
@@ -947,17 +925,18 @@ export const makeDriverPage = (options: {
         readonly timeoutMs?: number | undefined;
       },
     ) {
-      const go = {
-        waitUntil: WAIT_UNTIL[options.readiness ?? "load"],
-        timeout: options.timeoutMs ?? DEFAULT_BROWSER_TIMEOUT_MS,
-      };
+      const deadline = yield* deadlineIn(options.timeoutMs);
+      const readiness = options.readiness ?? "load";
       const address = to.kind === "url" ? addressOf(to.url) : undefined;
       if (to.kind === "url" && address === undefined)
         return yield* new BrowserHostError({
           reason: "refused",
           detail: "Only http and https addresses open.",
         });
-      const run = (): Promise<unknown> => {
+      // A page stuck in a script would hold the navigation until it times out.
+      if (dialog === undefined) yield* stopStuckScript(deadline);
+      const go = { waitUntil: "commit" as const, timeout: yield* remaining(deadline) };
+      const committed = attempt((): Promise<unknown> => {
         switch (to.kind) {
           case "url":
             return page.goto(address ?? to.url, go);
@@ -968,14 +947,31 @@ export const makeDriverPage = (options: {
           case "reload":
             return page.reload(go);
         }
-      };
-      yield* attempt(run).pipe(
+      });
+      const failed = yield* committed.pipe(
+        Effect.as(false),
         // A page that failed to load shows the browser's error page, which `loadError` names.
         Effect.catchIf(
           (error) => error.reason === "page" && /net::ERR_/.test(error.detail ?? ""),
-          () => Effect.void,
+          () => Effect.succeed(true),
         ),
       );
+      if (failed) {
+        // The error page commits after the failure; a navigation started before it would be cut off.
+        const timeout = Math.min(2_000, yield* remaining(deadline));
+        yield* attempt(() =>
+          page.waitForURL((url) => url.protocol === "chrome-error:", {
+            waitUntil: "commit",
+            timeout,
+          }),
+        ).pipe(Effect.ignore);
+      } else if (readiness !== "none") {
+        // Once the page commits, a slow subresource only delays readiness: the page is reported loading.
+        const timeout = yield* remaining(deadline);
+        yield* attempt(() =>
+          page.waitForLoadState(readiness === "load" ? "load" : "domcontentloaded", { timeout }),
+        ).pipe(Effect.catchIf(isTimeoutError, () => Effect.void));
+      }
       return yield* state;
     });
 
@@ -1041,7 +1037,7 @@ export const makeDriverPage = (options: {
       });
 
     const probe = (x: number, y: number) =>
-      attempt(() => page.evaluate(PROBE_SCRIPT, [x, y])).pipe(
+      attempt(() => page.evaluate(editableAt, [x, y] as const)).pipe(
         Effect.map((editable) => editable === true),
       );
 

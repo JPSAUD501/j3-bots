@@ -45,10 +45,13 @@ jobs:
       - name: Another user
         run: sudo useradd --no-create-home --shell /usr/sbin/nologin j3-other
 
+      # The browser driver's tests run on the runner's own Chrome, over fake pages
+      # the tests serve themselves.
       - name: Test
         run: vp run test
         env:
           J3_TEST_OTHER_USER: j3-other
+          J3_TEST_CHROMIUM: /usr/bin/google-chrome
 
       # Builds the web client and fails when a window's first load grows past
       # apps/web/bundle-budget.json (docs/operations/performance.md).
