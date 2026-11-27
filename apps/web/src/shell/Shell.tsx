@@ -146,8 +146,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   // press of Create, through the bot's arrival, until the new bot is in the roster and open, so
   // the home never shows in between.
   const [openingFirstBot, setOpeningFirstBot] = useState(false);
-  // How many times a bot's card asked for its routines: each brings them into view in its details.
-  const [routinesAsked, setRoutinesAsked] = useState(0);
+  // The bot whose card asked for its routines, until its details have brought them into view.
+  const [routinesFor, setRoutinesFor] = useState<BotId | null>(null);
   if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   // Beside the conversation, or over it: a bot's browser, or else the details.
   const browserTarget = item?._tag === "bot" ? navigation.browser : null;
@@ -700,7 +700,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             files={data.files(bot.id)}
             connectors={data.connectors}
             teammates={teammatesOf(bot.id, pairs)}
-            routinesAsked={routinesAsked}
+            atRoutines={routinesFor === bot.id}
+            onAtRoutines={() => setRoutinesFor(null)}
             modelName={botModelName(data.engine, bot)}
             stopShortcut={shortcuts.stop}
             browserHost={data.engine?.browser ?? null}
@@ -756,13 +757,14 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const openBotDetails = (botId: BotId) => {
     navigation.select({ _tag: "bot", botId });
     navigation.setDetailsOpen(true);
+    setRoutinesFor(null);
   };
   const cardIntents: BotCardIntents = {
     talk: (botId) => navigation.select({ _tag: "bot", botId }),
     startRoom: (botId) => intents.startRoomWith([botId]),
     openRoutines: (botId) => {
       openBotDetails(botId);
-      setRoutinesAsked((asked) => asked + 1);
+      setRoutinesFor(botId);
     },
     openDetails: openBotDetails,
     send: intents.sendQuickMessage,

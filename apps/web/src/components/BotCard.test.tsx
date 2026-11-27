@@ -26,12 +26,13 @@ interface Told {
   readonly sent: Array<Parameters<QuickSend>[0]>;
 }
 
-/** Wren's name, as a roster row has it, and a field and a button elsewhere on the page. */
+/** Wren's and Atlas's names, as roster rows have them, and a field and a button elsewhere on the page. */
 function Page({ intents }: { intents: BotCardIntents }) {
   return (
     <RosterProvider roster={team.roster} engine={team.engine}>
       <BotCardProvider intents={intents}>
-        <Wren />
+        <Name botId={ids.wren} name="Wren" />
+        <Name botId={ids.atlas} name="Atlas" />
         <input aria-label="Elsewhere" />
         <button type="button">After</button>
       </BotCardProvider>
@@ -39,11 +40,11 @@ function Page({ intents }: { intents: BotCardIntents }) {
   );
 }
 
-function Wren() {
-  const card = useBotCard(ids.wren);
+function Name({ botId, name }: { botId: BotId; name: string }) {
+  const card = useBotCard(botId);
   return (
     <button type="button" data-card-anchor="" {...card.hover} {...card.focus}>
-      Wren
+      {name}
     </button>
   );
 }
@@ -83,11 +84,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const wren = () => {
-  const found = [...container.querySelectorAll("button")].find((b) => b.textContent === "Wren");
-  if (found === undefined) throw new Error("No Wren on the page");
+const named = (name: string) => {
+  const found = [...container.querySelectorAll("button")].find((b) => b.textContent === name);
+  if (found === undefined) throw new Error(`No ${name} on the page`);
   return found;
 };
+const wren = () => named("Wren");
 const elsewhere = () => {
   const found = container.querySelector<HTMLInputElement>("input[aria-label=Elsewhere]");
   if (found === null) throw new Error("No field elsewhere on the page");
@@ -195,6 +197,19 @@ describe("a bot's card", () => {
     expect(told.talk).toEqual([]);
     expect(field.value).toBe("");
     expect(popup()?.textContent).toContain("Sent to Wren.");
+  });
+
+  it("stays on its bot while the operator works in it, the pointer resting on another bot", () => {
+    openByHover();
+    const field = document.querySelector<HTMLInputElement>("[data-bot-card] input");
+    if (field === null) throw new Error("No quick message field");
+    act(() => field.focus());
+    pointer("pointerout", wren());
+    pointer("pointerover", named("Atlas"));
+    wait(cardTiming.open);
+    expect(popup()?.textContent).toContain("Wren");
+    expect(popup()?.textContent).not.toContain("Atlas");
+    expect(document.activeElement).toBe(field);
   });
 
   it("says when the bot is gone and what was typed broke a limit, giving the text back", async () => {

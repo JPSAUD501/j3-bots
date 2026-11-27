@@ -161,7 +161,8 @@ export function BotCardProvider({
 
   const control: CardControl = {
     hoverEnter: (botId, event, side) => {
-      if (event.pointerType !== "mouse") return;
+      // A card the operator is working in, as typing its quick message, stays until they leave it.
+      if (event.pointerType !== "mouse" || focusInside()) return;
       openLater({ botId, anchor: anchorOf(event.currentTarget), side, via: "hover" });
     },
     hoverLeave: () => {

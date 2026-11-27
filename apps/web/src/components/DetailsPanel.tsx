@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ReactElement,
@@ -271,10 +272,11 @@ interface BotDetailsProps {
   /** The teammates it wrote or heard from, latest first (`teammatesOf`), deleted ones included. */
   readonly teammates: ReadonlyArray<Teammate>;
   /**
-   * Counts the times its card asked for its routines (decision 0102): each
-   * new count brings them into view.
+   * Its card asked for its routines (decision 0102): they come into view,
+   * and `onAtRoutines` says the request is met, so it is met once.
    */
-  readonly routinesAsked?: number;
+  readonly atRoutines?: boolean;
+  readonly onAtRoutines?: () => void;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   /** Whether the browser can run on the server's computer; null until the engine has said. */
@@ -299,7 +301,8 @@ export function BotDetails({
   memory,
   connectors,
   teammates,
-  routinesAsked = 0,
+  atRoutines = false,
+  onAtRoutines,
   modelName,
   browserHost,
   intents,
@@ -309,9 +312,12 @@ export function BotDetails({
   headingId,
 }: BotDetailsProps) {
   const routinesRef = useRef<HTMLElement>(null);
+  const reachedRoutines = useEffectEvent(() => onAtRoutines?.());
   useEffect(() => {
-    if (routinesAsked > 0) routinesRef.current?.scrollIntoView({ block: "start" });
-  }, [routinesAsked]);
+    if (!atRoutines) return;
+    routinesRef.current?.scrollIntoView({ block: "start" });
+    reachedRoutines();
+  }, [atRoutines]);
   const i18n = useI18n();
   const { t } = i18n;
   const { name, title, job } = bot.profile;
