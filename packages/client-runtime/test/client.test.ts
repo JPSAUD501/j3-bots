@@ -1525,6 +1525,42 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     },
   );
 
+  it.effect("tells its server a message went with a screen recording, and no other message", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const { sends } = yield* Taps;
+      const drafts = yield* Drafts;
+      const me = yield* (yield* UsageData).client;
+      const used = Server.recordedTelemetry.pipe(
+        Effect.map((all) =>
+          all.flatMap(({ event, client }) =>
+            client?.device === me.device && event.event === "feature.used"
+              ? [event.properties.feature]
+              : [],
+          ),
+        ),
+      );
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Learner") };
+
+      yield* drafts.setText(target, "Every morning I file the invoices.");
+      assert.strictEqual(yield* drafts.send(target), "sent");
+      yield* Queue.take(sends);
+      yield* drafts.attachRecording(target, recordingOf(1000, { count: 0 }).recording);
+      assert.strictEqual((yield* settledFile(target))._tag, "ready");
+      assert.strictEqual(yield* drafts.send(target), "sent");
+      yield* Queue.take(sends);
+
+      const seen = yield* used.pipe(
+        Effect.repeat({
+          until: (all) => all.includes("screen-recording"),
+          schedule: Schedule.spaced("10 millis"),
+        }),
+        Effect.timeout("5 seconds"),
+      );
+      assert.deepStrictEqual(seen, ["screen-recording"]);
+    }).pipe(Effect.provide(client())),
+  );
+
   it.effect("updates the roster live", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;

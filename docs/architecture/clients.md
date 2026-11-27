@@ -428,6 +428,7 @@ A client never sends usage data anywhere but to its server, and carries no analy
 
 - `feature.used` `whats-new`: What's new opened, as its dialog opens on the web and the desktop, as its screen shows on the phone;
 - `feature.used` `voice-input`: dictation started, through the server (`voice.dictate` in `client-runtime`) or on the phone's own recognizer;
+- `feature.used` `screen-recording`: a draft holding a screen recording sent (`Drafts.send` in `client-runtime`), which the server cannot tell from any other zip;
 - `connector-app.shown`: a connector's app opened in the reply (`inline`), and each time it goes full screen or pinned.
 
 The server attaches what the client said of itself to every event that client's requests cause ([Server: usage data](server.md#usage-data)).

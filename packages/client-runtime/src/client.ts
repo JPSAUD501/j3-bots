@@ -144,13 +144,12 @@ export type Platform =
   | SecureRandom.SecureRandom;
 
 /** Every service of the client runtime, for applications that use Effect directly. */
-export const layer = Layer.merge(SignOut.layer, UsageData.layer).pipe(
+export const layer = SignOut.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Roster.layer,
       TeammatePairs.layer,
       EngineStatus.layer,
-      Settings.layer,
       Devices.layer,
       Drafts.layer,
       Details.layer,
@@ -166,6 +165,9 @@ export const layer = Layer.merge(SignOut.layer, UsageData.layer).pipe(
       Voice.layer,
     ),
   ),
+  // Below the stores, so a draft's Send can tell what only the client sees.
+  Layer.provideMerge(UsageData.layer),
+  Layer.provideMerge(Settings.layer),
   Layer.provideMerge(Conversations.layer),
   Layer.provideMerge(Files.layer),
   Layer.provideMerge(Actions.layer),

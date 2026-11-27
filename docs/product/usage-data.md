@@ -24,7 +24,7 @@ Each event is one of a fixed list, and each of its details is one word from a fi
 | `connector.added`, `connector.removed` | A connector is added or removed | From the catalog or your own; once removed, whether it had an app |
 | `connector-app.shown` | A connector's app is shown | In the reply, full screen or pinned |
 | `update.applied` | The server runs another release, or an update failed | The versions, and the kind of failure |
-| `feature.used` | What's new is opened, or a message is dictated | Which of the two |
+| `feature.used` | What's new is opened, a message is dictated, or a message goes with a screen recording | Which of the three |
 | `request.failed` | Something you asked for was refused | The kind of refusal and its code, never its message |
 
 Every event also says which J3 Bots and engine versions run, the system family (Linux, macOS, Windows, Android), the processor family, and how the server runs (a service, the desktop app, by hand). An event a device caused also says which kind of device (web, desktop, quick access, Android), its system family and its app version.

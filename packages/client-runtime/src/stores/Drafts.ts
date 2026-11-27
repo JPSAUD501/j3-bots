@@ -41,6 +41,7 @@ import { ClientStorage, type LocalRecord, type LocalStorageError } from "../port
 import { Cell, type Readable, waitFor } from "../Store.ts";
 import { sameQuotes, withQuote } from "../presentation/quotes.ts";
 import { Conversations, keyTarget, type MentionLabel, targetKey } from "./Conversations.ts";
+import { UsageData } from "./UsageData.ts";
 
 /** A file in the composer, from the moment the operator picks it. */
 export type DraftFile =
@@ -488,6 +489,7 @@ export const layer = Layer.effect(
     const conversations = yield* Conversations;
     const random = yield* SecureRandom.SecureRandom;
     const policy = yield* ReconnectPolicy;
+    const usageData = yield* UsageData;
     const scope = yield* Scope.Scope;
 
     // Each draft's stored record, by key, as this window last read or wrote it.
@@ -1331,6 +1333,12 @@ export const layer = Layer.effect(
               offer(key, null);
               known.set(key, handedOver);
               show(key, empty);
+              // The server stores a recording as any file, so only Send knows one went.
+              if (draft.files.some((file) => file._tag === "ready" && file.recording === true)) {
+                yield* usageData
+                  .record({ event: "feature.used", properties: { feature: "screen-recording" } })
+                  .pipe(Effect.forkIn(scope));
+              }
               break;
             case "changed-elsewhere":
               // Unread, the draft stays as this window holds it, not saved, and nothing went.
