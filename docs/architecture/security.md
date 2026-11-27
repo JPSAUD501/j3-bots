@@ -241,11 +241,11 @@ The MCP Apps extension's reference host draws an app on an origin of its own, th
 
 A theme a bot saved is text a bot wrote, and so untrusted in the way a visual is ([Design: themes](../design/themes.md), [decision 0104](../decisions/0104-a-theme-is-data-two-colors-and-the-person-applies-it.md)). What keeps it in bounds:
 
-- **Applying is the person's.** Saving a theme shows it nowhere. It reaches a device only when the person presses Apply theme under the bot's message, or picks it in Settings, on that device.
+- **Applying is the person's.** Saving a theme shows it nowhere. It reaches a device only when the person presses Apply theme under the bot's message, or picks it in Settings, on that device. A bot never changes a saved theme, so what a person applied stays what they saw, and a deleted theme's id is never a theme's again, so a device that still picked it shows no other.
 - **Colors are checked.** Every palette keeps the stock tokens' contrast, in both appearances, whoever made it, so no theme makes text or a bot's color unreadable.
 - **CSS loads nothing.** A theme's CSS is refused when it holds `@import`, `image-set()`, `src()`, a backslash, or a `url()` other than `#id`, so it never fetches a file: a remote image or font would tell a third party when the app is open, and attribute selectors could spell out what is on screen through which file they load. It cannot animate, and it never reaches Android.
-- **Settings is out of its reach.** While Settings is open the theme's CSS is held off, and ⌘, or Ctrl+, opens Settings besides its button, so a theme can never take away the way to another theme.
-- **The image is inert.** A background is a JPEG, PNG or WebP of at most 4 MiB, checked by its bytes and refused when animated, read from the bot's workspace under the same containment as an attachment, and served to a paired device only, with `nosniff`.
+- **Settings is out of its reach.** The CSS applies only on a computer, where a mouse or a trackpad is the main pointer and ⌘, or Ctrl+, opens Settings besides its button; while Settings is open it is held off. So a theme can never take away the way to another theme. A phone or a tablet, with no such key, shows a theme's colors.
+- **The image is inert.** A background is a JPEG, PNG or WebP of at most 4 MiB, checked by its bytes and refused when animated or cut short, drawn under a veil thick enough that the conversation's text keeps its contrast on any picture, read from the bot's workspace under the same containment as an attachment, and served to a paired device only, with `nosniff`.
 
 ## Push notifications
 

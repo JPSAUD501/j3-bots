@@ -56,15 +56,15 @@ Palco (the stock look, monochrome and pure black in the dark), Grafite, Oceano, 
 
 ## Custom CSS
 
-`css`, at most 8,000 characters, is applied after the app's own styles on the web and in the desktop app. The Android app ignores it, and its Settings says that some themes change more there. It is written against stable hooks (`THEME_CSS_HOOKS`): `data-slot` attributes on the roster, its rows, the conversation, its header, the timeline, a message (with `data-author`), a bubble, the composer, the details panel, menus, buttons and switches, and `[role="dialog"]`. A web test fails when one leaves the interface. Other class names change between releases.
+`css`, at most 8,000 characters, is applied after the app's own styles on a computer, in the browser or the desktop app: where a mouse or a trackpad is the main pointer (`(hover: hover) and (pointer: fine)`). A phone or a tablet in a browser, and the Android app, show a theme's colors, and their Settings say that some themes change more on a computer. It is written against stable hooks (`THEME_CSS_HOOKS`): `data-slot` attributes on the roster, its rows, the conversation, its header, the timeline, a message (with `data-author`), a bubble, the composer, the details panel, menus, buttons and switches, and `[role="dialog"]`. A web test fails when one leaves the interface. Other class names change between releases.
 
 Theme CSS loads nothing and moves nothing on its own (`themeCssProblem`): no `@import`, `image-set()`, `src()` or backslash, `url()` only for `#id`, and no `@keyframes` or `animation`. Transitions stay, since they run only on a change.
 
-Settings never shows a theme's CSS. While it is open, the page holds the theme's own stylesheet off and draws Settings, and everything else, in the theme's colors alone, so whatever a theme's CSS hides or disguises, the person can always see the themes and pick another. ⌘, (Ctrl+, elsewhere) opens Settings, and so does the desktop app's Go menu, for a theme whose CSS hides the button in the roster.
+Settings never shows a theme's CSS. While it is open, the page holds the theme's own stylesheet off and draws Settings, and everything else, in the theme's colors alone, so whatever a theme's CSS hides or disguises, the person can always see the themes and pick another. ⌘, (Ctrl+, elsewhere) opens Settings, and so does the desktop app's Go menu, for a theme whose CSS hides the button in the roster: which is why the CSS applies only where a keyboard is at hand.
 
 ## Background image
 
-A saved theme may carry one still image, JPEG, PNG or WebP of at most 4 MiB, set by a bot from its workspace. Every client draws it behind the conversation, centered and covering it, under a veil of the canvas at 84%, so text stays readable on any picture. On the web and desktop it is `var(--theme-background-image)` too, for a theme's CSS. An animated image is refused.
+A saved theme may carry one still image, JPEG, PNG or WebP of at most 4 MiB, set by a bot from its workspace. Every client draws it behind the conversation, centered and covering it, under a veil of the canvas (`pictureVeil`): at least 84%, and thicker where a picture's whitest or blackest would take a word on the conversation under its contrast, so the rules above hold on any picture. On the web and desktop it is `var(--theme-background-image)` too, for a theme's CSS. An animated image, or one cut short, is refused. A bot only adds themes: a saved theme never changes under a person who applied it, and a deleted theme's id is never used again.
 
 ## How a client draws a theme
 
