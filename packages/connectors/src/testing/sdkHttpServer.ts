@@ -12,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { notesServer } from "./notesServer.ts";
 
-export { APPROVAL_URL } from "./notesServer.ts";
+export { APPROVAL_URL, DRIVE_STEP, DRIVE_STEP_URL } from "./notesServer.ts";
 
 /**
  * The notes server (`notesServer.ts`) over Streamable HTTP on loopback, at
@@ -39,6 +39,12 @@ export interface SdkHttpServer {
   readonly changed: (kind: "tools" | "resources" | "prompts") => void;
   /** Whether the task was cancelled (`tasks/cancel`). */
   readonly taskCancelled: () => boolean;
+  /**
+   * Says the operator finished the step on its own page with this id
+   * (`notifications/elicitation/complete`), to the client listening, at
+   * 2025-11-25.
+   */
+  readonly stepFinished: (elicitationId: string) => Promise<void>;
 }
 
 export interface SdkHttpOptions {
@@ -256,6 +262,11 @@ export const sdkHttpServer = (options: SdkHttpOptions) =>
                 }
               },
               taskCancelled: task.cancelled,
+              stepFinished: async (elicitationId) => {
+                for (const { server: one } of legacy.values()) {
+                  await one.server.createElicitationCompletionNotifier(elicitationId)();
+                }
+              },
             },
           }),
         );

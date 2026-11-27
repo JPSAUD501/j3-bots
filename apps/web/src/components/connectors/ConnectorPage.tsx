@@ -26,7 +26,9 @@ import {
   ListingFields,
   PageSection,
   StatusBlock,
-  ToolList,
+  ServedList,
+  skillItems,
+  toolItems,
 } from "./parts";
 import type { ConnectorsIntents } from "./screen";
 import { SignInPanel } from "./SignInPanel";
@@ -212,9 +214,19 @@ export function ConnectorPage({
       </PageSection>
 
       <PageSection title={t("connector.tools")}>
-        <ToolList tools={connector.tools} />
+        {connector.tools.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("connector.tools.none")}</p>
+        ) : (
+          <ServedList items={toolItems(connector.tools)} />
+        )}
         {server !== null && <p className="text-xs text-muted-foreground">{server}</p>}
       </PageSection>
+
+      {connector.skills !== undefined && connector.skills.length > 0 && (
+        <PageSection title={t("connector.skills")}>
+          <ServedList items={skillItems(connector.skills)} />
+        </PageSection>
+      )}
 
       <Disconnect
         connector={connector}

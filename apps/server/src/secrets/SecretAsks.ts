@@ -12,7 +12,9 @@ import {
   type SecretDraft,
   type SecretId,
   SecretName,
+  type SecretRequestFieldId,
 } from "@j3-bots/contracts";
+import type * as Redacted from "effect/Redacted";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -54,7 +56,7 @@ const decodeName = Schema.decodeUnknownOption(SecretName);
  * `secret-ask` card `ask_for_secret` shows in the bot's conversation closes
  * once, saved from the card, declined, or expired past its wait, and each
  * close wakes the bot for the audience of the turn that asked, with the
- * secret's reference. The bot never gets a value: the operator's values go
+ * secret's reference, or each one's of an ask for several values. The bot never gets a value: the operator's values go
  * from the client to `Secrets`.
  */
 export class SecretAsks extends Context.Service<
@@ -75,6 +77,21 @@ export class SecretAsks extends Context.Service<
       readonly request: EntryId | null;
     }) => Effect.Effect<Secret, Conflict | Invalid | NotFound>;
     /**
+     * Answers a bot's ask for several values (`values`): each is added as a
+     * single value under the name the card gives it, its bot may use them
+     * whatever `access` says, and the card closes as saved and wakes it once
+     * every one is. Every value must be given, once.
+     */
+    readonly addFromAsk: (input: {
+      readonly request: EntryId;
+      readonly access: SecretAccess;
+      readonly values: ReadonlyArray<{
+        readonly field: SecretRequestFieldId;
+        readonly id: SecretId;
+        readonly value: Redacted.Redacted<string>;
+      }>;
+    }) => Effect.Effect<ReadonlyArray<Secret>, Conflict | Invalid | NotFound>;
+    /**
      * The operator declines the ask, in the caller's transaction: the card
      * closes and the bot is woken. False when it had closed already.
      */
@@ -83,6 +100,14 @@ export class SecretAsks extends Context.Service<
     readonly run: Effect.Effect<never>;
   }
 >()("@j3-bots/server/secrets/SecretAsks") {}
+
+/** `access` with the bot that asked in it: it may always use what it asked for. */
+const withAsker = (access: SecretAccess, card: SecretAskEntry): SecretAccess => {
+  const botId = card.author.botId;
+  return access._tag === "every-bot" || access.botIds.includes(botId)
+    ? access
+    : { _tag: "bots", botIds: [...access.botIds, botId] };
+};
 
 export const layer = Layer.effect(
   SecretAsks,
@@ -126,6 +151,10 @@ export const layer = Layer.effect(
       }
       const card = found.value.entry;
       const name = decodeName(card.name);
+      const alongside = (card.values ?? []).slice(1).flatMap((value) => {
+        const decoded = decodeName(value.name);
+        return Option.isSome(decoded) ? [decoded.value] : [];
+      });
       if (Option.isNone(name)) {
         return yield* Effect.die(
           new TurnsInvariant({
@@ -139,7 +168,13 @@ export const layer = Layer.effect(
           botId: row.bot_id,
           kind: "system",
           audience: audienceOf(row),
-          payload: { _tag: "secret-ask", cardId: card.id, outcome: closing, name: name.value },
+          payload: {
+            _tag: "secret-ask",
+            cardId: card.id,
+            outcome: closing,
+            name: name.value,
+            ...(alongside.length > 0 ? { alongside } : {}),
+          },
           sourceEntryId: card.id,
           hops: 0,
           retryOf: null,
@@ -171,14 +206,15 @@ export const layer = Layer.effect(
         return yield* new NotFound({ resource: "entry" });
       }
       const card = found.value.entry;
-      if (card.name !== input.name || card.secret._tag !== input.draft._tag) {
+      // An ask for several values is answered with all of them (`addFromAsk`).
+      if (
+        card.values !== undefined ||
+        card.name !== input.name ||
+        card.secret._tag !== input.draft._tag
+      ) {
         return yield* new Invalid({ reason: "answer" });
       }
-      const botId = card.author.botId;
-      const access: SecretAccess =
-        input.access._tag === "every-bot" || input.access.botIds.includes(botId)
-          ? input.access
-          : { _tag: "bots", botIds: [...input.access.botIds, botId] };
+      const access = withAsker(input.access, card);
       // The secrets are another database: the secret is added first, with
       // the card it answers, and the card closed after. A crash between the
       // two leaves the card open: a device that sends the answer again, under
@@ -190,6 +226,66 @@ export const layer = Layer.effect(
           const { secret } = yield* secrets.add({ ...input, access, askedIn: card.id });
           yield* transaction(close(card.id, "saved"));
           return secret;
+        }),
+      );
+    });
+
+    const addFromAsk = Effect.fn("SecretAsks.addFromAsk")(function* (input: {
+      readonly request: EntryId;
+      readonly access: SecretAccess;
+      readonly values: ReadonlyArray<{
+        readonly field: SecretRequestFieldId;
+        readonly id: SecretId;
+        readonly value: Redacted.Redacted<string>;
+      }>;
+    }) {
+      const found = yield* entries.find(input.request);
+      if (Option.isNone(found) || found.value.entry._tag !== "secret-ask") {
+        return yield* new NotFound({ resource: "entry" });
+      }
+      const card = found.value.entry;
+      const asked = card.values;
+      const given = new Map(input.values.map((value) => [value.field, value]));
+      if (
+        asked === undefined ||
+        given.size !== input.values.length ||
+        given.size !== asked.length ||
+        new Set(input.values.map((value) => value.id)).size !== input.values.length
+      ) {
+        return yield* new Invalid({ reason: "answer" });
+      }
+      const answers: Array<{
+        readonly id: SecretId;
+        readonly name: SecretName;
+        readonly value: Redacted.Redacted<string>;
+      }> = [];
+      for (const value of asked) {
+        const answer = given.get(value.id);
+        const name = decodeName(value.name);
+        if (answer === undefined || Option.isNone(name)) {
+          return yield* new Invalid({ reason: "answer" });
+        }
+        answers.push({ id: answer.id, name: name.value, value: answer.value });
+      }
+      const access = withAsker(input.access, card);
+      // As for one secret: the values are added first, with the card they
+      // answer, and the card closed after; one value the operator already
+      // gave is not added twice when they send them again.
+      return yield* saving.withPermit(
+        Effect.gen(function* () {
+          const added: Array<Secret> = [];
+          for (const answer of answers) {
+            const { secret } = yield* secrets.add({
+              id: answer.id,
+              name: answer.name,
+              draft: { _tag: "value", value: answer.value },
+              access,
+              askedIn: card.id,
+            });
+            added.push(secret);
+          }
+          yield* transaction(close(card.id, "saved"));
+          return added;
         }),
       );
     });
@@ -222,9 +318,21 @@ export const layer = Layer.effect(
         if (open.length === 0) return;
         const saved = yield* secrets
           .askedIn(open.map(({ entry_id }) => entry_id))
-          .pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set()));
+          .pipe(Effect.orElseSucceed((): ReadonlyMap<string, number> => new Map()));
         for (const { entry_id } of open) {
-          if (saved.has(entry_id)) yield* transaction(close(entry_id, "saved"));
+          const added = saved.get(entry_id) ?? 0;
+          if (added === 0) continue;
+          // An ask for several values is saved once every one of them is.
+          const found = yield* entries.find(entry_id);
+          const card = Option.filter(
+            Option.map(found, ({ entry }) => entry),
+            (entry): entry is SecretAskEntry => entry._tag === "secret-ask",
+          );
+          const asked = Option.match(card, {
+            onNone: () => 1,
+            onSome: (c) => c.values?.length ?? 1,
+          });
+          if (added >= asked) yield* transaction(close(entry_id, "saved"));
         }
         const due = yield* openPastWait(timeText(yield* DateTime.now)).pipe(Effect.orDie);
         for (const { entry_id } of due) yield* transaction(close(entry_id, "expired"));
@@ -236,6 +344,6 @@ export const layer = Layer.effect(
       Effect.andThen(Effect.never),
     );
 
-    return SecretAsks.of({ add, decline, run });
+    return SecretAsks.of({ add, addFromAsk, decline, run });
   }),
 );

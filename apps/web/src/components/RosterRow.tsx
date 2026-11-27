@@ -11,9 +11,17 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import { type BotColor, littleDots, resolveAvatar, stage } from "@j3-bots/design-tokens";
-import type { ComponentProps, CSSProperties, Ref } from "react";
+import {
+  type AnimationEvent,
+  type ComponentProps,
+  type CSSProperties,
+  type Ref,
+  useEffect,
+  useState,
+} from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
+import { reducedMotion } from "../lib/motion";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
@@ -41,18 +49,64 @@ interface RosterRowProps extends useRender.ComponentProps<"button"> {
    */
   readonly withMenu?: boolean;
   /**
-   * The bot or room is new to the roster: it comes down into its row in a
-   * light of its own color, and its words follow it in.
+   * The bot or room is new to the roster: it arrives in its row
+   * (`useArrival`).
    */
   readonly entrance?: boolean;
 }
 
-/** The light a bot or a room comes down into, and how long it and the words after it take. */
-const entranceStyle = (color: string): CSSProperties & Record<`--row-${string}`, string> => ({
+/**
+ * Where a row new to the roster is in its arrival: its light is on and its
+ * bot on its way down (`lit`), its bot has landed (`landed`), or, under
+ * reduced motion, it fades in (`calm`).
+ */
+type Arrival = "lit" | "landed" | "calm";
+
+/** The light's own variables: the bot's color, and the arrival's times. */
+const arrivalStyle = (color: string): CSSProperties & Record<`--row-${string}`, string> => ({
   "--row-spot": color,
-  "--row-light": `${stage.rowLight}ms`,
-  "--row-words": `${stage.rowWords}ms`,
+  "--row-spot-in": `${stage.spotIn}ms`,
+  "--row-hold": `${stage.rowHold}ms`,
+  "--row-dim": `${stage.rowDim}ms`,
+  "--row-gap": `${stage.focus.gap}ms`,
 });
+
+/**
+ * A row's arrival, as one moment keyed to its bot's landing, as the first run
+ * stages its cast (`stage`): the light comes up first, the bot sets off
+ * `stage.spotLead` ms later and comes down into it, the row clipped to its
+ * own height so it never crosses the row above; as it lands its words come
+ * in and, a moment later, the light goes down. The landing is the avatar's
+ * own, on the frame loop, so the light never goes down before the bot is
+ * there however late its frames come; a bot no frame draws counts as landed
+ * after `stage.rowLand`. The light and the words are the stylesheet's
+ * (`.row-light` in `index.css`), so the arrival renders twice in all: as it
+ * lands, and as it ends. Under reduced motion the row fades in.
+ */
+function useArrival(entrance: boolean) {
+  const [arrival, setArrival] = useState<Arrival | null>(() =>
+    entrance ? (reducedMotion() ? "calm" : "lit") : null,
+  );
+  const lit = arrival === "lit";
+  useEffect(() => {
+    if (!lit) return;
+    const late = window.setTimeout(() => setArrival("landed"), stage.spotLead + stage.rowLand);
+    return () => window.clearTimeout(late);
+  }, [lit]);
+  return {
+    arrival,
+    /** The bot's entrance, which sets off once the light is up and lands the row with it. */
+    avatarEntrance: lit
+      ? { delay: stage.spotLead, onLanded: () => setArrival("landed") }
+      : (false as const),
+    /** Ends the arrival once its last move has played: the light gone down, or the fade. */
+    onAnimationEnd: (event: AnimationEvent) => {
+      if (event.animationName === "row-light-out" || event.animationName === "row-calm") {
+        setArrival(null);
+      }
+    },
+  };
+}
 
 /** Where each of the row's avatar's dots stands: along its lower left edge, clear of the primary bot's star at the other corner. */
 const DOTS = littleDots(40, MAX_SHOWN_LITTLE_ONES);
@@ -111,24 +165,33 @@ export function RosterRow({
   // A room's light is its first member's color.
   const face = item._tag === "bot" ? item.bot.profile.avatar : memberAvatars[0]?.avatar;
   const spot = face === undefined ? "var(--foreground)" : `var(--bot-${resolveAvatar(face).color})`;
+  const { arrival, avatarEntrance, onAnimationEnd } = useArrival(entrance);
   const content = (
     <>
-      <span className="relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
-        {entrance && <span aria-hidden className="row-spot" />}
-        {item._tag === "bot" ? (
-          <PrimaryBadge primary={item.bot.primary} size={40}>
-            <LiveBotAvatar
-              bot={item.bot}
-              unread={item.unread}
-              lastEntry={item.lastEntry}
-              size={40}
-              entrance={entrance}
-              {...(avatarRef === undefined ? {} : { ref: avatarRef })}
-            />
-          </PrimaryBadge>
-        ) : (
-          <RoomAvatar members={memberAvatars} size={40} entrance={entrance} />
+      <span className="row-stage relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
+        {(arrival === "lit" || arrival === "landed") && (
+          <span aria-hidden className="row-light">
+            <span className="row-beam" />
+            <span className="row-pool" />
+            <span className="row-shadow" />
+          </span>
         )}
+        <span className="row-body block">
+          {item._tag === "bot" ? (
+            <PrimaryBadge primary={item.bot.primary} size={40}>
+              <LiveBotAvatar
+                bot={item.bot}
+                unread={item.unread}
+                lastEntry={item.lastEntry}
+                size={40}
+                entrance={avatarEntrance}
+                {...(avatarRef === undefined ? {} : { ref: avatarRef })}
+              />
+            </PrimaryBadge>
+          ) : (
+            <RoomAvatar members={memberAvatars} size={40} entrance={avatarEntrance} />
+          )}
+        </span>
         {item._tag === "bot" && (
           <LittleDots
             count={item.bot.state._tag === "working" ? item.bot.state.littleOnes : 0}
@@ -136,8 +199,8 @@ export function RosterRow({
           />
         )}
       </span>
-      <span className={cn("flex min-w-0 flex-1 flex-col", entrance && "row-words")}>
-        <span className="flex items-baseline gap-2">
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="row-name flex items-baseline gap-2">
           <span className={cn("truncate text-sm", needs ? "font-semibold" : "font-medium")}>
             {name}
           </span>
@@ -152,7 +215,7 @@ export function RosterRow({
             </span>
           )}
         </span>
-        <span className="flex items-center gap-2">
+        <span className="row-line flex items-center gap-2">
           <SwapText text={line.text} className={cn("text-xs", toneClass[line.tone])} />
           {item.unread &&
             (unreadDot ? (
@@ -174,7 +237,9 @@ export function RosterRow({
     "aria-current": selected ? "page" : undefined,
     // Which bot or room the row is, so focus can come back to it.
     "data-roster-row": rosterKeyText(rosterKeyOf(item)),
-    ...(entrance ? { style: entranceStyle(spot) } : {}),
+    ...(arrival === null
+      ? {}
+      : { "data-arrival": arrival, style: arrivalStyle(spot), onAnimationEnd }),
     children: content,
   };
   return useRender({

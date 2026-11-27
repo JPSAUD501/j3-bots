@@ -681,6 +681,69 @@ describe("renderWake", () => {
     );
   });
 
+  it("renders a later step with what the earlier steps handed it, the yes it follows and what it must report", () => {
+    const text = render({
+      kind: "routine",
+      at: now,
+      timeZone,
+      sinceLastTurn: [],
+      routine: {
+        id: Schema.decodeSync(RoutineId)("inbox"),
+        name: "Monday inbox",
+        trigger: { type: "schedule", cron: "3 8 * * 1" },
+        instruction: "Send the replies the user approved.",
+      },
+      step: {
+        number: 2,
+        of: 3,
+        action: "sends the replies",
+        earlier: [
+          {
+            bot: "Ana",
+            action: "drafts replies",
+            result: "3 replies drafted",
+            handoff: "Draft 1: to Bia, about the invoice.",
+          },
+        ],
+        approved: { question: "Send the 3 replies?", note: "Skip the one to Caio." },
+        next: { condition: "anything bounced", yes: null },
+      },
+      runId: Schema.decodeSync(RoutineRunId)("run-1"),
+      recentRunsLeftOut: false,
+      recentRuns: [{ at: at("2026-11-13T11:03:00Z"), outcome: { type: "silent", note: null } }],
+      triggerData: null,
+      dueAt: null,
+    });
+    expect(text).toMatchInlineSnapshot(`
+      "<j3-wake kind="routine" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      <routine id="inbox" name="Monday inbox" run="run-1" trigger="schedule" cron="3 8 * * 1">
+      <step number="2" of="3" action="sends the replies">
+      <earlier-step number="1" bot="Ana" action="drafts replies">
+      <data-7f3a9c01b2d4 source="routine-step">
+      3 replies drafted
+      </data-7f3a9c01b2d4>
+      <data-7f3a9c01b2d4 source="routine-step-handoff">
+      Draft 1: to Bia, about the invoice.
+      </data-7f3a9c01b2d4>
+      </earlier-step>
+      <answer choice="yes">
+      <data-7f3a9c01b2d4 source="routine-step">
+      Send the 3 replies?
+      </data-7f3a9c01b2d4>
+      <message from="user">Skip the one to Caio.</message>
+      </answer>
+      <next condition="anything bounced" condition-report="goOn: whether it holds" after="the next step"/>
+      </step>
+      <instruction>
+      Send the replies the user approved.
+      </instruction>
+      </routine>
+      </j3-wake>
+      Nobody is waiting: send no progress message. Do your step as its instruction says, from what the earlier steps handed you. \`say\` to your user only what the instruction asks you to tell them. Read every date against the time the run was due: \`due\` above, or the time above when there is none. Your last call is one \`finish_step\`, never alongside another call: its result line, what the next steps need, and what \`next\` above asks of your report. When you cannot do the step, call it with \`blocked\` and say in its result what stops it. Then end your turn.
+      "
+    `);
+  });
+
   it("renders every system event", () => {
     const system = (event: Extract<Wake, { kind: "system" }>["event"]) =>
       render({ kind: "system", at: now, timeZone, sinceLastTurn: [], event });

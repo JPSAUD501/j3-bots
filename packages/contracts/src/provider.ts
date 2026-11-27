@@ -84,8 +84,9 @@ export type SignInFailure = typeof SignInFailure.Type;
  * - `starting`: the harness is starting;
  * - `waiting-for-browser`: it waits for the operator to sign in on `url`, in
  *   a browser on the server's machine, where the page returns to the
- *   harness. `opened` when the harness opened the browser itself, so a
- *   client offers the page instead of opening it again;
+ *   harness. The client opens it as soon as it arrives (decision 0085).
+ *   `opened` is always false: clients of 0.12, which still decode it, open
+ *   the page only when it is;
  * - `succeeded`: signed in, in J3 Bots' home. `endpoint` is the base URL of a
  *   provider connection stored on the server, which J3 Bots sets the harness
  *   up to use instead, so a bot may not use this sign-in while it stays;

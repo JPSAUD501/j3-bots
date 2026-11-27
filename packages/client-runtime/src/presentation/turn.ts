@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * A bot's turn as its conversation shows it while it runs: one row where the
- * turn's work goes, with what the bot is doing and how long the turn has run,
- * which becomes the turn's work fold when it ends. Everything here comes from
+ * turn's work goes, with what the bot is doing, which becomes the turn's work
+ * fold when it ends. Everything here comes from
  * what the server says: the bot's state for the turn and its start, the
  * conversation's entries for its fold. Nothing is made up on the client.
  */
@@ -14,7 +14,7 @@ import { turnKey } from "./timeline.ts";
 /** A turn under way in a bot's conversation. */
 export interface LiveTurn {
   readonly botId: BotId;
-  /** When the turn started, on the server: what its clock counts from. */
+  /** When the turn started, on the server: what its row and its fold are known by. */
   readonly startedAt: DateTime.Utc;
 }
 
@@ -82,19 +82,4 @@ export function withLiveTurn(
   }
   if (found.fold.status._tag === "finished") return rows;
   return rows.map((row, i) => (i === index ? { ...found, key, live: true } : row));
-}
-
-/** How long the turn has run at `now`, in ms; never less than none, whatever the device's clock says. */
-export const turnElapsed = (turn: LiveTurn, now: number): number =>
-  Math.max(0, now - DateTime.toEpochMillis(turn.startedAt));
-
-/** A turn's clock: "0:07", "12:40", then "1:02:03" past an hour. */
-export function turnClock(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor(total / 60) % 60;
-  const seconds = String(total % 60).padStart(2, "0");
-  return hours === 0
-    ? `${minutes}:${seconds}`
-    : `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`;
 }

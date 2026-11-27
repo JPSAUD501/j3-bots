@@ -5,12 +5,13 @@ import {
   EntryOrder,
   type SecretAskEntry,
   type SecretDraft,
+  secretRequestFieldId,
   SiteOrigin,
 } from "@j3-bots/contracts";
 import { at } from "@j3-bots/client-runtime/testing";
 import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
-import { askedSecret, editChanges, newSecret, type TypedSecret } from "./drafts";
+import { askedSecret, askedValues, editChanges, newSecret, type TypedSecret } from "./drafts";
 
 const scout = BotId.make("scout");
 const ask = (secret: SecretAskEntry["secret"]): SecretAskEntry => ({
@@ -141,5 +142,42 @@ describe("an edit of a secret", () => {
     const changes = editChanges(false, { ...typed, password: "ignored", value: "wx_new" });
     if (changes._tag !== "ready") throw new Error("expected changes");
     expect(Object.keys(changes.value).toSorted()).toEqual(["name", "value"]);
+  });
+});
+
+describe("the values a bot's ask for several saves", () => {
+  const asked = [
+    { id: secretRequestFieldId(0), name: "builds-client-id", label: "Client ID", masked: false },
+    {
+      id: secretRequestFieldId(1),
+      name: "builds-client-secret",
+      label: "Client secret",
+      masked: true,
+    },
+  ];
+  const valuesAsk: SecretAskEntry = { ...valueAsk, name: "builds-client-id", values: asked };
+
+  it("are each saved under the name the bot asked for it by, without the space around a paste", () => {
+    const typed = new Map([
+      [secretRequestFieldId(0), " client-7 "],
+      [secretRequestFieldId(1), "a client secret\n"],
+    ]);
+    const saved = askedValues(valuesAsk, asked, typed, false);
+    if (saved._tag !== "ready") throw new Error("expected values");
+    expect(saved.value.access).toEqual({ _tag: "bots", botIds: [scout] });
+    expect(
+      saved.value.values.map(({ field, name, value }) => [field, name, Redacted.value(value)]),
+    ).toEqual([
+      [secretRequestFieldId(0), "builds-client-id", "client-7"],
+      [secretRequestFieldId(1), "builds-client-secret", "a client secret"],
+    ]);
+  });
+
+  it("are not ready while one is left out, which they name", () => {
+    const typed = new Map([[secretRequestFieldId(0), "client-7"]]);
+    expect(askedValues(valuesAsk, asked, typed, false)).toEqual({
+      _tag: "invalid",
+      problem: { _tag: "value", field: secretRequestFieldId(1) },
+    });
   });
 });

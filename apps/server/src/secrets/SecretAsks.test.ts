@@ -6,11 +6,18 @@ import {
   type SecretDraft,
   SecretId,
   SecretName,
+  secretRequestFieldId,
+  SetupPageUrl,
   SiteOrigin,
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import { FILL_NOTES, SECRET_ASK_EXISTS, SECRET_ASK_SHOWN } from "@j3-bots/prompts";
+import {
+  FILL_NOTES,
+  SECRET_ASK_EXISTS,
+  SECRET_ASK_SHOWN,
+  SECRET_ASK_VALUES_SHOWN,
+} from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -166,7 +173,7 @@ it.effect(
       assert.strictEqual(yield* statusOf(bot.id), "saved");
       const woken = yield* nextWake(bot.id, session, turnId);
       assert.include(woken.text, 'reference="secret:example-work"');
-      assert.include(woken.text, "saved the secret you asked for");
+      assert.include(woken.text, "saved what you asked for");
 
       // Asked again, the bot is told it has it, and no second card is shown.
       const turn = woken.turnId;
@@ -269,7 +276,7 @@ it.effect(
       assert.strictEqual(again.id, "sec_aaaaaaaaaaaaaaaa");
       assert.strictEqual(yield* statusOf(bot.id), "saved");
       const { text } = yield* nextWake(bot.id, session, turnId);
-      assert.include(text, "saved the secret you asked for");
+      assert.include(text, "saved what you asked for");
     }).pipe(Effect.provide(domain)),
 );
 
@@ -318,4 +325,113 @@ it.effect("shows no card for a name another secret has, nor for a login without 
     for (const answer of [taken, pageless]) assert.strictEqual(answer._tag, "refused");
     assert.isEmpty((yield* conversation(bot.id)).filter((entry) => entry._tag === "secret-ask"));
   }).pipe(Effect.provide(domain)),
+);
+
+const CLIENT_ID = "client-id-value";
+const CLIENT_SECRET = "client-secret-value";
+
+const VALUES_ASK = {
+  kind: "values",
+  values: [
+    { name: "builds-client-id", label: "Client ID", shown: true },
+    { name: "builds-client-secret", label: "Client secret" },
+  ],
+  setup: "https://builds.example.com/settings/api-clients",
+  note: "The build server signs a service in with a client of its own.",
+};
+
+it.effect(
+  "asks for a service's client ID and secret on one card, saves each as a secret, and gives the bot both references",
+  () =>
+    Effect.gen(function* () {
+      const { bot, session, turnId } = yield* scene;
+      const answer = yield* callTool(session, turnId, "ask_for_secret", VALUES_ASK);
+      assert.deepStrictEqual(answer, {
+        _tag: "result",
+        value: {
+          status: "shown",
+          references: ["secret:builds-client-id", "secret:builds-client-secret"],
+          note: SECRET_ASK_VALUES_SHOWN,
+        },
+      });
+      const card = yield* awaitEntry(bot.id, "secret-ask");
+      assert.deepStrictEqual(
+        { values: card.values, setup: card.setup },
+        {
+          values: [
+            {
+              id: secretRequestFieldId(0),
+              name: "builds-client-id",
+              label: "Client ID",
+              masked: false,
+            },
+            {
+              id: secretRequestFieldId(1),
+              name: "builds-client-secret",
+              label: "Client secret",
+              masked: true,
+            },
+          ],
+          setup: SetupPageUrl.make("https://builds.example.com/settings/api-clients"),
+        },
+      );
+      yield* endsWithSay(session, turnId);
+      yield* turnEnded(bot.id);
+
+      const asks = yield* SecretAsks;
+      // A client that knows one input only answers with one value: refused, the card left open.
+      const one = yield* Effect.exit(
+        asks.add({
+          id: SecretId.make("sec_aaaaaaaaaaaaaaaa"),
+          name: SecretName.make("builds-client-id"),
+          draft: { _tag: "value", value: Redacted.make(CLIENT_ID) },
+          access: { _tag: "bots", botIds: [] },
+          request: card.id,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(one));
+      assert.strictEqual(yield* statusOf(bot.id), "pending");
+
+      const added = yield* asks.addFromAsk({
+        request: card.id,
+        access: { _tag: "bots", botIds: [] },
+        values: [
+          {
+            field: secretRequestFieldId(0),
+            id: SecretId.make("sec_bbbbbbbbbbbbbbbb"),
+            value: Redacted.make(CLIENT_ID),
+          },
+          {
+            field: secretRequestFieldId(1),
+            id: SecretId.make("sec_cccccccccccccccc"),
+            value: Redacted.make(CLIENT_SECRET),
+          },
+        ],
+      });
+      assert.deepStrictEqual(
+        added.map((secret) => ({
+          name: secret.name,
+          kind: secret.kind._tag,
+          access: secret.access,
+        })),
+        [
+          {
+            name: SecretName.make("builds-client-id"),
+            kind: "value",
+            access: { _tag: "bots", botIds: [bot.id] },
+          },
+          {
+            name: SecretName.make("builds-client-secret"),
+            kind: "value",
+            access: { _tag: "bots", botIds: [bot.id] },
+          },
+        ],
+      );
+      assert.strictEqual(yield* statusOf(bot.id), "saved");
+      const woken = yield* nextWake(bot.id, session, turnId);
+      assert.include(woken.text, 'reference="secret:builds-client-id"');
+      assert.include(woken.text, 'reference="secret:builds-client-secret"');
+      assert.notInclude(woken.text, CLIENT_ID);
+      assert.notInclude(woken.text, CLIENT_SECRET);
+    }).pipe(Effect.provide(domain)),
 );

@@ -2,7 +2,13 @@
 import { useAsleep, useAvatarMood, useConnection } from "@j3-bots/client-runtime/react";
 import type { Bot, EntryPreview } from "@j3-bots/contracts";
 import { type ReactNode, type Ref, useContext } from "react";
-import { type AvatarGround, type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar.tsx";
+import {
+  type AvatarEntrance,
+  type AvatarGround,
+  type AvatarHandle,
+  AvatarsAsleep,
+  BotAvatar,
+} from "./BotAvatar.tsx";
 import { PrimaryMark } from "./PrimaryMark.tsx";
 
 /** Whether the app has lost sight of the server long enough that what it shows may be out of date. */
@@ -44,7 +50,7 @@ export function LiveBotAvatar({
   readonly label?: string;
   readonly markPrimary?: boolean;
   /** Comes in from above as it first shows (`BotAvatar`). */
-  readonly entrance?: boolean;
+  readonly entrance?: boolean | AvatarEntrance;
   readonly ref?: Ref<AvatarHandle>;
 }) {
   const offline = useContext(AvatarsAsleep);

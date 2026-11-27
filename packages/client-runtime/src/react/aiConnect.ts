@@ -19,15 +19,13 @@ import {
   aiAction,
   type AiFacts,
   type AiPlace,
-  openAiAccount,
-  otherAiAccount,
   queuedSignIn,
 } from "../presentation/aiAccount.ts";
 import { Cell, type Readable } from "../Store.ts";
 
-// Connecting an AI, as the screens hold it: which account the operator
-// picked, and each account's one button, carried through what must happen
-// before a sign-in can start. The same on every client.
+// Connecting an AI, as the screens hold it: each account's one button,
+// carried through what must happen before a sign-in can start. The same on
+// every client.
 
 /**
  * What a screen asks of the server for the accounts. Each request resolves
@@ -48,8 +46,6 @@ export interface AiIntents {
 
 /** What the screens of one app share about connecting an AI. */
 interface AiSessionState {
-  /** The account the operator picked; null until they do. */
-  readonly picked: AiAccount | null;
   /** The accounts they asked to sign in to before it could start. */
   readonly wanted: ReadonlySet<AiAccount>;
   /** The accounts whose last sign-in already led to a connection (`AiFacts.spent`). */
@@ -68,13 +64,11 @@ const withMember = <A>(set: ReadonlySet<A>, member: A, present: boolean): Readon
 
 /**
  * What an app remembers of connecting an AI while it runs, whichever screen
- * the operator is on: the account they picked, so the question is asked
- * once, and a sign-in they asked for before it could start, so creating the
- * bot meanwhile does not lose it. A sign-in that waits is acted on by
+ * the operator is on: a sign-in they asked for before it could start, so
+ * creating the bot meanwhile does not lose it. A sign-in that waits is acted on by
  * whichever screen shows the account, once, however many show it.
  */
 interface AiSession extends Readable<AiSessionState> {
-  readonly pick: (account: AiAccount) => void;
   /** Asks to sign in to `account` as soon as it can. */
   readonly want: (account: AiAccount) => void;
   /** Forgets a sign-in asked for early. */
@@ -86,9 +80,8 @@ interface AiSession extends Readable<AiSessionState> {
   readonly settle: (account: AiAccount, state: AiAccountState, intents: AiIntents) => void;
 }
 
-const createAiSession = (initial: AiAccount | null = null): AiSession => {
+const createAiSession = (): AiSession => {
   const cell = new Cell<AiSessionState>({
-    picked: initial,
     wanted: new Set(),
     spent: new Set(),
     refused: new Set(),
@@ -107,7 +100,6 @@ const createAiSession = (initial: AiAccount | null = null): AiSession => {
   return {
     get: cell.get,
     subscribe: cell.subscribe,
-    pick: (account) => cell.update((now) => ({ ...now, picked: account })),
     want: (account) => {
       mark("refused", account, false);
       mark("wanted", account, true);
@@ -148,43 +140,18 @@ const SessionContext = createContext<AiSession | null>(null);
 
 /**
  * Shares one `AiSession` among the screens under it. One already shared
- * above is kept, so the app's own is the one every screen uses. `initial` is
- * the account open from the start of one this makes itself, for the gallery.
+ * above is kept, so the app's own is the one every screen uses.
  */
-export function AiSessionProvider(props: {
-  readonly initial?: AiAccount | undefined;
-  readonly children?: ReactNode;
-}) {
+export function AiSessionProvider(props: { readonly children?: ReactNode }) {
   const above = useContext(SessionContext);
-  const [own] = useState(() => createAiSession(props.initial ?? null));
+  const [own] = useState(createAiSession);
   return createElement(SessionContext.Provider, { value: above ?? own }, props.children);
-}
-
-/**
- * The account open on the screens that share this session, as `useAiConnect`
- * says it there, for a part of a screen that only needs to know which: the
- * one picked, else the one connected or signing in, else none.
- */
-export function useAiOpened(facts: AiFacts): AiAccount | null {
-  const above = useContext(SessionContext);
-  const [own] = useState(() => createAiSession());
-  const { picked, spent } = useSyncExternalStore(
-    (above ?? own).subscribe,
-    (above ?? own).get,
-    (above ?? own).get,
-  );
-  return picked ?? openAiAccount(aiAccountStates({ ...facts, spent }));
 }
 
 export interface AiConnectInput {
   readonly facts: AiFacts;
   readonly place: AiPlace;
   readonly intents: AiIntents;
-  /**
-   * The account open from the start, for the gallery, where each frame is on
-   * its own; under an `AiSessionProvider`, the session says which.
-   */
-  readonly initial?: AiAccount | undefined;
 }
 
 /** A request to the server: none under way, one under way, or the last one the server did not take. */
@@ -274,21 +241,10 @@ function useAiAccount(
   };
 }
 
-/** The accounts, and the one a screen has open. */
+/** The accounts, as one screen connects them. */
 export interface AiConnectModel {
   readonly place: AiPlace;
   readonly accounts: Readonly<Record<AiAccount, AiAccountModel>>;
-  /**
-   * The account open: the one the operator picked, else the one connected or
-   * signing in; null while they have picked none and none is, so the screen
-   * asks which they have.
-   */
-  readonly opened: AiAccountModel | null;
-  /**
-   * Opens `account`. Leaving an account that waits to sign in, or is signing
-   * in, stops that; what it was downloading goes on.
-   */
-  readonly open: (account: AiAccount) => void;
 }
 
 /**
@@ -297,17 +253,9 @@ export interface AiConnectModel {
  */
 export function useAiConnect(input: AiConnectInput): AiConnectModel {
   const above = useContext(SessionContext);
-  const [own] = useState(() => createAiSession(input.initial ?? null));
+  const [own] = useState(createAiSession);
   const session = above ?? own;
   const claude = useAiAccount("claude-code", input, session);
   const chatgpt = useAiAccount("codex", input, session);
-  const accounts = { "claude-code": claude, codex: chatgpt };
-  const { picked } = useSyncExternalStore(session.subscribe, session.get, session.get);
-  const shown = picked ?? openAiAccount({ "claude-code": claude.state, codex: chatgpt.state });
-  const open = (account: AiAccount) => {
-    const left = accounts[otherAiAccount(account)];
-    if (left.queued || left.state._tag === "signing-in") left.cancel();
-    session.pick(account);
-  };
-  return { place: input.place, accounts, opened: shown === null ? null : accounts[shown], open };
+  return { place: input.place, accounts: { "claude-code": claude, codex: chatgpt } };
 }

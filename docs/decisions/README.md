@@ -62,7 +62,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0062](0062-a-home-moves-as-an-export.md) | A home moves as an export: secrets sealed under a passphrase, sessions left behind | Accepted |
 | [0064](0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md) | The harnesses install as the server starts, and fail with the true reason | Accepted |
 | [0065](0065-the-first-run-tells-what-j3-bots-is-before-it-asks.md) | The first run tells what J3 Bots is before it asks, in a light drawn as light | Accepted |
-| [0066](0066-connecting-an-ai-is-picking-the-account-you-have.md) | Connecting an AI is picking the account you have | Accepted |
+| [0066](0066-connecting-an-ai-is-picking-the-account-you-have.md) | Connecting an AI is picking the account you have | Accepted; its question and drawn steps replaced by [0085](0085-signing-in-is-one-row-and-the-browser-opens-by-itself.md) |
 | [0067](0067-a-first-contact-is-a-paced-hello-not-a-setup.md) | A bot's first contact is a hello in a few paced messages, not a setup | Accepted |
 | [0068](0068-settings-lists-what-the-bots-added.md) | Settings lists what the bots added, and adds nothing itself | Accepted |
 | [0069](0069-quick-access-is-a-second-window-on-the-primary-bots-conversation.md) | Quick access is a second window on the primary bot's conversation | Accepted |
@@ -75,9 +75,13 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0077](0077-the-engine-moves-to-t3-code-0-1-13-and-no-older-engine-starts-on-its-data.md) | The engine moves to T3 Code 0.1.13, and no older engine starts on its data | Accepted |
 | [0078](0078-documents-open-in-a-viewer-of-the-apps-own.md) | Documents open in a viewer of the app's own, read on the client | Accepted |
 | [0079](0079-quick-access-brings-the-window-the-operator-was-in.md) | Quick access brings the window the operator was in | Accepted |
+| [0080](0080-a-routines-steps-are-each-bots-own-turns-driven-by-j3-bots.md) | A routine's steps are each bot's own turns, driven by J3 Bots | Accepted |
 | [0081](0081-one-secret-card-asks-for-every-value-at-once.md) | One secret card asks for every value a request needs, at once | Accepted |
 | [0082](0082-a-bots-effort-sits-beside-its-model-and-the-default-is-the-harnesss-own.md) | A bot's effort sits beside its model, and the default is the harness's own | Accepted |
 | [0083](0083-only-the-engine-notices-a-person-can-act-on-show.md) | Only the engine notices a person can act on show | Accepted |
 | [0084](0084-reactions-are-a-quiet-signal.md) | Reactions are a quiet signal, owned by J3 Bots | Accepted |
+| [0085](0085-signing-in-is-one-row-and-the-browser-opens-by-itself.md) | Signing in is one row, and the browser opens by itself | Accepted |
+| [0089](0089-a-connectors-skills-load-through-j3-tools.md) | A connector's skills load through J3 Bots' own tools | Accepted |
+| [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

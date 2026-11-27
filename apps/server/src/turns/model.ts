@@ -141,12 +141,14 @@ export const WakePayload = Schema.Union([
   }),
   /**
    * How the bot's ask for a secret ended: saved from its card, declined, or
-   * expired. `name` is the secret's, which the bot names it by.
+   * expired. `name` is the secret's, which the bot names it by; `alongside`
+   * the others' of an ask for several values, after the first.
    */
   Schema.TaggedStruct("secret-ask", {
     cardId: EntryId,
     outcome: Schema.Literals(["saved", "declined", "expired"]),
     name: SecretName,
+    alongside: Schema.optionalKey(Schema.Array(SecretName)),
   }),
   /**
    * How the bot's ask to add a connector its operator had to allow ended

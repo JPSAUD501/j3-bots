@@ -28,6 +28,9 @@ export type EnvelopeTag =
   | "routine"
   | "recent-runs"
   | "run"
+  | "step"
+  | "earlier-step"
+  | "next"
   | "field"
   | "browser-tab"
   | "secret"
@@ -49,6 +52,9 @@ const ENVELOPE_TAGS: ReadonlyArray<EnvelopeTag> = [
   "routine",
   "recent-runs",
   "run",
+  "step",
+  "earlier-step",
+  "next",
   "field",
   "browser-tab",
   "secret",

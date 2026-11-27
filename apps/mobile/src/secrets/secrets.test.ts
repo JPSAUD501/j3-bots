@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, Secret, SiteOrigin } from "@j3-bots/contracts";
+import {
+  BotId,
+  EntryId,
+  EntryOrder,
+  Secret,
+  type SecretAskEntry,
+  secretRequestFieldId,
+  SiteOrigin,
+} from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { askAccess, askDraft, secretChanges } from "./drafts.ts";
+import { askAccess, askDraft, askedValues, secretChanges } from "./drafts.ts";
 import { SHOWN_FOR, shownValues } from "./shown.ts";
 
 const origin = Schema.decodeSync(SiteOrigin)("https://example.com");
@@ -64,6 +72,48 @@ describe("a bot's ask", () => {
   it("lets only the asking bot use it, unless every bot may", () => {
     expect(askAccess(false, botId)).toEqual({ _tag: "bots", botIds: [botId] });
     expect(askAccess(true, botId)).toEqual({ _tag: "every-bot" });
+  });
+});
+
+describe("a bot's ask for several values", () => {
+  const asked = [
+    { id: secretRequestFieldId(0), name: "builds-client-id", label: "Client ID", masked: false },
+    {
+      id: secretRequestFieldId(1),
+      name: "builds-client-secret",
+      label: "Client secret",
+      masked: true,
+    },
+  ];
+  const entry: SecretAskEntry = {
+    _tag: "secret-ask",
+    id: EntryId.make("ask"),
+    order: EntryOrder.make(1),
+    author: { _tag: "bot", botId },
+    createdAt: DateTime.makeUnsafe(0),
+    name: "builds-client-id",
+    secret: { _tag: "value" },
+    values: asked,
+    note: "",
+    status: { _tag: "pending" },
+  };
+  const access = askAccess(false, botId);
+
+  it("saves each under the name the bot asked for it by, without the space around a paste", () => {
+    const typed = new Map([
+      [secretRequestFieldId(0), " client-7 "],
+      [secretRequestFieldId(1), "a client secret"],
+    ]);
+    const saved = Option.getOrThrow(askedValues(entry, asked, typed, access));
+    expect(saved.values.map(({ name, value }) => [name, Redacted.value(value)])).toEqual([
+      ["builds-client-id", "client-7"],
+      ["builds-client-secret", "a client secret"],
+    ]);
+  });
+
+  it("saves nothing while one is left out", () => {
+    const typed = new Map([[secretRequestFieldId(0), "client-7"]]);
+    expect(Option.isNone(askedValues(entry, asked, typed, access))).toBe(true);
   });
 });
 

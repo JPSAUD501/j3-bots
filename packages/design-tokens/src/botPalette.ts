@@ -51,6 +51,21 @@ export const botBubble = (color: BotColor): Themed => ({
 });
 
 /**
+ * How strongly a bot's color washes the row of a routine's step it is doing
+ * now (decision 0080): over the card's surface, more in the dark theme.
+ */
+export const trackLitTint = { light: 0.08, dark: 0.18 } as const satisfies Record<
+  keyof Themed,
+  number
+>;
+
+/** The row of a routine's step a bot is doing now: its color over the card's surface. */
+export const botTrackLit = (color: BotColor): Themed => ({
+  light: mixOklab(botPalette[color].light, colors.surface.light, trackLitTint.light),
+  dark: mixOklab(botPalette[color].dark, colors.surface.dark, trackLitTint.dark),
+});
+
+/**
  * How much of a bot's color one of its little ones keeps in its body: the
  * rest is white, so it is the bot's color made lighter in both themes. Its
  * rim stays the bot's own color, which is what keeps its silhouette 3:1
@@ -89,6 +104,24 @@ export const littleColors = (
   failed
     ? { body: littleFailed.body[theme], rim: littleFailed.rim[theme] }
     : { body: hexColor(botLittle(color)[theme]), rim: hexColor(botPalette[color][theme]) };
+
+/** The warm white of a lamp on a dark canvas: the web's `--row-lamp` and `--stage-lamp`. */
+const warmLamp = "oklch(0.97 0.04 85)";
+
+/**
+ * The light a row new to the roster comes up in, in `theme`, as `#rrggbb`, as
+ * the web's `.row-light` mixes it: on a light canvas all of it is the bot's
+ * own color (`spot`, a bot's `botPalette` color or the foreground for a room
+ * with no face); on a dark one the lamp is warm white and the beam takes 30%
+ * of the bot's color into it.
+ */
+export const rowLightColors = (
+  spot: string,
+  theme: keyof Themed,
+): { readonly spot: string; readonly lamp: string; readonly beam: string } => {
+  const lamp = theme === "dark" ? warmLamp : spot;
+  return { spot: hexColor(spot), lamp: hexColor(lamp), beam: hexColor(mixOklab(spot, lamp, 0.3)) };
+};
 
 /**
  * The eye, the same in both themes: a white lens and a near-black pupil,

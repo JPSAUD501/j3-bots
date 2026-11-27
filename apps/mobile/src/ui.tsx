@@ -75,6 +75,8 @@ export function Button(props: {
   readonly held?: boolean;
   /** Takes its share of a row it shares with other buttons. */
   readonly grow?: boolean;
+  /** Whether what it shows and hides is shown, for a button that does that. */
+  readonly expanded?: boolean;
 }) {
   const look = buttonLook[props.variant ?? "plain"];
   const disabled = props.disabled === true;
@@ -85,7 +87,7 @@ export function Button(props: {
       accessibilityRole="button"
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityHint={props.accessibilityHint}
-      accessibilityState={{ disabled: disabled || held }}
+      accessibilityState={{ disabled: disabled || held, expanded: props.expanded }}
       disabled={disabled}
       onPress={held ? undefined : props.onPress}
       className={`min-h-11 items-center justify-center rounded-pill px-5 ${look.box} ${disabled || held ? "opacity-50" : ""}`}

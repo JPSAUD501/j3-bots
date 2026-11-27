@@ -399,6 +399,24 @@ describe("connecting from the gallery", () => {
           }),
         );
         assert.strictEqual(invalidReason(outside), "connector-fields");
+        // A gallery entry signs in as its form says: its address may carry a
+        // key, which would go to an authorization server as the resource.
+        const asService = yield* Effect.flip(
+          connectors.update({
+            by: { _tag: "operator" },
+            connectorId: id,
+            service: {
+              clientId: Redacted.make("${secret:github-client-id}"),
+              credential: {
+                _tag: "client-secret",
+                value: Redacted.make("${secret:github-client-secret}"),
+              },
+              issuer: Option.none(),
+              scope: null,
+            },
+          }),
+        );
+        assert.strictEqual(invalidReason(asService), "connector-unsupported");
         const updated = yield* connectors.update({
           by: { _tag: "operator" },
           connectorId: id,

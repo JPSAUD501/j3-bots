@@ -8,14 +8,13 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import type { Entries } from "../entries/Entries.ts";
-import { Flag, json, Time, timeText } from "../persistence/columns.ts";
+import { json, Time, timeText } from "../persistence/columns.ts";
 import { DISPATCH_COLUMNS, DispatchRow, type Ledger } from "./Ledger.ts";
 import { audienceOf, conversation, type SessionRowId, StoredResponse } from "./model.ts";
 import { notices } from "./notices.ts";
 import type { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { endedWork, WorkJson } from "./turnWork.ts";
-import { waitedWithin } from "./waited.ts";
 import type { WorkSteps } from "./WorkSteps.ts";
 
 const LostRow = Schema.Struct({
@@ -49,10 +48,6 @@ const OpenRequest = Schema.Struct({
 const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
 const encodeWork = Schema.encodeEffect(WorkJson);
 
-const WaitRow = Schema.Struct({ opened_at: Time, closed_at: Schema.NullOr(Time) });
-
-const BackgroundFold = Schema.Struct({ entry_id: EntryId, pending: Flag });
-
 /** How a turn's end reads in its work fold. */
 export const endingOf = (outcome: TurnOutcome) =>
   outcome._tag === "completed" ? "completed" : outcome._tag === "failed" ? "failed" : "interrupted";
@@ -67,93 +62,20 @@ export const sessionRecords = (
   entries: Entries["Service"],
   workSteps: WorkSteps["Service"],
 ) => {
-  /**
-   * The cards the fold's turn waited on the operator for, from arrival until
-   * each closed. A card whose answer the engine refused leaves its turn
-   * waiting until it ends or is stopped, so it counts as open.
-   */
-  const waitRows = SqlSchema.findAll({
-    Request: EntryId,
-    Result: WaitRow,
-    execute: (foldId) => sql`
-      SELECT e.created_at AS opened_at,
-        CASE WHEN json_extract(e.body_json, '$.status._tag') = 'refused' THEN NULL
-          ELSE r.closed_at END AS closed_at
-      FROM turns t
-      JOIN engine_requests r ON r.session_id = t.session_id AND r.engine_turn_id = t.engine_turn_id
-      JOIN entries e ON e.id = r.entry_id
-      WHERE t.work_fold_entry_id = ${foldId}
-    `,
-  });
-
-  /**
-   * The fold ends with its turn, less the time the turn waited on the
-   * operator: `waitedMs` after the fold was written, as clients that count
-   * from it read it, and `waitedBeforeMs` from the turn's start until then.
-   * `background`: work the turn handed off still runs, and its steps go on
-   * until `backgroundEnded`.
-   */
+  /** The fold ends with its turn, and so does the stream of its steps. */
   const finishFold = Effect.fn("sessionRecords.finishFold")(function* (
     entryId: EntryId,
     outcome: TurnOutcome,
     at: DateTime.Utc,
-    background: boolean,
   ) {
     const found = yield* entries.find(entryId);
     if (Option.isNone(found) || found.value.entry._tag !== "work-fold") return;
     const fold = found.value.entry;
-    const waits = (yield* waitRows(entryId)).map((row) => ({
-      from: row.opened_at,
-      until: row.closed_at,
-    }));
-    const written = DateTime.min(fold.createdAt, at);
-    const waitedBeforeMs =
-      fold.turnStartedAt === null ? 0 : waitedWithin(waits, fold.turnStartedAt, written);
     yield* entries.update({
       ...fold,
-      status: {
-        _tag: "finished",
-        finishedAt: at,
-        ending: endingOf(outcome),
-        waitedMs: waitedWithin(waits, fold.createdAt, at),
-        waitedBeforeMs,
-        background,
-      },
+      status: { _tag: "finished", finishedAt: at, ending: endingOf(outcome) },
     });
-    if (!background) yield* sql.afterCommit(workSteps.finished(entryId));
-  }, Effect.orDie);
-
-  /** The folds of the session's ended turns whose handed-off work may have changed. */
-  const backgroundFolds = SqlSchema.findAll({
-    Request: Schema.String,
-    Result: BackgroundFold,
-    execute: (sessionId) => sql`
-      SELECT t.work_fold_entry_id AS entry_id, t.background_pending AS pending FROM turns t
-      JOIN entries e ON e.id = t.work_fold_entry_id
-      WHERE t.session_id = ${sessionId} AND t.finished_at IS NOT NULL
-        AND (t.background_pending = 1 OR json_extract(e.body_json, '$.status.background') = 1)
-    `,
-  });
-
-  /**
-   * Each ended turn's fold says whether the work it handed off still runs,
-   * as the turn's flag does (`turns.background_pending`); `lost`: nothing
-   * runs in the session any more. A fold whose work ended changes no more.
-   */
-  const followBackground = Effect.fn("sessionRecords.followBackground")(function* (
-    sessionId: SessionRowId,
-    lost: boolean,
-  ) {
-    for (const row of yield* backgroundFolds(sessionId)) {
-      const found = yield* entries.find(row.entry_id);
-      if (Option.isNone(found)) continue;
-      const fold = found.value.entry;
-      if (fold._tag !== "work-fold" || fold.status._tag !== "finished") continue;
-      const background = row.pending && !lost;
-      if (fold.status.background === background) continue;
-      yield* entries.update({ ...fold, status: { ...fold.status, background } });
-      if (!background) yield* sql.afterCommit(workSteps.finished(row.entry_id));
-    }
+    yield* sql.afterCommit(workSteps.finished(entryId));
   }, Effect.orDie);
 
   /**
@@ -250,14 +172,13 @@ export const sessionRecords = (
    * the turn records its outcome, and its work fold ends with it. A turn
    * stopped or failed before its first step still says how it ended, in a
    * fold of no steps; one that completed leaves only its reply, and a
-   * routine's turn or a quiet one none. `background`: work the turn handed off still runs.
+   * routine's turn or a quiet one none.
    */
   const endTurn = Effect.fn("sessionRecords.endTurn")(function* (
     session: FoldSession,
     turn: FoldTurn,
     outcome: TurnOutcome,
     at: DateTime.Utc,
-    background: boolean,
   ) {
     const [ended] = yield* sql<{ readonly quiet: number }>`
       UPDATE turns SET finished_at = ${timeText(at)}, outcome_json = ${yield* encodeOutcome(outcome)}
@@ -272,10 +193,10 @@ export const sessionRecords = (
     const foldId =
       turn.work_fold_entry_id ??
       (tellsItsEnd ? yield* foldOf(session, turn, { _tag: "running" }) : null);
-    if (foldId !== null) yield* finishFold(foldId, outcome, at, background);
+    if (foldId !== null) yield* finishFold(foldId, outcome, at);
   }, Effect.orDie);
 
-  return { foldOf, endTurn, finishFold, followBackground, closeCard };
+  return { foldOf, endTurn, finishFold, closeCard };
 };
 
 /**
@@ -309,7 +230,7 @@ export const sessionLoss = (
   signals: Signals["Service"],
 ) => {
   const { notify } = notices(sql, entries);
-  const { endTurn, followBackground, closeCard } = sessionRecords(sql, entries, workSteps);
+  const { endTurn, closeCard } = sessionRecords(sql, entries, workSteps);
   const targets = stopTargets(sql);
 
   const markLost = SqlSchema.findAll({
@@ -430,9 +351,8 @@ export const sessionLoss = (
     // gone long before the loss was known, as across an outage, and that time
     // is no work of the turn's.
     for (const turn of yield* openTurns(sessionId)) {
-      yield* endTurn(session, turn, interrupted, turn.last_activity_at, false);
+      yield* endTurn(session, turn, interrupted, turn.last_activity_at);
     }
-    yield* followBackground(sessionId, true);
     yield* settleWork(sessionId, now);
     yield* sql`UPDATE engine_tool_calls SET open = 0 WHERE session_id = ${sessionId}`;
     for (const request of yield* openRequests(sessionId)) {

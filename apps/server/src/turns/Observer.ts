@@ -57,7 +57,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { type EntryDraft, Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
-import { Flag, json, Time, timeText } from "../persistence/columns.ts";
+import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { liveRoom } from "../rooms/liveRoom.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
@@ -112,7 +112,6 @@ const TurnRow = Schema.Struct({
   finished_at: Schema.NullOr(Time),
   outcome_json: Schema.NullOr(json(TurnOutcome)),
   work_fold_entry_id: Schema.NullOr(EntryId),
-  background_pending: Flag,
   quiet: Flag,
 });
 type TurnRow = typeof TurnRow.Type;
@@ -370,7 +369,7 @@ export const layer = Layer.effect(
     const { requestRotation } = rotationRequests(sql, signals);
     const records = sessionRecords(sql, entries, workSteps);
     const quiet = quietTurns(sql);
-    const { endTurn, followBackground, closeCard } = records;
+    const { endTurn, closeCard } = records;
 
     /**
      * Each followed session. The engine sends a `synchronized` only on the
@@ -426,7 +425,7 @@ export const layer = Layer.effect(
       Result: TurnRow,
       execute: ({ sessionId, turnId }) => sql`
         SELECT engine_turn_id, audience, audience_room_id, started_at, finished_at, outcome_json,
-          work_fold_entry_id, background_pending, quiet
+          work_fold_entry_id, quiet
         FROM turns WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
       `,
     });
@@ -447,7 +446,7 @@ export const layer = Layer.effect(
       Result: TurnRow,
       execute: (sessionId) => sql`
         SELECT engine_turn_id, audience, audience_room_id, started_at, finished_at, outcome_json,
-          work_fold_entry_id, background_pending, quiet
+          work_fold_entry_id, quiet
         FROM turns WHERE session_id = ${sessionId} AND finished_at IS NULL
       `,
     });
@@ -592,10 +591,6 @@ export const layer = Layer.effect(
             _tag: "finished",
             finishedAt: turn.finished_at,
             ending: endingOf(turn.outcome_json),
-            // Its first step came after the turn ended: it worked for no time of the turn's.
-            waitedMs: 0,
-            waitedBeforeMs: 0,
-            background: turn.background_pending,
           } as const);
 
     /** The turn's work fold, written with its first step (`sessionRecords`). */
@@ -830,7 +825,6 @@ export const layer = Layer.effect(
           UPDATE turns SET background_pending = 1
           WHERE session_id = ${session.id} AND ${sql.in("engine_turn_id", listed)}
         `;
-        yield* followBackground(session.id, false);
       }
       if (event.runnableTurns.length > 0) return;
       if ((yield* openTurnRows(session.id).pipe(Effect.orDie)).length > 0) return;
@@ -844,7 +838,6 @@ export const layer = Layer.effect(
         WHERE session_id = ${session.id} AND background_pending = 1
           ${listed.length === 0 ? sql`` : sql`AND NOT ${sql.in("engine_turn_id", listed)}`}
       `;
-      yield* followBackground(session.id, false);
     }, Effect.orDie);
 
     /** A dispatch the engine may yet take, or may have taken unseen. */
@@ -976,7 +969,7 @@ export const layer = Layer.effect(
       // A routine run's attempt may have ended: its run settles, or its session retires.
       if (session.purpose === "side") yield* sql.afterCommit(signals.routines.fire);
       if (Option.isSome(turn)) {
-        yield* endTurn(session, turn.value, end.outcome, end.at, end.backgroundWork);
+        yield* endTurn(session, turn.value, end.outcome, end.at);
         // It handed off to work that goes on after it: a room's Stop finds it
         // by this turn until the engine no longer reports the work.
         if (end.backgroundWork) {

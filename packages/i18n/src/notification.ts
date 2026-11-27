@@ -32,10 +32,23 @@ export function notificationText(
     switch (notification.kind) {
       case "message":
         return preview ?? t("notification.message");
-      case "question":
+      case "question": {
+        const { routine } = notification;
+        if (routine?.reason === "yes") {
+          return preview === null
+            ? t("notification.routineYes", { name: routine.name })
+            : t("notification.routineYesAsks", { name: routine.name, question: preview });
+        }
+        if (routine?.reason === "failed") {
+          const bot = routine.stepBotId === null ? null : names.botName(routine.stepBotId);
+          return bot === null
+            ? t("notification.routineFailedAlone", { name: routine.name })
+            : t("notification.routineFailed", { name: routine.name, bot });
+        }
         return preview === null
           ? t("notification.question")
           : t("summary.asks", { prompt: preview });
+      }
       case "approval":
         return preview === null
           ? t("notification.approval")

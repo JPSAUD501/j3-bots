@@ -161,8 +161,13 @@ export class Entries extends Context.Service<
       readonly entry: EntryDraft;
       readonly commandId?: CommandId;
     }) => Effect.Effect<Entry>;
-    /** Replaces an entry's content. Its target, place and kind stay; the database refuses otherwise. */
-    readonly update: (entry: Entry) => Effect.Effect<void>;
+    /**
+     * Replaces an entry's content. Its target, place and kind stay; the
+     * database refuses otherwise. With `notify`, the operator hears of it as
+     * of a new entry, when it is one that notifies as it stands now: a
+     * routine's run that came to wait for them, say.
+     */
+    readonly update: (entry: Entry, options?: { readonly notify: boolean }) => Effect.Effect<void>;
     /**
      * Sets `by`'s reaction on a message of `target`, replacing the one it had
      * there, or takes it off (`null`), in the caller's transaction. Answers
@@ -433,7 +438,7 @@ export const layer = Layer.effect(
     );
 
     const update = Effect.fn("Entries.update")(
-      function* (entry: Entry) {
+      function* (entry: Entry, options: { readonly notify: boolean } = { notify: false }) {
         const located = yield* findRow(entry.id);
         if (Option.isNone(located)) return yield* Effect.die("An updated entry exists");
         yield* sql`
@@ -442,6 +447,7 @@ export const layer = Layer.effect(
           WHERE id = ${entry.id}
         `;
         yield* changes.record(scopeOf(located.value.target), entry.id);
+        if (options.notify) yield* notify(located.value.target, entry);
       },
       transaction,
       Effect.orDie,

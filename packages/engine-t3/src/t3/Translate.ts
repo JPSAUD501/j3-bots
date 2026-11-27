@@ -1375,10 +1375,12 @@ const stepStatus = (item: Item): WorkStep["status"] =>
 const stepOf = (item: Item): EngineStep | undefined => {
   const kind = stepKind(item);
   if (kind === undefined) return undefined;
+  const named = item.type === "dynamic_tool" ? dynamicToolStep(item) : undefined;
   return {
     id: WorkStepId.make(localIdFor(item.id)),
     kind,
-    tool: item.type === "dynamic_tool" ? (dynamicToolStep(item)?.tool ?? null) : null,
+    tool: named?.tool ?? null,
+    ...(named?.skill === undefined ? {} : { skill: named.skill }),
     label: stepLabel(item),
     status: stepStatus(item),
     startedAt: item.startedAt ?? item.updatedAt,
@@ -1400,7 +1402,7 @@ const stepsOf = (mirror: Mirror, run: Run) =>
   });
 
 const fingerprint = (step: EngineStep) =>
-  `${step.status}|${step.tool ?? ""}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}|${step.viewedImage ?? ""}`;
+  `${step.status}|${step.tool ?? ""}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}|${step.viewedImage ?? ""}|${step.skill === undefined ? "" : `${step.skill.name}/${step.skill.connector}`}`;
 
 // ---------------------------------------------------------------------------
 // The turn's plan and little ones

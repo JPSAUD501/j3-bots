@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the fake checks PKCE with node:crypto's synchronous SHA-256, as a real server would.
+// @effect-diagnostics nodeBuiltinImport:off -- the fake checks PKCE with node:crypto's synchronous SHA-256, and a client's assertion with its public key, as a real server would.
 import * as NodeCrypto from "node:crypto";
 import { DEFAULT_SESSION_LIMITS } from "@j3-bots/connectors";
 import { ConnectorId, ConnectorOrigin } from "@j3-bots/contracts";
@@ -26,8 +26,9 @@ import { Secrets } from "../secrets/Secrets.ts";
 // A fake MCP server and its authorization server, reached through the client
 // sign-ins use, as a provider would answer them: the 401 challenge, the
 // metadata documents, registration, the authorization step a browser takes,
-// the token endpoint and revocation. It checks what a real server checks
-// (PKCE, the redirect, the resource, the client) and records every request,
+// the token endpoint, with the client credentials grant too, and revocation.
+// It checks what a real server checks (PKCE, the redirect, the resource, the
+// client and its assertion) and records every request,
 // so a test can say what J3 Bots sent and to whom.
 
 export const MCP_URL = "https://mcp.example.test/mcp";
@@ -76,6 +77,10 @@ export interface FakeOptions {
   readonly stall: boolean;
   /** Paths of the authorization server that answer 501, as a server failing there. */
   readonly failing: ReadonlyArray<string>;
+  /** The grants its metadata lists; none listed when null. */
+  readonly grantTypes: ReadonlyArray<string> | null;
+  /** The algorithms its metadata lists for a client's assertion; none listed when null. */
+  readonly signingAlgorithms: ReadonlyArray<string> | null;
 }
 
 const defaultOptions: FakeOptions = {
@@ -98,6 +103,48 @@ const defaultOptions: FakeOptions = {
   catchAll: false,
   stall: false,
   failing: [],
+  grantTypes: null,
+  signingAlgorithms: null,
+};
+
+/** A client's assertion as the fake read it: its header and claims, its signature checked. */
+export interface ReadAssertion {
+  readonly header: Readonly<Record<string, unknown>>;
+  readonly claims: Readonly<Record<string, unknown>>;
+}
+
+const JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+const decodeJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+/** Whether `signature` is `key`'s over `data`, for the JOSE algorithm `algorithm`. */
+const verified = (
+  algorithm: unknown,
+  key: NodeCrypto.KeyObject,
+  data: Buffer,
+  signature: Buffer,
+): boolean => {
+  switch (algorithm) {
+    case "RS256":
+      return NodeCrypto.verify("sha256", data, key, signature);
+    case "PS256":
+      return NodeCrypto.verify(
+        "sha256",
+        data,
+        { key, padding: NodeCrypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 },
+        signature,
+      );
+    case "ES256":
+      return NodeCrypto.verify("sha256", data, { key, dsaEncoding: "ieee-p1363" }, signature);
+    case "ES384":
+      return NodeCrypto.verify("sha384", data, { key, dsaEncoding: "ieee-p1363" }, signature);
+    case "EdDSA":
+      return NodeCrypto.verify(null, data, key, signature);
+    default:
+      return false;
+  }
 };
 
 /** A request the fake received. */
@@ -204,6 +251,38 @@ export class FakeAuthorizationServer {
     return `${prefix}-${this.counter}`;
   }
 
+  /** Public keys of the clients that prove themselves with an assertion. */
+  readonly keys = new Map<string, NodeCrypto.KeyObject>();
+  /** Every client assertion it took, its signature good. */
+  readonly assertions: Array<ReadAssertion> = [];
+
+  /**
+   * Registers a client the operator made for a service, which proves itself
+   * with `secret`, in a Basic header or the body.
+   */
+  addSecretClient(clientId: string, secret: string) {
+    this.clients.set(clientId, { secret, method: "client_secret_basic", redirectUris: [] });
+  }
+
+  /**
+   * Registers a client the operator made for a service, which proves itself
+   * with an assertion signed by a P-256 key the service made for it: its
+   * private key, as PKCS #8 PEM, as the service hands it to the operator.
+   */
+  addKeyClient(clientId: string): string {
+    const { publicKey, privateKey } = NodeCrypto.generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+    });
+    this.keys.set(clientId, publicKey);
+    return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  }
+
+  /** Revokes a client: nothing it presents is taken from now on. */
+  revokeClient(clientId: string) {
+    this.clients.delete(clientId);
+    this.keys.delete(clientId);
+  }
+
   /** Registers a client the operator made at this provider, as for their own app. */
   addClient(clientId: string, secret: string | null) {
     this.clients.set(clientId, {
@@ -296,7 +375,18 @@ export class FakeAuthorizationServer {
       ...(this.options.revocation ? { revocation_endpoint: `${AS_ORIGIN}/revoke` } : {}),
       response_types_supported: ["code"],
       code_challenge_methods_supported: this.options.s256 ? ["S256"] : ["plain"],
-      token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+      token_endpoint_auth_methods_supported: [
+        "none",
+        "client_secret_post",
+        "client_secret_basic",
+        "private_key_jwt",
+      ],
+      ...(this.options.grantTypes === null
+        ? {}
+        : { grant_types_supported: this.options.grantTypes }),
+      ...(this.options.signingAlgorithms === null
+        ? {}
+        : { token_endpoint_auth_signing_alg_values_supported: this.options.signingAlgorithms }),
       ...(this.options.issParameter
         ? { authorization_response_iss_parameter_supported: true }
         : {}),
@@ -316,8 +406,36 @@ export class FakeAuthorizationServer {
     }
   }
 
+  /**
+   * The client an assertion proves (RFC 7523 §3): signed by its key, naming
+   * it as issuer and subject and this server's issuer, alone, as audience.
+   * Null when it proves none.
+   */
+  private asserted(form: URLSearchParams): string | null {
+    const [header = "", claims = "", signature = ""] = (form.get("client_assertion") ?? "").split(
+      ".",
+    );
+    const readHeader = decodeJson(Buffer.from(header, "base64url").toString());
+    const readClaims = decodeJson(Buffer.from(claims, "base64url").toString());
+    if (Option.isNone(readHeader) || Option.isNone(readClaims)) return null;
+    const clientId = readClaims.value["sub"];
+    if (typeof clientId !== "string" || readClaims.value["iss"] !== clientId) return null;
+    const key = this.keys.get(clientId);
+    if (key === undefined) return null;
+    const signed = verified(
+      readHeader.value["alg"],
+      key,
+      Buffer.from(`${header}.${claims}`),
+      Buffer.from(signature, "base64url"),
+    );
+    if (!signed || readClaims.value["aud"] !== this.issuer) return null;
+    this.assertions.push({ header: readHeader.value, claims: readClaims.value });
+    return clientId;
+  }
+
   /** The client a token or revocation request authenticates as, or null when it fails to. */
   private client(headers: Headers, form: URLSearchParams): string | null {
+    if (form.get("client_assertion_type") === JWT_BEARER) return this.asserted(form);
     const basic = headers.get("authorization");
     let id = form.get("client_id");
     let secret = form.get("client_secret");
@@ -436,6 +554,22 @@ export class FakeAuthorizationServer {
         }
         return this.tokens(clientId, code.scope);
       }
+      if (form.get("grant_type") === "client_credentials") {
+        if (
+          this.options.grantTypes !== null &&
+          !this.options.grantTypes.includes("client_credentials")
+        ) {
+          return json({ error: "unsupported_grant_type" }, 400);
+        }
+        // A client signing in as a service gets no refresh token (RFC 6749 §4.4.3).
+        const access = this.next("access");
+        this.issued.push(access);
+        return json({
+          access_token: access,
+          token_type: "Bearer",
+          ...(this.options.lifetime === null ? {} : { expires_in: this.options.lifetime }),
+        });
+      }
       if (form.get("grant_type") === "refresh_token") {
         const presented = form.get("refresh_token") ?? "";
         if (this.refreshTokens.get(presented) !== clientId) {
@@ -547,6 +681,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     env: [],
     formSecrets: [],
     formValues: [],
+    service: null,
   });
   yield* store.insert({
     id: NOTION,

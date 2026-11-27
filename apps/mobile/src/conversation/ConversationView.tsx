@@ -43,6 +43,7 @@ import type {
   EntryId,
   EntryOrder,
   EntryTarget,
+  EngineStatus,
   MessageEntry,
   Mentions,
   Room,
@@ -75,7 +76,7 @@ import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
-import { AiConnect } from "../components/AiConnect.tsx";
+import { AiConnect, useMobileAiConnect } from "../components/AiConnect.tsx";
 import { PendingButton } from "../components/form.tsx";
 import { StateMark } from "../components/States.tsx";
 import type { Navigation } from "../navigation.tsx";
@@ -607,11 +608,17 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
       <Body>
         {held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
       </Body>
-      {held !== null && held._tag !== "limit" && (
-        <View className="w-full max-w-sm">
-          <AiConnect engine={engine} />
-        </View>
-      )}
+      {held !== null && held._tag !== "limit" && <WaitingForAi engine={engine} />}
+    </View>
+  );
+}
+
+/** What connects the AI a bot's hello waits for, under the bot. */
+function WaitingForAi({ engine }: { readonly engine: EngineStatus | null }) {
+  const ai = useMobileAiConnect(engine);
+  return (
+    <View className="w-full max-w-sm">
+      <AiConnect ai={ai} />
     </View>
   );
 }
