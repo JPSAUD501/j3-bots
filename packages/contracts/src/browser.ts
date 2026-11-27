@@ -165,6 +165,29 @@ export const BrowserTabs = Schema.Struct({ tabs: Schema.Array(BrowserTab) });
 export type BrowserTabs = typeof BrowserTabs.Type;
 
 // ---------------------------------------------------------------------------
+// Sign-ins
+
+/**
+ * A site, as the person signs in to it: its registrable domain in ASCII
+ * ("example.co.uk", "xn--bcher-kva.example"), without a scheme or a port.
+ */
+export const BrowserSite = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253));
+export type BrowserSite = typeof BrowserSite.Type;
+
+/**
+ * The sites the person is signed in to in J3 Bots' browser, which every bot
+ * that may browse uses too: the sites a tab showed whose cookies the shared
+ * sign-ins hold. `unreadable` when the sign-ins cannot be opened now (the
+ * secrets' key is missing or another one): the list is then empty, and
+ * nothing is signed out because of it.
+ */
+export const BrowserSignIns = Schema.Struct({
+  status: Schema.Literals(["ready", "unreadable"]),
+  sites: Schema.Array(Schema.Struct({ site: BrowserSite })),
+});
+export type BrowserSignIns = typeof BrowserSignIns.Type;
+
+// ---------------------------------------------------------------------------
 // The media socket
 
 /** The largest picture a viewer may ask for, in device pixels. */

@@ -196,6 +196,7 @@ overrides:
   '@types/node': 24.12.4
   effect: 4.1.5
   pdfjs-dist>@napi-rs/canvas: '-'
+  tldts-core: 7.5.0
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
 
@@ -483,6 +484,9 @@ importers:
       playwright-core:
         specifier: 1.64.1
         version: 1.64.1
+      tldts:
+        specifier: 7.5.0
+        version: 7.5.0
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.5
@@ -5629,6 +5633,13 @@ packages:
   tinyrainbow@3.2.0:
     resolution: {integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==}
     engines: {node: '>=14.0.0'}
+
+  tldts-core@7.5.0:
+    resolution: {integrity: sha512-1kVus7QxknwQLIyAVIziz32NkXyENMsBFOSEe3oB4MoUPyCKnzPgkrNLc03PZwzKFb3+GbuKbzoEkT94W3CO5w==}
+
+  tldts@7.5.0:
+    resolution: {integrity: sha512-qHpu8BE4S/si6A0hUBO8TWQ9C7cY69WGSFww5QM20YNnOssXfHS9Vu/Cm0+lkesSLULY/wa0NUg8zONQrnzyWA==}
+    hasBin: true
 
   tmp-promise@3.0.3:
     resolution: {integrity: sha512-RwM7MoPojPxsOBYnyd2hy0bxtIlVrihNs9pj5SUvY8Zz1sQcQG2tG1hSr8PDxfgEB8RNKDhqbIlroIarSNDNsQ==}
@@ -11288,6 +11299,12 @@ snapshots:
   tinypool@2.2.0: {}
 
   tinyrainbow@3.2.0: {}
+
+  tldts-core@7.5.0: {}
+
+  tldts@7.5.0:
+    dependencies:
+      tldts-core: 7.5.0
 
   tmp-promise@3.0.3:
     dependencies:

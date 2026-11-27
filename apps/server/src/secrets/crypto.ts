@@ -12,7 +12,10 @@ import * as Redacted from "effect/Redacted";
 //   value's record id and field name as associated data, so a sealed value
 //   cannot be moved to another record or field;
 // - an export seals its copy under a key scrypt derives from the export's
-//   passphrase, with a random salt and the parameters the archive records.
+//   passphrase, with a random salt and the parameters the archive records;
+// - a subkey for one use of the data key's own, such as the browser's
+//   sign-ins, which HKDF-SHA256 derives from the data key and the use's name,
+//   so what one use seals no other opens.
 //
 // The associated data still says "vault": values sealed before secrets keep
 // opening under it.
@@ -62,6 +65,15 @@ export const kdfParamsInRange = ({ n, r, p }: KdfParams): boolean =>
   p >= LEAST_KDF_PARAMS.p &&
   p <= 16 &&
   128 * n * r * p <= MAX_KDF_MEMORY;
+
+/** What a subkey is for: each a key of its own. */
+export type SubkeyPurpose = "browser-sign-ins";
+
+/** The subkey of `dataKey` for `purpose`, which the caller zeroes when done with it. */
+export const deriveSubkey = (dataKey: Uint8Array, purpose: SubkeyPurpose): Buffer =>
+  Buffer.from(
+    NodeCrypto.hkdfSync("sha256", dataKey, new Uint8Array(0), `j3-bots ${purpose} v1`, KEY_BYTES),
+  );
 
 /** What a value is bound to: its record and its field. NUL never appears in either. */
 const fieldAad = (recordId: string, field: string) =>

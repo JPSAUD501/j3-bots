@@ -44,6 +44,8 @@ export class Layout extends Context.Service<
     /** What the release feed last found (`releases/ReleaseFeed.ts`). */
     readonly releaseFeed: string;
     readonly attachments: string;
+    /** J3 Bots' own browser's folder: its sign-ins and its binary. */
+    readonly browser: string;
     /**
      * The folder a command connector's npm launcher runs in, which holds only
      * an empty `package.json` (`CommandSessionOptions.launcherFolder`).
@@ -119,6 +121,7 @@ export const layer = Layer.effect(
       shippedSkills: layout.shippedSkills,
       releaseFeed: layout.releaseFeed,
       attachments: layout.attachments,
+      browser: layout.browser,
       launcherFolder: layout.launcherFolder,
       writable,
       writeFile,

@@ -27,7 +27,14 @@ import {
   Sequence,
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
-import { BrowserTabRef, BrowserTabs, BrowserWebAddress, SharedBrowserTabs } from "./browser.ts";
+import {
+  BrowserSignIns,
+  BrowserSite,
+  BrowserTabRef,
+  BrowserTabs,
+  BrowserWebAddress,
+  SharedBrowserTabs,
+} from "./browser.ts";
 import {
   CommandLine,
   Connector,
@@ -1043,13 +1050,26 @@ export const SettingsRpcs = RpcGroup.make(
    */
   Rpc.make("settings.deviceTimeZone", { payload: { timeZone: TimeZone } }),
   /**
-   * Signs the bots' browser out of every site: deletes the cookies and site
-   * data of the one browser profile they all use, on the server's computer.
-   * Pages open in it close. `Conflict("engine-unavailable")` when the engine
-   * cannot take it now. A server older than this RPC answers it with a
-   * defect.
+   * Signs J3 Bots' browser out of every site, everywhere: deletes every
+   * cookie and every site's storage of the shared sign-ins, on the server and
+   * on each desktop, at once on those connected and before anything else on
+   * one that connects later. Open tabs stay open, signed out. A server older
+   * than this RPC answers it with a defect.
    */
   Rpc.make("browser.signOut", { error: Conflict }),
+  /**
+   * The sites the person is signed in to (`BrowserSignIns`), now, then again
+   * on every change. A server older than this RPC answers it with a defect,
+   * and a client then shows no list.
+   */
+  Rpc.make("browser.signIns", { success: BrowserSignIns, stream: true }),
+  /**
+   * Signs out of one site everywhere, as `browser.signOut` does for all:
+   * the cookies of the site and of its subdomains, and their storage. A site
+   * the person is not signed in to signs out of nothing. A server older than
+   * this RPC answers it with a defect.
+   */
+  Rpc.make("browser.signOutSite", { payload: { site: BrowserSite }, error: Conflict }),
 );
 
 /**
