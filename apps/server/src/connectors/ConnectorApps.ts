@@ -32,13 +32,8 @@ import { Ids } from "../Ids.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import type { CallPlace } from "../turns/ConnectorSteps.ts";
-import {
-  type Audience,
-  AudienceColumn,
-  audienceColumns,
-  audienceOf,
-  targetOf,
-} from "../turns/model.ts";
+import { type Audience, AudienceColumn, audienceColumns, audienceOf } from "../turns/model.ts";
+import { liveTarget } from "../turns/liveTarget.ts";
 import type { OpenedApp } from "./Connectors.ts";
 import { Connectors } from "./Connectors.ts";
 
@@ -97,6 +92,7 @@ const TurnPlace = Schema.Struct({
   purpose: Schema.Literals(["main", "side"]),
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
+  finished_at: Schema.NullOr(Schema.String),
 });
 
 /** Where a view is shown: its entry's room, or, for a view of a bot's conversation, none. */
@@ -136,7 +132,7 @@ export const layer = Layer.effect(
       Request: Schema.Struct({ sessionId: Schema.String, turnId: Schema.String }),
       Result: TurnPlace,
       execute: ({ sessionId, turnId }) => sql`
-        SELECT s.purpose, t.audience, t.audience_room_id
+        SELECT s.purpose, t.audience, t.audience_room_id, t.finished_at
         FROM turns t JOIN sessions s ON s.id = t.session_id
         WHERE t.session_id = ${sessionId} AND t.engine_turn_id = ${turnId}
       `,
@@ -164,14 +160,20 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Where the call's turn shows its reply: the bot's conversation, or the
-     * room it speaks in while that room is there. A routine's turn has none.
+     * Who the call's turn speaks to while it runs: the bot's conversation, or
+     * a room. A routine's turn speaks to no one, and a turn that ended, as
+     * when the operator stopped it before its call came back, no more.
      */
     const audienceOfCall = Effect.fn("ConnectorApps.audienceOfCall")(function* (place: CallPlace) {
       const turn = yield* turnOf({ sessionId: place.sessionId, turnId: place.turnId });
-      if (Option.isNone(turn) || turn.value.purpose === "side") return Option.none<Audience>();
+      if (Option.isNone(turn) || turn.value.purpose === "side" || turn.value.finished_at !== null) {
+        return Option.none<Audience>();
+      }
       return Option.some(audienceOf(turn.value));
     });
+
+    /** Where the turn's reply goes, while its room is there and the bot is one of its members. */
+    const targetOfCall = liveTarget(sql);
 
     /** How many apps the call's turn shows already. */
     const shownBy = (place: CallPlace) =>
@@ -206,7 +208,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const audience = yield* audienceOfCall(input.place);
           if (Option.isNone(audience)) return false;
-          const target = targetOf(input.botId, audience.value);
+          const target = yield* targetOfCall(input.botId, audience.value);
           if (target === null) return false;
           if ((yield* shownBy(input.place)) >= MAX_CONNECTOR_APPS_PER_TURN) return false;
           const digestKey = yield* keepDocument(app.document);

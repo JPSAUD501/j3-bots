@@ -12,6 +12,7 @@ import { APP_SHOWN_LINE } from "@j3-bots/prompts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Bots } from "../bots/Bots.ts";
 import { fakeConnector, reachFakes } from "../testing/connectors.ts";
@@ -29,6 +30,8 @@ import {
   roomOf,
   sendInRoom,
   sendToBot,
+  turnEnded,
+  until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
@@ -44,11 +47,21 @@ const STOCK = "<p>Ridge 7: 2 in stock</p>";
 
 /**
  * A shop's connector: `stock` opens an app, `hold` is the app's alone, and
- * `refund` the bot's alone. `document` is what its app's address reads as.
+ * `refund` the bot's alone. `document` is what its app's address reads as;
+ * its tools answer once `answered` settles, at once without it.
  */
-const shop = (document: string = STOCK) =>
+const shop = (document: string = STOCK, answered?: Promise<void>) =>
   fakeConnector({
     name: "Wheelhouse",
+    ...(answered === undefined
+      ? {}
+      : {
+          answer: (name: string) => ({
+            _tag: "result" as const,
+            text: `${name} answered`,
+            after: answered,
+          }),
+        }),
     tools: [
       {
         name: "stock",
@@ -201,6 +214,39 @@ it.effect(
         baseUriDomains: [],
       });
       assert.strictEqual(view.tool.name, "stock");
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
+);
+
+it.effect(
+  "answers the bot and shows no app when its call comes back after the turn ended",
+  () =>
+    Effect.gen(function* () {
+      let answer = () => {};
+      const answered = new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      const connector = yield* shop(STOCK, answered);
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
+      const call = yield* Effect.forkChild(
+        callInTurn(ana, "wheelhouse__stock", { model: "Ridge 7" }, "call-1"),
+      );
+      yield* until(Effect.map(connector.calls, (calls) => calls.length > 0));
+
+      // The turn ends while the connector is still answering, as when the operator stops it.
+      yield* (yield* TestEngineControl).finishTurn({
+        sessionId: ana.session,
+        turnId: ana.turnId,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(ana.bot.id);
+      answer();
+
+      const reply = yield* Fiber.join(call);
+      assert.include(textOf(reply), "stock answered");
+      assert.notInclude(textOf(reply), APP_SHOWN_LINE);
+      assert.deepStrictEqual(appsIn(yield* conversation(ana.bot.id)), []);
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );
@@ -393,6 +439,8 @@ it.effect(
         yield* apps.setContext({ viewId, context: { text: "", structured: null } }),
         { _tag: "kept" },
       );
+      // What it set last, unread when the operator takes the connector away, goes with it.
+      yield* apps.setContext({ viewId, context: { text: "Picked size S.", structured: null } });
       yield* connector.grant([]);
       assert.deepStrictEqual(
         yield* apps.setContext({ viewId, context: { text: "Picked size L.", structured: null } }),

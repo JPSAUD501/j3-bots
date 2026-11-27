@@ -40,6 +40,8 @@ type FakeAnswer =
       readonly text: string | null;
       readonly isError?: boolean;
       readonly structuredContent?: Readonly<Record<string, unknown>>;
+      /** Sent once it settles, as from a server slow to answer; at once without it. */
+      readonly after?: Promise<void>;
     }
   | { readonly _tag: "raw"; readonly body: string }
   | { readonly _tag: "hang" }
@@ -349,13 +351,17 @@ export const fakeMcpServer = (options: FakeOptions) =>
                   response.end(answer.body);
                   return;
                 }
-                return reply(response, rpc.id, {
-                  content: answer.text === null ? [] : [{ type: "text", text: answer.text }],
-                  isError: answer.isError ?? false,
-                  ...(answer.structuredContent === undefined
-                    ? {}
-                    : { structuredContent: answer.structuredContent }),
-                });
+                const { id } = rpc;
+                const answered = () =>
+                  reply(response, id, {
+                    content: answer.text === null ? [] : [{ type: "text", text: answer.text }],
+                    isError: answer.isError ?? false,
+                    ...(answer.structuredContent === undefined
+                      ? {}
+                      : { structuredContent: answer.structuredContent }),
+                  });
+                if (answer.after !== undefined) return void answer.after.then(answered);
+                return answered();
               }
               case "skills/list":
               case "skills/get":
