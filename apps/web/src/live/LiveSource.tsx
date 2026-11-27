@@ -58,7 +58,7 @@ import {
   type IntentFailure,
   type IntentResult,
   type J3Client,
-  type Loaded,
+  loadedList,
   type MemoryEdit,
   type UpdateResult,
 } from "@j3-bots/client-runtime";
@@ -822,9 +822,6 @@ const loadingPair: PairView = {
   hasOlder: false,
   loadingOlder: false,
 };
-/** A read's value once loaded; a list that is gone reads as empty. */
-const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
-  loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
 
 /** The conversation or room the URL names. */
 const targetOf = (botId: BotId | null, roomId: RoomId | null): EntryTarget | null =>
@@ -895,6 +892,9 @@ function LiveShell({
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
   const routines = useRoutines(detailsBotId);
+  // The bot whose card shows: its routines are read while it does, unless its details hold them.
+  const [cardBotId, setCardBot] = useState<BotId | null>(null);
+  const cardRoutines = useRoutines(cardBotId === detailsBotId ? null : cardBotId);
   // The routine whose runs show over its bot's details, as the address names it.
   const runsOf: RoutineId | null = detailsBotId === null ? null : (search.routine ?? null);
   // Kept while its dialog fades out.
@@ -1055,6 +1055,15 @@ function LiveShell({
           connectorId: opened.connectorId,
           signIn: true,
         });
+      // What a bot's card in quick access leads to.
+      case "details":
+        return void navigate({
+          to: "/bots/$botId",
+          params: { botId: opened.botId },
+          search: { details: true },
+        });
+      case "new-room":
+        return setRoomForm({ _tag: "create", members: opened.members });
     }
   });
   // A link to a conversation or a room opens it as a notification click does,
@@ -1258,7 +1267,12 @@ function LiveShell({
     ...composer.data,
     submitting: cardSubmitting,
     workSteps: folds.steps,
-    routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
+    routines: (botId) =>
+      botId === detailsBotId
+        ? loadedList(routines)
+        : botId === cardBotId
+          ? loadedList(cardRoutines)
+          : null,
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
     connectors,
@@ -1530,6 +1544,8 @@ function LiveShell({
     shareBotTemplate: (botId) => shareTemplate(botId),
     newRoom: () => setRoomForm({ _tag: "create" }),
     startRoomWith: (botIds) => setRoomForm({ _tag: "create", members: botIds }),
+    sendQuickMessage: (input) => j3.send(input),
+    setCardBot,
     editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),
     archiveRoom: (roomId) =>
       j3.updateRoom(roomId, { archived: true }).then((result) => {

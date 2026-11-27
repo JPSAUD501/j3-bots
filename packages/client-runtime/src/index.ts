@@ -133,7 +133,7 @@ export {
   ProviderSetup,
   type SignInView,
 } from "./stores/ProviderSetup.ts";
-export type { Loaded } from "./stores/reads.ts";
+export { type Loaded, loadedList } from "./stores/reads.ts";
 export {
   type BotPlacement,
   isHidden,
