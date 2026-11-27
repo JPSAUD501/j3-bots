@@ -75,7 +75,6 @@ const lastStatus = (view: ReturnType<typeof useServerUpdate>): ReceivedUpdateSta
     case "lost":
       return view.last;
     case "unread":
-    case "unsupported":
       return null;
   }
 };
@@ -114,8 +113,7 @@ function useStartServerUpdate() {
     setPending(false);
     switch (result._tag) {
       case "started":
-      case "unsupported":
-        // The view says what started, or that the server updates on its machine.
+        // The view says what started.
         return;
       case "refused":
         if (result.reason === "work-running" && !stopWork) {
@@ -241,7 +239,7 @@ export function ServerUpdatePanel(props: { readonly place: "settings" | "behind"
           onChange={(next) => void request(() => client.serverUpdate.setChannel(next))}
         />
       )}
-      {controls && view._tag !== "unsupported" && (
+      {controls && (
         <View className="items-start">
           <Button
             label={t("update.check")}

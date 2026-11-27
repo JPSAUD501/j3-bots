@@ -4870,10 +4870,6 @@ function UpdatesGallerySection() {
           server={serverUpdate(said(s.refused))}
         />
         <UpdatesFrame
-          label="A server older than updates from the apps"
-          server={serverUpdate(serverViews.unsupported)}
-        />
-        <UpdatesFrame
           label="The app: downloading"
           app={appUpdate(appPhases.downloading)}
           height={300}
@@ -4999,13 +4995,6 @@ function UpdatesGallerySection() {
             server={desktopServer}
             mismatch={{ behind: "server", serverVersion: "0.3.1" }}
             serverUpdate={serverUpdate(said({ ...s.startedByHand, available: null }))}
-          />
-        </Frame>
-        <Frame label="Mismatch: the server predates the update routes" width={390} height={560}>
-          <Incompatible
-            server={desktopServer}
-            mismatch={{ behind: "server", serverVersion: "0.3.0" }}
-            serverUpdate={serverUpdate(serverViews.unsupported)}
           />
         </Frame>
         <Frame label="Mismatch: the app is behind, it updates in place" width={390} height={560}>

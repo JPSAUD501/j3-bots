@@ -1848,8 +1848,6 @@ export const en = {
   "serverUpdate.working": "Updating the server…",
   "serverUpdate.lost": "The update hasn’t finished. On the server’s machine, run this to see why:",
   "serverUpdate.unreachable": "Couldn’t reach the server to see its updates.",
-  "serverUpdate.unsupported":
-    "This server is older than updates from the apps. Update it on its machine:",
   "serverUpdate.unable.desktopManaged":
     "This server runs inside the J3 Bots app on its computer. Updating that app updates it.",
   "serverUpdate.unable.startedByHand":

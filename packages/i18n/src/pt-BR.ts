@@ -1881,8 +1881,6 @@ const sentences = {
   "serverUpdate.lost":
     "A atualização não terminou. Na máquina do servidor, rode isto para ver o motivo:",
   "serverUpdate.unreachable": "Não deu para falar com o servidor para ver as atualizações.",
-  "serverUpdate.unsupported":
-    "Este servidor é anterior às atualizações pelos apps. Atualize na máquina dele:",
   "serverUpdate.unable.desktopManaged":
     "Este servidor roda dentro do app J3 Bots no computador dele. Atualizar esse app atualiza o servidor.",
   "serverUpdate.unable.startedByHand":

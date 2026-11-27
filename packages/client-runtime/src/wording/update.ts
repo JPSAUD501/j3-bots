@@ -126,8 +126,6 @@ export function serverUpdateLine(view: ServerUpdateView, i18n: I18n): ServerUpda
   switch (view._tag) {
     case "unread":
       return null;
-    case "unsupported":
-      return line(t("serverUpdate.unsupported"), "quiet", { command: "j3-bots update" });
     case "unreachable":
       return line(t("serverUpdate.unreachable"), "quiet");
     case "restarting":

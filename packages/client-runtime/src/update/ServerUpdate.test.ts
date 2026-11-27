@@ -219,12 +219,14 @@ describe("updating the server from a client", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("tells a server without the update routes from one that does not answer", () =>
+  it.effect("reads a server that answers outside the contract, or not at all, as not reached", () =>
     Effect.gen(function* () {
-      const old = yield* setUp({});
-      yield* old.update.refresh;
-      assert.strictEqual(old.update.view.get()._tag, "unsupported");
-      assert.deepStrictEqual(yield* old.update.start("0.3.2", false), { _tag: "unsupported" });
+      const elsewhere = yield* setUp({});
+      yield* elsewhere.update.refresh;
+      assert.deepStrictEqual(elsewhere.update.view.get(), { _tag: "unreachable", last: null });
+      assert.deepStrictEqual(yield* elsewhere.update.start("0.3.2", false), {
+        _tag: "unreachable",
+      });
 
       const away = yield* setUp({ [UPDATE_HTTP_PATHS.status]: ["no-answer"] });
       yield* away.update.refresh;
