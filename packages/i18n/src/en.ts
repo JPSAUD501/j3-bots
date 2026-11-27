@@ -689,7 +689,6 @@ export const en = {
   "routine.sentence.afterYesIf": "{bot} {action}, after {you} say yes if {onlyIf}",
   "routine.sentence.you": "you",
   "routine.sentence.goesOnIf": "It goes on only if {check}.",
-  "routine.step.state.rest": "Step",
   "routine.step.state.todo": "To do",
   "routine.step.state.doing": "Doing now",
   "routine.step.state.done": "Done",

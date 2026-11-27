@@ -114,11 +114,11 @@ describe("a run as the card tells it", () => {
       "Monday emails, stopped quietly: Nothing new",
     );
     expect(miniRail(run)).toEqual([
-      { _tag: "bot", botId: maya, mark: "done" },
-      { _tag: "condition", stopped: true },
-      { _tag: "bot", botId: ana, mark: "open" },
-      { _tag: "you", mark: "open" },
-      { _tag: "bot", botId: bruno, mark: "open" },
+      { _tag: "bot", index: 0, botId: maya, mark: "done" },
+      { _tag: "condition", index: 1, stopped: true },
+      { _tag: "bot", index: 2, botId: ana, mark: "open" },
+      { _tag: "you", index: 3, mark: "open" },
+      { _tag: "bot", index: 4, botId: bruno, mark: "open" },
     ]);
   });
 

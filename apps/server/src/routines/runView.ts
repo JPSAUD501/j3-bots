@@ -59,14 +59,13 @@ export const RUN_COLUMNS = `
 `;
 
 /** A run of a routine with several steps, with what its card names. */
-export const CardRow = Schema.Struct({
+const CardRow = Schema.Struct({
   ...RunRow.fields,
   entry_id: Schema.NullOr(EntryId),
   owner_id: BotId,
   name: Schema.String,
   trigger_json: json(RoutineTrigger),
 });
-export type CardRow = typeof CardRow.Type;
 
 const StepRow = Schema.Struct({
   position: NonNegativeInt,

@@ -70,6 +70,10 @@ export type Station =
 
 export type StationOf<T extends Station["_tag"]> = Extract<Station, { readonly _tag: T }>;
 
+/** A station's place on the rail, as a list's key: the trigger, or its step's place. */
+export const stationKey = (station: Station): string =>
+  station._tag === "trigger" ? "trigger" : `step-${station.index}`;
+
 const botState = (run: RoutineRunStep): BotStationState => {
   switch (run.state) {
     case "doing":
@@ -277,10 +281,11 @@ export function trackWindow(stations: ReadonlyArray<Station>): TrackWindow {
 }
 
 /** One mark of a run's mini rail. */
-export type MiniMark =
+export type MiniMark = { readonly index: number } & (
   | { readonly _tag: "bot"; readonly botId: BotId; readonly mark: "done" | "open" | "failed" }
   | { readonly _tag: "you"; readonly mark: "done" | "open" | "failed" }
-  | { readonly _tag: "condition"; readonly stopped: boolean };
+  | { readonly _tag: "condition"; readonly stopped: boolean }
+);
 
 /**
  * A run in small, for its row in the routine's runs: a dot per bot step and
@@ -289,7 +294,7 @@ export type MiniMark =
  * is a red ring. The line ends where the run ended.
  */
 export function miniRail(run: RoutineRun): ReadonlyArray<MiniMark> {
-  return (run.steps ?? []).map((step): MiniMark => {
+  return (run.steps ?? []).map((step, index): MiniMark => {
     const mark = (): "done" | "open" | "failed" =>
       step.state === "failed"
         ? "failed"
@@ -302,11 +307,11 @@ export function miniRail(run: RoutineRun): ReadonlyArray<MiniMark> {
           : "done";
     switch (step.step._tag) {
       case "bot":
-        return { _tag: "bot", botId: step.step.botId, mark: mark() };
+        return { _tag: "bot", index, botId: step.step.botId, mark: mark() };
       case "condition":
-        return { _tag: "condition", stopped: step.state === "stopped" };
+        return { _tag: "condition", index, stopped: step.state === "stopped" };
       case "yes":
-        return { _tag: "you", mark: step.state === "no" ? "open" : mark() };
+        return { _tag: "you", index, mark: step.state === "no" ? "open" : mark() };
     }
   });
 }

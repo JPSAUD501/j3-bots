@@ -126,6 +126,7 @@ export {
   endReason,
   failureHelp,
   foldLine,
+  keyedRuns,
   routineSentence,
   type SentenceRun,
   sentenceText,

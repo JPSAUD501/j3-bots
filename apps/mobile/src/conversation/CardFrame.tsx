@@ -69,22 +69,29 @@ export function useClosedHere(pending: boolean): {
  * calm tag, the frame drawn in the waiting color. In a column narrower than
  * a tablet the card takes the whole column. When its height changes, as its
  * actions fold away, it moves on a spring; `pulse`, once set, gives it one
- * small pulse, as an approval does.
+ * small pulse, as an approval does. `attention` "blocked" draws it in the
+ * blocked color instead, for something that failed and needs the operator;
+ * `tag` names what the card waits on, or, without attention, where it stands
+ * in a quiet tag.
  */
 export function CardFrame({
   icon,
   title,
   attention,
+  tag,
   pulse = false,
   children,
 }: {
   readonly icon: LucideIcon;
   readonly title: string;
-  readonly attention: boolean;
+  readonly attention: boolean | "blocked";
+  readonly tag?: string;
   readonly pulse?: boolean;
   readonly children: ReactNode;
 }) {
   const { t } = useI18n();
+  const blocked = attention === "blocked";
+  const tagText = tag ?? (attention === false ? null : t("card.waiting"));
   const widths = use(EntryWidths);
   const full = widths.column < layout.breakpoints.tablet;
   const scale = useSharedValue(1);
@@ -106,24 +113,32 @@ export function CardFrame({
           .stiffness(slide.stiffness)
           .damping(slide.damping)}
         style={[pulsing, full ? undefined : { maxWidth: widths.card }]}
-        className={`gap-2.5 rounded-bubble border bg-surface p-3 ${full ? "self-stretch" : "self-start"} ${attention ? "border-waiting/45" : "border-border"}`}
+        className={`gap-2.5 rounded-bubble border bg-surface p-3 ${full ? "self-stretch" : "self-start"} ${blocked ? "border-blocked/45" : attention ? "border-waiting/45" : "border-border"}`}
       >
         <View className="flex-row items-center gap-2.5">
           <View
-            className={`size-7 items-center justify-center rounded-md ${attention ? "bg-waiting-surface" : "bg-muted"}`}
+            className={`size-7 items-center justify-center rounded-md ${blocked ? "bg-blocked-surface" : attention ? "bg-waiting-surface" : "bg-muted"}`}
           >
             <Icon
               icon={icon}
               size={16}
-              color={attention ? "accent-waiting" : "accent-muted-foreground"}
+              color={
+                blocked
+                  ? "accent-blocked"
+                  : attention
+                    ? "accent-waiting"
+                    : "accent-muted-foreground"
+              }
             />
           </View>
           <Text accessibilityRole="header" className="flex-1 text-sm font-semibold text-foreground">
             {title}
           </Text>
-          {attention && (
-            <Text className="rounded-pill bg-waiting-surface px-2.5 py-0.5 text-2xs font-medium text-waiting">
-              {t("card.waiting")}
+          {tagText !== null && (
+            <Text
+              className={`rounded-pill px-2.5 py-0.5 text-2xs font-medium ${blocked ? "bg-blocked-surface text-blocked" : attention ? "bg-waiting-surface text-waiting" : "bg-muted text-muted-foreground"}`}
+            >
+              {tagText}
             </Text>
           )}
         </View>

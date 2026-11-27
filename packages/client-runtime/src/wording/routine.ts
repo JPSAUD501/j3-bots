@@ -116,6 +116,21 @@ function merge(runs: ReadonlyArray<SentenceRun>): ReadonlyArray<SentenceRun> {
   return merged;
 }
 
+/**
+ * Each run with where it starts in the sentence, as its key: it stays while
+ * the sentence does.
+ */
+export function keyedRuns(
+  runs: ReadonlyArray<SentenceRun>,
+): ReadonlyArray<SentenceRun & { readonly key: number }> {
+  let start = 0;
+  return runs.map((run) => {
+    const key = start;
+    start += run.text.length;
+    return { ...run, key };
+  });
+}
+
 /** The sentence as plain text: the card's description, for whoever cannot see it. */
 export const sentenceText = (runs: ReadonlyArray<SentenceRun>): string =>
   runs.map((run) => run.text).join("");
@@ -134,13 +149,16 @@ const statusWords: Record<TrackStatus, KeyWith<never>> = {
 export const trackTag = (status: TrackStatus, ctx: PresentationContext): string =>
   ctx.i18n.t(statusWords[status]);
 
-/** Where a station stands, in words, read first for whoever cannot see its mark. */
-export function stationStateText(station: Station, ctx: PresentationContext): string {
+/**
+ * Where a station stands, in words, read first for whoever cannot see its
+ * mark; null for the trigger and for a routine at rest, which stand nowhere.
+ */
+export function stationStateText(station: Station, ctx: PresentationContext): string | null {
   const { t } = ctx.i18n;
-  if (station._tag === "trigger") return t("routine.step.state.rest");
+  if (station._tag === "trigger") return null;
   switch (station.state) {
     case "rest":
-      return t("routine.step.state.rest");
+      return null;
     case "todo":
       return t("routine.step.state.todo");
     case "doing":

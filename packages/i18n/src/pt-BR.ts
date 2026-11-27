@@ -687,7 +687,6 @@ const sentences = {
   "routine.sentence.afterYesIf": "{bot} {action}, depois que {you} disser sim se {onlyIf}",
   "routine.sentence.you": "você",
   "routine.sentence.goesOnIf": "Ela só segue se {check}.",
-  "routine.step.state.rest": "Etapa",
   "routine.step.state.todo": "A fazer",
   "routine.step.state.doing": "Fazendo agora",
   "routine.step.state.done": "Feita",
