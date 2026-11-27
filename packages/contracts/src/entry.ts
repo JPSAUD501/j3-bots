@@ -1142,9 +1142,10 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      * Room `roomId`, of bots only, paused: its bots answered each other
      * `ROOM_QUIET_ROUND` rounds since its kickoff, and their messages there
      * wake nobody from then on. Bot `botId`, which started it, was told in its
-     * own conversation. Shown in the room and in that conversation.
+     * own conversation, and the notice shows there too; `null` when that bot
+     * was deleted before, and nobody was told.
      */
-    Schema.TaggedStruct("room-paused", { botId: BotId, roomId: RoomId }),
+    Schema.TaggedStruct("room-paused", { botId: Schema.NullOr(BotId), roomId: RoomId }),
     AsksBeforeActing,
   ] as const;
 

@@ -760,6 +760,9 @@ export const en = {
     "{room} paused: its bots talked as long as they may on their own, and {bot} was told",
   "teamLine.roomPausedGone":
     "A room paused: its bots talked as long as they may on their own, and {bot} was told",
+  "teamLine.roomPausedUntold": "{room} paused: its bots talked as long as they may on their own",
+  "teamLine.roomPausedUntoldGone":
+    "A room paused: its bots talked as long as they may on their own",
 
   "routine.paused": "Paused",
   "routine.waiting": "Waiting for {connector} to answer",
@@ -973,6 +976,7 @@ export const en = {
   "room.archive.hint":
     "Archiving stops what the bots are doing here. What was said stays, and you can unarchive it later.",
   "room.unarchive": "Unarchive {name}",
+  "room.staysArchived": "Too few of its bots are left, so it stays archived.",
   "room.archiveFailed": "{name} wasn’t archived. Try again.",
   "room.unarchiveFailed": "{name} wasn’t unarchived. Try again.",
   "room.unarchiveNeedsMembers":

@@ -21,6 +21,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import { Bots } from "../bots/Bots.ts";
 import { Reactions } from "../reactions/Reactions.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -33,6 +35,7 @@ import {
   roomWakeStatuses,
   roundsIn,
   say,
+  stopRoom,
 } from "../testing/rooms.ts";
 import { command, conversation, nextTurn, sendToBot } from "../testing/turns.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
@@ -190,6 +193,93 @@ it.effect(
       assert.include(told, ROOM_PAUSED_LINE);
       assert.include(told, 'name="Launch plan"');
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/**
+ * Pip and Wren answer each other in `roomId`, each naming the other, from Pip's
+ * answer to the kickoff to the first answer past the limit, which pauses it.
+ */
+const talkToTheLimit = (roomId: RoomId, pip: Member, wren: Member) =>
+  Effect.gen(function* () {
+    const members = [pip, wren];
+    const turns = new Map<BotId, TurnId>();
+    for (let round = 1; round <= ROOM_QUIET_ROUND + 1; round++) {
+      const [one, other] = round % 2 === 1 ? [pip, wren] : [wren, pip];
+      const turnId = yield* nextTurn(one.bot.id, turns.get(one.bot.id) ?? null);
+      turns.set(one.bot.id, turnId);
+      yield* say(one, turnId, { text: `Round ${round}.`, mention: [other.bot.id] });
+      yield* finish(one, turnId, members);
+    }
+    assert.strictEqual((yield* roundsIn(roomId)).at(-1)?.[1], ROOM_QUIET_ROUND + 1);
+  });
+
+/** The `room-paused` wakes the bot has, by status. */
+const pausedWakes = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly status: string }>`
+      SELECT status FROM wakes
+      WHERE bot_id = ${botId} AND json_extract(payload_json, '$._tag') = 'room-paused'
+    `.pipe(Effect.orDie);
+    return rows.map((row) => row.status);
+  });
+
+/** Scout starts a room of bots only whose kickoff wakes Pip alone, and keeps its turn. */
+const startForPip = (scout: Member, pip: Member, wren: Member) =>
+  Effect.gen(function* () {
+    yield* sendToBot(scout.bot.id, "Have Pip and Wren settle the launch plan between them.");
+    const turnId = yield* nextTurn(scout.bot.id);
+    const started = yield* call(scout, turnId, "start_room", {
+      name: "Launch plan",
+      members: [pip.bot.id, wren.bot.id],
+      kickoff: "Pip the date, Wren the checklist.",
+      mention: [pip.bot.id],
+      with_user: false,
+    });
+    return { roomId: decodeStarted(resultOf(started)).id, turnId };
+  });
+
+it.effect("drops the starter's word of a pause once the operator stops the room", () =>
+  Effect.gen(function* () {
+    const [scout, pip, wren] = [
+      yield* member("Scout"),
+      yield* member("Pip"),
+      yield* member("Wren"),
+    ];
+    // Scout's turn runs on while the others talk, so the pause's wake waits for it.
+    const { roomId, turnId } = yield* startForPip(scout, pip, wren);
+    yield* talkToTheLimit(roomId, pip, wren);
+    assert.deepStrictEqual(yield* pausedWakes(scout.bot.id), ["pending"]);
+
+    yield* stopRoom(roomId);
+
+    assert.deepStrictEqual(yield* pausedWakes(scout.bot.id), ["cancelled"]);
+    yield* say(scout, turnId, { text: "Pip and Wren are on it.", done: true });
+    yield* finish(scout, turnId, [scout, pip, wren]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("shows the pause of a room of bots only whose starter was deleted, telling nobody", () =>
+  Effect.gen(function* () {
+    const [scout, pip, wren] = [
+      yield* member("Scout"),
+      yield* member("Pip"),
+      yield* member("Wren"),
+    ];
+    const { roomId, turnId } = yield* startForPip(scout, pip, wren);
+    yield* say(scout, turnId, { text: "Pip and Wren are on it.", done: true });
+    yield* finish(scout, turnId, [scout, pip, wren]);
+    yield* (yield* Bots).remove({ commandId: command(), botId: scout.bot.id, deleteFiles: true });
+
+    yield* talkToTheLimit(roomId, pip, wren);
+
+    assert.deepStrictEqual((yield* noticesIn(roomId)).at(-1), {
+      _tag: "room-paused",
+      botId: null,
+      roomId,
+    });
+    assert.deepStrictEqual(yield* pausedWakes(scout.bot.id), []);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("takes a bot's post from a turn the operator spoke in as its own, not their word", () =>

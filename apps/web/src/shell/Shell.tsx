@@ -29,6 +29,7 @@ import {
   rosterKeyText,
   rosterTarget,
   teammatesOf,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
@@ -649,13 +650,17 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">
               <p>{t("room.composerArchived", { name: archivedRoom.name })}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
-              >
-                {t("room.unarchive", { name: archivedRoom.name })}
-              </Button>
+              {unarchivable(archivedRoom) ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void intents.unarchiveRoom(archivedRoom.id)}
+                >
+                  {t("room.unarchive", { name: archivedRoom.name })}
+                </Button>
+              ) : (
+                <p>{t("room.staysArchived")}</p>
+              )}
             </div>
           )}
         </div>

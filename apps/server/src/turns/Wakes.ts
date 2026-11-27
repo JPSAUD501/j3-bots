@@ -45,10 +45,12 @@ export interface NewWake {
    * archived or deleted room left with nowhere to go; or a teammate's work
    * for `audience`, the audience its speaking turn spoke for, held to the
    * same rule as the teammate's own: `seq` is the dispatch that began it,
-   * `null` for a turn no dispatch began. Work for a room that posts in
-   * another room is recorded with the wake (`cause_bot_id`,
+   * `null` for a turn no dispatch began. Work for a room that wakes a bot
+   * anywhere but that room, by a post in another room or by pausing a room
+   * of bots only, is recorded with the wake (`cause_bot_id`,
    * `cause_room_id`), so a Stop of that room's work reaches the wakes it
-   * caused there (`Stops.record`, `Ledger`).
+   * caused (`Stops.record`, `Ledger`). A teammate's message keeps the rule
+   * of a Stop of its sender, and records none.
    */
   readonly cause:
     | { readonly _tag: "operator" }
@@ -129,14 +131,15 @@ export const layer = Layer.effect(
         const id = yield* ids.make("wake");
         const { audience, roomId } = audienceColumns(wake.audience);
         const { cause } = wake;
-        // A post into another room than the one its turn spoke for: in the
-        // same room, the room's own Stop reaches it as a wake of the room,
-        // and a member's leaving does not take back what it said there.
+        // What a room's work woke outside that room, but a teammate's
+        // message: in the same room, the room's own Stop reaches it as a
+        // wake of the room, and a member's leaving does not take back what
+        // it said there.
         const causeRoom =
           cause._tag === "teammate" &&
           cause.audience._tag === "room" &&
-          wake.audience._tag === "room" &&
-          wake.audience.roomId !== cause.audience.roomId
+          wake.kind !== "bot" &&
+          !(wake.audience._tag === "room" && wake.audience.roomId === cause.audience.roomId)
             ? { botId: cause.senderId, roomId: cause.audience.roomId }
             : null;
         yield* sql`

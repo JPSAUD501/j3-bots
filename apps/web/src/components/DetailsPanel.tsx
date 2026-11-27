@@ -45,6 +45,7 @@ import {
   type Teammate,
   trackCast,
   trackTrigger,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -861,7 +862,9 @@ export function RoomDetails({
         )}
       </DetailsSection>
       <DetailsSection title={t("room.archiveSection")}>
-        {archived ? (
+        {archived && !unarchivable(room) ? (
+          <p className="text-xs text-muted-foreground">{t("room.staysArchived")}</p>
+        ) : archived ? (
           <PendingButton onPress={intents.unarchiveRoom}>
             <ArchiveRestoreIcon aria-hidden />
             {t("room.unarchive", { name })}

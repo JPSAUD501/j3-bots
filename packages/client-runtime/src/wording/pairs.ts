@@ -90,8 +90,14 @@ const TEAM_LINES = {
  */
 export function teamNoticeLine(notice: TeamNotice, ctx: PresentationContext): NamedLine {
   const { i18n } = ctx;
-  const bot = botPart(notice.botId, ctx);
   const roomName = ctx.roomName(notice.roomId);
+  // A room of bots only whose starter was deleted paused with nobody told.
+  if (notice.botId === null) {
+    if (roomName === null) return named(i18n.parts("teamLine.roomPausedUntoldGone", {}));
+    const room: LineName = { _tag: "room", roomId: notice.roomId, name: roomName };
+    return named(i18n.parts("teamLine.roomPausedUntold", { room }));
+  }
+  const bot = botPart(notice.botId, ctx);
   const keys = TEAM_LINES[notice._tag];
   if (roomName === null) return named(i18n.parts(keys.gone, { bot }));
   const room: LineName = { _tag: "room", roomId: notice.roomId, name: roomName };

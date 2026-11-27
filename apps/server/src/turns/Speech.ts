@@ -1576,7 +1576,8 @@ export const layer = Layer.effect(
       // A turn from outside the room that the operator did not speak in may
       // carry a message of theirs steered into it, which does not count: they
       // are asked again, as the other tools that take only their word ask.
-      if (quiet !== null && !inThisRoom && !spoke) {
+      // A room of bots only takes nobody's word again, so nothing is to ask.
+      if (quiet !== null && !inThisRoom && !spoke && !live.value.botsOnly) {
         return { ...quiet, note: `${quiet.note} ${LATE_WORD}` };
       }
       return (

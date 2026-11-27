@@ -25,6 +25,7 @@ import {
   type TeammateRunPair,
   type TimelineItem,
   withLiveTurn,
+  unarchivable,
 } from "@j3-bots/client-runtime/presentation";
 import {
   useArrivals,
@@ -671,10 +672,14 @@ function ArchivedLine({ room }: { readonly room: Room }) {
       <Text className="text-center text-xs text-muted-foreground">
         {t("room.composerArchived", { name: room.name })}
       </Text>
-      <PendingButton
-        label={t("room.unarchive", { name: room.name })}
-        onPress={() => unarchive(room)}
-      />
+      {unarchivable(room) ? (
+        <PendingButton
+          label={t("room.unarchive", { name: room.name })}
+          onPress={() => unarchive(room)}
+        />
+      ) : (
+        <Text className="text-center text-xs text-muted-foreground">{t("room.staysArchived")}</Text>
+      )}
     </View>
   );
 }

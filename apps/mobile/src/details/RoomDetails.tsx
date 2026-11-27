@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { roomStop } from "@j3-bots/client-runtime/presentation";
+import { roomStop, unarchivable } from "@j3-bots/client-runtime/presentation";
 import type { Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
@@ -130,7 +130,9 @@ export function RoomDetails({ room }: { readonly room: Room }) {
 
       <Section open title={t("room.archiveSection")}>
         <View className="items-start gap-3">
-          {archived ? (
+          {archived && !unarchivable(room) ? (
+            <Quiet>{t("room.staysArchived")}</Quiet>
+          ) : archived ? (
             <PendingButton
               label={t("room.unarchive", { name })}
               onPress={() => actions.unarchive(room)}

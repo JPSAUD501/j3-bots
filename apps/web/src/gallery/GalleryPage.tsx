@@ -3406,6 +3406,14 @@ function DetailsSection() {
         <Pane>
           <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />
         </Pane>
+        <Pane>
+          {/* A room of bots only left too small takes no members from the operator: it stays archived. */}
+          <RoomDetails
+            room={{ ...archivedRoom, botsOnly: true }}
+            intents={roomIntents}
+            onClose={nothing}
+          />
+        </Pane>
       </div>
     </Section>
   );

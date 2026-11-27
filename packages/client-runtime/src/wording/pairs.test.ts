@@ -55,6 +55,14 @@ describe("teamNoticeLine", () => {
     expect(paused.parts).toContainEqual({ _tag: "room", roomId: support, name: "Support" });
   });
 
+  it("names nobody as told when the bot that started it was deleted before it paused", () => {
+    const paused = teamNoticeLine(
+      { _tag: "room-paused", botId: null, roomId: support },
+      team("Support"),
+    );
+    expect(paused.text).toBe("Support paused: its bots talked as long as they may on their own");
+  });
+
   it("says a room deleted since is a room", () => {
     expect(
       teamNoticeLine(

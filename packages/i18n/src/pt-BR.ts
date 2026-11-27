@@ -758,6 +758,8 @@ const sentences = {
     "{room} pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
   "teamLine.roomPausedGone":
     "Uma sala pausou: os bots conversaram o quanto podem sozinhos, e {bot} já sabe",
+  "teamLine.roomPausedUntold": "{room} pausou: os bots conversaram o quanto podem sozinhos",
+  "teamLine.roomPausedUntoldGone": "Uma sala pausou: os bots conversaram o quanto podem sozinhos",
 
   "routine.paused": "Pausada",
   "routine.waiting": "Esperando {connector} responder",
@@ -972,6 +974,7 @@ const sentences = {
   "room.archive.hint":
     "Arquivar interrompe o que os bots estão fazendo aqui. O que foi dito fica, e você pode desarquivar depois.",
   "room.unarchive": "Desarquivar {name}",
+  "room.staysArchived": "Sobraram poucos bots dela, então ela fica arquivada.",
   "room.archiveFailed": "{name} não foi arquivada. Tente de novo.",
   "room.unarchiveFailed": "{name} não foi desarquivada. Tente de novo.",
   "room.unarchiveNeedsMembers":

@@ -214,8 +214,9 @@ export const layer = Layer.effect(
      * A room of bots only paused: the room says so, and so does the
      * conversation of the bot that started it, which is woken there to tell
      * the operator. The wake is the speaking turn's work, as the message's
-     * wakes would have been, so a Stop of that work, or of the room, drops it.
-     * A starter since deleted is told nothing.
+     * wakes would have been, so a Stop of that work, or of the room it spoke
+     * for, drops it. A starter since deleted is told nothing, and the room
+     * names nobody as told.
      */
     const pause = Effect.fn("RoomRouting.pause")(function* (input: {
       readonly room: LiveRoom;
@@ -225,9 +226,9 @@ export const layer = Layer.effect(
       readonly stopped: boolean;
     }) {
       const { madeBy } = input.room;
-      if (madeBy === null) return;
       const notice = { _tag: "room-paused", botId: madeBy, roomId: input.room.id } as const;
       yield* notify(input.botId, { _tag: "room", roomId: input.room.id }, notice, null);
+      if (madeBy === null) return;
       yield* notify(madeBy, { _tag: "conversation" }, notice, null);
       if (input.stopped) return;
       yield* wakes.record([

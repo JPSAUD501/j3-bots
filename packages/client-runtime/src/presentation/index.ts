@@ -247,6 +247,7 @@ export {
   roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
+  unarchivable,
   withMember,
   withoutDeleted,
 } from "./roomForm.ts";
