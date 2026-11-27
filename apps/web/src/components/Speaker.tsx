@@ -9,10 +9,27 @@ import type { ReactNode } from "react";
  */
 export const speakerGutter = "relative ps-9";
 
-/** The speaker's name, over the first bubble of its run. */
-export function SpeakerName({ position, name }: { position: GroupPosition; name: string }) {
+/**
+ * The speaker's name, and its title after it, over the first bubble of its
+ * run: who speaks and what they are there for, as on a team's chat.
+ */
+export function SpeakerName({
+  position,
+  name,
+  title,
+}: {
+  position: GroupPosition;
+  name: string;
+  /** Empty for a bot that has none. */
+  title: string;
+}) {
   if (position !== "single" && position !== "first") return null;
-  return <span className="ps-1 pt-1 text-xs font-medium text-muted-foreground">{name}</span>;
+  return (
+    <span className="max-w-full truncate ps-1 pt-1 text-xs text-muted-foreground">
+      <span className="font-medium">{name}</span>
+      {title !== "" && <span> · {title}</span>}
+    </span>
+  );
 }
 
 /** The speaker's face, beside the last bubble of its run. */

@@ -4,6 +4,8 @@ import type { AddingNone, Catalog } from "./i18n.ts";
 /** Brazilian Portuguese. Every key of `en.ts`, with its placeholders and no others. */
 const sentences = {
   "bot.unknown": "Um bot excluído",
+  "bot.nameAndTitle": "{name} · {title}",
+  "bot.primaryTitle": "Assistente principal",
   "room.unknown": "Uma sala excluída",
 
   "avatar.shape": "Forma",
@@ -58,6 +60,7 @@ const sentences = {
   "roster.newSection": "Nova seção",
   "roster.moveToSection": "Mover para seção",
   "roster.leaveSection": "Tirar de {section}",
+  "roster.giveTitle": "Dar um cargo",
   "roster.makePrimary": "Tornar bot principal",
   "roster.replacePrimary": "Substituir bot principal…",
   "roster.replacePrimary.title": "Tornar {name} seu bot principal?",
@@ -65,8 +68,8 @@ const sentences = {
     "Pedidos que não são de ninguém vão para {name}. {previous} continua no time como um bot comum.",
   "roster.replacePrimary.confirm": "Tornar {name} principal",
   "roster.replacePrimary.cancel": "Manter {previous}",
-  "roster.hide": "Ocultar",
-  "roster.unhide": "Mostrar",
+  "backstage.move": "Mover para os bastidores",
+  "backstage.bringBack": "Trazer para a lista",
   "roster.more": "Mais",
   "roster.openDetails": "Detalhes",
   "roster.changeFailed": "A mudança não foi salva. Tente de novo.",
@@ -80,13 +83,14 @@ const sentences = {
   "roster.section.delete.title": "Excluir “{section}”?",
   "roster.section.delete.body": "Os bots dela continuam, de volta à lista principal.",
   "roster.section.delete.cancel": "Manter",
-  "roster.hidden": "Conversas ocultas",
-  "roster.hidden.back": "Voltar para bots e salas",
-  "roster.hidden.empty": "Nenhuma conversa oculta.",
+  "backstage.title": "Nos bastidores",
+  "backstage.row": "Nos bastidores · {count}",
+  "backstage.back": "Voltar para bots e salas",
+  "backstage.empty": "Nada nos bastidores.",
   "roster.menu.back": "Voltar",
-  "roster.hidden.count.one": "{count} conversa oculta",
-  "roster.hidden.count.other": "{count} conversas ocultas",
-  "roster.hidden.unhideName": "Mostrar {name}",
+  "backstage.count.one": "{count} conversa nos bastidores",
+  "backstage.count.other": "{count} conversas nos bastidores",
+  "backstage.bringBackName": "Trazer {name} para a lista",
   "roster.section": "Seção {name}",
   "roster.section.count.one": "{count} bot",
   "roster.section.count.other": "{count} bots",
@@ -1782,13 +1786,16 @@ const sentences = {
   "empty.gone.back": "Voltar para a lista",
 
   "newBot.title": "Novo bot",
-  "newBot.body": "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
+  "newBot.body":
+    "Dê um nome a ele e um cargo que diga, em poucas palavras, para que ele serve. Ele pergunta o resto, uma pergunta por vez.",
+  "newBot.titleField": "Cargo",
+  "newBot.titleField.placeholder": "Para que serve, como Posts do Instagram",
   "newBot.cancel": "Cancelar",
 
-  "visibility.hide": "Ocultar da lista",
-  "visibility.hide.hint":
-    "Vai para Conversas ocultas, que você abre quando quiser. Continua trabalhando e te notificando.",
-  "visibility.notice": "Esta conversa está oculta da sua lista.",
+  "backstage.keep": "Deixar nos bastidores",
+  "backstage.keep.hint":
+    "Fica fora da sua lista de conversas, em Nos bastidores, que você abre quando quiser. Continua trabalhando e avisando você.",
+  "backstage.notice": "Esta conversa está nos bastidores, fora da sua lista.",
 
   "roster.newFromTemplate": "Criar a partir de um modelo",
   "details.shareTemplate": "Compartilhar como modelo…",
@@ -1812,6 +1819,7 @@ const sentences = {
   "template.part.routine": "a rotina “{name}”",
   "template.close": "Fechar",
   "template.create.title": "Novo bot a partir de um modelo",
+  "template.create.title.label": "Um cargo para {name}: para que serve, em poucas palavras",
   "template.create.body":
     "Isto é tudo o que {name} vai ser e fazer. Nada é criado até você tocar em Criar.",
   "template.create.untrusted":
@@ -1859,7 +1867,8 @@ const sentences = {
   "editBot.name.required": "Um bot precisa de um nome.",
   "editBot.tooLong": "Use no máximo {max} caracteres.",
   "editBot.titleField": "Cargo",
-  "editBot.titleField.placeholder": "Como Pesquisa",
+  "editBot.titleField.placeholder": "Como Concorrentes das padarias",
+  "editBot.title.required": "Um bot precisa de um cargo: para que ele serve, em poucas palavras.",
   "editBot.job": "Função",
   "editBot.job.hint": "Para que {name} serve e quais são os limites dele, em palavras simples.",
   "editBot.model": "Modelo",

@@ -42,7 +42,7 @@ import { PresentationProvider } from "./presentation.tsx";
 import { ConversationScreen } from "./screens/Conversation.tsx";
 import { DetailsScreen } from "./screens/Details.tsx";
 import { EditBotScreen } from "./screens/EditBot.tsx";
-import { HiddenScreen } from "./screens/Hidden.tsx";
+import { BackstageScreen } from "./screens/Backstage.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
 import { PairScreen } from "./screens/Pair.tsx";
@@ -67,7 +67,7 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * One route per screen. On a phone they stack: the roster, a bot's or room's
  * conversation, its details, a teammate conversation, and over those the
  * forms, a memory file and a routine's runs;
- * Settings and the hidden conversations open from the roster. From the
+ * Settings and the bots and rooms behind the scenes open from the roster. From the
  * tablet width up the roster's route shows the conversation `item` names
  * beside the roster, and the conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
@@ -90,7 +90,8 @@ export type Screens = {
   pair: { readonly botIds: PairBotIds; readonly at?: EntryId };
   shareTemplate: { readonly botId: BotId };
   newFromTemplate: undefined;
-  editBot: { readonly botId: BotId };
+  /** The bot's form, opened at its title with `at`, as Give a title does. */
+  editBot: { readonly botId: BotId; readonly at?: "title" };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
   /**
@@ -104,7 +105,7 @@ export type Screens = {
   settingsPage: { readonly page: SettingsPage };
   whatsNew: undefined;
   usageDataSent: undefined;
-  hidden: undefined;
+  backstage: undefined;
   secrets: undefined;
   secret: { readonly id: SecretId };
   /** A new secret with `id` null; otherwise the one to change. */
@@ -249,7 +250,7 @@ export function Main() {
                 {/* Draws its own header: both bots' faces, their names and its menu. */}
                 <Stack.Screen name="pair" component={PairScreen} options={{ headerShown: false }} />
                 {/* Sets its own title. */}
-                <Stack.Screen name="hidden" component={HiddenScreen} />
+                <Stack.Screen name="backstage" component={BackstageScreen} />
                 {/* The browser draws its own bar: the page's site and who acts on it. */}
                 <Stack.Screen
                   name="browser"

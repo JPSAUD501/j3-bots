@@ -200,7 +200,7 @@ function PairMessage({
       {/* The face sits beside the bubble, not beside the marks under it. */}
       <div className={cn("flex flex-col items-start gap-1 self-stretch", speakerGutter)}>
         <span aria-hidden className="contents">
-          <SpeakerName position={position} name={name} />
+          <SpeakerName position={position} name={name} title={sender?.profile.title ?? ""} />
         </span>
         <SpeakerFace position={position}>
           <FaceOf botId={message.from} size={28} />

@@ -110,7 +110,7 @@ const MotionNow = createContext<{
 
 /**
  * Gives the list below how each of its rows moves, and which rows leave the
- * list by the operator's own hand, as a bot pinned or hidden: those fade away
+ * list by the operator's own hand, as a bot pinned or moved behind the scenes: those fade away
  * as they go, where a row that only stops being listed, as after a search,
  * goes at once. A row `entering` comes in with an arrival of its own
  * (`RosterRow`), which the list does not fade in.

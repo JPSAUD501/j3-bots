@@ -37,12 +37,13 @@ type Props = NativeStackScreenProps<Screens, "editBot">;
  * Once the server has the changes the screen closes; one that closes before
  * the answer says in a toast when the changes did not save. Leaving lets go
  * of a failed save, as the operator gave up on it; a save under way goes on.
+ * Opened `at` the title, as Give a title does, its title field has the focus.
  */
 export function EditBotScreen({ navigation, route }: Props) {
   const { t } = useI18n();
   const client = useJ3Client();
   const say = useSay();
-  const { botId } = route.params;
+  const { botId, at } = route.params;
   const found = useRosterItem({ _tag: "bot", botId });
   const bot = found._tag === "found" && found.item._tag === "bot" ? found.item.bot : null;
   const name = bot?.profile.name ?? "";
@@ -67,6 +68,7 @@ export function EditBotScreen({ navigation, route }: Props) {
   return (
     <EditBotForm
       bot={bot}
+      atTitle={at === "title"}
       onClose={navigation.goBack}
       onSave={(changes, leave) =>
         void client.updateBot(bot.id, changes).then((result) => {
@@ -83,17 +85,20 @@ export function EditBotScreen({ navigation, route }: Props) {
 
 /**
  * The form: name, title, look and job, the model and its effort, the permission mode, and
- * whether it is hidden from the roster's list. Save sends only what changed. While a save is under way the form shows what it
+ * whether it stays behind the scenes, out of the roster's list. Save sends only what changed. While a save is under way the form shows what it
  * sends and takes no edit; a save that fails leaves the edits in place and
  * says why, beside the field when one field is the reason.
  */
 function EditBotForm({
   bot,
+  atTitle,
   onClose,
   onSave,
 }: {
   /** The bot as the server has it now. Fields the operator left alone follow it. */
   readonly bot: Bot;
+  /** The title field takes the focus as the form opens. */
+  readonly atTitle: boolean;
   readonly onClose: () => void;
   /** `leave` closes the screen without asking about the edits it saved. */
   readonly onSave: (changes: BotChanges, leave: () => void) => void;
@@ -114,7 +119,7 @@ function EditBotForm({
     return fieldProblem === null
       ? null
       : fieldProblem === "required"
-        ? t("editBot.name.required")
+        ? t(field === "title" ? "editBot.title.required" : "editBot.name.required")
         : t("editBot.tooLong", { max: PROFILE_LIMITS[field] });
   };
 
@@ -157,6 +162,7 @@ function EditBotForm({
         maxLength={PROFILE_LIMITS.title}
         readOnly={saving}
         placeholder={t("editBot.titleField.placeholder")}
+        autoFocus={atTitle}
         onChange={(value) => form.editText("title", value)}
         error={fieldError("title")}
       />
@@ -286,8 +292,8 @@ function EditBotForm({
       )}
 
       <SwitchRow
-        label={t("visibility.hide")}
-        hint={t("visibility.hide.hint")}
+        label={t("backstage.keep")}
+        hint={t("backstage.keep.hint")}
         value={form.hidden}
         readOnly={saving}
         onChange={(hidden) => form.edit({ hidden })}

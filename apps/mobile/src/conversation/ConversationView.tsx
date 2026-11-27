@@ -884,7 +884,7 @@ function useHighlighted(room: Pick<Room, "members"> | null) {
  * What `@` offers in `item`'s draft, by the names the roster shows. In a room,
  * its members, each by its face, and `@everyone`. In a bot's conversation, the
  * operator's other bots, each by its face, and the rooms that bot is a member
- * of, each by its mark, hidden ones too; only once the server takes them
+ * of, each by its mark, those behind the scenes too; only once the server takes them
  * (`conversationMentions`), and nothing before.
  */
 function mentionChoicesOf(
@@ -897,6 +897,7 @@ function mentionChoicesOf(
     _tag: "bot",
     id: bot.id,
     name: bot.profile.name,
+    title: bot.profile.title,
     avatar: bot.profile.avatar,
   });
   if (item._tag === "room") {

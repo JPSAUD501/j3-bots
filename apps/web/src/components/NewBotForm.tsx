@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AvatarChoice, Bot } from "@j3-bots/contracts";
+import { type AvatarChoice, type Bot, PROFILE_LIMITS } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import { useEffect, useId, useState } from "react";
 import { useI18n } from "../app/context";
@@ -9,21 +9,25 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { lineField } from "./ui/field";
 
-/** What the form creates: a name, whether the bot becomes the primary one or is hidden, and its look. */
+/**
+ * What the form creates: a name and a title, whether the bot becomes the
+ * primary one or stays behind the scenes, and its look.
+ */
 export interface NewBot {
   readonly name: string;
+  readonly title: string;
   readonly primary: boolean;
   readonly hidden: boolean;
   readonly avatar: AvatarChoice;
 }
 
 interface NewBotFormProps {
-  /** Every bot there is, hidden ones included, so the look offered first is the one they use least. */
+  /** Every bot there is, those behind the scenes included, so the look offered first is the one they use least. */
   readonly bots: ReadonlyArray<Bot>;
   /** Resolves once the bot exists. */
   readonly onCreate: (bot: NewBot) => Promise<void>;
   readonly onCancel: () => void;
-  /** Told whether a name is typed and not created yet; told `false` again on unmount. */
+  /** Told whether a name or a title is typed and not created yet; told `false` again on unmount. */
   readonly onUnsavedChange?: (unsaved: boolean) => void;
   readonly className?: string;
 }
@@ -35,11 +39,13 @@ type FormState =
   | { readonly _tag: "failed" };
 
 /**
- * A name, a look, whether the bot becomes the primary one and whether it is
- * hidden; the bot asks the rest itself. The look starts as the one the server
- * would give it, which sits apart from the bots there are. Create stays
- * focusable while it cannot act, and pressing it then does nothing, as in
- * pairing and the composer.
+ * A name, a title, a look, whether the bot becomes the primary one and
+ * whether it stays behind the scenes; the bot asks the rest itself. The name
+ * makes it a person and the title says what it is for, so Create needs both.
+ * The look starts as the one the server would give it, which sits apart from
+ * the bots there are. Create stays focusable while it cannot act, and
+ * pressing it then does nothing, as in pairing and the composer; pressed
+ * with a name and no title, it says the title is missing.
  */
 export function NewBotForm({
   bots,
@@ -50,8 +56,13 @@ export function NewBotForm({
 }: NewBotFormProps) {
   const { t } = useI18n();
   const nameId = useId();
+  const titleId = useId();
+  const titleErrorId = useId();
   const hideHintId = useId();
   const [name, setName] = useState("");
+  const [title, setTitle] = useState("");
+  // Said once Create was pressed without a title, until one is typed.
+  const [titleMissing, setTitleMissing] = useState(false);
   const [primary, setPrimary] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
@@ -64,8 +75,9 @@ export function NewBotForm({
       ? state.avatar
       : (picked ?? freeAvatar(bots.map((bot) => bot.profile.avatar)));
   const trimmed = name.trim();
-  const ready = trimmed !== "" && state._tag !== "creating";
-  const unsaved = trimmed !== "";
+  const trimmedTitle = title.trim();
+  const ready = trimmed !== "" && trimmedTitle !== "" && state._tag !== "creating";
+  const unsaved = trimmed !== "" || trimmedTitle !== "";
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
     onUnsavedChange(true);
@@ -76,11 +88,12 @@ export function NewBotForm({
       className={cn("flex flex-col gap-3", className)}
       onSubmit={(event) => {
         event.preventDefault();
+        if (trimmed !== "" && trimmedTitle === "") setTitleMissing(true);
         if (!ready) return;
         setState({ _tag: "creating", avatar });
         // A created bot opens, which takes the form off the screen: until then it stays
         // creating, so Create cannot make a second bot.
-        onCreate({ name: trimmed, primary, hidden, avatar }).catch(() =>
+        onCreate({ name: trimmed, title: trimmedTitle, primary, hidden, avatar }).catch(() =>
           setState({ _tag: "failed" }),
         );
       }}
@@ -91,11 +104,32 @@ export function NewBotForm({
       <input
         id={nameId}
         value={name}
-        maxLength={40}
+        maxLength={PROFILE_LIMITS.name}
         onChange={(event) => setName(event.currentTarget.value)}
         placeholder={t("firstRun.create.placeholder")}
         className={lineField}
       />
+      <label htmlFor={titleId} className="sr-only">
+        {t("newBot.titleField")}
+      </label>
+      <input
+        id={titleId}
+        value={title}
+        maxLength={PROFILE_LIMITS.title}
+        autoComplete="off"
+        onChange={(event) => {
+          setTitle(event.currentTarget.value);
+          setTitleMissing(false);
+        }}
+        placeholder={t("newBot.titleField.placeholder")}
+        className={lineField}
+        {...(titleMissing ? { "aria-invalid": true, "aria-describedby": titleErrorId } : {})}
+      />
+      {titleMissing && (
+        <p id={titleErrorId} className="text-xs text-blocked">
+          {t("editBot.title.required")}
+        </p>
+      )}
       <AvatarPicker
         value={avatar}
         onChange={setPicked}
@@ -119,9 +153,9 @@ export function NewBotForm({
           />
         </span>
         <span className="flex flex-col gap-0.5">
-          <span>{t("visibility.hide")}</span>
+          <span>{t("backstage.keep")}</span>
           <span id={hideHintId} className="text-2xs">
-            {t("visibility.hide.hint")}
+            {t("backstage.keep.hint")}
           </span>
         </span>
       </label>

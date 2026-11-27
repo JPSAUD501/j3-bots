@@ -187,11 +187,14 @@ export interface ShellData {
 type PairingStart = ({ readonly _tag: "started" } & PairingOffer) | { readonly _tag: "failed" };
 
 /**
- * A bot to create: its name, whether it becomes the primary one or starts
- * hidden (visible when left out), and its look, or the server's choice.
+ * A bot to create: its name and title, whether it becomes the primary one or
+ * starts behind the scenes (in the list when left out), and its look, or the
+ * server's choice.
  */
 interface NewBot {
   readonly name: string;
+  /** What it is for: required of every bot the app creates (decision 0101). */
+  readonly title: string;
   readonly primary: boolean;
   readonly hidden?: boolean;
   readonly avatar?: AvatarChoice;
@@ -319,8 +322,11 @@ export interface ShellIntents extends TimelineIntents {
    */
   readonly unarchiveRoom: (roomId: RoomId) => Promise<void>;
   readonly deleteRoom: (roomId: RoomId) => void;
-  /** Opens the form that edits a bot's profile, model and permission mode. Absent where there is none. */
-  readonly editProfile?: (botId: BotId) => void;
+  /**
+   * Opens the form that edits a bot's profile, model and permission mode, at
+   * its title field for `"title"`. Absent where there is none.
+   */
+  readonly editProfile?: (botId: BotId, at?: "title") => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
   /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
   readonly setBrowser: (bot: Bot, enabled: boolean) => void;

@@ -187,7 +187,7 @@ import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
-import { HiddenConversations, SectionBlock, useFoldedSections } from "../components/RosterGroups";
+import { Backstage, SectionBlock, useFoldedSections } from "../components/RosterGroups";
 import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { AnsweringLine } from "../components/AnsweringLine";
 import { RoomWork } from "../components/RoomWork";
@@ -1103,15 +1103,17 @@ function NotificationPreview({
       current = false;
     };
   }, [notification, theme]);
-  const name = (id: BotId) =>
+  const profileOf = (id: BotId) =>
     team.roster.flatMap((row) =>
-      row._tag === "bot" && row.bot.id === id ? [row.bot.profile.name] : [],
-    )[0] ?? null;
+      row._tag === "bot" && row.bot.id === id ? [row.bot.profile] : [],
+    )[0];
+  const name = (id: BotId) => profileOf(id)?.name ?? null;
+  const botTitle = (id: BotId) => profileOf(id)?.title ?? "";
   const roomName = (id: RoomId) =>
     team.roster.flatMap((row) =>
       row._tag === "room" && row.room.id === id ? [row.room.name] : [],
     )[0] ?? null;
-  const text = notificationText(notification, { botName: name, roomName }, i18n);
+  const text = notificationText(notification, { botName: name, botTitle, roomName }, i18n);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
       {icon === null ? (
@@ -1155,16 +1157,42 @@ const memberAvatars = (item: RosterItem) =>
       )
     : [];
 
+/** Maple with the longest title a bot takes, to show where a row cuts what. */
+const longTitled = team.roster.flatMap((item) =>
+  item._tag === "bot" && item.bot.id === ids.maple
+    ? [
+        {
+          ...item,
+          bot: {
+            ...item.bot,
+            profile: { ...item.bot.profile, title: "Competitor bakeries and their launches" },
+          },
+        },
+      ]
+    : [],
+);
+
 function RosterSection() {
   return (
     <Section title="Roster rows">
-      <ul className="flex w-(--layout-roster-width) max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
-        {team.roster.map((item, index) => (
-          <li key={item._tag === "bot" ? item.bot.id : item.room.id}>
-            <RosterRow item={item} selected={index === 0} memberAvatars={memberAvatars(item)} />
-          </li>
-        ))}
-      </ul>
+      <Labeled label="Each bot's name over its title, then its status line; a room, and Moss, a bot from before titles, in two lines">
+        <ul className="flex w-(--layout-roster-width) max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
+          {team.roster.map((item, index) => (
+            <li key={item._tag === "bot" ? item.bot.id : item.room.id}>
+              <RosterRow item={item} selected={index === 0} memberAvatars={memberAvatars(item)} />
+            </li>
+          ))}
+        </ul>
+      </Labeled>
+      <Labeled label="The longest title on a narrow roster: two lines at most, the status line cut first">
+        <ul className="flex w-60 max-w-full flex-col gap-px rounded-md bg-sidebar p-2">
+          {longTitled.map((item) => (
+            <li key="long">
+              <RosterRow item={item} selected={false} />
+            </li>
+          ))}
+        </ul>
+      </Labeled>
     </Section>
   );
 }
@@ -1226,7 +1254,7 @@ const quietMenu: RosterMenuContext = {
 };
 
 const homeSection = team.sections[0];
-// The sample's hidden bot, and its room as it would be hidden.
+// The sample's bot behind the scenes, and its room as it would be there.
 const hiddenConversations = team.roster.flatMap((item) =>
   isHidden(item)
     ? [item]
@@ -1239,7 +1267,7 @@ function RosterOrganizeSection() {
   return (
     <Section title="Organizing the roster">
       <Frame
-        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to the hidden conversations. Right-click a row or tile, or its “…”, for its menu"
+        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to what is behind the scenes. Right-click a row or tile, or its “…”, for its menu"
         width={340}
         height={980}
       >
@@ -1267,17 +1295,17 @@ function RosterOrganizeSection() {
         </Labeled>
       )}
       <Frame
-        label="The hidden conversations, a bot and a room, each with Show"
+        label="Behind the scenes: a bot and a room, each with Bring back to the list"
         width={340}
-        height={220}
+        height={240}
       >
         <div className="h-full bg-sidebar p-2">
-          <HiddenConversations
+          <Backstage
             items={hiddenConversations}
             selected={null}
             rowLink={() => rowButton(nothing)}
             onBack={nothing}
-            onShow={nothing}
+            onBringBack={nothing}
           />
         </div>
       </Frame>
@@ -2869,13 +2897,14 @@ function ComposerDemo({
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot, a waiting bot and a blocked bot, each only its face and name; a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
+      <Labeled label="Headers: a working bot, a waiting bot and a blocked bot, each its face and its name over its title; Moss, a bot from before titles, by its name alone; a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
         <div className="flex flex-col gap-2">
           {(
             [
               { key: "working", subject: { _tag: "bot", bot: team.bots.scout } },
               { key: "waiting", subject: { _tag: "bot", bot: team.bots.atlas } },
               { key: "blocked", subject: { _tag: "bot", bot: team.bots.ledger } },
+              { key: "untitled", subject: { _tag: "bot", bot: team.bots.moss } },
               { key: "room", subject: { _tag: "room", room: team.room } },
               { key: "room-stopping", subject: { _tag: "room", room: stoppingRoom } },
               { key: "room-resting", subject: { _tag: "room", room: restingRoom } },
@@ -3329,7 +3358,7 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* Hidden, with nothing to stop: the line under its profile. No connector yet: the line that says to ask it. */}
+          {/* Behind the scenes, with nothing to stop: the line under its profile. No connector yet: the line that says to ask it. */}
           <BotDetails
             bot={{ ...moss, hidden: true }}
             routines={[]}
@@ -3392,7 +3421,7 @@ function DetailsSection() {
           <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
-          {/* Hidden while its work stops: the line after the Stop. */}
+          {/* Behind the scenes while its work stops: the line after the Stop. */}
           <RoomDetails
             room={{ ...stoppingRoom, hidden: true }}
             intents={roomIntents}
@@ -3830,7 +3859,17 @@ function RoomFormVariant({
 const roomMembers: MentionChoices = {
   candidates: team.room.members.flatMap((id): ReadonlyArray<MentionCandidate> => {
     const bot = bots.find((candidate) => candidate.id === id);
-    return bot ? [{ _tag: "bot", id, name: bot.profile.name, avatar: bot.profile.avatar }] : [];
+    return bot
+      ? [
+          {
+            _tag: "bot",
+            id,
+            name: bot.profile.name,
+            title: bot.profile.title,
+            avatar: bot.profile.avatar,
+          },
+        ]
+      : [];
   }),
   everyone: true,
 };

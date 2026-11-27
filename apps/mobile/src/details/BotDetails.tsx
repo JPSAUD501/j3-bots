@@ -68,7 +68,7 @@ import { RoutineSentence } from "../conversation/RoutineTrack.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useShareBotTemplate } from "../template/share.ts";
 import { useBotPlacing } from "../screens/placing.ts";
-import { HiddenNotice } from "./HiddenNotice.tsx";
+import { BackstageNotice } from "./BackstageNotice.tsx";
 import { useBotActions } from "./actions.ts";
 import { useOpenConnectors } from "../connectors/intents.ts";
 import { ConnectorTile, StatusWord } from "../connectors/parts.tsx";
@@ -80,7 +80,7 @@ const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<
 
 /**
  * Answers: what is this bot, and what runs without me. Its profile, Stop
- * while it has work to stop, that it is hidden while it is, its routines
+ * while it has work to stop, that it is behind the scenes while it is, its routines
  * with a switch to pause each, the files it sent, its memory, its
  * connectors, the teammates it wrote with, the model it runs on, a fresh
  * start, and, last and apart, deleting it.
@@ -152,7 +152,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         />
       )}
 
-      {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}
+      {bot.hidden && <BackstageNotice name={name} onBringBack={() => placing.bringBack(bot)} />}
 
       <Section open title={t("details.routines")}>
         {routines === null ? (
@@ -464,8 +464,8 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
 }
 
 /**
- * A teammate the bot wrote with: its face and name, then the latest message
- * between them after who wrote it, and when. It opens their conversation.
+ * A teammate the bot wrote with: its face, its name over its title, then the
+ * latest message between them after who wrote it, and when. It opens their conversation.
  * A deleted teammate is named so, its face left blank.
  */
 function TeammateRow({
@@ -478,13 +478,14 @@ function TeammateRow({
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
   const name = peer?.profile.name ?? ctx.i18n.t("bot.unknown");
+  const title = peer?.profile.title ?? "";
   const line = pairLine(teammate.pair, ctx);
   const time = activityTime(teammate.pair.lastMessage.createdAt, ctx);
   return (
     <PressScale
       depth="row"
       accessibilityRole="button"
-      accessibilityLabel={[name, time, line].join(", ")}
+      accessibilityLabel={[name, title, time, line].filter((part) => part !== "").join(", ")}
       onPress={onOpen}
       className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
     >
@@ -500,6 +501,11 @@ function TeammateRow({
           </Text>
           <Text className="text-xs text-muted-foreground">{time}</Text>
         </View>
+        {title !== "" && (
+          <Text numberOfLines={2} className="text-xs text-muted-foreground">
+            {title}
+          </Text>
+        )}
         <Text numberOfLines={1} className="text-sm text-muted-foreground">
           {line}
         </Text>

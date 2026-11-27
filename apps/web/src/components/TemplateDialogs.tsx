@@ -11,21 +11,23 @@ import {
   templateReadText,
   templateTooLargeText,
 } from "@j3-bots/client-runtime/wording";
-import type {
-  BotTemplate,
-  EngineStatus,
-  PermissionMode,
-  TemplateTooLarge,
+import {
+  type BotTemplate,
+  type EngineStatus,
+  type PermissionMode,
+  PROFILE_LIMITS,
+  type TemplateTooLarge,
 } from "@j3-bots/contracts";
 import { CopyIcon, CpuIcon, DownloadIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
-import { HideSwitch } from "./Visibility";
+import { BackstageSwitch } from "./Visibility";
 import { PermissionModeChoices } from "./PermissionModeChoices";
 import { TemplatePreview } from "./TemplatePreview";
 import { Button } from "./ui/button";
 import { alertDialog, dialogBackdrop, dialogTitle, screenDialog } from "./ui/dialog";
+import { lineField } from "./ui/field";
 
 const sheetBody = "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4";
 const sheetFooter = "flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3";
@@ -233,7 +235,8 @@ interface TemplateFormProps {
  * Creating a bot from a template, which is untrusted: the operator sees all
  * of it, the model it runs on here and the permission mode it starts with,
  * capped by the default unless they choose more, and whether it starts
- * hidden; nothing is created until they press Create. The sheet's content,
+ * behind the scenes; a template with no title asks for one, which Create
+ * needs. Nothing is created until they press Create. The sheet's content,
  * whatever frames it.
  */
 export function TemplateForm({
@@ -250,14 +253,18 @@ export function TemplateForm({
   const start = templateStart(template, engine);
   const [picked, setPicked] = useState<PermissionMode | null>(null);
   const [hidden, setHidden] = useState(false);
+  // Asked only of a template shared from a bot with no title.
+  const asksTitle = template.profile.title === "";
+  const [title, setTitle] = useState("");
+  const titleFieldId = useId();
   const [state, setState] = useState<"editing" | "creating" | Exclude<TemplateCreated, "done">>(
     "editing",
   );
   const mode = picked ?? start.permissionMode;
   const { name } = template.profile;
   const creating = state === "creating";
-  const picks = templateSubmission(template, start, picked);
-  // A visible bot says nothing of it, as the server's default.
+  const picks = templateSubmission(template, start, picked, title);
+  // A bot in the list says nothing of it, as the server's default.
   const submission = picks === null ? null : { ...picks, ...(hidden ? { hidden: true } : {}) };
   const ready = submission !== null && connected && !creating;
   return (
@@ -280,6 +287,23 @@ export function TemplateForm({
           {t("template.create.untrusted")}
         </p>
         <TemplatePreview template={template} routinesNote={t("template.routines.paused", { name })}>
+          {asksTitle && (
+            <section className="flex flex-col gap-1 border-t border-border pt-4">
+              <label htmlFor={titleFieldId} className="text-xs font-medium text-muted-foreground">
+                {t("template.create.title.label", { name })}
+              </label>
+              <input
+                id={titleFieldId}
+                value={title}
+                maxLength={PROFILE_LIMITS.title}
+                readOnly={creating}
+                autoComplete="off"
+                placeholder={t("newBot.titleField.placeholder")}
+                onChange={(event) => setTitle(event.currentTarget.value)}
+                className={lineField}
+              />
+            </section>
+          )}
           <section className="flex flex-col gap-2 border-t border-border pt-4">
             <h3 className="text-xs font-medium text-muted-foreground">{t("template.model")}</h3>
             {start.model._tag === "none" ? (
@@ -321,7 +345,7 @@ export function TemplateForm({
             />
           </section>
           <section className="border-t border-border pt-4">
-            <HideSwitch checked={hidden} readOnly={creating} onChange={setHidden} />
+            <BackstageSwitch checked={hidden} readOnly={creating} onChange={setHidden} />
           </section>
         </TemplatePreview>
       </div>

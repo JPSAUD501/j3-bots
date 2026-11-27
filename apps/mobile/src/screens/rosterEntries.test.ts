@@ -22,8 +22,11 @@ import {
   rosterSizes,
 } from "./rosterEntries.ts";
 
-// The touch scale's lines, `text-base` and `text-sm`, at the default font size.
-const sizes = rosterSizes({ base: 22, sm: 22 });
+// The touch scale's lines, `text-base`, `text-sm` and `text-xs`, at the default font size.
+const sizes = rosterSizes({ base: 22, sm: 22, xs: 16 });
+
+// Every title takes one line, as a short one does.
+const oneLine = () => 1;
 
 const bot = (name: string): BotItem => ({
   _tag: "bot",
@@ -111,41 +114,61 @@ describe("the pinned band", () => {
 
 describe("rosterSizes", () => {
   it("keeps the design's heights at the default font size", () => {
-    expect(sizes).toEqual({ row: 64, section: 48, empty: 40, hidden: 56, pinCell: 94 });
+    expect(sizes).toEqual({
+      row: 64,
+      titleLine: 16,
+      section: 48,
+      empty: 40,
+      backstage: 56,
+      pinCell: 94,
+    });
   });
 
   it("grows each entry with its text at a larger font size, never below the design", () => {
-    const large = rosterSizes({ base: 40, sm: 38 });
+    const large = rosterSizes({ base: 40, sm: 38, xs: 30 });
     expect(large.row).toBe(40 + 2 + 38 + 18);
     expect(large.section).toBe(38 + 26);
     expect(large.pinCell).toBe(64 + 8 + 38);
-    expect(rosterSizes({ base: 18, sm: 17 })).toMatchObject({ row: 64, section: 48, hidden: 56 });
+    expect(rosterSizes({ base: 18, sm: 17, xs: 14 })).toMatchObject({
+      row: 64,
+      section: 48,
+      backstage: 56,
+    });
   });
 });
 
 describe("rosterEntries", () => {
-  it("lists the band first, even empty, then the rows, then the way to the hidden bots", () => {
+  it("lists the band first, even empty, then the rows, then the way behind the scenes", () => {
     const entries = rosterEntries(
       arranged({ pinned: [bot("Ada")], main: [bot("Bo"), bot("Cy")], hidden: [bot("Di")] }),
       [],
       412,
       new Set(),
       sizes,
+      oneLine,
     );
-    expect(entries.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo", "bot:Cy", "hidden"]);
-    const unhidden = rosterEntries(arranged({ main: [bot("Bo")] }), [], 412, new Set(), sizes);
-    expect(unhidden.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo"]);
+    expect(entries.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo", "bot:Cy", "backstage"]);
+    const inList = rosterEntries(
+      arranged({ main: [bot("Bo")] }),
+      [],
+      412,
+      new Set(),
+      sizes,
+      oneLine,
+    );
+    expect(inList.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo"]);
   });
 
-  it("lists the way to the hidden conversations for a hidden room alone, with the room in it", () => {
+  it("lists the way behind the scenes for a room there alone, with the room in it", () => {
     const entries = rosterEntries(
       arranged({ hidden: [room("Launch")] }),
       [],
       412,
       new Set(),
       sizes,
+      oneLine,
     );
-    expect(entries.at(-1)).toMatchObject({ kind: "hidden", items: [room("Launch")] });
+    expect(entries.at(-1)).toMatchObject({ kind: "backstage", items: [room("Launch")] });
   });
 
   it("lists each section after the main rows: its bots, the empty line, or only its header when folded, which still says something is unread", () => {
@@ -165,6 +188,7 @@ describe("rosterEntries", () => {
       412,
       new Set([trips.id]),
       sizes,
+      oneLine,
     );
     expect(entries.map((entry) => entry.key)).toEqual([
       "pinned",
@@ -179,7 +203,7 @@ describe("rosterEntries", () => {
     expect(entries.at(-1)).toMatchObject({ kind: "section", count: 1, folded: true, unread: true });
   });
 
-  it("lists the pairs under their own header after every section, and before the way to the hidden bots", () => {
+  it("lists the pairs under their own header after every section, and before the way behind the scenes", () => {
     const work = { id: SectionId.make("work"), name: "Work" };
     const entries = rosterEntries(
       arranged({
@@ -191,6 +215,7 @@ describe("rosterEntries", () => {
       412,
       new Set(),
       sizes,
+      oneLine,
     );
     expect(entries.map((entry) => entry.kind)).toEqual([
       "pinned",
@@ -200,7 +225,7 @@ describe("rosterEntries", () => {
       "between",
       "pair",
       "pair",
-      "hidden",
+      "backstage",
     ]);
     expect(entries.filter((entry) => entry.kind === "pair").map((entry) => entry.height)).toEqual([
       sizes.row,
@@ -209,10 +234,31 @@ describe("rosterEntries", () => {
   });
 });
 
+describe("a row's height", () => {
+  it("grows by each line a bot's title takes, between its name and its status line", () => {
+    const titled = (title: string): BotItem => {
+      const item = bot(title);
+      return { ...item, bot: { ...item.bot, profile: { ...item.bot.profile, title } } };
+    };
+    const lines = (title: string) => (title.length > 10 ? 2 : 1);
+    const heights = rosterEntries(
+      arranged({ main: [bot("Bo"), titled("Research"), titled("Instagram posts")] }),
+      [],
+      412,
+      new Set(),
+      sizes,
+      lines,
+    ).flatMap((entry) => (entry.kind === "row" ? [entry.height] : []));
+    expect(heights).toEqual([sizes.row, sizes.row + 2 + 16, sizes.row + 2 + 2 * 16]);
+  });
+});
+
 describe("foundEntries", () => {
   it("lists the pairs a search found under their header, after the rows, and no header without one", () => {
-    const found = foundEntries([bot("Bo")], [pair("Bo", "Cy")], sizes);
+    const found = foundEntries([bot("Bo")], [pair("Bo", "Cy")], sizes, oneLine);
     expect(found.map((entry) => entry.kind)).toEqual(["row", "between", "pair"]);
-    expect(foundEntries([bot("Bo")], [], sizes).map((entry) => entry.kind)).toEqual(["row"]);
+    expect(foundEntries([bot("Bo")], [], sizes, oneLine).map((entry) => entry.kind)).toEqual([
+      "row",
+    ]);
   });
 });

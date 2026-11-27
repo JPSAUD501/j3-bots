@@ -68,7 +68,7 @@ import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import { Switch } from "./ui/switch";
-import { HiddenNotice } from "./Visibility";
+import { BackstageNotice } from "./Visibility";
 
 interface PanelFrameProps {
   readonly title: string;
@@ -231,7 +231,7 @@ export interface BotDetailsIntents {
   readonly stop: () => void;
   /** Stop, for an AI that ignores it (`botStop` is `force`), as the shortcut then does. */
   readonly forceStop: () => void;
-  /** Puts a hidden bot back in the roster's list. */
+  /** Brings a bot behind the scenes back to the roster's list. */
   readonly show: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
@@ -267,8 +267,8 @@ interface BotDetailsProps {
 
 /**
  * Answers: what is this bot, and what runs without me. While it has work to
- * stop, Stop comes first under its profile; while it is hidden, a line says
- * so after that, with Show.
+ * stop, Stop comes first under its profile; while it is behind the scenes, a
+ * line says so after that, with Bring back to the list.
  */
 export function BotDetails({
   bot,
@@ -347,7 +347,7 @@ export function BotDetails({
           </button>
         </StopPlace>
       )}
-      {bot.hidden && <HiddenNotice name={name} onShow={intents.show} />}
+      {bot.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
 
       <DetailsSection title={t("details.routines")}>
         {routines === null ? (
@@ -658,7 +658,10 @@ function RoutineCast({ steps }: { steps: ReadonlyArray<RoutineStep> }) {
   );
 }
 
-/** A teammate: its face and name, and the latest message between the two, which the row opens. */
+/**
+ * A teammate: its face, its name over its title, and the latest message
+ * between the two, which the row opens.
+ */
 function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => void }) {
   const ctx = usePresentation();
   const peer = useBots().get(teammate.peer);
@@ -676,6 +679,9 @@ function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => v
               {activityTime(pair.lastMessage.createdAt, ctx)}
             </span>
           </span>
+          {peer !== undefined && peer.profile.title !== "" && (
+            <span className="line-clamp-2 text-xs text-muted-foreground">{peer.profile.title}</span>
+          )}
           <span className="truncate text-xs text-muted-foreground">{pairLine(pair, ctx)}</span>
         </span>
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -732,7 +738,7 @@ export interface RoomDetailsIntents {
   readonly stop: () => void;
   /** Stop, for a member's AI that ignores the room's Stop (`roomStop` is `force`). */
   readonly forceStop: () => void;
-  /** Puts a hidden room back in the roster's list. */
+  /** Brings a room behind the scenes back to the roster's list. */
   readonly show: () => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: () => Promise<void>;
@@ -745,7 +751,7 @@ export interface RoomDetailsIntents {
  * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first;
- * while it is hidden, a line says so after that, with Show.
+ * while it is behind the scenes, a line says so after that, with Bring back to the list.
  */
 export function RoomDetails({
   room,
@@ -833,7 +839,7 @@ export function RoomDetails({
           </Confirm>
         </StopPlace>
       )}
-      {room.hidden && <HiddenNotice name={name} onShow={intents.show} />}
+      {room.hidden && <BackstageNotice name={name} onBringBack={intents.show} />}
       <DetailsSection title={t("room.membersTitle")}>
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>

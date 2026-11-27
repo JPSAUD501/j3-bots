@@ -12,8 +12,10 @@ import { Text } from "./text.tsx";
 export interface TextLines {
   /** `text-base`: a row's name. */
   readonly base: number;
-  /** `text-sm`: a row's second line, a section's name. */
+  /** `text-sm`: a row's status line, a section's name. */
   readonly sm: number;
+  /** `text-xs`: a line of a bot's title, in its row. */
+  readonly xs: number;
 }
 
 let current: TextLines | null = null;
@@ -27,7 +29,14 @@ const subscribe = (listener: () => void): (() => void) => {
 };
 
 const publish = (lines: TextLines): void => {
-  if (current !== null && current.base === lines.base && current.sm === lines.sm) return;
+  if (
+    current !== null &&
+    current.base === lines.base &&
+    current.sm === lines.sm &&
+    current.xs === lines.xs
+  ) {
+    return;
+  }
   current = lines;
   for (const listener of listeners) listener();
 };
@@ -46,11 +55,15 @@ export function LineProbe() {
   useWindowDimensions();
   const base = useRef<ComponentRef<typeof View>>(null);
   const sm = useRef<ComponentRef<typeof View>>(null);
+  const xs = useRef<ComponentRef<typeof View>>(null);
   useLayoutEffect(() => {
     let baseHeight: number | null = null;
     let smHeight: number | null = null;
+    let xsHeight: number | null = null;
     const read = () => {
-      if (baseHeight !== null && smHeight !== null) publish({ base: baseHeight, sm: smHeight });
+      if (baseHeight !== null && smHeight !== null && xsHeight !== null) {
+        publish({ base: baseHeight, sm: smHeight, xs: xsHeight });
+      }
     };
     base.current?.measure((_x, _y, _width, height) => {
       baseHeight = height;
@@ -58,6 +71,10 @@ export function LineProbe() {
     });
     sm.current?.measure((_x, _y, _width, height) => {
       smHeight = height;
+      read();
+    });
+    xs.current?.measure((_x, _y, _width, height) => {
+      xsHeight = height;
       read();
     });
   });
@@ -75,6 +92,11 @@ export function LineProbe() {
       </View>
       <View ref={sm}>
         <Text numberOfLines={1} className="text-sm">
+          Ag
+        </Text>
+      </View>
+      <View ref={xs}>
+        <Text numberOfLines={1} className="text-xs">
           Ag
         </Text>
       </View>

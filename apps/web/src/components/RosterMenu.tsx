@@ -16,11 +16,10 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   EllipsisIcon,
-  EyeIcon,
-  EyeOffIcon,
   FolderInputIcon,
   FolderMinusIcon,
   FolderPlusIcon,
+  ListPlusIcon,
   MessageSquareDotIcon,
   MessageSquareIcon,
   PanelRightIcon,
@@ -29,6 +28,8 @@ import {
   PinOffIcon,
   Share2Icon,
   StarIcon,
+  TagIcon,
+  TheaterIcon,
   Trash2Icon,
 } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
@@ -48,7 +49,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 
-/** Where a room sits in the roster: pinned at the top, or among the hidden. Fields left out keep their value. */
+/** Where a room sits in the roster: pinned at the top, or behind the scenes. Fields left out keep their value. */
 export type RoomPlacement = Pick<RoomChanges, "pinned" | "hidden">;
 
 /** What the roster's menus ask for. The shell carries each out and says when one did not take. */
@@ -64,8 +65,8 @@ export interface RosterIntents {
   readonly deleteSection: (sectionId: SectionId) => void;
   /** Opens the conversation or room with its details beside it. */
   readonly openDetails: (key: RosterItemKey) => void;
-  /** Absent where there is no form to edit a bot. */
-  readonly editProfile?: (botId: BotId) => void;
+  /** Opens the bot's form, at its title for `"title"`. Absent where there is no form to edit a bot. */
+  readonly editProfile?: (botId: BotId, at?: "title") => void;
   /** Shows the bot as a template, to save or share. */
   readonly shareTemplate: (botId: BotId) => void;
   readonly deleteBot: (botId: BotId) => void;
@@ -173,6 +174,12 @@ function BotRows({
   return (
     <>
       <ReadRow item={item} menu={menu} />
+      {/* A bot from before titles: the way to give it one, until it has one. */}
+      {bot.profile.title === "" && intents.editProfile !== undefined && (
+        <MenuItem icon={<TagIcon />} onClick={() => intents.editProfile?.(bot.id, "title")}>
+          {t("roster.giveTitle")}
+        </MenuItem>
+      )}
       {!bot.hidden &&
         (bot.pinned ? (
           <MenuItem
@@ -198,12 +205,15 @@ function BotRows({
           </MenuItem>
         ))}
       {bot.hidden ? (
-        <MenuItem icon={<EyeIcon />} onClick={() => intents.placeBot(bot.id, { hidden: false })}>
-          {t("roster.unhide")}
+        <MenuItem
+          icon={<ListPlusIcon />}
+          onClick={() => intents.placeBot(bot.id, { hidden: false })}
+        >
+          {t("backstage.bringBack")}
         </MenuItem>
       ) : (
-        <MenuItem icon={<EyeOffIcon />} onClick={() => intents.placeBot(bot.id, { hidden: true })}>
-          {t("roster.hide")}
+        <MenuItem icon={<TheaterIcon />} onClick={() => intents.placeBot(bot.id, { hidden: true })}>
+          {t("backstage.move")}
         </MenuItem>
       )}
       <MenuSeparator />
@@ -236,8 +246,8 @@ function BotRows({
 }
 
 /**
- * A room keeps its own pin, is read or unread like a conversation, and hides
- * as a bot does: a hidden room's pin waits until it is shown again.
+ * A room keeps its own pin, is read or unread like a conversation, and goes
+ * behind the scenes as a bot does: its pin waits until it is back in the list.
  */
 function RoomRows({
   item,
@@ -261,12 +271,12 @@ function RoomRows({
         </MenuItem>
       )}
       {room.hidden ? (
-        <MenuItem icon={<EyeIcon />} onClick={() => place({ hidden: false })}>
-          {t("roster.unhide")}
+        <MenuItem icon={<ListPlusIcon />} onClick={() => place({ hidden: false })}>
+          {t("backstage.bringBack")}
         </MenuItem>
       ) : (
-        <MenuItem icon={<EyeOffIcon />} onClick={() => place({ hidden: true })}>
-          {t("roster.hide")}
+        <MenuItem icon={<TheaterIcon />} onClick={() => place({ hidden: true })}>
+          {t("backstage.move")}
         </MenuItem>
       )}
       <MenuSeparator />

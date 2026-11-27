@@ -280,12 +280,29 @@ describe("templateStart", () => {
 
   it("leaves the permission mode to the server until the operator picks one", () => {
     const start = templateStart(template, engine(provider("claude", "claude-code", ready, "opus")));
-    expect(templateSubmission(template, start, null)).toEqual({ template, model: template.model });
-    expect(templateSubmission(template, start, "full-access")).toEqual({
+    expect(templateSubmission(template, start, null, "")).toEqual({
+      template,
+      model: template.model,
+    });
+    expect(templateSubmission(template, start, "full-access", "")).toEqual({
       template,
       model: template.model,
       permissionMode: "full-access",
     });
+  });
+
+  it("creates a bot from a template with no title only once the operator gives one", () => {
+    const untitled = { ...template, profile: { ...template.profile, title: "" } };
+    const start = templateStart(untitled, engine(provider("claude", "claude-code", ready, "opus")));
+    expect(templateSubmission(untitled, start, null, "  ")).toBeNull();
+    expect(templateSubmission(untitled, start, null, " Market research ")).toEqual({
+      template: { ...untitled, profile: { ...untitled.profile, title: "Market research" } },
+      model: template.model,
+    });
+    // A template's own title is the one the bot takes.
+    expect(templateSubmission(template, start, null, "Other")?.template.profile.title).toBe(
+      "Research",
+    );
   });
 
   it("offers no model, and supervised, before the engine lists one", () => {

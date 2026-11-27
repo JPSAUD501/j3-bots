@@ -362,6 +362,11 @@ export function QuickAccess({
               </span>
               <div className="flex min-w-0 flex-1 flex-col">
                 <h1 className="truncate text-sm font-medium">{name}</h1>
+                {bot.profile.title !== "" && (
+                  <span className="truncate text-xs text-muted-foreground">
+                    {bot.profile.title}
+                  </span>
+                )}
                 {presence !== null && (
                   <SwapText
                     text={presence.text}

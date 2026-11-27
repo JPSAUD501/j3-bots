@@ -11,13 +11,15 @@ export interface NotificationText {
 /** The names a notification shows, or null for a bot or room that no longer exists. */
 export interface NotificationNames {
   readonly botName: (id: BotId) => string | null;
+  /** What the bot is for, shown with its name; empty when it has none. */
+  readonly botTitle: (id: BotId) => string;
   readonly roomName: (id: RoomId) => string | null;
 }
 
 /**
  * A notification as the operator reads it: from the bot, or from the room it
- * was said in, naming the bot. Without a preview it says only what kind of
- * thing arrived. Null for a bot or room that has no name any more, such as one
+ * was said in, naming the bot with its title, as everywhere a bot speaks.
+ * Without a preview it says only what kind of thing arrived. Null for a bot or room that has no name any more, such as one
  * deleted since: there is nothing to open.
  */
 export function notificationText(
@@ -78,8 +80,10 @@ export function notificationText(
           : t("summary.connectorSignIn", { name: preview });
     }
   })();
+  const title = names.botTitle(notification.botId);
+  const named = title === "" ? name : t("bot.nameAndTitle", { name, title });
   const { target } = notification;
-  if (target._tag === "conversation") return { title: name, body: text };
+  if (target._tag === "conversation") return { title: named, body: text };
   const room = names.roomName(target.roomId);
-  return room === null ? null : { title: room, body: t("summary.fromBot", { name, text }) };
+  return room === null ? null : { title: room, body: t("summary.fromBot", { name: named, text }) };
 }

@@ -7,14 +7,19 @@ import {
   templateReadText,
   templateTooLargeText,
 } from "@j3-bots/client-runtime/wording";
-import { type BotTemplate, PermissionMode, type TemplateTooLarge } from "@j3-bots/contracts";
+import {
+  type BotTemplate,
+  PermissionMode,
+  PROFILE_LIMITS,
+  type TemplateTooLarge,
+} from "@j3-bots/contracts";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Cpu, ShieldAlert } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChoiceRow, Problem, Quiet, Section, SwitchRow } from "../components/form.tsx";
+import { ChoiceRow, Problem, Quiet, Section, SwitchRow, TextField } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { type Screens, useReplaceWithConversation } from "../navigation.tsx";
@@ -167,7 +172,8 @@ export function ShareTemplateScreen({
  * Creating a bot from the template file the operator opened, which is
  * untrusted: they see all of it, the model it runs on here and the
  * permission mode it starts with, capped by the default unless they choose
- * more, and whether it starts hidden; nothing is created until they press Create. Once it exists, its
+ * more, and whether it starts behind the scenes; a template with no title asks
+ * for one, which Create needs. Nothing is created until they press Create. Once it exists, its
  * conversation opens in place of this screen. Leaving lets the file go.
  */
 export function NewFromTemplateScreen({
@@ -212,12 +218,15 @@ function TemplateForm({
   const start = templateStart(template, engineStatus._tag === "ready" ? engineStatus.value : null);
   const [picked, setPicked] = useState<PermissionMode | null>(null);
   const [hidden, setHidden] = useState(false);
+  // Asked only of a template shared from a bot with no title.
+  const asksTitle = template.profile.title === "";
+  const [title, setTitle] = useState("");
   const [state, setState] = useState<"editing" | "creating" | "schedule" | "failed">("editing");
   const mode = picked ?? start.permissionMode;
   const { name } = template.profile;
   const creating = state === "creating";
   const model = start.model._tag === "none" ? null : start.model;
-  const submission = templateSubmission(template, start, picked);
+  const submission = templateSubmission(template, start, picked, title);
   const create = (draft: TemplateDraft) => {
     setState("creating");
     void client.createBotFromTemplate(draft).then((result) => {
@@ -267,6 +276,18 @@ function TemplateForm({
         </Text>
       </View>
       <TemplatePreview template={template} routinesNote={t("template.routines.paused", { name })}>
+        {asksTitle && (
+          <Section open>
+            <TextField
+              label={t("template.create.title.label", { name })}
+              value={title}
+              placeholder={t("newBot.titleField.placeholder")}
+              maxLength={PROFILE_LIMITS.title}
+              readOnly={creating}
+              onChange={setTitle}
+            />
+          </Section>
+        )}
         <Section open title={t("template.model")}>
           {model === null ? (
             <Problem>{t("template.create.noModel")}</Problem>
@@ -315,8 +336,8 @@ function TemplateForm({
         </Section>
         <Section open>
           <SwitchRow
-            label={t("visibility.hide")}
-            hint={t("visibility.hide.hint")}
+            label={t("backstage.keep")}
+            hint={t("backstage.keep.hint")}
             value={hidden}
             readOnly={creating}
             onChange={setHidden}
