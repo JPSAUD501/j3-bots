@@ -5,16 +5,18 @@
  * stopped at a condition, failed and stopped. Development only.
  */
 import type { RoutineCardCommand } from "@j3-bots/client-runtime";
+import type { TrackTrigger } from "@j3-bots/client-runtime/presentation";
 import {
   type BotId,
+  ConnectorId,
   EntryId,
   RoutineId,
   RoutineRunId,
   type Routine,
   type RoutineRun,
   type RoutineRunStep,
+  type OwnTrigger,
   type RoutineStep,
-  type RoutineTrigger,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ids, SAMPLE_NOW } from "./sample";
@@ -24,10 +26,20 @@ const at = (minutesAgo: number) => DateTime.subtract(SAMPLE_NOW, { minutes: minu
 const trackRoutineId = RoutineId.make("inbox-replies");
 export const trackOwner: BotId = ids.scout;
 export const trackName = "Inbox replies";
-export const trackTrigger: RoutineTrigger = {
+export const trackTrigger: OwnTrigger = {
   _tag: "schedule",
   cron: "0 9 * * 1",
   timeZone: "America/Sao_Paulo",
+};
+
+/** The same routine run when a connector says something happened, as its Track shows it. */
+export const trackEventTrigger: TrackTrigger = {
+  _tag: "event",
+  connectorId: ConnectorId.make("conn_samplemail0000000"),
+  name: "message_received",
+  arguments: { from: "ana@example.com" },
+  summary: "a new email from Ana arrives",
+  connector: "Mail",
 };
 
 const bot = (botId: BotId, action: string): RoutineStep => ({

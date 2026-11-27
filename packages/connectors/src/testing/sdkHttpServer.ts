@@ -10,8 +10,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { type EventsControl, type EventsFakeOptions, eventsFake } from "./eventsFake.ts";
 import { notesServer } from "./notesServer.ts";
 
+export type { Delivered, EventsControl, EventsFakeOptions } from "./eventsFake.ts";
 export { APPROVAL_URL, DRIVE_STEP, DRIVE_STEP_URL } from "./notesServer.ts";
 
 /**
@@ -23,7 +25,7 @@ export { APPROVAL_URL, DRIVE_STEP, DRIVE_STEP_URL } from "./notesServer.ts";
  * At 2026-07-28 it also runs `long_job` as a task (MCP's Tasks extension),
  * which the SDK does not serve: it asks for a yes or no once the task is
  * under way, and ends when answered, unless `endless`, when it runs until
- * cancelled.
+ * cancelled. Given `events`, it offers them too (`eventsFake.ts`).
  */
 
 export type Revision = "2026-07-28" | "2025-11-25";
@@ -39,6 +41,8 @@ export interface SdkHttpServer {
   readonly changed: (kind: "tools" | "resources" | "prompts") => void;
   /** Whether the task was cancelled (`tasks/cancel`). */
   readonly taskCancelled: () => boolean;
+  /** Its events, when it offers them. */
+  readonly events: EventsControl | null;
   /**
    * Says the operator finished the step on its own page with this id
    * (`notifications/elicitation/complete`), to the client listening, at
@@ -51,6 +55,8 @@ export interface SdkHttpOptions {
   readonly revision: Revision;
   /** The task runs until cancelled. */
   readonly endless?: boolean;
+  /** The events it offers, at 2026-07-28. */
+  readonly events?: EventsFakeOptions;
 }
 
 const Rpc = Schema.Struct({
@@ -164,7 +170,10 @@ export const sdkHttpServer = (options: SdkHttpOptions) =>
     }>((resume) => {
       const requests: Array<{ method: string; headers: NodeHttp.IncomingHttpHeaders }> = [];
       const task = taskFake(options.endless === true);
-      const modern = createMcpHandler(() => notesServer(), { legacy: "reject" });
+      const events = options.events === undefined ? null : eventsFake(options.events);
+      const modern = createMcpHandler(() => notesServer({ events: events !== null }), {
+        legacy: "reject",
+      });
       const legacy = new Map<
         string,
         { transport: WebStandardStreamableHTTPServerTransport; server: McpServer }
@@ -201,6 +210,14 @@ export const sdkHttpServer = (options: SdkHttpOptions) =>
               requests.push({ method: rpc.method, headers: request.headers });
           }
           const [rpc] = rpcs;
+          if (
+            events !== null &&
+            rpc?.id !== undefined &&
+            rpc.method !== undefined &&
+            events.handle({ id: rpc.id, method: rpc.method, params: rpc.params ?? {} }, response)
+          ) {
+            return;
+          }
           if (options.revision === "2026-07-28" && rpc?.id !== undefined) {
             const taskId = rpc.params?.["taskId"];
             if (rpc.method === "tools/call" && rpc.params?.["name"] === "long_job") {
@@ -262,6 +279,7 @@ export const sdkHttpServer = (options: SdkHttpOptions) =>
                 }
               },
               taskCancelled: task.cancelled,
+              events: events?.control ?? null,
               stepFinished: async (elicitationId) => {
                 for (const { server: one } of legacy.values()) {
                   await one.server.createElicitationCompletionNotifier(elicitationId)();

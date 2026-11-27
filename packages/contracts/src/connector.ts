@@ -2,7 +2,15 @@
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { BotId, Label, Language, NonNegativeInt, OpenLiterals, SkillName } from "./base.ts";
+import {
+  BotId,
+  ConnectorId,
+  Label,
+  Language,
+  NonNegativeInt,
+  OpenLiterals,
+  SkillName,
+} from "./base.ts";
 import { SecretName } from "./secrets.ts";
 import { OptionalLastChange } from "./skill.ts";
 
@@ -15,15 +23,6 @@ import { OptionalLastChange } from "./skill.ts";
 // every value a client sends for one travels as a redacted type, which
 // prints as `<redacted>`.
 // ---------------------------------------------------------------------------
-
-/**
- * A connector's id. The client that adds it chooses it, so adding again after
- * a lost reply finds the connector it added instead of adding another.
- */
-export const ConnectorId = Schema.String.check(Schema.isPattern(/^conn_[0-9a-z]{16,40}$/)).pipe(
-  Schema.brand("ConnectorId"),
-);
-export type ConnectorId = typeof ConnectorId.Type;
 
 /**
  * One of J3 Bots' own glyphs for a service, by name. Clients draw it from the

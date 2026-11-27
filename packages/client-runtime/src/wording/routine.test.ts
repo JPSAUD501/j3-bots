@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  ConnectorId,
   type RoutineRun,
   RoutineRunId,
   type RoutineRunStep,
@@ -9,7 +10,12 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { miniRail, trackStations, trackStatus } from "../presentation/routineTrack.ts";
+import {
+  miniRail,
+  trackStations,
+  trackStatus,
+  trackTrigger,
+} from "../presentation/routineTrack.ts";
 import { endReason, foldLine, routineSentence, sentenceText } from "./routine.ts";
 
 const maya = BotId.make("maya");
@@ -84,6 +90,29 @@ describe("routineSentence", () => {
     expect(sentenceText(routineSentence({ _tag: "webhook" }, asked, pt))).toBe(
       "Quando o webhook dela é chamado, Maya reúne os e-mails e Ana envia as respostas, depois que você disser sim se algo precisar de resposta.",
     );
+  });
+
+  it("opens a routine on a connector's event with the event, worded as the bot set it", () => {
+    const event = {
+      _tag: "event",
+      connectorId: ConnectorId.make("conn_samplemail0000000"),
+      name: "message_received",
+      arguments: {},
+      summary: "a new email from Ana arrives",
+    } as const;
+    const two = [bot(maya, "reads it"), bot(ana, "files the invoice")];
+    expect(sentenceText(routineSentence(trackTrigger(event, "Mail"), two, en))).toBe(
+      "When Mail says a new email from Ana arrives, Maya reads it and Ana files the invoice.",
+    );
+    expect(
+      sentenceText(
+        routineSentence(
+          trackTrigger({ ...event, summary: "chegar um e-mail novo da Ana" }, "Mail"),
+          [bot(maya, "lê o e-mail")],
+          pt,
+        ),
+      ),
+    ).toBe("Quando Mail avisar que chegar um e-mail novo da Ana, Maya lê o e-mail.");
   });
 });
 

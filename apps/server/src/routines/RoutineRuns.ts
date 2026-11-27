@@ -86,7 +86,8 @@ export const dueToTell = (
 
 /**
  * How many runs, skipped ones included, a routine's webhook may record in a
- * minute. A caller past it is told when to try again, and nothing is recorded.
+ * minute, and an event routine's events start. A caller past it is told when
+ * to try again, and nothing is recorded; events wait.
  */
 export const WEBHOOK_RUNS_PER_MINUTE = 10;
 
@@ -181,6 +182,16 @@ export interface RunReceipt {
 }
 
 /**
+ * Whether a run of an event routine started for the events it was given:
+ * `busy` while its previous run is still going, which the events wait for;
+ * `limited` past its runs per minute, until `until`.
+ */
+export type EventRunStart =
+  | { readonly _tag: "started"; readonly runId: RoutineRunId }
+  | { readonly _tag: "busy" }
+  | { readonly _tag: "limited"; readonly until: DateTime.Utc };
+
+/**
  * Why a webhook request was not taken: no routine with that address
  * (`unknown`, also for a wrong secret, so a caller learns nothing about which
  * routines exist), or a paused routine.
@@ -244,6 +255,16 @@ export class RoutineRuns extends Context.Service<
       readonly body: string;
       readonly requestKey: string | null;
     }) => Effect.Effect<RunReceipt, WebhookRefused | RateLimited>;
+    /**
+     * Starts a run of an event routine for the events that arrived, `body`
+     * its trigger data, in the caller's transaction: never a skipped one, as
+     * events that arrive while a run goes on wait to run together after it;
+     * and within the routine's runs per minute, as a webhook's are.
+     */
+    readonly events: (
+      routine: { readonly id: RoutineId; readonly botId: BotId },
+      body: string,
+    ) => Effect.Effect<EventRunStart>;
     /**
      * Settles every run whose attempt ended, or records its next attempt, in
      * the caller's transaction.
@@ -618,6 +639,41 @@ export const layer = Layer.effect(
     });
 
     /**
+     * Until when the routine may record no other run, when it recorded its
+     * runs per minute already. `routine.run` can take the count past the
+     * limit, so it may again once the tenth newest run, not the oldest,
+     * leaves the window.
+     */
+    const limitedUntil = Effect.fn("RoutineRuns.limitedUntil")(function* (routineId: RoutineId) {
+      const now = yield* DateTime.now;
+      const windowStart = DateTime.subtractDuration(now, Duration.minutes(1));
+      const recent = yield* runsSince({ routineId, since: timeText(windowStart) }).pipe(
+        Effect.orDie,
+      );
+      const tenthNewest = recent[recent.length - WEBHOOK_RUNS_PER_MINUTE];
+      return tenthNewest === undefined
+        ? Option.none<DateTime.Utc>()
+        : Option.some(DateTime.addDuration(tenthNewest.started_at, Duration.minutes(1)));
+    });
+
+    const events = Effect.fn("RoutineRuns.events")(function* (
+      routine: { readonly id: RoutineId; readonly botId: BotId },
+      body: string,
+    ) {
+      yield* settleEnded(routine.id);
+      const going = yield* sql`
+        SELECT 1 FROM routine_runs WHERE routine_id = ${routine.id} AND status = 'running'
+      `.pipe(Effect.orDie);
+      if (going.length > 0) return { _tag: "busy" } satisfies EventRunStart;
+      const limited = yield* limitedUntil(routine.id);
+      if (Option.isSome(limited)) {
+        return { _tag: "limited", until: limited.value } satisfies EventRunStart;
+      }
+      const receipt = yield* begin(routine, { body, key: null, dueAt: null });
+      return { _tag: "started", runId: receipt.runId } satisfies EventRunStart;
+    });
+
+    /**
      * Whether `presented` is `secret`. Their digests are compared in time that
      * does not depend on where they differ, and are of equal length, so not
      * even the secret's length shows.
@@ -682,20 +738,8 @@ export const layer = Layer.effect(
             }
           }
           if (!routine.enabled) return yield* new WebhookRefused({ reason: "paused" });
-          const now = yield* DateTime.now;
-          const windowStart = DateTime.subtractDuration(now, Duration.minutes(1));
-          const recent = yield* runsSince({
-            routineId: routine.id,
-            since: timeText(windowStart),
-          }).pipe(Effect.orDie);
-          // `routine.run` can take the count past the limit, so a call is
-          // taken again once the tenth newest run, not the oldest, leaves the window.
-          const tenthNewest = recent[recent.length - WEBHOOK_RUNS_PER_MINUTE];
-          if (tenthNewest !== undefined) {
-            return yield* new RateLimited({
-              retryAt: DateTime.addDuration(tenthNewest.started_at, Duration.minutes(1)),
-            });
-          }
+          const limited = yield* limitedUntil(routine.id);
+          if (Option.isSome(limited)) return yield* new RateLimited({ retryAt: limited.value });
           return yield* begin(
             { id: routine.id, botId: routine.bot_id },
             { body: input.body, key: input.requestKey, dueAt: null },
@@ -716,6 +760,7 @@ export const layer = Layer.effect(
       runNow,
       admitWebhook,
       webhook,
+      events,
       settle: settleEnded(null),
       expire: Effect.flatMap(DateTime.now, (now) => steps.expire(now)),
       report: Effect.fn("RoutineRuns.report")((input) =>

@@ -3,6 +3,7 @@ import {
   ApprovalDecision,
   type BotId,
   EntryId,
+  EventStopReason,
   type EntryTarget,
   QuestionAnswers,
   RoomId,
@@ -216,6 +217,14 @@ export const CatchUpNote = Schema.Union([
     changes: Schema.NonEmptyArray(
       Schema.Struct({ field: Schema.Literals(["name", "title", "job"]), value: Schema.String }),
     ),
+  }),
+  /** J3 Bots stopped listening for the connector's event an event routine runs on. */
+  Schema.TaggedStruct("routine-stopped", {
+    routine: Schema.String,
+    routineId: RoutineId,
+    connector: Schema.String,
+    at: Schema.DateTimeUtc,
+    reason: EventStopReason,
   }),
   /**
    * Reactions on a message of the bot's conversation or of a room it is in

@@ -753,6 +753,15 @@ export function sampleTeam(now: DateTime.Utc) {
     note: null,
   });
 
+  const mailEvent = (summary: string) =>
+    ({
+      _tag: "event",
+      connectorId: ConnectorId.make("conn_samplemail0000000"),
+      name: "message_received",
+      arguments: {},
+      summary,
+    }) as const;
+
   // Run times match the schedules at SAMPLE_NOW: a Friday, 14:40 in São Paulo and 17:40 in Lisbon.
   const routines: Record<string, Routine[]> = {
     [ids.scout]: [
@@ -793,6 +802,49 @@ export function sampleTeam(now: DateTime.Utc) {
         nextRunAt: null,
         lastRun: run(7 * 24 * 60 - 110, "failed"),
         runCount: 4,
+      },
+      // On a connector's event: listening, waiting for the connector, and stopped.
+      {
+        id: RoutineId.make("invoices-from-ana"),
+        botId: ids.scout,
+        name: "Invoices from Ana",
+        instruction: "When Ana sends an invoice, add it to the bills sheet and tell me the total.",
+        trigger: mailEvent("a new email from Ana arrives"),
+        enabled: true,
+        webhookUrl: null,
+        nextRunAt: null,
+        lastRun: run(95, "delivered"),
+        runCount: 6,
+        listening: { _tag: "listening" },
+        connectorName: "Mail",
+      },
+      {
+        id: RoutineId.make("school-notes"),
+        botId: ids.scout,
+        name: "School notes",
+        instruction: "Summarize any note from the school in two lines.",
+        trigger: mailEvent("an email from the school arrives"),
+        enabled: true,
+        webhookUrl: null,
+        nextRunAt: null,
+        lastRun: null,
+        runCount: 0,
+        listening: { _tag: "waiting", since: ago(12) },
+        connectorName: "Mail",
+      },
+      {
+        id: RoutineId.make("bank-statements"),
+        botId: ids.scout,
+        name: "Bank statements",
+        instruction: "When the bank sends a statement, list anything I didn't expect.",
+        trigger: mailEvent("the bank sends a statement"),
+        enabled: true,
+        webhookUrl: null,
+        nextRunAt: null,
+        lastRun: run(2 * 24 * 60, "silent"),
+        runCount: 11,
+        listening: { _tag: "stopped", reason: "access-revoked", since: ago(60) },
+        connectorName: "Mail",
       },
     ],
     [ids.atlas]: [

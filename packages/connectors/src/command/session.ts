@@ -9,6 +9,7 @@ import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { CommandFailed, type ConnectorFailure, NotMcp, ResponseTooLarge } from "../errors.ts";
+import type { EventsRefused } from "../events.ts";
 import {
   type ClientSetup,
   type McpSession,
@@ -189,17 +190,20 @@ export const openCommandSession = (
        * ended is its ending, and one because a message was too long is
        * that. One that does not read what it is sent is not speaking MCP.
        */
+      const explain = (failure: ConnectorFailure): ConnectorFailure =>
+        transport.tooLarge
+          ? new ResponseTooLarge({ limit: MAX_MESSAGE_BYTES })
+          : transport.stalled
+            ? new NotMcp()
+            : ended || failure._tag === "Unreachable"
+              ? new CommandFailed({ reason: "exited" })
+              : failure;
       const explained = <A>(effect: Effect.Effect<A, ConnectorFailure>) =>
-        effect.pipe(
-          Effect.mapError((failure): ConnectorFailure =>
-            transport.tooLarge
-              ? new ResponseTooLarge({ limit: MAX_MESSAGE_BYTES })
-              : transport.stalled
-                ? new NotMcp()
-                : ended || failure._tag === "Unreachable"
-                  ? new CommandFailed({ reason: "exited" })
-                  : failure,
-          ),
+        Effect.mapError(effect, explain);
+      /** As {@link explained}, an events request's: a refusal is the server's answer, as it is. */
+      const explainedEvent = <A>(effect: Effect.Effect<A, ConnectorFailure | EventsRefused>) =>
+        Effect.mapError(effect, (failure) =>
+          failure._tag === "EventsRefused" ? failure : explain(failure),
         );
 
       yield* Effect.acquireRelease(
@@ -231,7 +235,8 @@ export const openCommandSession = (
           ),
       );
 
-      const session = sessionOf(client, transport, limits, context, () => scrub);
+      const session = sessionOf(client, transport, limits, context, () => scrub, "notify");
+      const events = session.events;
       return {
         session: {
           info: session.info,
@@ -242,6 +247,16 @@ export const openCommandSession = (
           readResource: (input) => explained(session.readResource(input)),
           readAppResource: (uri, maxBytes) => explained(session.readAppResource(uri, maxBytes)),
           getPrompt: (input) => explained(session.getPrompt(input)),
+          events:
+            events === null
+              ? null
+              : {
+                  list: explainedEvent(events.list),
+                  poll: (input) => explainedEvent(events.poll(input)),
+                  stream: (input, frame) => explainedEvent(events.stream(input, frame)),
+                  subscribe: (input) => explainedEvent(events.subscribe(input)),
+                  unsubscribe: (input) => explainedEvent(events.unsubscribe(input)),
+                },
           skills: {
             ...session.skills,
             listSkills: explained(session.skills.listSkills),

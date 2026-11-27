@@ -21,7 +21,7 @@ import type { MemoryEditProblem } from "../presentation/saves.ts";
 import type { TemplateRead } from "../presentation/template.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { fileSize } from "./message.ts";
-import { scheduleInWords } from "./schedule.ts";
+import { eventInWords, eventStopText, scheduleInWords } from "./schedule.ts";
 import { dividerTime, timeInSentence, type TimeContext } from "./time.ts";
 
 const PERMISSION_TEXT: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
@@ -176,9 +176,11 @@ export interface RoutineLines {
   readonly expression: boolean;
   /**
    * That it is paused, or when it runs next, after the runs it missed while
-   * J3 Bots was not running; null when none of them applies.
+   * J3 Bots was not running; for a routine on a connector's event, that J3
+   * Bots waits for the connector or stopped listening, and why. Null when
+   * none of them applies. `blocked` is drawn in the blocked color.
    */
-  readonly status: string | null;
+  readonly status: { readonly text: string; readonly blocked: boolean } | null;
   /**
    * What its last run did, for `routine.lastRunWithCount` to place beside the
    * run count; `failed` is drawn in the blocked color. Null before it ran.
@@ -197,10 +199,37 @@ function missedText(missed: RoutineMissed, { i18n }: TimeContext): string {
     : i18n.plural("routine.missed", missed.count);
 }
 
-/** That it is paused, or the runs it missed and when it runs next. */
-function routineStatus(routine: Routine, ctx: TimeContext): string | null {
+/** That it is paused, how it listens for its event, or the runs it missed and when it runs next. */
+function routineStatus(routine: Routine, ctx: TimeContext): RoutineLines["status"] {
   const { t } = ctx.i18n;
-  if (!routine.enabled) return t("routine.paused");
+  if (!routine.enabled) return { text: t("routine.paused"), blocked: false };
+  const listening = routine.listening;
+  if (listening !== undefined) {
+    const connector = routine.connectorName ?? null;
+    switch (listening._tag) {
+      case "listening":
+        return null;
+      case "waiting":
+        return {
+          text: t("routine.waiting", { connector: connector ?? t("routine.theConnector") }),
+          blocked: false,
+        };
+      case "stopped": {
+        const reason = eventStopText(listening.reason, connector, ctx.i18n);
+        return {
+          text: reason === null ? t("routine.stoppedUnknown") : t("routine.stopped", { reason }),
+          blocked: true,
+        };
+      }
+    }
+  }
+  const text = clockStatus(routine, ctx);
+  return text === null ? null : { text, blocked: false };
+}
+
+/** When a routine runs next, after the runs it missed while J3 Bots was not running. */
+function clockStatus(routine: Routine, ctx: TimeContext): string | null {
+  const { t } = ctx.i18n;
   const next =
     routine.nextRunAt === null
       ? null
@@ -211,11 +240,15 @@ function routineStatus(routine: Routine, ctx: TimeContext): string | null {
 }
 
 export function routineLines(routine: Routine, ctx: TimeContext): RoutineLines {
-  const words = scheduleInWords(routine.trigger, ctx);
-  const expression = words === null && routine.trigger._tag === "schedule";
+  const { trigger } = routine;
+  const words =
+    trigger._tag === "event"
+      ? eventInWords(trigger, routine.connectorName ?? null, ctx.i18n)
+      : scheduleInWords(trigger, ctx);
+  const expression = words === null && trigger._tag === "schedule";
   const last = routine.lastRun;
   return {
-    schedule: words ?? (routine.trigger._tag === "schedule" ? routine.trigger.cron : ""),
+    schedule: words ?? (trigger._tag === "schedule" ? trigger.cron : ""),
     expression,
     status: routineStatus(routine, ctx),
     lastRun:

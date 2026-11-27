@@ -264,6 +264,15 @@ const catchUpItem = (note: Exclude<CatchUpNote, { readonly _tag: "reactions" }>)
       return { type: "routine-delivered", routine: note.routine, at: note.at, text: note.text };
     case "profile-changed":
       return { type: "profile-changed", changes: note.changes };
+    case "routine-stopped":
+      return {
+        type: "routine-stopped",
+        routine: note.routine,
+        routineId: note.routineId,
+        connector: note.connector,
+        at: note.at,
+        reason: note.reason,
+      };
     case "session-rotated":
       return {
         type: "session-rotated",

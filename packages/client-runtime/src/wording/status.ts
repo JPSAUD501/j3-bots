@@ -159,8 +159,10 @@ function previewSummary(
         : t("summary.handoffTo", { name: nameOf(preview.recipientId), text });
     }
     case "routine-change":
+    case "event-routine-change":
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
     case "routine-run":
+    case "event-routine-run":
       return t(current ? "routine.roster.waits" : "summary.routine", { name: text });
     case "unknown":
       return t("summary.cannotShow");

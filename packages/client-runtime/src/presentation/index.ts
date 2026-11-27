@@ -442,6 +442,8 @@ export {
   trackStations,
   type TrackStatus,
   trackStatus,
+  type TrackTrigger,
+  trackTrigger,
   type TrackWindow,
   trackWindow,
   type YouStationState,

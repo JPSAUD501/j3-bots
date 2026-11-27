@@ -53,7 +53,7 @@ export type ConnectorResult =
 export type ConnectorData =
   | { readonly kind: "resource"; readonly uri: string }
   | { readonly kind: "prompt"; readonly name: string }
-  | { readonly kind: "listing"; readonly of: "resources" | "prompts" | "skills" }
+  | { readonly kind: "listing"; readonly of: "resources" | "prompts" | "events" | "skills" }
   | {
       /** A skill's `SKILL.md`, as the bot loaded it. */
       readonly kind: "skill";
@@ -280,6 +280,22 @@ export interface ListedPrompt {
   }>;
 }
 
+/**
+ * An event a connector's server says it can tell J3 Bots about (MCP's Events
+ * extension), as a bot reads it in a listing: what it takes and what each
+ * occurrence carries, as the JSON Schemas its server gave, written compactly.
+ */
+export interface ListedEvent {
+  readonly name: string;
+  readonly description: string;
+  /** The schema of what a routine's trigger asks for, as JSON. */
+  readonly arguments: string;
+  /** The schema of what each occurrence carries, as JSON, when its server gave one. */
+  readonly payload: string | null;
+  /** How its server can deliver it: J3 Bots picks one, the bot never does. */
+  readonly delivery: ReadonlyArray<string>;
+}
+
 /** A skill of a connector's, as a bot reads it in a listing. */
 export interface ListedSkill {
   readonly name: string;
@@ -314,6 +330,12 @@ const promptLine = (prompt: ListedPrompt): string => {
   return `- ${prompt.name}${label}${about}${args}`;
 };
 
+const eventLine = (event: ListedEvent): string => {
+  const about = event.description === "" ? "" : `: ${event.description}`;
+  const payload = event.payload === null ? "" : ` [payload: ${event.payload}]`;
+  return `- ${event.name}${about} [arguments: ${event.arguments}]${payload} [delivery: ${event.delivery.join(", ")}]`;
+};
+
 const skillLine = (skill: ListedSkill): string =>
   `- ${skill.name} (${skill.uri}): ${skill.description}`;
 
@@ -321,6 +343,7 @@ const linesOf = (
   listing:
     | { readonly of: "resources"; readonly items: ReadonlyArray<ListedResource> }
     | { readonly of: "prompts"; readonly items: ReadonlyArray<ListedPrompt> }
+    | { readonly of: "events"; readonly items: ReadonlyArray<ListedEvent> }
     | { readonly of: "skills"; readonly items: ReadonlyArray<ListedSkill> },
 ): ReadonlyArray<string> => {
   switch (listing.of) {
@@ -328,6 +351,8 @@ const linesOf = (
       return listing.items.map(resourceLine);
     case "prompts":
       return listing.items.map(promptLine);
+    case "events":
+      return listing.items.map(eventLine);
     case "skills":
       return listing.items.map(skillLine);
   }
@@ -414,6 +439,8 @@ export const NOTHING_LISTED = {
     "None of the connectors you can use now lists a resource that matches. A connector that is not connected lists nothing until it is.",
   prompts:
     "None of the connectors you can use now lists a prompt that matches. A connector that is not connected lists nothing until it is.",
+  events:
+    "None of the connectors you can use now offers an event that matches. A connector that is not connected lists nothing until it is; one whose server offers no events can only be checked on a schedule.",
   skills:
     "None of the connectors you can use now serves a skill that matches. A connector that is not connected lists nothing until it is.",
 } as const;

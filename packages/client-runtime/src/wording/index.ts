@@ -94,7 +94,14 @@ export {
   type TeamNotice,
   teamNoticeLine,
 } from "./pairs.ts";
-export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
+export {
+  deviceZoneOffer,
+  eventInWords,
+  eventStopText,
+  scheduleInWords,
+  timeZoneHint,
+  triggerInWords,
+} from "./schedule.ts";
 export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";
 export { activityTime, dividerTime, type TimeContext, timeInSentence } from "./time.ts";

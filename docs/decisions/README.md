@@ -82,6 +82,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0084](0084-reactions-are-a-quiet-signal.md) | Reactions are a quiet signal, owned by J3 Bots | Accepted |
 | [0085](0085-signing-in-is-one-row-and-the-browser-opens-by-itself.md) | Signing in is one row, and the browser opens by itself | Accepted |
 | [0086](0086-code-stays-only-for-the-current-release-a-rollback-and-protocol-11.md) | Code stays only for the current release, a rollback to the one before, and the clients of its protocol | Accepted |
+| [0088](0088-a-connectors-events-wake-a-bot-through-a-routine.md) | A connector's events wake a bot through a routine | Accepted |
 | [0089](0089-a-connectors-skills-load-through-j3-tools.md) | A connector's skills load through J3 Bots' own tools | Accepted |
 | [0090](0090-a-connector-signs-in-as-a-service-with-credentials-the-operator-gives.md) | A connector signs in as a service, with credentials the operator gives | Accepted |
 

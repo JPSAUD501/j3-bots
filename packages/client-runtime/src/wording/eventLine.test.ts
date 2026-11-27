@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  ConnectorId,
   EntryId,
   EntryOrder,
   type HandoffEntry,
   type NoticeEntry,
   RoomId,
+  type EventRoutineChangeEntry,
   type RoutineChangeEntry,
   RoutineId,
 } from "@j3-bots/contracts";
@@ -136,6 +138,51 @@ describe("eventLineWords", () => {
     );
     expect(marked(words.runs)).toBe("3 rotinas criadas");
     expect(words.lead).toEqual({ _tag: "icon", icon: "routine" });
+  });
+
+  it("tells a routine on a connector's event as any routine, and marks why J3 Bots stopped listening", () => {
+    const eventChange = (
+      change: EventRoutineChangeEntry["change"],
+      order: number,
+      stopped?: EventRoutineChangeEntry["stopped"],
+    ): EventRoutineChangeEntry => ({
+      _tag: "event-routine-change",
+      id: EntryId.make(`e-${change}`),
+      order: EntryOrder.make(order),
+      author: change === "stopped" ? { _tag: "system" } : { _tag: "bot", botId: scout },
+      createdAt: at("2026-11-20T11:00:00Z"),
+      routineId: RoutineId.make("invoices"),
+      name: "Invoices",
+      change,
+      trigger: {
+        _tag: "event",
+        connectorId: ConnectorId.make("conn_mail0000000000000"),
+        name: "message_received",
+        arguments: {},
+        summary: "an invoice arrives",
+      },
+      connector: "Mail",
+      ...(stopped === undefined ? {} : { stopped }),
+    });
+    const lines = buildTimeline([
+      eventChange("created", 1),
+      eventChange("updated", 2),
+      eventChange("stopped", 3, "event-gone"),
+    ]).flatMap((item) => (item.kind === "event" ? [item.line] : []));
+    // Set up and then edited, it reads as one line, then the stop as one of its own.
+    expect(lines).toHaveLength(2);
+    const [set, stop] = lines;
+    if (set === undefined || stop === undefined) throw new Error("Two lines were expected");
+    expect(eventLineWords(set, en).label).toBe("Routine Invoices created");
+    expect(eventLineWords(stop, pt)).toMatchObject({
+      label: "Rotina Invoices parou, Mail não oferece mais esse evento",
+      lead: { _tag: "icon", icon: "paused" },
+      status: { tone: "blocked" },
+    });
+    expect(eventLineOpens(stop, inConversation)).toEqual({
+      _tag: "routine",
+      routineId: RoutineId.make("invoices"),
+    });
   });
 
   it("names the bot that saved the operator's name, and the name", () => {

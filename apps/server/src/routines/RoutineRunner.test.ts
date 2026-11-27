@@ -1382,6 +1382,7 @@ it.effect("says a run's earlier runs were left out when none fits beside its tri
         recentRuns: [],
         recentRunsLeftOut: true,
         triggerData: "x".repeat(length),
+        events: null,
         dueAt: null,
       });
     let low = 0;

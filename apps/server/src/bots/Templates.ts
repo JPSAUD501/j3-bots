@@ -36,8 +36,9 @@ const decodeSkill = Schema.decodeUnknownOption(TemplateSkill);
 
 /**
  * A routine as a template carries it; none for a one-time routine, which
- * never travels, nor for one with several steps, whose other bots a template
- * does not carry (decision 0080).
+ * never travels, nor for one on a connector's event, whose connector is the
+ * operator's own, nor for one with several steps, whose other bots a
+ * template does not carry (decision 0080).
  */
 const templateRoutine = (routine: Routine): Option.Option<TemplateRoutine> => {
   const { name, instruction, trigger } = routine;
@@ -48,6 +49,7 @@ const templateRoutine = (routine: Routine): Option.Option<TemplateRoutine> => {
     case "webhook":
       return Option.some({ name, instruction, trigger: { _tag: "webhook" } });
     case "once":
+    case "event":
       return Option.none();
   }
 };

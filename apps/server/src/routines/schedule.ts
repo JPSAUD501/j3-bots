@@ -206,7 +206,8 @@ const crowded = (compiled: Compiled, after: DateTime.Utc, until: DateTime.Utc) =
 
 /**
  * The first time the trigger fires strictly after `after`, or `None` when it
- * never will again: a webhook, or a one-time trigger whose time has come.
+ * never will again, or not by the clock: a webhook, a connector's event, or a
+ * one-time trigger whose time has come.
  * Fails with `Invalid` for a schedule that does not parse, names no date that
  * exists, or names a zone this runtime does not know.
  */
@@ -216,6 +217,7 @@ export const nextRun = (
 ): Result.Result<Option.Option<DateTime.Utc>, Invalid> => {
   switch (trigger._tag) {
     case "webhook":
+    case "event":
       return Result.succeed(Option.none());
     case "once":
       return Result.succeed(

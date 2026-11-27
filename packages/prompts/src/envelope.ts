@@ -131,6 +131,18 @@ export type CatchUpItem =
    * holds the recent conversation for the new one, oldest first.
    */
   | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> }
+  /**
+   * J3 Bots stopped listening for the event a routine runs on, for `reason`,
+   * and the routine will not run again until its trigger is set anew.
+   */
+  | {
+      readonly type: "routine-stopped";
+      readonly routine: string;
+      readonly routineId: RoutineId;
+      readonly connector: string;
+      readonly at: DateTime.Utc;
+      readonly reason: RoutineStopReason;
+    }
   /** Reactions on a message changed since the bot's last turn: how they stand now. */
   | { readonly type: "reactions"; readonly news: ReactionNews };
 
@@ -156,6 +168,14 @@ export interface ReactionNews {
     ...Array<{ readonly from: ReactionWho; readonly emoji: string }>,
   ];
 }
+
+/**
+ * Why J3 Bots stopped listening for a routine's event: the connector's server
+ * refused access or ended it (`access-revoked`), no longer offers the event
+ * (`event-gone`), refused what the trigger asks for (`refused`), or the
+ * connector is gone (`connector-gone`).
+ */
+export type RoutineStopReason = "access-revoked" | "event-gone" | "connector-gone" | "refused";
 
 /**
  * One message of a session digest: who wrote it, its text, the names of its
@@ -265,7 +285,28 @@ export interface BotWake extends WakeBase {
 export type RoutineTrigger =
   | { readonly type: "schedule"; readonly cron: string }
   | { readonly type: "once" }
-  | { readonly type: "webhook" };
+  | { readonly type: "webhook" }
+  /** A connector's event: `connector` is its name as the operator sees it, `event` the event's name at its server. */
+  | { readonly type: "event"; readonly connector: string; readonly event: string };
+
+/** One occurrence of a connector's event a run was started for. */
+export interface RoutineEventOccurrence {
+  readonly name: string;
+  readonly at: DateTime.Utc;
+  /** What its server said happened, as JSON text: untrusted. */
+  readonly data: string;
+}
+
+/**
+ * What a run on a connector's event was started for: the occurrences that
+ * arrived since the last run, oldest first, and whether some may have been
+ * missed, its server having said it lost track, or more having arrived than
+ * J3 Bots keeps for one run.
+ */
+export interface RoutineEvents {
+  readonly occurrences: ReadonlyArray<RoutineEventOccurrence>;
+  readonly missed: boolean;
+}
 
 export interface RoutineRunSummary {
   readonly at: DateTime.Utc;
@@ -333,6 +374,8 @@ export interface RoutineWake extends WakeBase {
   readonly recentRunsLeftOut: boolean;
   /** The webhook request body, for a webhook trigger. */
   readonly triggerData: string | null;
+  /** What happened, for a trigger on a connector's event. */
+  readonly events: RoutineEvents | null;
   /**
    * When the run was due, when that was more than a minute before `at` or on
    * another day in `timeZone`: J3 Bots was not running at a scheduled run's
@@ -789,6 +832,39 @@ const writeProfileChanges = (w: EnvelopeWriter, changes: ReadonlyArray<ProfileCh
   for (const change of changes) w.block("field", [["name", change.field]], change.value);
 };
 
+/** Why a routine stopped, as the bot is told; `routine` and `connector` come quoted. */
+const ROUTINE_STOPPED: {
+  readonly [K in RoutineStopReason]: (routine: string, connector: string) => string;
+} = {
+  "access-revoked": (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} no longer allows it, as when access was taken back.`,
+  "event-gone": (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} no longer offers it.`,
+  "connector-gone": (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} was removed or is no longer yours to use.`,
+  refused: (r, c) =>
+    `J3 Bots stopped listening for routine ${r}'s event: ${c} refused what its trigger asks for.`,
+};
+
+/** The occurrences a run on a connector's event was started for, each as untrusted data. */
+const writeEvents = (w: EnvelopeWriter, events: RoutineEvents): void => {
+  if (events.missed) {
+    w.line(
+      "Some events may have been missed before these: the connector's server lost track of them, or more arrived than one run takes. If the instruction needs every one, check the source itself.",
+    );
+  }
+  for (const event of events.occurrences) {
+    w.data(
+      [
+        ["source", "event"],
+        ["name", event.name],
+        ["at", w.time(event.at)],
+      ],
+      event.data,
+    );
+  }
+};
+
 /** Who wrote or reacted, as attributes: you, your user, or a teammate by name and id. */
 const whoAttributes = (who: ReactionWho): Attributes =>
   typeof who === "string"
@@ -838,6 +914,11 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
       case "profile-changed":
         w.line(PROFILE_CHANGED_LINE);
         writeProfileChanges(w, item.changes);
+        break;
+      case "routine-stopped":
+        w.line(
+          `${ROUTINE_STOPPED[item.reason](`"${escapeAttribute(item.routine)}"`, `"${escapeAttribute(item.connector)}"`)} Since ${w.time(item.at)} it does not run; its trigger was kept. Tell your user in a sentence, in your next message to them, and offer to set the event again (set_routine update with id ${item.routineId}) or to check on a schedule instead.`,
+        );
         break;
       case "session-rotated":
         if (item.digest.length === 0) {
@@ -1026,6 +1107,8 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
         ["run", wake.runId],
         ["trigger", trigger.type],
         ["cron", trigger.type === "schedule" ? trigger.cron : null],
+        ["connector", trigger.type === "event" ? trigger.connector : null],
+        ["event", trigger.type === "event" ? trigger.event : null],
         ["due", due?.iso ?? null],
         ["due-weekday", due?.weekday ?? null],
       ]);
@@ -1070,6 +1153,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       w.close("recent-runs");
       w.close("routine");
       if (wake.triggerData !== null) w.data([["source", "webhook"]], wake.triggerData);
+      if (wake.events !== null) writeEvents(w, wake.events);
       return;
     }
     case "system": {

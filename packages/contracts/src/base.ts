@@ -22,6 +22,15 @@ const id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_ID_
 export const BotId = id.pipe(Schema.brand("BotId"));
 export type BotId = typeof BotId.Type;
 
+/**
+ * A connector's id. The client that adds it chooses it, so adding again after
+ * a lost reply finds the connector it added instead of adding another.
+ */
+export const ConnectorId = Schema.String.check(Schema.isPattern(/^conn_[0-9a-z]{16,40}$/)).pipe(
+  Schema.brand("ConnectorId"),
+);
+export type ConnectorId = typeof ConnectorId.Type;
+
 export const RoomId = id.pipe(Schema.brand("RoomId"));
 export type RoomId = typeof RoomId.Type;
 

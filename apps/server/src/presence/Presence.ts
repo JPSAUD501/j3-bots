@@ -10,6 +10,7 @@ import {
   type NotificationSettings,
   PREVIEW_LENGTH,
   type RoutineNotice,
+  type EventRoutineRunEntry,
   type RoutineRunEntry,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -54,7 +55,7 @@ const kindOf = (
   readonly routine: RoutineNotice | null;
 } | null => {
   if (entry.author._tag !== "bot") return null;
-  if (entry._tag === "routine-run") {
+  if (entry._tag === "routine-run" || entry._tag === "event-routine-run") {
     const notice = routineNoticeOf(entry);
     return notice === null ? null : { ...notice, botId: entry.author.botId };
   }
@@ -69,7 +70,7 @@ const kindOf = (
  * notifies nothing.
  */
 const routineNoticeOf = (
-  entry: RoutineRunEntry,
+  entry: RoutineRunEntry | EventRoutineRunEntry,
 ): { readonly kind: NotificationKind; readonly routine: RoutineNotice } | null => {
   const steps = entry.run.steps ?? [];
   if (entry.run.status === "running" && steps.some((step) => step.state === "waiting")) {
@@ -118,10 +119,12 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "work-fold":
     case "notice":
     case "routine-change":
+    case "event-routine-change":
       return null;
     // A run's card notifies only when it needs the operator (`routineNoticeOf`),
     // as a question.
     case "routine-run":
+    case "event-routine-run":
       return "question";
   }
 };
@@ -146,7 +149,7 @@ const connectorCard = (entry: Entry): ConnectorNotice | null => {
 const previewText = (entry: Entry, settings: NotificationSettings): string | null => {
   if (!settings.previews || entry._tag === "browser-help") return null;
   // A run's card: the question its yes asks, never a step's own words otherwise.
-  if (entry._tag === "routine-run") {
+  if (entry._tag === "routine-run" || entry._tag === "event-routine-run") {
     const asked = entry.run.steps?.find((step) => step.state === "waiting")?.ask?.question;
     const line = cut((asked?.split("\n")[0] ?? "").trim(), PREVIEW_LENGTH);
     return line === "" ? null : line;

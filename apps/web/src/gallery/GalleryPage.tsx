@@ -182,6 +182,7 @@ import {
   trackRoutine,
   trackRuns,
   trackSteps,
+  trackEventTrigger,
   trackTrigger,
 } from "./sampleRoutineTrack";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
@@ -2500,6 +2501,28 @@ function RoutineTracksSection() {
           </div>
         </Labeled>
       ))}
+      <Labeled label="On a connector's event: the trigger reads in its words, with the connector's mark, at rest and in a run">
+        <div className="flex flex-col">
+          <RoutineTrack
+            entryId={trackEntry("event-rest")}
+            name={trackName}
+            trigger={trackEventTrigger}
+            owner={trackOwner}
+            steps={trackSteps}
+            run={null}
+          />
+          <RoutineTrack
+            entryId={trackEntry("event-run")}
+            name={trackName}
+            trigger={trackEventTrigger}
+            owner={trackOwner}
+            steps={trackSteps}
+            run={trackMoments.waiting}
+            onAnswer={nothing}
+            onStop={nothing}
+          />
+        </div>
+      </Labeled>
       <Labeled label="How a run ends: each folds into one line that opens its whole rail">
         <div className="flex flex-col">
           {trackEndings.map(([label, moment]) => (

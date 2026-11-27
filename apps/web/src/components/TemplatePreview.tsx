@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotTemplate, RoutineTrigger, TemplateRoutine } from "@j3-bots/contracts";
+import type { BotTemplate, OwnTrigger, TemplateRoutine } from "@j3-bots/contracts";
 import { scheduleInWords } from "@j3-bots/client-runtime/wording";
 import { CalendarClockIcon, ChevronRightIcon, ScrollTextIcon, WebhookIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -85,7 +85,7 @@ export function TemplatePreview({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { name, title, job, avatar } = template.profile;
-  const triggerOf = (routine: TemplateRoutine): RoutineTrigger =>
+  const triggerOf = (routine: TemplateRoutine): OwnTrigger =>
     routine.trigger._tag === "webhook"
       ? routine.trigger
       : { _tag: "schedule", cron: routine.trigger.cron, timeZone: ctx.timeZone };

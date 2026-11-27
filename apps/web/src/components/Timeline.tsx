@@ -30,6 +30,7 @@ import {
   type OwnAppSetup,
   type SecretRequestValues,
   type TimelineItem,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
@@ -381,23 +382,33 @@ function Card({
         />
       );
     case "routine-change":
+    case "event-routine-change":
       return (
         <RoutineTrack
           entryId={entry.id}
           name={entry.name}
-          trigger={entry.trigger}
+          trigger={
+            entry._tag === "event-routine-change"
+              ? trackTrigger(entry.trigger, entry.connector)
+              : entry.trigger
+          }
           owner={entry.author._tag === "bot" ? entry.author.botId : null}
           steps={entry.steps}
           run={null}
         />
       );
-    case "routine-run": {
+    case "routine-run":
+    case "event-routine-run": {
       const { run } = entry;
       return (
         <RoutineTrack
           entryId={entry.id}
           name={entry.name}
-          trigger={entry.trigger}
+          trigger={
+            entry._tag === "event-routine-run"
+              ? trackTrigger(entry.trigger, entry.connector)
+              : entry.trigger
+          }
           owner={entry.author.botId}
           steps={[]}
           run={run}

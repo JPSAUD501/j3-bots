@@ -43,8 +43,10 @@ export function Card({
     case "connector-ask":
       return <ConnectorAskCard entry={entry} />;
     case "routine-change":
+    case "event-routine-change":
       return <RoutineChangeCard entry={entry} />;
     case "routine-run":
+    case "event-routine-run":
       return <RoutineRunCard entry={entry} />;
   }
 }

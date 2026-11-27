@@ -94,6 +94,13 @@ The operator says "every weekday morning, tell me what changed in the repo" or "
 - When there is nothing to report, nothing appears. The run is still recorded in the routine's history.
 - The operator pauses, edits, tests or deletes a routine from the bot's details, or by telling the bot.
 
+The operator says "tell me when Ana sends an invoice" to a bot that uses their mail through a connector.
+
+- The bot looks at what the connector can tell (its events) and, when one fits, sets a routine that runs as it happens, not on a schedule. The operator copies no address, picks no setting and touches no connector: J3 Bots listens for the event and chooses how.
+- The routine reads in the operator's words: "When Mail says a new email from Ana arrives". It pauses, opens its runs and is deleted like any routine.
+- Several events close together make one run with all of them; nothing arrives for an event the instruction says to pass over.
+- When J3 Bots can't reach the connector for a while, the routine says it is waiting for it. When it has to stop listening, because access was taken back or the connector no longer offers the event, the routine says so and why, and the bot tells the operator in its next message and offers to set it again.
+
 The operator says "every Monday, gather my emails, have Atlas draft the replies, and ask me before Wren sends them".
 
 - The bot builds a routine in steps, naming its teammates, and its change card shows the Track at rest: one sentence that reads the routine back ("Every Monday at 9:00, Scout gathers last week's emails, only if there's something new Atlas summarises them and drafts replies, then, with your yes, Wren sends the replies"), composed from the steps, never by a model, and the stations under it. A one-step routine looks as it always did.
@@ -224,7 +231,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 - In a room, each bot's name stands over its run of messages and its avatar beside the last, as in a teammate conversation. The header shows the members' avatars, three at most and "+2" for the rest, the room's name and, under it, who is in it. While members answer, the room's last line names them ("Hal is answering…").
 - In a bot's conversation, the header shows the bot's face and name on one line, with no line about what it is doing under it.
 - Cards inline for what needs the operator (questions, approvals, credentials, a step in the bot's browser, a connector to add or sign in to) and for files. A picture a message carries shows as a photo, as one a person sends; a tap opens it large. A document a message carries (a PDF, a text or Markdown file, a table, a spreadsheet, a Word document or a presentation) shows the top of its first page or its first rows in its card, with what it is in words ("PDF, 12 pages"); a tap opens it in a viewer inside the app, with the same open and close as a picture's. A document too big to show, or one the app cannot read, says so and offers to save it, or on a phone to open it in another app.
-- What only happened takes one quiet line, as small as a time between messages: messages with teammates ("Talked with Wren · 3 messages"), a routine created or changed ("Routine Morning digest created"; several in a row, "3 routines created"), the name a bot saved for the operator. Tapping one shows the rest: the teammate conversation, the routine, or the routines to pick from.
+- What only happened takes one quiet line, as small as a time between messages: messages with teammates ("Talked with Wren · 3 messages"), a routine created or changed ("Routine Morning digest created"; several in a row, "3 routines created"), a routine that stopped listening for its event ("Routine Invoices stopped, Mail no longer allows it"), the name a bot saved for the operator. Tapping one shows the rest: the teammate conversation, the routine, or the routines to pick from.
 - A turn under way with a plan shows it as a short card under its row, and its little ones in a column under the bot's face; a room shows both under each member at work.
 - A finished turn's work folds into one line that says how it ended and how many steps it took, with no time ("Worked · 6 steps", "Stopped · 2 steps", "Failed · 1 step"), and opens to show the steps, each with its mark: done, failed, or running while the turn still runs. Work the bot left going after its reply reads as part of that finished turn: its steps are among the fold's, said as done ("Ran a command"), with no line or live mark of their own. The turn's plan folds into a line of its own ("Plan done, 4 of 4") that opens the plan. A step where the bot looked at an image shows it small beside the step; a tap opens it large. It shows nowhere else.
 - A connector's tool can come with its own interface, such as a table of what a shop has in stock: it shows under the turn's work line, open or folded, in a card that names the tool and its connector ("Stock · Wheelhouse"), and the operator uses it in place. What it asks of the operator waits under it in J3 Bots' own words: running one of its connector's tools as the bot (Allow, Don't allow), once per tool, unless the bot is in Full access; sending the bot a message as theirs (Send, Not now); opening a link in the browser (Open, Not now). Nothing it does reaches the bot unless the operator sends it.
@@ -236,7 +243,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 Answers: what is this bot, and what runs without me.
 
 - Profile: name, title, avatar, job, with Share as template.
-- Routines with their schedule, next run, last result, and a pause switch; a routine in steps shows its bots' faces and its sentence.
+- Routines with their schedule (or the event they run on), next run, last result, and a pause switch; one on an event says when it waits for its connector or stopped, and why; a routine in steps shows its bots' faces and its sentence.
 - Files the bot produced.
 - Memory, readable and editable.
 - Connectors this bot may use, each with its status, and a way to the connectors screen. With none, one line says to ask the bot to add one.

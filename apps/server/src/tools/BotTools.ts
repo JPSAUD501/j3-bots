@@ -328,6 +328,11 @@ export const layer = Layer.effect(
             })
             .pipe(Effect.map(asText), refuseUnknownConnector),
       ),
+      list_connector_events: framedHandler(tools.list_connector_events.input, (input, { caller }) =>
+        connectors
+          .events({ botId: caller.botId, ...scopeOf(input) })
+          .pipe(Effect.map(asText), refuseUnknownConnector),
+      ),
       list_connector_prompts: framedHandler(
         tools.list_connector_prompts.input,
         (input, { caller }) =>

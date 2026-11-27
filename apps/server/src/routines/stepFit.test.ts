@@ -31,6 +31,7 @@ const fifthReports = (handoff: string, triggerData: string) =>
       handoff,
     })),
     triggerData,
+    onEvent: false,
   });
 
 it("lets the longest handoffs through with the longest brief and webhook body", () => {

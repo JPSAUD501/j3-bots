@@ -134,6 +134,7 @@ describe("revision", () => {
         resources: true,
         prompts: true,
         tasks: false,
+        events: false,
         skills: false,
       });
       const methods = fake.requests.map((request) => request.method);

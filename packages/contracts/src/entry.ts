@@ -7,6 +7,7 @@ import { Attachment, AttachmentOffsets } from "./attachment.ts";
 import {
   BotId,
   CommandId,
+  ConnectorId,
   EntryId,
   EntryOrder,
   Label,
@@ -20,10 +21,16 @@ import {
 } from "./base.ts";
 import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId, ListingRef, SetupPageUrl } from "./connector.ts";
+import { ConnectorGlyph, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
-import { RoutineRun, RoutineStep, RoutineTrigger } from "./routine.ts";
+import {
+  EVENT_STOP_REASONS,
+  EventTrigger,
+  OwnTrigger,
+  RoutineRun,
+  RoutineStep,
+} from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
 import { StepSkill, StepTool, TurnWork, WorkStepKind } from "./work.ts";
@@ -1069,8 +1076,8 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   routineId: RoutineId,
   name: Label,
   change: Schema.Literals(["created", "updated", "paused", "resumed", "deleted"]),
-  /** The trigger as saved by this change. */
-  trigger: RoutineTrigger,
+  /** The trigger as saved by this change: a schedule, a time or a webhook. */
+  trigger: OwnTrigger,
   /**
    * The steps as saved by this change, for a routine with several steps:
    * the card draws its track. Absent for a one-step routine, a deletion, and
@@ -1079,6 +1086,45 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   steps: Schema.optionalKey(Schema.Array(RoutineStep)),
 });
 export type RoutineChangeEntry = typeof RoutineChangeEntry.Type;
+
+/** What can happen to a routine whose trigger is a connector's event, as its conversation shows it. */
+export const EVENT_ROUTINE_CHANGES = [
+  "created",
+  "updated",
+  "paused",
+  "resumed",
+  "deleted",
+  "stopped",
+] as const;
+
+/**
+ * A routine whose trigger is a connector's event was created or changed, by
+ * the bot or by the operator. A kind of its own, not `routine-change`: a
+ * client of protocol 11 built before 0.13.0 reads `routine-change`'s trigger
+ * as a schedule, a time or a webhook only, so it would refuse the whole
+ * conversation for one it does not know, while an entry of a kind it does not
+ * know it passes over (docs/architecture/clients.md, "Protocol compatibility").
+ */
+export const EventRoutineChangeEntry = Schema.TaggedStruct("event-routine-change", {
+  ...entry,
+  routineId: RoutineId,
+  name: Label,
+  /**
+   * As `routine-change`'s, and `stopped`: J3 Bots stopped listening for the
+   * event, for `stopped`'s reason. Open: a change a client does not know
+   * decodes as `unknown`.
+   */
+  change: OpenLiterals(EVENT_ROUTINE_CHANGES),
+  /** The trigger as saved by this change. */
+  trigger: EventTrigger,
+  /** As `routine-change`'s: the steps as saved by this change, for a routine with several. */
+  steps: Schema.optionalKey(Schema.Array(RoutineStep)),
+  /** The trigger's connector's name at this change; null when it was already removed. */
+  connector: Schema.NullOr(Label),
+  /** On a `stopped` change, why. */
+  stopped: Schema.optionalKey(OpenLiterals(EVENT_STOP_REASONS)),
+});
+export type EventRoutineChangeEntry = typeof EventRoutineChangeEntry.Type;
 
 /**
  * A run of a routine with several steps (decision 0080), in its owner's
@@ -1091,10 +1137,30 @@ export const RoutineRunEntry = Schema.TaggedStruct("routine-run", {
   author: BotAuthor,
   routineId: RoutineId,
   name: Label,
-  trigger: RoutineTrigger,
+  /** A schedule, a time or a webhook: an event routine's run is an `event-routine-run`. */
+  trigger: OwnTrigger,
   run: RoutineRun,
 });
 export type RoutineRunEntry = typeof RoutineRunEntry.Type;
+
+/**
+ * A run of an event routine with several steps: a `routine-run` whose
+ * trigger is a connector's event. A kind of its own for the reason
+ * `event-routine-change` is one: a client built before event routines reads
+ * `routine-run`'s trigger as a schedule, a time or a webhook only, and passes
+ * over a kind it does not know.
+ */
+export const EventRoutineRunEntry = Schema.TaggedStruct("event-routine-run", {
+  ...entry,
+  author: BotAuthor,
+  routineId: RoutineId,
+  name: Label,
+  trigger: EventTrigger,
+  /** The trigger's connector's name as the card was last brought up to date; null once it is removed. */
+  connector: Schema.NullOr(Label),
+  run: RoutineRun,
+});
+export type EventRoutineRunEntry = typeof EventRoutineRunEntry.Type;
 
 export const Entry = Schema.Union([
   MessageEntry,
@@ -1110,7 +1176,9 @@ export const Entry = Schema.Union([
   NoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  EventRoutineChangeEntry,
   RoutineRunEntry,
+  EventRoutineRunEntry,
 ]);
 export type Entry = typeof Entry.Type;
 
@@ -1167,7 +1235,9 @@ export const ReceivedEntry = Schema.Union([
   ReceivedNoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  EventRoutineChangeEntry,
   RoutineRunEntry,
+  EventRoutineRunEntry,
   UnknownEntry,
 ]);
 export type ReceivedEntry = typeof ReceivedEntry.Type;
@@ -1202,7 +1272,9 @@ export const entryText = (entry: Entry): string => {
     case "connector-ask":
       return entry.name;
     case "routine-change":
+    case "event-routine-change":
     case "routine-run":
+    case "event-routine-run":
       return entry.name;
     case "work-fold":
     case "notice":

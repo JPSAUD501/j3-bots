@@ -2,6 +2,7 @@
 import {
   type BotId,
   type Entry,
+  type EventRoutineChangeEntry,
   type EntryId,
   type HandoffEntry,
   type MessageEntry,
@@ -19,8 +20,16 @@ type NoticeOf<Tag extends NoticeEntry["notice"]["_tag"]> = NoticeEntry & {
   readonly notice: Extract<NoticeEntry["notice"], { readonly _tag: Tag }>;
 };
 
+/**
+ * A routine created or changed, as the routine lines tell it: one of J3
+ * Bots' own triggers, or a connector's event, with a change both kinds share.
+ */
+export type RoutineChange =
+  | RoutineChangeEntry
+  | (EventRoutineChangeEntry & { readonly change: RoutineChangeEntry["change"] });
+
 /** Routine changes of one kind by one author, one per routine, oldest first. */
-export type RoutineChanges = readonly [RoutineChangeEntry, ...RoutineChangeEntry[]];
+export type RoutineChanges = readonly [RoutineChange, ...RoutineChange[]];
 
 /**
  * Something that happened, which the timeline reports in one quiet line
@@ -35,6 +44,9 @@ export type RoutineChanges = readonly [RoutineChangeEntry, ...RoutineChangeEntry
  *   the line opens the routine, or lists them (`joinEventLines`).
  * - `routine-paused`: J3 Bots paused a routine it could not read; the line
  *   opens it, to be edited.
+ * - `event-routine`: J3 Bots stopped listening for a routine's event, or a
+ *   routine on an event changed in a way this client does not know; the
+ *   line opens the routine.
  * - `operator-named`: a bot saved the name the operator asked to be called by.
  * - `team`: a bot started a room on the operator's word (`room-started`), or
  *   made this bot for one (`made-for-room`); the line opens the room.
@@ -43,6 +55,7 @@ export type EventLine =
   | { readonly _tag: "teammates"; readonly run: TeammateRun }
   | { readonly _tag: "routines"; readonly changes: RoutineChanges }
   | { readonly _tag: "routine-paused"; readonly entry: NoticeOf<"routine-paused"> }
+  | { readonly _tag: "event-routine"; readonly entry: EventRoutineChangeEntry }
   | { readonly _tag: "operator-named"; readonly entry: NoticeOf<"operator-named"> }
   | { readonly _tag: "team"; readonly entry: NoticeOf<"room-started" | "made-for-room"> };
 
@@ -52,8 +65,12 @@ export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry>;
 /**
  * A routine with several steps that a bot made or changed (decision 0080):
  * drawn as its track at rest, which reads it back, rather than as a line.
+ * Its trigger is one of J3 Bots' own, or a connector's event.
  */
-export type TrackChangeEntry = RoutineChangeEntry & {
+export type TrackChangeEntry = (
+  | RoutineChangeEntry
+  | (EventRoutineChangeEntry & { readonly change: RoutineChangeEntry["change"] })
+) & {
   readonly change: "created" | "updated";
   readonly steps: NonNullable<RoutineChangeEntry["steps"]>;
 };
@@ -63,10 +80,10 @@ export type TrackChangeEntry = RoutineChangeEntry & {
  * a routine's track: drawn as a card.
  */
 export type CardEntry =
-  | Exclude<NonMessageEntry, HandoffEntry | RoutineChangeEntry>
+  | Exclude<NonMessageEntry, HandoffEntry | RoutineChangeEntry | EventRoutineChangeEntry>
   | TrackChangeEntry;
 
-const isTrackChange = (entry: RoutineChangeEntry): entry is TrackChangeEntry =>
+const isTrackChange = (entry: RoutineChange): entry is TrackChangeEntry =>
   entry.steps !== undefined && (entry.change === "created" || entry.change === "updated");
 
 /** The other bot of a teammate message: the recipient of one sent, the sender of one received. */
@@ -143,6 +160,16 @@ export function placeOf(entry: NonMessageEntry): EntryPlace {
       return isTrackChange(entry)
         ? { _tag: "card", entry }
         : { _tag: "line", line: { _tag: "routines", changes: [entry] } };
+    case "event-routine-change": {
+      const { change } = entry;
+      if (change === "stopped" || change === "unknown") {
+        return { _tag: "line", line: { _tag: "event-routine", entry } };
+      }
+      const known = { ...entry, change };
+      return isTrackChange(known)
+        ? { _tag: "card", entry: known }
+        : { _tag: "line", line: { _tag: "routines", changes: [known] } };
+    }
     case "notice": {
       const { notice } = entry;
       if (notice._tag === "routine-paused")
@@ -158,7 +185,7 @@ export function placeOf(entry: NonMessageEntry): EntryPlace {
   }
 }
 
-const sameAuthor = (a: RoutineChangeEntry, b: RoutineChangeEntry) =>
+const sameAuthor = (a: RoutineChange, b: RoutineChange) =>
   a.author._tag === b.author._tag &&
   (a.author._tag !== "bot" || (b.author._tag === "bot" && a.author.botId === b.author.botId));
 
@@ -173,7 +200,7 @@ const sameAuthor = (a: RoutineChangeEntry, b: RoutineChangeEntry) =>
  * - A change of another routine, of the same kind as those before it, joins
  *   them: "3 routines created".
  */
-function joinRoutines(changes: RoutineChanges, next: RoutineChangeEntry): RoutineChanges | null {
+function joinRoutines(changes: RoutineChanges, next: RoutineChange): RoutineChanges | null {
   const [first] = changes;
   const last = changes[changes.length - 1] ?? first;
   if (!sameAuthor(first, next)) return null;
@@ -221,6 +248,7 @@ export function latestOfLine(line: EventLine): NonMessageEntry {
         change.order > latest.order ? change : latest,
       );
     case "routine-paused":
+    case "event-routine":
     case "operator-named":
     case "team":
       return line.entry;
@@ -265,6 +293,8 @@ export function eventLineOpens(line: EventLine, setting: LineSetting): EventLine
     }
     case "routine-paused":
       return { _tag: "routine", routineId: line.entry.notice.routineId };
+    case "event-routine":
+      return { _tag: "routine", routineId: line.entry.routineId };
     case "operator-named":
       return null;
     case "team": {

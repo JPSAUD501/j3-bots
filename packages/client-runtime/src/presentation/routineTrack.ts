@@ -7,14 +7,28 @@
  */
 import type {
   BotId,
+  EventTrigger,
+  OwnTrigger,
   RoutineAnswer,
   RoutineAsk,
   RoutineRun,
   RoutineRunStep,
   RoutineStep,
   RoutineStepFailure,
+  RoutineTrigger,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
+
+/**
+ * A routine's trigger as the Track shows it: one of J3 Bots' own, or a
+ * connector's event with that connector's name, which its words need; null
+ * once the connector is removed.
+ */
+export type TrackTrigger = OwnTrigger | (EventTrigger & { readonly connector: string | null });
+
+/** `trigger` as the Track shows it, `connector` the name of an event trigger's connector. */
+export const trackTrigger = (trigger: RoutineTrigger, connector: string | null): TrackTrigger =>
+  trigger._tag === "event" ? { ...trigger, connector } : trigger;
 
 /** A bot step's station. `rest` is a routine drawn with no run. */
 export type BotStationState = "rest" | "todo" | "doing" | "done" | "failed" | "skipped";

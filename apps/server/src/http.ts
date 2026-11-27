@@ -38,6 +38,7 @@ import { Devices } from "./devices/Devices.ts";
 import * as MediaSocket from "./browser/MediaSocket.ts";
 import * as OAuthCallback from "./connectors/oauth/callback.ts";
 import * as OAuthClientMetadata from "./connectors/oauth/clientMetadata.ts";
+import * as EventWebhook from "./routines/eventWebhook.ts";
 import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
@@ -321,6 +322,7 @@ export const routes = Layer.mergeAll(
   download,
   workImage,
   Webhook.route,
+  EventWebhook.route,
   UpdateRoutes.routes,
   OAuthCallback.route,
   OAuthClientMetadata.route,

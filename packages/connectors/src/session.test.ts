@@ -10,6 +10,7 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 import { MCP_APP_MIME_TYPE, MCP_APPS_EXTENSION } from "@j3-bots/contracts";
 import { NeedsSignIn } from "./errors.ts";
+import { EVENTS_EXTENSION } from "./events.ts";
 import type { UrlPolicy } from "./guard.ts";
 import {
   CLIENT_CREDENTIALS_EXTENSION,
@@ -283,6 +284,7 @@ describe("openSession", () => {
       assert.deepInclude(fake.clientCapabilities[0], {
         extensions: {
           [TASKS_EXTENSION]: {},
+          [EVENTS_EXTENSION]: {},
           [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
           // A connector's server may sign J3 Bots in as a service, with credentials the operator gave.
           [CLIENT_CREDENTIALS_EXTENSION]: {},
