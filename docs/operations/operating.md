@@ -273,7 +273,7 @@ Secrets keep the logins and values you type for bots, and what connectors need t
   systemctl --user start j3-bots
   ```
 
-  The secrets are then empty. Add each login again. A connector kept its address, its keys and its sign-in among the secrets, so each one lost them too: **Disconnect** it on its page and ask a bot to add it again, with its address or command. The bot asks you to save any key it needs as a secret, and a service that needs your own app asks for it on a card ([A bot's browser, secrets and connectors](browser-secrets-and-connectors.md#add-one)). Keep the moved folder if you might find the password or the key: putting it back as `~/.j3-bots/vault` while the service is stopped brings everything back. It goes outside the data directory so that no backup of it takes the folder with its key.
+  The secrets are then empty. Add each login again. A connector kept its address, its keys and its sign-in among the secrets, so each one lost them too: **Disconnect** it on its page and ask a bot to add it again, with its address or command. The bot asks you to save any key it needs as a secret, and a service that needs your own app asks for it on a card ([A bot's browser, secrets and connectors](browser-secrets-and-connectors.md#add-one)). Keep the moved folder if you might find the password or the key: putting it back as `~/.j3-bots/vault` while the service is stopped brings back every secret, and the keys and sign-ins of each connector you have not disconnected meanwhile. It goes outside the data directory so that no backup of it takes the folder with its key.
 
 ## J3 Bots' own harnesses
 

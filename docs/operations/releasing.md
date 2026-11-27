@@ -79,7 +79,7 @@ The Android app:
 | --- | --- |
 | `j3-bots-<version>-android-arm64.apk` | The app's production variant (`APP_VARIANT=production`: "J3 Bots", `dev.j3bots.mobile`), with its JavaScript bundled, for arm64 phones, signed with the release key ([Android signing](#android-signing)), whose certificate's SHA-256 is `bfd3b598e6bd1c1ccdc969076a4254fd5a3696bddd5092df44b2bb51581431ff` |
 
-**Verified** on the published `j3-bots-0.1.0-rc.1-android-arm64.apk`, with build-tools 37.0.0: `apksigner verify --print-certs` verifies it, with schemes v2 and v3 and one signer, whose certificate's SHA-256 is the one above, and `aapt2 dump badging` reads package `dev.j3bots.mobile`, label "J3 Bots", version name `0.1.0-rc.1`, version code 10,001, and native code for `arm64-v8a` only.
+**Verified** on the published `j3-bots-0.1.0-rc.1-android-arm64.apk`, with build-tools 37.0.0: `apksigner verify --print-certs` verifies it, with schemes v2 and v3 and one signer, whose certificate's SHA-256 is the one above, and `aapt2 dump badging` reads package `dev.j3bots.mobile`, label "J3 Bots", version name `0.1.0-rc.1`, version code 10,001 (the formula of 0.3.0 and before), and native code for `arm64-v8a` only.
 
 The APK carries the release's version as its version name, and a version code made from it (`apps/mobile/src/androidVersionCode.ts`). Android installs an APK over the app only when its version code is not lower than the installed one's, so the code grows with the version. The code is:
 

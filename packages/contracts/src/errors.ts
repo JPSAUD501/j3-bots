@@ -42,7 +42,7 @@ export const Resource = Schema.Literals([
   "connector",
   "connector-listing",
   "sign-in",
-  /** A provider, which only `engine.recheckProvider` names. */
+  /** A provider, which only `engine.recheckProvider` and `engine.updateProvider` name. */
   "provider",
   /** A skill, which only skill requests name. */
   "skill",

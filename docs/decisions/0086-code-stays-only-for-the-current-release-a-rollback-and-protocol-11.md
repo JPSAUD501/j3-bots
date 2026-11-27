@@ -13,7 +13,7 @@ Deciding what is legacy needs a line that holds release after release, not a jud
 **Code stays only if one of three holds. Everything else goes.**
 
 - **(a) The current release uses it.** A path some caller reaches, a setting something reads, a string a screen shows.
-- **(b) A rollback to the previous minor release needs it.** An update keeps a snapshot to roll back to ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)), so the previous release's data and clients must still work: for 0.12, those of 0.11. Data a home of the previous release can still hold counts, whichever release wrote it: an entry, a command receipt or a connector's record is kept for as long as the home is, so the reader for its oldest shape stays.
+- **(b) A rollback to the previous minor release needs it.** An update keeps a snapshot to roll back to ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)), so the previous release's data and clients must still work: for 0.12, those of 0.11. Data a home of the previous release can still hold counts, whichever release wrote it: an entry, a command receipt or a connector's record is kept for as long as the home is, so the reader for its oldest shape stays. A file the server rebuilds when it cannot read it, as the release feed file, is a cache, not such data. Builds before 0.1.0 were never released, so what only they wrote is not either.
 - **(c) Clients still on the current protocol need it.** Clients compare the protocol version for equality, so the peers a release meets are those of its protocol: at protocol 11, the releases from 0.9.0 on. A field one of them may leave out stays optional, and a request one of them calls stays answered.
 
 **What goes:** dead code and paths no caller reaches; shims, readers and fallbacks for releases before the previous minor that no home of it can hold; names left behind by renames; flags that are always on or always off; settings nothing reads; and text, in comments and docs, that tells how something used to be instead of what it is. Docs are rewritten to say what holds now.
@@ -32,7 +32,7 @@ The first pass, for 0.13.0, removed the Android version code's formula for 0.3.0
 
 ## Costs
 
-- **A home that skips releases may meet something its new release no longer reads.** Only files outside the database are exposed; the database has its migrations. A release feed file 0.8 wrote and nothing rewrote since is fetched again instead of read.
+- **A home that skips releases may meet something its new release no longer reads.** Only files outside the database are exposed; the database has its migrations. A release feed file 0.8 wrote and nothing rewrote since is fetched again instead of read, losing the verdicts and the rate limit it kept: the release is checked again, and a refused check records the limit again.
 - **Optional fields every server sends stay optional.** A client keeps code for the field's absence that no server of its protocol triggers, until the next protocol bump takes it out.
 - **The line moves with each minor release.** What (b) and (c) keep today becomes removable when the next minor ships or the protocol changes, so the inventory is a task of every minor release, not done once.
 
