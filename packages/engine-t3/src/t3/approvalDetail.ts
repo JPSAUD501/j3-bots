@@ -113,6 +113,19 @@ const trimmed = (text: string | null | undefined) => {
 };
 
 /**
+ * What `prompt` says besides `action`: the lines after it when it opens with
+ * it, as Codex's prompt for a command does, followed by the directory it runs
+ * in and the host it reaches (**Read** at bc0f04d, `CodexAdapterV2.ts`
+ * `codexCommandApprovalPrompt`); otherwise the whole prompt.
+ */
+const afterAction = (prompt: string | null | undefined, action: string) => {
+  const text = trimmed(prompt);
+  if (text === undefined || action === "" || !text.startsWith(action)) return text;
+  const rest = text.slice(action.length);
+  return /^[^\S\n]*\r?\n/.test(rest) ? trimmed(rest) : text;
+};
+
+/**
  * What a grant for the session allows from then on, by the provider that takes
  * it and the kind of action shown exactly. Read at bc0f04d:
  *
@@ -409,11 +422,12 @@ export function approvalOf(
       };
   // The prompt, when the action came from elsewhere and the prompt says
   // something else, is the provider's reason for asking. A text that trims to
-  // the action is the action again, not a reason.
+  // the action is the action again, not a reason, and a prompt that opens with
+  // the action adds only the lines after it.
   const action = shown.action.trim();
   const reasons = [
     trimmed(approval.reason),
-    shown.fromPrompt ? undefined : trimmed(approval.prompt),
+    shown.fromPrompt ? undefined : afterAction(approval.prompt, action),
   ].filter((text): text is string => text !== undefined && text !== action);
   const reason = [...new Set(reasons)].join("\n\n").slice(0, MAX_REASON).trim();
   return {
