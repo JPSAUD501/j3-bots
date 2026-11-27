@@ -136,11 +136,14 @@ const DOCTOR_REQUIRED = [
 
 /**
  * The checks of `j3-bots doctor` about the machine the check runs on, not the
- * install: the user's groups and keys, and the harnesses it has and their
- * sign-ins. Every other check must pass, but the scripted agent's warning.
+ * install: the user's groups and keys, what the bot's browser needs of the
+ * system (its libraries, fonts and sandbox, which a runner's AppArmor may
+ * block), and the harnesses it has and their sign-ins. Every other check must
+ * pass, but the scripted agent's warning.
  */
 const ABOUT_THE_MACHINE: ReadonlySet<string> = new Set([
   "This user",
+  "Browser",
   ...Object.values(HARNESSES).map((harness) => harness.name),
 ]);
 
