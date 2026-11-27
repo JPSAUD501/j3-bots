@@ -259,18 +259,38 @@ describe("a recording's events", () => {
     );
   });
 
-  it("hides every character typed once the signal stops answering", () => {
+  it("hides every character no reading covers once the signal stops answering", () => {
     const events = makeEvents({ screens: SCREENS, system: "mac", secureSignal: true });
     const lines: Array<EventLine> = [];
     events.push({ kind: "secure", at: 0, on: false });
     for (const input of typing(100, "hi")) lines.push(...events.push(input).lines);
+    lines.push(...events.push({ kind: "secure", at: 300, on: false }).lines);
+    // Typed after the last reading, then the signal stops: nothing read them.
+    for (const input of typing(400, "x1")) lines.push(...events.push(input).lines);
     lines.push(...events.signalLost().lines);
-    for (const input of typing(500, "hi")) lines.push(...events.push(input).lines);
+    for (const input of typing(700, "hi")) lines.push(...events.push(input).lines);
     lines.push(...events.finish(900).lines);
     assert.deepStrictEqual(lines, [
       { t: 100, type: "text", until: 200, text: "hi" },
-      { t: 500, type: "password", until: 600 },
+      { t: 400, type: "password", until: 800 },
       { t: 900, type: "stop" },
+    ]);
+  });
+
+  it("keeps a key held with Option or AltGr in a password as typed, since it can type a character", () => {
+    const events = makeEvents({ screens: SCREENS, system: "mac", secureSignal: true });
+    const lines: Array<EventLine> = [];
+    for (const input of [
+      { kind: "secure", at: 0, on: true },
+      { kind: "key", at: 100, key: key("x", { alt: true }) },
+      { kind: "key", at: 200, key: key("1", { ctrl: true, alt: true }) },
+      { kind: "secure", at: 300, on: true },
+    ] satisfies ReadonlyArray<RawInput>)
+      lines.push(...events.push(input).lines);
+    lines.push(...events.finish(400).lines);
+    assert.deepStrictEqual(lines, [
+      { t: 100, type: "password", until: 200 },
+      { t: 400, type: "stop" },
     ]);
   });
 

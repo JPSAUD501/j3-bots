@@ -113,8 +113,14 @@ export const makeStore = Effect.fn("recording.store")(function* (folder: string)
 
   const dir = (id: RecordingId) => path.join(folder, id);
 
-  const writeSession = (id: RecordingId, session: Session) =>
-    fs.writeFileString(path.join(dir(id), SESSION_FILE), encodeSession(session));
+  // Written beside it and renamed over it, so a quit while it is written
+  // leaves the one before whole, and the recording with it.
+  const writeSession = (id: RecordingId, session: Session) => {
+    const file = path.join(dir(id), SESSION_FILE);
+    return fs
+      .writeFileString(`${file}.next`, encodeSession(session))
+      .pipe(Effect.andThen(fs.rename(`${file}.next`, file)));
+  };
 
   const sizeOf = (file: string) =>
     fs.stat(file).pipe(

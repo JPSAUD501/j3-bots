@@ -105,7 +105,7 @@ Recorded with J3 Bots ${facts.appVersion} on ${facts.os.platform}, starting ${fa
 ${screens}
 ${voice}
 ${input}
-- \`frames/\`: a small JPEG of the screen at each click and each change of window (${facts.frames} in all), named by time and screen, so you can follow what happened without a video tool. An event's \`frame\` may be missing when the screen could not be read just then.
+- \`frames/\`: a small JPEG of the screen at each click and each change of window (${facts.frames} in all), named by time and screen, so you can follow what happened without a video tool. An event's \`frame\` may be missing when the screen could not be read just then, or the recording was paused by the time it was taken.
 - \`${MANIFEST_FILE}\`: the same facts as data: screens, sizes, scale, start time, time zone, system, version.
 
 ## Time

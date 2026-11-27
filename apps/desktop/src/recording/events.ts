@@ -177,15 +177,17 @@ export const makeEvents = (options: {
   const typeKey = (at: number, key: KeyDown, secure: boolean, lines: Array<EventLine>) => {
     const meaning = meaningOf(key, options.system);
     closeScroll(lines);
+    // In a password, a key held with Option, AltGr or Alt can type one of
+    // its characters too, so it is kept as typed like any other.
+    if (secure && (meaning._tag === "char" || meaning._tag === "shortcut")) {
+      if (run?.kind !== "password") closeRun(lines);
+      run = { kind: "password", t: run?.kind === "password" ? run.t : at, until: at };
+      return;
+    }
     switch (meaning._tag) {
       case "none":
         return;
       case "char": {
-        if (secure) {
-          if (run?.kind !== "password") closeRun(lines);
-          run = { kind: "password", t: run?.kind === "password" ? run.t : at, until: at };
-          return;
-        }
         if (run?.kind !== "text" || at - run.until > RUN_GAP) closeRun(lines);
         run =
           run?.kind === "text"
@@ -303,28 +305,35 @@ export const makeEvents = (options: {
     }
   };
 
-  /** Whether the password signal says so at the last reading before `at`, or the first after it; `null` while that one is to come. */
-  const secureAt = (at: number, final: boolean): boolean | null => {
-    let before: boolean | null = null;
+  /** Whether the password signal says so at the last reading before `at`, or the first after it; `null` with no reading after it yet. */
+  const secureAt = (at: number): boolean | null => {
+    let before = false;
     for (const reading of readings) {
       if (reading.at <= at) before = reading.on;
-      if (reading.at >= at) return before === true || reading.on;
+      if (reading.at >= at) return before || reading.on;
     }
-    return final || !secureSignal ? before === true : null;
+    return null;
   };
 
-  const drain = (final: boolean): Output => {
+  /**
+   * Applies the inputs that can be told now. A key with no reading after it
+   * waits while the signal answers (`open`); once the recording stopped, it
+   * goes by the last reading; once the signal was lost, it is a password's,
+   * since nothing read it.
+   */
+  const drain = (end: "open" | "stopped" | "lost"): Output => {
     const lines: Array<EventLine> = [];
     const frames: Array<FrameWanted> = [];
     while (waiting.length > 0) {
       const input = waiting[0]!;
       let secure = false;
-      if (input.kind === "key" && secureSignal) {
-        const known = secureAt(input.at, final);
-        if (known === null) break;
-        secure = known;
-      } else if (input.kind === "key") {
-        secure = blind || secureAt(input.at, true) === true;
+      if (input.kind === "key") {
+        const known = secureAt(input.at);
+        if (blind) secure = true;
+        else if (known !== null) secure = known;
+        else if (end === "lost") secure = true;
+        else if (secureSignal && end === "open") break;
+        else secure = readings.at(-1)?.on === true;
       }
       waiting.shift();
       apply(input, secure, lines, frames);
@@ -340,22 +349,22 @@ export const makeEvents = (options: {
     push: (input: RawInput): Output => {
       if (input.kind === "secure") readings.push({ at: input.at, on: input.on });
       else waiting.push(input);
-      return drain(false);
+      return drain("open");
     },
     /**
-     * The signal stopped answering: keys waiting go by its last reading, and
-     * every character typed from now on is kept as a password's, since
-     * nothing can tell it is not one.
+     * The signal stopped answering: keys waiting go by the readings around
+     * them, those no reading followed are kept as a password's, and so is
+     * every character typed from now on, since nothing can tell it is not one.
      */
     signalLost: (): Output => {
-      const output = drain(true);
+      const output = drain("lost");
       secureSignal = false;
       blind = true;
       return output;
     },
     /** The recording stopped at `at`: what waits goes by the last reading, and every run ends. */
     finish: (at: number): Output => {
-      const { lines, frames } = drain(true);
+      const { lines, frames } = drain("stopped");
       const all = [...lines];
       closeAll(all);
       all.push({ t: at, type: "stop" });

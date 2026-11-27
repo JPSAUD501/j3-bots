@@ -253,6 +253,9 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
 
   const take = (at: Live, output: Output) => {
     if (output.lines.length > 0) write(at, store.appendLines(at.id, output.lines));
+    // An event held behind a key can come out after Pause: what the screen
+    // shows then is not the recording's, so it gets no picture.
+    if (at.pausedAt !== null) return;
     for (const frame of output.frames) {
       cue(at, { _tag: "frame", screen: frame.screen, name: frame.name });
     }
@@ -688,10 +691,12 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
     /**
      * Whether a page may have the microphone or the screens: the app's own
      * page may have a microphone (the sheet's level meter); only the
-     * recorder's control may have the screens, while it records.
+     * recorder's control may have the screens, while it records. Electron
+     * names no type for a screen's capture (`chromeMediaSource: "desktop"`),
+     * so a request is a microphone's only when it names audio and nothing else.
      */
     allowsMedia: (contents: WebContents, mediaTypes: ReadonlyArray<string>) =>
-      mediaTypes.every((type) => type === "audio") ||
+      (mediaTypes.length > 0 && mediaTypes.every((type) => type === "audio")) ||
       (live !== null && !live.pill.isDestroyed() && contents === live.pill.webContents),
   };
 });

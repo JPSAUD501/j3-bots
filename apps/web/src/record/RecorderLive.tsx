@@ -83,7 +83,8 @@ export function RecorderLive({ app, solid }: { readonly app: Desktop; readonly s
   const cued = useEffectEvent((cue: RecorderCue) => {
     switch (cue._tag) {
       case "frame":
-        capture?.still(cue.screen, cue.name);
+        // Nothing of the screen is kept while paused.
+        if (phase === "recording") capture?.still(cue.screen, cue.name);
         return;
       case "space":
         setSpace(cue.state);
