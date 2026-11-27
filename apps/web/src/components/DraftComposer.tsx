@@ -4,7 +4,7 @@ import { targetKey } from "@j3-bots/client-runtime";
 import type { BotId, EntryTarget, SuggestedReply } from "@j3-bots/contracts";
 import type { RefObject } from "react";
 import type { ShellData, ShellIntents } from "../shell/data";
-import { Composer, type MentionCandidate } from "./Composer";
+import { Composer, type MentionChoices } from "./Composer";
 import type { PromptMenu } from "./PromptPicker";
 
 interface DraftComposerProps {
@@ -30,10 +30,10 @@ interface DraftComposerProps {
     | "renderPrompt"
     | "dictate"
   >;
-  /** In a room, who the message wakes as the draft stands. */
+  /** Whom the message is for as the draft stands (`addressingOf`). */
   readonly addressing?: Addressing | undefined;
-  /** In a room, its members, for `@`. */
-  readonly mentionable?: ReadonlyArray<MentionCandidate> | undefined;
+  /** What `@` offers (`mentionChoicesOf`); nothing when left out. */
+  readonly mentionable?: MentionChoices | undefined;
   /** In a bot's conversation, the reply the AI guesses comes next, while it is on offer. */
   readonly suggestion?: SuggestedReply | null;
   readonly inputRef?: RefObject<HTMLDivElement | null>;

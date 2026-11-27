@@ -22,6 +22,8 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Reaction.** One emoji under a message, by the operator or a bot, one each per message, as in a chat. The operator's reaction on a bot's message reaches that bot a few seconds later, and most often the bot says nothing; every other reaction waits for the bots' next turns ([0084](../decisions/0084-reactions-are-a-quiet-signal.md)). The interface says "Reaction" in English and "Reação" in Portuguese.
 
+**Mention.** A bot or room named with `@` in a message, picked from a list as the operator types. In a room, mentioning members says whom the message wakes. In a bot's conversation, a mention names one of the operator's other bots or a room that bot is in, and reaches no one: only the conversation's bot reads it, and it decides what to pass on with its own tools ([0092](../decisions/0092-a-mention-in-a-bots-conversation-points-and-delivers-nothing.md)). A mention shows as a chip, which opens what it names.
+
 **Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a request for help in the bot's browser, a file, a routine that was created, a handoff between bots.
 
 **Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.

@@ -70,6 +70,12 @@ export class Roster extends Context.Service<
      * and Mark as unread.
      */
     readonly sections: Readable<ReadonlyArray<Section> | null>;
+    /**
+     * Whether the server takes mentions of bots and rooms in a bot's
+     * conversation, as its latest roster snapshot says. Only then does a
+     * client offer `@` there.
+     */
+    readonly conversationMentions: Readable<boolean>;
     /** Pins, hides, makes primary or moves the bot between sections. */
     readonly placeBot: (botId: BotId, placement: BotPlacement) => Effect.Effect<IntentResult<Bot>>;
     /**
@@ -121,6 +127,7 @@ export const layer = Layer.effect(
     const conversations = yield* Conversations;
     const state = new Cell<Synced<ReadonlyArray<RosterItem>>>(loading);
     const sections = new Cell<ReadonlyArray<Section> | null>(null);
+    const conversationMentions = new Cell(false);
 
     yield* connection
       .eachSession((client) =>
@@ -141,6 +148,7 @@ export const layer = Layer.effect(
                 Effect.sync(() => {
                   if (frame._tag === "snapshot") {
                     sections.set(frame.sections ?? null);
+                    conversationMentions.set(frame.conversationMentions === true);
                     return state.set(ready(frame.items));
                   }
                   if (frame.sections !== undefined) sections.set(frame.sections);
@@ -248,6 +256,7 @@ export const layer = Layer.effect(
     return Roster.of({
       state,
       sections,
+      conversationMentions,
       stop,
       stopRoom,
       forceStop,

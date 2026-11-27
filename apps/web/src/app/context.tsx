@@ -76,6 +76,7 @@ export function RosterProvider({
 
 export const useBot = (id: BotId): Bot | null => use(BotsContext).get(id) ?? null;
 export const useBots = (): ReadonlyMap<BotId, Bot> => use(BotsContext);
+export const useRooms = (): ReadonlyMap<RoomId, Room> => use(RoomsContext);
 
 export function usePresentation(): PresentationContext {
   const i18n = use(I18nContext);

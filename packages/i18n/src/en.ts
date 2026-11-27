@@ -929,7 +929,10 @@ export const en = {
   "roomForm.createFailedClosed": "The room {name} wasn’t created.",
 
   "mention.label": "Mention a bot",
+  "mention.labelConversation": "Mention a bot or a room",
   "mention.everyone": "Every member answers",
+  "mention.room": "Room",
+  "mention.open": "Open {name}",
 
   "settings.title": "Settings",
   "settings.back": "All settings",

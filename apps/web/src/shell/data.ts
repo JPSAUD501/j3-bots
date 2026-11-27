@@ -100,6 +100,11 @@ export interface ShellData {
    * menu offers them then, nor Mark as unread.
    */
   readonly sections: ReadonlyArray<Section> | null;
+  /**
+   * Whether the server takes mentions of bots and rooms in a bot's
+   * conversation: only then does `@` offer them there.
+   */
+  readonly conversationMentions: boolean;
   readonly conversation: (target: EntryTarget) => ConversationView;
   /** Every pair of bots that wrote each other, latest first; null until they load. */
   readonly pairs: ReadonlyArray<TeammatePair> | null;

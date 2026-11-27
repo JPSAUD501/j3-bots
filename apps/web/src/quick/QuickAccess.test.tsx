@@ -79,6 +79,7 @@ function Harness({
         onOpenConversation={() => {}}
         onOpenPair={() => {}}
         onOpenRoom={() => {}}
+        onOpenBot={() => {}}
         onClose={() => told.closed.push(true)}
         onLeft={() => told.left.push(true)}
       />

@@ -516,7 +516,12 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     retryDrafts: () => Promise.resolve(true),
     dismissDraftOffer: nothing,
     sendDraft: (target, addressing) => {
-      const mentions = addressing?.mentions;
+      const mentions =
+        addressing !== undefined && "mentions" in addressing ? addressing.mentions : undefined;
+      const named =
+        addressing !== undefined && "conversationMentions" in addressing
+          ? addressing.conversationMentions
+          : [];
       const key = keyOf(target);
       const draft = get().drafts[key] ?? blankDraft;
       const { text, offsets } = placedMessage(draft.text);
@@ -526,16 +531,16 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
       if (text === "" && attachments.length === 0) return;
       update((s) => ({
         ...withEntries(s, key, (es) =>
-          appended(
-            es,
-            message(
+          appended(es, {
+            ...message(
               { _tag: "operator" },
               text,
               attachments,
               mentions,
               attachments.length === 0 ? undefined : offsets,
             ),
-          ),
+            ...(named.length === 0 ? {} : { conversationMentions: named }),
+          }),
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
       }));
@@ -928,6 +933,7 @@ function toData(state: State, secrets: SecretsView): ShellData {
     signIns: new Map(),
     roster: state.roster,
     sections: state.sections,
+    conversationMentions: true,
     conversation: (target) => ({
       phase: "ready",
       items: state.entries[keyOf(target)] ?? [],

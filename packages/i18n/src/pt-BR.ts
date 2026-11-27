@@ -928,7 +928,10 @@ const sentences = {
   "roomForm.createFailedClosed": "A sala {name} não foi criada.",
 
   "mention.label": "Mencionar um bot",
+  "mention.labelConversation": "Mencionar um bot ou uma sala",
   "mention.everyone": "Todos os membros respondem",
+  "mention.room": "Sala",
+  "mention.open": "Abrir {name}",
 
   "settings.title": "Configurações",
   "settings.back": "Todas as configurações",

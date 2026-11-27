@@ -8,7 +8,7 @@ import {
 } from "@j3-bots/client-runtime/react";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
 import type { J3Client } from "@j3-bots/client-runtime";
-import type { Bot, BotId, EngineStatus, RoomId, RosterItem } from "@j3-bots/contracts";
+import type { Bot, BotId, EngineStatus, Room, RoomId, RosterItem } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import * as DateTime from "effect/DateTime";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
@@ -29,6 +29,7 @@ function useNow(): DateTime.Utc {
 
 const PresentationContextValue = createContext<PresentationContext | null>(null);
 const BotsContext = createContext<ReadonlyMap<BotId, Bot>>(new Map());
+const RoomsContext = createContext<ReadonlyMap<RoomId, Room>>(new Map());
 
 /** The time zone the operator saved, when the device knows it; else the device's own. */
 const timeZoneOf = (saved: string | null): string =>
@@ -40,12 +41,13 @@ const botsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<BotId, Bot> =>
     roster.flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [])),
   );
 
-/** Every room's name by id, archived ones too, so a notice names the room as it is called now. */
-const roomsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<RoomId, string> =>
+/**
+ * Every room by id, archived and hidden ones too, so a notice or a mention
+ * names the room as it is called now.
+ */
+const roomsOf = (roster: ReadonlyArray<RosterItem>): ReadonlyMap<RoomId, Room> =>
   new Map(
-    roster.flatMap((item) =>
-      item._tag === "room" ? [[item.room.id, item.room.name] as const] : [],
-    ),
+    roster.flatMap((item) => (item._tag === "room" ? [[item.room.id, item.room] as const] : [])),
   );
 
 const contextOf = (input: {
@@ -53,14 +55,14 @@ const contextOf = (input: {
   readonly now: DateTime.Utc;
   readonly timeZone: string;
   readonly bots: ReadonlyMap<BotId, Bot>;
-  readonly rooms: ReadonlyMap<RoomId, string>;
+  readonly rooms: ReadonlyMap<RoomId, Room>;
   readonly engine: EngineStatus | null;
 }): PresentationContext => ({
   i18n: input.i18n,
   now: input.now,
   timeZone: input.timeZone,
   botName: (id: BotId) => input.bots.get(id)?.profile.name ?? null,
-  roomName: (id: RoomId) => input.rooms.get(id) ?? null,
+  roomName: (id: RoomId) => input.rooms.get(id)?.name ?? null,
   aiName: (bot: Bot) => aiNameOf(input.engine, bot.model.providerId),
 });
 
@@ -87,7 +89,7 @@ export const presentationNow = (client: J3Client, i18n: I18n): PresentationConte
  * What every sentence and time on screen needs: the language, the time now,
  * the operator's time zone as saved in Settings (the device's until the
  * settings are read, or when the device does not know that zone), and every
- * bot by id.
+ * bot and room by id.
  */
 export function PresentationProvider({ children }: { readonly children: ReactNode }) {
   const i18n = useI18n();
@@ -106,7 +108,9 @@ export function PresentationProvider({ children }: { readonly children: ReactNod
   );
   return (
     <PresentationContextValue value={context}>
-      <BotsContext value={bots}>{children}</BotsContext>
+      <BotsContext value={bots}>
+        <RoomsContext value={rooms}>{children}</RoomsContext>
+      </BotsContext>
     </PresentationContextValue>
   );
 }
@@ -119,6 +123,9 @@ export const usePresentation = (): PresentationContext => {
 
 /** Every bot the operator has, by id, hidden ones included. */
 export const useBots = (): ReadonlyMap<BotId, Bot> => use(BotsContext);
+
+/** Every room the operator has, by id, archived and hidden ones included. */
+export const useRooms = (): ReadonlyMap<RoomId, Room> => use(RoomsContext);
 
 /** Every bot the operator has, hidden ones included, in the roster's order. */
 export const useBotList = (): ReadonlyArray<Bot> => {

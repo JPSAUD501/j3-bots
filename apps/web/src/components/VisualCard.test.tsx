@@ -69,6 +69,7 @@ const shown = (page: string) =>
       secrets={{ view: secrets.view.get(), intents: { ...secrets, copy: copySample } }}
       onOpenPair={() => {}}
       onOpenRoom={() => {}}
+      onOpenBot={() => {}}
     />,
   );
 

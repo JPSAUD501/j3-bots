@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, Invalid, NotFound } from "@j3-bots/contracts";
+import { type Bot, BotId, Invalid, NotFound, type Room, RoomId } from "@j3-bots/contracts";
+import { at, bot as fixture } from "../../test/fixtures.ts";
 import { describe, expect, it } from "vite-plus/test";
 import type { DraftMention } from "../stores/Drafts.ts";
 import {
   addressed,
+  conversationMentionables,
+  conversationMentionNames,
   followEdit,
   insertMention,
   type Mentionable,
@@ -13,18 +16,26 @@ import {
   mentionOptions,
   mentionQuery,
   movedOption,
+  named,
+  namedNoLonger,
   standingMentions,
 } from "./mentions.ts";
 
-const member = (id: string, name: string): Mentionable => ({ id: BotId.make(id), name });
+const member = (id: string, name: string) =>
+  ({ _tag: "bot", id: BotId.make(id), name }) as const satisfies Mentionable;
 const ana = member("ana", "Ana");
 const anaLima = member("ana-lima", "Ana Lima");
 const scout = member("scout", "Scout");
 const joao = member("joao", "João");
 const members = [scout, ana, anaLima, joao];
+const launch = { _tag: "room", id: RoomId.make("launch"), name: "Launch" } as const;
 const ids = members.map((one) => one.id);
 
-const bot = ({ id, name }: Mentionable): MentionOption => ({ _tag: "bot", id, name });
+const bot = ({ id, name }: { id: BotId; name: string }): MentionOption => ({
+  _tag: "bot",
+  id,
+  name,
+});
 const everyone: MentionOption = { _tag: "everyone" };
 
 /** Whom a draft's message asks, as `message.send` takes it. */
@@ -117,7 +128,7 @@ describe("addressed", () => {
   it("mentions the one picked of two members with the same name", () => {
     const otherAna = member("ana-2", "Ana");
     const room = [ana, otherAna];
-    expect(mentionOptions("an", room)).toEqual([bot(ana), bot(otherAna)]);
+    expect(mentionOptions("an", room, true)).toEqual([bot(ana), bot(otherAna)]);
     const { text, mentions } = picked("@an", bot(otherAna));
     expect(addressedTo(text, mentions, [ana.id, otherAna.id])).toEqual({
       _tag: "bots",
@@ -128,7 +139,7 @@ describe("addressed", () => {
   it("asks everyone only for the picked @everyone, not for a bot named Everyone", () => {
     const named = member("everyone-bot", "Everyone");
     const room = [scout, named];
-    expect(mentionOptions("every", room)).toEqual([bot(named), everyone]);
+    expect(mentionOptions("every", room, true)).toEqual([bot(named), everyone]);
     const theBot = picked("@every", bot(named));
     expect(addressedTo(theBot.text, theBot.mentions, [scout.id, named.id])).toEqual({
       _tag: "bots",
@@ -235,16 +246,27 @@ describe("mentionQuery", () => {
 
 describe("mentionOptions", () => {
   it("offers members a word of whose name starts with the query, then everyone", () => {
-    expect(mentionOptions("li", members)).toEqual([bot(anaLima)]);
-    expect(mentionOptions("ana l", members)).toEqual([bot(anaLima)]);
-    expect(mentionOptions("", members)).toEqual([...members.map(bot), everyone]);
-    expect(mentionOptions("EV", members)).toEqual([everyone]);
+    expect(mentionOptions("li", members, true)).toEqual([bot(anaLima)]);
+    expect(mentionOptions("ana l", members, true)).toEqual([bot(anaLima)]);
+    expect(mentionOptions("", members, true)).toEqual([...members.map(bot), everyone]);
+    expect(mentionOptions("EV", members, true)).toEqual([everyone]);
   });
 
   it("matches whatever the case and accents, composed or decomposed", () => {
-    expect(mentionOptions("joa", members)).toEqual([bot(joao)]);
-    expect(mentionOptions("JOÃ".normalize("NFD"), members)).toEqual([bot(joao)]);
-    expect(mentionOptions("joã", [member("joao", "João")])).toEqual([bot(member("joao", "João"))]);
+    expect(mentionOptions("joa", members, true)).toEqual([bot(joao)]);
+    expect(mentionOptions("JOÃ".normalize("NFD"), members, true)).toEqual([bot(joao)]);
+    expect(mentionOptions("joã", [member("joao", "João")], true)).toEqual([
+      bot(member("joao", "João")),
+    ]);
+  });
+});
+
+describe("mentionOptions in a bot's conversation", () => {
+  it("offers bots and rooms, and never everyone", () => {
+    const candidates = [scout, launch];
+    expect(mentionOptions("", candidates, false)).toEqual([bot(scout), launch]);
+    expect(mentionOptions("lau", candidates, false)).toEqual([launch]);
+    expect(mentionOptions("ev", candidates, false)).toEqual([]);
   });
 });
 
@@ -324,10 +346,10 @@ describe("mentionedNames", () => {
 
   it("highlights whom the message addressed, and no one else", () => {
     expect(mentionedNames({ _tag: "bots", ids: [ana.id] }, [], nameOf)).toEqual([
-      { name: "Ana", botId: ana.id },
+      { name: "Ana", of: { _tag: "bot", botId: ana.id } },
     ]);
     expect(mentionedNames({ _tag: "everyone" }, [], nameOf)).toEqual([
-      { name: "everyone", botId: null },
+      { name: "everyone", of: null },
     ]);
     expect(mentionedNames(null, [], nameOf)).toEqual([]);
   });
@@ -335,8 +357,8 @@ describe("mentionedNames", () => {
   it("goes by the names the members were picked by, when the message keeps them", () => {
     const labels = [{ botId: ana.id, label: "Ana Prime" }];
     expect(mentionedNames({ _tag: "bots", ids: [ana.id, scout.id] }, labels, nameOf)).toEqual([
-      { name: "Ana Prime", botId: ana.id },
-      { name: "Scout", botId: scout.id },
+      { name: "Ana Prime", of: { _tag: "bot", botId: ana.id } },
+      { name: "Scout", of: { _tag: "bot", botId: scout.id } },
     ]);
   });
 
@@ -344,7 +366,7 @@ describe("mentionedNames", () => {
     const gone = BotId.make("gone");
     const labels = [{ botId: gone, label: "Wren" }];
     expect(mentionedNames({ _tag: "bots", ids: [gone] }, labels, nameOf)).toEqual([
-      { name: "Wren", botId: gone },
+      { name: "Wren", of: { _tag: "bot", botId: gone } },
     ]);
     expect(mentionedNames({ _tag: "bots", ids: [gone] }, [], nameOf)).toEqual([]);
   });
@@ -354,5 +376,103 @@ describe("movedOption", () => {
   it("wraps at both ends", () => {
     expect(movedOption(0, -1, 4)).toBe(3);
     expect(movedOption(3, 1, 4)).toBe(0);
+  });
+});
+
+describe("conversationMentionables", () => {
+  const fields = { pinned: false, hidden: true, createdAt: at("2026-11-01T00:00:00Z") };
+  const active = (name: string, ...members: ReadonlyArray<Bot>): Room => ({
+    ...fields,
+    id: RoomId.make(name.toLowerCase()),
+    name,
+    status: "active",
+    members: members.map((one) => one.id),
+    work: "none",
+    forceStop: false,
+    answering: [],
+    memberWork: [],
+  });
+
+  it("offers the other bots, hidden too, then the rooms the bot is in that take messages", () => {
+    const ana = fixture("Ana");
+    const bia = fixture("Bia", undefined, { hidden: true });
+    const cris = fixture("Cris");
+    const archived: Room = {
+      ...fields,
+      id: RoomId.make("old"),
+      name: "Old",
+      status: "archived",
+      members: [ana.id, bia.id],
+      archivedAt: at("2026-11-02T00:00:00Z"),
+    };
+    const rooms = [active("Launch", ana, bia), active("Ops", bia, cris), archived];
+    expect(conversationMentionables(ana.id, [ana, bia, cris], rooms)).toEqual([
+      { _tag: "bot", id: bia.id, name: "Bia" },
+      { _tag: "bot", id: cris.id, name: "Cris" },
+      { _tag: "room", id: RoomId.make("launch"), name: "Launch" },
+    ]);
+  });
+});
+
+describe("named", () => {
+  const candidates = [scout, ana, launch];
+
+  it("sends each bot and room picked that stands, once, with the names they were picked by", () => {
+    const first = picked("@sc", bot(scout));
+    const second = picked(`${first.text}ask @lau`, launch, first.mentions);
+    const third = picked(`${second.text}and @sc`, bot(scout), second.mentions);
+    expect(named(third.text, third.mentions, candidates)).toEqual({
+      conversationMentions: [
+        { _tag: "bot", botId: scout.id },
+        { _tag: "room", roomId: launch.id },
+      ],
+      labels: [
+        { botId: scout.id, label: "Scout" },
+        { roomId: launch.id, label: "Launch" },
+      ],
+    });
+  });
+
+  it("leaves out what is no longer offered, and is undefined when nothing stands", () => {
+    const pick = picked("tell @lau", launch);
+    expect(named(pick.text, pick.mentions, [scout])).toBeUndefined();
+    expect(named("tell @Launch", [], candidates)).toBeUndefined();
+  });
+});
+
+describe("conversationMentionNames", () => {
+  it("highlights each by the name it was picked by, else by its name now", () => {
+    const mentions = [
+      { _tag: "bot", botId: ana.id },
+      { _tag: "room", roomId: launch.id },
+    ] as const;
+    const nameOf = () => "Now";
+    expect(
+      conversationMentionNames(mentions, [{ roomId: launch.id, label: "Launch" }], nameOf),
+    ).toEqual([
+      { name: "Now", of: mentions[0] },
+      { name: "Launch", of: mentions[1] },
+    ]);
+    expect(conversationMentionNames(undefined, [], nameOf)).toEqual([]);
+  });
+});
+
+describe("namedNoLonger", () => {
+  const refused = { _tag: "refused", error: new Invalid({ reason: "mentions" }) } as const;
+  const mentions = [
+    { _tag: "bot", botId: ana.id },
+    { _tag: "room", roomId: launch.id },
+  ] as const;
+
+  it("drops from a refused message what `@` no longer offers there", () => {
+    expect(namedNoLonger(refused, mentions, [ana])).toEqual({
+      conversationMentions: [{ _tag: "bot", botId: ana.id }],
+    });
+  });
+
+  it("is null for another refusal, or when everything mentioned is still offered", () => {
+    const gone = { _tag: "refused", error: new NotFound({ resource: "bot" }) } as const;
+    expect(namedNoLonger(gone, mentions, [ana])).toBeNull();
+    expect(namedNoLonger(refused, mentions, [ana, launch])).toBeNull();
   });
 });

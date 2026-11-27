@@ -4,13 +4,13 @@ import {
   type MentionName,
   parseMessageText,
 } from "@j3-bots/client-runtime/presentation";
-import type { Attachment, Bot, BotId } from "@j3-bots/contracts";
+import type { Attachment, ConversationMention } from "@j3-bots/contracts";
 import { Linking, View } from "react-native";
-import { useBots } from "../presentation.tsx";
+import { useBots, useRooms } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 import { InlineFile } from "./FileCard.tsx";
 import { INLINE_LINE_HEIGHT } from "./inlineChip.ts";
-import { MentionChip } from "./MentionChip.tsx";
+import { TextMention } from "./MentionChip.tsx";
 
 /** A message's files, each drawn where it was placed in its text. */
 interface PlacedFiles {
@@ -22,10 +22,11 @@ interface PlacedFiles {
 }
 
 /**
- * Message text with paragraphs, code and links, each bot it mentions as its
- * chip, and each of its files where it was placed, in the bubble's own text
- * color (`className`). Links open in the browser. Its text can be selected
- * unless a long press on the message does something else (`selectable`).
+ * Message text with paragraphs, code and links, each bot and room it
+ * mentions as its chip, which opens what it names (`OpenMention`), and each
+ * of its files where it was placed, in the bubble's own text color
+ * (`className`). Links open in the browser. Its text can be selected unless a
+ * long press on the message does something else (`selectable`).
  */
 export function MessageText({
   text,
@@ -41,11 +42,12 @@ export function MessageText({
   readonly selectable?: boolean;
 }) {
   const bots = useBots();
-  // A mention is a bot's chip while the bot is there; `@everyone` and a deleted bot's stay text.
-  const botOf = (botId: BotId | null): Bot | undefined =>
-    botId === null ? undefined : bots.get(botId);
+  const rooms = useRooms();
+  // A mention is a chip while what it names is there; `@everyone` and a deleted one's stay text.
+  const there = (of: ConversationMention | null) =>
+    of !== null && (of._tag === "bot" ? bots.has(of.botId) : rooms.has(of.roomId));
   const chipped = (inline: Inline) =>
-    inline.kind === "file" || (inline.kind === "mention" && botOf(inline.botId) !== undefined);
+    inline.kind === "file" || (inline.kind === "mention" && there(inline.of));
   return (
     <View className="gap-2">
       {parseMessageText(text, mentionable, placed?.offsets).map((block, i) =>
@@ -68,7 +70,7 @@ export function MessageText({
           >
             {block.inlines.map((inline, j) => (
               // oxlint-disable-next-line react/no-array-index-key -- inlines are positional
-              <InlinePart key={j} inline={inline} placed={placed} botOf={botOf} />
+              <InlinePart key={j} inline={inline} placed={placed} />
             ))}
           </Text>
         ),
@@ -80,11 +82,9 @@ export function MessageText({
 function InlinePart({
   inline,
   placed,
-  botOf,
 }: {
   readonly inline: Inline;
   readonly placed: PlacedFiles | undefined;
-  readonly botOf: (botId: BotId | null) => Bot | undefined;
 }) {
   switch (inline.kind) {
     case "text":
@@ -105,14 +105,8 @@ function InlinePart({
           {inline.text}
         </Text>
       );
-    case "mention": {
-      const bot = botOf(inline.botId);
-      return bot === undefined ? (
-        <Text className="font-semibold">@{inline.name}</Text>
-      ) : (
-        <MentionChip avatar={bot.profile.avatar} seed={bot.id} name={inline.name} />
-      );
-    }
+    case "mention":
+      return <TextMention name={inline.name} of={inline.of} />;
     case "file": {
       const attachment = placed?.files[inline.index];
       return attachment === undefined ? null : (

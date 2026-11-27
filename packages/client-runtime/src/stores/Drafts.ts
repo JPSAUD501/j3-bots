@@ -2,11 +2,13 @@
 import {
   Attachment,
   BotId,
+  type ConversationMention,
   DeviceId,
   type EntryTarget,
   type LookingAt,
   type Mentions,
   NonNegativeInt,
+  RoomId,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -44,16 +46,18 @@ export type DraftFile =
   | ({ readonly _tag: "failed"; readonly key: string; readonly problem: FileProblem } & LocalFile);
 
 /**
- * A mention the operator picked in a room's draft: who it names, and where
- * its token (`@` and the label) starts in the text. Only a pick makes one;
- * text that merely reads like a mention is none. Whether it still stands
- * when the draft is sent is the client's to judge from the text.
+ * A mention the operator picked in a draft: what it names, and where its
+ * token (`@` and the label) starts in the text. Only a pick makes one; text
+ * that merely reads like a mention is none. Whether it still stands when the
+ * draft is sent is the client's to judge from the text.
  */
 export const DraftMention = Schema.Union([
-  /** One member, by id, written as `@` and the name it had when picked. */
+  /** One bot, by id, written as `@` and the name it had when picked. */
   Schema.TaggedStruct("bot", { botId: BotId, label: Schema.String, position: NonNegativeInt }),
-  /** Every member, written `@everyone`. */
+  /** In a room, every member, written `@everyone`. */
   Schema.TaggedStruct("everyone", { position: NonNegativeInt }),
+  /** In a bot's conversation, a room, by id, written as `@` and the name it had when picked. */
+  Schema.TaggedStruct("room", { roomId: RoomId, label: Schema.String, position: NonNegativeInt }),
 ]);
 export type DraftMention = typeof DraftMention.Type;
 
@@ -64,7 +68,7 @@ export interface Draft {
    * `files`, in their order.
    */
   readonly text: string;
-  /** The mentions picked in `text`, in no particular order. Always empty outside a room. */
+  /** The mentions picked in `text`, in no particular order. */
   readonly mentions: ReadonlyArray<DraftMention>;
   readonly files: ReadonlyArray<DraftFile>;
   /**
@@ -78,15 +82,17 @@ export interface Draft {
 const empty: Draft = { text: "", mentions: [], files: [], sending: false };
 
 /**
- * Who a room message addresses, as the client judged it from the mentions
- * standing in the draft: whom `message.send` asks, and the names the members
- * it mentions were picked by where those picks stand, the first for each
- * member being the pick that addressed it.
+ * Whom a message is for, as the client judged it from the mentions standing
+ * in the draft: in a room, whom `message.send` asks; in a bot's conversation,
+ * the bots and rooms it mentions. With it, the names they were picked by
+ * where those picks stand, the first for each being the pick that named it.
  */
-export interface Addressing {
-  readonly mentions: Mentions;
-  readonly labels: ReadonlyArray<MentionLabel>;
-}
+export type Addressing =
+  | { readonly mentions: Mentions; readonly labels: ReadonlyArray<MentionLabel> }
+  | {
+      readonly conversationMentions: ReadonlyArray<ConversationMention>;
+      readonly labels: ReadonlyArray<MentionLabel>;
+    };
 
 /**
  * What quick access sends beside a draft, as its chips showed it at Send:
@@ -192,11 +198,17 @@ const keptOf = (draft: Draft): Kept => ({
   files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
 });
 
-const sameMention = (one: DraftMention, other: DraftMention) =>
-  one.position === other.position &&
-  (one._tag === "bot"
-    ? other._tag === "bot" && one.botId === other.botId && one.label === other.label
-    : other._tag === "everyone");
+const sameMention = (one: DraftMention, other: DraftMention) => {
+  if (one.position !== other.position) return false;
+  switch (one._tag) {
+    case "bot":
+      return other._tag === "bot" && one.botId === other.botId && one.label === other.label;
+    case "room":
+      return other._tag === "room" && one.roomId === other.roomId && one.label === other.label;
+    case "everyone":
+      return other._tag === "everyone";
+  }
+};
 
 /** Whether two drafts hold the same writing: the same text, with the same mentions picked in it. */
 const sameWriting = (

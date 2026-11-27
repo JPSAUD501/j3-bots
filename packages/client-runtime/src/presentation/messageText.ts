@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId } from "@j3-bots/contracts";
+import type { ConversationMention } from "@j3-bots/contracts";
 
 /**
- * A name a message highlights where `@` opens it, and whose it is: a member's,
- * or `@everyone`'s, which is no bot's.
+ * A name a message highlights where `@` opens it, and what it names: a bot, a
+ * room, or nothing in particular for `@everyone`.
  */
 export interface MentionName {
   readonly name: string;
-  readonly botId: BotId | null;
+  readonly of: ConversationMention | null;
 }
 
 export type Inline =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "code"; readonly text: string }
   | { readonly kind: "link"; readonly href: string; readonly text: string }
-  | { readonly kind: "mention"; readonly name: string; readonly botId: BotId | null }
+  | { readonly kind: "mention"; readonly name: string; readonly of: ConversationMention | null }
   /** The message's file of this index, where the operator placed it. */
   | { readonly kind: "file"; readonly index: number };
 
@@ -121,9 +121,9 @@ interface Placed {
  * Splits message text into what the bubble renders: paragraphs with inline
  * code, links and mentions, and fenced code blocks. Everything else is plain
  * text. Only http and https addresses become links. `@` and a name in
- * `mentionable` is a mention, of the bot the name is, where it opens and ends
- * as one, outside code and links; of two names that both fit, the longer, and
- * of two bots of one name, the first.
+ * `mentionable` is a mention, of the bot or room the name is, where it opens
+ * and ends as one, outside code and links; of two names that both fit, the
+ * longer, and of two of one name, the first.
  *
  * Each of `placed`, a file's offset in the text by its index, never
  * decreasing, becomes a `file` inline where it stands: in its paragraph,
@@ -242,7 +242,7 @@ function inlines(
       );
       if (found === undefined) continue;
       plain(cursor, at);
-      out.push({ kind: "mention", name: found.name, botId: found.botId });
+      out.push({ kind: "mention", name: found.name, of: found.of });
       cursor = at + 1 + found.name.length;
     }
     plain(cursor, end);

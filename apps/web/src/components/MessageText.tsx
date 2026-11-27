@@ -78,7 +78,7 @@ function InlinePart({ inline, placed }: { inline: Inline; placed: PlacedFiles | 
         </a>
       );
     case "mention":
-      return <TextMention name={inline.name} botId={inline.botId} />;
+      return <TextMention name={inline.name} of={inline.of} />;
     case "file": {
       const attachment = placed?.files[inline.index];
       return attachment === undefined ? null : (

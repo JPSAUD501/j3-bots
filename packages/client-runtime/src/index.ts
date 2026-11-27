@@ -92,6 +92,7 @@ export {
   messageStatus,
   type MessageStatus,
   type OutgoingMessage,
+  type Readdressing,
   type SecretAnswer,
   targetKey,
 } from "./stores/Conversations.ts";
