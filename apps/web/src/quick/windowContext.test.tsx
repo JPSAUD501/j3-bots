@@ -20,7 +20,10 @@ const BROWSER = { app: "Example Browser", title: "Invoice 2026-031 · Paid" } as
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 
 /** The desktop app as quick access's page meets it, its cues sent by hand. */
-function fakeApp(answers: { picture: QuickAccessPicture; screen?: LookingAtSettings["screen"] }) {
+function fakeApp(answers: {
+  picture: QuickAccessPicture | Promise<QuickAccessPicture>;
+  screen?: LookingAtSettings["screen"];
+}) {
   const listeners = new Set<(cue: QuickAccessCue) => void>();
   const asked: Array<number> = [];
   const app: WindowSource = {
@@ -50,6 +53,8 @@ function fakeApp(answers: { picture: QuickAccessPicture; screen?: LookingAtSetti
 }
 
 let sent: Array<WindowContext | undefined>;
+/** What to call once the message last sent went. */
+let went: () => void;
 function Harness({ app }: { app: WindowSource }) {
   const window = useWindowContext(app);
   return (
@@ -60,7 +65,11 @@ function Harness({ app }: { app: WindowSource }) {
       <button
         type="button"
         data-send
-        onClick={() => void window.context().then((context) => sent.push(context))}
+        onClick={() => {
+          const going = window.send();
+          went = going.sent;
+          void Promise.resolve(going.context).then((context) => sent.push(context));
+        }}
       />
     </>
   );
@@ -75,6 +84,7 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   sent = [];
+  went = () => {};
 });
 
 afterEach(() => {
@@ -178,6 +188,32 @@ describe("the window quick access opened over", () => {
     expect(container.querySelector("[role=group]")).toBeNull();
     await send();
     expect(sent.at(-1)).toBeUndefined();
+  });
+
+  it("sends the window Send was pressed on, though quick access opened again meanwhile", async () => {
+    let answer: (picture: QuickAccessPicture) => void = () => {};
+    const { app, cue } = fakeApp({ picture: new Promise((resolve) => (answer = resolve)) });
+    act(() => root.render(<Harness app={app} />));
+    cue({ _tag: "open", opening: 1 });
+    cue(seen(1, "available"));
+    await press(button("Add a picture of Example Browser"));
+    await send();
+
+    // Shown again over another window while the picture was still being taken.
+    cue({ _tag: "open", opening: 2 });
+    cue({
+      _tag: "seen",
+      opening: 2,
+      window: { lookingAt: { app: "Notes" }, picture: "available", pictureByDefault: false },
+    });
+    await act(async () => {
+      answer({ _tag: "taken", bytes: JPEG, mediaType: "image/jpeg", width: 2, height: 2 });
+      await Promise.resolve();
+    });
+    expect(sent.at(-1)).toEqual({ lookingAt: BROWSER });
+    // Its message went: the chips of the showing now are kept.
+    act(() => went());
+    expect(container.textContent).toContain("Notes");
   });
 
   it("asks for macOS's permission before a picture, in plain words, and sends none until then", async () => {

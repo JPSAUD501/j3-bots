@@ -16,7 +16,7 @@ const nowhere: WindowReader = {
   beforeFocus: Duration.zero,
   front: () => Effect.succeed(null),
   screen: Effect.succeed("not-needed"),
-  askScreenAccess: Effect.void,
+  askScreenAccess: () => Effect.void,
 };
 
 /**

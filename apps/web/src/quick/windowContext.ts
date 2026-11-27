@@ -155,12 +155,13 @@ export function useWindowContext(app: WindowSource) {
   };
 
   /**
-   * What goes with a message sent now: what the chips show, once a picture
-   * being taken is.
+   * What goes with a message sent now: what the chips show as Send is
+   * pressed, with a picture being taken once it is. Shown again meanwhile,
+   * the window pressed on goes, without a picture; taken off, nothing does.
    */
-  const context = async (): Promise<WindowContext | undefined> => {
-    const taking = current.current?.picture;
-    if (taking?._tag === "taking") await taking.done;
+  const context = async (pressed: Held): Promise<WindowContext | undefined> => {
+    if (pressed.picture._tag === "taking") await pressed.picture.done;
+    if (latest.current !== pressed.opening) return { lookingAt: pressed.window.lookingAt };
     const now = current.current;
     if (now === null) return undefined;
     const { lookingAt } = now.window;
@@ -180,8 +181,17 @@ export function useWindowContext(app: WindowSource) {
   return {
     view,
     intents,
-    context,
-    /** It went with a message: the next one goes without it. */
-    sent: () => update(() => null),
+    /**
+     * Send was pressed: what goes beside the message, and what to call once
+     * it went, after which the next message goes without it.
+     */
+    send: () => {
+      const pressed = current.current;
+      if (pressed === null) return { context: undefined, sent: () => {} };
+      return {
+        context: context(pressed),
+        sent: () => update((before) => (before?.opening === pressed.opening ? null : before)),
+      };
+    },
   };
 }

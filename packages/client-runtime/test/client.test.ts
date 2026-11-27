@@ -1749,7 +1749,10 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         const lookingAt = { app: "Firefox", title: "Pull request #346" };
 
         // The window alone is no message.
-        assert.strictEqual(yield* drafts.send(target, undefined, { lookingAt }), "empty");
+        assert.strictEqual(
+          yield* drafts.send(target, undefined, Effect.succeed({ lookingAt })),
+          "empty",
+        );
 
         yield* drafts.setText(target, "what changed here?");
         yield* drafts.attach(target, [
@@ -1758,7 +1761,18 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* waitFor(drafts.state, (state) =>
           (state.get(targetKey(target))?.files ?? []).every((file) => file._tag === "ready"),
         );
-        assert.strictEqual(yield* drafts.send(target, undefined, { lookingAt, picture }), "sent");
+        // Typed while the picture is still on its way: the message is what Send was pressed on.
+        const taken = yield* Deferred.make<{
+          lookingAt: typeof lookingAt;
+          picture: typeof picture;
+        }>();
+        const sending = yield* drafts
+          .send(target, undefined, Deferred.await(taken))
+          .pipe(Effect.forkScoped);
+        yield* waitFor(drafts.state, (state) => state.get(targetKey(target))?.sending === true);
+        yield* drafts.setText(target, "what changed here? and why");
+        yield* Deferred.succeed(taken, { lookingAt, picture });
+        assert.strictEqual(yield* Fiber.join(sending), "sent");
         const delivered = yield* waitFor(conversation.state, (state) =>
           state.items.some((item) => item._tag === "message"),
         );
@@ -1766,6 +1780,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           item._tag === "message" ? [item] : [],
         );
         assert.deepStrictEqual(message?.lookingAt, lookingAt);
+        assert.strictEqual(message?.text, "what changed here?");
         assert.deepStrictEqual(
           message?.attachments.map((file) => file.name),
           ["notes.txt", "Firefox.png"],
@@ -1784,7 +1799,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           (state.get(targetKey(target))?.files ?? []).every((file) => file._tag === "ready"),
         );
         assert.strictEqual(
-          yield* drafts.send(target, undefined, { lookingAt, picture }),
+          yield* drafts.send(target, undefined, Effect.succeed({ lookingAt, picture })),
           "picture-failed",
         );
         const kept = drafts.state.get().get(targetKey(target));

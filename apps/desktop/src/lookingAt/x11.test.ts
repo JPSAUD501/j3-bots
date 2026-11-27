@@ -245,6 +245,21 @@ describe("reading the window in front on X11", () => {
         width: 2,
         height: 1,
       });
+
+      // A screen's worth of pixels comes in many chunks, and arrives whole.
+      const size = { width: 1280, height: 720 };
+      const pixels = Buffer.alloc(size.width * size.height * 4);
+      pixels.writeUInt32LE(0x00102030, pixels.length - 4);
+      const large = yield* reader(
+        yield* xServer({ ...browser("Notes"), pixels, size }),
+        null,
+      ).front({ withTitle: true });
+      yield* large?.takePicture ?? Effect.void;
+      assert.strictEqual(pictures.at(-1)?.bgra.length, pixels.length);
+      assert.deepStrictEqual(
+        pictures.at(-1)?.bgra.subarray(-4),
+        Uint8Array.from([0x30, 0x20, 0x10, 0xff]),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -37,8 +37,11 @@ export interface WindowReader {
    */
   readonly front: (options: { readonly withTitle: boolean }) => Effect.Effect<FrontWindow | null>;
   readonly screen: Effect.Effect<ScreenAccess>;
-  /** Asks the system for what `screen` says is `needed`, where the operator gives it. */
-  readonly askScreenAccess: Effect.Effect<void>;
+  /**
+   * Asks the system for what `screen` says is `needed`, where the operator
+   * gives it: the system's own ask the `first` time, its settings after.
+   */
+  readonly askScreenAccess: (options: { readonly first: boolean }) => Effect.Effect<void>;
 }
 
 /** JPEG quality of a picture of a window: text in it stays legible, and it stays small. */

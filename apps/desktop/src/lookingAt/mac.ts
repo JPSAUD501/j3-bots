@@ -24,13 +24,15 @@ import { lookingAtOf } from "./text.ts";
 
 /**
  * Prints the first ordinary window on screen of another process than
- * `argv[0]`, as JSON: its number, its app's name, and its title when macOS
- * gives it. Options: on screen only (1), without the desktop's own (16).
+ * `argv[0]`, as JSON: its number, its app's name, and, when `argv[1]` is
+ * "title", its title when macOS gives it. Options: on screen only (1),
+ * without the desktop's own (16).
  */
 const FRONT_WINDOW = `
 ObjC.import("CoreGraphics");
 function run(argv) {
   const own = Number(argv[0]);
+  const withTitle = argv[1] === "title";
   const listed = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
   for (const window of listed) {
     const bounds = window.kCGWindowBounds || {};
@@ -39,7 +41,7 @@ function run(argv) {
     return JSON.stringify({
       number: window.kCGWindowNumber,
       app: window.kCGWindowOwnerName || null,
-      title: window.kCGWindowName || null,
+      title: withTitle ? window.kCGWindowName || null : null,
     });
   }
   return "null";
@@ -93,9 +95,11 @@ export const macReader = Effect.fn("desktop.macReader")(function* (ownProcess: n
   );
 
   const front = ({ withTitle }: { readonly withTitle: boolean }) =>
-    outputOf("/usr/bin/osascript", ["-l", "JavaScript", "-e", FRONT_WINDOW, String(ownProcess)], {
-      deadline: ASK_WITHIN,
-    }).pipe(
+    outputOf(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", FRONT_WINDOW, String(ownProcess), withTitle ? "title" : "app"],
+      { deadline: ASK_WITHIN },
+    ).pipe(
       Effect.map((printed) => {
         const listed = Option.getOrNull(
           Option.flatMap(printed, (text) => decodeListed(text.trim())),
@@ -118,16 +122,18 @@ export const macReader = Effect.fn("desktop.macReader")(function* (ownProcess: n
     beforeFocus: Duration.zero,
     front,
     screen: Effect.sync(screenAccess),
-    askScreenAccess: Effect.promise(async () => {
-      // macOS asks the operator itself the first time an app reads the
-      // screen; after that only System Settings changes the answer.
-      if (systemPreferences.getMediaAccessStatus("screen") === "not-determined") {
-        await desktopCapturer
-          .getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } })
-          .catch(() => []);
-        return;
-      }
-      await shell.openExternal(SCREEN_RECORDING_SETTINGS).catch(() => undefined);
-    }),
+    askScreenAccess: ({ first }) =>
+      Effect.promise(async () => {
+        // macOS asks the operator itself the first time an app reads the
+        // screen; after that only System Settings changes the answer. Electron
+        // reports either as not granted, so the app keeps whether it asked.
+        if (first) {
+          await desktopCapturer
+            .getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } })
+            .catch(() => []);
+          return;
+        }
+        await shell.openExternal(SCREEN_RECORDING_SETTINGS).catch(() => undefined);
+      }),
   } satisfies WindowReader;
 });

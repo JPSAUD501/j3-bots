@@ -66,8 +66,8 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       {
         type: "session-rotated",
         digest: [
-          { from: "user", text: "text", files: [] },
-          { from: "you", text: "text", files: ["a.pdf"] },
+          { from: "user", text: "text", files: [], lookingAt: { app: "app", title: "text" } },
+          { from: "you", text: "text", files: ["a.pdf"], lookingAt: null },
         ],
       },
     ],

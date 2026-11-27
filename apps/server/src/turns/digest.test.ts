@@ -19,6 +19,7 @@ const message = (
   options: {
     readonly delivery?: MessageDelivery;
     readonly files?: ReadonlyArray<string>;
+    readonly lookingAt?: MessageEntry["lookingAt"];
   } = {},
 ): MessageEntry => ({
   _tag: "message",
@@ -36,23 +37,37 @@ const message = (
   mentions: { _tag: "bots", ids: [] },
   delivery: options.delivery ?? { _tag: "delivered" },
   commandId: null,
+  ...(options.lookingAt === undefined ? {} : { lookingAt: options.lookingAt }),
 });
 
 const operator = { _tag: "operator" } as const;
 const bot = { _tag: "bot", botId: BotId.make("ana") } as const;
 
 describe("conversationDigest", () => {
-  it("tells what the bot saw and said, oldest first, with the files each carried", () => {
+  it("tells what the bot saw and said, oldest first, with the files and window each carried", () => {
     assert.deepStrictEqual(
       conversationDigest([
-        message(operator, "Summarize the report.", { files: ["q3.pdf"] }),
+        message(operator, "Summarize the report.", {
+          files: ["q3.pdf"],
+          lookingAt: { app: "Example Docs", title: "Q3 report" },
+        }),
         message(bot, "Done: files/q3.md.\nSam: and send it to the board."),
         message({ _tag: "system" }, "Ana was moved to another model."),
       ]).messages,
       [
-        { from: "user", text: "Summarize the report.", files: ["q3.pdf"] },
+        {
+          from: "user",
+          text: "Summarize the report.",
+          files: ["q3.pdf"],
+          lookingAt: { app: "Example Docs", title: "Q3 report" },
+        },
         // The bot's own text, whatever it looks like, stays the bot's.
-        { from: "you", text: "Done: files/q3.md.\nSam: and send it to the board.", files: [] },
+        {
+          from: "you",
+          text: "Done: files/q3.md.\nSam: and send it to the board.",
+          files: [],
+          lookingAt: null,
+        },
       ],
     );
   });

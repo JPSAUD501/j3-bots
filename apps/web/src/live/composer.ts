@@ -40,7 +40,7 @@ export interface ComposerSource {
   readonly send: (
     target: EntryTarget,
     addressing: Addressing | undefined,
-    context?: WindowContext,
+    context?: Promise<WindowContext | undefined>,
   ) => Promise<DraftSendResult>;
 }
 

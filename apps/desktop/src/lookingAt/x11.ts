@@ -55,17 +55,16 @@ export const bgraOf = (
   const length = width * height * 4;
   if (data.length < length) return null;
   const bitmap = new Uint8Array(length);
-  for (let at = 0; at < length; at += 4) {
-    // A pixel 0x00RRGGBB, least significant byte first or last.
-    const [blue, green, red] =
-      byteOrder === "lsb"
-        ? [data[at] ?? 0, data[at + 1] ?? 0, data[at + 2] ?? 0]
-        : [data[at + 3] ?? 0, data[at + 2] ?? 0, data[at + 1] ?? 0];
-    bitmap[at] = blue;
-    bitmap[at + 1] = green;
-    bitmap[at + 2] = red;
-    bitmap[at + 3] = 255;
+  // A pixel 0x00RRGGBB, least significant byte first: blue, green, red, as it lies.
+  if (byteOrder === "lsb") bitmap.set(data.subarray(0, length));
+  else {
+    for (let at = 0; at < length; at += 4) {
+      bitmap[at] = data[at + 3] ?? 0;
+      bitmap[at + 1] = data[at + 2] ?? 0;
+      bitmap[at + 2] = data[at + 1] ?? 0;
+    }
   }
+  for (let at = 3; at < length; at += 4) bitmap[at] = 255;
   return bitmap;
 };
 
@@ -206,7 +205,7 @@ export const x11Reader = (options: {
     beforeFocus: Duration.millis(150),
     front,
     screen: Effect.succeed("not-needed"),
-    askScreenAccess: Effect.void,
+    askScreenAccess: () => Effect.void,
   };
 };
 

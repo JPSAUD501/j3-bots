@@ -450,10 +450,17 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
             ),
         );
       });
+      // The system's own ask comes once; Electron cannot tell it from a no.
+      const askScreenAccess = Effect.gen(function* () {
+        const { screenAsked } = yield* settings.get;
+        yield* reader.askScreenAccess({ first: !screenAsked });
+        if (screenAsked) return;
+        yield* settings
+          .update((current) => ({ ...current, screenAsked: true }))
+          .pipe(Effect.catch((error) => Effect.logWarning("Saving the screen ask failed", error)));
+      });
       ipcMain.handle(IPC_CHANNELS.askScreenAccess, (event) =>
-        fromApp(event)
-          ? runPromise(reader.askScreenAccess.pipe(Effect.andThen(lookingAtNow)))
-          : null,
+        fromApp(event) ? runPromise(askScreenAccess.pipe(Effect.andThen(lookingAtNow))) : null,
       );
 
       const toggle = (from: Opener) => {

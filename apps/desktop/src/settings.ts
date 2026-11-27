@@ -68,8 +68,9 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * display it was dragged on, the latest last (`quickAccess`), and what
  * quick access reads of the window in front as it opens: its title, on
  * until the operator turns it off (`windowTitle`), and a picture of it for
- * every message, off until the operator turns it on (`windowPicture`). None
- * is a secret.
+ * every message, off until the operator turns it on (`windowPicture`), and
+ * whether macOS has asked the operator for Screen Recording on the app's
+ * behalf (`screenAsked`), which it does only once. None is a secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -86,6 +87,7 @@ export const Settings = Schema.Struct({
   quickAccess: Schema.Array(QuickAccessPlace),
   windowTitle: Schema.Boolean,
   windowPicture: Schema.Boolean,
+  screenAsked: Schema.Boolean,
 });
 export type Settings = typeof Settings.Type;
 
@@ -104,6 +106,7 @@ const EMPTY: Settings = {
   quickAccess: [],
   windowTitle: true,
   windowPicture: false,
+  screenAsked: false,
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -149,6 +152,7 @@ export const decodeSettings = (
     quickAccess,
     windowTitle,
     windowPicture,
+    screenAsked,
   } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
@@ -169,6 +173,7 @@ export const decodeSettings = (
   const keptQuickAccess = decodeQuickAccess(quickAccess);
   const keptWindowTitle = decodeFlag(windowTitle);
   const keptWindowPicture = decodeFlag(windowPicture);
+  const keptScreenAsked = decodeFlag(screenAsked);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -194,6 +199,7 @@ export const decodeSettings = (
   if (windowPicture !== undefined && Option.isNone(keptWindowPicture)) {
     dropped.push("windowPicture");
   }
+  if (screenAsked !== undefined && Option.isNone(keptScreenAsked)) dropped.push("screenAsked");
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -212,6 +218,7 @@ export const decodeSettings = (
       quickAccess: Option.getOrElse(keptQuickAccess, () => EMPTY.quickAccess),
       windowTitle: Option.getOrElse(keptWindowTitle, () => EMPTY.windowTitle),
       windowPicture: Option.getOrElse(keptWindowPicture, () => EMPTY.windowPicture),
+      screenAsked: Option.getOrElse(keptScreenAsked, () => EMPTY.screenAsked),
     },
     dropped,
   };

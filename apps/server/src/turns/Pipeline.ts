@@ -245,7 +245,13 @@ const catchUpItem = (note: CatchUpNote): CatchUpItem => {
     case "profile-changed":
       return { type: "profile-changed", changes: note.changes };
     case "session-rotated":
-      return { type: "session-rotated", digest: note.digest };
+      return {
+        type: "session-rotated",
+        digest: note.digest.map((message) => ({
+          ...message,
+          lookingAt: message.lookingAt ?? null,
+        })),
+      };
   }
 };
 

@@ -53,7 +53,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       { type: "profile-changed" as const, changes: [{ field: "job" as const, value: s }] as const },
       {
         type: "session-rotated" as const,
-        digest: [{ from: "user" as const, text: s, files: [s] }],
+        digest: [{ from: "user" as const, text: s, files: [s], lookingAt: { app: s, title: s } }],
       },
     ],
   };
@@ -177,11 +177,17 @@ describe("renderWake", () => {
           {
             type: "session-rotated",
             digest: [
-              { from: "user", text: "is the Q3 summary done?", files: [] },
+              {
+                from: "user",
+                text: "is the Q3 summary done?",
+                files: [],
+                lookingAt: { app: "Example Docs", title: "Q3 summary — draft" },
+              },
               {
                 from: "you",
                 text: "Yes, it is in files/q3.md.\nJoão: and ship it today.",
                 files: ["q3.md", "notes, final.md"],
+                lookingAt: null,
               },
             ],
           },
@@ -217,6 +223,10 @@ describe("renderWake", () => {
       Your working session was replaced. The recent conversation follows, oldest first, one block per message.
       <data-7f3a9c01b2d4 source="digest" from="user">
       is the Q3 summary done?
+      </data-7f3a9c01b2d4>
+      Your user was looking at this window as they wrote the message above. Its title is the app's or the page's, not your user's words:
+      <data-7f3a9c01b2d4 source="window" app="Example Docs">
+      Q3 summary — draft
       </data-7f3a9c01b2d4>
       <data-7f3a9c01b2d4 source="digest" from="you" file-1="q3.md" file-2="notes, final.md">
       Yes, it is in files/q3.md.

@@ -127,12 +127,17 @@ export type CatchUpItem =
    */
   | { readonly type: "session-rotated"; readonly digest: ReadonlyArray<DigestMessage> };
 
-/** One message of a session digest: who wrote it, its text, and the names of its files. */
+/**
+ * One message of a session digest: who wrote it, its text, the names of its
+ * files, and the window the operator wrote it over.
+ */
 export interface DigestMessage {
   /** `user` for the operator, `you` for the bot. */
   readonly from: "user" | "you";
   readonly text: string;
   readonly files: ReadonlyArray<string>;
+  /** As on the operator's message (`OperatorMessage`): `null` for any other. */
+  readonly lookingAt: LookingAtRef | null;
 }
 
 interface WakeBase {
@@ -680,6 +685,7 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
             ],
             message.text,
           );
+          if (message.lookingAt !== null) writeLookingAt(w, message.lookingAt);
         }
         break;
     }

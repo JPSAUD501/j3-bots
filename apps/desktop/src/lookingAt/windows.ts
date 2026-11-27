@@ -27,7 +27,8 @@ import { residentHelper } from "./windowsHelper.ts";
 /**
  * The helper's C#. `Front(own, withTitle)`: the window the operator is in,
  * or, while one of the app's own (process `own`) has the keys, the first
- * ordinary window of another process in front-to-back order. `Picture`: a
+ * ordinary window of another process in front-to-back order that is not
+ * kept above all others. No title is read unless `withTitle`. `Picture`: a
  * PNG of a window, as base64.
  */
 const HELPER = String.raw`
@@ -55,6 +56,7 @@ public static class J3Windows {
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int max);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextLengthW(IntPtr window);
   [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc each, IntPtr data);
   [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
@@ -72,9 +74,9 @@ public static class J3Windows {
     return text.ToString();
   }
 
-  // Shown, not minimized to nothing, not a tool palette (WS_EX_TOOLWINDOW), not cloaked on another desktop.
+  // Shown, not minimized, not a tool palette (WS_EX_TOOLWINDOW), not cloaked on another desktop.
   static bool Ordinary(IntPtr window) {
-    if (window == IntPtr.Zero || !IsWindowVisible(window)) return false;
+    if (window == IntPtr.Zero || !IsWindowVisible(window) || IsIconic(window)) return false;
     if ((GetWindowLongW(window, -20) & 0x80) != 0) return false;
     int cloaked;
     if (DwmGetWindowAttribute(window, 14, out cloaked, 4) == 0 && cloaked != 0) return false;
@@ -113,9 +115,13 @@ public static class J3Windows {
     IntPtr window = GetForegroundWindow();
     if (!Ordinary(window) || ProcessOf(window) == own) {
       window = IntPtr.Zero;
-      // GW_HWNDNEXT: the next window down.
+      // GW_HWNDNEXT: the next window down. Windows kept above all others
+      // (WS_EX_TOPMOST: a video's picture in picture, a pinned window) stand
+      // before the one the operator was in, so they are passed over; a titled
+      // window is an app's, read by its length alone.
       for (IntPtr at = GetTopWindow(IntPtr.Zero); at != IntPtr.Zero; at = GetWindow(at, 2)) {
-        if (Ordinary(at) && ProcessOf(at) != own && TitleOf(at).Length > 0) { window = at; break; }
+        if ((GetWindowLongW(at, -20) & 0x8) != 0) continue;
+        if (Ordinary(at) && ProcessOf(at) != own && GetWindowTextLengthW(at) > 0) { window = at; break; }
       }
     }
     if (window == IntPtr.Zero) return null;
@@ -225,10 +231,12 @@ export const windowsReader = Effect.fn("desktop.windowsReader")(function* (ownPr
 
   return {
     reach: "window",
-    // The window the operator was in is found under quick access too.
-    beforeFocus: Duration.zero,
+    // The foreground window, read before quick access takes the keys; when
+    // the helper is not that quick (it compiles itself on the first press),
+    // the window just under quick access's is found in front-to-back order.
+    beforeFocus: Duration.millis(150),
     front,
     screen: Effect.succeed("not-needed"),
-    askScreenAccess: Effect.void,
+    askScreenAccess: () => Effect.void,
   } satisfies WindowReader;
 });

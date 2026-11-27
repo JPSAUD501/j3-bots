@@ -297,21 +297,34 @@ export const connectX = (options: {
       socket.on("error", end);
       socket.on("close", end);
       socket.on("connect", () => socket.write(setupRequest(options.cookie)));
+      // Chunks wait apart until the reply they belong to is whole, and are
+      // joined once: a window's picture is megabytes in 64 KB chunks.
+      const arriving: Array<Buffer> = [];
+      let arrivingBytes = 0;
+      let needed = 8;
       socket.on("data", (chunk: Buffer) => {
-        received = Buffer.concat([received, chunk]);
+        arriving.push(chunk);
+        arrivingBytes += chunk.length;
+        if (received.length + arrivingBytes < needed) return;
+        received = Buffer.concat([received, ...arriving.splice(0)]);
+        arrivingBytes = 0;
+        // Short of `bytes`: the next chunk is joined only once they are there.
+        const short = (bytes: number) => {
+          needed = bytes;
+        };
         // A reply handed on may end the connection, which leaves the rest unread.
         for (;;) {
           if (ended) return;
           if (setupLength === null) {
-            if (received.length < 8) return;
+            if (received.length < 8) return short(8);
             // Success is 1; a refusal (0) and a second round of authentication (2) are not.
             if (received.readUInt8(0) !== 1) return end();
             setupLength = 8 + received.readUInt16LE(6) * 4;
           }
           const first = waiting[0];
-          if (first === undefined) return;
+          if (first === undefined) return short(0);
           if (setupLength > 0) {
-            if (received.length < setupLength) return;
+            if (received.length < setupLength) return short(setupLength);
             const reply = received.subarray(0, setupLength);
             received = received.subarray(setupLength);
             setupLength = 0;
@@ -319,7 +332,7 @@ export const connectX = (options: {
             first(reply);
             continue;
           }
-          if (received.length < 32) return;
+          if (received.length < 32) return short(32);
           const kind = received.readUInt8(0);
           // An event the app never asked for: passed over.
           if (kind > 1) {
@@ -327,7 +340,7 @@ export const connectX = (options: {
             continue;
           }
           const length = kind === 1 ? 32 + received.readUInt32LE(4) * 4 : 32;
-          if (received.length < length) return;
+          if (received.length < length) return short(length);
           const reply = received.subarray(0, length);
           received = received.subarray(length);
           waiting.shift();

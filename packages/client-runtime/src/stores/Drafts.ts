@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
+import { transferDeadline } from "../connection/http.ts";
 import { Files, uploadProblem } from "../files/Files.ts";
 import {
   admitFiles,
@@ -330,13 +331,15 @@ export class Drafts extends Context.Service<
      * second finds the draft already on its way. What goes is the draft as it
      * was at the call, or nothing. The transaction claims the draft as this
      * window last read or wrote it, so two windows never send it twice.
-     * Without `addressing` the message mentions nobody. `context` goes with
-     * the draft as it is given, and is never kept with it.
+     * Without `addressing` the message mentions nobody. `context` is what
+     * goes beside the draft: it is waited for once the draft is held as on
+     * its way, so nothing typed meanwhile goes with it, and it is never kept
+     * with the draft.
      */
     readonly send: (
       target: EntryTarget,
       addressing?: Addressing,
-      context?: WindowContext,
+      context?: Effect.Effect<WindowContext | undefined>,
     ) => Effect.Effect<DraftSendResult>;
     /**
      * Each draft another window sent or changed while this one was changing
@@ -1002,7 +1005,7 @@ export const layer = Layer.effect(
     const send = Effect.fn("Drafts.send")(function* (
       target: EntryTarget,
       addressing?: Addressing,
-      context?: WindowContext,
+      context?: Effect.Effect<WindowContext | undefined>,
     ) {
       const key = targetKey(target);
       // What the operator pressed Send on, captured at the press.
@@ -1015,9 +1018,16 @@ export const layer = Layer.effect(
       // Every file is uploaded: each mark places one of `attachments`, in order.
       const { text, offsets } = placedMessage(draft.text);
       const { files: drafted } = keptOf(draft);
-      const picture = context?.picture;
+      if (context === undefined && text === "" && drafted.length === 0) return "empty";
+      const pressed: Draft = { ...draft, sending: true };
+      show(key, pressed);
+      const beside = context === undefined ? undefined : yield* context;
+      const picture = beside?.picture;
       // The window alone is no message: it goes with words or files.
-      if (text === "" && drafted.length === 0 && picture === undefined) return "empty";
+      if (text === "" && drafted.length === 0 && picture === undefined) {
+        show(key, draft);
+        return "empty";
+      }
       const local =
         picture === undefined
           ? null
@@ -1027,9 +1037,10 @@ export const layer = Layer.effect(
               size: picture.body.size,
             };
       // Checked before it uploads, so a picture the message cannot take is never stored.
-      if (local !== null && admitFiles(drafted, [local])[0] !== null) return "picture-failed";
-      const pressed: Draft = { ...draft, sending: true };
-      show(key, pressed);
+      if (local !== null && admitFiles(drafted, [local])[0] !== null) {
+        show(key, draft);
+        return "picture-failed";
+      }
       // The picture uploads for the pairing the draft is sent under, as the draft's files did.
       const uploadFor = followed.get();
       if (picture !== undefined && uploadFor === null) {
@@ -1041,7 +1052,13 @@ export const layer = Layer.effect(
           ? null
           : yield* files
               .upload({ pairing: uploadFor, ...local, body: picture.body, onProgress: () => {} })
-              .pipe(Effect.option);
+              .pipe(
+                // The draft waits on it: offline, or too slow for one
+                // transfer of its size, it fails and the draft is back.
+                Effect.timeoutOption(transferDeadline(local.size, policy.requestTimeout)),
+                Effect.option,
+                Effect.map(Option.flatten),
+              );
       if (uploaded !== null && Option.isNone(uploaded)) {
         show(key, draft);
         return "picture-failed";
@@ -1078,7 +1095,7 @@ export const layer = Layer.effect(
                 text,
                 attachments,
                 ...(drafted.length === 0 ? {} : { attachmentOffsets: placedAt }),
-                ...(context?.lookingAt === undefined ? {} : { lookingAt: context.lookingAt }),
+                ...(beside?.lookingAt === undefined ? {} : { lookingAt: beside.lookingAt }),
                 ...addressing,
               },
               {

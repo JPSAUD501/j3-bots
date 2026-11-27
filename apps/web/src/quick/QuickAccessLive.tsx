@@ -199,13 +199,12 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
     ...cards,
     ...composer.intents,
     // The window the operator was in goes with what they send from here.
-    sendDraft: (asked, addressing) =>
-      void windowContext
-        .context()
-        .then((context) => composer.send(asked, addressing, context))
-        .then((result) => {
-          if (result === "sent") windowContext.sent();
-        }),
+    sendDraft: (asked, addressing) => {
+      const going = windowContext.send();
+      void composer.send(asked, addressing, going.context).then((result) => {
+        if (result === "sent") going.sent();
+      });
+    },
     openWorkFold: folds.open,
     closeWorkFold: folds.close,
     openAttachment: attachments.open,
