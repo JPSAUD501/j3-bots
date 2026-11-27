@@ -199,8 +199,9 @@ export function Quotes({
  * draft takes.
  *
  * Android selects only in a field that is enabled, so the field is one that
- * opens no keyboard, hides its caret and offers no menu to paste or cut
- * with, and it holds the message's words as its value.
+ * opens no keyboard and hides its caret, and holds the message's words as
+ * its value, which React Native puts back if a paste or a cut changes them.
+ * Its menu stays: without it, Android lets the selection go.
  */
 function PassagePicker({
   target,
@@ -230,7 +231,6 @@ function PassagePicker({
         scrollEnabled={false}
         showSoftInputOnFocus={false}
         caretHidden
-        contextMenuHidden
         accessibilityLabel={t("quote.sheet.title")}
         onSelectionChange={({ nativeEvent }) => setSelection(nativeEvent.selection)}
         className="rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground"
