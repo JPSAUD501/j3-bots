@@ -40,7 +40,7 @@ const START: SessionStart = {
   startedAt: "2026-11-27T14:05:00.000Z",
   local: { year: 2026, month: 11, day: 27, hour: 11, minute: 5, second: 0 },
   timeZone: "America/Sao_Paulo",
-  appVersion: "0.14.0",
+  appVersion: "0.15.0",
   os: { platform: "linux", release: "6.8.0" },
   input: "everything",
   passwords: "pause",

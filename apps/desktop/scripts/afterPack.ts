@@ -17,20 +17,22 @@ export default function afterPack(context: AfterPackContext): void {
   const platform = `${context.electronPlatformName}-${Arch[context.arch]}`;
   // The input hook screen recordings read keys and clicks through
   // (decision 0098), unpacked beside the asar, since a native module loads
-  // only from a real file.
-  const hook = NodePath.join(
+  // only from a real file; and the licenses it ships under, beside it.
+  const native = NodePath.join(
     context.packager.getResourcesDir(context.appOutDir),
     "app.asar.unpacked",
     "dist",
     "native",
     "uiohook",
-    "uiohook-napi",
-    "prebuilds",
-    platform,
-    "uiohook-napi.node",
   );
+  const hook = NodePath.join(native, "uiohook-napi", "prebuilds", platform, "uiohook-napi.node");
   if (!NodeFS.existsSync(hook)) {
     throw new Error(`The ${platform} package lacks the input hook screen recordings need.`);
+  }
+  for (const notice of ["NOTICE", "COPYING", "COPYING.LESSER", "uiohook-napi/LICENSE"]) {
+    if (!NodeFS.existsSync(NodePath.join(native, notice))) {
+      throw new Error(`The ${platform} package lacks the input hook's ${notice}.`);
+    }
   }
   console.log(`  • input hook      ${platform}`);
   const runtime = NodePath.join(

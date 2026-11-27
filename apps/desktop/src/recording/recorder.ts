@@ -116,6 +116,8 @@ interface Options {
 interface Live {
   readonly id: RecordingId;
   readonly job: RecorderJob;
+  /** What this recording reads besides the screens and the voice, as it started. */
+  readonly input: RecordingCheck["input"];
   readonly pill: BrowserWindow;
   /** Each screen, its video's size as the control first asked for it. */
   screens: ReadonlyArray<RecordedScreen>;
@@ -201,7 +203,10 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
     at.startedAt === null ? 0 : (at.pausedAt ?? now()) - at.startedAt - at.pausedTotal;
 
   const fromPill = (event: IpcMainEvent | IpcMainInvokeEvent) =>
-    live !== null && !live.pill.isDestroyed() && event.sender === live.pill.webContents;
+    fromApp(event) &&
+    live !== null &&
+    !live.pill.isDestroyed() &&
+    event.sender === live.pill.webContents;
   const fromMain = (event: IpcMainEvent | IpcMainInvokeEvent) =>
     fromApp(event) && event.sender === main.webContents;
 
@@ -340,10 +345,7 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
       const events = at.events;
       if (events === null) return;
       const recording = () => at.phase === "recording" && at.pausedAt === null;
-      if (
-        input === "everything" &&
-        (platform !== "darwin" || systemPreferences.isTrustedAccessibilityClient(false))
-      ) {
+      if (at.input === "everything") {
         const path = yield* Path.Path;
         yield* listenToInput(hookBinary(app.getAppPath(), path.join), (event) => {
           if (!recording()) return;
@@ -416,6 +418,13 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
       return "space" satisfies RecordingStartResult;
     const screens = yield* screensHere();
     if (screens.length === 0) return "failed" satisfies RecordingStartResult;
+    // Keys and clicks only where the system lets the app read them: never on
+    // Wayland, and on macOS once the operator allowed it under Accessibility.
+    const recorded: RecordingCheck["input"] =
+      input === "everything" &&
+      (platform !== "darwin" || systemPreferences.isTrustedAccessibilityClient(false))
+        ? "everything"
+        : "screen-and-voice";
     const id = yield* randomId;
     const startedAt = yield* DateTime.now;
     const local = DateTime.toParts(DateTime.setZone(startedAt, DateTime.zoneMakeLocal()));
@@ -435,7 +444,7 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? null,
         appVersion: app.getVersion(),
         os: { platform, release: process.getSystemVersion() },
-        input,
+        input: recorded,
         passwords,
         screens: screens.map(({ screen: number, bounds, video }) => ({
           screen: number,
@@ -485,10 +494,12 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
     pill.setContentProtection(true);
     const at: Live = {
       id,
+      input: recorded,
       job: {
         target: request.target,
         pairing: request.pairing,
         microphone: request.microphone,
+        face: request.face,
         screens: screens.map(({ screen: number, source, video }) => ({
           screen: number,
           source,
@@ -516,7 +527,10 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
     for (const window of BrowserWindow.getAllWindows()) {
       if (window !== pill && window.isVisible()) window.hide();
     }
-    void pill.loadURL(`${options.appOrigin}${RECORDER_PATH}`);
+    // Where a window cannot be see-through, the page fills it (`?solid=true`).
+    void pill.loadURL(
+      `${options.appOrigin}${RECORDER_PATH}${options.transparent ? "" : "?solid=true"}`,
+    );
     return "started" satisfies RecordingStartResult;
   });
 
@@ -533,7 +547,7 @@ export const serve = Effect.fn("desktop.recorder")(function* (options: Options) 
     at.events = makeEvents({
       screens: at.screens,
       system: systemOf(platform),
-      secureSignal: passwords === "hidden" && input === "everything",
+      secureSignal: passwords === "hidden" && at.input === "everything",
     });
     write(at, store.appendLines(at.id, [{ t: 0, type: "start" } satisfies EventLine]));
     runFork(beside(at));

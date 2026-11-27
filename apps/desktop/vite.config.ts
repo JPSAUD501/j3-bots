@@ -6,8 +6,9 @@ import { defineConfig } from "vite-plus";
 // The input hook screen recordings read keys and clicks through
 // (`uiohook-napi`, decision 0098) is a native module: its prebuilt binary
 // for each desktop target is copied beside the bundle, under
-// `dist/native/uiohook/<platform>-<arch>/`, and loaded from there
-// (src/recording/input.ts); electron-builder.yml keeps it out of the asar.
+// `dist/native/uiohook/uiohook-napi/prebuilds/<platform>-<arch>/`, and loaded
+// from there (src/recording/input.ts), with its licenses and notice
+// (notices/uiohook); electron-builder.yml keeps them out of the asar.
 // The preload script is CommonJS, the only form a sandboxed preload can be.
 // Tests use the root configuration.
 
@@ -37,6 +38,8 @@ export default defineConfig({
           to: "dist/native/uiohook",
           flatten: false,
         },
+        { from: "node_modules/uiohook-napi/LICENSE", to: "dist/native/uiohook", flatten: false },
+        { from: "notices/uiohook/*", to: "dist/native/uiohook" },
       ],
     },
     {

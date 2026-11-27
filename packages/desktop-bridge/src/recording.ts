@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { DeviceId, EntryTarget } from "@j3-bots/contracts";
+import { Avatar, BotId, DeviceId, EntryTarget } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 
 // A screen recording (decision 0098): the sheet in the app's window that
@@ -64,15 +64,21 @@ export type RecordingAccessRequest = typeof RecordingAccessRequest.Type;
 /** A microphone, by the id the page's media devices give it. */
 const MicrophoneId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512));
 
+/** The face the floating control shows, listening: the bot's look, and the id that seeds its manner. */
+export const RecorderFace = Schema.Struct({ avatar: Avatar, seed: BotId });
+export type RecorderFace = typeof RecorderFace.Type;
+
 /**
  * Starts recording, once the sheet counted down: for the conversation or
  * room `target`, under `pairing`, with the microphone the operator picked
  * (`null`: none, or the system's default when `microphone` is `default`).
+ * `face`: the bot's, in a conversation; `null` in a room.
  */
 export const RecordingStart = Schema.Struct({
   target: EntryTarget,
   pairing: DeviceId,
   microphone: Schema.NullOr(MicrophoneId),
+  face: Schema.NullOr(RecorderFace),
 });
 export type RecordingStart = typeof RecordingStart.Type;
 
@@ -103,6 +109,7 @@ export const RecorderJob = Schema.Struct({
   target: EntryTarget,
   pairing: DeviceId,
   microphone: Schema.NullOr(MicrophoneId),
+  face: Schema.NullOr(RecorderFace),
   screens: Schema.Array(RecordedScreen).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(MAX_RECORDED_SCREENS),

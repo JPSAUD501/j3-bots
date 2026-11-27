@@ -346,8 +346,6 @@ export const makeStore = Effect.fn("recording.store")(function* (folder: string)
   };
 });
 
-export type Store = Effect.Success<ReturnType<typeof makeStore>>;
-
 const isRecordingId = (name: string): name is RecordingId => /^rec_[0-9a-z]{16}$/.test(name);
 
 const LastTime = Schema.Struct({ t: Schema.Number });

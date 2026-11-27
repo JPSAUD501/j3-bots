@@ -110,7 +110,7 @@ const BUTTONS: Readonly<Record<number, string>> = {
 export const linesText = (lines: ReadonlyArray<EventLine>) =>
   lines.map((line) => `${JSON.stringify(line)}\n`).join("");
 
-export const frameName = (t: number, screen: number) =>
+const frameName = (t: number, screen: number) =>
   `frames/${String(Math.max(0, Math.floor(t))).padStart(9, "0")}-s${screen}.jpg`;
 
 type Run =

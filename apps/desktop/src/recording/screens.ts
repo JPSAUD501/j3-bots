@@ -7,9 +7,9 @@
 // pixels by that screen's scale alone.
 
 /** The largest video a screen is recorded at: HD, its own shape kept. */
-export const VIDEO_BOX = { width: 1280, height: 720 } as const;
+const VIDEO_BOX = { width: 1280, height: 720 } as const;
 
-export interface Rect {
+interface Rect {
   readonly x: number;
   readonly y: number;
   readonly width: number;

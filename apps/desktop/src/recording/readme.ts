@@ -28,7 +28,7 @@ export interface RecordingFacts {
 export const screenFile = (screen: number) => `screen-${screen}.mp4`;
 export const VOICE_FILE = "voice.webm";
 export const EVENTS_FILE = "events.jsonl";
-export const TRANSCRIPT_FILE = "transcript.json";
+const TRANSCRIPT_FILE = "transcript.json";
 export const MANIFEST_FILE = "manifest.json";
 export const README_FILE = "README.md";
 

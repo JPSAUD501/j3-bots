@@ -1,0 +1,20 @@
+The input hook J3 Bots reads keys, clicks and the wheel through while it
+records the screen (decision 0098 in the J3 Bots repository) is the prebuilt
+binary of uiohook-napi 1.5.5, in uiohook-napi/prebuilds/<platform>-<arch>/.
+
+uiohook-napi
+  Copyright (c) 2020 Alexander Drozdov
+  License: MIT, in uiohook-napi/LICENSE.
+  Source: https://github.com/SnosMe/uiohook-napi, and the npm package
+  uiohook-napi@1.5.5, which holds the binding's source and libuiohook's.
+
+libuiohook, which the binary holds
+  Copyright (C) 2006-2023 Alexander Barker. All Rights Reserved.
+  License: GNU Lesser General Public License, version 3 or later, in
+  COPYING.LESSER, with the GNU General Public License, version 3, it adds to,
+  in COPYING.
+  Source: https://github.com/kwhat/libuiohook, and the npm package above, as
+  uiohook-napi built it.
+
+The binary is a file of its own, loaded as the app runs. To use a modified
+libuiohook, build uiohook-napi with it and put its binary in place of this one.
