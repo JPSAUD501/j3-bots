@@ -26,7 +26,13 @@ export type ProfileChanges = Partial<Pick<SettingsValue, "operatorName" | "timeZ
 export type SettingsChange =
   | { readonly section: "profile"; readonly changes: ProfileChanges }
   | { readonly section: "notifications"; readonly changes: NotificationSettingsChange }
-  | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges };
+  | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges }
+  | { readonly section: "usage-data"; readonly changes: UsageDataChanges };
+
+/** The operator's switch for usage data; only for a server whose settings carry `telemetry`. */
+export interface UsageDataChanges {
+  readonly enabled: boolean;
+}
 
 /**
  * What the harnesses do on their own: whether the server updates the copies it
@@ -56,6 +62,7 @@ export interface SettingsSaves {
   readonly profile: SettingsSave<ProfileChanges>;
   readonly notifications: SettingsSave<NotificationSettingsChange>;
   readonly harnesses: SettingsSave<HarnessSettingsChanges>;
+  readonly "usage-data": SettingsSave<UsageDataChanges>;
 }
 
 /**
@@ -121,6 +128,7 @@ export const layer = Layer.effect(
       profile: new Cell<SettingsSaves["profile"]>({ _tag: "idle" }),
       notifications: new Cell<SettingsSaves["notifications"]>({ _tag: "idle" }),
       harnesses: new Cell<SettingsSaves["harnesses"]>({ _tag: "idle" }),
+      "usage-data": new Cell<SettingsSaves["usage-data"]>({ _tag: "idle" }),
     };
 
     const latest = latestRead((settings: SettingsValue) => state.set(ready(settings)));
@@ -172,7 +180,10 @@ export const layer = Layer.effect(
       cell: Cell<SettingsSave<Changes>>,
       changes: Changes,
       sent: ProfileChanges &
-        HarnessSettingsChanges & { readonly notifications?: NotificationSettingsChange },
+        HarnessSettingsChanges & {
+          readonly notifications?: NotificationSettingsChange;
+          readonly telemetry?: boolean;
+        },
     ) {
       const commandId = yield* actions.commandId;
       const saving: SettingsSave<Changes> = { _tag: "saving", changes };
@@ -199,6 +210,10 @@ export const layer = Layer.effect(
           });
         case "harnesses":
           return yield* save(saves.harnesses, change.changes, change.changes);
+        case "usage-data":
+          return yield* save(saves["usage-data"], change.changes, {
+            telemetry: change.changes.enabled,
+          });
       }
     });
 

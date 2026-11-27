@@ -880,6 +880,7 @@ function LiveShell({
   const profileSave = useReadable(j3.settingsSaves.profile);
   const notificationsSave = useReadable(j3.settingsSaves.notifications);
   const harnessesSave = useReadable(j3.settingsSaves.harnesses);
+  const usageDataSave = useReadable(j3.settingsSaves["usage-data"]);
   const devices = useDevices();
   const conversation = useConversation(target);
   // The teammate conversation the address names, and every pair the roster lists.
@@ -1230,6 +1231,7 @@ function LiveShell({
       profile: profileSave,
       notifications: notificationsSave,
       harnesses: harnessesSave,
+      "usage-data": usageDataSave,
     },
     settingsOpen,
     settingsPage,
@@ -1542,6 +1544,11 @@ function LiveShell({
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
+    usageData: {
+      sent: () =>
+        j3.usageDataSent().then((result) => (result._tag === "done" ? result.value : null)),
+      record: j3.recordUsage,
+    },
     providerActions: providerActionsOf(j3),
     secrets: { ...j3.secrets, copy: copySecret },
     refreshDevices: j3.refreshDevices,

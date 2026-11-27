@@ -567,6 +567,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   area={appArea}
                   scroller={timeline}
                   rows={rows}
+                  onShown={(displayMode) =>
+                    intents.usageData.record({
+                      event: "connector-app.shown",
+                      properties: { displayMode },
+                    })
+                  }
                 >
                   <Timeline
                     rows={rows}

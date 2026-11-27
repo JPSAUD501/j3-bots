@@ -976,6 +976,7 @@ export function sampleTeam(now: DateTime.Utc) {
     updateChannel: "stable",
     autoUpdateHarnesses: true,
     suggestReplies: true,
+    telemetry: { enabled: true, heldOff: false },
   };
 
   const devices: ReadonlyArray<Device> = [

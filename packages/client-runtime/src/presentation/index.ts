@@ -299,6 +299,7 @@ export { shownSaveProblem } from "./saves.ts";
 export { type Shared, type SharedFile, type SharedMessage, sharedMessage } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export { providersNeedYou, type SettingsPage, settingsGroups } from "./settingsPages.ts";
+export { sentAsJson, USAGE_DATA_DOCS, type UsageDataSwitch, usageDataSwitch } from "./usageData.ts";
 export {
   isTemplateFileName,
   openTemplateChunks,

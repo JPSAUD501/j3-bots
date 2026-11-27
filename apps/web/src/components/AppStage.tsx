@@ -54,6 +54,8 @@ export interface AppStageState {
   ) => ConnectorAppDisplayMode;
   /** What the bots said since an app went full screen, which shows over it. */
   readonly replies: ReadonlyArray<MessageEntry>;
+  /** Tells that an app was shown in `mode`, for usage data: in the reply once it opens, otherwise as it goes there. */
+  readonly shown: (mode: ConnectorAppDisplayMode) => void;
 }
 
 const INLINE_ONLY: ReadonlyArray<ConnectorAppDisplayMode> = ["inline"];
@@ -66,6 +68,7 @@ const noStage: AppStageState = {
   staged: null,
   show: () => "inline",
   replies: [],
+  shown: () => {},
 };
 
 const AppStageContext = createContext<AppStageState>(noStage);
@@ -82,6 +85,7 @@ export function AppStageProvider({
   scroller,
   rows,
   initial = null,
+  onShown,
   children,
 }: {
   readonly area: HTMLElement | null;
@@ -92,9 +96,17 @@ export function AppStageProvider({
    * which what the bots say shows over it: the gallery's. A conversation opens with none.
    */
   readonly initial?: StagedFrom | null;
+  /** Each app shown, and in what mode; the gallery tells no one. */
+  readonly onShown?: (mode: ConnectorAppDisplayMode) => void;
   readonly children: ReactNode;
 }) {
   const [staged, setStaged] = useState<StagedFrom | null>(initial);
+  // The latest, so a new callback changes neither `show` nor what the stage gives.
+  const tell = useRef(onShown);
+  useLayoutEffect(() => {
+    tell.current = onShown;
+  }, [onShown]);
+  const shown = useCallback((mode: ConnectorAppDisplayMode) => tell.current?.(mode), []);
 
   const fullscreen = staged?.mode === "fullscreen";
   useEffect(() => {
@@ -123,9 +135,10 @@ export function AppStageProvider({
       }
       if (area === null) return "inline";
       setStaged({ viewId, mode, since: latest.current });
+      shown(mode);
       return mode;
     },
-    [area],
+    [area, shown],
   );
 
   const value = useMemo<AppStageState>(() => {
@@ -137,8 +150,9 @@ export function AppStageProvider({
       staged: staged === null ? null : { viewId: staged.viewId, mode: staged.mode },
       show,
       replies,
+      shown,
     };
-  }, [area, scroller, rows, staged, show]);
+  }, [area, scroller, rows, staged, show, shown]);
 
   return <AppStageContext value={value}>{children}</AppStageContext>;
 }

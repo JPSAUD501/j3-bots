@@ -43,6 +43,7 @@ export function useSavesUnderWay(j3: J3Client): boolean {
       profile: useReadable(j3.settingsSaves.profile),
       notifications: useReadable(j3.settingsSaves.notifications),
       harnesses: useReadable(j3.settingsSaves.harnesses),
+      "usage-data": useReadable(j3.settingsSaves["usage-data"]),
     },
     bots: useReadable(j3.botSaves),
     memory: useReadable(j3.memorySaves),

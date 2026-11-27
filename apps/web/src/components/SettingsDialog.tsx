@@ -117,7 +117,8 @@ import { SecretsSection } from "./secrets/SecretsSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
-import { Switch } from "./ui/switch";
+import { SwitchRow } from "./SettingsSwitch";
+import { UsageDataSection } from "./UsageData";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
 
@@ -142,6 +143,7 @@ type SettingsIntents = Pick<
   | "serverUpdate"
   | "updatePrompt"
   | "whatsNew"
+  | "usageData"
   | "shortcut"
   | "lookingAt"
   | "providerSetup"
@@ -199,9 +201,13 @@ const pageIcons: Record<SettingsPage, LucideIcon> = {
 
 /**
  * Settings' pages this window has something for: where the bots live only in
- * the desktop app, and updates only where one can be followed from here.
+ * the desktop app, and About only where an update can be followed from here
+ * or the server offers its usage data switch.
  */
-const pagesFor = (intents: SettingsIntents): ReadonlyArray<ReadonlyArray<SettingsPage>> =>
+const pagesFor = (
+  intents: SettingsIntents,
+  settings: Settings | null,
+): ReadonlyArray<ReadonlyArray<SettingsPage>> =>
   settingsGroups
     .map((group) =>
       group.filter((page) => {
@@ -209,7 +215,11 @@ const pagesFor = (intents: SettingsIntents): ReadonlyArray<ReadonlyArray<Setting
           case "where":
             return intents.server !== undefined || intents.local !== undefined;
           case "updates":
-            return intents.serverUpdate !== undefined || intents.update !== undefined;
+            return (
+              intents.serverUpdate !== undefined ||
+              intents.update !== undefined ||
+              settings?.telemetry !== undefined
+            );
           default:
             return true;
         }
@@ -297,7 +307,7 @@ export function SettingsPanel({
   readonly wide: boolean;
 }) {
   const { t } = useI18n();
-  const groups = pagesFor(intents);
+  const groups = pagesFor(intents, data.settings);
   const page =
     data.settingsPage !== null && groups.some((group) => group.includes(data.settingsPage!))
       ? data.settingsPage
@@ -574,12 +584,20 @@ function PageBody({
       return <WhereSection server={intents.server} local={intents.local} />;
     case "updates":
       return (
-        <UpdatesSection
-          server={intents.serverUpdate}
-          app={intents.update}
-          local={intents.local}
-          onUpdate={intents.updatePrompt?.reopen}
-        />
+        <>
+          <UpdatesSection
+            server={intents.serverUpdate}
+            app={intents.update}
+            local={intents.local}
+            onUpdate={intents.updatePrompt?.reopen}
+          />
+          <UsageDataSection
+            settings={data.settings}
+            save={data.settingsSaves["usage-data"]}
+            connected={data.connected}
+            intents={intents}
+          />
+        </>
       );
   }
 }
@@ -1009,43 +1027,6 @@ function HarnessSwitch({
           save.changes[setting] !== undefined &&
           t("settings.saveFailed")}
       </p>
-    </div>
-  );
-}
-
-/** A setting that is on or off: its name and what it does, beside the switch. */
-function SwitchRow({
-  label,
-  hint,
-  checked,
-  readOnly,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  readOnly: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  const labelId = useId();
-  const hintId = useId();
-  return (
-    <div className="flex items-start gap-3">
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span id={labelId} className="text-sm">
-          {label}
-        </span>
-        <span id={hintId} className="text-2xs text-muted-foreground">
-          {hint}
-        </span>
-      </span>
-      <Switch
-        checked={checked}
-        readOnly={readOnly}
-        aria-labelledby={labelId}
-        aria-describedby={hintId}
-        onCheckedChange={onChange}
-      />
     </div>
   );
 }

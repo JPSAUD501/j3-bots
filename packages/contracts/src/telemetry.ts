@@ -75,7 +75,11 @@ export const TelemetryVersion = ReleaseVersion;
 /** What a client tells its server about itself once its socket opens (`telemetry.hello`). */
 export const TelemetryClient = Schema.Struct({
   surface: TelemetrySurface,
-  version: TelemetryVersion,
+  /**
+   * The client's own release: the desktop app's or the Android app's. Null
+   * for the web client, which is the server's release, as every event says.
+   */
+  version: Schema.NullOr(TelemetryVersion),
   os: TelemetryOs,
   /** The hash of a random id this client keeps for itself. */
   device: TelemetryIdHash,
@@ -172,7 +176,7 @@ const SERVER_PROPERTIES = {
 /** What an event a client's request caused carries about that client (`telemetry.hello`). */
 const CLIENT_PROPERTIES = {
   surface: Schema.optionalKey(TelemetrySurface),
-  clientVersion: Schema.optionalKey(TelemetryVersion),
+  clientVersion: Schema.optionalKey(Schema.NullOr(TelemetryVersion)),
   clientOs: Schema.optionalKey(TelemetryOs),
   clientDevice: Schema.optionalKey(TelemetryIdHash),
 } as const;

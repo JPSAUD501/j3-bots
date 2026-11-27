@@ -150,6 +150,7 @@ export function ConnectorAppBlock({
 }) {
   const { t } = useI18n();
   const stage = useAppStage();
+  const { shown } = stage;
   const mode: ConnectorAppDisplayMode =
     stage.staged?.viewId === app.viewId ? stage.staged.mode : "inline";
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
@@ -175,14 +176,17 @@ export function ConnectorAppBlock({
     void access.open(app.viewId).then((view) => {
       if (!current) return;
       const document = view === null ? null : connectorAppDocument(view, access.server);
-      setLoaded(
-        view === null || document === null ? { _tag: "failed" } : { _tag: "ready", view, document },
-      );
+      if (view === null || document === null) {
+        setLoaded({ _tag: "failed" });
+        return;
+      }
+      setLoaded({ _tag: "ready", view, document });
+      shown("inline");
     });
     return () => {
       current = false;
     };
-  }, [access, app.viewId, wanted, loaded._tag]);
+  }, [access, app.viewId, wanted, loaded._tag, shown]);
 
   useEffect(() => {
     if (loaded._tag !== "ready") return;
