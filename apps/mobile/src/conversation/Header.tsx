@@ -14,9 +14,9 @@ import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
 
 /**
- * Who this is: a bot's face and name on one line, or a room's members side by
- * side, up to three and then how many more, its name and, under it, who is in
- * it. What a bot is doing is the conversation's to show, in the turn under
+ * Who this is: a bot's face, its name and, under it, its title, or a room's
+ * members side by side, up to three and then how many more, its name and,
+ * under it, who is in it. What a bot is doing is the conversation's to show, in the turn under
  * way and its cards; the header only says it to screen readers, once at each
  * change of state and each new line, then how the turn ended
  * (`useTurnAnnouncement`). The block with the name opens the details, where
@@ -42,8 +42,13 @@ export function ConversationHeader({
   const { t } = ctx.i18n;
   const bots = useBots();
   const name = itemName(item);
-  const members =
-    item._tag === "room" ? t("room.members", { names: memberList(item.room, ctx) }) : null;
+  // Under the name: who is in a room, or what a bot is for; a bot from before titles has none.
+  const under =
+    item._tag === "room"
+      ? t("room.members", { names: memberList(item.room, ctx) })
+      : item.bot.profile.title === ""
+        ? null
+        : item.bot.profile.title;
 
   // The block with the name turns muted while pressed: the avatar's light keeps its ring in that color.
   const [pressed, setPressed] = useState(false);
@@ -55,7 +60,7 @@ export function ConversationHeader({
   const landing = useLandingSpot(item._tag === "bot" ? item.bot.id : null);
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
-  // The block with the name keeps 4 px above and below its lines, so a room's
+  // The block with the name keeps 4 px above and below its lines, so a
   // second line clears the border at the largest font sizes, where the header grows.
   return (
     <View className="min-h-12 flex-row items-center gap-1 border-b border-border px-2">
@@ -72,7 +77,7 @@ export function ConversationHeader({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={t("conversation.openDetails", { name })}
-        {...(members === null ? {} : { accessibilityHint: members })}
+        {...(under === null ? {} : { accessibilityHint: under })}
         onPress={onOpenDetails}
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
@@ -98,9 +103,9 @@ export function ConversationHeader({
             </Text>
             <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
           </View>
-          {members !== null && (
+          {under !== null && (
             <Text numberOfLines={1} className="text-2xs text-muted-foreground">
-              {members}
+              {under}
             </Text>
           )}
         </View>

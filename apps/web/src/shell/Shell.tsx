@@ -398,10 +398,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
               // The first bot is the primary one: there is no other to choose.
-              return intents.createBot({ name, primary: true, avatar }).then((result) => {
-                if (result._tag === "failed") setOpeningFirstBot(false);
-                return result;
-              });
+              return intents
+                .createBot({ name, title: t("bot.primaryTitle"), primary: true, avatar })
+                .then((result) => {
+                  if (result._tag === "failed") setOpeningFirstBot(false);
+                  return result;
+                });
             }}
             onArrived={(botId) => navigation.select({ _tag: "bot", botId })}
             providerActions={intents.providerActions}

@@ -16,8 +16,9 @@ export const speakerGutter = FACE + 8;
 
 /**
  * A bot's message where several bots speak, in a room or a teammate
- * conversation: the bot's name over the first bubble of its group, its still
- * face at the bottom left of the last, and the message beside it. A bot
+ * conversation: the bot's name, and its title after it, over the first bubble
+ * of its group, as on a team's chat; its still face at the bottom left of the
+ * last, and the message beside it. A bot
  * deleted since keeps its place, as "A deleted bot" by a plain disc. The face
  * carries who spoke, never what the bot is doing now. A long press on the
  * name or the face opens the bot's card (decision 0102).
@@ -42,11 +43,14 @@ export function Speaker({
       {startsGroup && (
         <Text
           numberOfLines={1}
-          className="self-start pb-1 text-xs font-medium text-foreground"
+          className="self-start pb-1 text-xs text-foreground"
           style={{ paddingStart: speakerGutter }}
           {...card?.props}
         >
-          {bot?.profile.name ?? t("bot.unknown")}
+          <Text className="font-medium">{bot?.profile.name ?? t("bot.unknown")}</Text>
+          {bot !== undefined && bot.profile.title !== "" && (
+            <Text className="text-muted-foreground"> · {bot.profile.title}</Text>
+          )}
         </Text>
       )}
       <View className="flex-row items-end gap-2">

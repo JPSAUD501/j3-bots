@@ -16,11 +16,12 @@ const byId = (roster: ReadonlyArray<RosterItem>) => {
   return { bots, rooms };
 };
 
-/** A bot as a mention list offers it: by its name and its face. */
+/** A bot as a mention list offers it: by its name, its title and its face. */
 const face = (bot: Bot): MentionCandidate => ({
   _tag: "bot",
   id: bot.id,
   name: bot.profile.name,
+  title: bot.profile.title,
   avatar: bot.profile.avatar,
 });
 

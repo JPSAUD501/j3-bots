@@ -56,6 +56,7 @@ import {
 } from "../components/Reorder.tsx";
 import { PairRow } from "../components/PairRow.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
+import { useTitleLines } from "../components/titleLines.tsx";
 import { BetweenHeader, SectionEmpty, SectionHeader } from "../components/SectionHeader.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { UpdateNotice } from "../update/UpdateNotice.tsx";
@@ -188,8 +189,9 @@ interface PressedPair {
  * The roster's own header, with its search and New, and under it, under the
  * status bar, what the operator arranged: the pinned bots as a band of large
  * avatars, then the rows in no section, then each section, then the pairs of
- * bots that wrote each other under "Between bots", then the way to the
- * hidden bots and rooms. A search lists only what matches, hidden ones too, as rows,
+ * bots that wrote each other under "Between bots", then the way to the bots
+ * and rooms behind the scenes. A search lists only what matches, those
+ * behind the scenes too, as rows,
  * then the pairs either of whose bots matches. A long press on a bot, a
  * room, a pair or a section's header opens its menu.
  */
@@ -244,10 +246,20 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const searching = searched !== "";
   // Beside a conversation the roster is its column's width.
   const width = sideBySide ? layout.rosterWidth : windowWidth;
-  // A search finds hidden bots and rooms too, in the order the web lists what it finds.
-  // Each entry is as tall as its text needs at the operator's font size, once the lines are read.
+  // A search finds bots and rooms behind the scenes too, in the order the web lists what it finds.
+  // Each entry is as tall as its text needs at the operator's font size, once the lines are read,
+  // and a bot's row as tall as its title needs at the list's width.
   const lines = useTextLines();
   const sizes = lines === null ? null : rosterSizes(lines);
+  const { titleLines, probe } = useTitleLines(
+    roster._tag === "loading"
+      ? []
+      : roster.value.flatMap((item) =>
+          item._tag === "bot" && item.bot.profile.title !== "" ? [item.bot.profile.title] : [],
+        ),
+    width,
+    lines,
+  );
   // The pairs come with the roster's bots, and wait for them; until they are read there are none.
   const allPairs = pairs._tag === "ready" ? pairs.value : [];
   const entries =
@@ -258,6 +270,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
             orderRoster(filterRoster(roster.value, query)),
             filterPairs(allPairs, roster.value, query),
             sizes,
+            titleLines,
           )
         : rosterEntries(
             arrangeRoster(orderRoster(roster.value), sections ?? []),
@@ -265,6 +278,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
             width,
             folded,
             sizes,
+            titleLines,
           );
   const { motion, onTaken } = useRowMotion(
     entries === null ? null : { rows: entries, query: searched },
@@ -333,6 +347,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   ];
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
+      {probe}
       <View className="flex-row items-center gap-1 ps-4 pe-2 pt-3">
         {/* Alone on a phone the roster is titled; beside a conversation it needs no title. */}
         {sideBySide ? (
@@ -534,12 +549,12 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                       onMenu={(anchor) => setPressedPair({ botIds: entry.pair.botIds, anchor })}
                     />
                   );
-                case "hidden":
+                case "backstage":
                   return (
-                    <HiddenRow
+                    <BackstageRow
                       items={entry.items}
                       height={entry.height}
-                      onOpen={() => navigation.navigate("hidden")}
+                      onOpen={() => navigation.navigate("backstage")}
                     />
                   );
               }
@@ -590,10 +605,10 @@ function PairMenu({
 }
 
 /**
- * The way to the hidden bots and rooms, at the end of the list: how many there are,
- * and a chevron to the screen that lists them.
+ * The way to the bots and rooms behind the scenes, at the end of the list:
+ * how many there are, and a chevron to the screen that lists them.
  */
-function HiddenRow({
+function BackstageRow({
   items,
   height,
   onOpen,
@@ -609,16 +624,15 @@ function HiddenRow({
     <PressScale
       depth="row"
       accessibilityRole="button"
-      accessibilityLabel={[plural("roster.hidden.count", count), unread ? t("roster.unread") : null]
+      accessibilityLabel={[plural("backstage.count", count), unread ? t("roster.unread") : null]
         .filter((part) => part !== null)
         .join(", ")}
       onPress={onOpen}
       className="mx-2 flex-row items-center gap-2 rounded-lg px-3 active:bg-muted"
       style={{ height }}
     >
-      <Text className="text-base text-muted-foreground">{t("roster.hidden")}</Text>
+      <Text className="text-base text-muted-foreground">{t("backstage.row", { count })}</Text>
       {unread && <View className="size-2 rounded-pill bg-accent" />}
-      <Text className="text-base text-muted-foreground">{count}</Text>
       <Icon icon={ChevronRight} size={16} color="accent-muted-foreground" />
     </PressScale>
   );

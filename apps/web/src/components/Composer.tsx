@@ -82,7 +82,11 @@ const sendButton = cn(
 
 /** What the composer offers after `@`: a bot, drawn by its face, or a room, by its mark. */
 export type MentionCandidate =
-  | (Extract<Mentionable, { readonly _tag: "bot" }> & { readonly avatar: Avatar })
+  | (Extract<Mentionable, { readonly _tag: "bot" }> & {
+      readonly avatar: Avatar;
+      /** What the bot is for, under its name; empty when it has none. */
+      readonly title: string;
+    })
   | (Extract<Mentionable, { readonly _tag: "room" }> & {
       readonly members: ReadonlyArray<RoomAvatarMember>;
     });
@@ -1106,7 +1110,16 @@ export function MentionList({
                   />
                 )}
                 {candidate?._tag === "room" && <RoomAvatar members={candidate.members} size={20} />}
-                <span className="min-w-0 truncate">{option.name}</span>
+                {candidate?._tag === "bot" && candidate.title !== "" ? (
+                  <span className="flex min-w-0 flex-col py-1 leading-tight">
+                    <span className="truncate">{option.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {candidate.title}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="min-w-0 truncate">{option.name}</span>
+                )}
                 {option._tag === "room" && (
                   <span className="ms-auto shrink-0 text-xs text-muted-foreground">
                     {t("mention.room")}

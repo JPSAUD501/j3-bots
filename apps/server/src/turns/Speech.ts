@@ -1969,7 +1969,7 @@ export const layer = Layer.effect(
             .open({
               name: input.name,
               members: [found.botId, ...members],
-              hidden: input.hidden ?? false,
+              hidden: !input.listed,
               madeBy: found.botId,
             })
             .pipe(
@@ -2019,7 +2019,9 @@ export const layer = Layer.effect(
             id: room.id,
             note:
               posted?.note ??
-              "The room is in your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up.",
+              (input.listed
+                ? "The room is in your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up."
+                : "The room is behind the scenes, out of your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up."),
             ...(posted === null ? {} : { stopped: posted.stopped }),
           } satisfies Schema.Json;
         }),

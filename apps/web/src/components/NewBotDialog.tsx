@@ -13,11 +13,11 @@ interface NewBotDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves once the bot exists; the dialog then closes and its conversation opens. */
   readonly onCreate: (bot: NewBot) => Promise<void>;
-  /** Whether a name is typed and not created yet. Held by the owner, which keeps such a form open. */
+  /** Whether a name or title is typed and not created yet. Held by the owner, which keeps such a form open. */
   readonly onUnsavedChange: (unsaved: boolean) => void;
 }
 
-/** A name, a look, and whether the bot is primary or hidden. The bot asks the rest itself. */
+/** A name, a title, a look, and whether the bot is primary or behind the scenes. The bot asks the rest itself. */
 export function NewBotDialog({
   bots,
   open,
