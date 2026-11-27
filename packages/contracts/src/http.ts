@@ -12,21 +12,8 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
 /**
  * Bumped when a change to the contract would break a client built against the
  * previous version. Clients compare it with `GET /api/server` before anything
- * else. 6 is the first whose clients pass over a kind of entry or notice, or a
- * failure class, they do not know: from 6 on, adding one needs no bump. 7
- * widened the avatars a client sends to twelve shapes and twelve colors. 8
- * added the bot's browser: `browser.subscribe` and the media socket at
- * `HTTP_PATHS.browser`. 9 added teammate conversations (`TeammatePairRpcs`). 10 took the host
- * and the hop limit out of a room: `Room`, `room.create` and `room.update`
- * have neither `hostId` nor `hopLimit`, and a room's bots go quiet past a
- * fixed limit since the operator last wrote there (`chain-stopped` with
- * `limit: "room"`). 11 is 0.9.0's, once for all its changes: the skills
- * (`SkillRpcs`), who changed a connector last (`Connector.lastChange`), no
- * connector suggestion card, the vault became secrets (`SecretsRpcs` in
- * place of the vault's requests, the `secret-ask` card in place of the
- * save-login card, no `Bot.vault`), and no review of a connector's changed
- * tools (`Connector` has no `review`, and `connector.acceptToolChanges` is
- * gone).
+ * else. A client passes over a kind of entry or notice, or a failure class, it
+ * does not know, so adding one needs no bump.
  * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
 export const PROTOCOL_VERSION = 11;

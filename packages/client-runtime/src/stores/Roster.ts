@@ -65,9 +65,9 @@ export class Roster extends Context.Service<
   {
     readonly state: Readable<Synced<ReadonlyArray<RosterItem>>>;
     /**
-     * The sections, in the operator's order, or null while the server has not
-     * said it has them: a server that predates them sends none. Only while it
-     * is not null does a client offer sections and Mark as unread.
+     * The sections, in the operator's order, or null until a roster snapshot
+     * carries them. Only while it is not null does a client offer sections
+     * and Mark as unread.
      */
     readonly sections: Readable<ReadonlyArray<Section> | null>;
     /** Pins, hides, makes primary or moves the bot between sections. */
@@ -140,7 +140,6 @@ export const layer = Layer.effect(
               Effect.andThen(
                 Effect.sync(() => {
                   if (frame._tag === "snapshot") {
-                    // A server that predates sections sends none: this one has them.
                     sections.set(frame.sections ?? null);
                     return state.set(ready(frame.items));
                   }

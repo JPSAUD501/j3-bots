@@ -34,7 +34,7 @@ export const Resource = Schema.Literals([
   "memory-file",
   "device",
   "attachment",
-  /** Only an answer to a request about sections names it, which an older client never makes. */
+  /** Only an answer to a request about sections names it. */
   "section",
   /** A secret, which only the secrets' requests name. */
   "secret",
@@ -42,7 +42,7 @@ export const Resource = Schema.Literals([
   "connector",
   "connector-listing",
   "sign-in",
-  /** A provider, which only `engine.recheckProvider`, new in 0.8.0, names: an older client never asks it. */
+  /** A provider, which only `engine.recheckProvider` names. */
   "provider",
   /** A skill, which only skill requests name. */
   "skill",
@@ -129,8 +129,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "sign-in-refused",
     /**
      * The engine cannot update this provider's harness itself, or knows no
-     * newer version of it. Only `engine.updateProvider`, new in 0.8.0,
-     * answers it.
+     * newer version of it. Only `engine.updateProvider` answers it.
      */
     "provider-not-updatable",
     /**
