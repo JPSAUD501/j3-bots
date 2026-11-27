@@ -92,6 +92,15 @@ The operator says "every weekday morning, tell me what changed in the repo" or "
 - When there is nothing to report, nothing appears. The run is still recorded in the routine's history.
 - The operator pauses, edits, tests or deletes a routine from the bot's details, or by telling the bot.
 
+The operator says "every Monday, gather my emails, have Atlas draft the replies, and ask me before Wren sends them".
+
+- The bot builds a routine in steps, naming its teammates, and its change card shows the Track at rest: one sentence that reads the routine back ("Every Monday at 9:00, Scout gathers last week's emails, only if there's something new Atlas summarises them and drafts replies, then, with your yes, Wren sends the replies"), composed from the steps, never by a model, and the stations under it. A one-step routine looks as it always did.
+- When it runs, one card in the owner's conversation follows it: the light moves down the rail, each bot step shows its bot at work and then its one result line ("14 new emails"), and each bot shows as working in its own roster row, its work in its own conversation.
+- A condition that does not hold ends the run quietly, with what the bot found ("Nothing new"); the steps after it show as skipped.
+- At the operator's yes the card turns to the waiting color and asks the question the bot before wrote ("Send the 3 replies Atlas drafted?"), with its two answers, a note and how long it waits. The owner shows as waiting in the roster, and a notification leads to the card; nothing is answered from the notification. No, or no answer in time, ends the run quietly.
+- A step that failed reads in plain words with one main action: Try again, which resumes from that step and says first when the step may have done part of its work, or what the bot said blocked it. Stop, while the run goes, ends it there.
+- Once a run ends, its card folds to one line ("Done · 3 replies sent"), which opens the Track again. The routine's runs show each run as a small rail of dots, and the details show the bots that take part and the sentence.
+
 ### Several bots, one goal
 
 The operator asks a bot for a team, or sets one up themselves.
@@ -222,7 +231,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 Answers: what is this bot, and what runs without me.
 
 - Profile: name, title, avatar, job, with Share as template.
-- Routines with their schedule, next run, last result, and a pause switch.
+- Routines with their schedule, next run, last result, and a pause switch; a routine in steps shows its bots' faces and its sentence.
 - Files the bot produced.
 - Memory, readable and editable.
 - Connectors this bot may use, each with its status, and a way to the connectors screen. With none, one line says to ask the bot to add one.
