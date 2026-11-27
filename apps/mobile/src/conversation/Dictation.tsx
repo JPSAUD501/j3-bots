@@ -4,6 +4,7 @@ import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
 } from "expo-speech-recognition";
+import { useJ3Client } from "@j3-bots/client-runtime/react";
 import { Mic, Square } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Linking, Platform, Pressable, View } from "react-native";
@@ -136,6 +137,7 @@ export function useDictation({
   /** The operator can see the conversation. */
   readonly inView: boolean;
 }): Dictation | null {
+  const client = useJ3Client();
   const [available] = useState(dictationAvailable);
   const [state, setState] = useState<DictationState>({ _tag: "idle" });
   const [problem, setProblem] = useState<DictationProblem | null>(null);
@@ -223,6 +225,7 @@ export function useDictation({
         addsPunctuation: true,
         iosTaskHint: "dictation",
       });
+      client.recordUsage({ event: "feature.used", properties: { feature: "voice-input" } });
     })().catch(() => finish("failed"));
   };
 

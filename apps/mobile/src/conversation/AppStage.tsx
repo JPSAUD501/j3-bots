@@ -205,6 +205,7 @@ function liveApps(first: Surroundings, unstage: (viewId: ConnectorAppViewId) => 
         return;
       }
       const view = opened.value;
+      client.recordUsage({ event: "connector-app.shown", properties: { displayMode: "inline" } });
       let next = 0;
       const asked = <A,>(make: (id: number, done: (answer: A) => void) => AppAsk): Promise<A> =>
         new Promise<A>((resolve) => {
@@ -421,9 +422,10 @@ export function useAppStageState({
       const live = apps.lives.get().get(viewId);
       if (!STAGE_MODES.includes(mode) || live === undefined) return "inline";
       setStaged({ app: live.app, mode, since: latest.current });
+      client.recordUsage({ event: "connector-app.shown", properties: { displayMode: mode } });
       return mode;
     },
-    [apps],
+    [apps, client],
   );
 
   useLayoutEffect(() => {
