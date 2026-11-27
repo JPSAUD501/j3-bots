@@ -9,10 +9,12 @@ import {
   type CommandError,
   CommandId,
   defaultPermissionMode,
+  type EffortLevel,
   type EngineStatus,
   Conflict,
   Invalid,
   type ModelChoice,
+  modelEfforts,
   NotFound,
   type PermissionMode,
   ProviderId,
@@ -96,6 +98,23 @@ const offered = (status: EngineStatus, model: ModelChoice) =>
       provider.models.some((candidate) => candidate.id === model.modelId),
   );
 
+/** Whether the engine reports `effort` as a level of `model` now. */
+const effortOffered = (status: EngineStatus, model: ModelChoice, effort: EffortLevel) =>
+  (modelEfforts(status, model) ?? []).some((choice) => choice.id === effort);
+
+/**
+ * `change` as it is saved for `bot`: a new model that the bot's effort is not
+ * a level of, with no effort of its own, takes the bot back to the harness's
+ * default effort, so the bot never keeps a level its model lacks.
+ */
+const withEffortFallback = (status: EngineStatus, bot: Bot, change: BotChanges): BotChanges =>
+  change.model !== undefined &&
+  change.effort === undefined &&
+  bot.effort !== null &&
+  !effortOffered(status, change.model, bot.effort)
+    ? { ...change, effort: null }
+    : change;
+
 /**
  * A bot that another bot's `create_bot` makes, in the turn that called it
  * (`turns/Speech.ts`).
@@ -149,12 +168,14 @@ export class Bots extends Context.Service<
     /**
      * Succeeds once the change is saved. A model of another provider stops
      * the bot's work in progress, then replaces its main session, with a
-     * digest of the conversation. Another model of the same provider, or a
-     * permission mode, is applied to the session by the rotator before its
-     * next turn, once a turn running there has ended: the session takes no
-     * work until the engine has it, retried while the engine is unavailable,
-     * and held while it runs background work the change would end, which the
-     * bot's conversation is told (`EngineSessions`).
+     * digest of the conversation. Another model of the same provider, an
+     * effort, or a permission mode, is applied to the session by the rotator
+     * before its next turn, once a turn running there has ended: the session
+     * takes no work until the engine has it, retried while the engine is
+     * unavailable, and held while it runs background work the change would
+     * end, which the bot's conversation is told (`EngineSessions`). A new
+     * model the bot's effort is not a level of takes it back to the default
+     * effort.
      */
     readonly update: (input: {
       readonly commandId: CommandId;
@@ -261,6 +282,15 @@ export const layer = Layer.effect(
       if (!offered(status, model)) return yield* new Invalid({ reason: "model" });
     });
 
+    /** A level the engine reports for `model` now; the model's own check says why not. */
+    const checkEffort = Effect.fn("Bots.checkEffort")(function* (
+      status: EngineStatus,
+      model: ModelChoice,
+      effort: EffortLevel,
+    ) {
+      if (!effortOffered(status, model, effort)) return yield* new Invalid({ reason: "model" });
+    });
+
     /** Makes `botId` the one primary bot, telling subscribers about the one it replaces. */
     const makePrimary = Effect.fn("Bots.makePrimary")(function* (at: DateTime.Utc) {
       for (const previous of yield* store.clearPrimary(at)) {
@@ -355,7 +385,7 @@ export const layer = Layer.effect(
       readonly botId: BotId;
       /** What the command's receipt records it was asked. */
       readonly payload: unknown;
-      /** Whether it may change the model, the permission mode or the browser. */
+      /** Whether it may change the model, its effort, the permission mode or the browser. */
       readonly settings: boolean;
       /** Whether it may change what the bot's instructions say: its profile, model or browser switch. */
       readonly instructions: boolean;
@@ -365,7 +395,7 @@ export const layer = Layer.effect(
         status: EngineStatus,
       ) => Effect.Effect<Option.Option<BotChanges>>;
     }) {
-      /** Saves the change; `settingsChanged` records a new model, permission mode or browser. */
+      /** Saves the change; `settingsChanged` records a new model, effort, permission mode or browser. */
       const save = <F>(settingsChanged: Effect.Effect<void, F>) =>
         receipts.once({
           commandId: input.commandId,
@@ -377,8 +407,11 @@ export const layer = Layer.effect(
             const status = yield* engineState.current;
             const decided = yield* input.decide(before, status);
             if (Option.isNone(decided)) return before.bot;
-            const change = decided.value;
+            const change = withEffortFallback(status, before.bot, decided.value);
             if (change.model !== undefined) yield* checkModel(status, change.model);
+            if (change.effort !== undefined && change.effort !== null) {
+              yield* checkEffort(status, change.model ?? before.bot.model, change.effort);
+            }
             if (change.sectionId !== undefined && change.sectionId !== null) {
               yield* sections.require(change.sectionId);
             }
@@ -437,6 +470,7 @@ export const layer = Layer.effect(
         payload: input,
         settings:
           input.changes.model !== undefined ||
+          input.changes.effort !== undefined ||
           input.changes.permissionMode !== undefined ||
           input.changes.browser !== undefined,
         // The browser's rules come and go with its switch.

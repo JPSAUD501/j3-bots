@@ -130,6 +130,7 @@ export function bot(
     id: BotId.make(name.toLowerCase()),
     profile: { name, title: "", avatar: { shape: "dome", color: "cobalt" }, job: "" },
     model: { providerId: ProviderId.make("p"), modelId: ModelId.make("m") },
+    effort: null,
     permissionMode: "supervised",
     primary: false,
     browser: false,

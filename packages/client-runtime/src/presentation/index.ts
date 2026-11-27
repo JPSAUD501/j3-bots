@@ -82,6 +82,8 @@ export { MEMBER_WORK_LINGER, type MemberWork, roomMemberWork, showsTurnWork } fr
 export {
   type BotEdits,
   botPatch,
+  type EffortChoices,
+  effortChoices,
   editsAfterFailedBotSave,
   modelChoices,
   noBotEdits,

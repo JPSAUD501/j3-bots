@@ -23,6 +23,7 @@ export {
   avatarShapeText,
   botColorText,
   botModelName,
+  effortText,
   memoryEditProblemText,
   memoryFileName,
   permissionModeText,

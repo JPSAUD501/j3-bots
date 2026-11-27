@@ -11,6 +11,7 @@ import {
   ConnectorGlyph,
   ConnectorId,
   DeviceId,
+  EffortLevel,
   EntryId,
   MemoryPath,
   pairBotIds,
@@ -74,6 +75,19 @@ export const ids = {
  */
 export const SAMPLE_NOW = DateTime.makeUnsafe("2026-11-20T17:40:00Z");
 
+/** The engine's English names for the levels of effort, as it reports them. */
+const EFFORT_NAMES: Readonly<Record<string, string>> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+};
+
+/** A model's levels of effort, as the engine reports them. */
+export const sampleEfforts = (...ids: ReadonlyArray<string>) =>
+  ids.map((id) => ({ id: EffortLevel.make(id), name: EFFORT_NAMES[id] ?? id }));
+
 /** The sample team as it stands at `now`: every time in it is placed relative to that moment. */
 export function sampleTeam(now: DateTime.Utc) {
   const ago = (minutes: number) =>
@@ -89,8 +103,16 @@ export function sampleTeam(now: DateTime.Utc) {
         harness: "claude-code",
         status: { _tag: "ready" },
         models: [
-          { id: ModelId.make("claude-opus-5-5"), name: "Claude Opus 5.5" },
-          { id: ModelId.make("claude-sonnet-5-5"), name: "Claude Sonnet 5.5" },
+          {
+            id: ModelId.make("claude-opus-5-5"),
+            name: "Claude Opus 5.5",
+            efforts: sampleEfforts("low", "medium", "high", "xhigh", "max"),
+          },
+          {
+            id: ModelId.make("claude-sonnet-5-5"),
+            name: "Claude Sonnet 5.5",
+            efforts: sampleEfforts("low", "medium", "high"),
+          },
         ],
         // As the engine labels Claude Code's windows: "Session" is its five-hour one.
         usage: [
@@ -137,6 +159,7 @@ export function sampleTeam(now: DateTime.Utc) {
             : `Handles ${title.toLowerCase()} for the operator. Asks before spending money or writing to anyone outside the team.`,
       },
       model: { providerId: claude, modelId: ModelId.make("claude-sonnet-5-5") },
+      effort: null,
       permissionMode: extra.permissionMode ?? "supervised",
       browser: false,
       primary: extra.primary ?? false,

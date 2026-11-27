@@ -36,7 +36,7 @@ const engine = (status: ProviderStatus["status"]): EngineStatus => ({
       name: "Claude Code",
       harness: "claude-code",
       status,
-      models: [{ id: ModelId.make("m"), name: "Model" }],
+      models: [{ id: ModelId.make("m"), name: "Model", efforts: [] }],
       usage: [],
     },
   ],

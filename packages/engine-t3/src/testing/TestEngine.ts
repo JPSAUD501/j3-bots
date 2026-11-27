@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   answersSecretRequest,
+  type EffortLevel,
   type EngineStatus,
   type FailureClass,
   type ModelChoice,
@@ -307,6 +308,8 @@ export class TestEngineControl extends Context.Service<
     readonly openedSessions: Effect.Effect<ReadonlyArray<SessionId>>;
     /** The model a session runs, as it was opened or last configured. */
     readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
+    /** The effort asked of a session's model, as it was opened or last configured. */
+    readonly sessionEffort: (sessionId: SessionId) => Effect.Effect<EffortLevel | null>;
     /** The permission mode a session runs, as it was opened or last configured. */
     readonly sessionPermissionMode: (sessionId: SessionId) => Effect.Effect<PermissionMode>;
     /**
@@ -673,6 +676,7 @@ interface SessionRecord {
   readonly projectId: EngineProjectId;
   retired: boolean;
   model: ModelChoice;
+  effort: EffortLevel | null;
   permissionMode: PermissionMode;
   /**
    * Whether the session's provider session has the browser tools: what its
@@ -1613,7 +1617,7 @@ const make = Effect.gen(function* () {
 
     clearBrowserProfile: command(Effect.sync(() => void browserProfileClears++)),
 
-    openSession: ({ key, projectId, model, permissionMode }) =>
+    openSession: ({ key, projectId, model, effort, permissionMode }) =>
       command(
         Effect.gen(function* () {
           const previous = yield* priorUse(key, "openSession");
@@ -1648,6 +1652,7 @@ const make = Effect.gen(function* () {
             projectId,
             retired: false,
             model,
+            effort,
             permissionMode,
             browserTools: null,
             log: [],
@@ -1683,7 +1688,7 @@ const make = Effect.gen(function* () {
         }),
       ),
 
-    configureSession: ({ sessionId, model, permissionMode, reloadTools }) =>
+    configureSession: ({ sessionId, model, effort, permissionMode, reloadTools }) =>
       door(
         "configureSession",
         command(
@@ -1694,7 +1699,8 @@ const make = Effect.gen(function* () {
             const changesModel =
               model !== undefined &&
               (model.providerId !== session.model.providerId ||
-                model.modelId !== session.model.modelId);
+                model.modelId !== session.model.modelId ||
+                effort !== session.effort);
             // Only a provider session that started has tools to reload.
             const reloads = reloadTools === true && session.browserTools !== null;
             if (!changesMode && !changesModel && !reloads) return;
@@ -1713,7 +1719,10 @@ const make = Effect.gen(function* () {
             if (changesMode && backgroundRuns(session)) {
               return yield* new BackgroundWorkRunning({ sessionId });
             }
-            if (model !== undefined) session.model = model;
+            if (model !== undefined) {
+              session.model = model;
+              session.effort = effort;
+            }
             if (permissionMode !== undefined && changesMode) {
               const refusal = modeRefusal(permissionMode);
               if (Option.isSome(refusal)) return yield* refusal.value;
@@ -2223,6 +2232,14 @@ const make = Effect.gen(function* () {
         return session === undefined
           ? misuse(`no session ${sessionId}`)
           : Effect.succeed(session.model);
+      }),
+
+    sessionEffort: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.effort);
       }),
 
     sessionPermissionMode: (sessionId) =>

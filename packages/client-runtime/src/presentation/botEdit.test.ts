@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type EngineStatus, ModelId, ProviderId } from "@j3-bots/contracts";
+import { EffortLevel, type EngineStatus, ModelId, ProviderId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { bot } from "../../test/fixtures.ts";
 import {
   botPatch,
   editsAfterFailedBotSave,
+  effortChoices,
   modelChoices,
   noBotEdits,
   withHiddenEdit,
@@ -17,7 +18,9 @@ const scout = bot("Scout", { _tag: "idle" }, { model: claude });
 
 describe("botPatch", () => {
   it("sends only the fields the operator changed", () => {
-    expect(botPatch(scout, { ...noBotEdits, title: " Research ", model: codex, job: "" })).toEqual({
+    expect(
+      botPatch(scout, { ...noBotEdits, title: " Research ", model: codex, job: "" }, null),
+    ).toEqual({
       _tag: "changes",
       changes: { profile: { title: "Research" }, model: codex },
     });
@@ -26,23 +29,29 @@ describe("botPatch", () => {
       botPatch(
         { ...scout, profile: { ...scout.profile, name: "Scout II" } },
         { ...noBotEdits, permissionMode: "auto" },
+        null,
       ),
     ).toEqual({ _tag: "changes", changes: { permissionMode: "auto" } });
   });
 
   it("sends nothing for edits back to the saved values, and refuses an empty name", () => {
     expect(
-      botPatch(scout, {
-        name: "Scout ",
-        title: "",
-        job: null,
-        avatar: { shape: "dome", color: "cobalt" },
-        model: { ...claude },
-        permissionMode: "supervised",
-        hidden: null,
-      }),
+      botPatch(
+        scout,
+        {
+          name: "Scout ",
+          title: "",
+          job: null,
+          avatar: { shape: "dome", color: "cobalt" },
+          model: { ...claude },
+          effort: null,
+          permissionMode: "supervised",
+          hidden: null,
+        },
+        null,
+      ),
     ).toEqual({ _tag: "unchanged" });
-    expect(botPatch(scout, { ...noBotEdits, name: "  ", title: "Research" })).toEqual({
+    expect(botPatch(scout, { ...noBotEdits, name: "  ", title: "Research" }, null)).toEqual({
       _tag: "invalid",
       fields: new Set(["name"]),
     });
@@ -50,21 +59,21 @@ describe("botPatch", () => {
 
   it("sends whether the bot is hidden whenever the operator moved the switch", () => {
     const hide = withHiddenEdit(noBotEdits, true, scout.hidden);
-    expect(botPatch(scout, hide)).toEqual({ _tag: "changes", changes: { hidden: true } });
+    expect(botPatch(scout, hide, null)).toEqual({ _tag: "changes", changes: { hidden: true } });
     // A bot hid it meanwhile: the operator's choice is still sent, so it is recorded as theirs.
-    expect(botPatch({ ...scout, hidden: true }, hide)).toEqual({
+    expect(botPatch({ ...scout, hidden: true }, hide, null)).toEqual({
       _tag: "changes",
       changes: { hidden: true },
     });
     // Moved back to what the bot is: nothing to send.
-    expect(botPatch(scout, withHiddenEdit(hide, false, scout.hidden))).toEqual({
+    expect(botPatch(scout, withHiddenEdit(hide, false, scout.hidden), null)).toEqual({
       _tag: "unchanged",
     });
   });
 
   it("sends a new avatar with the profile", () => {
     const avatar = { shape: "ghost", color: "honey" } as const;
-    expect(botPatch(scout, { ...noBotEdits, avatar, title: "Research" })).toEqual({
+    expect(botPatch(scout, { ...noBotEdits, avatar, title: "Research" }, null)).toEqual({
       _tag: "changes",
       changes: { profile: { title: "Research", avatar } },
     });
@@ -78,7 +87,7 @@ describe("withProfileEdit", () => {
     const titled = withProfileEdit(reverted, "title", "Research", "");
     // Another device renames the bot before Save.
     const elsewhere = { ...scout, profile: { ...scout.profile, name: "Scout III" } };
-    expect(botPatch(elsewhere, titled)).toEqual({
+    expect(botPatch(elsewhere, titled, null)).toEqual({
       _tag: "changes",
       changes: { profile: { title: "Research" } },
     });
@@ -104,7 +113,7 @@ describe("modelChoices", () => {
     name: id,
     harness: "other" as const,
     status: ready ? { _tag: "ready" as const } : { _tag: "unavailable" as const, checking: false },
-    models: models.map((model) => ({ id: ModelId.make(model), name: model })),
+    models: models.map((model) => ({ id: ModelId.make(model), name: model, efforts: [] })),
     usage: [],
   });
   const engine = (providers: EngineStatus["providers"]): EngineStatus => ({
@@ -155,5 +164,110 @@ describe("modelChoices", () => {
       unoffered: [claude, codex],
       pickUnavailable: false,
     });
+  });
+});
+
+describe("effort", () => {
+  const level = EffortLevel.make;
+  const choice = (id: string, name: string) => ({ id: level(id), name });
+  // Sonnet takes low, high and max; GPT takes low, medium and xhigh.
+  const withEfforts: EngineStatus = {
+    state: { _tag: "ready" },
+    pinnedVersion: "1",
+    providers: [
+      {
+        id: claude.providerId,
+        name: "Claude",
+        harness: "claude-code",
+        status: { _tag: "ready" },
+        models: [
+          {
+            id: claude.modelId,
+            name: "Sonnet",
+            efforts: [choice("low", "Low"), choice("high", "High"), choice("max", "Max")],
+          },
+        ],
+        usage: [],
+      },
+      {
+        id: codex.providerId,
+        name: "Codex",
+        harness: "codex",
+        status: { _tag: "ready" },
+        models: [
+          {
+            id: codex.modelId,
+            name: "GPT",
+            efforts: [
+              choice("low", "Low"),
+              choice("medium", "Medium"),
+              choice("xhigh", "Extra High"),
+            ],
+          },
+        ],
+        usage: [],
+      },
+    ],
+  };
+  const atMax = { ...scout, effort: level("max") };
+
+  it("sends a picked level, and the default as null", () => {
+    expect(
+      botPatch(scout, { ...noBotEdits, effort: { level: level("high") } }, withEfforts),
+    ).toEqual({
+      _tag: "changes",
+      changes: { effort: "high" },
+    });
+    expect(botPatch(atMax, { ...noBotEdits, effort: { level: null } }, withEfforts)).toEqual({
+      _tag: "changes",
+      changes: { effort: null },
+    });
+    expect(
+      botPatch(atMax, { ...noBotEdits, effort: { level: level("max") } }, withEfforts),
+    ).toEqual({
+      _tag: "unchanged",
+    });
+  });
+
+  it("takes the default with a model that lacks the level, and keeps a level both take", () => {
+    expect(botPatch(atMax, { ...noBotEdits, model: codex }, withEfforts)).toEqual({
+      _tag: "changes",
+      changes: { model: codex, effort: null },
+    });
+    expect(
+      botPatch({ ...scout, effort: level("low") }, { ...noBotEdits, model: codex }, withEfforts),
+    ).toEqual({
+      _tag: "changes",
+      changes: { model: codex },
+    });
+  });
+
+  it("leaves a level the model stopped taking alone until the operator changes something", () => {
+    const stopped = { ...scout, effort: level("ultra") };
+    expect(botPatch(stopped, { ...noBotEdits, title: "Research" }, withEfforts)).toEqual({
+      _tag: "changes",
+      changes: { profile: { title: "Research" } },
+    });
+  });
+
+  it("shows a level the model lacks as the default, and says which and why", () => {
+    expect(effortChoices(withEfforts, codex, level("max"))).toEqual({
+      levels: [choice("low", "Low"), choice("medium", "Medium"), choice("xhigh", "Extra High")],
+      shown: null,
+      fallback: { level: choice("max", "Max"), modelName: "GPT" },
+    });
+    expect(effortChoices(withEfforts, claude, level("max"))).toMatchObject({
+      shown: "max",
+      fallback: null,
+    });
+  });
+
+  it("shows the level the form holds while the model's levels are not known", () => {
+    expect(effortChoices(null, claude, level("high"))).toEqual({
+      levels: [choice("high", "high")],
+      shown: "high",
+      fallback: null,
+    });
+    expect(effortChoices(null, claude, null).levels).toEqual([]);
   });
 });

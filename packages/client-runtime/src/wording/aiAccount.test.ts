@@ -20,7 +20,7 @@ const claude = (status: ProviderStatus["status"]): ProviderStatus => ({
   harness: "claude-code",
   status,
   // Claude Code lists its catalog whatever its state.
-  models: [{ id: ModelId.make("claude-haiku-5-5"), name: "Haiku 5.5" }],
+  models: [{ id: ModelId.make("claude-haiku-5-5"), name: "Haiku 5.5", efforts: [] }],
   usage: [],
 });
 

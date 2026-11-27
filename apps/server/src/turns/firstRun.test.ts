@@ -464,7 +464,7 @@ it.effect("moves a bot once a ready provider lists its first model", () =>
     const first = yield* engineSession(bot.id);
 
     yield* providerLists(OTHER_PROVIDER_MODEL.providerId, [
-      { id: OTHER_PROVIDER_MODEL.modelId, name: "GPT" },
+      { id: OTHER_PROVIDER_MODEL.modelId, name: "GPT", efforts: [] },
     ]);
     const moved = yield* sessionAfter(bot.id, first);
     yield* nextTurn(bot.id);

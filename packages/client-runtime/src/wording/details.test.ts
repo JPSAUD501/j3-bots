@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  EffortLevel,
   MemoryPath,
   MISSED_RUNS_LIMIT,
   ModelId,
@@ -15,7 +16,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
 import { createI18n } from "@j3-bots/i18n";
-import { memoryFileName, routineLines, routineRunLines } from "./details.ts";
+import { effortText, memoryFileName, routineLines, routineRunLines } from "./details.ts";
 import { type ProviderPlace, providerLine } from "./engine.ts";
 
 const en = context("2026-11-20T17:40:00Z");
@@ -171,7 +172,7 @@ const provider = (change: Partial<ProviderStatus>): ProviderStatus => ({
   name: "Claude",
   harness: "claude-code",
   status: { _tag: "ready" },
-  models: [{ id: ModelId.make("m"), name: "Opus" }],
+  models: [{ id: ModelId.make("m"), name: "Opus", efforts: [] }],
   usage: [],
   ...change,
 });
@@ -251,5 +252,16 @@ describe("memoryFileName", () => {
     expect(name("profile.md")).toBe("Profile");
     expect(name("log/2026-13.md")).toBe("log/2026-13.md");
     expect(name("notes/ideas.md")).toBe("notes/ideas.md");
+  });
+});
+
+describe("effortText", () => {
+  it("names the default and the levels it knows in the reader's words, others as the engine does", () => {
+    const pt = createI18n("pt-BR");
+    expect(effortText(null, pt)).toBe("Padrão");
+    expect(effortText({ id: EffortLevel.make("xhigh"), name: "Extra High" }, pt)).toBe(
+      "Muito alto",
+    );
+    expect(effortText({ id: EffortLevel.make("deep"), name: "Deep" }, pt)).toBe("Deep");
   });
 });

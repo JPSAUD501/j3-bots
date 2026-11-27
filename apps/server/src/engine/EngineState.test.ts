@@ -13,7 +13,7 @@ const provider = (
   name: id,
   harness: id === "codex" ? "codex" : "claude-code",
   status,
-  models: models.map((model) => ({ id: ModelId.make(model), name: model })),
+  models: models.map((model) => ({ id: ModelId.make(model), name: model, efforts: [] })),
   usage: [],
 });
 

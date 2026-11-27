@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type Bot,
+  type EffortChoice,
   type EngineStatus,
   MAX_TEMPLATE_FILE_SIZE,
   MEMORY_TEXT_LIMIT,
@@ -71,6 +72,22 @@ export function templateTooLargeText(name: string, error: TemplateTooLarge, i18n
     limit: fileSize(MAX_TEMPLATE_FILE_SIZE, i18n.locale),
     part: templatePartText(error.largest, i18n),
   });
+}
+
+/** The levels of effort clients have words of their own for (`effortText`). */
+const NAMED_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+type NamedEffort = (typeof NAMED_EFFORTS)[number];
+const namedEffort = (id: string): NamedEffort | undefined =>
+  NAMED_EFFORTS.find((named) => named === id);
+
+/**
+ * A level of effort as a picker names it, null being the default: in the
+ * interface's words for a level they have, else as the engine names it.
+ */
+export function effortText(level: EffortChoice | null, { t }: I18n): string {
+  if (level === null) return t("editBot.effort.level.default");
+  const named = namedEffort(level.id);
+  return named === undefined ? level.name : t(`editBot.effort.level.${named}`);
 }
 
 /** A permission mode's name, and what it lets a bot do. */

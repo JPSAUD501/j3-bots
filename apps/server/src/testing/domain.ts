@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus, ProviderStatus, ProviderVersion } from "@j3-bots/contracts";
-import { ModelId, ProviderId } from "@j3-bots/contracts";
+import { EffortLevel, ModelId, ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
 import * as Context from "effect/Context";
@@ -44,7 +44,17 @@ const providers: EngineStatus["providers"] = [
     name: "Claude",
     harness: "claude-code",
     status: { _tag: "ready" },
-    models: [{ id: DEFAULT_MODEL.modelId, name: "Claude Opus" }],
+    models: [
+      {
+        id: DEFAULT_MODEL.modelId,
+        name: "Claude Opus",
+        efforts: [
+          { id: EffortLevel.make("low"), name: "Low" },
+          { id: EffortLevel.make("high"), name: "High" },
+          { id: EffortLevel.make("max"), name: "Max" },
+        ],
+      },
+    ],
     usage: [],
   },
   {
@@ -52,7 +62,17 @@ const providers: EngineStatus["providers"] = [
     name: "Codex",
     harness: "codex",
     status: { _tag: "ready" },
-    models: [{ id: OTHER_PROVIDER_MODEL.modelId, name: "GPT" }],
+    models: [
+      {
+        id: OTHER_PROVIDER_MODEL.modelId,
+        name: "GPT",
+        efforts: [
+          { id: EffortLevel.make("low"), name: "Low" },
+          { id: EffortLevel.make("medium"), name: "Medium" },
+          { id: EffortLevel.make("xhigh"), name: "Extra High" },
+        ],
+      },
+    ],
     usage: [],
   },
 ];

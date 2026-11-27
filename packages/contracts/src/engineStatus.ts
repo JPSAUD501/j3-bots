@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   BotId,
+  EffortLevel,
   Label,
   ModelId,
   NonNegativeInt,
@@ -88,6 +89,29 @@ export const ProviderUpdate = Schema.Struct({
 });
 export type ProviderUpdate = typeof ProviderUpdate.Type;
 
+/**
+ * One level of effort a model takes, with the engine's English name for it
+ * (`Label`), which a client shows only for a level it has no words of its own
+ * for.
+ */
+export const EffortChoice = Schema.Struct({ id: EffortLevel, name: Label });
+export type EffortChoice = typeof EffortChoice.Type;
+
+/**
+ * A model the engine offers on a provider. `efforts`: the levels of effort it
+ * takes, lowest first, as the engine reports them; empty for a model that
+ * takes no choice of effort. A server older than it, at the same protocol
+ * version, leaves it out, which reads as no choice (`modelEfforts`), and an
+ * older client ignores it. Optional, not defaulted, so a reply read from an
+ * older server is written back as it came (the admin status reply's rule).
+ */
+export const ProviderModel = Schema.Struct({
+  id: ModelId,
+  name: Label,
+  efforts: Schema.optionalKey(Schema.Array(EffortChoice)),
+});
+export type ProviderModel = typeof ProviderModel.Type;
+
 export const ProviderStatus = Schema.Struct({
   id: ProviderId,
   name: Label,
@@ -135,7 +159,7 @@ export const ProviderStatus = Schema.Struct({
       retryAt: Schema.optionalKey(Schema.DateTimeUtc),
     }),
   ]),
-  models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),
+  models: Schema.Array(ProviderModel),
   usage: Schema.Array(UsageWindow),
   /**
    * Its harness's version (`ProviderVersion`), absent when the engine did
@@ -273,6 +297,21 @@ export type HarnessCopies = Readonly<Record<SignInHarness, HarnessCopy>>;
 export const defaultPermissionMode = (status: EngineStatus, model: ModelChoice): PermissionMode => {
   const provider = status.providers.find((candidate) => candidate.id === model.providerId);
   return provider !== undefined && provider.harness !== "other" ? "auto" : "supervised";
+};
+
+/**
+ * The levels of effort `model` takes, as `status` reports them; null while the
+ * engine does not list the model, whose levels are then not known, and none
+ * from a server that does not report levels.
+ */
+export const modelEfforts = (
+  status: EngineStatus,
+  model: ModelChoice,
+): ReadonlyArray<EffortChoice> | null => {
+  const listed = status.providers
+    .find((provider) => provider.id === model.providerId)
+    ?.models.find((candidate) => candidate.id === model.modelId);
+  return listed === undefined ? null : (listed.efforts ?? []);
 };
 
 /** The routine whose run a turn was part of. */

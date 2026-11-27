@@ -11,6 +11,7 @@ import {
   type BotTemplate,
   Conflict,
   type Connector,
+  EffortLevel,
   type EngineStatus,
   EntryId,
   type EntryTarget,
@@ -194,7 +195,7 @@ import type { DesktopLocal, DesktopUpdate, RemoteServerUpdate } from "../shell/d
 import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
-import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
+import { SAMPLE_NOW, ids, sampleEfforts, sampleTeam } from "./sample";
 import {
   longPlan,
   playedRoom,
@@ -2426,7 +2427,13 @@ const twoProviders: EngineStatus = {
       ? {
           ...provider,
           status: { _tag: "ready" },
-          models: [{ id: ModelId.make("gpt-5.5-codex"), name: "GPT-5.5 Codex" }],
+          models: [
+            {
+              id: ModelId.make("gpt-5.5-codex"),
+              name: "GPT-5.5 Codex",
+              efforts: sampleEfforts("low", "medium", "high", "xhigh"),
+            },
+          ],
         }
       : provider,
   ),
@@ -2637,6 +2644,18 @@ function EditingSection() {
             changes: { model: toCodex },
             failure: { _tag: "refused", error: new Invalid({ reason: "model" }) },
           }}
+        />
+        <EditBotVariant
+          label="Edit: effort chosen; pick GPT-5.5 Codex to see it fall back"
+          bot={{
+            ...team.bots.scout,
+            model: { ...team.bots.scout.model, modelId: ModelId.make("claude-opus-5-5") },
+            effort: EffortLevel.make("max"),
+          }}
+        />
+        <EditBotVariant
+          label="Edit: the model no longer offers the bot's effort"
+          bot={{ ...team.bots.scout, effort: EffortLevel.make("max") }}
         />
         <EditBotVariant
           label="Edit: failed, offline"

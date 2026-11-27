@@ -652,6 +652,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
             providerId: ProviderId.make("claude-code"),
             modelId: ModelId.make("claude-sonnet-5-5"),
           },
+          effort: null,
           permissionMode: "supervised",
           primary,
           browser: false,

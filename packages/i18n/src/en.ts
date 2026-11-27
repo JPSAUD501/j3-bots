@@ -1530,6 +1530,18 @@ export const en = {
   "editBot.model.someNotReady":
     "Providers that can’t run a bot right now aren’t listed. Settings shows why.",
   "editBot.model.unavailable": "The engine no longer offers this model. Choose another to save.",
+  "editBot.effort": "Effort",
+  "editBot.effort.hint":
+    "More effort takes longer and uses more of your plan, for more careful work. Default lets the AI decide.",
+  "editBot.effort.fallback": "{model} doesn’t offer {level}, so {name} uses Default.",
+  "editBot.effort.level.default": "Default",
+  "editBot.effort.level.none": "None",
+  "editBot.effort.level.minimal": "Minimal",
+  "editBot.effort.level.low": "Low",
+  "editBot.effort.level.medium": "Medium",
+  "editBot.effort.level.high": "High",
+  "editBot.effort.level.xhigh": "Extra high",
+  "editBot.effort.level.max": "Max",
   "editBot.permissionMode": "Permission mode",
   "editBot.nextTurn": "{name} uses the new settings from its next turn.",
   "editBot.providerChangeStops":

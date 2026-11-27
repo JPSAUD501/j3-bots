@@ -4,6 +4,7 @@ import {
   type Bot,
   type BotState,
   BotId,
+  EffortLevel,
   type ModelChoice,
   ModelId,
   PermissionMode,
@@ -34,6 +35,7 @@ const BotRow = Schema.Struct({
   job: Schema.String,
   provider_id: ProviderId,
   model_id: ModelId,
+  effort: Schema.NullOr(EffortLevel),
   permission_mode: PermissionMode,
   is_primary: Flag,
   pinned: Flag,
@@ -82,6 +84,7 @@ const toStored = (
       job: row.job,
     },
     model: { providerId: row.provider_id, modelId: row.model_id },
+    effort: row.effort,
     permissionMode: row.permission_mode,
     primary: row.is_primary,
     pinned: row.pinned,
@@ -134,6 +137,8 @@ export interface NewBot {
 export interface BotChanges {
   readonly profile?: Partial<Profile>;
   readonly model?: ModelChoice;
+  /** A level of the bot's model, or null for the harness's default (`Bot.effort`). */
+  readonly effort?: EffortLevel | null;
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
   readonly pinned?: boolean;
@@ -145,7 +150,7 @@ export interface BotChanges {
 }
 
 const SELECT = `
-  SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+  SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id, effort,
     permission_mode, is_primary, pinned, hidden, made_by_bot_id, visibility_by_operator, browser,
     section_id, workspace_path, workspace_root, engine_project_id, created_at
   FROM bots
@@ -257,6 +262,7 @@ export const layer = Layer.effect(
         columns["model_id"] = changes.model.modelId;
         columns["model_by_server"] = chooser === "server" ? 1 : 0;
       }
+      if (changes.effort !== undefined) columns["effort"] = changes.effort;
       if (changes.permissionMode !== undefined) {
         columns["permission_mode"] = changes.permissionMode;
         columns["permission_mode_by_server"] = chooser === "server" ? 1 : 0;

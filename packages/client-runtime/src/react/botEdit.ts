@@ -5,6 +5,8 @@ import type { BotChanges, Save } from "../stores/Details.ts";
 import {
   type BotEdits,
   botPatch,
+  type EffortChoices,
+  effortChoices,
   editsAfterFailedBotSave,
   type ModelChoices,
   modelChoices,
@@ -36,9 +38,11 @@ export interface BotEdit {
   /** The latest save's problem, while it shows. */
   readonly problem: SaveProblem | null;
   readonly choices: ModelChoices;
+  /** The effort shown for the model the form holds, and the levels it takes. */
+  readonly effort: EffortChoices;
   /** The model picked, or the one the bot runs on, is one the engine no longer offers. */
   readonly modelUnavailable: boolean;
-  /** The model or the permission mode changes, which takes effect on the next turn. */
+  /** The model, its effort or the permission mode changes, which takes effect on the next turn. */
   readonly settingsChange: boolean;
   /** The provider changes, which stops a turn under way. */
   readonly providerChange: boolean;
@@ -48,12 +52,12 @@ export interface BotEdit {
   readonly changes: BotChanges | null;
   readonly editText: (field: ProfileField, value: string) => void;
   readonly edit: (
-    change: Partial<Pick<BotEdits, "avatar" | "model" | "permissionMode" | "hidden">>,
+    change: Partial<Pick<BotEdits, "avatar" | "model" | "effort" | "permissionMode" | "hidden">>,
   ) => void;
 }
 
 /**
- * The edit of a bot's name, title, avatar and job, its model, its permission mode
+ * The edit of a bot's name, title, avatar and job, its model and effort, its permission mode
  * and whether it is hidden, as a form holds it. Save sends only what changed. A save that fails leaves
  * the edits in place, and its problem shows until the operator edits again.
  * Fields the operator left alone follow the bot as the server has it.
@@ -94,9 +98,14 @@ export function useBotEdit(options: {
   const name = edits.name ?? shown.profile.name;
   const model = edits.model ?? shown.model;
   const permissionMode = edits.permissionMode ?? shown.permissionMode;
-  const patch = botPatch(bot, edits);
+  const patch = botPatch(bot, edits, engine);
   const problem = shownSaveProblem(save, !failureShown);
   const choices = modelChoices(engine, bot.model, edits.model);
+  const effort = effortChoices(
+    engine,
+    model,
+    edits.effort === null ? shown.effort : edits.effort.level,
+  );
   const canSave = patch._tag === "changes" && !choices.pickUnavailable && !saving && connected;
 
   return {
@@ -116,8 +125,12 @@ export function useBotEdit(options: {
           : "too-long",
     problem,
     choices,
+    effort,
     modelUnavailable: problem === "model" || choices.pickUnavailable,
-    settingsChange: !sameModel(model, bot.model) || permissionMode !== bot.permissionMode,
+    settingsChange:
+      !sameModel(model, bot.model) ||
+      permissionMode !== bot.permissionMode ||
+      (patch._tag === "changes" && patch.changes.effort !== undefined),
     providerChange: model.providerId !== bot.model.providerId,
     unsaved: patch._tag !== "unchanged",
     changes: canSave && patch._tag === "changes" ? patch.changes : null,

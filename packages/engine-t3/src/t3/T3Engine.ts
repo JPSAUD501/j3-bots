@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type BrowserHostStatus,
+  type EffortLevel,
   EngineStatus,
   type ModelChoice,
   ModelId,
@@ -19,6 +20,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderOptionSelection,
   ProviderSessionId,
   RunId,
   RuntimeRequestId,
@@ -58,6 +60,7 @@ import { isInlineImage, normalizeAttachmentMetadata } from "../attachments.ts";
 import {
   Engine,
   type DispatchInput,
+  type ModelSetting,
   type EngineOptions,
   type ConnectionOutcome,
   type ProviderConnection,
@@ -133,6 +136,7 @@ import {
   versionNumberIn,
   withFirstCheckBudget,
 } from "./Providers.ts";
+import { effortOptions, levelBeforeTurn, sameOptions } from "./Effort.ts";
 import {
   activeConnection,
   driverOf,
@@ -423,7 +427,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const providerOfInstance = new Map(
     options.providers.map((provider) => [instanceIdFor(provider.id), provider.id]),
   );
-  const echoingInstances = new Set(
+  /**
+   * Claude Code's instances. Claude Code echoes a steer, takes a level its
+   * model lacks as its default, and clears a level only in a new process,
+   * which the engine starts at the next turn (**Read** at `bc0f04d`,
+   * `claudeModelOptions.ts` `compileClaudeModelSelection`, `ClaudeAdapterV2.ts`
+   * `canApplyClaudeSelectionLive`).
+   */
+  const claudeCodeInstances = new Set(
     options.providers.flatMap((provider) =>
       provider.harness === "claude-code" ? [instanceIdFor(provider.id)] : [],
     ),
@@ -437,13 +448,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         Option.map(decodeModelId(selection.model), (modelId) => ({ providerId, modelId })),
       );
     },
-    echoesSteers: (instanceId) => echoingInstances.has(instanceId),
+    echoesSteers: (instanceId) => claudeCodeInstances.has(instanceId),
   };
   /**
    * The providers as each provisioning writes them, with the executable
    * each runs now (`setHarnessExecutable`).
    */
   const providers = yield* Ref.make(options.providers);
+  /** The engine's own report of its provider instances, kept while it is ready. */
+  const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
    * The providers whose instance the engine may run with another executable
    * than `providers` names: an upsert whose outcome is not known, or one the
@@ -970,13 +983,31 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const refused = (error: { readonly message: string }) =>
     Effect.die(new Error(`The engine refused a command: ${error.message}`));
 
-  const modelSelection = (model: ModelChoice) =>
-    providerIds.has(model.providerId)
-      ? Effect.succeed({
-          instanceId: ProviderInstanceId.make(instanceIdFor(model.providerId)),
-          model: model.modelId,
-        })
-      : Effect.fail(new ModelUnavailable({ providerId: model.providerId, modelId: model.modelId }));
+  /**
+   * The engine's selection of `model`, asking it for `effort` while the engine
+   * reports that level for the model (`effortOptions`).
+   */
+  const modelSelection = (model: ModelChoice, effort: EffortLevel | null) => {
+    if (!providerIds.has(model.providerId)) {
+      return Effect.fail(
+        new ModelUnavailable({ providerId: model.providerId, modelId: model.modelId }),
+      );
+    }
+    const instanceId = ProviderInstanceId.make(instanceIdFor(model.providerId));
+    return Effect.map(SubscriptionRef.get(reported), (providers) => {
+      const options = effortOptions(
+        providers
+          .find((provider) => provider.instanceId === instanceId)
+          ?.models.find((candidate) => candidate.slug === model.modelId),
+        effort,
+      );
+      return {
+        instanceId,
+        model: model.modelId,
+        ...(options === undefined ? {} : { options }),
+      };
+    });
+  };
 
   const commandId = (purpose: string, key: string) => CommandId.make(commandIdFor(purpose, key));
   // Commands that are idempotent by nature still need distinct ids, or the engine
@@ -1321,10 +1352,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly projectId: EngineProjectId;
     readonly title: string;
     readonly model: ModelChoice;
+    readonly effort: EffortLevel | null;
     readonly permissionMode: PermissionMode;
   }) {
     const sessionId = SessionId.make(threadIdFor(input.key));
-    const selection = yield* modelSelection(input.model);
+    const selection = yield* modelSelection(input.model, input.effort);
     const sentTo = yield* Ref.get(starts);
     // Settled by the key's receipt, as a dispatch is: the engine keeps a
     // refusal for the key, so a refused opening is never sent again.
@@ -1392,24 +1424,28 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       ),
     );
 
-  const configureSession = Effect.fn("Engine.configureSession")(function* (input: {
-    readonly sessionId: SessionId;
-    readonly model?: ModelChoice;
-    readonly permissionMode?: PermissionMode;
-    readonly reloadTools?: boolean;
-  }) {
+  const configureSession = Effect.fn("Engine.configureSession")(function* (
+    input: {
+      readonly sessionId: SessionId;
+      readonly permissionMode?: PermissionMode;
+      readonly reloadTools?: boolean;
+    } & ModelSetting,
+  ) {
     // Only what differs from what the thread runs is sent: a session opened
     // again under its key is the one the engine opened first, as it was
     // opened then, and is set to the caller's settings this way.
     const mirror = yield* liveProjection(input.sessionId);
     const thread = mirror.thread;
     const threadId = ThreadId.make(input.sessionId);
-    const wanted = input.model === undefined ? undefined : yield* modelSelection(input.model);
+    const wanted =
+      input.model === undefined ? undefined : yield* modelSelection(input.model, input.effort);
+    if (input.model !== undefined) yield* forgetDroppedLevel(input.sessionId);
     const selection =
       wanted !== undefined &&
       (thread === undefined ||
         thread.modelSelection.instanceId !== wanted.instanceId ||
-        thread.modelSelection.model !== wanted.model)
+        thread.modelSelection.model !== wanted.model ||
+        !sameOptions(thread.modelSelection.options, wanted.options))
         ? wanted
         : undefined;
     const mode =
@@ -1423,7 +1459,20 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // what the project allows then, and resumes the conversation natively
     // (**Read** at `bc0f04d`, `prepareMcpSession`; `provider-session.detach`
     // is **Verified**, below). One that has stopped starts again anyway.
-    const reload = input.reloadTools === true && liveProviderSessions(mirror).length > 0;
+    const live = liveProviderSessions(mirror).length > 0;
+    const reload = input.reloadTools === true && live;
+    // Claude Code clears a level in a new process, which the engine starts at
+    // the next turn, and the turn fails there while background work would
+    // end (**Read** at `bc0f04d`, `ClaudeAdapterV2.ts`, the query replacement
+    // that background work blocks): the change waits for the work instead.
+    const clearsLevel =
+      live &&
+      selection !== undefined &&
+      thread !== undefined &&
+      claudeCodeInstances.has(selection.instanceId) &&
+      thread.modelSelection.instanceId === selection.instanceId &&
+      (thread.modelSelection.options ?? []).length > 0 &&
+      (selection.options ?? []).length === 0;
     if (selection === undefined && mode === undefined && !reload) return;
     // A change may replace the provider session, which ends a turn running in
     // it: none is sent while one runs.
@@ -1432,9 +1481,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       return yield* new SessionBusy({ sessionId: input.sessionId, turnId: running.value });
     }
     // The engine checks this for a change of model or runtime mode, and not
-    // for a detach, which would end the work: checked here first, so nothing
-    // is sent.
-    if (reload && isBackgroundWorkPending(yield* reportedWork(input.sessionId, mirror))) {
+    // for a detach or a level cleared, which would end the work: checked here
+    // first, so nothing is sent.
+    if (
+      (reload || clearsLevel) &&
+      isBackgroundWorkPending(yield* reportedWork(input.sessionId, mirror))
+    ) {
       return yield* new BackgroundWorkRunning({ sessionId: input.sessionId });
     }
     if (selection !== undefined) {
@@ -1640,10 +1692,78 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // A retired session's streams end, and nothing resumes them.
     batches.forget(sessionId);
     yield* toolReads.forget(sessionId);
+    yield* forgetDroppedLevel(sessionId);
   });
 
   // ---------------------------------------------------------------------------
   // Dispatch
+
+  /**
+   * The level each session's thread asked for that its model stopped taking,
+   * dropped before a turn (`alignLevel`), until it is asked for again.
+   */
+  const droppedLevels = yield* Ref.make<
+    ReadonlyMap<SessionId, ReadonlyArray<ProviderOptionSelection>>
+  >(new Map());
+
+  /**
+   * Before a turn, the thread's level follows what the engine reports for its
+   * model now. The engine passes a harness other than Claude Code the level
+   * as it is, and a model that no longer takes it, as after an update of its
+   * harness, fails the turn (**Read** at `bc0f04d`, `CodexAdapterV2.ts`
+   * `startTurn`): the level is dropped, so the turn runs at the default, and
+   * asked for again once the engine reports it again. Claude Code takes such
+   * a level as its default itself. A model the engine does not report now is
+   * left as it is.
+   */
+  const alignLevel = Effect.fnUntraced(function* (sessionId: SessionId, mirror: Mirror) {
+    const selection = mirror.thread?.modelSelection;
+    if (selection === undefined || claudeCodeInstances.has(selection.instanceId)) return;
+    const model = (yield* SubscriptionRef.get(reported))
+      .find((provider) => provider.instanceId === selection.instanceId)
+      ?.models.find((candidate) => candidate.slug === selection.model);
+    if (model === undefined) return;
+    const asked = selection.options ?? [];
+    const dropped = (yield* Ref.get(droppedLevels)).get(sessionId);
+    const options = levelBeforeTurn(model, asked, dropped);
+    if (options === undefined) return;
+    // A change of level alone replaces no provider session, so the engine
+    // has no background work to refuse it for; were it to, the turn goes as
+    // it is.
+    const sent = yield* sendSettingsCommand(
+      sessionId,
+      {
+        type: "thread.model-selection.set",
+        commandId: commandId("level", `${sessionId}:${yield* uniqueKey}`),
+        threadId: ThreadId.make(sessionId),
+        modelSelection: {
+          instanceId: selection.instanceId,
+          model: selection.model,
+          ...(options.length === 0 ? {} : { options }),
+        },
+      },
+      undefined,
+    ).pipe(
+      Effect.as(true),
+      Effect.catchTag("BackgroundWorkRunning", () => Effect.succeed(false)),
+    );
+    if (!sent) return;
+    yield* Ref.update(droppedLevels, (current) => {
+      const next = new Map(current);
+      if (options.length === 0) next.set(sessionId, asked);
+      else next.delete(sessionId);
+      return next;
+    });
+  });
+
+  /** The thread's settings are the caller's again: nothing dropped is asked for. */
+  const forgetDroppedLevel = (sessionId: SessionId) =>
+    Ref.update(droppedLevels, (current) => {
+      if (!current.has(sessionId)) return current;
+      const next = new Map(current);
+      next.delete(sessionId);
+      return next;
+    });
 
   const sendDispatch = Effect.fnUntraced(function* (input: DispatchInput) {
     const kind = input.delivery._tag;
@@ -1699,6 +1819,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       if (Option.isSome(busy)) {
         return yield* new SessionBusy({ sessionId: input.sessionId, turnId: busy.value });
       }
+      // Nothing of the dispatch has gone out yet: a lost answer to the
+      // level's change leaves its key unsent, and the next first send aligns
+      // the level again, which a resend would not.
+      yield* alignLevel(input.sessionId, before).pipe(
+        Effect.catchTag("EngineIndeterminate", () => Effect.fail(new EngineUnavailable())),
+      );
     }
     yield* sendDispatch(input);
     const after = yield* projection(input.sessionId).pipe(
@@ -2295,8 +2421,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
-  /** The engine's own report of its provider instances, kept while it is ready. */
-  const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
    * Every report the engine sends, from a subscription opened again a few
    * seconds after it ends or fails, for as long as the engine is ready.
