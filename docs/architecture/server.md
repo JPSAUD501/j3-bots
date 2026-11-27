@@ -721,7 +721,7 @@ A Stop of the bot reaches side sessions too: a wake still pending is cancelled, 
 | `failed` | Its last attempt failed, the engine refused its envelope, or a Stop of the bot or the routine's deletion ended it |
 | `skipped` | It came due while the previous run was still going |
 
-`skipped` keeps that one meaning: a run missed while the server was not running leaves no row, since a new status would change the protocol. It is counted on the routine instead (`missed`, above). A client of an earlier release ignores both fields.
+`skipped` keeps that one meaning: a run missed while the server was not running leaves no row, since a new status would change the protocol. It is counted on the routine instead (`missed`, above).
 
 **Retries.** An attempt that fails before the bot says anything (the engine could not open its session or lost it, its turn failed, also before it started, or was interrupted by something other than a Stop) is tried again with a new wake, in a fresh side session: two minutes after the first attempt failed, four after the second, three attempts in all. One whose envelope the engine refused, or that could never fit its input limit, fails the run at once: the next would be refused too. A failed attempt's leftover background work ends when its retry is due ([Sessions](#sessions)). The run's history shows how many attempts started, none for a skipped run. A provider at its usage limit holds the next attempt until the reset, as it holds every automated wake. The last attempt's failure fails the run. Nothing about a failed attempt shows in the conversation; the run's history is where it shows. What the operator stopped is not tried again.
 

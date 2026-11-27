@@ -37,8 +37,8 @@ The clearest existing design for persistent AI teammates. What follows comes fro
 | --- | --- |
 | Hosted, with its own subscription | Self-hosted, on subscriptions the operator already has |
 | The model is not selectable | A model per bot |
-| A shared cloud computer with a browser the user can watch | A browser on the operator's own machine, watched and taken over from the clients (planned); no managed desktop |
-| A catalog of connected apps | A gallery of MCP servers that the server signs in to and bridges, so bots never hold the tokens (planned) |
+| A shared cloud computer with a browser the user can watch | A browser on the operator's own machine, watched and taken over from the clients; no managed desktop |
+| A catalog of connected apps | A gallery of MCP servers, which bots add on the operator's word, that the server signs in to and bridges, so bots never hold the tokens |
 | In a group, bots decide among themselves who answers | The same: a message that mentions members wakes only them, one that mentions nobody wakes every other member, every member reads every message, a member with nothing to add stays silent, and a room closes once its bots have answered each other for a few rounds since the operator last wrote |
 | Memory stored by the service | Memory as files the operator owns |
 
