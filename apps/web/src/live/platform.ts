@@ -241,7 +241,7 @@ const browserTransfer = FileTransfer.of({
   upload: Effect.fn("FileTransfer.upload")((request: UploadRequest) =>
     Effect.callback<UploadResponse, TransferFailed>((resume) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", request.url);
+      xhr.open(request.method, request.url);
       for (const [name, value] of Object.entries(request.headers)) {
         xhr.setRequestHeader(name, value);
       }

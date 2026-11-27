@@ -371,7 +371,7 @@ const transfer = Layer.effect(
         Effect.gen(function* () {
           const bytes = yield* Effect.promise(() => request.body.arrayBuffer());
           const response = yield* http.execute(
-            HttpClientRequest.post(request.url).pipe(
+            HttpClientRequest.make(request.method)(request.url).pipe(
               HttpClientRequest.setHeaders(request.headers),
               HttpClientRequest.bodyUint8Array(
                 new Uint8Array(bytes),

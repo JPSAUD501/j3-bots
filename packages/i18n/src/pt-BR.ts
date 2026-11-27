@@ -1275,6 +1275,9 @@ const sentences = {
   "composer.file.serverSetup":
     "O servidor não guarda arquivos até que a configuração dele seja corrigida; o log dele diz como",
   "composer.file.notPaired": "Este dispositivo saiu da conta",
+  "composer.file.recordingTooLarge": "Maior que {size}, o máximo para uma gravação",
+  "composer.file.noSpace": "O disco do servidor está sem espaço",
+  "composer.file.unreadable": "Este dispositivo não consegue mais ler o arquivo",
   "composer.tooLong":
     "Longa demais para enviar. Uma mensagem pode ter no máximo {count} caracteres.",
   "composer.tooManyFiles":

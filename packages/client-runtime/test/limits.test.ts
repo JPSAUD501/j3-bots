@@ -5,6 +5,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
+  MAX_RECORDING_SIZE,
 } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { admitFiles, type LocalFile, normalizeMediaType } from "../src/files/limits.ts";
@@ -41,6 +42,19 @@ describe("admitFiles", () => {
     const fit = Math.floor(MAX_INLINE_IMAGES_SIZE / MAX_INLINE_IMAGE_SIZE);
     const held = Array.from({ length: fit - 1 }, () => image);
     assert.deepStrictEqual(admitFiles(held, [image, image]), [null, "images-too-large"]);
+  });
+
+  it("holds a screen recording to the recording's limit rather than a file's", () => {
+    const recording = (size: number): LocalFile => ({
+      name: "screen.zip",
+      mediaType: "application/zip",
+      size,
+      recording: true,
+    });
+    assert.deepStrictEqual(
+      admitFiles([], [recording(MAX_ATTACHMENT_SIZE + 1), recording(MAX_RECORDING_SIZE + 1)]),
+      [null, "recording-too-large"],
+    );
   });
 
   it("counts the files already held, and not the ones refused", () => {

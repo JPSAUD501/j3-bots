@@ -1263,6 +1263,9 @@ export const en = {
   "composer.file.serverSetup":
     "The server can’t store files until its setup is fixed; its log says how",
   "composer.file.notPaired": "This device is signed out",
+  "composer.file.recordingTooLarge": "Larger than {size}, the most a recording can be",
+  "composer.file.noSpace": "The server’s disk is out of space",
+  "composer.file.unreadable": "This device can’t read the file anymore",
   "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
   "composer.tooManyFiles": "Too many files to send. A message can carry {count} files at most.",
   "composer.filesProblem": "Can’t send these files. {reason}.",

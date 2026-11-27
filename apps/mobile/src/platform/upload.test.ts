@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- The servers the upload meets are plain node:http servers on loopback.
 import { assert, describe, it } from "@effect/vitest";
+import type { UploadRequest } from "@j3-bots/client-runtime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as NodeHttp from "node:http";
@@ -40,7 +41,8 @@ const serve = (status: number, headers: Record<string, string> = {}) => {
 };
 
 const upload = makeUploader(globalThis.fetch);
-const request = (url: string) => ({
+const request = (url: string): UploadRequest => ({
+  method: "POST",
   url,
   headers: { authorization: "Bearer a-fictional-token", "content-type": "text/plain" },
   body: new Blob(["the file"], { type: "text/plain" }),

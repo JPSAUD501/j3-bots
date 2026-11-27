@@ -17,6 +17,7 @@ import {
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
   MAX_MESSAGE_LENGTH,
+  RECORDING_CHUNK_SIZE,
   Conflict,
   Invalid,
   NotFound,
@@ -59,6 +60,7 @@ import {
 } from "../src/connection/Connection.ts";
 import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
+import { Files } from "../src/files/Files.ts";
 import { FILE_MARK } from "../src/files/placed.ts";
 import { passageOf, type QuotableMessage, replyTo } from "../src/presentation/quotes.ts";
 import { waitFor } from "../src/Store.ts";
@@ -72,7 +74,7 @@ import {
 } from "../src/stores/Conversations.ts";
 import { Details, memorySaveKey } from "../src/stores/Details.ts";
 import { Devices } from "../src/stores/Devices.ts";
-import { Drafts, type WindowContext } from "../src/stores/Drafts.ts";
+import { type DraftFile, Drafts, type WindowContext } from "../src/stores/Drafts.ts";
 import { Presence } from "../src/stores/Presence.ts";
 import { Roster } from "../src/stores/Roster.ts";
 import { Settings } from "../src/stores/Settings.ts";
@@ -120,8 +122,8 @@ class Taps extends Context.Service<
     readonly silentReacts: { count: number };
     /**
      * Whether the roster answers as a server from before conversation
-     * mentions and quotes does, its snapshot without `conversationMentions`
-     * and `quotes`.
+     * mentions, quotes and screen recordings does, its snapshot without
+     * `conversationMentions`, `quotes` and `screenRecordings`.
      */
     readonly olderRoster: { value: boolean };
   }
@@ -249,7 +251,12 @@ const tapped = Layer.mergeAll(
         ).pipe(
           Stream.map((frame) => {
             if (!olderRoster.value || frame._tag !== "snapshot") return frame;
-            const { conversationMentions: _, quotes: _quotes, ...older } = frame;
+            const {
+              conversationMentions: _,
+              quotes: _quotes,
+              screenRecordings: _recordings,
+              ...older
+            } = frame;
             return older;
           }),
         );
@@ -465,6 +472,118 @@ const uploadsFailingOnce = (open: Latch.Latch, bearers: Array<string>) =>
       });
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** Whether `request` sends a piece of a recording upload. */
+const isRecordingPiece = (request: HttpClientRequest.HttpClientRequest, url: URL) =>
+  request.method === "PUT" && url.pathname.startsWith(`${HTTP_PATHS.recordingUploads}/`);
+
+/**
+ * Something between the client and the server that passes the first piece of
+ * a recording on to the server and loses its answer, as a dropped connection
+ * would, then passes the rest on. Records the offset of every piece sent.
+ */
+const recordingAnswerLostOnce = (offsets: Array<string>) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      return HttpClient.make((request, url) => {
+        if (!isRecordingPiece(request, url)) return server.execute(request);
+        offsets.push(url.searchParams.get("offset") ?? "");
+        if (offsets.length > 1) return server.execute(request);
+        return server.execute(request).pipe(
+          Effect.flatMap((response) => response.text),
+          Effect.as(HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }))),
+        );
+      });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/**
+ * A server that forgot the first recording upload begun through it, as it
+ * forgets one left alone for a day: it answers that upload's first piece
+ * with 404. Counts the uploads begun.
+ */
+const recordingForgottenOnce = (begun: { count: number }) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      let forgotten = false;
+      return HttpClient.make((request, url) => {
+        if (request.method === "POST" && url.pathname === HTTP_PATHS.recordingUploads) {
+          begun.count += 1;
+        }
+        if (!isRecordingPiece(request, url) || forgotten) return server.execute(request);
+        forgotten = true;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+        );
+      });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** Something between the client and the server that holds every piece of a recording while `open` is closed. */
+const recordingPiecesHeld = (open: Latch.Latch) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      return HttpClient.make((request, url) =>
+        isRecordingPiece(request, url)
+          ? open.await.pipe(Effect.andThen(server.execute(request)))
+          : server.execute(request),
+      );
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** A server that refuses every recording as larger than it takes. */
+const recordingsTooLarge = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* () {
+    const server = yield* HttpClient.HttpClient;
+    return HttpClient.make((request, url) =>
+      request.method === "POST" && url.pathname === HTTP_PATHS.recordingUploads
+        ? Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 413 })))
+        : server.execute(request),
+    );
+  }),
+).pipe(Layer.provide(FetchHttpClient.layer));
+
+/**
+ * A recording of `size` bytes, as the platform hands one over: bytes that end
+ * as a zip does, read a piece at a time, counting each time it is let go.
+ */
+const recordingOf = (size: number, released: { count: number }) => {
+  const bytes = new Uint8Array(size);
+  for (let at = 0; at < size - 22; at++) bytes[at] = (at * 7) % 251;
+  bytes.set([0x50, 0x4b, 0x05, 0x06], size - 22);
+  return {
+    bytes,
+    recording: {
+      name: "screen.zip",
+      size,
+      read: (start: number, end: number) => Promise.resolve(bytes.slice(start, end)),
+      release: () => {
+        released.count += 1;
+      },
+    },
+  };
+};
+
+/** The one file of the draft for `target`, once it has stopped uploading. */
+const settledFile = (target: EntryTarget) =>
+  Effect.gen(function* () {
+    const drafts = yield* Drafts;
+    const state = yield* waitFor(drafts.state, (state) =>
+      (state.get(targetKey(target))?.files ?? []).some((file) => file._tag !== "uploading"),
+    );
+    const [file] = state.get(targetKey(target))?.files ?? [];
+    assert.isDefined(file);
+    return file;
+  });
+
+const problemOf = (file: DraftFile) => (file._tag === "failed" ? file.problem : file._tag);
 
 /** The credential the client saved, for the same device's next launch. */
 const savedCredential = Effect.gen(function* () {
@@ -1217,6 +1336,129 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
     ),
   );
 
+  it.effect(
+    "uploads a recording in pieces, goes on from where the server stands after a lost answer, and lets it go",
+    () => {
+      const offsets: Array<string> = [];
+      const released = { count: 0 };
+      return Effect.gen(function* () {
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Learner") };
+        const { bytes, recording } = recordingOf(RECORDING_CHUNK_SIZE + 1000, released);
+
+        yield* drafts.attachRecording(target, recording);
+        const file = yield* settledFile(target);
+
+        assert.strictEqual(file._tag, "ready");
+        if (file._tag !== "ready") return;
+        // The first piece again after its answer was lost; the server says it
+        // holds it, and the next piece goes from there.
+        assert.deepStrictEqual(offsets, ["0", "0", String(RECORDING_CHUNK_SIZE)]);
+        assert.strictEqual(released.count, 1);
+        const stored = yield* (yield* Files).download(file.attachment);
+        assert.strictEqual(stored.mediaType, "application/zip");
+        assert.isTrue(Buffer.from(stored.bytes).equals(Buffer.from(bytes)));
+      }).pipe(
+        Effect.provide(
+          client(
+            Option.none(),
+            TestPlatform.makeDevice(),
+            recordingAnswerLostOnce(offsets),
+            SHORT_TIMEOUT,
+          ),
+        ),
+        // Let go once, not again as the client closes.
+        Effect.andThen(Effect.sync(() => assert.strictEqual(released.count, 1))),
+      );
+    },
+  );
+
+  it.effect("begins a recording again once the server no longer knows it", () => {
+    const begun = { count: 0 };
+    return Effect.gen(function* () {
+      yield* pairAndConnect;
+      const drafts = yield* Drafts;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Forgotten") };
+
+      yield* drafts.attachRecording(target, recordingOf(2000, { count: 0 }).recording);
+
+      assert.strictEqual((yield* settledFile(target))._tag, "ready");
+      assert.strictEqual(begun.count, 2);
+    }).pipe(
+      Effect.provide(
+        client(Option.none(), TestPlatform.makeDevice(), recordingForgottenOnce(begun)),
+      ),
+    );
+  });
+
+  it.effect(
+    "says the server has no room for a recording, and lets it go only once it leaves the draft",
+    () => {
+      const released = { count: 0 };
+      return Effect.gen(function* () {
+        const disk = yield* Server.TestDiskSpace;
+        yield* disk.set(Option.some(0));
+        yield* pairAndConnect;
+        const drafts = yield* Drafts;
+        const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Full") };
+
+        yield* drafts.attachRecording(target, recordingOf(2000, released).recording);
+        const file = yield* settledFile(target);
+
+        assert.strictEqual(problemOf(file), "no-space");
+        assert.strictEqual(released.count, 0);
+        yield* drafts.detach(target, file.key);
+        assert.strictEqual(released.count, 1);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* (yield* Server.TestDiskSpace).set(Option.some(1024 ** 4));
+          }),
+        ),
+        Effect.provide(client()),
+      );
+    },
+  );
+
+  it.effect("says a recording is larger than the server takes", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const drafts = yield* Drafts;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Huge") };
+
+      yield* drafts.attachRecording(target, recordingOf(2000, { count: 0 }).recording);
+
+      assert.strictEqual(problemOf(yield* settledFile(target)), "recording-too-large");
+    }).pipe(Effect.provide(client(Option.none(), TestPlatform.makeDevice(), recordingsTooLarge))),
+  );
+
+  it.effect("lets a recording go once when it is taken out of the draft as it uploads", () => {
+    const released = { count: 0 };
+    return Effect.gen(function* () {
+      yield* pairAndConnect;
+      const drafts = yield* Drafts;
+      const target: EntryTarget = { _tag: "conversation", botId: yield* createBot("Changed") };
+
+      yield* drafts.attachRecording(target, recordingOf(2000, released).recording);
+      const [file] = drafts.state.get().get(targetKey(target))?.files ?? [];
+      assert.strictEqual(file?._tag, "uploading");
+      yield* drafts.detach(target, file?.key ?? "");
+
+      assert.strictEqual(released.count, 1);
+      assert.deepStrictEqual(drafts.state.get().get(targetKey(target))?.files ?? [], []);
+    }).pipe(
+      Effect.provide(
+        Layer.unwrap(
+          Effect.map(Latch.make(false), (open) =>
+            client(Option.none(), TestPlatform.makeDevice(), recordingPiecesHeld(open)),
+          ),
+        ),
+      ),
+      Effect.andThen(Effect.sync(() => assert.strictEqual(released.count, 1))),
+    );
+  });
+
   it.effect("updates the roster live", () =>
     Effect.gen(function* () {
       yield* pairAndConnect;
@@ -1236,7 +1478,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
   );
 
   it.effect(
-    "offers `@` in a bot's conversation, and Reply and Quote, only once the server says it takes them",
+    "offers `@` in a bot's conversation, Reply and Quote, and recording the screen, only once the server says it takes them",
     () =>
       Effect.gen(function* () {
         const { olderRoster } = yield* Taps;
@@ -1246,12 +1488,14 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* waitFor(roster.state, (state) => state._tag === "ready");
         assert.isFalse(roster.conversationMentions.get());
         assert.isFalse(roster.quotes.get());
+        assert.isFalse(roster.screenRecordings.get());
 
         // The server is updated: the snapshot of the next connection says it takes them.
         olderRoster.value = false;
         yield* (yield* TestPlatform.TestNetwork).dropSockets;
         yield* waitFor(roster.conversationMentions, (takes) => takes);
         yield* waitFor(roster.quotes, (takes) => takes);
+        yield* waitFor(roster.screenRecordings, (takes) => takes);
       }).pipe(Effect.provide(client())),
   );
 

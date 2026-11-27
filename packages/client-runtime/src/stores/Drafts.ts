@@ -9,6 +9,7 @@ import {
   type Mentions,
   MessageQuote,
   NonNegativeInt,
+  RECORDING_MEDIA_TYPE,
   RoomId,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -27,7 +28,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { backoffDelay, Connection, NotPaired, ReconnectPolicy } from "../connection/Connection.ts";
 import { transferDeadline } from "../connection/http.ts";
-import { Files, uploadProblem } from "../files/Files.ts";
+import { Files, type RecordingSource, type UploadRefused, uploadProblem } from "../files/Files.ts";
 import {
   admitFiles,
   type FileProblem,
@@ -44,8 +45,28 @@ import { Conversations, keyTarget, type MentionLabel, targetKey } from "./Conver
 /** A file in the composer, from the moment the operator picks it. */
 export type DraftFile =
   | ({ readonly _tag: "uploading"; readonly key: string; readonly sent: number } & LocalFile)
-  | { readonly _tag: "ready"; readonly key: string; readonly attachment: Attachment }
+  | {
+      readonly _tag: "ready";
+      readonly key: string;
+      readonly attachment: Attachment;
+      /** A screen recording, whose cap is `MAX_RECORDING_SIZE` (`LocalFile.recording`). */
+      readonly recording?: true;
+    }
   | ({ readonly _tag: "failed"; readonly key: string; readonly problem: FileProblem } & LocalFile);
+
+/**
+ * A screen recording the operator adds to a draft (decision 0098): a zip on
+ * the device, which it uploads a piece at a time.
+ */
+export interface DraftRecording extends RecordingSource {
+  /**
+   * Called once the runtime no longer needs the file: when the server holds
+   * it, or when it leaves the draft, removed, dropped, or never taken in by
+   * a draft that was being sent. Called once; not when the upload fails,
+   * since a failed file stays in the draft until the operator removes it.
+   */
+  readonly release: () => void;
+}
 
 /**
  * A mention the operator picked in a draft: what it names, and where its
@@ -181,6 +202,7 @@ const localFileOf = (file: DraftFile): LocalFile =>
         name: file.attachment.name,
         mediaType: file.attachment.mediaType,
         size: file.attachment.size,
+        ...(file.recording === true ? { recording: true } : {}),
       }
     : file;
 
@@ -353,6 +375,18 @@ export class Drafts extends Context.Service<
     readonly attach: (
       target: EntryTarget,
       files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+      at?: number,
+    ) => Effect.Effect<void>;
+    /**
+     * Adds a screen recording to the draft, placed at `at` in its text or
+     * after it, and uploads it in resumable pieces (`Files.uploadRecording`),
+     * admitted against `MAX_RECORDING_SIZE`. Only a server that carries
+     * `screenRecordings` takes one. It shows as `failed` when it breaks a
+     * limit or its upload fails for good.
+     */
+    readonly attachRecording: (
+      target: EntryTarget,
+      recording: DraftRecording,
       at?: number,
     ) => Effect.Effect<void>;
     /** Takes a file out of the draft, stopping its upload. */
@@ -562,6 +596,29 @@ export const layer = Layer.effect(
     if (first !== null) yield* load(first);
 
     const uploads = new Map<string, Fiber.Fiber<void>>();
+    // What each recording in a draft lets go of once it is no longer needed, by file key.
+    const releases = new Map<string, () => void>();
+    const release = (fileKey: string) => {
+      const letGo = releases.get(fileKey);
+      if (letGo === undefined) return;
+      releases.delete(fileKey);
+      letGo();
+    };
+    /** Lets go of each recording no draft holds any more, however it left. */
+    const releaseDropped = () => {
+      if (releases.size === 0) return;
+      const held = new Set(
+        [...state.get().values()].flatMap((draft) => draft.files.map((file) => file.key)),
+      );
+      for (const fileKey of releases.keys()) if (!held.has(fileKey)) release(fileKey);
+    };
+    const unsubscribeReleases = state.subscribe(releaseDropped);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        unsubscribeReleases();
+        for (const fileKey of releases.keys()) release(fileKey);
+      }),
+    );
     // Text on offer for `restore`, by key: text this window held, never kept,
     // when another window changed its draft, with the revision of the offer.
     const displaced = new Map<
@@ -951,6 +1008,71 @@ export const layer = Layer.effect(
     const dismiss = (target: EntryTarget) =>
       locked(Effect.sync(() => offer(targetKey(target), null)));
 
+    /** The draft with `entries` placed together at `at` in its text, or after it. */
+    const withFiles =
+      (at: number | undefined, entries: ReadonlyArray<DraftFile>) =>
+      (draft: Draft): Draft => {
+        const placed = insertMarks(draft, at ?? draft.text.length, entries.length);
+        return {
+          ...draft,
+          text: placed.text,
+          mentions: placed.mentions,
+          files: draft.files.toSpliced(placed.index, 0, ...entries),
+        };
+      };
+
+    /**
+     * Uploads the draft's file `fileKey` with `upload` for the pairing this
+     * window follows, showing how far it has gone, then the file ready or
+     * failed. It stops when that pairing ends.
+     */
+    const startUpload = Effect.fnUntraced(function* (
+      target: EntryTarget,
+      fileKey: string,
+      local: LocalFile,
+      upload: (
+        pairing: DeviceId,
+        onProgress: (sent: number) => void,
+      ) => Effect.Effect<Attachment, UploadRefused | NotPaired>,
+    ) {
+      const key = targetKey(target);
+      const pairing = followed.get();
+      const progress = (sent: number) => {
+        const current = state
+          .get()
+          .get(key)
+          ?.files.find((candidate) => candidate.key === fileKey);
+        if (current?._tag !== "uploading" || current.sent === sent) return;
+        replaceFileNow(target, fileKey, { ...current, sent });
+      };
+      const ready: (attachment: Attachment) => DraftFile = (attachment) =>
+        local.recording === true
+          ? { _tag: "ready", key: fileKey, attachment, recording: true }
+          : { _tag: "ready", key: fileKey, attachment };
+      const fiber = yield* (
+        pairing === null ? Effect.fail(new NotPaired()) : upload(pairing, progress)
+      ).pipe(
+        Effect.matchEffect({
+          // The server holds it, so the device need not keep it: let go
+          // before it shows ready, so whoever sees it ready sees it let go.
+          onSuccess: (attachment) =>
+            Effect.sync(() => release(fileKey)).pipe(
+              Effect.andThen(replaceFile(target, fileKey, ready(attachment))),
+            ),
+          onFailure: (error) =>
+            replaceFile(target, fileKey, {
+              _tag: "failed",
+              key: fileKey,
+              problem: uploadProblem(error),
+              ...local,
+            }),
+        }),
+        Effect.ensuring(Effect.sync(() => uploads.delete(fileKey))),
+        Effect.forkIn(scope),
+      );
+      uploads.set(fileKey, fiber);
+    });
+
     const attach = Effect.fn("Drafts.attach")(function* (
       target: EntryTarget,
       added: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
@@ -979,56 +1101,57 @@ export const layer = Layer.effect(
           : { _tag: "failed", key: file.key, problem, ...file.local };
       });
       // Placed where the operator left the caret, or after the text.
-      yield* change(target, (draft) => {
-        const placed = insertMarks(draft, at ?? draft.text.length, entries.length);
-        return {
-          ...draft,
-          text: placed.text,
-          mentions: placed.mentions,
-          files: draft.files.toSpliced(placed.index, 0, ...entries),
-        };
-      });
+      yield* change(target, withFiles(at, entries));
 
-      // Each file uploads for the pairing that took it, and stops when that pairing ends.
-      const pairing = followed.get();
       for (const [index, file] of picked.entries()) {
         if (problems[index] !== null) continue;
-        const fileKey = file.key;
-        const progress = (sent: number) => {
-          const current = state
-            .get()
-            .get(key)
-            ?.files.find((candidate) => candidate.key === fileKey);
-          if (current?._tag !== "uploading" || current.sent === sent) return;
-          replaceFileNow(target, fileKey, { ...current, sent });
-        };
-        const fiber = yield* (
-          pairing === null
-            ? Effect.fail(new NotPaired())
-            : files.upload({
-                pairing,
-                name: file.local.name,
-                mediaType: file.local.mediaType,
-                body: file.body,
-                onProgress: progress,
-              })
-        ).pipe(
-          Effect.matchEffect({
-            onSuccess: (attachment) =>
-              replaceFile(target, fileKey, { _tag: "ready", key: fileKey, attachment }),
-            onFailure: (error) =>
-              replaceFile(target, fileKey, {
-                _tag: "failed",
-                key: fileKey,
-                problem: uploadProblem(error),
-                ...file.local,
-              }),
+        yield* startUpload(target, file.key, file.local, (pairing, onProgress) =>
+          files.upload({
+            pairing,
+            name: file.local.name,
+            mediaType: file.local.mediaType,
+            body: file.body,
+            onProgress,
           }),
-          Effect.ensuring(Effect.sync(() => uploads.delete(fileKey))),
-          Effect.forkIn(scope),
         );
-        uploads.set(fileKey, fiber);
       }
+    });
+
+    const attachRecording = Effect.fn("Drafts.attachRecording")(function* (
+      target: EntryTarget,
+      recording: DraftRecording,
+      at?: number,
+    ) {
+      const key = targetKey(target);
+      const fileKey = `local-${++nextKey}`;
+      const local: LocalFile = {
+        name: recording.name,
+        mediaType: RECORDING_MEDIA_TYPE,
+        size: recording.size,
+        recording: true,
+      };
+      const [problem = null] = admitFiles(heldFiles(state.get().get(key)), [local]);
+      releases.set(fileKey, recording.release);
+      yield* change(
+        target,
+        withFiles(at, [
+          problem === null
+            ? { _tag: "uploading", key: fileKey, sent: 0, ...local }
+            : { _tag: "failed", key: fileKey, problem, ...local },
+        ]),
+      );
+      // A draft being sent, or not read yet, takes no file: it is let go at once.
+      releaseDropped();
+      if (problem !== null || !releases.has(fileKey)) return;
+      yield* startUpload(target, fileKey, local, (pairing, onProgress) =>
+        files.uploadRecording({
+          pairing,
+          name: recording.name,
+          size: recording.size,
+          read: recording.read,
+          onProgress,
+        }),
+      );
     });
 
     const detach = (target: EntryTarget, fileKey: string) =>
@@ -1282,6 +1405,7 @@ export const layer = Layer.effect(
       state: visible(state, noDrafts),
       setText,
       attach,
+      attachRecording,
       detach,
       quote,
       unquote,

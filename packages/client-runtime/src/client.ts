@@ -376,6 +376,8 @@ export interface J3Client {
   readonly conversationMentions: Readable<boolean>;
   /** See `Roster.quotes`: whether Reply and Quote are offered. */
   readonly quotes: Readable<boolean>;
+  /** See `Roster.screenRecordings`: whether recording the screen is offered. */
+  readonly screenRecordings: Readable<boolean>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
   /** Each section of Settings' latest save, under way or how it ended. */
@@ -460,6 +462,15 @@ export interface J3Client {
   readonly attachFiles: (
     target: EntryTarget,
     files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+    at?: number,
+  ) => void;
+  /**
+   * Adds a screen recording to the draft, placed at `at` in its text or
+   * after it, and uploads it in resumable pieces (`Drafts.attachRecording`).
+   */
+  readonly attachRecording: (
+    target: EntryTarget,
+    recording: Drafts.DraftRecording,
     at?: number,
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
@@ -860,6 +871,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     sections: services.roster.sections,
     conversationMentions: services.roster.conversationMentions,
     quotes: services.roster.quotes,
+    screenRecordings: services.roster.screenRecordings,
     pairs: services.pairs.state,
     engine: services.engine.state,
     settings: services.settings.state,
@@ -957,6 +969,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     setDraftText: (target, text, mentions, order) =>
       run.sync(services.drafts.setText(target, text, mentions, order)),
     attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
+    attachRecording: (target, recording, at) =>
+      fire(services.drafts.attachRecording(target, recording, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     quoteInDraft: (target, quote) => run.sync(services.drafts.quote(target, quote)),
     unquoteInDraft: (target, index) => run.sync(services.drafts.unquote(target, index)),

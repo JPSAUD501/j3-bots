@@ -42,7 +42,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {}) {
 }
 
 /** An upload untouched this long is removed, and its id answers as unknown. */
-export const UPLOAD_LIFETIME = Duration.hours(24);
+const UPLOAD_LIFETIME = Duration.hours(24);
 
 /** How often uploads are looked over for those past `UPLOAD_LIFETIME`. */
 const SWEEP_INTERVAL = Duration.hours(1);

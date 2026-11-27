@@ -5,6 +5,7 @@ import {
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
   MAX_MESSAGE_LENGTH,
+  MAX_RECORDING_SIZE,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import { documentKind, type DocumentKind } from "../documents/kinds.ts";
@@ -195,6 +196,12 @@ export function fileProblemText(problem: FileProblem, { t, locale }: I18n): stri
       return t("composer.file.refused");
     case "server-setup":
       return t("composer.file.serverSetup");
+    case "recording-too-large":
+      return t("composer.file.recordingTooLarge", { size: fileSize(MAX_RECORDING_SIZE, locale) });
+    case "no-space":
+      return t("composer.file.noSpace");
+    case "unreadable":
+      return t("composer.file.unreadable");
     case "not-paired":
       return t("composer.file.notPaired");
   }

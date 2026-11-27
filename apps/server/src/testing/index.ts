@@ -25,6 +25,7 @@ export { Entries } from "../entries/Entries.ts";
 export { Presence } from "../presence/Presence.ts";
 export { Usage } from "../turns/Usage.ts";
 export { botHasTabs, type FakeViewer, TestBrowserControl, ViewerClosed } from "./browser.ts";
+export { TestDiskSpace } from "./diskSpace.ts";
 export { botAsks } from "./turns.ts";
 export { pastTurns, turnRecorded } from "./usage.ts";
 
