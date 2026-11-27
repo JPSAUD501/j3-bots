@@ -6,7 +6,7 @@ import type { ThemesIntents } from "../shell/data";
 import { ids, SAMPLE_NOW } from "./sample";
 
 /** A theme Scout made: the one bot-made theme the gallery shows. */
-export const sampleBotTheme: SavedTheme = {
+const sampleBotTheme: SavedTheme = {
   id: ThemeId.make("low-tide"),
   definition: {
     name: "Low tide",
