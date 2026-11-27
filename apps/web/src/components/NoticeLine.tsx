@@ -6,6 +6,7 @@ import {
   CirclePauseIcon,
   CornerDownRightIcon,
   OctagonPauseIcon,
+  ShieldAlertIcon,
   UserRoundCheckIcon,
 } from "lucide-react";
 import { useId, useState } from "react";
@@ -17,7 +18,8 @@ import { Button } from "./ui/button";
 /**
  * A quiet line where something stopped, or where a bot changed something the
  * operator should know about, with a way to retry when the server still
- * accepts one. A failed turn's technical words stay behind Details. It is
+ * accepts one. The engine's technical words, of a failed turn or of why the
+ * bot asks before acting, stay behind Details. It is
  * part of the timeline, not an announcement: the header's live region is
  * what tells a screen reader the state changed.
  */
@@ -33,7 +35,10 @@ export function NoticeLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { notice } = entry;
-  const details = notice._tag === "turn-failed" ? notice.details : undefined;
+  const details =
+    notice._tag === "turn-failed" || notice._tag === "asks-before-acting"
+      ? notice.details
+      : undefined;
   const [showDetails, setShowDetails] = useState(false);
   const detailsId = useId();
   const failed =
@@ -47,7 +52,9 @@ export function NoticeLine({
         ? CirclePauseIcon
         : notice._tag === "operator-named"
           ? UserRoundCheckIcon
-          : CircleAlertIcon;
+          : notice._tag === "asks-before-acting"
+            ? ShieldAlertIcon
+            : CircleAlertIcon;
   return (
     <div className="my-2 flex flex-col items-center gap-1">
       <div

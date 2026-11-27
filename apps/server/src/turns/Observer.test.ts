@@ -1104,6 +1104,36 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "tells the conversation once per kind that the AI asks before acting, however often the engine says it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Deploy the site.");
+      const turnId = yield* nextTurn(bot.id);
+      const fullAccess = {
+        _tag: "asks-before-acting",
+        permissionMode: "full-access",
+        details: "Full access is running with approval checks.",
+      } as const;
+      const auto = { _tag: "asks-before-acting", permissionMode: "auto" } as const;
+
+      yield* control.engineNotice({ sessionId: session, turnId, notice: fullAccess });
+      yield* control.engineNotice({ sessionId: session, turnId, notice: fullAccess });
+      yield* control.engineNotice({ sessionId: session, turnId, notice: auto });
+      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+      yield* turnEnded(bot.id);
+      yield* flushed(bot.id);
+
+      const shown = (yield* conversation(bot.id)).flatMap((entry) =>
+        entry._tag === "notice" && entry.notice._tag === "asks-before-acting" ? [entry.notice] : [],
+      );
+      assert.deepStrictEqual(shown, [fullAccess, auto]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("keeps what the engine said of a failure behind its notice", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

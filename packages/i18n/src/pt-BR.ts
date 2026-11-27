@@ -576,6 +576,10 @@ const sentences = {
     "{name} não pôde participar: uma política no computador que roda o J3 Bots recusou o modo de permissão escolhido. As mensagens para {name} esperam até você editar {name} e escolher um modo mais baixo, ou aumentar o limite da política e reiniciar o J3 Bots.",
   "notice.settingsHeld":
     "As novas configurações valem quando o trabalho em segundo plano terminar, e as mensagens esperam até lá. Pare o bot para aplicá-las agora.",
+  "notice.asksBeforeActingAuto":
+    "Pergunta antes de cada ação, apesar de trabalhar em {mode}: a IA dele não pode usar {mode} aqui, com esta conta ou este modelo. Responda às perguntas conforme chegarem, ou edite o bot e escolha outro modelo ou modo de permissão.",
+  "notice.asksBeforeActingFullAccess":
+    "Pergunta antes de agir, apesar de ter {mode}: a IA dele não tem permissão para deixar de perguntar no computador que roda o J3 Bots. Responda às perguntas conforme chegarem, ou peça a quem administra as configurações da IA lá para liberar.",
   "notice.observationFailed":
     "Não deu para acompanhar o trabalho deste bot. O que aparece aqui pode estar atrasado.",
   "notice.handoffFailed": "A mensagem de {name} não chegou",

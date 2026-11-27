@@ -1045,6 +1045,18 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
     notice("notice-member-mode-refused", { _tag: "member-mode-refused", botId: ids.juniper }),
     notice("notice-settings", { _tag: "settings-held" }),
+    notice("notice-asks-auto", {
+      _tag: "asks-before-acting",
+      permissionMode: "auto",
+      details:
+        "Asking about each action: Claude's settings turn auto mode off. Switch this thread to Supervised or Auto-accept edits, or change the setting.",
+    }),
+    notice("notice-asks-full-access", {
+      _tag: "asks-before-acting",
+      permissionMode: "full-access",
+      details:
+        "Could not confirm Claude bypass permissions here, so Full access is running with approval checks.",
+    }),
     notice("notice-behind", { _tag: "observation-failed" }),
     notice("notice-too-long", { _tag: "too-long" }),
   ];

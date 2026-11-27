@@ -236,6 +236,12 @@ export function noticeText(
     case "room-started":
     case "made-for-room":
       return teamNoticeLine(notice, ctx).text;
+    case "asks-before-acting": {
+      const mode = permissionModeText(notice.permissionMode, ctx.i18n).name;
+      return notice.permissionMode === "auto"
+        ? t("notice.asksBeforeActingAuto", { mode })
+        : t("notice.asksBeforeActingFullAccess", { mode });
+    }
   }
 }
 

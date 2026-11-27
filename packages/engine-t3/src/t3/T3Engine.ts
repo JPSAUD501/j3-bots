@@ -172,6 +172,7 @@ import {
   engineAnswersOf,
   liveProviderSessions,
   findRequest,
+  freshNotice,
   isEnded,
   isEndedTool,
   isOver,
@@ -192,6 +193,7 @@ import {
   type Mirror,
   type View,
 } from "./Translate.ts";
+import { logNotice } from "./notices.ts";
 import {
   type ItemRead,
   makeToolReads,
@@ -2129,6 +2131,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             case "event": {
               if (item.sequence <= sequence) return;
               sequence = item.sequence;
+              const notice = freshNotice(mirror, item.event);
+              if (notice !== undefined) {
+                yield* logNotice(notice, input.sessionId, (yield* providerReads).redact);
+              }
               if (!applyEvent(mirror, item.event) || view === undefined) return;
               yield* digestToolCalls(mirror);
               yield* emit(

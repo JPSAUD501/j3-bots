@@ -804,6 +804,21 @@ export const StepSummary = WorkStep.mapFields(({ kind, tool, label }) => ({ kind
 export type StepSummary = typeof StepSummary.Type;
 
 /**
+ * The bot's AI asks the operator before acting, although its permission mode
+ * (`permissionMode`) would have it act on its own: the AI's own settings, its
+ * account or its model do not allow that mode on the computer running
+ * J3 Bots, so each action waits for an approval card. Shown once per working
+ * session, in the bot's own conversation, where those cards are (decision
+ * 0083). `details` is what the engine said of it, technical and scrubbed of
+ * secrets, which clients show only behind "Details".
+ */
+export const AsksBeforeActing = Schema.TaggedStruct("asks-before-acting", {
+  permissionMode: Schema.Literals(["auto", "full-access"]),
+  details: Schema.optionalKey(FailureDetails),
+});
+export type AsksBeforeActing = typeof AsksBeforeActing.Type;
+
+/**
  * Every kind of notice, with the failure class a failed turn's notice takes:
  * the closed one where the server writes, the open one where a client reads.
  */
@@ -908,6 +923,7 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      * room `roomId`, where it opens instead of greeting here.
      */
     Schema.TaggedStruct("made-for-room", { botId: BotId, roomId: RoomId }),
+    AsksBeforeActing,
   ] as const;
 
 /**
