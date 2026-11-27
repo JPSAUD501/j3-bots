@@ -82,10 +82,10 @@ export const ThemeDefinition = Schema.Struct({
 });
 export type ThemeDefinition = typeof ThemeDefinition.Type;
 
-/** Who made a saved theme: the operator, in Settings, or a bot. */
+/** Who made a saved theme: the operator, in Settings, or a bot, null once it was deleted. */
 export const ThemeMaker = Schema.Union([
   Schema.TaggedStruct("operator", {}),
-  Schema.TaggedStruct("bot", { botId: BotId }),
+  Schema.TaggedStruct("bot", { botId: Schema.NullOr(BotId) }),
 ]);
 export type ThemeMaker = typeof ThemeMaker.Type;
 

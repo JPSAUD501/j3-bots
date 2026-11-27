@@ -27,6 +27,7 @@ import {
   toOklch,
 } from "./color.ts";
 import { botColors, type BotColor } from "./names.ts";
+import { themeCssProblem } from "./themeCss.ts";
 import {
   type ColorRole,
   colors,
@@ -636,6 +637,8 @@ function definitionProblem(definition: ThemeDefinition): string | null {
       }
     }
   }
+  const css = definition.css === undefined ? null : themeCssProblem(definition.css);
+  if (css !== null) return css;
   const canvas = toOklch(seedOf(definition.canvas, "dark"));
   if (typeof definition.canvas !== "string") {
     if (canvas.l > 0.5)

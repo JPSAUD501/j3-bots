@@ -35,6 +35,8 @@ export type RosterFrame =
       readonly quotes: true;
       /** The server takes screen recordings (`HTTP_PATHS.recordingUploads`), so clients offer one. */
       readonly screenRecordings: true;
+      /** The server keeps themes (`ThemeRpcs`) and takes `say`'s theme offer, so clients offer them. */
+      readonly themes: true;
     }
   | {
       readonly _tag: "changed";
@@ -232,6 +234,7 @@ export const layer = Layer.effect(
             conversationMentions: true,
             quotes: true,
             screenRecordings: true,
+            themes: true,
           }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter(
