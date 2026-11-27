@@ -8,8 +8,10 @@
  * page of this origin, such as quick access, shows the same theme. A change
  * is a stylesheet swap: no reload, and nothing redrawn frame after frame.
  *
- * The theme's own CSS is held off while Settings is open, so a theme can
- * never hide or disguise the way to another one.
+ * The theme's own CSS applies only on a computer, where a mouse or a
+ * trackpad points and `Ctrl+,` opens Settings, and it is held off while
+ * Settings is open: so a theme can never hide or disguise the way to another
+ * one. A phone or a tablet shows a theme's colors, as the Android app does.
  */
 import { hexColor, renderThemeColorsCss, THEME_BACKGROUND_VARIABLE } from "@j3-bots/design-tokens";
 import { ThemeWindowColors } from "@j3-bots/desktop-bridge";
@@ -28,6 +30,9 @@ export const THEME_ROOT = ":root[data-theme]";
 export const LOOK_KEY = "j3:theme-look";
 const COLORS_ID = "j3-theme";
 const OWN_CSS_ID = "j3-theme-css";
+
+/** Where a theme's own CSS applies: a computer, whose main pointer is a mouse or a trackpad. */
+export const OWN_CSS_MEDIA = "(hover: hover) and (pointer: fine)";
 
 /**
  * A theme as the page draws it: its id, its colors' stylesheet, its own CSS
@@ -92,10 +97,9 @@ function styleElement(id: string): HTMLElement {
   return style;
 }
 
-/** Applies the theme's own CSS, or holds it off without dropping it. */
+/** Applies the theme's own CSS where it may, or holds it off without dropping it. */
 function placeOwnCss(style: HTMLElement) {
-  if (ownCssHeld) style.setAttribute("media", "not all");
-  else style.removeAttribute("media");
+  style.setAttribute("media", ownCssHeld ? "not all" : OWN_CSS_MEDIA);
 }
 
 /** Draws `look` on this page, or the stock theme for null. */

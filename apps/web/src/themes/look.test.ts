@@ -4,7 +4,7 @@ import { themeChoices } from "@j3-bots/client-runtime/presentation";
 import { BotId, ThemeId, type ThemeLibrary } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { drawLook, holdOwnCss, lookOf, THEME_ROOT } from "./look";
+import { drawLook, holdOwnCss, lookOf, OWN_CSS_MEDIA, THEME_ROOT } from "./look";
 
 const own = `[data-slot="bubble"] { border-radius: 4px; }`;
 
@@ -45,7 +45,7 @@ describe("the look a page draws for a theme", () => {
   });
 });
 
-describe("Settings, while it is open", () => {
+describe("a theme's own CSS", () => {
   /** The stylesheets the page applies: a sheet whose media is `not all` applies nowhere. */
   const applied = () =>
     [...document.head.querySelectorAll("style")]
@@ -57,10 +57,12 @@ describe("Settings, while it is open", () => {
     drawLook(null);
   });
 
-  it("shows in the theme's colors without its own CSS, which comes back when it closes", () => {
+  it("applies on a computer, and is held off while Settings is open", () => {
     const look = lookOf(choice("square"), true);
     drawLook(look);
     expect(applied()).toEqual([look?.colors, own]);
+    // On a computer only: a phone or a tablet, with no Ctrl+, to reach Settings, shows the colors.
+    expect(document.getElementById("j3-theme-css")?.getAttribute("media")).toBe(OWN_CSS_MEDIA);
 
     holdOwnCss(true);
     expect(applied()).toEqual([look?.colors]);

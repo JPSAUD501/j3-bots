@@ -32,6 +32,8 @@
             if (look.css !== "") {
               const own = document.createElement("style");
               own.id = "j3-theme-css";
+              // A computer's only, as src/themes/look.ts places it.
+              own.media = "(hover: hover) and (pointer: fine)";
               own.textContent = look.css;
               document.head.append(own);
             }

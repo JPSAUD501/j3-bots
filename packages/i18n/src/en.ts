@@ -1084,7 +1084,7 @@ export const en = {
   "settings.themes.delete.confirm": "Delete",
   "settings.themes.failed": "That didn't work. Check the connection and try again.",
   "settings.themes.styledElsewhere":
-    "Some themes also change shapes and spacing, which shows only on the computer and in the browser. Here they show their colors.",
+    "Some themes also change shapes and spacing, which shows only on a computer. Here they show their colors.",
   "settings.themes.preview.bot": "The report is ready. Want me to send it?",
   "settings.themes.preview.you": "Yes, send it.",
   "settings.themes.create": "Create from colors",

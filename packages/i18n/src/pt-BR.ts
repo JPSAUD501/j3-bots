@@ -1085,7 +1085,7 @@ const sentences = {
   "settings.themes.delete.confirm": "Apagar",
   "settings.themes.failed": "Não deu certo. Confira a conexão e tente de novo.",
   "settings.themes.styledElsewhere":
-    "Alguns temas também mudam formas e espaçamentos, o que aparece só no computador e no navegador. Aqui eles mostram as cores.",
+    "Alguns temas também mudam formas e espaçamentos, o que aparece só no computador. Aqui eles mostram as cores.",
   "settings.themes.preview.bot": "O relatório está pronto. Quer que eu envie?",
   "settings.themes.preview.you": "Sim, pode enviar.",
   "settings.themes.create": "Criar a partir de cores",

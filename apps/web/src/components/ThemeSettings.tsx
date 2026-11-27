@@ -8,6 +8,7 @@ import { PlusIcon } from "lucide-react";
 import { useDeferredValue, useId, useMemo, useState } from "react";
 import { useBots, useI18n } from "../app/context";
 import { cn } from "../lib/cn";
+import { useThemeCssApplies } from "../themes/useThemeCssApplies";
 import { setThemeId, usePreferences } from "../preferences/preferences";
 import { ThemePreview } from "../themes/ThemePreview";
 import { type ShownThemes, useShownThemes, useThemePicture } from "../themes/ThemeRuntime";
@@ -52,6 +53,10 @@ function Themes({
   const groupName = useId();
   const [editing, setEditing] = useState<ThemeEditing | null>(null);
   const [failed, setFailed] = useState(false);
+  // On a phone or a tablet a theme shows its colors only.
+  const cssApplies = useThemeCssApplies();
+  const styledElsewhere =
+    !cssApplies && choices.some((choice) => choice.definition.css !== undefined);
   const [busy, setBusy] = useState(false);
   const shown = themes.shown;
   const botList = useMemo(() => [...bots.values()], [bots]);
@@ -156,6 +161,9 @@ function Themes({
             </div>
           )}
         </div>
+      )}
+      {styledElsewhere && (
+        <p className="text-xs text-muted-foreground">{t("settings.themes.styledElsewhere")}</p>
       )}
       {failed && (
         <p role="status" className="text-xs text-blocked">
