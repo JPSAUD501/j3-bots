@@ -9,6 +9,7 @@ import * as AdminClient from "../admin/AdminClient.ts";
 import * as Host from "../system/Host.ts";
 import * as Network from "../system/Network.ts";
 import * as Systemd from "../system/Systemd.ts";
+import { diagnosticsCommand } from "./diagnostics.ts";
 import { doctorCommand } from "./doctor.ts";
 import { engineCommand } from "./engine.ts";
 import { pairCommand } from "./pair.ts";
@@ -26,6 +27,7 @@ const cli = Command.make("j3-bots").pipe(
   Command.withSubcommands([
     serveCommand,
     doctorCommand,
+    diagnosticsCommand,
     pairCommand,
     providerCommand,
     serviceCommand,

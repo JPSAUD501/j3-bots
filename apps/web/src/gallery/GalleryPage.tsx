@@ -229,7 +229,14 @@ import { Switch } from "../components/ui/switch";
 import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
-import type { DesktopLocal, DesktopUpdate, RemoteServerUpdate } from "../shell/data";
+import type {
+  DesktopLocal,
+  DesktopUpdate,
+  DiagnosticsIntents,
+  RemoteServerUpdate,
+} from "../shell/data";
+import { PrivacySection } from "../components/Privacy";
+import { DiagnosticsSheet, type DiagnosticsSheetState } from "../components/Diagnostics";
 import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
@@ -259,7 +266,7 @@ import {
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { sampleSentEvents } from "./usageData";
-import { SentPanel, UsageDataSection } from "../components/UsageData";
+import { SentPanel } from "../components/UsageData";
 import { useSampleSecrets } from "./sampleSecrets";
 import { ordered, withOwnReaction } from "./entries";
 import { galleryVariants } from "./variants";
@@ -383,7 +390,7 @@ export default function GalleryPage() {
                 <EngineSettingsSection />
                 <SecretsGallerySection />
                 <UsageGallerySection />
-                <UsageDataGallerySection />
+                <PrivacyGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
                 <FirstRunWideSection />
@@ -4571,8 +4578,14 @@ function SecretsGallerySection() {
   );
 }
 
-/** The About page's usage data switch, on a server whose `telemetry` is `setting`, with `save`. */
-function UsageDataFrame({
+/** A diagnostics zip that never arrives: the gallery has no server to make one. */
+const sampleDiagnostics: DiagnosticsIntents = { save: () => Promise.resolve(false) };
+
+/**
+ * The About page's privacy area, on a server whose `telemetry` is `setting`,
+ * with `save`, and which makes a diagnostics zip.
+ */
+function PrivacyFrame({
   label,
   setting,
   save = { _tag: "idle" },
@@ -4584,8 +4597,8 @@ function UsageDataFrame({
   connected?: boolean;
 }) {
   return (
-    <Frame label={label} width={390} height={260} padded>
-      <UsageDataSection
+    <Frame label={label} width={390} height={340} padded>
+      <PrivacySection
         settings={{ ...team.settings, telemetry: setting }}
         save={save}
         connected={connected}
@@ -4593,31 +4606,50 @@ function UsageDataFrame({
           updateSettings: nothing,
           usageData: { sent: () => Promise.resolve(sampleSentEvents), record: nothing },
         }}
+        diagnostics={sampleDiagnostics}
       />
     </Frame>
   );
 }
 
-function UsageDataGallerySection() {
+/** The sheet before Download diagnostics saves, as its popup shows it, in `state`. */
+function DiagnosticsSheetFrame({ label, state }: { label: string; state: DiagnosticsSheetState }) {
   return (
-    <Section title="Usage data">
+    <Frame label={label} width={390} height={460}>
+      <div className="flex h-full items-center bg-scrim p-4">
+        <div className="w-full rounded-xl border border-border bg-surface p-5 shadow-overlay">
+          <DiagnosticsSheet
+            titleId={`diagnostics-${state}`}
+            state={state}
+            onSave={nothing}
+            onCancel={nothing}
+          />
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
+function PrivacyGallerySection() {
+  return (
+    <Section title="Settings → About: privacy (usage data and diagnostics)">
       <div className="flex flex-wrap gap-4">
-        <UsageDataFrame
+        <PrivacyFrame
           label="On, as a new install starts"
           setting={{ enabled: true, heldOff: false }}
         />
-        <UsageDataFrame label="Turned off" setting={{ enabled: false, heldOff: false }} />
-        <UsageDataFrame
+        <PrivacyFrame label="Usage data turned off" setting={{ enabled: false, heldOff: false }} />
+        <PrivacyFrame
           label="Turning off: the switch shows the save under way"
           setting={{ enabled: true, heldOff: false }}
           save={{ _tag: "saving", changes: { enabled: false } }}
         />
-        <UsageDataFrame
+        <PrivacyFrame
           label="The save failed"
           setting={{ enabled: true, heldOff: false }}
           save={{ _tag: "failed", changes: { enabled: false } }}
         />
-        <UsageDataFrame
+        <PrivacyFrame
           label="Held off on the server's computer (DO_NOT_TRACK, CI, or J3_TELEMETRY_ENABLED)"
           setting={{ enabled: true, heldOff: true }}
         />
@@ -4645,6 +4677,9 @@ function UsageDataGallerySection() {
             onClose={nothing}
           />
         </Frame>
+        <DiagnosticsSheetFrame label="Diagnostics: what is in it, and Save" state="ready" />
+        <DiagnosticsSheetFrame label="Diagnostics: the server makes the file" state="preparing" />
+        <DiagnosticsSheetFrame label="Diagnostics: the file did not arrive" state="failed" />
       </div>
     </Section>
   );

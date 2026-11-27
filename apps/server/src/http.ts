@@ -4,6 +4,11 @@ import {
   AttachmentId,
   Conflict,
   DESKTOP_APP_ORIGINS,
+  DIAGNOSTICS_API_VERSION,
+  DIAGNOSTICS_HTTP_PATH,
+  DIAGNOSTICS_MEDIA_TYPE,
+  DiagnosticsRequest,
+  diagnosticsFileName,
   HTTP_PATHS,
   Invalid,
   J3Rpcs,
@@ -35,10 +40,12 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../package.json" with { type: "json" };
+import { PUBLIC_NAME, REFUSED_NAME } from "./logs/annotations.ts";
 import { Attachments } from "./attachments/Attachments.ts";
 import { PieceCutOff, RecordingUploads } from "./attachments/RecordingUploads.ts";
 import { WorkImages } from "./attachments/WorkImages.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
+import { Diagnostics } from "./diagnostics/Diagnostics.ts";
 import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
@@ -66,6 +73,7 @@ const serverInfo = Layer.unwrap(
       version: packageJson.version,
       startedAt: yield* DateTime.now,
       updateApi: UPDATE_API_VERSION,
+      diagnostics: DIAGNOSTICS_API_VERSION,
     };
     const response = yield* HttpServerResponse.schemaJson(ServerInfo)(info).pipe(Effect.orDie);
     return HttpRouter.add("GET", HTTP_PATHS.server, Effect.succeed(response));
@@ -106,6 +114,7 @@ const requestDevice = Effect.gen(function* () {
 });
 
 const tooLarge = HttpServerResponse.empty({ status: 413 });
+const badRequest = HttpServerResponse.empty({ status: 400 });
 const unsupportedMediaType = HttpServerResponse.empty({ status: 415 });
 
 /**
@@ -315,6 +324,42 @@ const cancelRecording = HttpRouter.add(
   }),
 );
 
+/** A diagnostics request is the client's surface, release and system: well under this. */
+const DIAGNOSTICS_BODY_LIMIT = 4 * 1024;
+
+const decodeDiagnosticsRequest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(DiagnosticsRequest),
+);
+
+/**
+ * The server's diagnostics zip (`DIAGNOSTICS_HTTP_PATH`), for any paired
+ * device: each is the operator's. JSON only, so a page elsewhere cannot ask
+ * for one without a preflight the server never grants.
+ */
+const diagnostics = HttpRouter.add(
+  "POST",
+  DIAGNOSTICS_HTTP_PATH,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (!isJson(request.headers["content-type"])) return unsupportedMediaType;
+    if (Option.isNone(yield* requestDevice)) return unauthorized;
+    const body = yield* readText(request, DIAGNOSTICS_BODY_LIMIT).pipe(Effect.result);
+    if (body._tag === "Failure") {
+      return body.failure._tag === "BodyTooLarge" ? tooLarge : badRequest;
+    }
+    const asked = yield* decodeDiagnosticsRequest(body.success).pipe(Effect.option);
+    if (Option.isNone(asked)) return badRequest;
+    const zip = yield* (yield* Diagnostics).zip(asked.value.client);
+    return HttpServerResponse.stream(zip, {
+      contentType: DIAGNOSTICS_MEDIA_TYPE,
+      headers: {
+        "content-disposition": `attachment; filename="${diagnosticsFileName(yield* DateTime.now)}"`,
+        "cache-control": "no-store",
+      },
+    });
+  }),
+);
+
 /**
  * An image a step of a bot's work looked at, read from the bot's workspace as
  * it is now, typed by what its bytes hold. A page that opens its address on
@@ -385,17 +430,26 @@ const refusedNameLogger = (
   publicOrigin: Option.Option<ServerOrigin>,
   refused: RefusedNames["Service"],
 ) => {
-  const answered = Option.match(publicOrigin, {
+  const publicName = Option.map(publicOrigin, (origin) => URL.parse(origin)?.hostname ?? origin);
+  const answered = Option.match(publicName, {
     onNone: () => "localhost and IP addresses; publicOrigin is not set",
-    onSome: (origin) => `localhost, IP addresses and ${URL.parse(origin)?.hostname ?? origin}`,
+    onSome: () => `localhost, IP addresses and the name in ${PUBLIC_NAME}`,
+  });
+  // The names are the operator's network's: in annotations, which a diagnostics zip leaves out.
+  const annotations = (name: string) => ({
+    [REFUSED_NAME]: name,
+    ...Option.match(publicName, {
+      onNone: () => ({}),
+      onSome: (each) => ({ [PUBLIC_NAME]: each }),
+    }),
   });
   return (host: string | undefined) =>
     Effect.gen(function* () {
       const name = requestedName(host);
       if (!(yield* refused.record(name))) return;
       yield* Effect.logWarning(
-        `Refused a plain-HTTP request for ${name} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at ${name}, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
-      );
+        `Refused a plain-HTTP request for the name in ${REFUSED_NAME} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at that name, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
+      ).pipe(Effect.annotateLogs(annotations(name)));
     });
 };
 
@@ -450,6 +504,7 @@ export const routes = Layer.mergeAll(
   recordingPiece,
   cancelRecording,
   workImage,
+  diagnostics,
   Webhook.route,
   EventWebhook.route,
   UpdateRoutes.routes,

@@ -4,6 +4,8 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   DESKTOP_APP_ORIGINS,
+  DIAGNOSTICS_API_VERSION,
+  DIAGNOSTICS_HTTP_PATH,
   HTTP_PATHS,
   PROTOCOL_VERSION,
   ServerInfo,
@@ -16,10 +18,13 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
+import { unzipSync } from "fflate";
 import { ServerConfig, type ServerConfigShape } from "./config.ts";
+import { DIAGNOSTICS_FILES } from "./diagnostics/build.ts";
 import { Devices } from "./devices/Devices.ts";
 import * as Http from "./http.ts";
 import * as TestDomain from "./testing/domain.ts";
@@ -135,6 +140,10 @@ const recordLogs = Logger.layer([
 /** The logged lines that mention `text`. */
 const logLinesWith = (text: string) => logged.filter((line) => line.includes(text));
 
+/** A logged line's message. */
+const messageOfLine = (line: string) =>
+  Schema.decodeSync(Schema.fromJsonString(Schema.Struct({ message: Schema.String })))(line).message;
+
 /** The client listener over the test domain, its configuration changed by `configure`. */
 const served = (configure: (config: ServerConfigShape) => ServerConfigShape) =>
   Http.serve(NodeHttpServer.layerTest, { logAddress: false }).pipe(
@@ -160,6 +169,56 @@ it.layer(served((config) => config))("http", (it) => {
         Effect.flatMap(HttpClientResponse.schemaBodyJson(ServerInfo)),
       );
       assert.strictEqual(info.protocolVersion, PROTOCOL_VERSION);
+      assert.strictEqual(info.diagnostics, DIAGNOSTICS_API_VERSION);
+    }),
+  );
+
+  it.effect("gives a paired device the diagnostics zip, and no one else", () =>
+    Effect.gen(function* () {
+      const { token } = yield* (yield* Devices).mint("Laptop");
+      const asked = (body: string, contentType = "application/json") =>
+        HttpClientRequest.post(DIAGNOSTICS_HTTP_PATH).pipe(
+          HttpClientRequest.bodyText(body, contentType),
+        );
+      const request = asked(
+        JSON.stringify({ client: { surface: "desktop", version: "0.14.0", os: "macos" } }),
+      );
+      const status = (each: HttpClientRequest.HttpClientRequest) =>
+        HttpClient.execute(each).pipe(Effect.map((response) => response.status));
+
+      assert.strictEqual(yield* status(request), 401);
+      assert.strictEqual(
+        yield* status(request.pipe(HttpClientRequest.bearerToken("not-a-device-token"))),
+        401,
+      );
+      // A page elsewhere may POST plain text without a preflight: refused unread.
+      assert.strictEqual(
+        yield* status(
+          asked(JSON.stringify({ client: {} }), "text/plain").pipe(
+            HttpClientRequest.bearerToken(token),
+          ),
+        ),
+        415,
+      );
+      assert.strictEqual(
+        yield* status(
+          asked(JSON.stringify({ client: {} })).pipe(HttpClientRequest.bearerToken(token)),
+        ),
+        400,
+      );
+
+      const response = yield* HttpClient.execute(
+        request.pipe(HttpClientRequest.bearerToken(token)),
+      );
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers["content-type"], "application/zip");
+      assert.match(
+        response.headers["content-disposition"] ?? "",
+        /^attachment; filename="j3-bots-diagnostics-\d{4}-\d{2}-\d{2}-\d{4}\.zip"$/,
+      );
+      const files = unzipSync(new Uint8Array(yield* response.arrayBuffer));
+      assert.deepStrictEqual(Object.keys(files), [...DIAGNOSTICS_FILES]);
+      assert.include(new TextDecoder().decode(files["manifest.json"]), `"surface": "desktop"`);
     }),
   );
 
@@ -357,7 +416,9 @@ it.layer(
       assert.notInclude(refused.body, "bots.example.com");
       const lines = logLinesWith("other.example.com");
       assert.lengthOf(lines, 1);
-      assert.include(lines[0], "bots.example.com");
+      // The server's own name, in an annotation the diagnostics zip leaves out, never its message.
+      assert.include(lines[0], '"publicName":"bots.example.com"');
+      assert.notInclude(messageOfLine(lines[0] ?? ""), "bots.example.com");
     }),
   );
 

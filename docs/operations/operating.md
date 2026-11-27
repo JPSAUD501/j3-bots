@@ -67,9 +67,36 @@ journalctl --user -u j3-bots -n 200      # the last 200 lines
 
 The server writes one JSON object per line: wakes, dispatches and outcomes with identifiers, not message text. If `journalctl --user` shows nothing, the journal is not stored on disk; run `sudo mkdir -p /var/log/journal` and `sudo systemctl restart systemd-journald`.
 
+The server also keeps its own copy of the same lines in `~/.j3-bots/logs/server.log`, however it runs. The file is moved aside to `server.log.1` and on at 4 MiB, and at most five files are kept (20 MiB). The diagnostics zip reads its log from there.
+
+## Diagnostics
+
+When something behaves oddly and you want help, send a diagnostics zip to whoever helps you. It says how the server runs, and holds no messages, no names and no secrets ([decision 0100](../decisions/0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md)). `README.md` inside lists each file and what it holds.
+
+From any paired device, open **Settings → About and updates**, and under **Privacy**, **Download diagnostics**. The web client and the desktop app save the file; the Android app opens the share sheet. From a shell on the server's machine, for when no client opens:
+
+```sh
+j3-bots diagnostics                     # j3-bots-diagnostics-<date>-<time>.zip in this folder
+j3-bots diagnostics --out support.zip
+```
+
+Like `doctor` ([What doctor says](install.md#what-doctor-says)), it acts on the installed service's data directory, else on the one `j3-bots serve` would use from this shell. It changes nothing, and it never writes over anything already at the file's name. With the server stopped it still writes the zip, without the engine's state or the providers'; it says so. Its shell is not the server's environment, so its zip says whether usage data is on only when the switch is off; otherwise it says it does not know.
+
+The zip holds:
+
+- the server's log and the engine's for the last 7 days, the newest lines when there are more;
+- what failed;
+- the update and the migrations;
+- each provider's state;
+- the settings, with secrets reduced to set or not set;
+- counts of bots, rooms, routines, connectors and conversations;
+- whether usage data is on, and the last events it sent.
+
+A secret value the server keeps, anything shaped like a token, your home folder, your user name, the machine's name, IP addresses and email addresses are replaced before anything is written. The zip is at most 24 MiB. Read `README.md` before you send it, and send it where you choose: J3 Bots never sends it anywhere.
+
 ## Usage data
 
-The server sends anonymous usage data until you turn it off: what it sends and what it never does is in [Usage data](../product/usage-data.md). The switch is in Settings → About and updates, and takes effect at once for the whole server. To keep it off from the server's environment instead, whatever the switch says:
+The server sends anonymous usage data until you turn it off: what it sends and what it never does is in [Usage data](../product/usage-data.md). The switch is in Settings → About and updates → Privacy, and takes effect at once for the whole server. To keep it off from the server's environment instead, whatever the switch says:
 
 | Variable | What it does |
 | --- | --- |

@@ -23,6 +23,8 @@ export const HOME_ENTRIES = {
   shared: "shared",
   /** What the server keeps for itself outside the database. */
   state: "state",
+  /** The server's own copy of its log, `logs/server.log` and the files moved aside from it. */
+  logs: "logs",
   attachments: "attachments",
   /** What `j3-bots update` copied before it changed release, one folder per update. */
   backups: "backups",
@@ -84,6 +86,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * state/runtime.json     the release whose data this home holds, and a transition under way
  * state/release-feed.json  the newer releases the server last found, and whether they verified
  * state/npm-project/package.json  empty: the project a command connector's npm launcher runs in
+ * logs/server.log        the server's log, one JSON object per line, and server.log.1 to .4 before it
  * attachments/           file bytes, by digest
  * backups/<snapshot>/    the databases and settings an update copied first
  * vault/vault.sqlite     the sealed secrets and connector secrets; in no snapshot
@@ -127,6 +130,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
         harnesses,
         shared,
         state,
+        logs,
         attachments,
         backups,
         secrets,
@@ -146,6 +150,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
           HOME_ENTRIES.bots,
           shared,
           state,
+          logs,
           attachments,
           backups,
           secrets,

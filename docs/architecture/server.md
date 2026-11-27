@@ -74,6 +74,8 @@ harnesses/
     <v>.partial      a download cut off, resumed by the next install of that version
     <v>.staging/     where a download is unpacked, before it moves into versions/<v>/
   codex/             the same for Codex
+logs/
+  server.log         the server's own log, JSON lines; moved aside to server.log.1 to .4 at 4 MiB each
 state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
   runtime.json       the release this home's data was last handed to, whether by a rollback, and a transition under way
@@ -1160,7 +1162,7 @@ The operator dictates into the composer; the words land there and nothing is sen
 
 ## Client API
 
-Clients use one WebSocket to the server, with typed requests and subscriptions defined in `packages/contracts`, plus a few HTTP routes for what a socket does badly (pairing, file transfer), and the media socket that shows the bot's browser ([The bot's browser](#the-bots-browser)).
+Clients use one WebSocket to the server, with typed requests and subscriptions defined in `packages/contracts`, plus a few HTTP routes for what a socket does badly (pairing, file transfer, the [diagnostics zip](#diagnostics)), and the media socket that shows the bot's browser ([The bot's browser](#the-bots-browser)).
 
 Each of the server's listeners (this one, the tool endpoint and the admin channel) binds only once its routes are built, so a request that arrives the moment a port opens is answered, never dropped. Node accepts connections as soon as a server binds and answers a request only once a handler is attached; bound first, a listener would leave a request that arrived in between waiting forever. Between the bind and the attach, Effect resumes from Node's listen callback synchronously, with nothing that waits in between, so no request can arrive unhandled. A step a listener takes after binding that does wait, such as setting the admin socket's mode, runs once its handler is attached.
 
@@ -1237,6 +1239,42 @@ A client asks the server to update itself through `POST /api/update/v1/start`, w
 - `failed`: bringing the release before back failed too, and `j3-bots update --rollback` finishes it; or the unit ended without recording how, as when the machine restarted under it (`interrupted`). A run whose unit has ended while it has not is ended that way the next time the status is read. The detail of any ending but `done` names the unit's journal, where what the update printed is.
 
 While a run has not ended, the status' `state` is its stage and `run` names it, so a client follows it by polling `status`. A stream would end with the restart, and a client already polls `GET /api/server` while the server is down. The server logs the run, the versions and the device when it starts one, and how it ended when it finds one cut off, never a token.
+
+## Diagnostics
+
+A diagnostics zip says how the server runs, for whoever helps the operator, and holds nothing of the person ([decision 0100](../decisions/0100-a-diagnostics-zip-holds-what-the-server-knows-and-nothing-of-the-person.md)). The files it holds, each explained in its own `README.md`, are listed in the decision record. Two ways make it, and both make the same zip (`apps/server/src/diagnostics/build.ts`):
+
+- **`POST /api/diagnostics/v1`** (`DIAGNOSTICS_HTTP_PATH`).
+  - It takes the device token as a bearer, and a JSON body naming the client that asks (`DiagnosticsRequest`).
+  - It answers `415` for any type but JSON, before anything else. Without a valid token it answers `401`; for a body over 4 KiB, `413`; for one that does not decode, `400`.
+  - Otherwise it streams the zip as `application/zip`, with a file name of `diagnosticsFileName` and `cache-control: no-store`.
+  - Any paired device may ask, as for every route: a paired device holds the operator's authority.
+  - The server names the route's version in `ServerInfo.diagnostics`.
+- **`j3-bots diagnostics`** opens the database read-only, and makes its file with mode 0600, refusing anything already at its name, a link included. It removes the file again when no whole zip was written. Over the admin channel, it asks a running server for the engine's state and when the server started ([Operating: diagnostics](../operations/operating.md#diagnostics)). Only the running server knows what in its environment keeps usage data off, so the command's zip says it does not know.
+
+**Where the logs come from.**
+
+- **The server's log.** The server keeps the same JSON lines it writes to the console in `logs/server.log`, batched once a second, so a zip has them however the server runs (`ServerLogFile`). It is private state: each write checks the folder with `Layout.writable` and opens the file so that a link at its name is refused (`writeInPlace`), and a write that fails is dropped, never stopping the server. Only a line that decodes as the server's own log shape enters the zip, re-encoded without its fiber, scrubbed, its cause then cut at 8 KiB. A line that names something of the operator's network names it in an annotation the zip leaves out (`logs/annotations.ts`): the name a refused plain-HTTP request asked for is `refusedName`, and the name `publicOrigin` serves the server at, which the line gives beside it, is `publicName`: the scrubber takes out the name set now, and the annotation keeps an earlier one out of a line written before it changed.
+- **The engine's log.** It comes from the engine's trace file, through the adapter ([Engine: what J3 Bots uses](engine.md#what-j3-bots-uses-and-what-it-leaves-alone)).
+
+Each log is read newest first, file by file, and stops at the first file older than 7 days. It keeps the newest lines that fit its budget: 14 MiB for the server's and 6 MiB for the engine's. The zip is at most 24 MiB (`MAX_DIAGNOSTICS_SIZE`).
+
+**The zip is made as it is sent.**
+
+- Each file is made in turn, scrubbed, deflated and passed on before the next is read.
+- At most one log's kept lines are in memory at a time.
+- A file that cannot be made says so: `{ "unreadable": … }`, with why. The other files are still made.
+- A failure to read the secret values the scrubber needs stops the zip instead, since without them a secret could pass: a query that fails, or a secret store, the engine's included, that is there and cannot be read.
+
+**One scrubber** (`scrub.ts`) goes over every file's text before it enters the zip: a log line by line, a JSON file value by value (`scrubJson`), so it still parses whatever a secret looks like, and every text whole before it is cut. It replaces:
+
+- the values the server holds as secrets, read fresh for each zip: the vault's, the webhooks', the push registrations', the bridge key, and the engine's, as the adapter lists them; of a record kept as a JSON document, such as a connector's sign-in, only the values typed as secret;
+- credentials, and anything shaped like a token;
+- email addresses;
+- the home folder, the OS user name, the host name and the name in `publicOrigin`;
+- IP addresses other than loopback.
+
+Ids stay, so a flow can be followed across files.
 
 ## J3 Bots' own harnesses
 
@@ -1323,7 +1361,7 @@ The server sends anonymous usage data to J3 Bots' PostHog project while its envi
 - **Where events come from.** The domain records most of them as what they describe is kept, after its transaction commits: a bot or a room made, a message sent, a turn's end as the observer closes it, a routine's run, a connector added or removed. A report loop records `server.started` and an update the server sees on starting (`update.applied`, from the release it ran last), and every ten minutes an update a client started that ended rolled back or failed, and once a UTC day `install.active` with the counts of bots, active rooms, enabled routines and connectors. What it already told (the day, the release, the update run) is kept in the database, in `telemetry_install` (migration 0065), so a restart does not tell it again.
 - **Clients.** A client calls `telemetry.hello` once its socket opens with what it is (`TelemetryClient`: surface, release, system family and the hash of its own random id), but only against a server whose settings carry `telemetry`. The handlers keep it for that socket and attach it to the events that socket's requests cause (`surface`, `clientVersion`, `clientOs`, `clientDevice`). The first hello of a device in a UTC day records `client.connected`, counted in memory, so after a restart the device's first socket that day counts again. `telemetry.record` takes the events only a client sees (`ClientTelemetryEvent`: `connector-app.shown`, `feature.used`). While usage data is off, the server drops those events and records no `client.connected`; what a hello said stays with its socket, in memory, and leaves only with an event that socket's requests cause once usage data is on. A change of the settings is kept and applied together, even when its request is cancelled, so a switch turned off takes effect.
 - **Delivery.** What the server says of itself is read once there is something to send, and its install kind within five seconds or `manual`, so nothing of it is on the start's way. Events wait in memory, at most 1,000, the oldest dropped past that. Every ten seconds up to 50 go to `<host>/batch/` in one request, each with its own UUID, with a ten-second timeout. A failed batch is sent again before anything newer, after an exponential backoff with jitter from two seconds to five minutes, and dropped after six tries, or at once on `400`, `401`, `403` or `413`. A batch on its way as the switch goes off is never tried again, and nothing is taken to be sent while the server's own details are read. The answer is read to its end within the timeout, whatever its status. The server's stop waits at most a second to send what waits. Sending never fails or holds anything else. J3 Bots never calls PostHog's management API.
-- **What was sent.** Each batch that went is kept, every event as the JSON text that left, in `telemetry_sent`, the newest 100 (`telemetry.sent`, which every client shows as "See what is sent", and `Telemetry.sent` for a diagnostics export).
+- **What was sent.** Each batch that went is kept, every event as the JSON text that left, in `telemetry_sent`, the newest 100 (`telemetry.sent`, which every client shows as "See what is sent", and the diagnostics zip holds as `usage-data.json`, both read by `sentBodies`).
 - **On and off.** `TelemetrySwitch` combines the environment's rules, read once at start, with the operator's switch in the settings (`settings.update` with `telemetry`), which takes effect at once and drops what waits when it goes off. `Settings.telemetry` tells clients whether the server offers usage data (`enabled`, and `heldOff` while the environment keeps it off whatever the switch says). The environment's rules, first match wins:
   1. `DO_NOT_TRACK` set to a yes keeps it off.
   2. `J3_TELEMETRY_ENABLED` set to anything but a yes keeps it off; a value that is neither a yes nor a no is logged as a warning.

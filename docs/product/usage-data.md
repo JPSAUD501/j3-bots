@@ -37,11 +37,11 @@ Messages, names, memory, files, paths, addresses, hostnames, IP addresses, email
 
 ## See what is sent
 
-In Settings → About and updates, **See what is sent** shows the last 100 events your server sent, exactly as they left.
+In Settings → About and updates, under **Privacy**, **See what is sent** shows the last 100 events your server sent, exactly as they left. A diagnostics zip you download there holds them too, with whether usage data is on.
 
 ## Turn it off
 
-- **Settings → About and updates → Share anonymous usage data.** Off for the whole server, at once, from any of your devices. What was waiting to be sent is dropped.
+- **Settings → About and updates → Privacy → Share anonymous usage data.** Off for the whole server, at once, from any of your devices. What was waiting to be sent is dropped.
 - **`DO_NOT_TRACK=1`** in the server's environment keeps it off whatever the switch says.
 - **`J3_TELEMETRY_ENABLED=false`** in the server's environment does the same.
 

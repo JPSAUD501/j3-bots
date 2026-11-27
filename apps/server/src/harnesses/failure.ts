@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import type { PrivateLocationExposed } from "../Layout.ts";
-import type { InPlaceFailure } from "../inPlace.ts";
+import type { InPlaceFailure } from "../home/inPlace.ts";
 
 /** Why an install or an update of J3 Bots' copy of a harness did not finish (`HarnessInstallFailure`). */
 export class HarnessFailed extends Schema.TaggedError<HarnessFailed>()("HarnessFailed", {

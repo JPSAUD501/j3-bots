@@ -376,6 +376,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly serverUpdate?: RemoteServerUpdate;
   /** The way back to the update prompt: what waits behind it, and opening it again. */
   readonly updatePrompt?: UpdatePromptIntents;
+  /** The server's diagnostics zip. Absent from a server that makes none. */
+  readonly diagnostics?: DiagnosticsIntents;
   /** What each release lets people do, up to the server's, and its mark after an update. */
   readonly whatsNew: WhatsNewIntents;
   /** The server's anonymous usage data: what it sent, and what only this window sees. */
@@ -529,6 +531,12 @@ interface UpdatePromptIntents {
 }
 
 /** Updating the desktop app, which carries its own page. */
+/** Getting the server's diagnostics zip to the operator (Settings → About). */
+export interface DiagnosticsIntents {
+  /** Gets the zip from the server and saves it: whether it was saved. */
+  readonly save: () => Promise<boolean>;
+}
+
 export interface DesktopUpdate {
   readonly status: UpdateStatus;
   /** Checks for an update now, unless one is on its way or ready. */

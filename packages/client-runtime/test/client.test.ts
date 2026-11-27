@@ -3,6 +3,7 @@ import {
   BotId,
   CommandId,
   DeviceId,
+  DIAGNOSTICS_API_VERSION,
   DeviceToken,
   type Entry,
   EntryId,
@@ -59,9 +60,9 @@ import {
   type ConnectionState,
   type ReconnectSettings,
 } from "../src/connection/Connection.ts";
+import { AttachmentUnavailable, Files } from "../src/files/Files.ts";
 import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
-import { AttachmentUnavailable, Files } from "../src/files/Files.ts";
 import { FILE_MARK } from "../src/files/placed.ts";
 import { passageOf, type QuotableMessage, replyTo } from "../src/presentation/quotes.ts";
 import { waitFor } from "../src/Store.ts";
@@ -874,6 +875,24 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const current =
         devices._tag === "ready" ? devices.value.find((device) => device.current) : null;
       assert.strictEqual(current?.name, "Test client");
+    }).pipe(Effect.provide(client())),
+  );
+
+  it.effect("downloads the server's diagnostics zip while the server says it makes one", () =>
+    Effect.gen(function* () {
+      const connection = yield* Connection;
+      assert.strictEqual(connection.server.get(), null);
+      yield* pairAndConnect;
+      assert.strictEqual(connection.server.get()?.diagnostics, DIAGNOSTICS_API_VERSION);
+
+      const zip = yield* (yield* Files).diagnostics({ surface: "web", version: null, os: "linux" });
+      assert.strictEqual(zip.mediaType, "application/zip");
+      // A zip starts with its first file's local header.
+      assert.deepStrictEqual(Array.from(zip.bytes.subarray(0, 4)), [0x50, 0x4b, 0x03, 0x04]);
+
+      // Signed out, the device is offered nothing of the server.
+      assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
+      assert.strictEqual(yield* waitFor(connection.server, (info) => info === null), null);
     }).pipe(Effect.provide(client())),
   );
 

@@ -143,6 +143,7 @@ import { saveText } from "./openFile";
 import { useWorkFolds } from "./workFolds";
 import { readTemplate, useTemplateDrop } from "./templateFiles";
 import { updatable, useDesktopUpdate, useLaunchUpdate, useReportSaving } from "./appUpdate";
+import { useDiagnostics } from "./diagnostics";
 import { useRemoteServerUpdate } from "./serverUpdate";
 import { useUpdatePrompt } from "./updatePrompt";
 import { useWhatsNew } from "./whatsNew";
@@ -953,6 +954,7 @@ function LiveShell({
   const serverUpdate = useRemoteServerUpdate();
   // The way back to the update prompt after "Later", in the roster's footer.
   const updatePrompt = useUpdatePrompt(false);
+  const diagnostics = useDiagnostics();
   const whatsNew = useWhatsNew();
   const shortcut = useDesktopShortcut();
   const lookingAt = useDesktopLookingAt();
@@ -1610,6 +1612,7 @@ function LiveShell({
     ...(local === undefined ? { serverUpdate } : { local }),
     ...(update === undefined ? {} : { update }),
     updatePrompt: { entry: updatePrompt.entry, reopen: updatePrompt.reopen },
+    ...(diagnostics === undefined ? {} : { diagnostics }),
     whatsNew,
     ...(shortcut === undefined ? {} : { shortcut }),
     ...(lookingAt === undefined ? {} : { lookingAt }),

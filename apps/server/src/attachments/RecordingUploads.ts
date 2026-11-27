@@ -28,7 +28,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { removeLeftovers } from "../files.ts";
 import { Ids } from "../Ids.ts";
-import { writeInPlace } from "../inPlace.ts";
+import { writeInPlace } from "../home/inPlace.ts";
 import { Layout } from "../Layout.ts";
 import { json } from "../persistence/columns.ts";
 import { DiskSpace } from "../system/DiskSpace.ts";

@@ -73,11 +73,14 @@ export interface ProvisionInput {
  * reads it: it reads and removes only the secrets its settings name (**Read**
  * at `bc0f04d`, `serverSettings.ts`).
  */
-const StoredConnection = Schema.Struct({ baseUrl: Schema.String, key: Schema.String });
+export const StoredConnection = Schema.Struct({ baseUrl: Schema.String, key: Schema.String });
 type StoredConnection = typeof StoredConnection.Type;
 
+/** The file of the engine's secret store that holds the provider connection. */
+export const CONNECTION_FILE = "j3-provider-connection.json";
+
 const connectionFile = (path: Path.Path, home: string) =>
-  path.join(engineFolders(path, home).secrets, "j3-provider-connection.json");
+  path.join(engineFolders(path, home).secrets, CONNECTION_FILE);
 
 /**
  * The variable that carries the connection's key to the harnesses. Each
