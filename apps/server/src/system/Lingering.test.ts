@@ -2,9 +2,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real listeners, one unreferenced, for Node's own diagnostic report to list.
 import * as NodeNet from "node:net";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { holdersIn } from "./Lingering.ts";
+import { holdersIn, type Lingering, watchStop } from "./Lingering.ts";
 
 /** A listener on loopback for as long as the scope lives, unreferenced if asked; its port. */
 const listening = (referenced: boolean) =>
@@ -39,6 +41,23 @@ describe("what keeps a stopping server's process running", () => {
       const named = Option.getOrElse(holding, () => []);
       assert.include(named, `tcp on 127.0.0.1:${held}`);
       assert.notInclude(named, `tcp on 127.0.0.1:${unreferenced}`);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("says, once a stop runs long, whether everything was released and what still holds", () =>
+    Effect.gen(function* () {
+      const held = yield* listening(true);
+      const said = yield* Deferred.make<Lingering>();
+      const stopping = yield* watchStop(Duration.millis(20), (lingering) =>
+        Deferred.succeed(said, lingering).pipe(Effect.asVoid),
+      );
+
+      yield* stopping.begun;
+      yield* stopping.released;
+      const lingering = yield* Deferred.await(said);
+
+      assert.isTrue(lingering.released);
+      assert.include(lingering.holding ?? [], `tcp on 127.0.0.1:${held}`);
     }).pipe(Effect.scoped),
   );
 });

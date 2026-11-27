@@ -11,6 +11,19 @@ import * as Schema from "effect/Schema";
 // waits on. Node waits on each active handle not unreferenced (a socket, a
 // timer, a child process); its diagnostic report lists them.
 
+declare global {
+  namespace NodeJS {
+    interface ProcessReport {
+      /**
+       * Leaves network details out of a report, the host names of its
+       * sockets' addresses included, so that it waits on no name lookup; the
+       * addresses stay. Node has it since 20.13; the types here lack it.
+       */
+      excludeNetwork: boolean;
+    }
+  }
+}
+
 /** An address a socket is bound or connected to, as Node's diagnostic report gives it. */
 const Endpoint = Schema.Struct({
   ip4: Schema.optionalKey(Schema.String),
@@ -103,6 +116,9 @@ export const watchStop = (
         if (begun) return;
         begun = true;
         NodeTimers.setTimeout(() => {
+          // A slow name server would hold the report, and the warning, past
+          // the time whoever stops the server waits.
+          process.report.excludeNetwork = true;
           Effect.runFork(
             report({
               released,
