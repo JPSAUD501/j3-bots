@@ -29,3 +29,4 @@ export * from "./visual.ts";
 export * from "./voice.ts";
 export * from "./work.ts";
 export * from "./update.ts";
+export * from "./diagnostics.ts";

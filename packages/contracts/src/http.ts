@@ -109,6 +109,12 @@ export const ServerInfo = Schema.Struct({
    * protocol sends it; it decodes as null when it is missing.
    */
   updateApi: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * The `DIAGNOSTICS_API_VERSION` of the diagnostics route the server serves
+   * (`DIAGNOSTICS_HTTP_PATH`). Absent from a server before 0.14.0, which has
+   * none: a client offers "Download diagnostics" only when it is here.
+   */
+  diagnostics: Schema.optionalKey(PositiveInt),
 });
 export type ServerInfo = typeof ServerInfo.Type;
 
