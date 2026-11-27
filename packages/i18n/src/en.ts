@@ -579,6 +579,10 @@ export const en = {
     "{name} couldn’t take part: a policy on the computer running J3 Bots refused its permission mode. Messages for {name} wait until you edit {name} and choose a lower mode, or raise the policy’s limit and restart J3 Bots.",
   "notice.settingsHeld":
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
+  "notice.asksBeforeActingAuto":
+    "Asks before each action, though it works in {mode}: its AI can’t use {mode} here, with this account or this model. Answer the questions as they come, or edit it and choose another model or permission mode.",
+  "notice.asksBeforeActingFullAccess":
+    "Asks before acting, though it has {mode}: its AI isn’t allowed to skip asking on the computer running J3 Bots. Answer the questions as they come, or ask whoever manages its AI’s settings there to allow it.",
   "notice.observationFailed":
     "Couldn’t keep up with this bot’s work. What shows here may be behind.",
   "notice.handoffFailed": "{name}’s message didn’t arrive",

@@ -54,6 +54,7 @@ import type {
   EndedTurn,
   EngineRequest,
   EngineStep,
+  EngineNotice,
   HostSpeech,
   OpenRequest,
   OpenTurn,
@@ -484,6 +485,12 @@ export class TestEngineControl extends Context.Service<
       readonly requestId: RequestId;
       readonly request: EngineRequest;
     }) => Effect.Effect<void>;
+    /** The engine said something in the turn that the operator should see. */
+    readonly engineNotice: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly notice: EngineNotice;
+    }) => Effect.Effect<void>;
     /** The bot called the host's own speech tool. */
     readonly hostSpeech: (input: {
       readonly sessionId: SessionId;
@@ -643,6 +650,7 @@ interface TurnRecord {
   readonly landed: Array<DelegatedResult>;
   readonly toolCalls: Map<ToolCallId, ToolCallRecord>;
   readonly hostSpeech: Array<HostSpeech>;
+  readonly notices: Array<EngineNotice>;
   readonly closedRequests: Array<{
     readonly requestId: RequestId;
     readonly turnId: TurnId;
@@ -997,6 +1005,7 @@ const make = Effect.gen(function* () {
       landed: [],
       toolCalls: new Map(),
       hostSpeech: [],
+      notices: [],
       closedRequests: [],
       background: false,
       unannounced: false,
@@ -1448,6 +1457,9 @@ const make = Effect.gen(function* () {
       closedRequests: listed.flatMap((turn) => turn.closedRequests),
       steers,
       delegatedResults: [...session.delegatedResults],
+      notices: listed.flatMap((turn) =>
+        turn.notices.map((notice) => ({ turnId: turn.turnId, notice })),
+      ),
       model: session.model,
       queueHeld,
       stopIgnored: session.stopIgnored,
@@ -2495,6 +2507,15 @@ const make = Effect.gen(function* () {
           request,
           heldCall: open.heldCall,
         }));
+      }),
+
+    engineNotice: ({ sessionId, turnId, notice }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        const at = yield* DateTime.now;
+        turn.notices.push(notice);
+        emit(session, at, (stamp) => ({ _tag: "engine-notice", ...stamp, turnId, notice }));
       }),
 
     hostSpeech: ({ sessionId, turnId, text }) =>

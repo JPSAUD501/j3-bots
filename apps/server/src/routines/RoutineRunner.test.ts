@@ -285,6 +285,35 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "tells the conversation once that the AI asks before acting, though each run's side session says it again",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot, routine } = yield* Effect.flatMap(
+        createBot("Ana", undefined, "full-access"),
+        ranRoutineOf,
+      );
+      const notice = { _tag: "asks-before-acting", permissionMode: "full-access" } as const;
+      const runOnce = (previous: SessionId | null) =>
+        Effect.gen(function* () {
+          const side = yield* sideTurn(routine.id, previous);
+          const turn = { sessionId: side.engine_session_id, turnId: side.admitted_turn_id };
+          yield* control.engineNotice({ ...turn, notice });
+          yield* control.finishTurn({ ...turn, outcome: { _tag: "completed" } });
+          yield* settled(routine);
+          yield* until(sidesRetired(bot.id));
+          return side.engine_session_id;
+        });
+
+      const first = yield* runOnce(null);
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      yield* runOnce(first);
+
+      assert.deepStrictEqual(yield* noticesOf(bot.id), ["asks-before-acting"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("settles a run that ends without speaking as silent, and shows nothing", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

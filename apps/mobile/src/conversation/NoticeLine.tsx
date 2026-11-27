@@ -7,6 +7,7 @@ import {
   CirclePause,
   CornerDownRight,
   OctagonPause,
+  ShieldAlert,
   UserRoundCheck,
 } from "lucide-react-native";
 import { useState } from "react";
@@ -18,7 +19,8 @@ import { usePresentation } from "../presentation.tsx";
 /**
  * A quiet line where something stopped, or where a bot changed something the
  * operator should know about, with Try again when the server still takes one.
- * A failed turn's technical words stay behind Details. It is part of the
+ * The engine's technical words, of a failed turn or of why the bot asks
+ * before acting, stay behind Details. It is part of the
  * conversation, not an announcement: the header says a change of state.
  */
 export function NoticeLine({
@@ -33,7 +35,10 @@ export function NoticeLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { notice } = entry;
-  const details = notice._tag === "turn-failed" ? notice.details : undefined;
+  const details =
+    notice._tag === "turn-failed" || notice._tag === "asks-before-acting"
+      ? notice.details
+      : undefined;
   const [showDetails, setShowDetails] = useState(false);
   const failed =
     notice._tag === "turn-failed" ||
@@ -58,7 +63,9 @@ export function NoticeLine({
         ? CirclePause
         : notice._tag === "operator-named"
           ? UserRoundCheck
-          : CircleAlert;
+          : notice._tag === "asks-before-acting"
+            ? ShieldAlert
+            : CircleAlert;
   return (
     <View className="my-1 items-center px-4">
       <View className="flex-row flex-wrap items-center justify-center gap-x-2">

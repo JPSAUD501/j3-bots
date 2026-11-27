@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   ApprovalEntry,
+  AsksBeforeActing,
   FailureClass,
   FailureDetails,
   LittleOne,
@@ -338,6 +339,25 @@ export const DelegatedResult = Schema.Struct({
 });
 export type DelegatedResult = typeof DelegatedResult.Type;
 
+/**
+ * Something the engine said in a turn that the operator should see
+ * (decision 0083). The engine tells a thread many things in notices of its
+ * own words; only these are worth the operator's attention, and the adapter
+ * logs every one of them, these included.
+ * - `asks-before-acting`: the bot's AI fell back to asking before each action
+ *   in a turn whose permission mode is Auto or Full access, because its own
+ *   settings, account or model do not allow that mode. **Read** at `bc0f04d`:
+ *   `ClaudeAdapterV2.ts`, `announceAutoFallback`, once per provider session,
+ *   and the bypass downgrade notice, once per engine thread while the engine
+ *   runs; each again after the engine restarts.
+ */
+export const EngineNotice = Schema.Union([AsksBeforeActing]);
+export type EngineNotice = typeof EngineNotice.Type;
+
+/** An engine notice and the turn it came in, as `engine-notice` carries it. */
+export const TurnNotice = Schema.Struct({ turnId: TurnId, notice: EngineNotice });
+export type TurnNotice = typeof TurnNotice.Type;
+
 const at = { cursor: EventCursor, at: Schema.DateTimeUtc };
 
 /**
@@ -374,6 +394,9 @@ export const SessionEvent = Schema.Union([
    *   requeued shows as its follow-up turn, with the dispatch as its cause;
    * - `delegatedResults` is at least every `delegated-result` after the
    *   cursor, and may repeat ones already applied (by `resultId`);
+   * - `notices` is every `engine-notice` of its open turns, which may repeat
+   *   ones already applied. One of a turn that ended in the gap is not
+   *   listed: what it explained is over;
    * - `model` is the session's model as the engine holds it now: the model
    *   of the last turn it started, since it moves the session's selection to
    *   each turn's as the turn starts (**Read** at `bc0f04d`, `Orchestrator.ts`,
@@ -400,6 +423,7 @@ export const SessionEvent = Schema.Union([
     ),
     steers: Schema.Array(SteerSettlement),
     delegatedResults: Schema.Array(DelegatedResult),
+    notices: Schema.Array(TurnNotice),
     model: Schema.NullOr(ModelChoice),
     queueHeld: Schema.Boolean,
     /** As `stop-ignored` says it now. */
@@ -532,6 +556,12 @@ export const SessionEvent = Schema.Union([
    * provider answered. Told when it changes. `Engine.forceStop` ends it.
    */
   Schema.TaggedStruct("stop-ignored", { ...at, turnId: Schema.NullOr(TurnId) }),
+  /**
+   * The engine said something in the turn that the operator should see
+   * (`EngineNotice`). Sent once per notice the engine recorded, while the
+   * turn runs.
+   */
+  Schema.TaggedStruct("engine-notice", { ...at, ...TurnNotice.fields }),
   /**
    * A step was added or changed. Steps replace by id; the latest running step is
    * what the bot is doing right now.

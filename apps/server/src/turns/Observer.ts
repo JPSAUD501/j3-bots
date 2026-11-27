@@ -16,6 +16,7 @@ import {
   type BackgroundWork,
   type DelegatedResult,
   Engine,
+  type EngineNotice,
   type EngineDown,
   type EngineIncompatible,
   EngineInstanceId,
@@ -197,10 +198,19 @@ const changesWork = (event: SessionEvent): boolean => {
     case "step":
     case "turn-work":
     case "host-speech":
+    case "engine-notice":
     case "tool-call":
     case "queue-held":
     case "synchronized":
       return false;
+  }
+};
+
+/** What tells one engine notice from another of its bot (`engine_notices.kind`). */
+const noticeKind = (notice: EngineNotice): string => {
+  switch (notice._tag) {
+    case "asks-before-acting":
+      return `${notice._tag}:${notice.permissionMode}`;
   }
 };
 
@@ -1215,6 +1225,26 @@ export const layer = Layer.effect(
       yield* touchActivity(session.id, turnId, at);
     }, Effect.orDie);
 
+    /**
+     * What the engine said that the operator should see (decision 0083): a
+     * notice in the bot's own conversation, where its approval cards are,
+     * once for each model the bot has, whichever of its sessions said it: a
+     * routine's run says it again in each side session. A notice of a
+     * permission mode the bot no longer has is over.
+     */
+    const engineNotice = Effect.fn("Observer.engineNotice")(function* (
+      session: Watched,
+      notice: EngineNotice,
+    ) {
+      const fresh = yield* sql`
+        INSERT INTO engine_notices (bot_id, kind, provider_id, model_id)
+        SELECT id, ${noticeKind(notice)}, provider_id, model_id FROM bots
+        WHERE id = ${session.bot_id} AND permission_mode = ${notice.permissionMode}
+        ON CONFLICT DO NOTHING RETURNING kind
+      `;
+      if (fresh.length > 0) yield* notify(session.bot_id, conversation, notice, null);
+    }, Effect.orDie);
+
     /** The host's own speech tool, delivered once per speech like a `say` without `done`. */
     /**
      * What the bot said through the engine rather than `say`: a message of
@@ -1558,6 +1588,7 @@ export const layer = Layer.effect(
         }
       }
       for (const speech of event.hostSpeech) yield* hostSpeech(session, speech);
+      for (const { notice } of event.notices) yield* engineNotice(session, notice);
       for (const result of event.delegatedResults) yield* delegatedResult(session, result);
       // A turn that started on an older model during the gap, and has ended
       // since, left the session on it.
@@ -1662,6 +1693,8 @@ export const layer = Layer.effect(
           return yield* turnWork(session, event.turnId, event.work, event.at);
         case "host-speech":
           return yield* hostSpeech(session, event);
+        case "engine-notice":
+          return yield* engineNotice(session, event.notice);
         case "tool-call":
           return yield* toolCall(
             session,

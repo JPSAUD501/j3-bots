@@ -26,6 +26,7 @@ import {
   emptyMirror,
   engineAnswersOf,
   type EventBody,
+  freshNotice,
   type Providers,
   isDeleted,
   isOver,
@@ -2276,5 +2277,110 @@ describe("a question past what a card used to hold", () => {
       engineAnswersOf(many, answers({ "question-6": { optionIds: ["option-8"], text: null } })),
       { q5: "Option 8" },
     );
+  });
+});
+
+describe("the engine's notices", () => {
+  /** A notice the engine recorded in run 1, as the provider `driver` named it. */
+  const notice = (
+    id: string,
+    driver: string | null,
+    nativeId: string,
+    message: string,
+    fields: Record<string, unknown> = {},
+  ) =>
+    item({
+      id,
+      type: "system_notice",
+      status: "completed",
+      nativeItemRef: driver === null ? null : { driver, nativeId, strength: "weak" },
+      title: message,
+      message,
+      completedAt: at,
+      ...fields,
+    });
+  const autoFallback = notice(
+    "item-auto",
+    "claudeAgent",
+    "auto-mode-unavailable:provider-turn-1",
+    "Asking about each action: Claude's settings turn auto mode off.",
+  );
+  const bypassDowngrade = notice(
+    "item-bypass",
+    "claudeAgent",
+    "bypass-policy-downgrade:provider-turn-1",
+    "Full access is running with approval checks. token=abc123def456ghi",
+  );
+  const usageLimit = notice(
+    "item-limit",
+    "claudeAgent",
+    "usage-limit:provider-turn-1:five_hour:1",
+    "Claude usage limit reached.",
+  );
+  const others = [
+    usageLimit,
+    notice("item-mcp", "codex", "mcp-startup-failed:provider-turn-1:j3", "Failed to start", {
+      title: "MCP server j3 failed to start",
+    }),
+    // A provider other than Claude Code that used the same words.
+    notice("item-acp", "acpRegistry", "auto-mode-unavailable:provider-turn-1", "Auto is off."),
+    notice("item-restart", null, "", "Cancelled because the server restarted."),
+  ];
+  const noticesOf = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((event) => (event._tag === "engine-notice" ? [event] : []));
+
+  it("tells only that the AI asks before acting, once each, in J3 Bots' terms with the engine's words as details", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    for (const recorded of [autoFallback, bypassDowngrade, ...others]) applyEvent(mirror, recorded);
+
+    assert.deepStrictEqual(noticesOf(diff(mirror, view, at, noProviders)), [
+      {
+        _tag: "engine-notice",
+        turnId: TurnId.make("run-1"),
+        notice: {
+          _tag: "asks-before-acting",
+          permissionMode: "auto",
+          details: "Asking about each action: Claude's settings turn auto mode off.",
+        },
+      },
+      {
+        _tag: "engine-notice",
+        turnId: TurnId.make("run-1"),
+        notice: {
+          _tag: "asks-before-acting",
+          permissionMode: "full-access",
+          details: "Full access is running with approval checks. token=[redacted]",
+        },
+      },
+    ]);
+    applyEvent(mirror, bypassDowngrade);
+    assert.deepStrictEqual(noticesOf(diff(mirror, view, at, noProviders)), []);
+  });
+
+  it("lists a running turn's notice in a replacement, and not once the turn ended", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, bypassDowngrade);
+
+    const { event, view } = replacement(mirror, true, at, new Map(), noProviders);
+    assert.deepStrictEqual(
+      event.notices.map(({ turnId, notice }) => ({ turnId, kind: notice._tag })),
+      [{ turnId: TurnId.make("run-1"), kind: "asks-before-acting" }],
+    );
+    assert.deepStrictEqual(noticesOf(diff(mirror, view, at, noProviders)), []);
+
+    applyEvent(mirror, run("completed", 1));
+    assert.deepStrictEqual(replacement(mirror, true, at, new Map(), noProviders).event.notices, []);
+  });
+
+  it("is fresh for the log only the first time the session's stream records it", () => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1));
+    assert.strictEqual(freshNotice(mirror, usageLimit)?.id, "item-limit");
+    applyEvent(mirror, usageLimit);
+    assert.strictEqual(freshNotice(mirror, usageLimit), undefined);
+    assert.strictEqual(freshNotice(mirror, command("running")), undefined);
   });
 });

@@ -57,6 +57,7 @@ import {
   type SteerSettlement,
   type ToolCall,
   type TurnCause,
+  type TurnNotice,
   type TurnOutcome,
   type EngineTurnWork,
 } from "../events.ts";
@@ -79,6 +80,7 @@ import {
 } from "./approvalDetail.ts";
 import { failureDetailsOf } from "./failureDetails.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
+import { engineNoticeOf, isSystemNotice, type SystemNotice } from "./notices.ts";
 import { TOOL_SERVER } from "./Provision.ts";
 import { isStepTool, toolStep } from "./toolNames.ts";
 import { hasPersistentFlag, type ToolPersistence } from "./toolPersistence.ts";
@@ -297,6 +299,21 @@ const delegatedResultOf = (
   if (origin === null || runId === origin) return undefined;
   return { runId, origin, text: message.text };
 };
+
+/**
+ * The notice an engine event records, when the mirror has not seen it yet:
+ * what the server's log takes once per notice (`logNotice`). Read before the
+ * event is applied.
+ */
+export const freshNotice = (
+  mirror: Mirror,
+  event: OrchestrationV2DomainEvent,
+): SystemNotice | undefined =>
+  event.type === "turn-item.updated" &&
+  isSystemNotice(event.payload) &&
+  !mirror.items.has(event.payload.id)
+    ? event.payload
+    : undefined;
 
 /** Applies one engine event. Returns whether it touched what the session's events are made of. */
 export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): boolean => {
@@ -1534,6 +1551,13 @@ const speechOf = (item: Item): HostSpeech | undefined => {
   };
 };
 
+/** The notice the operator sees for the item, if it is one they see (`engineNoticeOf`). */
+const turnNoticeOf = (item: Item, providers: Providers): TurnNotice | undefined => {
+  if (!isSystemNotice(item) || item.runId === null) return undefined;
+  const notice = engineNoticeOf(item, providers.redact);
+  return notice === undefined ? undefined : { turnId: TurnId.make(item.runId), notice };
+};
+
 // ---------------------------------------------------------------------------
 // Requests
 
@@ -2078,6 +2102,8 @@ export interface View {
   readonly taken: Set<string>;
   /** Delegated results reported (`delegated-result`), by message id. */
   readonly delegatedResults: Set<string>;
+  /** Engine notices told (`engine-notice`), by item id. */
+  readonly notices: Set<string>;
   hold: HoldView;
   /** The run whose ignored stop the subscriber was told of (`stop-ignored`), or null. */
   stopIgnored: string | null;
@@ -2093,6 +2119,7 @@ const emptyView = (): View => ({
   steers: new Set(),
   taken: new Set(),
   delegatedResults: new Set(),
+  notices: new Set(),
   hold: { state: "none" },
   stopIgnored: null,
 });
@@ -2107,6 +2134,7 @@ export const copyView = (view: View): View => ({
   steers: new Set(view.steers),
   taken: new Set(view.taken),
   delegatedResults: new Set(view.delegatedResults),
+  notices: new Set(view.notices),
   hold: view.hold,
   stopIgnored: view.stopIgnored,
 });
@@ -2375,6 +2403,11 @@ export const diff = (
           view.speech.add(speech.speechId);
           events.push({ _tag: "host-speech", ...speech });
         }
+        const notice = turnNoticeOf(item, providers);
+        if (notice !== undefined && !view.notices.has(item.id)) {
+          view.notices.add(item.id);
+          events.push({ _tag: "engine-notice", ...notice });
+        }
         const call = toolCallOf(mirror, item);
         if (call !== undefined) {
           const seen = view.toolCalls.get(call.callId);
@@ -2496,6 +2529,7 @@ export const replacement = (
     closedAt: DateTime.Utc;
   }> = [];
   const steerSettlements: Array<SteerSettlement> = [];
+  const notices: Array<TurnNotice> = [];
 
   const steers = steersOf(mirror);
   for (const run of runsInOrder(mirror)) {
@@ -2560,11 +2594,13 @@ export const replacement = (
         });
       }
     }
-    if (history) {
-      for (const item of itemsOf(mirror, run)) {
-        const speech = speechOf(item);
-        if (speech !== undefined) hostSpeech.push(speech);
-      }
+    for (const item of itemsOf(mirror, run)) {
+      // What a notice explains is over once its turn ended.
+      const notice = ended ? undefined : turnNoticeOf(item, providers);
+      if (notice !== undefined) notices.push(notice);
+      if (!history) continue;
+      const speech = speechOf(item);
+      if (speech !== undefined) hostSpeech.push(speech);
     }
   }
 
@@ -2587,6 +2623,7 @@ export const replacement = (
       closedRequests,
       steers: steerSettlements,
       delegatedResults,
+      notices,
       model: mirror.thread === undefined ? null : providers.modelOf(mirror.thread.modelSelection),
       // Stands for a hold the fresh view reports.
       queueHeld: view.hold.state === "reported",
