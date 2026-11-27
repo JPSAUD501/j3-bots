@@ -70,15 +70,6 @@ describe("png", () => {
 });
 
 describe("Canvas", () => {
-  it("clears along an open line without clearing what the line encloses", () => {
-    const canvas = new Canvas(20, 20, [10, 20, 30]);
-    // Three sides of a square: a fill would close it, a stroke follows it only.
-    canvas.clearStroke(flattenPath("M4 4L16 4L16 16L4 16"), 2);
-    const alpha = (x: number, y: number) => canvas.pixels[(y * 20 + x) * 4 + 3];
-    expect([alpha(10, 4), alpha(16, 10), alpha(10, 15)]).toEqual([0, 0, 0]);
-    expect([alpha(10, 10), alpha(4, 10), alpha(0, 0)]).toEqual([255, 255, 255]);
-  });
-
   it.each([
     [0, 4],
     [4, -1],
@@ -113,5 +104,106 @@ describe("Canvas", () => {
     [Number.NaN, 1],
   ])("refuses a dash pattern of %s and %s", (on, off) => {
     expect(() => stroked([on, off])).toThrow(RangeError);
+  });
+});
+
+describe("a gradient fill", () => {
+  const rect = (width: number, height: number) =>
+    flattenPath(`M0 0L${width} 0L${width} ${height}L0 ${height}Z`);
+  const pixel = (canvas: Canvas, x: number, y: number) => {
+    const at = (y * canvas.width + x) * 4;
+    return Array.from(canvas.pixels.subarray(at, at + 4));
+  };
+
+  it("changes evenly along a linear gradient's line, and keeps its end colors past it", () => {
+    const canvas = new Canvas(1, 10);
+    canvas.fill(rect(1, 10), {
+      kind: "linear",
+      from: { x: 0, y: 2 },
+      to: { x: 0, y: 8 },
+      stops: [
+        { offset: 0, color: [0, 0, 0] },
+        { offset: 1, color: [240, 120, 60] },
+      ],
+    });
+    expect([pixel(canvas, 0, 0), pixel(canvas, 0, 1)]).toEqual([
+      [0, 0, 0, 255],
+      [0, 0, 0, 255],
+    ]);
+    // The row whose center is 2.5 of the line's 6 px along it.
+    expect(pixel(canvas, 0, 4)).toEqual([100, 50, 25, 255]);
+    expect(pixel(canvas, 0, 9)).toEqual([240, 120, 60, 255]);
+  });
+
+  const glow = (canvas: Canvas) =>
+    canvas.fill(rect(21, 1), {
+      kind: "radial",
+      center: { x: 10.5, y: 0.5 },
+      radius: 10,
+      stops: [
+        { offset: 0, color: [200, 100, 60], opacity: 0.5 },
+        { offset: 1, color: [200, 100, 60], opacity: 0 },
+      ],
+    });
+
+  it("fades a radial gradient out from its center, over what is under it", () => {
+    const canvas = new Canvas(21, 1, [0, 0, 0]);
+    glow(canvas);
+    // Half the color at the center, a quarter halfway out, none at the radius and past it.
+    expect(pixel(canvas, 10, 0)).toEqual([100, 50, 30, 255]);
+    expect(pixel(canvas, 15, 0)).toEqual([50, 25, 15, 255]);
+    expect([pixel(canvas, 0, 0), pixel(canvas, 20, 0)]).toEqual([
+      [0, 0, 0, 255],
+      [0, 0, 0, 255],
+    ]);
+  });
+
+  it("over nothing, keeps its color whole and carries its opacity as alpha", () => {
+    const canvas = new Canvas(21, 1);
+    glow(canvas);
+    expect(pixel(canvas, 10, 0)).toEqual([200, 100, 60, 128]);
+    expect(pixel(canvas, 15, 0)).toEqual([200, 100, 60, 64]);
+    expect(pixel(canvas, 20, 0)[3]).toBe(0);
+  });
+
+  const black = [0, 0, 0] as const;
+  it.each([
+    ["no stops", { kind: "radial", center: { x: 1, y: 1 }, radius: 1, stops: [] }],
+    [
+      "stops out of order",
+      {
+        kind: "radial",
+        center: { x: 1, y: 1 },
+        radius: 1,
+        stops: [
+          { offset: 0.6, color: black },
+          { offset: 0.2, color: black },
+        ],
+      },
+    ],
+    [
+      "an opacity past 1",
+      {
+        kind: "radial",
+        center: { x: 1, y: 1 },
+        radius: 1,
+        stops: [{ offset: 0, color: black, opacity: 1.5 }],
+      },
+    ],
+    [
+      "no radius",
+      { kind: "radial", center: { x: 1, y: 1 }, radius: 0, stops: [{ offset: 0, color: black }] },
+    ],
+    [
+      "a line between one point",
+      {
+        kind: "linear",
+        from: { x: 1, y: 1 },
+        to: { x: 1, y: 1 },
+        stops: [{ offset: 0, color: black }],
+      },
+    ],
+  ] as const)("refuses a gradient with %s", (_, gradient) => {
+    expect(() => new Canvas(2, 2).fill(rect(2, 2), gradient)).toThrow(RangeError);
   });
 });

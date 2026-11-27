@@ -54,39 +54,12 @@ const ellipse = (cx: number, cy: number, rx: number, ry: number) =>
 const circle = (x: number, y: number, r: number) => ellipse(x, y, r, r);
 
 /**
- * How an avatar is painted, past its tokens and its face. Without either
- * field it is drawn in its colors, its light's cutout clear.
- */
-export interface AvatarPaint {
-  /**
-   * The color of what the avatar is drawn on, which a status light's cutout
-   * takes, as the SVG renderers draw it, instead of clearing through it.
-   */
-  readonly ground?: Rgb;
-  /**
-   * Every part in white or clear, for an image a system tints from its alpha
-   * alone: the body, the stalk, the light and the pupil in white, and what
-   * stands out of the body in color (the lens, the mouth, the light's cutout)
-   * cut out of it.
-   */
-  readonly silhouette?: boolean;
-  /**
-   * The size it shows at, in px, when that is not the box's: drawn on a
-   * screen of more pixels than px, it takes the proportions of its size on
-   * screen, as an avatar of 28 px and under draws its eye larger.
-   */
-  readonly shownAt?: number;
-}
-
-/** A part's paint: a color, or `null` for clearing what is under it. */
-type Ink = Rgb | null;
-
-const WHITE: Rgb = [255, 255, 255];
-
-/**
- * Draws `face` into `box` on `canvas`, in `theme`'s colors, or as `paint`
- * says. A still image has nothing to fade into, so an offline bot keeps its
- * parts opaque and only loses its color.
+ * Draws `face` into `box` on `canvas`, in `theme`'s colors. A still image has
+ * nothing to fade into, so an offline bot keeps its parts opaque and only
+ * loses its color. `shownAt` is the size it shows at, in px, when that is not
+ * the box's: drawn on a screen of more pixels than px, it takes the
+ * proportions of its size on screen, as an avatar of 28 px and under draws
+ * its eye larger.
  */
 export function drawAvatar(
   canvas: Canvas,
@@ -94,11 +67,11 @@ export function drawAvatar(
   face: AvatarFace,
   theme: keyof Themed,
   box: AvatarBox,
-  paint: AvatarPaint = {},
+  shownAt: number = box.size,
 ) {
   const { shape: shapeName, color } = resolveAvatar(avatar);
   const shape = avatarShapes[shapeName];
-  const frame = avatarFrame(shapeName, face, paint.shownAt ?? box.size);
+  const frame = avatarFrame(shapeName, face, shownAt);
   const unit = box.size / avatarViewBox.size;
   const toBox = (p: Point): Point => ({
     x: box.x + (p.x - avatarViewBox.x) * unit,
@@ -112,71 +85,58 @@ export function drawAvatar(
     mapSubpaths(flattenPath(d), (p) =>
       toBox(apply(frame.body, apply(frame.signal, turn === undefined ? p : apply(turn, p)))),
     );
-  const tone = (value: string): Ink => {
-    if (paint.silhouette === true) return WHITE;
+  const tone = (value: string): Rgb => {
     const parsed = parseColor(value);
     return srgb(face.asleep ? washedOut(parsed) : parsed);
   };
-  const cutOut = (ink: Ink): Ink => (paint.silhouette === true ? null : ink);
-  const fill = (subpaths: ReadonlyArray<Subpath>, ink: Ink) =>
-    ink === null ? canvas.clear(subpaths) : canvas.fill(subpaths, ink);
-  const stroke = (
-    subpaths: ReadonlyArray<Subpath>,
-    width: number,
-    ink: Ink,
-    options: { readonly opacity?: number; readonly dash?: readonly [number, number] } = {},
-  ) =>
-    ink === null
-      ? canvas.clearStroke(subpaths, width, options)
-      : canvas.stroke(subpaths, width, ink, options);
   const bodyColor = tone(botPalette[color][theme]);
-  const lens = cutOut(tone(avatarEye.lens));
+  const lens = tone(avatarEye.lens);
   const pupil = tone(avatarEye.pupil);
-  // The mouth is drawn in the pupil's color, on the body.
-  const mouth = cutOut(pupil);
   // The eye scales with the body's frame: strokes on it are as wide as the box draws them.
   const eyeUnit = unit * frame.eye[0];
 
-  stroke(onBody(frame.stalk), frame.stalkWidth * unit, bodyColor);
+  canvas.stroke(onBody(frame.stalk), frame.stalkWidth * unit, bodyColor);
   const body = onBody(shape.path);
-  fill(body, bodyColor);
-  stroke(body, shape.outline * unit, bodyColor);
+  canvas.fill(body, bodyColor);
+  canvas.stroke(body, shape.outline * unit, bodyColor);
 
   if (frame.open) {
-    fill(onEye(circle(0, 0, AVATAR_EYE)), lens);
-    fill(onEye(circle(frame.pupil.x, frame.pupil.y, frame.pupil.r)), pupil);
+    canvas.fill(onEye(circle(0, 0, AVATAR_EYE)), lens);
+    canvas.fill(onEye(circle(frame.pupil.x, frame.pupil.y, frame.pupil.r)), pupil);
     if (frame.glint !== null) {
-      fill(onEye(circle(frame.glint.x, frame.glint.y, frame.glint.r)), lens);
+      canvas.fill(onEye(circle(frame.glint.x, frame.glint.y, frame.glint.r)), lens);
     }
     for (const cover of [frame.cheek, frame.upperLid, frame.lowerLid]) {
-      if (cover !== "") fill(onEye(cover), bodyColor);
+      if (cover !== "") canvas.fill(onEye(cover), bodyColor);
     }
   }
   if (frame.arcOpacity > 0) {
-    stroke(onEye(frame.arc), frame.arcWidth * eyeUnit, lens, { opacity: frame.arcOpacity });
+    canvas.stroke(onEye(frame.arc), frame.arcWidth * eyeUnit, lens, { opacity: frame.arcOpacity });
   }
   if (frame.mouth.ry > 0) {
     const { cx, cy, rx, ry } = frame.mouth;
-    fill(onBody(ellipse(cx, cy, rx, ry)), mouth);
+    // The mouth is drawn in the pupil's color, on the body.
+    canvas.fill(onBody(ellipse(cx, cy, rx, ry)), pupil);
   }
 
   const { x, y, r } = frame.light;
-  if (frame.lightCut > 0) {
-    fill(
-      onBody(circle(x, y, frame.lightCut)),
-      paint.silhouette === true ? null : (paint.ground ?? null),
-    );
-  }
+  // A status light stands in a clear cutout of the body.
+  if (frame.lightCut > 0) canvas.clear(onBody(circle(x, y, frame.lightCut)));
 
   const signalWidth = avatarSignals.stroke * unit * frame.signal[0];
   switch (face.signal) {
     case "ring":
-      stroke(onSignal(circle(0, 0, avatarSignals.ring.r), frame.ring), signalWidth, bodyColor, {
-        dash: [avatarSignals.ring.dash[0] * unit, avatarSignals.ring.dash[1] * unit],
-      });
+      canvas.stroke(
+        onSignal(circle(0, 0, avatarSignals.ring.r), frame.ring),
+        signalWidth,
+        bodyColor,
+        {
+          dash: [avatarSignals.ring.dash[0] * unit, avatarSignals.ring.dash[1] * unit],
+        },
+      );
       break;
     case "ping":
-      stroke(
+      canvas.stroke(
         onSignal(circle(0, 0, avatarSignals.ping.from + face.ping * avatarSignals.ping.spread)),
         signalWidth,
         tone(colors.waiting[theme]),
@@ -185,12 +145,12 @@ export function drawAvatar(
       break;
     case "arcs":
       avatarSignals.arcs.forEach((d, i) => {
-        stroke(onSignal(d), signalWidth, bodyColor, { opacity: face.arcs[i] ?? 1 });
+        canvas.stroke(onSignal(d), signalWidth, bodyColor, { opacity: face.arcs[i] ?? 1 });
       });
       break;
     case "dots":
       avatarSignals.dots.forEach((dot, i) => {
-        fill(onSignal(circle(dot.x, dot.y, dot.r * (face.dots[i] ?? 1))), bodyColor);
+        canvas.fill(onSignal(circle(dot.x, dot.y, dot.r * (face.dots[i] ?? 1))), bodyColor);
       });
       break;
     case null:
@@ -198,7 +158,7 @@ export function drawAvatar(
   }
 
   const light = face.light === "body" ? bodyColor : tone(colors[face.light][theme]);
-  fill(onBody(circle(x, y, r)), light);
+  canvas.fill(onBody(circle(x, y, r)), light);
 }
 
 /**
@@ -228,7 +188,7 @@ export function renderStillAvatar(
   shownAt: number = size,
 ): Uint8Array<ArrayBuffer> {
   const canvas = stillCanvas(size);
-  drawAvatar(canvas, avatar, face, theme, { x: 0, y: 0, size }, { shownAt });
+  drawAvatar(canvas, avatar, face, theme, { x: 0, y: 0, size }, shownAt);
   return canvas.png();
 }
 
