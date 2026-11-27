@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 import { ServerConfig } from "./config.ts";
-import { replaceFile } from "./files.ts";
+import { type FileContents, replaceFile } from "./files.ts";
 import { homeLayout } from "./home/entries.ts";
 import { isWithin, realLocation } from "./paths.ts";
 
@@ -61,11 +61,12 @@ export class Layout extends Context.Service<
      * `writable`, creates it if missing, writes a new file (mode 0600) of a
      * random name there that must not exist yet (so a link planted in its place is never
      * followed), then renames it over `file`. A link at `file` itself is
-     * replaced, not followed.
+     * replaced, not followed. A copy of another file is written a piece at a
+     * time.
      */
     readonly writeFile: (
       file: string,
-      data: string | Uint8Array,
+      data: FileContents,
     ) => Effect.Effect<void, PrivateLocationExposed | PlatformError.PlatformError>;
   }
 >()("@j3-bots/server/Layout") {}
@@ -101,7 +102,7 @@ export const layer = Layer.effect(
     );
 
     const writeFile = Effect.fn("Layout.writeFile")(
-      function* (file: string, data: string | Uint8Array) {
+      function* (file: string, data: FileContents) {
         const folder = yield* writable(path.dirname(file));
         yield* fs.makeDirectory(folder, { recursive: true });
         yield* replaceFile(file, data, 0o600);

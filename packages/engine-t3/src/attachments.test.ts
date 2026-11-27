@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { normalizeAttachmentMetadata } from "./attachments.ts";
+import { attachmentLimitViolation, normalizeAttachmentMetadata } from "./attachments.ts";
+
+describe("attachmentLimitViolation", () => {
+  it("counts no file past what the engine carries, and names the others where they stand", () => {
+    const recording = { mediaType: "application/zip", size: 3 * 1024 * 1024 * 1024 };
+    const empty = { mediaType: "text/plain", size: 0 };
+
+    assert.isUndefined(attachmentLimitViolation([recording]));
+    assert.deepStrictEqual(attachmentLimitViolation([recording, empty]), {
+      _tag: "empty",
+      index: 1,
+    });
+  });
+});
 
 describe("normalizeAttachmentMetadata", () => {
   it("puts a file's name and media type in the form the engine stages", () => {

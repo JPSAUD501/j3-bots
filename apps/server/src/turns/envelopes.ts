@@ -12,7 +12,7 @@ import {
   type QuestionEntry,
   type RoomId,
 } from "@j3-bots/contracts";
-import { ENGINE_INPUT_LIMIT, engineInputLength } from "@j3-bots/engine-t3";
+import { ENGINE_INPUT_LIMIT, engineCarries, engineInputLength } from "@j3-bots/engine-t3";
 import type {
   AskAnswer,
   MentionRef,
@@ -153,8 +153,9 @@ export const roomName = (rooms: Rooms["Service"], roomId: RoomId | null) =>
 
 /**
  * An operator's message as an envelope shows it: each file where `offsets`
- * places it in the text, or, without them, after the text, and the window
- * the operator was looking at, when it went with the message.
+ * places it in the text, or, without them, after the text, one the engine
+ * does not carry marked as only in the workspace, and the window the
+ * operator was looking at, when it went with the message.
  */
 export const operatorMessage = (
   at: DateTime.Utc,
@@ -170,6 +171,7 @@ export const operatorMessage = (
     path: inboxPath(file),
     mediaType: file.mediaType,
     offset: offsets?.[index] ?? null,
+    ...(engineCarries(file) ? {} : { workspaceOnly: true }),
   })),
   lookingAt:
     lookingAt === undefined ? null : { app: lookingAt.app, title: lookingAt.title ?? null },

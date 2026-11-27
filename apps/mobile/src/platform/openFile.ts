@@ -6,7 +6,7 @@ import * as Sharing from "expo-sharing";
 import { localFileName } from "./fileName.ts";
 
 /** How opening a file ended, for what the conversation says about it. */
-export type OpenOutcome = "opened" | "gone" | "unreachable" | "not-paired" | "failed";
+export type OpenOutcome = "opened" | "gone" | "unreachable" | "too-large" | "not-paired" | "failed";
 
 /** The folder in the app's cache that holds the files opened, one folder each. */
 const opened = () => new Directory(Paths.cache, "opened");

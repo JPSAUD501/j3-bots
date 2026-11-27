@@ -200,6 +200,67 @@ export const en = {
   "conversation.details": "Details",
 
   "message.lookingAt": "Looking at {window}",
+  "message.offer.recordScreen": "Record your screen",
+  "message.offer.recordScreen.elsewhere":
+    "To record your screen, open the J3 Bots app on your computer.",
+
+  "recordSheet.title": "Record your screen",
+  "recordSheet.what.everything":
+    "J3 Bots records all your screens, your voice, and the keys you press and where you click, until you stop.",
+  "recordSheet.what.withoutKeys":
+    "J3 Bots records all your screens and your voice until you stop. Allow Accessibility below, and it records the keys you press and where you click too.",
+  "recordSheet.what.screenAndVoice":
+    "J3 Bots records the screen you share when the system asks, and your voice, until you stop. This system doesn’t let apps read your keys and clicks.",
+  "recordSheet.where":
+    "Nothing leaves this computer while you record. Then it goes into your message to {name} as a file, which uploads to your J3 Bots server, and {name}’s AI looks at it once you send it.",
+  "recordSheet.passwords.hidden":
+    "When you type a password, only the fact that you typed one is kept. Pause to hide anything else: nothing is recorded while paused.",
+  "recordSheet.passwords.pause":
+    "This system doesn’t say when a password is typed, so pause before you type one. Nothing is recorded while paused.",
+  "recordSheet.pauseHides": "Pause to hide anything: nothing is recorded while paused.",
+  "recordSheet.microphone": "Microphone",
+  "recordSheet.microphone.default": "System default",
+  "recordSheet.microphone.none": "No microphone",
+  "recordSheet.microphone.unnamed": "Microphone {number}",
+  "recordSheet.microphone.failed":
+    "J3 Bots can’t use this microphone. Pick another, or allow it in your system’s settings.",
+  "recordSheet.access": "macOS needs your permission first.",
+  "recordSheet.access.screen": "Screen Recording, to record your screens",
+  "recordSheet.access.keys": "Accessibility, to read your keys and clicks",
+  "recordSheet.access.open": "Open Settings",
+  "recordSheet.access.granted": "Allowed",
+  "recordSheet.access.after": "Then come back here. macOS may ask you to reopen J3 Bots.",
+  "recordSheet.lowSpace":
+    "This computer’s disk is almost full. The recording stops by itself before it fills.",
+  "recordSheet.busy": "Another recording is under way.",
+  "recordSheet.space":
+    "There isn’t enough free disk space to record. Free some space and try again.",
+  "recordSheet.failed": "The recording couldn’t start.",
+  "recordSheet.start": "Start recording",
+  "recordSheet.cancel": "Cancel",
+  "recordSheet.countdown": "Recording in {count}",
+
+  "recorder.starting": "Starting…",
+  "recorder.finishing": "Saving…",
+  "recorder.recording": "Recording",
+  "recorder.paused": "Paused",
+  "recorder.voice": "Microphone level",
+  "recorder.lowSpace": "The disk is almost full: the recording stops by itself before it fills",
+  "recorder.pause": "Pause",
+  "recorder.resume": "Resume",
+  "recorder.stop": "Stop",
+  "recorder.discard": "Discard",
+  "recorder.keep": "Keep",
+
+  "recording.fileName": "Screen recording {date}.zip",
+  "recording.failed.screen": "The recording stopped: J3 Bots couldn’t record the screen.",
+  "recording.failed.microphone": "The recording stopped: J3 Bots couldn’t use the microphone.",
+  "recording.failed.encoder": "The recording stopped: J3 Bots couldn’t encode it.",
+  "recording.failed.space": "The recording stopped: the disk is full.",
+  "recording.failed.storage": "J3 Bots couldn’t save the recording.",
+  "recording.interrupted":
+    "A recording that stopped before you did was saved, and is in your message to {name}.",
+
   "message.queued": "Queued",
   "message.waitingForModel": "Sent once the AI is connected",
   "message.waitingForReset": "Sent when the usage limit resets",
@@ -827,6 +888,8 @@ export const en = {
   "composer.attach": "Attach a file",
   "composer.attach.photos": "Photos and videos",
   "composer.attach.files": "Files",
+  "composer.add": "Add to the message",
+  "composer.recordScreen": "Record your screen",
   "composer.dictate": "Dictate a message",
   "composer.send": "Send message",
   "composer.suggestion": "Suggested reply: {text}",
@@ -1260,6 +1323,9 @@ export const en = {
   "composer.file.serverSetup":
     "The server can’t store files until its setup is fixed; its log says how",
   "composer.file.notPaired": "This device is signed out",
+  "composer.file.recordingTooLarge": "Larger than {size}, the most a recording can be",
+  "composer.file.noSpace": "The server’s disk is out of space",
+  "composer.file.unreadable": "This device can’t read the file anymore",
   "composer.tooLong": "Too long to send. A message can hold {count} characters at most.",
   "composer.tooManyFiles": "Too many files to send. A message can carry {count} files at most.",
   "composer.filesProblem": "Can’t send these files. {reason}.",
@@ -1426,6 +1492,7 @@ export const en = {
 
   "file.gone": "{name} is no longer on the server.",
   "file.unreachable": "{name} couldn’t be opened. Check the connection and try again.",
+  "file.tooLarge": "{name} is too large to open on this device. The bot has it.",
   "file.cannotOpen": "{name} couldn’t be opened on this device.",
 
   "connection.offline": "You’re offline. What you send goes out when you’re back.",

@@ -45,6 +45,12 @@ export interface AttachmentRef {
   readonly path: string;
   readonly mediaType: string;
   /**
+   * The engine does not carry it, as it carries no file over its limit (a
+   * screen recording): it is only in the workspace, at `path`. It takes no
+   * number, since the harness is never handed it.
+   */
+  readonly workspaceOnly?: true;
+  /**
    * Where the operator placed it in the message's text, in UTF-16 code units:
    * the envelope writes it there. `null` for a file written after the text,
    * as one sent without a place is. A message places all of its files or
@@ -850,10 +856,13 @@ const writeTeammateMessage = (w: EnvelopeWriter, message: TeammateMessage): void
     message.text,
   );
 
-/** A file as the envelope names it, numbered in the order the wake carries it. */
+/**
+ * A file as the envelope names it, numbered in the order the wake carries it;
+ * one only in the workspace, without a number.
+ */
 const attachmentTag = (w: EnvelopeWriter, file: AttachmentRef): string =>
   `<attachment${attributes([
-    ["n", w.nextFile()],
+    ["n", file.workspaceOnly === true ? null : w.nextFile()],
     ["name", file.name],
     ["type", file.mediaType],
     ["path", file.path],

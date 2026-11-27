@@ -2,6 +2,7 @@
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Attachments from "./attachments/Attachments.ts";
+import * as RecordingUploads from "./attachments/RecordingUploads.ts";
 import * as WorkImages from "./attachments/WorkImages.ts";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
@@ -83,11 +84,11 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 /**
  * Every service of the server's domain, over a migrated database, the server's
  * configuration, the filesystem, an `Engine` with its `BrowserBridge` and
- * `EngineSpeech`, a `PushSender`, the HTTP client connectors' sign-ins use
- * (`OAuthHttp`), an
+ * `EngineSpeech`, a `PushSender`, the disk's free space (`DiskSpace`), the
+ * HTTP client connectors' sign-ins use (`OAuthHttp`), an
  * `McpRegistry`, the `HarnessSources` J3 Bots installs harnesses from and
  * finds the operator's own with, and the `SkillRepositories` skills are
- * installed from. Which engine, sender, client, registry, sources and
+ * installed from. Which engine, sender, disk, client, registry, sources and
  * repositories are the caller's: the real ones in `server.ts`, in-memory or
  * local ones in tests. Building it starts the turn machinery, the push
  * worker and the reaction worker, which run for as long as the layer's scope.
@@ -153,6 +154,7 @@ export const layer = Layer.mergeAll(
       Ledger.layer,
       Wakes.layer,
       WorkSteps.layer,
+      RecordingUploads.layer,
       BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
       Secrets.layer,
     ),

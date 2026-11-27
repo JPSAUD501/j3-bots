@@ -97,6 +97,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
   const j3 = useJ3Client();
   const connection = useConnection();
   const pairing = useReadable(j3.pairing);
+  const recordsScreens = useReadable(j3.screenRecordings);
   const listed = useReadable(j3.roster);
   const roster = listed._tag === "ready" ? listed.value : null;
   const primary =
@@ -215,6 +216,10 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
     openRoutine: (routineId) => openInMain({ _tag: "routine", botId: primary.bot.id, routineId }),
     openConversation: (bot) => openInMain({ _tag: "conversation", botId: bot }),
     signInConnector: (entry) => openInMain({ _tag: "connector", connectorId: entry.connectorId }),
+    // The sheet before a recording opens in the main window, which hides as it starts.
+    ...(recordsScreens
+      ? { recordScreen: (asked: EntryTarget) => app.recording.openInMain(asked, pairing) }
+      : {}),
     setShown: setOnScreen,
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();

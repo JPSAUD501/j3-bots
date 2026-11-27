@@ -155,6 +155,36 @@ export const IPC_CHANNELS = {
    * loads the page again. Answers `ModeChange`.
    */
   deleteLocalData: "j3bots:delete-local-data",
+  /** Answers `RecordingCheck`. */
+  recordingCheck: "j3bots:recording-check",
+  /** `RecordingAccessRequest`, answered with `RecordingCheck`. */
+  recordingAccess: "j3bots:recording-access",
+  /** `RecordingStart`, answered with `RecordingStartResult`. */
+  startRecording: "j3bots:start-recording",
+  /** `RecordingOpen`: shows the main window with the sheet on that conversation. Not answered. */
+  openRecorder: "j3bots:open-recorder",
+  /** The main window's page listens for recordings now: the app sends those it keeps. Not answered. */
+  recordingsWanted: "j3bots:recordings-wanted",
+  /** From the main process, to the main window's page: `RecordingDelivery`. */
+  recording: "j3bots:recording",
+  /** `RecordingRead`, answered with the bytes or `null`. */
+  readRecording: "j3bots:read-recording",
+  /** `RecordingRelease`. Not answered. */
+  releaseRecording: "j3bots:release-recording",
+  /** From the recorder's page only: answers `RecorderJob`, or `null` when nothing is to be recorded. */
+  recorderJob: "j3bots:recorder-job",
+  /** `RecorderStarted`, from the recorder's page. Not answered. */
+  recorderStarted: "j3bots:recorder-started",
+  /** `RecorderChunk`, from the recorder's page. Not answered. */
+  recorderChunk: "j3bots:recorder-chunk",
+  /** `RecorderFrame`, from the recorder's page. Not answered. */
+  recorderFrame: "j3bots:recorder-frame",
+  /** `RecorderControl`, from the recorder's page. Not answered. */
+  recorderControl: "j3bots:recorder-control",
+  /** `RecorderFailure`, from the recorder's page. Not answered. */
+  recorderFailed: "j3bots:recorder-failed",
+  /** From the main process, to the recorder's page: `RecorderCue`. */
+  recorderCue: "j3bots:recorder-cue",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -256,4 +286,33 @@ export interface DesktopBridge {
   readonly exportLocal: (request: unknown) => Promise<unknown>;
   readonly runHereAgain: () => Promise<unknown>;
   readonly deleteLocalData: () => Promise<unknown>;
+  readonly recordingCheck: () => Promise<unknown>;
+  /** Opens where the operator gives a permission (a `RecordingAccessRequest`). */
+  readonly recordingAccess: (request: unknown) => Promise<unknown>;
+  /** Starts recording (a `RecordingStart`). */
+  readonly startRecording: (request: unknown) => Promise<unknown>;
+  /** Opens the sheet in the main window (a `RecordingOpen`). */
+  readonly openRecorder: (request: unknown) => void;
+  /**
+   * Calls `listener` with each recording for the page (a `RecordingDelivery`),
+   * starting with those the app keeps; answers a function that stops it.
+   */
+  readonly onRecording: (listener: (delivery: unknown) => void) => () => void;
+  /** Bytes of a recording (a `RecordingRead`). */
+  readonly readRecording: (request: unknown) => Promise<unknown>;
+  /** Lets the app delete a recording (a `RecordingRelease`). */
+  readonly releaseRecording: (request: unknown) => void;
+  readonly recorderJob: () => Promise<unknown>;
+  /** The recorder's encoders started (a `RecorderStarted`). */
+  readonly recorderStarted: (report: unknown) => void;
+  /** What an encoder wrote (a `RecorderChunk`). */
+  readonly recorderChunk: (chunk: unknown) => void;
+  /** A picture the app asked for (a `RecorderFrame`). */
+  readonly recorderFrame: (frame: unknown) => void;
+  /** What the operator pressed on the recorder (a `RecorderControl`). */
+  readonly recorderControl: (control: unknown) => void;
+  /** The recorder could not record (a `RecorderFailure`). */
+  readonly recorderFailed: (failure: unknown) => void;
+  /** Calls `listener` with each cue for the recorder (a `RecorderCue`); answers a function that stops it. */
+  readonly onRecorderCue: (listener: (cue: unknown) => void) => () => void;
 }

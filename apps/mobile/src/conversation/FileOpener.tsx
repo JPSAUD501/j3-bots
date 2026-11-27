@@ -59,6 +59,8 @@ export function FileOpenerProvider({ children }: { readonly children: ReactNode 
             return say(t("file.gone", { name }));
           case "unreachable":
             return say(t("file.unreachable", { name }));
+          case "too-large":
+            return say(t("file.tooLarge", { name }));
           case "failed":
             return say(t("file.cannotOpen", { name }));
           // Opened; or the pairing ended, and the pairing screen says so.

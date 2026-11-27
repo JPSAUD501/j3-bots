@@ -552,6 +552,7 @@ describe("renderWake", () => {
   });
 
   it("writes each file where the operator placed it, numbered in the order the wake carries them", () => {
+    // A file only in the workspace is never handed to the harness, so it takes no number.
     const pixel = { id: botId("pixel"), name: "Pixel", title: "Design" };
     const file = (name: string, mediaType: string, offset: number | null) => ({
       name,
@@ -576,7 +577,10 @@ describe("renderWake", () => {
           {
             at: at("2026-11-20T12:42:00Z"),
             text: "and the report",
-            attachments: [file("report.pdf", "application/pdf", null)],
+            attachments: [
+              { ...file("recording.zip", "application/zip", null), workspaceOnly: true },
+              file("report.pdf", "application/pdf", null),
+            ],
             lookingAt: null,
           },
         ],
@@ -588,6 +592,7 @@ describe("renderWake", () => {
       </message>
       <message from="user" at="09:42">
       and the report
+      <attachment name="recording.zip" type="application/zip" path="files/inbox/recording.zip"/>
       <attachment n="3" name="report.pdf" type="application/pdf" path="files/inbox/report.pdf"/>
       </message>
       </j3-wake>

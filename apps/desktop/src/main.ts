@@ -77,6 +77,7 @@ import { externalUrl, isAppUrl, isFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import { grants, holds } from "./permissions.ts";
 import * as QuickAccess from "./quickAccess.ts";
+import * as Recorder from "./recording/recorder.ts";
 import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
@@ -571,22 +572,26 @@ const program = Effect.gen(function* () {
 
   // The app's page only, never a frame in it: a bot's visual and a
   // connector's app are on the app's scheme, though sandboxed.
-  session.defaultSession.setPermissionRequestHandler((_contents, permission, grant, details) => {
+  // The screens go only to the recorder's control, while it records.
+  let capturesScreens: (contents: WebContents) => boolean = () => false;
+  session.defaultSession.setPermissionRequestHandler((contents, permission, grant, details) => {
+    const microphone = grants(permission, "mediaTypes" in details ? details.mediaTypes : undefined);
     const granted =
-      grants(permission, "mediaTypes" in details ? details.mediaTypes : undefined) &&
+      (microphone || (permission === "media" && capturesScreens(contents))) &&
       details.isMainFrame &&
       isAppUrl(details.requestingUrl, APP_ORIGIN);
     // macOS asks the operator itself, once, before the app hears the
     // microphone; a refusal there reaches the page as one here.
-    if (granted && permission === "media" && process.platform === "darwin") {
+    if (granted && microphone && permission === "media" && process.platform === "darwin") {
       systemPreferences.askForMediaAccess("microphone").then(grant, () => grant(false));
       return;
     }
     grant(granted);
   });
   session.defaultSession.setPermissionCheckHandler(
-    (_contents, permission, requestingOrigin, details) =>
-      holds(permission, details.mediaType) &&
+    (contents, permission, requestingOrigin, details) =>
+      (holds(permission, details.mediaType) ||
+        (permission === "media" && contents !== null && capturesScreens(contents))) &&
       details.isMainFrame &&
       isAppUrl(requestingOrigin, APP_ORIGIN),
   );
@@ -702,10 +707,20 @@ const program = Effect.gen(function* () {
   yield* SignInRelay.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
   const sendCommand = commandSender(window);
+  const reader = yield* readerHere({
+    platform: process.platform,
+    wayland,
+    env: process.env,
+    homeDirectory: app.getPath("home"),
+    hostname: computer.hostname,
+    locale: app.getLocale(),
+    ownProcess: process.pid,
+  });
+  const preload = path.join(app.getAppPath(), "dist", "preload.cjs");
   const quickAccess = yield* QuickAccess.serve({
     main: window,
     appOrigin: APP_ORIGIN,
-    preload: path.join(app.getAppPath(), "dist", "preload.cjs"),
+    preload,
     fromApp,
     transparent,
     wayland,
@@ -717,17 +732,22 @@ const program = Effect.gen(function* () {
       forward();
       sendCommand({ _tag: "open", target, pairing });
     },
-    reader: yield* readerHere({
-      platform: process.platform,
-      wayland,
-      env: process.env,
-      homeDirectory: app.getPath("home"),
-      hostname: computer.hostname,
-      locale: app.getLocale(),
-      ownProcess: process.pid,
-    }),
+    reader,
   });
   unloadQuickAccess = quickAccess.unload;
+  const recorder = yield* Recorder.serve({
+    main: window,
+    appOrigin: APP_ORIGIN,
+    preload,
+    fromApp,
+    transparent,
+    wayland,
+    reader,
+    bringMain: forward,
+    sendCommand,
+    folder: path.join(app.getPath("userData"), "recordings"),
+  });
+  capturesScreens = recorder.capturesScreens;
   yield* Menus.serve({
     window,
     appearance,

@@ -57,6 +57,7 @@ import type {
   LocalServerState,
   LookingAtSettings,
   PhoneAccess,
+  RecordingCheck,
   ServerUpdate,
   UseThisComputerResult,
 } from "@j3-bots/desktop-bridge";
@@ -120,6 +121,9 @@ import {
 } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { QuickAccess } from "../quick/QuickAccess";
+import type { Level } from "../record/level";
+import { Pill, type PillProps } from "../record/Pill";
+import { type Microphone, RecordSheetBody, type RecordSheetBodyProps } from "../record/RecordSheet";
 import type { PictureChip, WindowChipsView } from "../quick/WindowChips";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { DocumentsProvider } from "../components/documents/documents";
@@ -367,6 +371,8 @@ export default function GalleryPage() {
                 <BubblesSection />
                 <ReactionsSection />
                 <QuotesSection />
+                <RecordOfferSection />
+                <ScreenRecordingSection />
                 <DocumentsSection />
                 <CardsSection />
                 <RoutineTracksSection />
@@ -1493,6 +1499,7 @@ function BubblesSection() {
               reveal: revealIn(team.entries[`bot:${ids.scout}`] ?? []),
               drafting: null,
             }}
+            recordScreen={null}
           />
         </div>
       </Labeled>
@@ -1512,6 +1519,7 @@ function BubblesSection() {
               reveal: revealIn(team.entries[`room:${ids.newsletter}`] ?? []),
               drafting: null,
             }}
+            recordScreen={null}
           />
         </div>
       </Labeled>
@@ -1563,6 +1571,207 @@ function ReactionsSection() {
           onRetry={nothing}
           onReact={nothing}
         />
+      </Labeled>
+    </Section>
+  );
+}
+
+function RecordOfferSection() {
+  const { recordOffer } = variants;
+  return (
+    <Section title="A bot's offer to record the screen">
+      <Labeled label="In the desktop app and its quick access: Record your screen under the bot's message, which opens the recorder">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={recordOffer}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            recordScreen={{ _tag: "here", record: nothing }}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="In a browser, which cannot record: a quiet line saying to open the app on the computer">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={recordOffer}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+            recordScreen={{ _tag: "elsewhere" }}
+          />
+        </div>
+      </Labeled>
+    </Section>
+  );
+}
+
+/** A microphone's level held still, so every frame draws the same bars. */
+const heldLevel: Level = { open: () => ({ read: () => 0.55, close: () => undefined }) };
+
+/** What the sheet hears from the app on each system, as it first opens. */
+const sheetChecks = {
+  firstMac: {
+    input: "everything",
+    passwords: "hidden",
+    screen: "needed",
+    keys: "needed",
+    space: "enough",
+    busy: false,
+  },
+  windows: {
+    input: "everything",
+    passwords: "hidden",
+    screen: "not-needed",
+    keys: "not-needed",
+    space: "enough",
+    busy: false,
+  },
+  x11LowSpace: {
+    input: "everything",
+    passwords: "pause",
+    screen: "not-needed",
+    keys: "not-needed",
+    space: "low",
+    busy: false,
+  },
+  wayland: {
+    input: "screen-and-voice",
+    passwords: "pause",
+    screen: "not-needed",
+    keys: "not-needed",
+    space: "enough",
+    busy: false,
+  },
+} as const satisfies Record<string, RecordingCheck>;
+
+const sheetMicrophones: ReadonlyArray<Microphone> = [
+  { id: "mic-built-in", label: "MacBook Pro Microphone" },
+  { id: "mic-headset", label: "USB Headset" },
+];
+
+function SheetFrame({
+  label,
+  height,
+  ...props
+}: { label: string; height: number } & Partial<Omit<RecordSheetBodyProps, "titleId">>) {
+  const titleId = useId();
+  return (
+    <Frame label={label} width={448} height={height}>
+      <div className="flex h-full flex-col gap-4 bg-surface p-5">
+        <RecordSheetBody
+          titleId={titleId}
+          recipient={team.bots.scout.profile.name}
+          check={sheetChecks.windows}
+          microphones={sheetMicrophones}
+          microphone="default"
+          level={heldLevel}
+          microphoneFailed={false}
+          countdown={null}
+          problem={null}
+          onMicrophone={nothing}
+          onAskAccess={nothing}
+          onStart={nothing}
+          onClose={nothing}
+          {...props}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+function PillFrame({ label, ...props }: { label: string } & Partial<PillProps>) {
+  const { scout } = team.bots;
+  return (
+    <Frame label={label} width={320} height={64}>
+      <div className="p-2">
+        <Pill
+          face={{ avatar: scout.profile.avatar, seed: scout.id }}
+          phase="recording"
+          level={heldLevel}
+          space="enough"
+          solid={false}
+          onPause={nothing}
+          onResume={nothing}
+          onStop={nothing}
+          onDiscard={nothing}
+          {...props}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+/** A recording's zip in the composer, on its way to the server. */
+const recordingFile: DraftFile = {
+  _tag: "uploading",
+  key: "recording",
+  name: "Screen recording 2026-11-20 14.32.zip",
+  mediaType: "application/zip",
+  size: 412_000_000,
+  sent: 150_000_000,
+};
+
+function ScreenRecordingSection() {
+  const scoutName = team.bots.scout.profile.name;
+  const draftKey = useId();
+  return (
+    <Section title="Recording the screen">
+      <Labeled label="In the desktop app, + offers files and Record your screen. Elsewhere it opens the file picker, as before">
+        <div className="max-w-(--layout-text-column) pt-28">
+          <Composer
+            draftKey={draftKey}
+            recipient={scoutName}
+            value=""
+            onValueChange={nothing}
+            onAttachFiles={nothing}
+            onRecordScreen={nothing}
+            addMenuOpen
+            onSend={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="The sheet before recording: what is recorded and where it goes, the microphone with its level live, then Start">
+        <div className="flex flex-wrap gap-4">
+          <SheetFrame label="Windows: everything, a password kept as typed" height={470} />
+          <SheetFrame
+            label="macOS the first time: its permissions, until they are given"
+            height={600}
+            check={sheetChecks.firstMac}
+          />
+          <SheetFrame
+            label="X11 with a nearly full disk: pause before a password"
+            height={520}
+            check={sheetChecks.x11LowSpace}
+            microphone="mic-headset"
+          />
+          <SheetFrame
+            label="Wayland: the screens and the voice only"
+            height={470}
+            check={sheetChecks.wayland}
+          />
+          <SheetFrame
+            label="A microphone it cannot open, and no voice picked after"
+            height={500}
+            microphoneFailed
+            level={null}
+          />
+          <SheetFrame label="Counting down" height={230} countdown={2} />
+        </div>
+      </Labeled>
+      <Labeled label="The floating control: the bot listening, a red dot, the voice's level, Discard, Pause and Stop; paused; a nearly full disk; in a room; saving">
+        <div className="flex flex-wrap gap-4">
+          <PillFrame label="Recording" />
+          <PillFrame label="Paused" phase="paused" />
+          <PillFrame label="Recording, the disk nearly full" space="low" />
+          <PillFrame label="In a room, with no voice" face={null} level={null} />
+          <PillFrame label="Saving" phase="finishing" />
+        </div>
+      </Labeled>
+      <Labeled label="Stopped: the recording's zip in the composer, uploading">
+        <div className="max-w-(--layout-text-column)">
+          <ComposerDemo initial="" recipient={scoutName} files={[recordingFile]} />
+        </div>
       </Labeled>
     </Section>
   );
@@ -1689,6 +1898,7 @@ function QuotingDemo() {
         onOpenRoom={nothing}
         onOpenBot={nothing}
         quotes={{ reveal: revealIn(entries), drafting }}
+        recordScreen={null}
       />
       <Composer
         draftKey={draftKey}
@@ -2092,6 +2302,7 @@ function StagedConversation({
                 onOpenRoom={nothing}
                 onOpenBot={nothing}
                 quotes={appSampleQuotes}
+                recordScreen={null}
               />
             </AppStageProvider>
           </div>
@@ -2120,6 +2331,7 @@ function ConnectorAppsSection() {
         onOpenRoom={nothing}
         onOpenBot={nothing}
         quotes={appSampleQuotes}
+        recordScreen={null}
       />
     </div>
   );

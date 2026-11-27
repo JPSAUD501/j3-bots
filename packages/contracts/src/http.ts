@@ -51,6 +51,35 @@ export const HTTP_PATHS = {
    */
   attachments: "/attachments",
   /**
+   * A screen recording (decision 0098), uploaded in pieces that resume, with
+   * the device token as a bearer on every request. Only a server whose roster
+   * snapshot carries `screenRecordings` has it.
+   *
+   * - `POST` a `RecordingUploadStart` as JSON. Answers a new `RecordingUpload`
+   *   with nothing received; 400 with `Invalid("attachment")` for a name that
+   *   is blank or over `MAX_ATTACHMENT_NAME_LENGTH` characters, 413 above
+   *   `MAX_RECORDING_SIZE`, 507 with `Conflict("no-space")` when the server's
+   *   disk lacks room for it and the copy a bot's workspace takes, and 409
+   *   with `Conflict("private-location")`, as for an upload.
+   * - `GET <path>/<id>` answers where it stands, a `RecordingUpload`; 404 when
+   *   the server knows no such upload, or it lay untouched for a day and was
+   *   removed.
+   * - `PUT <path>/<id>?offset=<received>` the next raw bytes, at most
+   *   `RECORDING_CHUNK_SIZE` of them. Answers the `RecordingUpload` as it
+   *   stands after them; the piece that completes it (or an empty one once
+   *   every byte is there) stores the file, which the answer carries as
+   *   `attachment`, with `RECORDING_MEDIA_TYPE`. A piece cut off on the way
+   *   keeps what arrived of it. 409 with `RecordingOffset` when `offset` is
+   *   not where the upload stands, 413 for a piece over the limit, 400 with
+   *   `Invalid("attachment")` for one past the size the upload began with or
+   *   a whole file that is not a zip (which removes the upload), 507 with
+   *   `Conflict("no-space")` when the disk no longer has room, 409 with
+   *   `Conflict("private-location")`, and 404 as for `GET`.
+   * - `DELETE <path>/<id>` removes it and what arrived of it: 204, or 404 as
+   *   for `GET`.
+   */
+  recordingUploads: "/attachments/recordings",
+  /**
    * `GET <path>/<id>` with the device token as a bearer answers an image a
    * step of a bot's work looked at (`WorkStep.image`), read again from the
    * bot's workspace: a GIF, JPEG, PNG or WebP of at most

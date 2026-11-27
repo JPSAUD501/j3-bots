@@ -65,6 +65,7 @@ import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
 import { QuoteOnSelection } from "./QuoteOnSelection";
 import { type GoToQuote, lightSource, OpenQuote } from "./Quotes";
+import type { RecordScreen } from "./RecordOffer";
 import { RoutineTrack } from "./RoutineTrack";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretAskCard } from "./SecretAskCard";
@@ -184,6 +185,11 @@ interface TimelineProps {
   /** Opens the conversation of the bot a mention names. */
   readonly onOpenBot: (botId: BotId) => void;
   readonly quotes: TimelineQuotes;
+  /**
+   * Where a bot's offer to record the screen leads here (`recordScreenIn`);
+   * null where the operator cannot write, which shows no offer.
+   */
+  readonly recordScreen: RecordScreen | null;
 }
 
 /**
@@ -206,6 +212,7 @@ export function Timeline({
   onOpenRoom,
   onOpenBot,
   quotes,
+  recordScreen,
 }: TimelineProps) {
   const bots = useBots();
   const rooms = useRooms();
@@ -425,6 +432,7 @@ export function Timeline({
                           },
                         }
                       : {})}
+                    {...(recordScreen === null ? {} : { recordScreen })}
                     submitting={submitting(message.id)}
                     openingHold={openingHold}
                   />

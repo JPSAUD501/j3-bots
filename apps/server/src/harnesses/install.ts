@@ -17,7 +17,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { Layout } from "../Layout.ts";
 import type { DistributionClient, Release } from "./distributions.ts";
 import { fileFailed, HarnessFailed } from "./failure.ts";
-import { sha256 } from "./hash.ts";
+import { sha256 } from "../hash.ts";
 import { writeInPlace } from "../home/inPlace.ts";
 import { type CopyLayout, InnerPath, type InstalledCopy } from "./layout.ts";
 

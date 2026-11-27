@@ -146,13 +146,12 @@ export type Platform =
   | SecureRandom.SecureRandom;
 
 /** Every service of the client runtime, for applications that use Effect directly. */
-export const layer = Layer.merge(SignOut.layer, UsageData.layer).pipe(
+export const layer = SignOut.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Roster.layer,
       TeammatePairs.layer,
       EngineStatus.layer,
-      Settings.layer,
       Devices.layer,
       Drafts.layer,
       Details.layer,
@@ -168,6 +167,9 @@ export const layer = Layer.merge(SignOut.layer, UsageData.layer).pipe(
       Voice.layer,
     ),
   ),
+  // Below the stores, so a draft's Send can tell what only the client sees.
+  Layer.provideMerge(UsageData.layer),
+  Layer.provideMerge(Settings.layer),
   Layer.provideMerge(Conversations.layer),
   Layer.provideMerge(Files.layer),
   Layer.provideMerge(Actions.layer),
@@ -364,7 +366,10 @@ export interface BrowserViewHandle {
 /** A file's bytes, or why there are none. */
 export type DownloadResult =
   | { readonly _tag: "done"; readonly value: Files.Download }
-  | { readonly _tag: "failed"; readonly reason: "not-found" | "unreachable" | "not-paired" };
+  | {
+      readonly _tag: "failed";
+      readonly reason: "not-found" | "unreachable" | "too-large" | "not-paired";
+    };
 
 /** A download's result as `J3Client` gives it, its failures as data. */
 const downloaded = <R>(
@@ -419,6 +424,8 @@ export interface J3Client {
   readonly conversationMentions: Readable<boolean>;
   /** See `Roster.quotes`: whether Reply and Quote are offered. */
   readonly quotes: Readable<boolean>;
+  /** See `Roster.screenRecordings`: whether recording the screen is offered. */
+  readonly screenRecordings: Readable<boolean>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
   /** Each section of Settings' latest save, under way or how it ended. */
@@ -505,6 +512,16 @@ export interface J3Client {
     files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
     at?: number,
   ) => void;
+  /**
+   * Adds a screen recording to the draft, placed at `at` in its text or
+   * after it, and uploads it in resumable pieces (`Drafts.attachRecording`):
+   * `false` when the draft did not take it, which leaves it as it was.
+   */
+  readonly attachRecording: (
+    target: EntryTarget,
+    recording: Drafts.DraftRecording,
+    at?: number,
+  ) => Promise<boolean>;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
    * Adds a reply or a passage to the draft's quotes (`Drafts.quote`): `full`
@@ -917,6 +934,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     sections: services.roster.sections,
     conversationMentions: services.roster.conversationMentions,
     quotes: services.roster.quotes,
+    screenRecordings: services.roster.screenRecordings,
     pairs: services.pairs.state,
     engine: services.engine.state,
     settings: services.settings.state,
@@ -1014,6 +1032,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     setDraftText: (target, text, mentions, order) =>
       run.sync(services.drafts.setText(target, text, mentions, order)),
     attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
+    attachRecording: (target, recording, at) =>
+      run.promise(services.drafts.attachRecording(target, recording, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     quoteInDraft: (target, quote) => run.sync(services.drafts.quote(target, quote)),
     unquoteInDraft: (target, index) => run.sync(services.drafts.unquote(target, index)),

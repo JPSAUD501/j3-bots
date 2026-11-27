@@ -24,6 +24,7 @@ import { MessageFile } from "./FileCard";
 import { MessageText } from "./MessageText";
 import { ReplyButton, SentQuotes } from "./Quotes";
 import { type OnReact, ReactButton, ReactionPills, type ReactionView } from "./Reactions";
+import { RecordOffer, type RecordScreen } from "./RecordOffer";
 import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
 import { Button } from "./ui/button";
@@ -106,6 +107,11 @@ interface MessageBubbleProps {
   readonly reply?: { readonly onReply: () => void; readonly full: boolean };
   /** The message lit as the source of a quote, still, as the gallery shows it. */
   readonly sourceLit?: boolean;
+  /**
+   * Where a bot's offer to record the screen leads, which shows under its
+   * message. Without it, as where the operator cannot write, it shows none.
+   */
+  readonly recordScreen?: RecordScreen;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left in a tint of its color. */
@@ -128,6 +134,7 @@ export function MessageBubble({
   reactionView,
   reply,
   sourceLit = false,
+  recordScreen,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -149,6 +156,13 @@ export function MessageBubble({
       ? { reactions: message.reactions ?? [], onReact }
       : null;
   const quotes = message.quotes ?? [];
+  // Only a bot offers, and only what this version knows.
+  const recording =
+    message._tag === "message" &&
+    message.author._tag === "bot" &&
+    message.offer?.kind === "record-screen"
+      ? (recordScreen ?? null)
+      : null;
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
@@ -296,6 +310,7 @@ export function MessageBubble({
           </div>
         )}
       </div>
+      {recording !== null && <RecordOffer recording={recording} />}
       {reacting !== null && <ReactionPills {...reacting} fromOperator={fromOperator} />}
       {fromOperator && message.lookingAt !== undefined && (
         // The window the operator wrote it over, from quick access, which went with it.

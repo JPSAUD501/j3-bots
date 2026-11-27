@@ -249,6 +249,20 @@ describe("the desktop bridge", () => {
       exportLocal: call,
       runHereAgain: call,
       deleteLocalData: call,
+      recordingCheck: call,
+      recordingAccess: call,
+      startRecording: call,
+      openRecorder: call,
+      onRecording: call,
+      readRecording: call,
+      releaseRecording: call,
+      recorderJob: call,
+      recorderStarted: call,
+      recorderChunk: call,
+      recorderFrame: call,
+      recorderControl: call,
+      recorderFailed: call,
+      onRecorderCue: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));

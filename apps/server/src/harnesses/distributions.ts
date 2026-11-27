@@ -10,7 +10,7 @@ import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Stream from "effect/Stream";
 import { HarnessFailed } from "./failure.ts";
-import { sha256Hex } from "./hash.ts";
+import { sha256Hex } from "../hash.ts";
 
 // Where J3 Bots' own copies of the harnesses come from: each maker's official
 // distribution, read as its own install scripts read it, over HTTPS, from the

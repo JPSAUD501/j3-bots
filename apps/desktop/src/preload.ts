@@ -122,6 +122,34 @@ const bridge: DesktopBridge = {
   exportLocal: (request) => ipcRenderer.invoke(IPC_CHANNELS.exportLocal, request),
   runHereAgain: () => ipcRenderer.invoke(IPC_CHANNELS.runHereAgain),
   deleteLocalData: () => ipcRenderer.invoke(IPC_CHANNELS.deleteLocalData),
+  recordingCheck: () => ipcRenderer.invoke(IPC_CHANNELS.recordingCheck),
+  recordingAccess: (request) => ipcRenderer.invoke(IPC_CHANNELS.recordingAccess, request),
+  startRecording: (request) => ipcRenderer.invoke(IPC_CHANNELS.startRecording, request),
+  openRecorder: (request) => ipcRenderer.send(IPC_CHANNELS.openRecorder, request),
+  onRecording: (listener) => {
+    const forward = (_event: unknown, delivery: unknown) => listener(delivery);
+    ipcRenderer.on(IPC_CHANNELS.recording, forward);
+    // Listening now: the main process sends the recordings it keeps.
+    ipcRenderer.send(IPC_CHANNELS.recordingsWanted);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.recording, forward);
+    };
+  },
+  readRecording: (request) => ipcRenderer.invoke(IPC_CHANNELS.readRecording, request),
+  releaseRecording: (request) => ipcRenderer.send(IPC_CHANNELS.releaseRecording, request),
+  recorderJob: () => ipcRenderer.invoke(IPC_CHANNELS.recorderJob),
+  recorderStarted: (report) => ipcRenderer.send(IPC_CHANNELS.recorderStarted, report),
+  recorderChunk: (chunk) => ipcRenderer.send(IPC_CHANNELS.recorderChunk, chunk),
+  recorderFrame: (frame) => ipcRenderer.send(IPC_CHANNELS.recorderFrame, frame),
+  recorderControl: (control) => ipcRenderer.send(IPC_CHANNELS.recorderControl, control),
+  recorderFailed: (failure) => ipcRenderer.send(IPC_CHANNELS.recorderFailed, failure),
+  onRecorderCue: (listener) => {
+    const forward = (_event: unknown, cue: unknown) => listener(cue);
+    ipcRenderer.on(IPC_CHANNELS.recorderCue, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.recorderCue, forward);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

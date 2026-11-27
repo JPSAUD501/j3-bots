@@ -46,7 +46,9 @@ export function useAttachments(j3: J3Client, say: (text: string) => void): Attac
       say(
         result.reason === "not-found"
           ? t("file.gone", { name: attachment.name })
-          : t("file.unreachable", { name: attachment.name }),
+          : result.reason === "too-large"
+            ? t("file.tooLarge", { name: attachment.name })
+            : t("file.unreachable", { name: attachment.name }),
       );
     });
   // Only the image types a page draws without running anything get here: a

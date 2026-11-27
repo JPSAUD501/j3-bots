@@ -92,6 +92,16 @@ On an Android phone, the operator is reading something in another app and wants 
 
 Neither exists on iPhone.
 
+### Showing a bot your screen
+
+On the computer, showing a bot how something is done can be quicker than telling it.
+
+- In the desktop app, `+` in the composer offers **Record your screen** beside files; so does quick access, which opens the app's window for it. A bot can offer it too, under its message, when the operator describes something they do on the computer. Elsewhere it isn't offered, and a bot's offer says to open the app on the computer.
+- A short sheet says what happens, in plain words: all their screens, their voice, and the keys they press and where they click are recorded until they stop; it goes into their message to the bot as a file, and the bot's AI looks at it; nothing leaves the computer while they record; in their message it uploads to their J3 Bots server as any file does, and the bot gets it when they send. It says how passwords are kept: where the system says one is being typed, only that one was typed; elsewhere, to pause before typing one. On Wayland it says only the screen they share when the system asks and their voice are recorded. Below, the microphone, with bars that move as they speak, and **No microphone**. On a Mac, the first time, it lists the two permissions macOS asks for, Screen Recording and Accessibility, each with a button that opens System Settings at it. **Start recording** counts 3, 2, 1.
+- The app's windows step aside, and a small bar floats over everything: the bot's face, listening, a red dot, the voice's bars, and three buttons, Discard, Pause and Stop. There is no clock. It can be dragged out of the way. Pause records nothing until Resume, which is how to hide something. Discard asks once more, in the bar itself. When the disk runs low, the bar shows it, and the recording stops by itself before the disk fills, keeping what it has.
+- On Stop the window comes back with the recording in the draft, as a file named for when it started, uploading. The operator can write around it and send it as any message, or remove it. A recording that stopped because the app quit is kept, and offered in the draft the next time the app opens, with a line that says so.
+- The bot receives a `.zip` it can read without watching: a video of each screen, the voice, what was clicked and typed and in which window, a picture at each click, and a README that says how to read it all.
+
 ### Being asked
 
 A bot needs a decision or permission.
@@ -266,6 +276,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
 - What a message replies to or quotes sits above its words, as small cards with the face and name of whoever said it and the start of the message or the words quoted, at most two lines each. A tap goes to the original.
+- When the operator describes a task they do on their computer, a bot can now and then offer to watch them do it: under its message, one quiet button, **Record your screen**, that opens the recorder in the desktop app and its quick access. In a browser, and on a phone, which cannot record, a quiet line takes its place: "To record your screen, open the J3 Bots app on your computer." The recording goes to the bot as a file, like any other.
 - Reactions sit under a message as small pills, one per emoji, with a count when more than one person or bot chose it. The operator's own looks chosen, and a tap on it takes it off; picking the same emoji again does the same, and picking another replaces it, one reaction each per message. Who reacted is a press on the pill away on a phone, the pointer over it on a computer. A bot that looked at a reaction and said nothing leaves nothing behind in the conversation, and a room names it among those answering only once it speaks.
 - In a room, each bot's name stands over its run of messages and its avatar beside the last, as in a teammate conversation. The header shows the members' avatars, three at most and "+2" for the rest, the room's name and, under it, who is in it. While members answer, the room's last line names them ("Hal is answering…").
 - In a bot's conversation, the header shows the bot's face and name on one line, with no line about what it is doing under it.

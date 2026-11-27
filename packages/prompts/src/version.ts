@@ -113,7 +113,10 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
         id: entryId,
         at,
         text: "text",
-        attachments: [{ name: "a.pdf", path: "files/a.pdf", mediaType: "x", offset: null }],
+        attachments: [
+          { name: "a.pdf", path: "files/a.pdf", mediaType: "x", offset: null },
+          { name: "a.zip", path: "files/a.zip", mediaType: "x", offset: null, workspaceOnly: true },
+        ],
         lookingAt: null,
       },
       {

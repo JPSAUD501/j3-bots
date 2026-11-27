@@ -148,6 +148,13 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "skill-limit",
     /** The repository could not be fetched: unreachable, refused, or no such commit or branch. */
     "skill-fetch",
+    /**
+     * The server's disk lacks room for the file and the copy a bot's
+     * workspace takes of it. Only a recording upload answers it
+     * (`HTTP_PATHS.recordingUploads`), so no client of an earlier version
+     * meets it.
+     */
+    "no-space",
   ]),
 }) {
   override get message(): string {

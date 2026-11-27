@@ -23,6 +23,7 @@ import { DraftComposer } from "../components/DraftComposer";
 import { addressingOf, mentionChoicesOf } from "../components/mentionChoices";
 import { toneClass } from "../components/RosterRow";
 import { SwapText } from "../components/SwapText";
+import { recordScreenIn } from "../components/RecordOffer";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { Button } from "../components/ui/button";
@@ -79,6 +80,7 @@ export type QuickAccessIntents = TimelineIntents &
     | "stopBot"
     | "forceStopBot"
     | "secrets"
+    | "recordScreen"
   >;
 
 interface QuickAccessProps {
@@ -445,6 +447,7 @@ export function QuickAccess({
                               }
                             : null,
                         }}
+                        recordScreen={recordScreenIn(intents.recordScreen, target)}
                       />
                     </div>
                   </div>

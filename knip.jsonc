@@ -13,6 +13,10 @@
       // the window names: built into dist, which knip does not map back. The
       // hook electron-builder.yml names, which electron-builder loads.
       "entry": ["src/main.ts", "src/preload.ts", "scripts/afterPack.ts"],
+      // The input hook's prebuilt binary, which the build copies out of the
+      // package by path (vite.config.ts) and the app loads itself: nothing
+      // imports the package.
+      "ignoreDependencies": ["uiohook-napi"],
     },
     "apps/mobile": {
       // The config plugin prebuild loads by the path app.config.ts names.

@@ -148,10 +148,10 @@ export type TelemetryDisplayMode = typeof TelemetryDisplayMode.Type;
 
 /**
  * A feature a client tells its server was used, which no request to the
- * server shows: What's new opened, and a message dictated. Screen recording
- * joins the list when it reaches J3 Bots.
+ * server shows: What's new opened, a message dictated, and a message sent
+ * with a screen recording, which the server stores as any other file.
  */
-export const TelemetryFeature = Schema.Literals(["whats-new", "voice-input"]);
+export const TelemetryFeature = Schema.Literals(["whats-new", "voice-input", "screen-recording"]);
 export type TelemetryFeature = typeof TelemetryFeature.Type;
 
 // ---------------------------------------------------------------------------

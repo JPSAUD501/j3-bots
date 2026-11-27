@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   DeviceId,
+  EntryTarget,
   Language,
   PairingCode,
   PairingLinkTarget,
@@ -31,6 +32,18 @@ import {
   PhoneAccessChange,
   QuickAccessCue,
   QuickAccessPicture,
+  RecorderCue,
+  type RecorderChunk,
+  type RecorderControl,
+  type RecorderFailure,
+  type RecorderFrame,
+  RecorderJob,
+  type RecorderStarted,
+  RecordingCheck,
+  RecordingDelivery,
+  type RecordingId,
+  RecordingStart,
+  RecordingStartResult,
   ShellCommand,
   ShortcutChange,
   ShortcutStatus,
@@ -251,6 +264,44 @@ export interface Desktop {
   readonly copySecret: (value: Redacted.Redacted<string>) => Promise<boolean>;
   /** What the quick access window's page asks of the app. Any other page is not answered. */
   readonly quickAccess: DesktopQuickAccess;
+  /** Recording the screens for a bot (decision 0098), as the main window's page asks. */
+  readonly recording: DesktopRecording;
+  /** What the recorder's floating control's page asks of the app. Any other page is not answered. */
+  readonly recorder: DesktopRecorder;
+}
+
+/** Recording the screens, as the main window's page speaks to the app. */
+interface DesktopRecording {
+  /** What the sheet shows before a recording starts; `null` when the app gave no answer the page understands. */
+  readonly check: () => Promise<RecordingCheck | null>;
+  /** Opens where the operator gives a permission the check says is needed, answering the check after it. */
+  readonly askAccess: (access: "screen" | "keys") => Promise<RecordingCheck | null>;
+  /** Starts recording; the app hides its windows and shows its floating control. */
+  readonly start: (request: RecordingStart) => Promise<RecordingStartResult>;
+  /** From quick access: shows the main window with the sheet open on `target`. */
+  readonly openInMain: (target: EntryTarget, pairing: DeviceId) => void;
+  /**
+   * Calls `listener` with each recording that ends, starting with those the
+   * app kept from before; answers a function that stops it.
+   */
+  readonly onRecording: (listener: (delivery: RecordingDelivery) => void) => () => void;
+  /** Bytes `[start, end)` of a ready recording's zip; `null` once it is gone or the app could not read it. */
+  readonly read: (id: RecordingId, start: number, end: number) => Promise<Uint8Array | null>;
+  /** The page no longer needs the recording: the app deletes it. */
+  readonly release: (id: RecordingId) => void;
+}
+
+/** The app, as the page of the recorder's floating control speaks to it. */
+interface DesktopRecorder {
+  /** What to record; `null` when no recording waits for this page. */
+  readonly job: () => Promise<RecorderJob | null>;
+  readonly started: (report: RecorderStarted) => void;
+  readonly chunk: (chunk: RecorderChunk) => void;
+  readonly frame: (frame: RecorderFrame) => void;
+  readonly control: (action: RecorderControl["action"]) => void;
+  readonly failed: (reason: RecorderFailure["reason"]) => void;
+  /** Calls `listener` with each cue the app sends; answers a function that stops it. */
+  readonly onCue: (listener: (cue: RecorderCue) => void) => () => void;
 }
 
 /** The app, as the page of its quick access window speaks to it. */
@@ -309,6 +360,13 @@ const decodePairingLink = Schema.decodeUnknownOption(LocalPairingLink);
 const decodeRelayStart = Schema.decodeUnknownOption(SignInRelayStart);
 const decodeExpected = Schema.decodeUnknownOption(Schema.Boolean);
 const decodeSignInReturn = Schema.decodeUnknownOption(SignInReturn);
+const decodeRecordingCheck = Schema.decodeUnknownOption(RecordingCheck);
+const decodeStartResult = Schema.decodeUnknownOption(RecordingStartResult);
+const decodeDelivery = Schema.decodeUnknownOption(RecordingDelivery);
+const decodeRecordingBytes = Schema.decodeUnknownOption(Schema.Uint8Array);
+const decodeJob = Schema.decodeUnknownOption(RecorderJob);
+const decodeRecorderCue = Schema.decodeUnknownOption(RecorderCue);
+const encodeStart = Schema.encodeSync(RecordingStart);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -509,6 +567,56 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         ask(() => bridge.quickAccessPicture({ opening }), decodePicture).then(
           (picture): QuickAccessPicture => picture ?? { _tag: "failed" },
         ),
+    },
+    recording: {
+      check: () => ask(() => bridge.recordingCheck(), decodeRecordingCheck),
+      askAccess: (access) => ask(() => bridge.recordingAccess({ access }), decodeRecordingCheck),
+      start: (request) =>
+        ask(() => bridge.startRecording(encodeStart(request)), decodeStartResult).then(
+          (result): RecordingStartResult => result ?? "failed",
+        ),
+      openInMain: (target, pairing) => {
+        bridge.openRecorder({ target, pairing });
+      },
+      onRecording: (listener) => {
+        const stop: unknown = bridge.onRecording((delivery: unknown) =>
+          Option.map(decodeDelivery(delivery), listener),
+        );
+        return () => {
+          if (typeof stop === "function") stop();
+        };
+      },
+      read: (id, start, end) =>
+        ask(() => bridge.readRecording({ id, start, end }), decodeRecordingBytes),
+      release: (id) => {
+        bridge.releaseRecording({ id });
+      },
+    },
+    recorder: {
+      job: () => ask(() => bridge.recorderJob(), decodeJob),
+      started: (report) => {
+        bridge.recorderStarted(report);
+      },
+      chunk: (chunk) => {
+        bridge.recorderChunk(chunk);
+      },
+      frame: (frame) => {
+        bridge.recorderFrame(frame);
+      },
+      control: (action) => {
+        bridge.recorderControl({ action });
+      },
+      failed: (reason) => {
+        bridge.recorderFailed({ reason });
+      },
+      onCue: (listener) => {
+        const stop: unknown = bridge.onRecorderCue((cue: unknown) =>
+          Option.map(decodeRecorderCue(cue), listener),
+        );
+        return () => {
+          if (typeof stop === "function") stop();
+        };
+      },
     },
   }),
 });

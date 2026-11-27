@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
 
@@ -17,6 +18,13 @@ const TEMPORARY_NAME_BYTES = 12;
 const TEMPORARY_SUFFIX = ".j3-writing";
 
 /**
+ * What a file is written with: its whole contents, or a copy of the file at
+ * `from`, read and written a piece at a time, so a file of gigabytes never
+ * sits in memory.
+ */
+export type FileContents = string | Uint8Array | { readonly copyOf: string };
+
+/**
  * Writes `data` to a new file (mode `mode`) of a random name in `file`'s
  * folder, one that must not exist yet, so a link planted in its place is
  * never followed; then `place`s it at `file`. The temporary name is short and
@@ -25,7 +33,7 @@ const TEMPORARY_SUFFIX = ".j3-writing";
  */
 const writeBeside = Effect.fn("files.writeBeside")(function* (
   file: string,
-  data: string | Uint8Array,
+  data: FileContents,
   mode: number,
   place: (temporary: string) => Effect.Effect<void, PlatformError.PlatformError>,
 ) {
@@ -34,13 +42,17 @@ const writeBeside = Effect.fn("files.writeBeside")(function* (
   const random = yield* SecureRandom.SecureRandom;
   const suffix = Hex.encode(yield* random.randomBytes(TEMPORARY_NAME_BYTES));
   const temporary = path.join(path.dirname(file), `.${suffix}${TEMPORARY_SUFFIX}`);
-  const contents = typeof data === "string" ? new TextEncoder().encode(data) : data;
-  yield* fs
-    .writeFile(temporary, contents, { flag: "wx", mode })
-    .pipe(
-      Effect.andThen(place(temporary)),
-      Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
-    );
+  const write =
+    typeof data === "string" || data instanceof Uint8Array
+      ? fs.writeFile(temporary, typeof data === "string" ? new TextEncoder().encode(data) : data, {
+          flag: "wx",
+          mode,
+        })
+      : fs.stream(data.copyOf).pipe(Stream.run(fs.sink(temporary, { flag: "wx", mode })));
+  yield* write.pipe(
+    Effect.andThen(place(temporary)),
+    Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
+  );
 }, Effect.provide(SecureRandom.layerWebCrypto));
 
 /**
@@ -61,7 +73,7 @@ export const removeLeftovers = Effect.fn("files.removeLeftovers")(function* (fol
 /** Replaces `file` with `data`, whole. A link at `file` itself is replaced, not followed. */
 export const replaceFile = Effect.fn("files.replaceFile")(function* (
   file: string,
-  data: string | Uint8Array,
+  data: FileContents,
   mode: number,
 ) {
   const fs = yield* FileSystem.FileSystem;

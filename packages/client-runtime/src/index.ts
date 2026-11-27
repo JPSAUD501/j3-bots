@@ -122,6 +122,7 @@ export {
   type DraftChangedElsewhere,
   type DraftFile,
   DraftMention,
+  type DraftRecording,
   type DraftSendResult,
   type WindowContext,
 } from "./stores/Drafts.ts";

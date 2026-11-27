@@ -1140,6 +1140,7 @@ export const layer = Layer.effect(
                     delivery: { _tag: "delivered" },
                     commandId: null,
                     ...(shown === null ? {} : { visual: shown }),
+                    ...(input.offer === undefined ? {} : { offer: { kind: input.offer } }),
                   },
                 });
                 if (files.length > 0) {

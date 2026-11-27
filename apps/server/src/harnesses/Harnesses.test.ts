@@ -27,7 +27,7 @@ import { Layout } from "../Layout.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { claudeCode, codex, onlyTo } from "./distributions.ts";
 import { type Harnesses, make, withCopies } from "./Harnesses.ts";
-import { sha256Hex } from "./hash.ts";
+import { sha256Hex } from "../hash.ts";
 import { installRelease, type Probe, versionIn } from "./install.ts";
 import { copyLayout } from "./layout.ts";
 

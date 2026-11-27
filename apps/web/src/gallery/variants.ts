@@ -74,7 +74,7 @@ export function galleryVariants(now: DateTime.Utc) {
     extra: Partial<
       Pick<
         MessageEntry,
-        "attachments" | "delivery" | "visual" | "lookingAt" | "reactions" | "quotes"
+        "attachments" | "delivery" | "visual" | "lookingAt" | "reactions" | "quotes" | "offer"
       >
     > = {},
   ): MessageEntry => ({
@@ -89,6 +89,7 @@ export function galleryVariants(now: DateTime.Utc) {
     ...(extra.lookingAt === undefined ? {} : { lookingAt: extra.lookingAt }),
     ...(extra.reactions === undefined ? {} : { reactions: extra.reactions }),
     ...(extra.quotes === undefined ? {} : { quotes: extra.quotes }),
+    ...(extra.offer === undefined ? {} : { offer: extra.offer }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -322,6 +323,14 @@ export function galleryVariants(now: DateTime.Utc) {
     scout,
     "This page held a frame of its own, so it is not shown.",
     { visual: sampleVisuals.embedding },
+  );
+
+  /** A bot's offer to record the screen (decision 0098), after the operator described a chore. */
+  const recordOffer = message(
+    "offer-record",
+    scout,
+    "That sounds like a lot of clicking. Want to show me once? Record your screen while you do it, and talk me through it as you go.",
+    { offer: { kind: "record-screen" } },
   );
 
   const option = (
@@ -1375,6 +1384,7 @@ export function galleryVariants(now: DateTime.Utc) {
     visualBubbles,
     escapingVisual,
     embeddingVisual,
+    recordOffer,
     reactions,
     quotes,
     questions,

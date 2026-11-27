@@ -8,6 +8,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_INLINE_IMAGE_SIZE,
   MAX_INLINE_IMAGES_SIZE,
+  MAX_RECORDING_SIZE,
   MessageAttachments,
   MessageText,
 } from "@j3-bots/contracts";
@@ -19,6 +20,11 @@ export interface LocalFile {
   readonly mediaType: string;
   /** Bytes. */
   readonly size: number;
+  /**
+   * A screen recording (decision 0098), which uploads in pieces and may be
+   * up to `MAX_RECORDING_SIZE` rather than `MAX_ATTACHMENT_SIZE`.
+   */
+  readonly recording?: true;
 }
 
 /** Why a file cannot go with a message. */
@@ -26,6 +32,8 @@ export type FileProblem =
   | "empty"
   /** Over `MAX_ATTACHMENT_SIZE`. */
   | "too-large"
+  /** A recording over `MAX_RECORDING_SIZE`. */
+  | "recording-too-large"
   /** An inline image over `MAX_INLINE_IMAGE_SIZE`. */
   | "image-too-large"
   /** It would take the message's inline images over `MAX_INLINE_IMAGES_SIZE`. */
@@ -41,6 +49,10 @@ export type FileProblem =
    * `Conflict("private-location")`).
    */
   | "server-setup"
+  /** The server's disk has no room for a recording (507 `Conflict("no-space")`). */
+  | "no-space"
+  /** This device could no longer read the recording it was uploading. */
+  | "unreadable"
   /** This device is no longer paired, so the file cannot be sent. */
   | "not-paired";
 
@@ -60,7 +72,9 @@ const isInlineImage = (file: LocalFile) => INLINE_IMAGE_MEDIA_TYPES.includes(fil
 
 const problemOf = (file: LocalFile): FileProblem | null => {
   if (file.size === 0) return "empty";
-  if (file.size > MAX_ATTACHMENT_SIZE) return "too-large";
+  if (file.recording === true) {
+    if (file.size > MAX_RECORDING_SIZE) return "recording-too-large";
+  } else if (file.size > MAX_ATTACHMENT_SIZE) return "too-large";
   if (isInlineImage(file) && file.size > MAX_INLINE_IMAGE_SIZE) return "image-too-large";
   const name = file.name.trim();
   if (name.length > MAX_ATTACHMENT_NAME_LENGTH) return "name-too-long";

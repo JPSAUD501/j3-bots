@@ -15,7 +15,7 @@ export const makeUploader =
     Effect.tryPromise({
       try: async (signal) => {
         const response = await fetch(request.url, {
-          method: "POST",
+          method: request.method,
           headers: request.headers,
           body: request.body,
           redirect: "error",

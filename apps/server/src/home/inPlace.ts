@@ -44,7 +44,8 @@ const writeAll = (file: string, fd: number, chunk: Uint8Array) =>
 
 /**
  * Writes `bytes` into `file` in place, after what it holds when `append`,
- * creating it (mode 0600) when missing: for a download that resumes. The
+ * creating it (mode 0600) when missing: for a download or an upload that
+ * resumes. The
  * caller checks `file`'s folder first (`Layout.writable`); a link at `file`
  * is refused, even one put there after that check, except on Windows, which
  * has no such open and follows it.

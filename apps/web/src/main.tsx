@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "./index.css";
 
-import { QUICK_ACCESS_PATH } from "@j3-bots/desktop-bridge";
+import { QUICK_ACCESS_PATH, RECORDER_PATH } from "@j3-bots/desktop-bridge";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -27,9 +27,10 @@ if (import.meta.env.PROD && desktop === null && "serviceWorker" in navigator) {
   });
 }
 
-// The desktop app's quick access window shows one conversation: links to the
-// app and clicks on notifications are the main window's to take.
-if (window.location.pathname !== QUICK_ACCESS_PATH) {
+// The desktop app's quick access window shows one conversation, and its
+// recorder's window only its control: links to the app and clicks on
+// notifications are the main window's to take.
+if (window.location.pathname !== QUICK_ACCESS_PATH && window.location.pathname !== RECORDER_PATH) {
   // Before the page finishes loading: a window the service worker opened for a
   // notification click is handed the click then.
   listenForNotificationClicks(desktop);

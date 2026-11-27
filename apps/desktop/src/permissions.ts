@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * What the app's page may ask of the system: showing notifications, writing
- * to the clipboard, and the microphone alone, which dictation hears. Never a
- * camera, a screen, or audio together with video.
+ * to the clipboard, and the microphone alone, which dictation and a screen
+ * recording hear. Never a camera, a screen, or audio together with video:
+ * the screens go only to the recorder's control (`capturesScreens`).
  */
 
 type MediaType = "video" | "audio" | "unknown";

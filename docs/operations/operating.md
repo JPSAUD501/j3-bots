@@ -144,6 +144,21 @@ Pressed over another app, the shortcut reads that app's window and shows it as c
 
 Only the X11 read was checked on a running system, under Xvfb without a compositing manager; the rest follows each system's documentation ([Clients: Desktop](../architecture/clients.md#desktop) marks each).
 
+## Recording the screen in the desktop app
+
+The desktop app records every screen, the voice, keys, clicks and the window in front into one zip for a bot ([Experience](../product/experience.md#showing-a-bot-your-screen), [decision 0098](../decisions/0098-the-desktop-app-records-the-screen-for-a-bot.md)). It offers this only while it follows a server that takes recordings, from 0.14.0. What it records depends on the system:
+
+| Where | What to expect |
+| --- | --- |
+| Windows | Everything. The control floats above other windows and is left out of the video. A password typed where Windows says the field is one is kept only as "typed a password", read through Windows PowerShell 5.1 from `System32`; a policy that stops Windows PowerShell or `Add-Type` stops that reading, and from then on no typed text is kept. |
+| macOS | Everything, once System Settings → Privacy & Security allows J3 Bots under Screen Recording and under Accessibility; the sheet asks for each while it is missing. Without Accessibility, the screens and the voice only. A password is kept only as "typed a password" while macOS's secure input is on. |
+| Linux on X11 | Everything. The control shows in the video, and no password is detected, so the sheet says to pause before typing one. With no compositing manager the control is not see-through. |
+| Linux on Wayland | The screen the desktop's screen-sharing portal is told to share, and the voice: Electron gets one source from the portal, so a second screen is recorded only if it is the one picked. Keys, clicks and windows are not readable there. |
+
+Only Chromium's encoders were checked on a running system, on Linux under Xvfb; the rest follows each system's documentation ([Clients: Desktop](../architecture/clients.md#desktop) marks each).
+
+A recording is written as it runs to `<userData>/recordings/<id>/`: one video per screen, the voice, the events and the pictures. The zip itself is never written; the app serves it from those files as it uploads. A recording stays there until the server holds it or the operator discards it, and one the app did not finish, as when it quit, is put back in its draft at the next start. Disk space is checked before it starts and every 15 seconds while it runs: the sheet says space is low under 2 GiB free, a recording does not start under 1 GiB, and one that runs stops under 300 MiB, keeping what it holds. A recording uploads to the server in pieces, up to 8 GiB, and the server holds it twice while the bot has it: once with the conversation's files and once in the bot's inbox. Before it begins, and before each piece, the server checks that its disk has room for what is still to come, the second copy and 1 GiB more; short of that, the file in the draft says the server's disk is out of space ([Server: attachments](../architecture/server.md#attachments)).
+
 ## The server the desktop app runs
 
 When the desktop app runs the bots on this computer, it runs the server itself, as a child of the app, instead of the service ([Clients: Desktop](../architecture/clients.md#desktop)). Nothing of it is installed: no unit, no `j3-bots` command, no `~/.j3-bots`. Its files are under the app's profile, `<userData>`: `~/.config/J3 Bots` on Linux, `%APPDATA%\J3 Bots` on Windows, `~/Library/Application Support/J3 Bots` on macOS (`J3 Bots Development` for a development build).

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import type { BotId, EntryId } from "@j3-bots/contracts";
+import { AttachmentId, type BotId, type EntryId } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -9,7 +9,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import { Attachments } from "../attachments/Attachments.ts";
 import * as Domain from "../domain.ts";
+import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -217,6 +219,50 @@ it.effect(
         assert.include(dispatch?.text, `${path.basename(folder)}/${copied}`);
       }
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("copies a file too large for the engine into the inbox, and names it there alone", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const layout = yield* Layout;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    // 60 MiB, past the 50 the engine takes with a message: a screen recording.
+    const size = 60 * 1024 * 1024;
+    const from = path.join(layout.attachments, "recording.part");
+    yield* fs.makeDirectory(layout.attachments, { recursive: true });
+    yield* fs.writeFile(from, new Uint8Array(0));
+    yield* fs.truncate(from, size);
+    const file = yield* (yield* Attachments).storeFile({
+      id: AttachmentId.make(yield* (yield* Ids).make("att")),
+      name: "recording.zip",
+      mediaType: "application/zip",
+      from,
+    });
+
+    const message = yield* (yield* Pipeline).sendMessage({
+      commandId: command(),
+      target: { _tag: "conversation", botId: bot.id },
+      text: "Learn how I file a report.",
+      attachments: [file.id],
+    });
+    yield* nextTurn(bot.id);
+    yield* deliveryIs(message, "delivered");
+
+    const folder = yield* inboxOf(bot.id, message);
+    assert.deepStrictEqual(yield* fs.readDirectory(folder), ["recording.zip"]);
+    assert.strictEqual(Number((yield* fs.stat(path.join(folder, "recording.zip"))).size), size);
+    const [dispatch] = (yield* control.dispatches(session)).filter(({ text }) =>
+      text.includes("Learn how I file a report."),
+    );
+    assert.deepStrictEqual(dispatch?.attachments, []);
+    assert.match(
+      dispatch?.text ?? "",
+      /<attachment name="recording\.zip" type="application\/zip" path="[^"]+\/recording\.zip"\/>/,
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("resends a message without copying its file into the inbox again", () =>

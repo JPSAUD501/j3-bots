@@ -281,6 +281,8 @@ export const makeInProcessLocks = (): WindowLocks["Service"] => {
 
 /** One upload, as the runtime asks the platform to send it. */
 export interface UploadRequest {
+  /** `POST` for a whole file; `PUT` for a piece of a recording. */
+  readonly method: "POST" | "PUT";
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Blob;

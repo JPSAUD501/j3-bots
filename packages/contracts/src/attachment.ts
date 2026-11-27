@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { AttachmentId, EntryId, NonNegativeInt } from "./base.ts";
+import { AttachmentId, EntryId, NonNegativeInt, PositiveInt } from "./base.ts";
 
 /**
  * J3 Bots' limit on a file's name, in characters, after trimming. The engine
@@ -107,6 +107,60 @@ export const MAX_INLINE_IMAGE_SIZE = 10 * 1024 * 1024;
 
 /** The most bytes of inline images one message may carry together. */
 export const MAX_INLINE_IMAGES_SIZE = 80 * 1024 * 1024;
+
+/**
+ * The media type of a screen recording: the zip the desktop app makes
+ * (decision 0098). A recording upload always stores this one.
+ */
+export const RECORDING_MEDIA_TYPE = "application/zip";
+
+/**
+ * The largest screen recording `HTTP_PATHS.recordingUploads` takes, in
+ * bytes: 8 GiB, hours of HD video at the low frame rate the desktop app
+ * records. The server's free disk bounds it further (see there).
+ */
+export const MAX_RECORDING_SIZE = 8 * 1024 * 1024 * 1024;
+
+/** The most bytes one piece of a recording upload may carry. */
+export const RECORDING_CHUNK_SIZE = 8 * 1024 * 1024;
+
+/** A recording upload, as the server names it: `rec_` and 20 lowercase letters or digits. */
+export const RecordingUploadId = Schema.String.check(Schema.isPattern(/^rec_[0-9a-z]{20}$/)).pipe(
+  Schema.brand("RecordingUploadId"),
+);
+export type RecordingUploadId = typeof RecordingUploadId.Type;
+
+/** What a client sends to begin a recording upload. The server checks the name as an upload's. */
+export const RecordingUploadStart = Schema.Struct({
+  name: Schema.String,
+  /** Bytes. */
+  size: PositiveInt,
+});
+export type RecordingUploadStart = typeof RecordingUploadStart.Type;
+
+/** Where a recording upload stands. */
+export const RecordingUpload = Schema.Struct({
+  id: RecordingUploadId,
+  /** Bytes, as the upload began with. */
+  size: PositiveInt,
+  /** The bytes the server holds, from the start: where the next piece begins. */
+  received: NonNegativeInt,
+  /** The file, once every byte arrived and was stored: what a message carries. */
+  attachment: Schema.optionalKey(Attachment),
+});
+export type RecordingUpload = typeof RecordingUpload.Type;
+
+/**
+ * A piece of a recording upload did not begin where the upload stands, at
+ * `received`: the client sends again from there.
+ */
+export class RecordingOffset extends Schema.TaggedError<RecordingOffset>()("RecordingOffset", {
+  received: NonNegativeInt,
+}) {
+  override get message(): string {
+    return "The piece does not begin where the upload stands.";
+  }
+}
 
 /** A file a bot delivered, as the bot's details screen lists it. */
 export const BotFile = Schema.Struct({

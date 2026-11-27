@@ -74,6 +74,7 @@ const shown = (page: string) =>
       onOpenRoom={() => {}}
       onOpenBot={() => {}}
       quotes={{ reveal: () => Promise.resolve("shown"), drafting: null }}
+      recordScreen={null}
     />,
   );
 

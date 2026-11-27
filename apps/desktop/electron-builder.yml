@@ -29,6 +29,10 @@ directories:
 files:
   - dist/**
   - package.json
+# The input hook's binaries (vite.config.ts): a native module loads only
+# from a real file.
+asarUnpack:
+  - dist/native/**
 # The web client's build, which the main process reads beside the app's asar.
 # Each platform local mode runs on adds its server runtime below
 # (`server-runtime`), which `pnpm release --server-runtime` builds into
@@ -87,11 +91,12 @@ mac:
   # Ad hoc: no Developer ID, which Apple Silicon still needs to run the app at all.
   identity: "-"
   artifactName: J3-Bots-${version}-${arch}-unsigned.${ext}
-  # Dictation hears the microphone: macOS asks the operator once, in these
-  # words, and the hardened runtime needs the audio-input entitlement, which
-  # the app and the helper that captures audio both carry.
+  # Dictation and screen recording hear the microphone: macOS asks the
+  # operator once, in these words, and the hardened runtime needs the
+  # audio-input entitlement, which the app and the helper that captures audio
+  # both carry.
   extendInfo:
-    NSMicrophoneUsageDescription: J3 Bots hears your voice only while you dictate, to write it into your message.
+    NSMicrophoneUsageDescription: J3 Bots hears your voice only while you dictate a message or record your screen for a bot.
   entitlements: entitlements.mac.plist
   entitlementsInherit: entitlements.mac.plist
   # Apple Silicon only: no runtime is built for Intel Macs, where the app only
