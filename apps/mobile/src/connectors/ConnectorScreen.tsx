@@ -46,7 +46,9 @@ import {
   ListingFields,
   PageSection,
   StatusBlock,
-  ToolList,
+  ServedList,
+  skillItems,
+  toolItems,
 } from "./parts.tsx";
 
 type Props = NativeStackScreenProps<Screens, "connector">;
@@ -183,9 +185,19 @@ export function ConnectorScreen({ navigation, route }: Props) {
       </PageSection>
 
       <PageSection title={t("connector.tools")}>
-        <ToolList tools={connector.tools} />
+        {connector.tools.length === 0 ? (
+          <Quiet>{t("connector.tools.none")}</Quiet>
+        ) : (
+          <ServedList items={toolItems(connector.tools)} />
+        )}
         {server !== null && <Quiet>{server}</Quiet>}
       </PageSection>
+
+      {connector.skills !== undefined && connector.skills.length > 0 && (
+        <PageSection title={t("connector.skills")}>
+          <ServedList items={skillItems(connector.skills)} />
+        </PageSection>
+      )}
 
       {!onComputer && (
         <Disconnect connector={connector} intents={intents} onRemoved={navigation.goBack} />

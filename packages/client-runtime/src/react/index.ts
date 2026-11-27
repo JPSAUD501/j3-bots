@@ -281,7 +281,6 @@ export {
   type AiIntents,
   AiSessionProvider,
   useAiConnect,
-  useAiOpened,
 } from "./aiConnect.ts";
 export { type BotEdit, type ProfileFieldProblem, useBotEdit } from "./botEdit.ts";
 export { type MemoryEdit, type MemoryReading, useMemoryEdit } from "./memoryEdit.ts";

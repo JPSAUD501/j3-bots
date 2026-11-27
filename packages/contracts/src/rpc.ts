@@ -14,6 +14,7 @@ import {
   EntryId,
   EntryOrder,
   Language,
+  NonNegativeInt,
   ProviderId,
   RoomId,
   RoutineId,
@@ -56,12 +57,14 @@ import {
   EntryPreview,
   EntryTarget,
   LookingAt,
+  MAX_SECRET_ASK_VALUES,
   Mentions,
   MessageText,
   PREVIEW_LENGTH,
   QuestionAnswers,
   ReceivedEntry,
   SecretRequestAnswer,
+  SecretRequestFieldId,
   WorkStep,
 } from "./entry.ts";
 import { CommandError, Conflict, ConnectorCommandError, NotFound } from "./errors.ts";
@@ -76,7 +79,14 @@ import {
 } from "./memory.ts";
 import { PairBotIds, PairSeq, TeammateMessage, TeammatePair } from "./pair.ts";
 import { Room, RoomMembers, RoomName } from "./room.ts";
-import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
+import {
+  Routine,
+  RoutineAnswer,
+  RoutineNotice,
+  RoutineInstruction,
+  RoutineRun,
+  RoutineTrigger,
+} from "./routine.ts";
 import {
   HarnessLocation,
   ProviderConnectionOutcome,
@@ -94,6 +104,7 @@ import {
   SecretId,
   SecretName,
   SecretsStatus,
+  SecretValue,
   TotpPreview,
 } from "./secrets.ts";
 import { Section, SectionName } from "./section.ts";
@@ -299,7 +310,7 @@ export const EntryRpcs = RpcGroup.make(
    *
    * A bot's ask for a secret (`secret-ask`) takes only a dismissal, its
    * Decline, which closes it as declined and wakes the bot to say so; it is
-   * saved with `secrets.add`.
+   * saved with `secrets.add`, or `secrets.addFromAsk` for one with `values`.
    *
    * A connector's request for input is answered `connector-input`: the
    * answer goes to the connector's server only, never to the bot, and the
@@ -717,6 +728,40 @@ export const RoutineRpcs = RpcGroup.make(
     payload: { ...command, routineId: RoutineId },
     error: CommandError,
   }),
+  /**
+   * Answers the yes a run waits for (decision 0080). A run no longer
+   * waiting, or waiting at another yes than `step` names, fails
+   * `Conflict("card-closed")`.
+   */
+  Rpc.make("routine.answer", {
+    payload: {
+      ...command,
+      runId: RoutineRunId,
+      /**
+       * The yes's place in the run's steps, as the card showed it, so an
+       * answer to one yes never closes a later one. Absent from a client
+       * that predates it, whose answer goes to the yes the run waits for.
+       */
+      step: Schema.optionalKey(NonNegativeInt),
+      choice: RoutineAnswer.fields.choice,
+      note: RoutineAnswer.fields.note,
+    },
+    error: CommandError,
+  }),
+  /**
+   * Resumes a failed run from the step it failed at, keeping what the steps
+   * before reported. A run that is not `retryable` fails
+   * `Conflict("not-retryable")`.
+   */
+  Rpc.make("routine.retry", {
+    payload: { ...command, runId: RoutineRunId },
+    error: CommandError,
+  }),
+  /** Ends a run that is going, as a Stop of its owner ends it. A run already over fails `Conflict("card-closed")`. */
+  Rpc.make("routine.stopRun", {
+    payload: { ...command, runId: RoutineRunId },
+    error: CommandError,
+  }),
 );
 
 export const MemoryRpcs = RpcGroup.make(
@@ -889,6 +934,14 @@ export const Notification = Schema.Struct({
   browserHelp: Schema.NullOr(
     Schema.Struct({ reason: BrowserHelpEntry.fields.reason, site: BrowserHelpEntry.fields.site }),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * A run of a routine with several steps that needs the operator (decision
+   * 0080), always a `question`: its routine's name, and why, in fixed words.
+   * For the yes it waits for, the preview is what the yes asks; for a step
+   * it failed at, it names that step's bot. Absent for every other
+   * notification, and from a server that predates steps.
+   */
+  routine: Schema.optionalKey(RoutineNotice),
 });
 export type Notification = typeof Notification.Type;
 
@@ -1076,6 +1129,28 @@ export const SecretsRpcs = RpcGroup.make(
       request: Schema.NullOr(EntryId),
     },
     success: Secret,
+    error: CommandError,
+  }),
+  /**
+   * Answers a bot's `secret-ask` card that asks for several values
+   * (`values`): each value is added as a single value under the name the
+   * card gives it, as `id`, usable by the bots of `access` and always by the
+   * bot that asked. The card closes as saved once every one is added, and
+   * wakes the bot with their references. Every value must be given, and only
+   * those: else `Invalid("answer")`, and nothing is added. A name another
+   * secret took since the ask fails with `Conflict("secret-name-taken")`;
+   * values added before it stay added. Sent again, under any ids, the
+   * values added already are returned as they are.
+   */
+  Rpc.make("secrets.addFromAsk", {
+    payload: {
+      request: EntryId,
+      access: SecretAccess,
+      values: Schema.Array(
+        Schema.Struct({ field: SecretRequestFieldId, id: SecretId, value: SecretValue }),
+      ).check(Schema.isMaxLength(MAX_SECRET_ASK_VALUES)),
+    },
+    success: Schema.Array(Secret),
     error: CommandError,
   }),
   /**

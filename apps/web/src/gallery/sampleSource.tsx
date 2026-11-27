@@ -81,6 +81,7 @@ import {
   samplePromptIntents,
 } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
+import { sampleTrackCommand } from "./sampleRoutineTrack";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -430,6 +431,10 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     openConnectors,
     signInConnector: (entry) =>
       openConnectors({ _tag: "connector", connectorId: entry.connectorId, signIn: true }),
+    routineCard: (entryId, _name, command) =>
+      inFlight(entryId, (e) =>
+        e._tag === "routine-run" ? { ...e, run: sampleTrackCommand(e.run, command) } : e,
+      ),
     answerConnectorInput: (entryId, answer) =>
       inFlight(entryId, (e) =>
         e._tag === "connector-input"

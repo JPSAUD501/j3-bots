@@ -20,13 +20,13 @@ import {
 } from "./base.ts";
 import { FailureClass, FailureDetails, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
+import { ConnectorGlyph, ConnectorId, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
-import { RoutineTrigger } from "./routine.ts";
+import { RoutineRun, RoutineStep, RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepTool, TurnWork, WorkStepKind } from "./work.ts";
+import { StepSkill, StepTool, TurnWork, WorkStepKind } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -564,13 +564,35 @@ export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
 /** The most characters a bot's note on an ask for a secret holds. */
 export const MAX_SECRET_ASK_NOTE_LENGTH = 500;
 
+/** The fewest and the most values one ask for secrets takes on its card. */
+export const MIN_SECRET_ASK_VALUES = 2;
+export const MAX_SECRET_ASK_VALUES = 4;
+
+/**
+ * One of the values a bot asks for together, each saved as a single value
+ * under its own name: a service's client ID and its client secret, say.
+ */
+export const SecretAskValue = Schema.Struct({
+  /** Its place on the card, `field-1` for the first, which the answer names it by. */
+  id: SecretRequestFieldId,
+  /** The name it is saved under, which the bot names it by (`secret:<name>`). */
+  name: Label,
+  /** What the operator reads above its input, such as "Client ID". */
+  label: Label,
+  /** Whether what is typed is hidden. False shows it, as for an identifier that is not secret. */
+  masked: Schema.Boolean,
+});
+export type SecretAskValue = typeof SecretAskValue.Type;
+
 /**
  * A bot asks the operator for a secret: a login for a site, or a single value
- * such as a token. The client sends what the operator types with
- * `secrets.add`, naming this card, straight to the server: it never passes
- * through the bot, and this entry has no field for it. Saving, declining
- * (`card.answer` with `dismiss`) or expiring closes it and wakes the bot with
- * the outcome, and once saved, with the secret's reference.
+ * such as a token, or a few values that go together, each saved as a single
+ * value. The client sends what the operator types with `secrets.add`
+ * (`secrets.addFromAsk` for an ask with `values`), naming this card, straight
+ * to the server: it never passes through the bot, and this entry has no field
+ * for it. Saving, declining (`card.answer` with `dismiss`) or expiring closes
+ * it and wakes the bot with the outcome, and once saved, with the secrets'
+ * references.
  */
 export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   ...entry,
@@ -578,7 +600,8 @@ export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
   /**
    * The name the secret is saved under, which the bot asked for and names
    * it by (`secret:<name>`). A save-login card from before secrets shows the
-   * name it was saved under, or its site.
+   * name it was saved under, or its site. For an ask with `values`, the
+   * first value's.
    */
   name: Label,
   secret: Schema.Union([
@@ -586,6 +609,23 @@ export const SecretAskEntry = Schema.TaggedStruct("secret-ask", {
     Schema.TaggedStruct("login", { origin: SiteOrigin }),
     Schema.TaggedStruct("value", {}),
   ]),
+  /**
+   * The values asked for together, in order, for a `value` ask that takes
+   * several on one card; absent for an ask for one secret. A client that
+   * does not know it shows one input, and the server refuses that answer
+   * (`Invalid("answer")`).
+   */
+  values: Schema.optionalKey(
+    Schema.Array(SecretAskValue).check(
+      Schema.isMinLength(MIN_SECRET_ASK_VALUES),
+      Schema.isMaxLength(MAX_SECRET_ASK_VALUES),
+    ),
+  ),
+  /**
+   * Where the service issues what is asked for, when the bot knows it, which
+   * the card links to: a page of the service's own settings, say.
+   */
+  setup: Schema.optionalKey(SetupPageUrl),
   /** Why the bot needs it, in its own words. */
   note: Schema.String.check(Schema.isMaxLength(MAX_SECRET_ASK_NOTE_LENGTH)),
   status: Schema.Union([
@@ -747,6 +787,8 @@ export const WorkStep = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** For a `login` step, the fill it made or refused. */
   fill: Schema.optionalKey(CredentialFill),
+  /** For a `connector-skill` step, the skill it loads; absent when it could not be named. */
+  skill: Schema.optionalKey(StepSkill),
   /**
    * For a call to a connector's tool: the connector, and the tool's `_meta.ui`
    * as its server listed it (MCP Apps), null when it has none.
@@ -769,8 +811,13 @@ export const WorkStep = Schema.Struct({
 });
 export type WorkStep = typeof WorkStep.Type;
 
-/** What a client needs to say a step in a line: its kind, its tool and its label. */
-export const StepSummary = WorkStep.mapFields(({ kind, tool, label }) => ({ kind, tool, label }));
+/** What a client needs to say a step in a line: its kind, its tool, its label and the skill it loads. */
+export const StepSummary = WorkStep.mapFields(({ kind, tool, label, skill }) => ({
+  kind,
+  tool,
+  label,
+  skill,
+}));
 export type StepSummary = typeof StepSummary.Type;
 
 /**
@@ -988,8 +1035,30 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   change: Schema.Literals(["created", "updated", "paused", "resumed", "deleted"]),
   /** The trigger as saved by this change. */
   trigger: RoutineTrigger,
+  /**
+   * The steps as saved by this change, for a routine with several steps:
+   * the card draws its track. Absent for a one-step routine, a deletion, and
+   * from a server that predates steps.
+   */
+  steps: Schema.optionalKey(Schema.Array(RoutineStep)),
 });
 export type RoutineChangeEntry = typeof RoutineChangeEntry.Type;
+
+/**
+ * A run of a routine with several steps (decision 0080), in its owner's
+ * conversation, which the server updates as the run moves: its steps, where
+ * each stands, the yes it waits for, and how it ended. Its author is the
+ * routine's owner.
+ */
+export const RoutineRunEntry = Schema.TaggedStruct("routine-run", {
+  ...entry,
+  author: BotAuthor,
+  routineId: RoutineId,
+  name: Label,
+  trigger: RoutineTrigger,
+  run: RoutineRun,
+});
+export type RoutineRunEntry = typeof RoutineRunEntry.Type;
 
 export const Entry = Schema.Union([
   MessageEntry,
@@ -1005,6 +1074,7 @@ export const Entry = Schema.Union([
   NoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  RoutineRunEntry,
 ]);
 export type Entry = typeof Entry.Type;
 
@@ -1061,6 +1131,7 @@ export const ReceivedEntry = Schema.Union([
   ReceivedNoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  RoutineRunEntry,
   UnknownEntry,
 ]);
 export type ReceivedEntry = typeof ReceivedEntry.Type;
@@ -1095,6 +1166,7 @@ export const entryText = (entry: Entry): string => {
     case "connector-ask":
       return entry.name;
     case "routine-change":
+    case "routine-run":
       return entry.name;
     case "work-fold":
     case "notice":

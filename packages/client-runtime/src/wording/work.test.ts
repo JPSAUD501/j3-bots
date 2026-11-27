@@ -10,7 +10,15 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { fillDetail, stepDetail, stepMark, stepText, workDoneText, workFoldTitle } from "./work.ts";
+import {
+  activityText,
+  fillDetail,
+  stepDetail,
+  stepMark,
+  stepText,
+  workDoneText,
+  workFoldTitle,
+} from "./work.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", {});
 
@@ -112,6 +120,44 @@ describe("a step in plain words", () => {
   it("says the roster's summary of a turn the same way", () => {
     const edited = { kind: "edit", tool: null, label: "/home/someone/notes.md" } as const;
     expect(workDoneText(edited, null, ctx.i18n)).toBe("Edited a file");
+  });
+});
+
+describe("a connector's skill", () => {
+  const skill = { name: "invoices", connector: "Billing" };
+  const step = (status: WorkStep["status"], named: boolean): WorkStep => ({
+    id: WorkStepId.make("step"),
+    kind: "tool",
+    tool: "connector-skill",
+    label: "Used a connector's skill",
+    status,
+    startedAt: at("2026-11-20T14:00:00Z"),
+    finishedAt: status === "running" ? null : at("2026-11-20T14:00:01Z"),
+    ...(named ? { skill } : {}),
+  });
+
+  it("names the skill and its connector while it is used and once it was", () => {
+    expect(plain(stepText(step("running", true), true, ctx.i18n))).toBe(
+      "Using the skill invoices from Billing",
+    );
+    expect(plain(stepText(step("completed", true), true, ctx.i18n))).toBe(
+      "Used the skill invoices from Billing",
+    );
+    const working = {
+      activity: null,
+      activityKind: "tool",
+      tool: "connector-skill",
+      skill,
+    } as const;
+    expect(plain(activityText(working, ctx.i18n))).toBe("Using the skill invoices from Billing");
+    const summary = { kind: "tool", tool: "connector-skill", label: "x", skill } as const;
+    expect(plain(workDoneText(summary, null, ctx.i18n))).toBe(
+      "Used the skill invoices from Billing",
+    );
+  });
+
+  it("says only that a connector's skill was used when the step does not name it", () => {
+    expect(stepText(step("completed", false), true, ctx.i18n)).toBe("Used a connector’s skill");
   });
 });
 

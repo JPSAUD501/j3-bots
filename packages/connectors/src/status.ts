@@ -23,7 +23,9 @@ export type FailingReason =
   | "refused-address"
   | "command-not-found"
   | "command-exited"
-  | "command-refused";
+  | "command-refused"
+  | "issuer-changed"
+  | "sign-in-unsupported";
 
 export interface Failing {
   readonly reason: FailingReason;
@@ -73,29 +75,45 @@ export type Activity = "connect" | "call";
 export type Observation =
   | { readonly _tag: "answered" }
   | { readonly _tag: "needs-sign-in"; readonly need: SignInNeed }
+  /** The service refused the credentials the connector signs in as a service with, kept in this secret. */
+  | { readonly _tag: "secret-refused"; readonly secret: SecretName }
   | { readonly _tag: "failing"; readonly reason: FailingReason }
   | { readonly _tag: "unchanged" };
 
 /**
  * What a failure says about the connector. Secrets that cannot be read, and
  * a secret its settings need, are their own status, which reaches the
- * connector from the secrets, and a withdrawn request says nothing of the
- * connector. A call that timed out,
- * answered too much, or got an MCP error is that call's trouble; the same
- * while connecting or listing means the server is not working.
+ * connector from the secrets; a withdrawn request, or a step on the
+ * server's own page the operator did not finish, says nothing of the
+ * connector; a service that refused the credentials it signs in with does.
+ * A call that timed out, answered too much, or got an MCP error is that
+ * call's trouble; the same while connecting or listing means the server is
+ * not working.
  */
 export const observe = (failure: ConnectorFailure, activity: Activity): Observation => {
   switch (failure._tag) {
-    case "SecretsUnavailable":
     case "SecretNeeded":
+      return failure.reason === "refused"
+        ? { _tag: "secret-refused", secret: failure.secret }
+        : { _tag: "unchanged" };
+    case "SecretsUnavailable":
     case "Withdrawn":
+    case "StepNotFinished":
       return { _tag: "unchanged" };
     case "NeedsSignIn":
       return { _tag: "needs-sign-in", need: "rejected" };
     case "AuthFailing":
-      return failure.reason === "secret-unusable"
-        ? { _tag: "needs-sign-in", need: "rejected" }
-        : { _tag: "failing", reason: "unreachable" };
+      switch (failure.reason) {
+        case "secret-unusable":
+          return { _tag: "needs-sign-in", need: "rejected" };
+        case "issuer-changed":
+        case "sign-in-unsupported":
+          return { _tag: "failing", reason: failure.reason };
+        case "refresh-failed":
+          return { _tag: "failing", reason: "unreachable" };
+        case "scope-refused":
+          return { _tag: "unchanged" };
+      }
     case "UrlRefused":
       return { _tag: "failing", reason: "refused-address" };
     case "Unreachable":
@@ -142,6 +160,7 @@ export const nextFailing = (
         since: Option.match(failing, { onNone: () => now, onSome: (f) => f.since }),
       });
     case "needs-sign-in":
+    case "secret-refused":
     case "unchanged":
       return failing;
   }

@@ -3,6 +3,7 @@ import type {
   ActivityKind,
   CredentialFill,
   FillField,
+  StepSkill,
   StepSummary,
   StepTool,
   TurnEnding,
@@ -29,6 +30,7 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
   secret: { did: "tool.secret.did", doing: "tool.secret.doing" },
   login: { did: "tool.login.did", doing: "tool.login.doing" },
   connector: { did: "tool.connector.did", doing: "tool.connector.doing" },
+  "connector-skill": { did: "tool.connectorSkill.did", doing: "tool.connectorSkill.doing" },
   browser: { did: "tool.browser.did", doing: "tool.browser.doing" },
   "pull-request": { did: "tool.pullRequest.did", doing: "tool.pullRequest.doing" },
   issue: { did: "tool.issue.did", doing: "tool.issue.doing" },
@@ -55,6 +57,28 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
 
 /** The tool's words, or none for a tool this build cannot name. */
 const wordsOf = (tool: StepTool) => (tool === null || tool === "unknown" ? null : toolWords[tool]);
+
+/**
+ * What a step using `tool` is doing, or did: a connector's skill by its name
+ * and its connector's, when the step names them; else the tool's words, or
+ * null for a tool this build cannot name.
+ */
+const toolText = (
+  tool: StepTool,
+  skill: StepSkill | undefined,
+  running: boolean,
+  i18n: I18n,
+): string | null => {
+  if (tool === "connector-skill" && skill !== undefined) {
+    const { name, connector } = skill;
+    return i18n.t(running ? "tool.connectorSkill.doingNamed" : "tool.connectorSkill.didNamed", {
+      skill: name,
+      connector,
+    });
+  }
+  const words = wordsOf(tool);
+  return words === null ? null : i18n.t(running ? words.doing : words.did);
+};
 
 const filled: Record<FillField, KeyWith<"name">> = {
   username: "fill.filled.username",
@@ -90,20 +114,21 @@ const kindWords: Record<
 /**
  * A step in plain words, as the operator reads it wherever it is shown: what
  * it is doing while it runs, what it did once it ran. A tool J3 Bots names
- * in its words; a tool it cannot name by its own readable name; every other
+ * in its words, a connector's skill by its name and its connector's; a tool it cannot name by its own readable name; every other
  * step by its kind, never by its command, path or search, which only the
  * step's detail shows (`stepDetail`).
  */
 function stepWords(
   kind: ActivityKind,
   tool: StepTool,
+  skill: StepSkill | undefined,
   label: string | null,
   running: boolean,
   i18n: I18n,
 ): string {
   const { t } = i18n;
-  const words = wordsOf(tool);
-  if (words !== null) return t(running ? words.doing : words.did);
+  const said = toolText(tool, skill, running, i18n);
+  if (said !== null) return said;
   if (kind === "tool") {
     const name = label === null ? "" : firstLine(label);
     if (name === "") return t(running ? "tool.builtIn.doing" : "tool.builtIn.did");
@@ -128,7 +153,14 @@ export function fillText(fill: CredentialFill, i18n: I18n): string {
  */
 export function stepText(step: WorkStep, turnRuns: boolean, i18n: I18n): string {
   if (step.fill !== undefined) return fillText(step.fill, i18n);
-  return stepWords(step.kind, step.tool, step.label, stepMark(step, turnRuns) === "running", i18n);
+  return stepWords(
+    step.kind,
+    step.tool,
+    step.skill,
+    step.label,
+    stepMark(step, turnRuns) === "running",
+    i18n,
+  );
 }
 
 /**
@@ -205,14 +237,20 @@ export function fillDetail(fill: CredentialFill, i18n: I18n): string {
   }
 }
 
-/** What a working bot is doing, in a few words: the step it is on, in plain words (`stepWords`). */
+/**
+ * What a working bot is doing, in a few words: the step it is on, in plain
+ * words (`stepWords`), a connector's skill by name.
+ */
 export function activityText(
-  activity: string | null,
-  kind: ActivityKind,
-  tool: StepTool,
+  working: {
+    readonly activity: string | null;
+    readonly activityKind: ActivityKind;
+    readonly tool: StepTool;
+    readonly skill?: StepSkill;
+  },
   i18n: I18n,
 ): string {
-  return stepWords(kind, tool, activity, true, i18n);
+  return stepWords(working.activityKind, working.tool, working.skill, working.activity, true, i18n);
 }
 
 /**
@@ -230,7 +268,7 @@ export function workDoneText(
     if (ending === "failed") return t("summary.workFailed");
     return t("summary.workFold");
   }
-  return stepWords(step.kind, step.tool, step.label, false, i18n);
+  return stepWords(step.kind, step.tool, step.skill, step.label, false, i18n);
 }
 
 /**

@@ -139,7 +139,11 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** The bot's oldest open card it ended a turn on: an `ask`, or a request for help in its browser. */
+    /**
+     * The bot's oldest open card it waits on between turns: an `ask` it ended
+     * a turn on, a request for help in its browser, or a run of its routine
+     * waiting for the operator's yes.
+     */
     const askCard = SqlSchema.findOneOption({
       Request: BotId,
       Result: Card,
@@ -150,6 +154,12 @@ export const layer = Layer.effect(
           UNION ALL
           SELECT b.entry_id, e.seq FROM browser_help_cards b JOIN entries e ON e.id = b.entry_id
           WHERE b.bot_id = ${botId} AND b.closed_at IS NULL
+          UNION ALL
+          SELECT r.entry_id, e.seq FROM routine_runs r
+          JOIN routines ro ON ro.id = r.routine_id
+          JOIN routine_run_steps s ON s.run_id = r.id AND s.position = r.step
+          JOIN entries e ON e.id = r.entry_id
+          WHERE ro.bot_id = ${botId} AND r.status = 'running' AND s.state = 'waiting'
         )
         ORDER BY seq LIMIT 1
       `,
@@ -250,6 +260,7 @@ export const layer = Layer.effect(
           activity: running ? step.value.label : null,
           activityKind: running ? step.value.kind : null,
           tool: running ? step.value.tool : null,
+          ...(running && step.value.skill !== undefined ? { skill: step.value.skill } : {}),
           littleOnes: work?.littleOnes.working ?? 0,
         } as const;
       }

@@ -163,6 +163,8 @@ function previewSummary(
     }
     case "routine-change":
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
+    case "routine-run":
+      return t(current ? "routine.roster.waits" : "summary.routine", { name: text });
     case "unknown":
       return t("summary.cannotShow");
   }
@@ -367,10 +369,7 @@ function turnUnderWayLine(
   if (state.stalled) return { text: ctx.i18n.t("presence.stalled"), tone: "waiting" };
   return state._tag === "thinking"
     ? { text: t("presence.thinking"), tone: "default" }
-    : {
-        text: activityText(state.activity, state.activityKind, state.tool, ctx.i18n),
-        tone: "default",
-      };
+    : { text: activityText(state, ctx.i18n), tone: "default" };
 }
 
 /**

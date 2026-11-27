@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Loaded } from "@j3-bots/client-runtime";
 import {
+  asksYou,
   botStop,
   connectorsOf,
   type Teammate,
   teammatesOf,
+  trackCast,
 } from "@j3-bots/client-runtime/presentation";
 import {
   useBotFiles,
@@ -24,7 +26,14 @@ import {
   permissionModeText,
   routineLines,
 } from "@j3-bots/client-runtime/wording";
-import type { Bot, Connector, MemoryFile, Routine } from "@j3-bots/contracts";
+import {
+  type Bot,
+  type Connector,
+  hasSeveralSteps,
+  type MemoryFile,
+  type Routine,
+  type RoutineStep,
+} from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import {
   CalendarClock,
@@ -53,6 +62,7 @@ import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
+import { RoutineSentence } from "../conversation/RoutineTrack.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useShareBotTemplate } from "../template/share.ts";
 import { useBotPlacing } from "../screens/placing.ts";
@@ -278,6 +288,35 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
  * A routine: its name, its trigger in words, its next run, how its last run
  * went, and a switch that pauses it. The rest of the row opens its runs.
  */
+/** Who does a routine's steps, as small faces, and an amber dot when it stops for the operator's yes. */
+function RoutineCast({ steps }: { readonly steps: ReadonlyArray<RoutineStep> }) {
+  const bots = useBots();
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      className="flex-row items-center gap-0.5"
+    >
+      {trackCast(steps).flatMap((botId) => {
+        const bot = bots.get(botId);
+        return bot === undefined
+          ? []
+          : [
+              <BotAvatar
+                key={botId}
+                avatar={bot.profile.avatar}
+                seed={bot.id}
+                state="idle"
+                size={16}
+                still
+              />,
+            ];
+      })}
+      {asksYou(steps) && <View className="ms-0.5 size-1.5 rounded-pill bg-waiting" />}
+    </View>
+  );
+}
+
 function RoutineRow({
   routine,
   onOpen,
@@ -290,6 +329,8 @@ function RoutineRow({
   const client = useJ3Client();
   const say = useSay();
   const lines = routineLines(routine, ctx);
+  // A routine with several steps reads back as its sentence, with who does it.
+  const steps = hasSeveralSteps(routine.steps, routine.botId) ? routine.steps : null;
   const icon = !routine.enabled
     ? CirclePause
     : routine.trigger._tag === "webhook"
@@ -309,12 +350,34 @@ function RoutineRow({
         onPress={onOpen}
         className="-my-1 gap-0.5 rounded-md py-1 active:bg-muted"
       >
-        <Text numberOfLines={1} className="text-base text-foreground">
-          {routine.name}
-        </Text>
-        <Text face={lines.expression ? "mono" : "text"} className="text-sm text-muted-foreground">
-          {lines.schedule}
-        </Text>
+        {steps === null ? (
+          <>
+            <Text numberOfLines={1} className="text-base text-foreground">
+              {routine.name}
+            </Text>
+            <Text
+              face={lines.expression ? "mono" : "text"}
+              className="text-sm text-muted-foreground"
+            >
+              {lines.schedule}
+            </Text>
+          </>
+        ) : (
+          <>
+            <View className="flex-row items-center gap-2">
+              <Text numberOfLines={1} className="min-w-0 shrink text-base text-foreground">
+                {routine.name}
+              </Text>
+              <RoutineCast steps={steps} />
+            </View>
+            <RoutineSentence
+              trigger={routine.trigger}
+              steps={steps}
+              className="text-sm"
+              lines={2}
+            />
+          </>
+        )}
         {lines.status !== null && (
           <Text className="text-xs text-muted-foreground">{lines.status}</Text>
         )}

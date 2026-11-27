@@ -19,7 +19,9 @@ import {
   SecretId,
   SecretName,
   secretRequestFieldId,
+  SetupPageUrl,
   SiteOrigin,
+  SkillName,
   WorkStepId,
   type ApprovalEntry,
   type Author,
@@ -606,9 +608,36 @@ export function galleryVariants(now: DateTime.Utc) {
     _tag: "login",
     origin: SiteOrigin.make("https://billing.example.com"),
   } as const;
+  /** An ask for a service's client ID and secret together, on one card. */
+  const askValues = (name: string, status: SecretAskEntry["status"]): SecretAskEntry => ({
+    _tag: "secret-ask",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    name: "builds-client-id",
+    secret: { _tag: "value" },
+    values: [
+      {
+        id: secretRequestFieldId(0),
+        name: "builds-client-id",
+        label: "Client ID",
+        masked: false,
+      },
+      {
+        id: secretRequestFieldId(1),
+        name: "builds-client-secret",
+        label: "Client secret",
+        masked: true,
+      },
+    ],
+    setup: SetupPageUrl.make("https://builds.example.com/settings/api-clients"),
+    note: "The build server signs in a service with its own client. Make one for J3 Bots on its API clients page, and I can start builds myself.",
+    status,
+  });
   const asks: ReadonlyArray<SecretAskEntry> = [
     ask("ask-login", billing, { _tag: "pending" }),
     ask("ask-value", { _tag: "value" }, { _tag: "pending" }),
+    askValues("ask-values", { _tag: "pending" }),
+    askValues("ask-values-saved", { _tag: "saved" }),
     ask("ask-saved", billing, { _tag: "saved" }),
     ask("ask-declined", { _tag: "value" }, { _tag: "declined" }),
     ask("ask-expired", billing, { _tag: "expired" }),
@@ -848,6 +877,12 @@ export function galleryVariants(now: DateTime.Utc) {
       outcome,
     },
   });
+  /** A load of one of the sample Notion's skills, as its work step shows it. */
+  const skillStep = (name: string, status: WorkStep["status"]): WorkStep => ({
+    ...step("tool", "Used a connector's skill", status, "connector-skill"),
+    id: WorkStepId.make(`variant-skill-${name}`),
+    skill: { name: SkillName.make(name), connector: Label.make("Notion") },
+  });
   const folds: ReadonlyArray<{
     entry: WorkFoldEntry;
     steps: ReadonlyArray<WorkStep> | null;
@@ -930,6 +965,11 @@ export function galleryVariants(now: DateTime.Utc) {
         step("read", "invoices/2026-04.json"),
         step("command", "node reconcile.js --watch", "running"),
       ],
+      open: true,
+    },
+    {
+      entry: fold("fold-skills", { _tag: "running" }, 2),
+      steps: [skillStep("meeting-notes", "completed"), skillStep("project-brief", "running")],
       open: true,
     },
     {

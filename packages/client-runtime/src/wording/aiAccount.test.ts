@@ -112,23 +112,22 @@ describe("an AI account, in words", () => {
 });
 
 describe("the connect step", () => {
-  it("asks which AI the operator has while none is open, in both languages", () => {
+  it("asks which AI the bot uses while none is connected, in both languages", () => {
     const step = connectStepText(
       ready(claude({ _tag: "unavailable", checking: true })),
-      null,
       null,
       "Nova",
       en,
     );
     expect(step.title).toBe("Which AI will Nova use?");
-    expect(connectStepText(null, null, null, "Nova", createI18n("pt-BR")).title).toBe(
+    expect(connectStepText(null, null, "Nova", createI18n("pt-BR")).title).toBe(
       "Qual IA Nova vai usar?",
     );
   });
 
   it("lets the bot be created while its AI still downloads, and says it greets once connected", () => {
     const engine = ready(claude({ _tag: "unavailable", checking: false, reason: "not-installed" }));
-    const step = connectStepText(engine, null, null, "Nova", en);
+    const step = connectStepText(engine, null, "Nova", en);
     expect(step.createWaits).toBeNull();
     expect(step.later).toBe(
       "No rush: create Nova now, and it says hello as soon as its AI is connected.",
@@ -141,20 +140,18 @@ describe("the connect step", () => {
       pinnedVersion: "0.1.12",
       providers: [],
     };
-    const step = connectStepText(starting, null, null, "Nova", en);
+    const step = connectStepText(starting, null, "Nova", en);
     expect(step.createWaits).toBe(
       "J3 Bots is still getting ready. You can create Nova in a moment.",
     );
     expect(step.later).toBeNull();
     // Before the server answers at all, the client waits for it to create the bot.
-    expect(connectStepText(null, null, null, "Nova", en).createWaits).toBeNull();
+    expect(connectStepText(null, null, "Nova", en).createWaits).toBeNull();
   });
 
   it("says the account is connected, and drops the line about later", () => {
-    const state: AiAccountState = { _tag: "ready", limit: null };
     const engine = ready(claude({ _tag: "ready" }));
-    const text = aiAccountText("claude-code", state, at("here", engine), ctx);
-    const step = connectStepText(engine, { account: "claude-code", text }, state, "Nova", en);
+    const step = connectStepText(engine, "claude-code", "Nova", en);
     expect(step).toMatchObject({
       title: "Claude is connected",
       body: "Everything is ready for Nova to say hello.",
@@ -168,22 +165,16 @@ describe("the connect step", () => {
       ...ready(),
       state: { _tag: "unavailable", reason },
     });
-    const restarting = connectStepText(out("down"), null, null, "Nova", en);
+    const restarting = connectStepText(out("down"), null, "Nova", en);
     expect(restarting.title).toBe("J3 Bots is restarting");
-    const stuck = connectStepText(out("port-in-use"), null, null, "Nova", en);
+    const stuck = connectStepText(out("port-in-use"), null, "Nova", en);
     expect(stuck.title).toBe("J3 Bots can’t run your bots right now");
     for (const step of [restarting, stuck]) {
       expect(`${step.title} ${step.body}`).not.toMatch(jargon);
     }
     expect(stuck.details[0]).toBe("The engine’s port is taken");
     // The server lists no AI while its engine is out, so the bot waits for it to run again.
-    const silent = connectStepText(
-      { ...out("port-in-use"), providers: [] },
-      null,
-      null,
-      "Nova",
-      en,
-    );
+    const silent = connectStepText({ ...out("port-in-use"), providers: [] }, null, "Nova", en);
     expect(silent.createWaits).toBe("You can create Nova once J3 Bots is running again.");
   });
 
@@ -220,11 +211,11 @@ describe("the connect step", () => {
       pinnedVersion: "0.1.12",
       providers: [],
     });
-    const full = connectStepText(failed("storage"), null, null, "Nova", en);
+    const full = connectStepText(failed("storage"), null, "Nova", en);
     expect(full.title).toBe("J3 Bots couldn’t finish getting ready");
     expect(full.body).toContain("Free up some space");
-    const held = connectStepText(failed("in-use"), null, null, "Nova", en);
-    const refused = connectStepText(failed("permission"), null, null, "Nova", en);
+    const held = connectStepText(failed("in-use"), null, "Nova", en);
+    const refused = connectStepText(failed("permission"), null, "Nova", en);
     expect(refused.body).toBe("It keeps trying on its own. Details says what went wrong.");
     for (const step of [full, held, refused]) {
       expect(`${step.title} ${step.body}`).not.toMatch(jargon);

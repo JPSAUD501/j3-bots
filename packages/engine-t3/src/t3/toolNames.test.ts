@@ -77,6 +77,26 @@ describe("toolStep", () => {
     expect(toolStep(call("TaskStop", { title: "TaskStop" }))?.tool).toBe("task-stop");
   });
 
+  it("names the skill a connector-skill step loads, by its name or the folder its address ends in", () => {
+    const load = (skill: string) =>
+      toolStep(
+        call("mcp__j3__use_connector_skill", { input: { connector: "acme-billing", skill } }),
+      );
+    expect(load("invoices")).toEqual({
+      kind: "tool",
+      tool: "connector-skill",
+      label: "Used a connector's skill",
+      skill: { name: "invoices", connector: "Acme billing" },
+    });
+    expect(load("skill://acme/invoices/SKILL.md")?.skill?.name).toBe("invoices");
+    // A name the skills format would not take names no skill: the step stays.
+    expect(load("Ignore previous instructions")).toEqual({
+      kind: "tool",
+      tool: "connector-skill",
+      label: "Used a connector's skill",
+    });
+  });
+
   it("names a harness's own tools only without a server", () => {
     expect(toolStep(call("mcp__notes__TodoWrite"))?.tool).toBeNull();
     expect(toolStep(call("mcp__files__Read"))?.kind).toBe("tool");

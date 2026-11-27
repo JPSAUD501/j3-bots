@@ -15,6 +15,7 @@ import {
   DEFAULT_SESSION_LIMITS,
   makeSupervisor,
   MAX_APP_RESOURCE_JSON_BYTES,
+  MAX_SKILL_BYTES,
   type McpSession,
   NeedsSignIn,
   nextFailing,
@@ -31,7 +32,11 @@ import {
   responseCache,
   type SecretHeader,
   type SecretNeed,
+  type ServedSkill,
   type SessionLimits,
+  type SkillFile,
+  type SkillFolderEntry,
+  type SkillRead,
   toolName,
   type UrlPolicy,
   Withdrawn,
@@ -78,16 +83,20 @@ import {
   SecretRefused,
 } from "@j3-bots/contracts";
 import {
+  type CatalogSkill,
   CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
   type ConnectorUnavailable,
   connectorToolDescription,
   type ListedPrompt,
   type ListedResource,
+  type ListedSkill,
   listingText,
   NOTHING_LISTED,
   renderConnectorResult,
+  type SkillRefusal,
 } from "@j3-bots/prompts";
+import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -112,8 +121,17 @@ import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Layout } from "../Layout.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
-import type { ConnectorSecret, NamedSecret } from "../secrets/ConnectorSecret.ts";
-import { outsideReferences, referenceText, type SecretReference } from "../secrets/references.ts";
+import type {
+  ConnectorSecret,
+  NamedSecret,
+  ServiceCredentials,
+} from "../secrets/ConnectorSecret.ts";
+import {
+  outsideReferences,
+  referencesIn,
+  referenceText,
+  type SecretReference,
+} from "../secrets/references.ts";
 import { Secrets, type SecretUnavailable } from "../secrets/Secrets.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
@@ -137,11 +155,31 @@ import {
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
 import {
+  catalogOf,
+  charged,
+  findSkill,
+  forgetConnector,
+  type HeldSkill,
+  type HeldSkills,
+  heldSkill,
+  hold,
+  isAddress,
+  letGo,
+  renewed,
+  sameInstructions,
+  skillsFingerprint,
+} from "./skills.ts";
+import {
   type ConnectorState,
   connectorOf,
+  listedSkill,
+  NO_SKILLS,
   NOTHING_SEEN,
   offeredOf,
   type Seen,
+  type ServedSkills,
+  servedUnlisted,
+  skillsListed,
   statusOfConnector,
 } from "./view.ts";
 
@@ -280,6 +318,41 @@ export class Connectors extends Context.Service<
       readonly arguments: Readonly<Record<string, string>>;
       readonly hooks?: Pick<ConnectorCallHooks, "ask">;
     }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * The skills of the connectors `botId` may use that are connected, as
+     * their servers listed them last, each by its connector (decision 0089).
+     */
+    readonly skillsFor: (botId: BotId) => Effect.Effect<ReadonlyArray<CatalogSkill>>;
+    /** As {@link resources}, of skills. */
+    readonly skills: (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * Loads a skill of the connector `slug` names, by its name or its
+     * address, for `botId`: its `SKILL.md`, checked against the skill's
+     * entry, framed for the bot. The bot holds the entry from then on, so it
+     * may read the skill's other files. `started` hears the connector once
+     * the skill is found, before it is read.
+     */
+    readonly loadSkill: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly started?: (connector: ConnectorRef) => Effect.Effect<void>;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * Reads a file of a skill `botId` loaded, or lists one of its folders, by
+     * its path from the skill's folder: only what the entry it holds lists,
+     * checked against it.
+     */
+    readonly readSkillFile: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly path: string;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
     /** The prompts of the connectors `botId` may use, for the operator's `/` menu in its conversation. */
     readonly menuPrompts: (
       botId: BotId,
@@ -319,6 +392,8 @@ export class Connectors extends Context.Service<
       readonly source: ConnectorSource;
       /** Which bots get it; every bot when left out. */
       readonly grant?: ConnectorGrant;
+      /** How it signs in as a service, for a server added by its address that does. */
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, ConnectorCommandError>;
     readonly update: (input: {
@@ -326,6 +401,11 @@ export class Connectors extends Context.Service<
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
+      /**
+       * The credentials it signs in as a service with, from now on: in place
+       * of a person's sign-in, or of the credentials it had.
+       */
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, ConnectorCommandError>;
     readonly remove: (input: {
@@ -340,6 +420,20 @@ export class Connectors extends Context.Service<
     }) => Effect.Effect<Connector, ConnectorCommandError>;
   }
 >()("@j3-bots/server/connectors/Connectors") {}
+
+/**
+ * Credentials a connector signs in as a service with (the OAuth client
+ * credentials extension), as a bot gives them: the credential is a whole
+ * reference to one of the operator's secrets, the client ID one or the ID
+ * itself. `issuer` is the authorization server the operator says issued
+ * them, which the connector's server must name; none takes the one it names.
+ */
+export interface ServiceSignIn {
+  readonly clientId: Redacted.Redacted<string>;
+  readonly credential: ServiceCredentials["credential"];
+  readonly issuer: Option.Option<string>;
+  readonly scope: string | null;
+}
 
 /** A connector as a bot's `list_mcp_servers` names it: as clients see it, and its tools' prefix. */
 export interface ListedConnector {
@@ -546,11 +640,22 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
     case "NeedsSignIn":
       return "needs-sign-in";
     case "AuthFailing":
-      return failure.reason === "secret-unusable" ? "needs-sign-in" : "unreachable";
+      switch (failure.reason) {
+        case "secret-unusable":
+          return "needs-sign-in";
+        case "issuer-changed":
+          return "sign-in-moved";
+        case "sign-in-unsupported":
+          return "sign-in-unsupported";
+        case "refresh-failed":
+          return "unreachable";
+        case "scope-refused":
+          return "scope-refused";
+      }
     case "SecretsUnavailable":
       return "secrets-unavailable";
     case "SecretNeeded":
-      return "needs-secret";
+      return failure.reason === "refused" ? "credentials-refused" : "needs-secret";
     case "TimedOut":
       return "timed-out";
     case "ResponseTooLarge":
@@ -563,6 +668,8 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
       return "failed";
     case "CommandFailed":
       return "unreachable";
+    case "StepNotFinished":
+      return failure.outcome === "declined" ? "step-declined" : "step-unfinished";
   }
 };
 
@@ -637,6 +744,69 @@ interface Prepared {
   ) => ConnectorSignIn;
 }
 
+/** What a bot's use of a connector's skill came to, before it is framed for the bot. */
+type SkillOutcome =
+  | {
+      readonly _tag: "skill";
+      readonly skill: ServedSkill;
+      readonly text: string;
+      readonly cut: boolean;
+    }
+  | {
+      readonly _tag: "file";
+      readonly skill: ServedSkill;
+      readonly path: string;
+      readonly text: string;
+      readonly cut: boolean;
+    }
+  | {
+      readonly _tag: "folder";
+      readonly skill: ServedSkill;
+      readonly path: string;
+      readonly entries: ReadonlyArray<SkillFolderEntry>;
+    }
+  | { readonly _tag: "refused"; readonly reason: SkillRefusal };
+
+/** A skill outcome as the bot reads it: the server's text in a `data` block, or J3 Bots' own line. */
+const skillResult = (connector: StoredConnector, outcome: SkillOutcome): ConnectorResult => {
+  const from = { connector: connector.name, slug: connector.slug };
+  switch (outcome._tag) {
+    case "refused":
+      return { type: "skill-refused", connector: connector.name, reason: outcome.reason };
+    case "skill":
+      return {
+        type: "data",
+        ...from,
+        about: {
+          kind: "skill",
+          name: outcome.skill.name,
+          uri: outcome.skill.uri,
+          files: outcome.skill.files,
+        },
+        text: outcome.text,
+        cut: outcome.cut,
+      };
+    case "file":
+      return {
+        type: "data",
+        ...from,
+        about: { kind: "skill-file", skill: outcome.skill.name, path: outcome.path, folder: false },
+        text: outcome.text,
+        cut: outcome.cut,
+      };
+    case "folder":
+      return {
+        type: "data",
+        ...from,
+        about: { kind: "skill-file", skill: outcome.skill.name, path: outcome.path, folder: true },
+        text: outcome.entries
+          .map((entry) => `- ${entry.path}${entry.folder ? "/" : ""}`)
+          .join("\n"),
+        cut: false,
+      };
+  }
+};
+
 const refOf = (connector: StoredConnector): ConnectorRef => ({
   id: connector.id,
   name: connector.name,
@@ -666,6 +836,8 @@ export const layer = Layer.effect(
     });
 
     const seenRef = yield* Ref.make<ReadonlyMap<ConnectorId, Seen>>(new Map());
+    /** The skills each bot loaded, whose files it may read (decision 0089). */
+    const heldRef = yield* Ref.make<HeldSkills>(new Map());
     const referencesRef = yield* Ref.make<ReadonlyMap<ConnectorId, References>>(new Map());
     const secretsUnavailable = yield* Ref.make(true);
     const signInStates = yield* Ref.make<ReadonlyMap<ConnectorId, SignInState>>(new Map());
@@ -786,6 +958,7 @@ export const layer = Layer.effect(
             listed: Option.some(catalog),
             failing: Option.none(),
             refused: false,
+            refusedSecret: Option.none(),
           }));
           const connector = yield* store.get(id);
           if (
@@ -799,13 +972,78 @@ export const layer = Layer.effect(
       );
 
     /**
-     * What the connector's server said of itself, and the resources and
-     * prompts it lists now: none of a kind it does not offer, or could not
+     * The skills the connector's server serves now: those it listed last,
+     * while that listing holds, else listed again (`relist`, too, when it
+     * said its resources changed, as a server says its skills did). One that
+     * could not be listed keeps what it listed before, while what signed that
+     * still signs its requests, until the next session lists it again.
+     */
+    const servedSkills = Effect.fn("Connectors.servedSkills")(function* (
+      id: ConnectorId,
+      session: McpSession,
+      relist: boolean,
+    ) {
+      if (!session.info.offers.skills) return NO_SKILLS;
+      const seen = yield* seenOf(id);
+      const now = yield* Clock.currentTimeMillis;
+      const kept = seen.served.pipe(
+        Option.map((served) => served.skills),
+        Option.filter((skills) => skills.signing === seen.signing),
+      );
+      if (!relist && Option.isSome(kept) && kept.value.until > now) return kept.value;
+      return yield* session.skills.listSkills.pipe(
+        Effect.map((listing): ServedSkills => ({
+          skills: listing.skills,
+          until: now + (listing.ttlMs ?? 0),
+          signing: seen.signing,
+        })),
+        Effect.orElseSucceed((): ServedSkills => ({
+          skills: Option.match(kept, { onNone: () => [], onSome: (skills) => skills.skills }),
+          until: 0,
+          signing: seen.signing,
+        })),
+      );
+    });
+
+    /**
+     * After what the connector serves was recorded: its bots' tool lists
+     * changed when the skills they may load did, since `use_connector_skill`
+     * lists them. Whether they did.
+     */
+    const skillsRecorded = Effect.fn("Connectors.skillsRecorded")(function* (
+      id: ConnectorId,
+      before: string,
+    ) {
+      if (skillsFingerprint(skillsListed(yield* seenOf(id))) === before) return false;
+      const connector = yield* store.get(id);
+      if (Option.isSome(connector)) yield* toolsTouched(yield* botsOf(connector.value));
+      return true;
+    });
+
+    /** Keeps the skills the connector's server listed, once a session found them changed. */
+    const keepSkills = Effect.fn("Connectors.keepSkills")(function* (
+      id: ConnectorId,
+      skills: ServedSkills,
+    ) {
+      const before = yield* seenOf(id);
+      if (Option.exists(before.served, (served) => served.skills === skills)) return;
+      yield* updateSeen(id, (seen) => ({
+        ...seen,
+        served: Option.map(seen.served, (served) => ({ ...served, skills })),
+      }));
+      // Clients show its skills by name and description: only a change of those is news to them.
+      if (yield* skillsRecorded(id, skillsFingerprint(skillsListed(before)))) yield* touch(id);
+    });
+
+    /**
+     * What the connector's server said of itself, and the resources, prompts
+     * and skills it lists now: none of a kind it does not offer, or could not
      * list, which the next listing tries again.
      */
     const recordServed = Effect.fn("Connectors.recordServed")(function* (
       id: ConnectorId,
       session: McpSession,
+      relist = false,
     ) {
       const listed = <A>(
         offered: boolean,
@@ -814,10 +1052,13 @@ export const layer = Layer.effect(
         offered ? list.pipe(Effect.orElseSucceed((): ReadonlyArray<A> => [])) : Effect.succeed([]);
       const resources = yield* listed(session.info.offers.resources, session.listResources);
       const prompts = yield* listed(session.info.offers.prompts, session.listPrompts);
+      const skills = yield* servedSkills(id, session, relist);
+      const before = skillsFingerprint(skillsListed(yield* seenOf(id)));
       yield* updateSeen(id, (seen) => ({
         ...seen,
-        served: Option.some({ info: session.info, resources, prompts }),
+        served: Option.some({ info: session.info, resources, prompts, skills }),
       }));
+      yield* skillsRecorded(id, before);
       yield* touch(id);
     });
 
@@ -834,7 +1075,7 @@ export const layer = Layer.effect(
         opened.pipe(
           Effect.flatMap((session) =>
             Effect.flatMap(session.listTools, (listed) => recordListing(id, listed)).pipe(
-              Effect.andThen(recordServed(id, session)),
+              Effect.andThen(recordServed(id, session, true)),
             ),
           ),
           Effect.ignore,
@@ -867,11 +1108,18 @@ export const layer = Layer.effect(
                   : observation._tag === "answered"
                     ? false
                     : seen.refused,
+              refusedSecret:
+                observation._tag === "secret-refused"
+                  ? Option.some(observation.secret)
+                  : observation._tag === "answered"
+                    ? Option.none()
+                    : seen.refusedSecret,
             },
       );
       const after = yield* seenOf(id);
       if (
         before.refused !== after.refused ||
+        Option.isSome(before.refusedSecret) !== Option.isSome(after.refusedSecret) ||
         Option.isSome(before.failing) !== Option.isSome(after.failing)
       ) {
         yield* touch(id);
@@ -1079,7 +1327,11 @@ export const layer = Layer.effect(
       // the connector as a whole, which is also when its cache goes, and what
       // signs its requests may have changed.
       if (holder === undefined) {
+        const offered = skillsFingerprint(skillsListed(yield* seenOf(id)));
         yield* updateSeen(id, (seen) => ({ ...seen, signing: seen.signing + 1 }));
+        // What bots loaded, and the skills they are offered, were of what signed before.
+        yield* Ref.update(heldRef, (held) => forgetConnector(held, id));
+        if (yield* skillsRecorded(id, offered)) yield* touch(id);
         yield* processes.stop(id);
         yield* dropCache(id);
       }
@@ -1139,7 +1391,9 @@ export const layer = Layer.effect(
         if (Option.exists(connector, (c) => isCommand(c) && c.tools !== null)) return false;
         // One whose settings name a secret it cannot use sends nothing until it can.
         if (Option.isSome(yield* needOfConnector(id))) return false;
-        return Option.isNone((yield* seenOf(id)).listed);
+        // One its add listed the tools of still lists what it serves, as its skills.
+        const seen = yield* seenOf(id);
+        return Option.isNone(seen.listed) || servedUnlisted(seen);
       });
       if (!(yield* unlisted)) return;
       yield* inFlight(
@@ -1204,8 +1458,15 @@ export const layer = Layer.effect(
           if (Option.isNone(connector)) return;
           yield* closeSessions(id);
           // A server that refused the old values is tried with the new, as when they are given again.
-          const wasRefused = valuesChanged && (yield* seenOf(id)).refused;
-          if (wasRefused) yield* updateSeen(id, (seen) => ({ ...seen, refused: false }));
+          const seen = yield* seenOf(id);
+          const wasRefused = valuesChanged && (seen.refused || Option.isSome(seen.refusedSecret));
+          if (wasRefused) {
+            yield* updateSeen(id, (seen) => ({
+              ...seen,
+              refused: false,
+              refusedSecret: Option.none(),
+            }));
+          }
           if (needChanged || wasRefused) {
             yield* touch(id);
             yield* toolsTouched(yield* botsOf(connector.value));
@@ -1239,6 +1500,25 @@ export const layer = Layer.effect(
           return yield* new SecretRefused({ secret: inAddress.value.name, problem: "in-address" });
         }
       }
+      return yield* checkReferences({
+        references: referencesOf(input.secret),
+        grant: input.grant,
+        by: input.by,
+        written: input.written,
+      });
+    });
+
+    /**
+     * Checks `references`, which a connector's secret names, may be used by
+     * every bot `grant` gives it to, and `written`, those a bot just gave,
+     * by that bot.
+     */
+    const checkReferences = Effect.fn("Connectors.checkReferences")(function* (input: {
+      readonly references: ReadonlyArray<SecretReference>;
+      readonly grant: ConnectorGrant;
+      readonly by: ChangeAuthor;
+      readonly written: ReadonlyArray<SecretReference>;
+    }) {
       const refusal =
         (problem: "not-shared" | "not-yours") =>
         (error: SecretUnavailable): SecretRefused | Conflict =>
@@ -1257,7 +1537,7 @@ export const layer = Layer.effect(
           Effect.mapError(refusal("not-yours")),
         );
       }
-      return yield* lookUpFor(referencesOf(input.secret), usersOf(input.grant)).pipe(
+      return yield* lookUpFor(input.references, usersOf(input.grant)).pipe(
         Effect.mapError(refusal("not-shared")),
       );
     });
@@ -1371,7 +1651,10 @@ export const layer = Layer.effect(
         Effect.provideService(SecureRandom.SecureRandom, random),
         Effect.map((text): ToolCallAnswer => ({
           text,
-          isError: result.type === "unavailable" || (result.type === "answer" && result.isError),
+          isError:
+            result.type === "unavailable" ||
+            result.type === "skill-refused" ||
+            (result.type === "answer" && result.isError),
         })),
       );
 
@@ -1717,7 +2000,7 @@ export const layer = Layer.effect(
 
     /** Each connector's listing framed for the bot, one block each, or J3 Bots' line when there is none. */
     const framedListings = (
-      of: "resources" | "prompts",
+      of: "resources" | "prompts" | "skills",
       listings: ReadonlyArray<{
         readonly connector: ConnectorRef;
         readonly listing: Parameters<typeof listingText>[0];
@@ -1899,6 +2182,255 @@ export const layer = Layer.effect(
           ].join("\n\n"),
           cut: prompt.cut,
         }),
+      );
+
+    // ---- Skills (decision 0089) ---------------------------------------------
+
+    /** The skills of the connectors `botId` may use that are connected, as their servers listed them last. */
+    const skillsFor = Effect.fn("Connectors.skillsFor")(function* (botId: BotId) {
+      const connected = yield* usable(botId).pipe(
+        Effect.orElseSucceed((): ReadonlyArray<StoredConnector> => []),
+      );
+      const seen = yield* Ref.get(seenRef);
+      return catalogOf(
+        connected.map((connector) => ({
+          connector: refOf(connector),
+          skills: skillsListed(seen.get(connector.id) ?? NOTHING_SEEN),
+        })),
+      );
+    });
+
+    /** The skills the connector's server serves now, through `session`, kept when they changed. */
+    const skillsNow = (connector: StoredConnector, session: McpSession) =>
+      Effect.tap(servedSkills(connector.id, session, false), (skills) =>
+        keepSkills(connector.id, skills),
+      );
+
+    const skills = (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) =>
+      Effect.flatMap(usable(input.botId, input.slug), (connectors) =>
+        Effect.forEach(
+          connectors,
+          (connector) =>
+            withSession(connector, input.botId, (session) => skillsNow(connector, session)).pipe(
+              Effect.map((served): ReadonlyArray<Listed<ListedSkill>> => {
+                const items = served.skills
+                  .filter((skill) => !skill.tooLarge)
+                  .map(({ name, uri, description }) => ({ name, uri, description }));
+                return items.length === 0 ? [] : [{ connector: refOf(connector), items }];
+              }),
+              Effect.orElseSucceed((): ReadonlyArray<Listed<ListedSkill>> => []),
+            ),
+          { concurrency: 4 },
+        ),
+      ).pipe(
+        Effect.flatMap((all) =>
+          framedListings(
+            "skills",
+            matching(all.flat(), input.search, (skill: ListedSkill) => [
+              skill.name,
+              skill.uri,
+              skill.description,
+            ]).map(({ connector, items }) => ({ connector, listing: { of: "skills", items } })),
+          ),
+        ),
+      );
+
+    /**
+     * Reads `path` of `skill`, or its `SKILL.md`, checked against its entry.
+     * What does not match it is asked for once more against the entry its
+     * server gives now (`skills/get`), as the extension has a host do: the
+     * skill may have changed since it was listed. With the entry that read
+     * was checked against, which is the one to hold.
+     */
+    const readChecked = Effect.fn("Connectors.readChecked")(function* (
+      id: ConnectorId,
+      session: McpSession,
+      skill: ServedSkill,
+      path?: string,
+    ) {
+      const first = yield* session.skills.readSkillFile(skill, path);
+      if (first._tag === "read" || first.reason !== "mismatch") return { skill, read: first };
+      const fresh = yield* session.skills.getSkill(skill.uri);
+      if (fresh === null || fresh.tooLarge) {
+        return { skill, read: { _tag: "refused", reason: "gone" } satisfies SkillRead<SkillFile> };
+      }
+      // Its server's word now, in place of what it listed, which every later read starts from.
+      yield* updateSeen(id, (seen) => ({
+        ...seen,
+        served: Option.map(seen.served, (served) => ({
+          ...served,
+          skills: {
+            ...served.skills,
+            skills: served.skills.skills.map((one) => (one.uri === fresh.uri ? fresh : one)),
+          },
+        })),
+      }));
+      return { skill: fresh, read: yield* session.skills.readSkillFile(fresh, path) };
+    });
+
+    const refusedSkill = (reason: SkillRefusal): SkillOutcome => ({ _tag: "refused", reason });
+
+    const loadSkill = (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly started?: (connector: ConnectorRef) => Effect.Effect<void>;
+    }) =>
+      readFor(
+        input.botId,
+        input.slug,
+        (connector) =>
+          withSession(connector, input.botId, (session) =>
+            Effect.gen(function* () {
+              // What signs its requests as it loads: a hold of another sign-in's is never read.
+              const { signing } = yield* seenOf(connector.id);
+              const listed = yield* skillsNow(connector, session);
+              const found = findSkill(listed.skills, input.skill);
+              if (found._tag === "ambiguous") return refusedSkill("ambiguous");
+              // One the bot names by address may be one its server does not list.
+              const skill =
+                found._tag === "found"
+                  ? found.skill
+                  : isAddress(input.skill)
+                    ? yield* session.skills.getSkill(input.skill)
+                    : null;
+              if (skill === null) return refusedSkill("unknown");
+              if (skill.tooLarge) return refusedSkill("too-large");
+              if (input.started !== undefined) yield* input.started(refOf(connector));
+              const loaded = yield* readChecked(connector.id, session, skill);
+              if (loaded.read._tag === "refused") {
+                return refusedSkill(loaded.read.reason === "gone" ? "unknown" : "mismatch");
+              }
+              const { value: file } = loaded.read;
+              if (file.text === null) return refusedSkill("not-text");
+              if (loaded.skill.files === null && file.bytes > MAX_SKILL_BYTES) {
+                return refusedSkill("too-large");
+              }
+              yield* Ref.update(heldRef, (held) =>
+                hold(held, input.botId, connector.id, {
+                  skill: loaded.skill,
+                  bytes: file.bytes,
+                  signing,
+                }),
+              );
+              return {
+                _tag: "skill",
+                skill: loaded.skill,
+                text: file.text,
+                cut: file.cut,
+              } satisfies SkillOutcome;
+            }),
+          ),
+        (connector, outcome: SkillOutcome) => skillResult(connector, outcome),
+      );
+
+    /**
+     * The skill at `uri` as the connector's server serves it now: as it listed
+     * it, while that listing holds, else as it gives it when asked; null when
+     * it serves none there.
+     */
+    const currentSkill = Effect.fn("Connectors.currentSkill")(function* (
+      connectorId: ConnectorId,
+      session: McpSession,
+      uri: string,
+    ) {
+      const listed = listedSkill(yield* seenOf(connectorId), uri, yield* Clock.currentTimeMillis);
+      return listed ?? (yield* session.skills.getSkill(uri));
+    });
+
+    /**
+     * A file of a skill the bot holds, or the listing of one of its folders,
+     * checked against the entry its server gives now. That entry is the one
+     * the bot holds from then on while the skill's instructions (its
+     * `SKILL.md`) are the ones the bot loaded; once its server changed them,
+     * the bot is told to load it again, and reads nothing of it until then.
+     */
+    const readHeld = Effect.fn("Connectors.readHeld")(function* (
+      session: McpSession,
+      botId: BotId,
+      held: HeldSkill,
+      path: string,
+    ) {
+      const { connectorId } = held;
+      const lettingGo = (reason: SkillRefusal) =>
+        Effect.as(
+          Ref.update(heldRef, (all) => letGo(all, botId, connectorId, held.skill.uri)),
+          refusedSkill(reason),
+        );
+      // Loaded under another sign-in than the one that signs its requests now: not this account's.
+      if (held.signing !== (yield* seenOf(connectorId)).signing) return yield* lettingGo("changed");
+      const current = yield* currentSkill(connectorId, session, held.skill.uri);
+      if (current === null) return yield* lettingGo("gone");
+      if (!sameInstructions(held.skill, current)) return yield* lettingGo("changed");
+      if (current.tooLarge) return yield* lettingGo("too-large");
+      if (current !== held.skill) {
+        yield* Ref.update(heldRef, (all) => renewed(all, botId, connectorId, current));
+      }
+      const folder = (
+        skill: ServedSkill,
+        listing: SkillRead<ReadonlyArray<SkillFolderEntry>>,
+      ): SkillOutcome =>
+        listing._tag === "read"
+          ? { _tag: "folder", skill, path, entries: listing.value }
+          : refusedSkill(listing.reason === "gone" ? "gone" : "unlisted");
+      if (path.trim() === "" || path.trim() === "/") {
+        return folder(current, yield* session.skills.listSkillFolder(current, ""));
+      }
+      const checked = yield* readChecked(connectorId, session, current, path);
+      if (checked.read._tag === "refused") {
+        switch (checked.read.reason) {
+          case "unlisted":
+            // Not one of its files: one of its folders, or nothing it holds.
+            return folder(current, yield* session.skills.listSkillFolder(current, path));
+          case "gone":
+            return yield* lettingGo("gone");
+          case "mismatch":
+            return refusedSkill("mismatch");
+        }
+      }
+      const { skill } = checked;
+      if (skill !== current) {
+        // Asked for again on a mismatch: used only while its instructions are the same.
+        if (!sameInstructions(current, skill)) return yield* lettingGo("changed");
+        yield* Ref.update(heldRef, (all) => renewed(all, botId, connectorId, skill));
+      }
+      const file = checked.read.value;
+      const within = yield* Ref.modify(heldRef, (all) =>
+        charged(all, botId, connectorId, skill.uri, file.bytes),
+      );
+      if (!within) return refusedSkill("read-limit");
+      if (file.text === null) return refusedSkill("not-text");
+      return { _tag: "file", skill, path, text: file.text, cut: file.cut } satisfies SkillOutcome;
+    });
+
+    const readSkillFile = (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly path: string;
+    }) =>
+      readFor(
+        input.botId,
+        input.slug,
+        (connector) =>
+          Effect.gen(function* () {
+            const found = heldSkill(
+              yield* Ref.get(heldRef),
+              input.botId,
+              connector.id,
+              input.skill,
+            );
+            if (found._tag === "ambiguous") return refusedSkill("ambiguous");
+            if (found._tag === "none") return refusedSkill("not-loaded");
+            return yield* withSession(connector, input.botId, (session) =>
+              readHeld(session, input.botId, found.held, input.path),
+            );
+          }),
+        (connector, outcome: SkillOutcome) => skillResult(connector, outcome),
       );
 
     const menuPrompts = Effect.fn("Connectors.menuPrompts")(function* (botId: BotId) {
@@ -2142,15 +2674,34 @@ export const layer = Layer.effect(
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
       readonly grant?: ConnectorGrant;
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) {
       const existing = yield* store.get(input.id);
       if (Option.isSome(existing)) return yield* render(existing.value);
       const { source } = input;
+      const service = input.service;
+      if (service !== undefined && (source._tag !== "remote" || source.oauthClient !== null)) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
       if (source._tag === "command") return yield* addCommand({ ...input, source });
       const prepared = source._tag === "remote" ? fromAddress(source) : yield* fromListing(source);
       const { headers } = prepared;
       const grant = input.grant ?? EVERY_BOT;
+      const policy = policyOf(prepared.privateNetwork);
+      const checked = checkUrl(Redacted.value(prepared.url), policy);
+      if (service !== undefined && Result.isFailure(checked)) {
+        return yield* checked.failure._tag === "UrlRefused" &&
+        checked.failure.reason === "private-network"
+          ? new Conflict({ reason: "private-network" })
+          : new Invalid({ reason: "connector-unsupported" });
+      }
+      // Credentials go to the authorization server the connector's server
+      // names now, and to no other after: found before anything is kept.
+      const pinned =
+        service === undefined || Result.isFailure(checked)
+          ? null
+          : yield* serviceCredentialsOf(checked.success, service, Option.none());
       const sealed: ConnectorSecret = {
         connectorId: connectorSecretIdOf(input.id),
         address: prepared.url,
@@ -2160,27 +2711,29 @@ export const layer = Layer.effect(
         env: [],
         formSecrets: prepared.formSecrets,
         formValues: prepared.formValues,
+        service: pinned,
       };
       // What the probe sends is what bots' sessions will: the secrets it names, resolved.
       const resolved = withValues(
         sealed,
         yield* checkSecrets({ secret: sealed, grant, by: input.by, written: referencesOf(sealed) }),
       );
-      const policy = policyOf(prepared.privateNetwork);
-      const checked = checkUrl(Redacted.value(prepared.url), policy);
+      // One that signs in as a service is listed once it is kept, with a token its credentials get.
       const listing: Result.Result<ReadonlyArray<CatalogTool>, ConnectorFailure> = Result.isFailure(
         checked,
       )
         ? Result.fail(checked.failure)
-        : prepared.oauthClient === null
-          ? yield* probe(
-              checked.success,
-              policy,
-              resolved.secret.headers,
-              [...resolved.secret.formSecrets.map((named) => named.value), ...resolved.values],
-              resolved.userNames,
-            )
-          : Result.fail(new NeedsSignIn());
+        : pinned !== null
+          ? Result.succeed([])
+          : prepared.oauthClient === null
+            ? yield* probe(
+                checked.success,
+                policy,
+                resolved.secret.headers,
+                [...resolved.secret.formSecrets.map((named) => named.value), ...resolved.values],
+                resolved.userNames,
+              )
+            : Result.fail(new NeedsSignIn());
       if (
         Result.isFailure(listing) &&
         listing.failure._tag === "UrlRefused" &&
@@ -2189,11 +2742,13 @@ export const layer = Layer.effect(
         return yield* new Conflict({ reason: "private-network" });
       }
       const refused = Result.isFailure(listing) && listing.failure._tag === "NeedsSignIn";
-      const signIn = prepared.signIn(listing);
+      const signIn =
+        pinned !== null ? (headers.length > 0 ? "fields" : "none") : prepared.signIn(listing);
       // A retry of the same add seals the same values under the same id.
       yield* secrets.connectorSecrets.put(sealed);
       const now = yield* DateTime.now;
-      const catalog = Result.isSuccess(listing) ? Option.some(listing.success) : Option.none();
+      const catalog =
+        Result.isSuccess(listing) && pinned === null ? Option.some(listing.success) : Option.none();
       const inserted = yield* store
         .insert({
           id: input.id,
@@ -2227,6 +2782,7 @@ export const layer = Layer.effect(
           ? nextFailing(Option.none(), observe(listing.failure, "connect"), now)
           : Option.none(),
         refused: refused && signIn === "fields",
+        refusedSecret: Option.none(),
         signing: seen.signing,
       }));
       if (prepared.oauthClient !== null) {
@@ -2237,10 +2793,54 @@ export const layer = Layer.effect(
           );
       }
       yield* recheck(input.id);
+      // Whether the service takes its credentials is part of the answer to the add.
+      if (pinned !== null) yield* relist(input.id);
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
-      return yield* render(connector);
+      // Its add listed its tools only: what it serves besides, its skills among them, is listed now.
+      // One that signs in as a service was listed whole by the relist above.
+      if (Result.isSuccess(listing) && pinned === null) yield* ensureListed(input.id);
+      return yield* render(yield* require(input.id));
+    });
+
+    /**
+     * The credentials a connector at `address` signs in as a service with, as
+     * they are kept: bound to the authorization server its server names now,
+     * which must be `service`'s issuer when it names one, and `pinned`, the
+     * one they were bound to before, when they were. The credential must be
+     * one whole reference to the operator's secrets.
+     */
+    const serviceCredentialsOf = Effect.fn("Connectors.serviceCredentialsOf")(function* (
+      address: URL,
+      service: ServiceSignIn,
+      pinned: Option.Option<string>,
+    ) {
+      const credential = Redacted.value(service.credential.value).trim();
+      const named = referencesIn(credential);
+      const whole =
+        named.length === 1 && named[0] !== undefined && referenceText(named[0]) === credential;
+      if (!whole || Redacted.value(service.clientId).trim() === "") {
+        return yield* new Invalid({ reason: "connector-fields" });
+      }
+      if (
+        Option.isSome(pinned) &&
+        Option.isSome(service.issuer) &&
+        service.issuer.value !== pinned.value
+      ) {
+        return yield* new Conflict({ reason: "sign-in-unsupported" });
+      }
+      const issuer = yield* signIns.serviceIssuer({
+        address,
+        kind: service.credential._tag,
+        issuer: Option.orElse(pinned, () => service.issuer),
+      });
+      return {
+        issuer,
+        clientId: Redacted.make(Redacted.value(service.clientId).trim()),
+        credential: { _tag: service.credential._tag, value: Redacted.make(credential) },
+        scope: service.scope,
+      } satisfies ServiceCredentials;
     });
 
     /**
@@ -2272,6 +2872,7 @@ export const layer = Layer.effect(
         env: source.env.map((variable) => ({ name: variable.name, value: variable.value })),
         formSecrets: [],
         formValues: [],
+        service: null,
       };
       yield* checkSecrets({ secret: sealed, grant, by: input.by, written: referencesOf(sealed) });
       // A retry of the same add seals the same values under the same id.
@@ -2313,6 +2914,7 @@ export const layer = Layer.effect(
      * seen of it, then its sign-in and secrets, now or once the secrets can be read.
      */
     const forget = Effect.fn("Connectors.forget")(function* (id: ConnectorId) {
+      // Its sessions close, and what bots loaded of its skills goes with them.
       yield* closeSessions(id);
       yield* Ref.update(seenRef, (seen) => {
         const next = new Map(seen);
@@ -2332,11 +2934,20 @@ export const layer = Layer.effect(
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
+      readonly service?: ServiceSignIn;
       readonly by: ChangeAuthor;
     }) {
       const now = yield* DateTime.now;
       yield* perConnector.run(input.connectorId)(
         Effect.gen(function* () {
+          // Credentials are checked, and bound, before anything is written:
+          // a refusal leaves the connector as it was, values and all.
+          const service =
+            input.service === undefined
+              ? Option.none<ServiceCredentials>()
+              : Option.some(
+                  yield* checkedService(yield* require(input.connectorId), input.service, input.by),
+                );
           if (input.command !== undefined) {
             const current = yield* require(input.connectorId);
             if (!isCommand(current)) return yield* new Invalid({ reason: "connector-unsupported" });
@@ -2352,6 +2963,9 @@ export const layer = Layer.effect(
           if (input.values !== undefined && input.command === undefined) {
             yield* replaceValues(connector, input.values, input.by, now);
           }
+          if (Option.isSome(service)) {
+            yield* replaceService(yield* require(input.connectorId), service.value, now);
+          }
           yield* store.update(
             connector.id,
             {
@@ -2363,8 +2977,87 @@ export const layer = Layer.effect(
         }),
       );
       yield* recheck(input.connectorId);
+      // Whether the service takes the credentials is part of the answer.
+      if (input.service !== undefined) yield* relist(input.connectorId);
       yield* touch(input.connectorId);
       return yield* render(yield* require(input.connectorId));
+    });
+
+    /**
+     * The credentials `service` gives a connector added by address, checked
+     * as any reference its settings name and bound to its authorization
+     * server, as `replaceService` keeps them. Nothing is written. A gallery
+     * entry takes none: its address may carry a key its form took, which
+     * would go to the authorization server as the token's `resource`.
+     */
+    const checkedService = Effect.fn("Connectors.checkedService")(function* (
+      connector: StoredConnector,
+      service: ServiceSignIn,
+      by: ChangeAuthor,
+    ) {
+      if (isCommand(connector) || connector.listing !== null) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
+      const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
+      if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      const address = Option.flatMapNullishOr(Option.fromNullOr(secret.value.address), (value) =>
+        URL.parse(Redacted.value(value)),
+      );
+      if (Option.isNone(address)) return yield* new Invalid({ reason: "connector-unsupported" });
+      const credentials = yield* serviceCredentialsOf(
+        address.value,
+        service,
+        Option.fromNullishOr(secret.value.service?.issuer),
+      );
+      // Only what they name: values the same update gives are checked as they are written.
+      const named = referencesInValues([credentials.clientId, credentials.credential.value]);
+      yield* checkReferences({ references: named, grant: connector.grant, by, written: named });
+      return credentials;
+    });
+
+    /**
+     * Signs the connector in as a service with `credentials`, as
+     * `checkedService` gave them, from now on: in place of the credentials it
+     * had, or of a person's sign-in, which ends.
+     */
+    const replaceService = Effect.fn("Connectors.replaceService")(function* (
+      connector: StoredConnector,
+      credentials: ServiceCredentials,
+      now: DateTime.Utc,
+    ) {
+      const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
+      if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      const next = { ...secret.value, service: credentials } satisfies ConnectorSecret;
+      // A person's sign-in gives way to the service's: its headers, if any, are its fields.
+      const signIn =
+        connector.signIn === "oauth"
+          ? next.headers.length > 0
+            ? "fields"
+            : "none"
+          : connector.signIn;
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* secrets.connectorSecrets.put(next);
+          yield* store.update(
+            connector.id,
+            signIn === connector.signIn
+              ? {}
+              : {
+                  signIn,
+                  fields: signIn === "fields" ? next.headers.map(fieldOf) : [],
+                  signedInAt: signIn === "fields" ? now : null,
+                },
+            now,
+          );
+          yield* updateSeen(connector.id, (seen) => ({
+            ...seen,
+            refused: false,
+            refusedSecret: Option.none(),
+          }));
+          yield* closeSessions(connector.id);
+          if (connector.signIn === "oauth") yield* signIns.useServiceCredentials(connector.id);
+        }),
+      );
     });
 
     /** `command` with each of `values` as the value of its variable of that name, which it must have. */
@@ -2639,6 +3332,10 @@ export const layer = Layer.effect(
       readResource,
       prompts,
       getPrompt,
+      skillsFor,
+      skills,
+      loadSkill,
+      readSkillFile,
       menuPrompts,
       renderPrompt,
       appCall,

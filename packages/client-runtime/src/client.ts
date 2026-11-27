@@ -166,6 +166,9 @@ export interface SecretsHandle {
     secret: Secrets.NewSecret,
     request: EntryId | null,
   ) => Promise<Secrets.SecretsResult<Secret>>;
+  readonly addFromAsk: (
+    asked: Secrets.AskedValues,
+  ) => Promise<Secrets.SecretsResult<ReadonlyArray<Secret>>>;
   readonly update: (id: SecretId, changes: SecretChanges) => Promise<Secrets.SecretsResult<Secret>>;
   readonly remove: (id: SecretId) => Promise<Secrets.SecretsResult>;
   readonly setAccess: (
@@ -540,6 +543,11 @@ export interface J3Client {
     entryId: EntryId,
     answer: Conversations.CardAnswer,
   ) => Promise<Actions.IntentResult>;
+  /** See `Conversations.routineCard`. */
+  readonly routineCard: (
+    entryId: EntryId,
+    command: Conversations.RoutineCardCommand,
+  ) => Promise<Actions.IntentResult>;
   readonly provideSecret: (
     entryId: EntryId,
     answer: Conversations.SecretAnswer,
@@ -887,6 +895,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),
+    routineCard: (entryId, command) => run.promise(conversations.routineCard(entryId, command)),
     provideSecret: (entryId, answer) => run.promise(conversations.provideSecret(entryId, answer)),
     stopBot: (botId) => run.promise(services.roster.stop(botId)),
     stopRoom: (roomId) => run.promise(services.roster.stopRoom(roomId)),
@@ -911,6 +920,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       view: services.secrets.view,
       openOldVault: (password) => run.promise(services.secrets.openOldVault(password)),
       add: (secret, request) => run.promise(services.secrets.add(secret, request)),
+      addFromAsk: (asked) => run.promise(services.secrets.addFromAsk(asked)),
       update: (id, changes) => run.promise(services.secrets.update(id, changes)),
       remove: (id) => run.promise(services.secrets.remove(id)),
       setAccess: (id, access) => run.promise(services.secrets.setAccess(id, access)),

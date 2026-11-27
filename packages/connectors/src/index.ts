@@ -9,6 +9,8 @@
  *   current revision of MCP or the one it speaks, signed from the store at
  *   each request: its tools, resources and prompts, its requests for input,
  *   and calls it runs as tasks.
+ * - {@link skillsOf}: the skills a server serves (MCP's Skills extension),
+ *   each file checked against its skill's entry before it is used.
  * - {@link catalogOf}: a server's tools, cleaned into what bots are offered.
  * - {@link elicitationOf}: a server's request for input, as the operator
  *   sees it.
@@ -44,6 +46,7 @@ export {
   NotMcp,
   ResponseTooLarge,
   SecretNeeded,
+  StepNotFinished,
   SecretsUnavailable,
   ServerError,
   TimedOut,
@@ -87,6 +90,20 @@ export {
   type SessionOptions,
   type ToolAnswer,
 } from "./session.ts";
+export {
+  MAX_SKILL_BYTES,
+  MAX_SKILL_FILES,
+  type ServedSkill,
+  type SessionSkills,
+  type SkillFile,
+  type SkillFolderEntry,
+  type SkillListing,
+  type SkillRead,
+  type SkillReadRefusal,
+  SKILLS_EXTENSION,
+  skillPath,
+  skillsOf,
+} from "./skills.ts";
 export {
   type Activity,
   type Failing,

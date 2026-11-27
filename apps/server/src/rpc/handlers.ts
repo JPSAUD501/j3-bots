@@ -237,6 +237,9 @@ export const handlers = J3Rpcs.toLayer(
       "routine.delete": ({ commandId, routineId }) =>
         routines.remove({ commandId, routineId, author: operator }),
       "routine.run": (input) => routines.run(input),
+      "routine.answer": (input) => routines.answer(input),
+      "routine.retry": (input) => routines.retry(input),
+      "routine.stopRun": (input) => routines.stopRun(input),
       "memory.list": ({ scope }) => memory.list(scope),
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),
@@ -281,6 +284,7 @@ export const handlers = J3Rpcs.toLayer(
       "secrets.list": () => secrets.list,
       "secrets.reveal": ({ id, field }) => secrets.reveal({ id, field, deviceId: device.id }),
       "secrets.add": (input) => secretAsks.add(input),
+      "secrets.addFromAsk": (input) => secretAsks.addFromAsk(input),
       "secrets.update": (input) => secrets.update(input),
       "secrets.delete": ({ id }) => secrets.remove(id),
       "secrets.setAccess": ({ id, access }) => secrets.setAccess(id, access),

@@ -732,6 +732,239 @@
       transition: opacity var(--duration-state) var(--ease-out);
     }
   }
+
+  /*
+   * The Track (RoutineTrack.tsx): a routine's stations down a rail, the line
+   * under them drawn in an SVG the rail measures. A station is its mark in a
+   * 28 px cell and its words; a lit station has a wash that reaches 8 px out
+   * on each side, in its bot's color, the waiting color or the blocked one.
+   */
+  .track-station {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    column-gap: 12px;
+    padding-block: 6px;
+    transition:
+      padding var(--duration-state) var(--ease-out),
+      opacity var(--duration-state) var(--ease-out);
+  }
+
+  .track-station::before {
+    position: absolute;
+    inset: 0 -8px;
+    z-index: -1;
+    border-radius: 14px;
+    background: var(--track-wash, transparent);
+    content: "";
+    opacity: 0;
+    transition: opacity var(--duration-state) var(--ease-out);
+  }
+
+  .track-station[data-lit] {
+    padding-block: 8px;
+  }
+
+  .track-station[data-lit]::before {
+    opacity: 1;
+  }
+
+  .track-station[data-lit="bot"] {
+    --track-wash: var(--track-lit);
+    --avatar-cutout: var(--track-lit);
+  }
+
+  .track-station[data-lit="waiting"] {
+    --track-wash: var(--waiting-surface);
+  }
+
+  .track-station[data-lit="blocked"] {
+    --track-wash: var(--blocked-surface);
+    --avatar-cutout: var(--blocked-surface);
+  }
+
+  .track-station[data-state="skipped"],
+  .track-station[data-state="not-needed"] {
+    opacity: 0.5;
+  }
+
+  .track-station[data-kind="condition"] {
+    padding-block: 5px;
+  }
+
+  .track-enter {
+    animation: track-enter var(--duration-soft) var(--ease-soft) backwards;
+  }
+
+  .track-mark {
+    position: relative;
+    display: flex;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    align-self: start;
+  }
+
+  /* The title's first line sits on the mark's middle. */
+  .track-title {
+    padding-block-start: 4px;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--muted-foreground);
+    transition: color var(--duration-state) var(--ease-out);
+  }
+
+  .track-station:is(
+      [data-state="rest"],
+      [data-state="doing"],
+      [data-state="waiting"],
+      [data-state="failed"]
+    )
+    .track-title {
+    color: var(--foreground);
+  }
+
+  .track-station:is([data-state="doing"], [data-state="waiting"], [data-state="failed"])
+    .track-title {
+    font-weight: 500;
+  }
+
+  .track-sub {
+    font-size: var(--text-2xs);
+    line-height: var(--text-2xs--line-height);
+    color: var(--muted-foreground);
+  }
+
+  .track-gate {
+    padding-block-start: 6px;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    color: var(--muted-foreground);
+  }
+
+  .track-siding {
+    margin-block-start: 2px;
+    font-size: var(--text-2xs);
+    line-height: var(--text-2xs--line-height);
+    color: var(--muted-foreground);
+    transition:
+      opacity var(--duration-state) var(--ease-out),
+      color var(--duration-state) var(--ease-out);
+  }
+
+  .track-station[data-state="passed"] .track-siding {
+    opacity: 0.45;
+  }
+
+  .track-station[data-state="stopped"] .track-siding {
+    color: var(--foreground);
+  }
+
+  .track-disc {
+    position: relative;
+    display: flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+  }
+
+  .track-disc svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .track-you {
+    background: var(--waiting-surface);
+    box-shadow: inset 0 0 0 1.5px var(--waiting);
+    color: var(--waiting);
+    transition:
+      background-color var(--duration-slow) var(--ease-out),
+      color var(--duration-slow) var(--ease-out);
+  }
+
+  .track-you[data-waiting] {
+    background: var(--waiting);
+    color: var(--surface);
+  }
+
+  /* Its ping, stepped like the avatar's: a ring that leaves the disc and fades. */
+  .track-you[data-waiting]::after {
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid var(--waiting);
+    border-radius: inherit;
+    content: "";
+    animation: track-ping 1.6s steps(12) infinite;
+  }
+
+  .track-you[data-timed-out] {
+    background: var(--muted);
+    box-shadow: none;
+    color: var(--muted-foreground);
+  }
+
+  .track-diamond {
+    width: 10px;
+    height: 10px;
+    rotate: 45deg;
+    border: 1.5px solid var(--muted-foreground);
+    border-radius: 1.5px;
+    background: var(--surface);
+    transition: background-color var(--duration-state) var(--ease-out);
+  }
+
+  .track-diamond[data-judged] {
+    background: var(--muted-foreground);
+    animation: track-diamond var(--duration-pop) var(--ease-pop);
+  }
+
+  /* The face at 22 px while it does not work, at full size while it does. */
+  .track-face {
+    position: relative;
+    display: flex;
+    scale: 0.79;
+    transition: scale var(--duration-slide) var(--ease-slide);
+  }
+
+  .track-face[data-big] {
+    scale: 1;
+  }
+
+  .track-check {
+    position: absolute;
+    inset-block-end: -3px;
+    inset-inline-end: -4px;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 0 2px var(--avatar-cutout, var(--surface));
+  }
+
+  .track-check svg {
+    stroke-width: 3.4;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .track-enter {
+      animation: appear var(--duration-state) var(--ease-out) backwards;
+    }
+
+    .track-you[data-waiting]::after {
+      inset: -3px;
+      animation: none;
+      opacity: 0.4;
+    }
+
+    .track-diamond[data-judged] {
+      animation: none;
+    }
+
+    .track-face {
+      transition: none;
+    }
+  }
 }
 
 @keyframes send-off {
@@ -785,6 +1018,31 @@
   50% {
     opacity: 0.35;
     transform: scale(0.7);
+  }
+}
+
+@keyframes track-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes track-ping {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+@keyframes track-diamond {
+  50% {
+    scale: 1.3;
   }
 }
 

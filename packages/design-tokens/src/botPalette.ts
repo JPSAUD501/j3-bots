@@ -51,6 +51,21 @@ export const botBubble = (color: BotColor): Themed => ({
 });
 
 /**
+ * How strongly a bot's color washes the row of a routine's step it is doing
+ * now (decision 0080): over the card's surface, more in the dark theme.
+ */
+export const trackLitTint = { light: 0.08, dark: 0.18 } as const satisfies Record<
+  keyof Themed,
+  number
+>;
+
+/** The row of a routine's step a bot is doing now: its color over the card's surface. */
+export const botTrackLit = (color: BotColor): Themed => ({
+  light: mixOklab(botPalette[color].light, colors.surface.light, trackLitTint.light),
+  dark: mixOklab(botPalette[color].dark, colors.surface.dark, trackLitTint.dark),
+});
+
+/**
  * How much of a bot's color one of its little ones keeps in its body: the
  * rest is white, so it is the bot's color made lighter in both themes. Its
  * rim stays the bot's own color, which is what keeps its silhouette 3:1

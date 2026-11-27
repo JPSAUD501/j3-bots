@@ -217,7 +217,10 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
       return Effect.succeed({
         name: "secret-ask",
         outcome: payload.outcome,
-        reference: secretReference(payload.name),
+        references: [
+          secretReference(payload.name),
+          ...(payload.alongside ?? []).map(secretReference),
+        ],
       });
     case "connector-ask":
       return Effect.succeed({

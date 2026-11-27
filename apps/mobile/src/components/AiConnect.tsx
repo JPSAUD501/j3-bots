@@ -5,10 +5,6 @@ import {
   aiAccountNames,
   aiAccounts,
   type AiPlace,
-  otherAiAccount,
-  type SignInStep,
-  signInStepAt,
-  signInSteps,
 } from "@j3-bots/client-runtime/presentation";
 import {
   type AiAccountModel,
@@ -22,19 +18,9 @@ import {
   aiAccountText,
   aiActionLabel,
   type AiTone,
-  signInStepLabel,
 } from "@j3-bots/client-runtime/wording";
 import type { EngineStatus } from "@j3-bots/contracts";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  CornerDownLeft,
-  type LucideIcon,
-  Monitor,
-  Terminal,
-  UserRoundCheck,
-} from "lucide-react-native";
+import { Check, ChevronDown, ChevronRight, ExternalLink } from "lucide-react-native";
 import { type ReactNode, useEffect, useState } from "react";
 import { Linking, View } from "react-native";
 import Animated, {
@@ -44,7 +30,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useI18n } from "../i18n.ts";
-import { popIn, useReducedMotion } from "../motion.ts";
+import { useReducedMotion } from "../motion.ts";
 import { usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
@@ -53,8 +39,9 @@ import { CommandLine } from "./CommandLine.tsx";
 import { Icon } from "./Icon.tsx";
 
 // Connecting an AI, as every screen of the app draws it: the first run's
-// step, Settings, and a conversation whose bot waits for one
-// (docs/decisions/0066-connecting-an-ai-is-picking-the-account-you-have.md).
+// step, Settings, and a conversation whose bot waits for one. Each account is
+// one row whose status line carries the one thing that moves it forward
+// (docs/decisions/0085-signing-in-is-one-row-and-the-browser-opens-by-itself.md).
 // A phone never runs the server, so an account signs in elsewhere: in the
 // desktop app that runs it, or with a command on the server's machine.
 
@@ -93,7 +80,7 @@ const toneClass = {
 } as const satisfies Record<AiTone, string>;
 
 /** An account's words, for the state it is in on this screen. */
-export function useAiText(ai: MobileAiConnect, account: AiAccountModel): AiAccountText {
+function useAiText(ai: MobileAiConnect, account: AiAccountModel): AiAccountText {
   return aiAccountText(
     account.account,
     account.state,
@@ -102,47 +89,7 @@ export function useAiText(ai: MobileAiConnect, account: AiAccountModel): AiAccou
   );
 }
 
-/**
- * The question the first screen asks: which AI the operator has. One large
- * button each, with a mark on the one already connected.
- */
-export function AiChoice({ ai }: { readonly ai: MobileAiConnect }) {
-  const { t } = useI18n();
-  return (
-    <View className="w-full gap-3">
-      <View accessibilityLabel={t("ai.choice.label")} className="w-full gap-2">
-        {aiAccounts.map((account) => {
-          const { name, maker, product } = aiAccountNames[account];
-          const connected = ai.accounts[account].state._tag === "ready";
-          const subtitle = `${t("ai.by", { maker })} · ${product}`;
-          return (
-            <PressScale
-              key={account}
-              accessibilityRole="button"
-              accessibilityLabel={`${name}, ${subtitle}`}
-              accessibilityState={{ selected: connected }}
-              onPress={() => ai.open(account)}
-              className="min-h-18 flex-row items-center gap-3 rounded-lg border border-input bg-surface px-4 py-3"
-            >
-              <View className="flex-1">
-                <Text className="text-lg font-semibold text-foreground">{name}</Text>
-                <Text className="text-sm text-muted-foreground">{subtitle}</Text>
-              </View>
-              {connected ? (
-                <Icon icon={Check} color="accent-success" size={20} />
-              ) : (
-                <Icon icon={ChevronRight} color="accent-muted-foreground" size={20} />
-              )}
-            </PressScale>
-          );
-        })}
-      </View>
-      <Text className="text-center text-xs text-muted-foreground">{t("ai.plan")}</Text>
-    </View>
-  );
-}
-
-/** What breathes while it is the step under way; still under reduced motion. */
+/** What breathes while something is under way; still under reduced motion. */
 function Breathing({ on, children }: { readonly on: boolean; readonly children: ReactNode }) {
   const reduced = useReducedMotion();
   const opacity = useSharedValue(1);
@@ -151,72 +98,6 @@ function Breathing({ on, children }: { readonly on: boolean; readonly children: 
   }, [on, reduced, opacity]);
   const style = useAnimatedStyle(() => ({ opacity: opacity.get() }));
   return <Animated.View style={style}>{children}</Animated.View>;
-}
-
-const firstStepIcon = { "desktop-app": Monitor, server: Terminal, here: Monitor } as const;
-
-/**
- * The sign-in, drawn: where it starts, the operator signs in, and they come
- * back. The step under way stands out and breathes; those behind it are
- * checked. Before a sign-in starts, the three are only what is to come.
- */
-function SignInSteps({
-  account,
-  at,
-  place,
-}: {
-  readonly account: AiAccount;
-  readonly at: SignInStep | "done" | null;
-  readonly place: AiPlace;
-}) {
-  const i18n = useI18n();
-  const reached = at === null ? -1 : at === "done" ? signInSteps.length : signInSteps.indexOf(at);
-  const icons: Record<SignInStep, LucideIcon> = {
-    page: firstStepIcon[place],
-    "sign-in": UserRoundCheck,
-    back: CornerDownLeft,
-  };
-  return (
-    <View accessibilityLabel={i18n.t("ai.steps.label")} className="w-full flex-row items-start">
-      {signInSteps.map((step, index) => {
-        const current = index === reached;
-        const done = index < reached;
-        return (
-          <View key={step} className="flex-1 items-center gap-2">
-            {index > 0 && (
-              <View
-                className={`absolute top-5.5 right-1/2 h-px w-full ${index <= reached ? "bg-foreground" : "bg-border"}`}
-              />
-            )}
-            <View
-              className={`size-11 items-center justify-center rounded-pill border bg-background ${
-                current ? "border-foreground" : done ? "border-success" : "border-border"
-              }`}
-            >
-              <Breathing on={current}>
-                <Icon
-                  icon={done ? Check : icons[step]}
-                  color={
-                    current
-                      ? "accent-foreground"
-                      : done
-                        ? "accent-success"
-                        : "accent-muted-foreground"
-                  }
-                  size={20}
-                />
-              </Breathing>
-            </View>
-            <Text
-              className={`px-1 text-center text-xs ${current ? "font-medium text-foreground" : "text-muted-foreground"}`}
-            >
-              {signInStepLabel(step, account, place, i18n)}
-            </Text>
-          </View>
-        );
-      })}
-    </View>
-  );
 }
 
 /**
@@ -270,182 +151,52 @@ export function AiDetails({ children }: { readonly children: ReactNode }) {
 }
 
 /** How far a state is, for the bar; `undefined` for a state that shows none. */
-const progressOf = ({ state }: AiAccountModel): number | null | undefined => {
+const progressOf = (account: AiAccountModel): number | null | undefined => {
+  const { state } = account;
   switch (state._tag) {
     case "getting":
-    case "preparing":
       return state.progress;
     case "checking":
     case "finishing":
       return null;
+    case "missing":
+      // Asked for, and about to start.
+      return account.queued ? null : undefined;
     case "ready":
     case "signing-in":
     case "sign-in":
-    case "missing":
     case "problem":
+    case "preparing":
       return undefined;
   }
 };
 
-/**
- * One account, whole: where it stands, the sign-in drawn while it is the
- * way forward, calm progress while something downloads, and what went wrong
- * with what to do next. `said` is the sentence a screen already says in its
- * own type, as the first run's step does, so it is not repeated here;
- * `button` leaves the account's one button to a screen that draws it itself.
- */
-export function AiAccountPanel({
-  ai,
-  account,
-  said = null,
-  button = true,
-  align = "center",
-}: {
-  readonly ai: MobileAiConnect;
-  readonly account: AiAccountModel;
-  readonly said?: "line" | "hint" | null;
-  readonly button?: boolean;
-  /**
-   * `start` in a list, as Settings', where the account is one of several and
-   * the sign-in is drawn only once it is under way; centered where the
-   * account has the screen.
-   */
-  readonly align?: "center" | "start";
-}) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const text = useAiText(ai, account);
-  const { state, action } = account;
-  const { product } = aiAccountNames[account.account];
-  const progress = progressOf(account);
-  const centered = align === "center";
-  // The sign-in is drawn while it is under way, and before it, where the account has the screen.
-  const drawn =
-    state._tag === "signing-in" ||
-    state._tag === "finishing" ||
-    (centered && state._tag === "sign-in" && state.failed === null);
-  const page = state._tag === "missing" ? state.page : null;
-  const stoppable = state._tag === "getting";
-  const words = centered ? "text-center" : "";
+/** A quiet link out of the app, to a page in the system's browser. */
+function PageLink({ href, label }: { readonly href: string; readonly label: string }) {
   return (
-    <View className={`w-full gap-3 ${centered ? "items-center" : "items-start"}`}>
-      {state._tag === "ready" && centered && (
-        <Animated.View
-          entering={popIn()}
-          className="size-14 items-center justify-center rounded-pill bg-success"
-        >
-          <Icon icon={Check} color="accent-background" size={28} />
-        </Animated.View>
-      )}
-      {said === null && (
-        <Text
-          accessibilityLiveRegion="polite"
-          className={`text-sm ${words} ${toneClass[text.tone]}`}
-        >
-          {text.line}
-        </Text>
-      )}
-      {drawn && <SignInSteps account={account.account} at={signInStepAt(state)} place={ai.place} />}
-      {progress !== undefined && <Progress value={progress} label={text.line} />}
-      {text.hint !== null && said !== "hint" && (
-        <Text className={`text-sm text-muted-foreground ${words}`}>{text.hint}</Text>
-      )}
-      {text.command !== null && (
-        <View className="w-full">
-          <CommandLine command={text.command} />
-        </View>
-      )}
-      {page !== null && (
-        <Button
-          variant="secondary"
-          label={t("ai.howToInstall", { product })}
-          onPress={() => void Linking.openURL(page)}
-        />
-      )}
-      {button && action !== null && (
-        <View className="w-full">
-          <Button
-            variant={page === null ? "primary" : "secondary"}
-            label={aiActionLabel(action, account.account, i18n)}
-            held={account.asking === "asking"}
-            onPress={account.act}
-          />
-        </View>
-      )}
-      {account.asking === "failed" && (
-        <Text accessibilityRole="alert" className="text-xs text-blocked">
-          {t("ai.requestFailed")}
-        </Text>
-      )}
-      {(text.details.length > 0 || stoppable) && (
-        <AiDetails>
-          {text.details.map((detail) => (
-            <Text key={detail} selectable className="text-xs text-muted-foreground">
-              {detail}
-            </Text>
-          ))}
-          {stoppable && (
-            <View className="flex-row">
-              <Button
-                variant="quiet"
-                label={t("ai.stopDownload")}
-                held={account.asking === "asking"}
-                onPress={account.stopDownload}
-              />
-            </View>
-          )}
-        </AiDetails>
-      )}
-    </View>
-  );
-}
-
-/** The way from one account to the other: a wrong turn has an obvious way back. */
-export function OtherAccount({
-  ai,
-  account,
-}: {
-  readonly ai: MobileAiConnect;
-  readonly account: AiAccount;
-}) {
-  const { t } = useI18n();
-  const other = otherAiAccount(account);
-  return (
-    <Button
-      variant="quiet"
-      label={t("ai.other", { account: aiAccountNames[other].name })}
-      onPress={() => ai.open(other)}
-    />
+    <PressScale
+      accessibilityRole="link"
+      accessibilityLabel={label}
+      onPress={() => void Linking.openURL(href)}
+      className="min-h-11 flex-row items-center gap-1.5 self-start"
+    >
+      <Icon icon={ExternalLink} color="accent-muted-foreground" size={14} />
+      <Text className="text-xs text-muted-foreground underline">{label}</Text>
+    </PressScale>
   );
 }
 
 /**
- * Connecting an AI, in one place: the question, which one the operator has,
- * then that account alone, with the other one press away. For a screen that
- * is not the first run's step, as a conversation whose bot waits for its AI.
+ * One AI account, as one row: its name, and under it the line that says
+ * where it stands, with the one thing that moves it forward right beside
+ * that line: How to connect while it is not connected, Try again after
+ * something went wrong. What the operator reads only when they need it sits
+ * under the row: how far a download is, where to sign in, and the details,
+ * folded. `children`, as the version it runs, shows only once it is
+ * connected. `stale` is a state reported before a disconnection: said,
+ * muted, with nothing to press.
  */
-export function AiConnect({ engine }: { readonly engine: EngineStatus | null }) {
-  const ai = useMobileAiConnect(engine);
-  const { opened } = ai;
-  if (opened === null) return <AiChoice ai={ai} />;
-  return (
-    <View className="w-full items-center gap-3">
-      <Text className="text-base font-semibold text-foreground">
-        {aiAccountNames[opened.account].name}
-      </Text>
-      <AiAccountPanel ai={ai} account={opened} />
-      <OtherAccount ai={ai} account={opened.account} />
-    </View>
-  );
-}
-
-/**
- * One account as Settings lists it: its name and maker, then the account
- * whole (`AiAccountPanel`), with `children` after it, as its version.
- * `stale` is a state reported before a disconnection: said, muted, with
- * nothing to press.
- */
-export function AiAccountCard({
+function AiAccountRow({
   ai,
   account,
   stale = false,
@@ -456,23 +207,137 @@ export function AiAccountCard({
   readonly stale?: boolean;
   readonly children?: ReactNode;
 }) {
-  const { t } = useI18n();
-  const { name, maker } = aiAccountNames[account];
-  const text = useAiText(ai, ai.accounts[account]);
+  const i18n = useI18n();
+  const { t } = i18n;
+  const model = ai.accounts[account];
+  const text = useAiText(ai, model);
+  const [howOpen, setHowOpen] = useState(false);
+  const { state, action } = model;
+  const { name, maker, product } = aiAccountNames[account];
+  // A signed-out account says where it signs in only when asked.
+  const elsewhere = ai.place !== "here" && state._tag === "sign-in" && state.failed === null;
+  const progress = progressOf(model);
+  const stoppable = state._tag === "getting";
+  const trailing = stale ? null : state._tag === "ready" ? (
+    <Icon icon={Check} color="accent-success" size={20} />
+  ) : action !== null ? (
+    <Button
+      variant={state._tag === "missing" && !state.canGet ? "secondary" : "primary"}
+      label={aiActionLabel(action, account, i18n)}
+      held={model.asking === "asking"}
+      onPress={model.act}
+    />
+  ) : state._tag === "signing-in" || model.queued ? (
+    <Button variant="quiet" label={t("ai.cancel")} onPress={model.cancel} />
+  ) : elsewhere ? (
+    <Button
+      variant="secondary"
+      label={t("ai.howToConnect")}
+      expanded={howOpen}
+      onPress={() => setHowOpen((now) => !now)}
+    />
+  ) : null;
   return (
-    <View className="gap-3 rounded-md border border-border px-3 py-3">
-      <View className="flex-row flex-wrap items-baseline gap-x-2">
-        <Text className="text-sm font-semibold text-foreground">{name}</Text>
-        <Text className="text-xs text-muted-foreground">{t("ai.by", { maker })}</Text>
+    <View className="gap-2 rounded-lg border border-border bg-surface px-3 py-3">
+      <View className="min-h-11 flex-row items-center gap-3">
+        <View className="flex-1 gap-0.5">
+          <View className="flex-row flex-wrap items-baseline gap-x-2">
+            <Text className="text-sm font-semibold text-foreground">{name}</Text>
+            <Text className="text-xs text-muted-foreground">{t("ai.by", { maker })}</Text>
+          </View>
+          <Text
+            accessibilityLiveRegion="polite"
+            className={`text-sm ${stale ? "text-muted-foreground" : toneClass[text.tone]}`}
+          >
+            {text.line}
+          </Text>
+        </View>
+        {trailing}
       </View>
-      {stale ? (
-        <Text className="text-sm text-muted-foreground">{text.line}</Text>
-      ) : (
+      {!stale && (
         <>
-          <AiAccountPanel ai={ai} account={ai.accounts[account]} align="start" />
-          {children}
+          {progress !== undefined && <Progress value={progress} label={text.line} />}
+          {text.hint !== null && (!elsewhere || howOpen) && (
+            <Text className="text-sm text-muted-foreground">{text.hint}</Text>
+          )}
+          {text.command !== null && howOpen && (
+            <View className="w-full">
+              <CommandLine command={text.command} />
+            </View>
+          )}
+          {state._tag === "signing-in" && state.page !== null && (
+            <PageLink href={state.page} label={t("ai.openPage")} />
+          )}
+          {state._tag === "missing" && state.page !== null && (
+            <PageLink href={state.page} label={t("ai.howToInstall", { product })} />
+          )}
+          {model.asking === "failed" && (
+            <Text accessibilityRole="alert" className="text-xs text-blocked">
+              {t("ai.requestFailed")}
+            </Text>
+          )}
+          {(text.details.length > 0 || stoppable) && (
+            <AiDetails>
+              {text.details.map((detail) => (
+                <Text key={detail} selectable className="text-xs text-muted-foreground">
+                  {detail}
+                </Text>
+              ))}
+              {stoppable && (
+                <View className="flex-row">
+                  <Button
+                    variant="quiet"
+                    label={t("ai.stopDownload")}
+                    held={model.asking === "asking"}
+                    onPress={model.stopDownload}
+                  />
+                </View>
+              )}
+            </AiDetails>
+          )}
+          {state._tag === "ready" && children}
         </>
       )}
+    </View>
+  );
+}
+
+/**
+ * Every AI account, one row each (`AiAccountRow`). `extra` is what each row
+ * shows once connected, as its version in Settings.
+ */
+export function AiAccountList({
+  ai,
+  stale = false,
+  extra,
+}: {
+  readonly ai: MobileAiConnect;
+  readonly stale?: boolean;
+  readonly extra?: (account: AiAccount) => ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <View accessibilityLabel={t("ai.choice.label")} className="w-full gap-2">
+      {aiAccounts.map((account) => (
+        <AiAccountRow key={account} ai={ai} account={account} stale={stale}>
+          {extra?.(account)}
+        </AiAccountRow>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * Connecting an AI in one place, for a screen that is not Settings: the
+ * accounts, one row each, and that it uses the plan the operator already
+ * has. The first run's step and a conversation whose bot waits for its AI.
+ */
+export function AiConnect({ ai }: { readonly ai: MobileAiConnect }) {
+  const { t } = useI18n();
+  return (
+    <View className="w-full gap-3">
+      <AiAccountList ai={ai} />
+      <Text className="text-center text-xs text-muted-foreground">{t("ai.plan")}</Text>
     </View>
   );
 }

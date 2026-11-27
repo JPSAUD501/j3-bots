@@ -12,7 +12,7 @@ import {
   ProviderId,
   SectionId,
 } from "./base.ts";
-import { ActivityKind, StepTool } from "./work.ts";
+import { ActivityKind, StepSkill, StepTool } from "./work.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
 
@@ -162,6 +162,8 @@ export const BotState = Schema.Union([
      * of `activity`, which then carries an English phrase for older clients.
      */
     tool: StepTool,
+    /** For a `connector-skill` step, the skill it loads, for clients to name in place of `activity`. */
+    skill: Schema.optionalKey(StepSkill),
     /**
      * How many of its little ones work now (`LittleOnes.working`), in
      * whichever audience its turn speaks to: a count only, which says
