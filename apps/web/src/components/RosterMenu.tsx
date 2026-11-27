@@ -80,7 +80,7 @@ export type RosterQuestion =
 /** What every roster menu needs to know about the roster around it. */
 export interface RosterMenuContext {
   readonly intents: RosterIntents;
-  /** Null while the server has not said it has sections: no section rows, no Mark as unread. */
+  /** Null until the roster loads: no section rows, no Mark as unread. */
   readonly sections: ReadonlyArray<Section> | null;
   /** The bot that is primary now, if one is. */
   readonly primary: Bot | null;

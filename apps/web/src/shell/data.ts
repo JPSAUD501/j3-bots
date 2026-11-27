@@ -96,8 +96,8 @@ export interface ShellData {
   /** Null until the roster first loads. */
   readonly roster: ReadonlyArray<RosterItem> | null;
   /**
-   * The operator's sections, in their order. Null until the roster loads, and
-   * from a server that has no sections: no menu offers them, nor Mark as unread.
+   * The operator's sections, in their order. Null until the roster loads: no
+   * menu offers them then, nor Mark as unread.
    */
   readonly sections: ReadonlyArray<Section> | null;
   readonly conversation: (target: EntryTarget) => ConversationView;
@@ -326,8 +326,7 @@ export interface ShellIntents extends TimelineIntents {
   /** In the desktop app, updating it. Absent in a browser, whose page is the server's own. */
   readonly update?: DesktopUpdate;
   /**
-   * Updating the server from here. Absent where the server has no update
-   * routes (older than J3 Bots 0.3.1), and in the desktop app's local mode,
+   * Updating the server from here. Absent in the desktop app's local mode,
    * where updating the app updates the server it runs.
    */
   readonly serverUpdate?: RemoteServerUpdate;
