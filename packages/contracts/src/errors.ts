@@ -42,7 +42,7 @@ export const Resource = Schema.Literals([
   "connector",
   "connector-listing",
   "sign-in",
-  /** A provider, which only `engine.recheckProvider` and `engine.updateProvider` name. */
+  /** A provider, which only `engine.*Provider` requests name. */
   "provider",
   /** A skill, which only skill requests name. */
   "skill",
@@ -126,6 +126,8 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "registration-refused",
     /** The service answered the sign-in with an error, or refused its code. */
     "sign-in-refused",
+    /** The provider is the first of its harness, which can be turned off, never removed. */
+    "provider-not-removable",
     /**
      * The engine cannot update this provider's harness itself, or knows no
      * newer version of it. Only `engine.updateProvider` answers it.

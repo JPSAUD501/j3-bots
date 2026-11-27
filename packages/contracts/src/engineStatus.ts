@@ -116,8 +116,61 @@ export const ProviderModel = Schema.Struct({
    * catalog model, and from an older server.
    */
   custom: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * True for a model that also runs in its harness's fast mode, which
+   * answers sooner and spends more of the plan (`Bot.fast`). Absent for a
+   * model without one, and from an older server, which offers none.
+   */
+  fast: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ProviderModel = typeof ProviderModel.Type;
+
+/** The longest path of a harness's executable or folder the server takes. */
+export const MAX_PROVIDER_PATH = 4096;
+
+/** An absolute path on the server's machine, as the operator typed it. */
+export const ProviderPath = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_PROVIDER_PATH),
+);
+
+/** The longest launch arguments the server takes. */
+export const MAX_LAUNCH_ARGUMENTS = 2000;
+
+/** More arguments a harness starts with, as one line the harness splits on spaces; empty for none. */
+export const LaunchArguments = Schema.String.check(
+  Schema.isMaxLength(MAX_LAUNCH_ARGUMENTS),
+  Schema.makeFilter((text: string) =>
+    /[\r\n\0]/.test(text) ? "Launch arguments are one line." : true,
+  ),
+);
+
+/**
+ * What the operator can change of a provider, from a server that lets them
+ * set providers up (decision 0108): Claude Code and Codex, each instance an
+ * account of its own, in a home of its own.
+ * - `enabled`: off, it never runs, and the bots on it wait for it;
+ * - `added`: the operator added it. The first of each harness was not, and
+ *   stays: it can be turned off, never removed;
+ * - `binaryPath`: the harness's executable the operator chose instead of
+ *   J3 Bots' own copy or the one on the server's `PATH`; null for those;
+ * - `launchArguments`: what the harness starts with after J3 Bots' own;
+ * - `home`: the folder J3 Bots keeps the account's sign-in and settings in,
+ *   on the server's machine. J3 Bots chooses it, since it writes the bots'
+ *   tools there, so it is only shown.
+ * Absent from a server older than it, at the same protocol version, which
+ * then takes none of `engine.addProvider`, `engine.setUpProvider` and
+ * `engine.removeProvider`, nor a sign-in for any provider but the first of
+ * each harness; an older client ignores it.
+ */
+export const ProviderSetup = Schema.Struct({
+  enabled: Schema.Boolean,
+  added: Schema.Boolean,
+  binaryPath: Schema.NullOr(ProviderPath),
+  launchArguments: LaunchArguments,
+  home: ProviderPath,
+});
+export type ProviderSetup = typeof ProviderSetup.Type;
 
 export const ProviderStatus = Schema.Struct({
   id: ProviderId,
@@ -185,6 +238,8 @@ export const ProviderStatus = Schema.Struct({
    * install nor an update; an older client ignores it.
    */
   copy: Schema.optionalKey(HarnessCopy),
+  /** What the operator can change of it (`ProviderSetup`); absent as that says. */
+  setup: Schema.optionalKey(ProviderSetup),
 });
 export type ProviderStatus = typeof ProviderStatus.Type;
 
@@ -319,6 +374,17 @@ export const modelEfforts = (
     .find((provider) => provider.id === model.providerId)
     ?.models.find((candidate) => candidate.id === model.modelId);
   return listed === undefined ? null : (listed.efforts ?? []);
+};
+
+/**
+ * Whether `model` runs in fast mode, as `status` reports it; null while the
+ * engine does not list the model, and false from a server that reports none.
+ */
+export const modelOffersFast = (status: EngineStatus, model: ModelChoice): boolean | null => {
+  const listed = status.providers
+    .find((provider) => provider.id === model.providerId)
+    ?.models.find((candidate) => candidate.id === model.modelId);
+  return listed === undefined ? null : listed.fast === true;
 };
 
 /** The routine whose run a turn was part of. */
