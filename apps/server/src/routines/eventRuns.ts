@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { RoutineEvents } from "@j3-bots/prompts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { json } from "../persistence/columns.ts";
 
@@ -29,3 +31,15 @@ const EventRunData = Schema.Struct({
 
 /** `EventRunData` as the `trigger_data` column stores it. */
 export const EventRunDataJson = json(EventRunData);
+
+const decodeEventRun = Schema.decodeUnknownOption(EventRunDataJson);
+
+/**
+ * What a run on a connector's event was started for, from its trigger data;
+ * data this server cannot read says only that events may have been missed.
+ */
+export const eventsOf = (data: string): RoutineEvents =>
+  Option.match(decodeEventRun(data), {
+    onNone: () => ({ occurrences: [], missed: true }),
+    onSome: (run) => ({ occurrences: run.events, missed: run.missed }),
+  });

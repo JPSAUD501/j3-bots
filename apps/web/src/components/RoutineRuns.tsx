@@ -2,6 +2,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import type { Loaded, RoutineRuns as Runs } from "@j3-bots/client-runtime";
 import { routineLines, routineRunLines } from "@j3-bots/client-runtime/wording";
+import { trackTrigger } from "@j3-bots/client-runtime/presentation";
 import { hasSeveralSteps, type Routine, type RoutineRun } from "@j3-bots/contracts";
 import {
   CircleCheckIcon,
@@ -109,7 +110,7 @@ export function RoutineRunList({ routine, runs }: RoutineRunListProps) {
         <section className="border-b border-border px-4 py-3">
           <RoutineTrackRest
             name={routine.name}
-            trigger={routine.trigger}
+            trigger={trackTrigger(routine.trigger, routine.connectorName ?? null)}
             owner={routine.botId}
             steps={routine.steps}
           />

@@ -773,6 +773,7 @@ describe("renderWake", () => {
       recentRunsLeftOut: false,
       recentRuns: [{ at: at("2026-11-13T11:03:00Z"), outcome: { type: "silent", note: null } }],
       triggerData: null,
+      events: null,
       dueAt: null,
     });
     expect(text).toMatchInlineSnapshot(`

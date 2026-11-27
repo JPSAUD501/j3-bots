@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { trackTrigger } from "@j3-bots/client-runtime/presentation";
 import { useRoutineRuns, useRoutines } from "@j3-bots/client-runtime/react";
 import { routineLines, routineRunLines } from "@j3-bots/client-runtime/wording";
 import { hasSeveralSteps, type RoutineRun } from "@j3-bots/contracts";
@@ -137,7 +138,7 @@ export function RoutineRunsScreen({
         <Section>
           <RoutineTrackRest
             name={routine.name}
-            trigger={routine.trigger}
+            trigger={trackTrigger(routine.trigger, routine.connectorName ?? null)}
             owner={routine.botId}
             steps={routine.steps}
           />

@@ -19,7 +19,6 @@ import {
   PROMPT_VERSION,
   renderWake,
   type RoutineRunSummary,
-  type RoutineEvents,
   type RoutineStepWake,
   type RoutineWake,
   type RoutineTrigger as EnvelopeTrigger,
@@ -63,7 +62,7 @@ import { stopTargets } from "../turns/stopTargets.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
-import { EventRunDataJson } from "./eventRuns.ts";
+import { eventsOf } from "./eventRuns.ts";
 import { dueToTell, RoutineRuns } from "./RoutineRuns.ts";
 import { recordRunFailure } from "./runFailure.ts";
 import { StepReport } from "./runSteps.ts";
@@ -94,8 +93,6 @@ const Attempt = Schema.Struct({
   step: Schema.NullOr(Schema.Int),
 });
 type Attempt = typeof Attempt.Type;
-
-const decodeEventRun = Schema.decodeUnknownOption(EventRunDataJson);
 
 /** What a step before the one at work came to, for its envelope. */
 const StepSoFar = Schema.Struct({
@@ -161,16 +158,6 @@ const envelopeTrigger = (trigger: RoutineTrigger, connector: string | null): Env
       return { type: "event", connector: connector ?? "a removed connector", event: trigger.name };
   }
 };
-
-/**
- * What a run on a connector's event was started for, from its trigger data;
- * data this server cannot read says only that events may have been missed.
- */
-const eventsOf = (data: string): RoutineEvents =>
-  Option.match(decodeEventRun(data), {
-    onNone: () => ({ occurrences: [], missed: true }),
-    onSome: (run) => ({ occurrences: run.events, missed: run.missed }),
-  });
 
 const clipped = (text: string) =>
   text.length <= RECENT_RUN_TEXT ? text : `${text.slice(0, RECENT_RUN_TEXT)}…`;

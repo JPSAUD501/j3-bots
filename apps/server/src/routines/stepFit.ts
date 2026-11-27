@@ -4,6 +4,7 @@ import { PROFILE_LIMITS } from "@j3-bots/contracts";
 import type { EarlierStep, RoutineStepWake, Wake } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import { fitsEngine } from "../turns/envelopes.ts";
+import { eventsOf } from "./eventRuns.ts";
 
 /** What a report of a step held, as far as the steps after it are told. */
 export interface ReportSoFar {
@@ -44,6 +45,8 @@ export function laterStepsFit(run: {
   readonly position: number;
   readonly reports: ReadonlyArray<ReportSoFar>;
   readonly triggerData: string | null;
+  /** Whether the routine runs on a connector's event, whose trigger data is the events. */
+  readonly onEvent: boolean;
 }): boolean {
   const bots = run.steps.flatMap((step, index) => (step._tag === "bot" ? [index] : []));
   const reported = new Map(run.reports.map((report) => [report.position, report]));
@@ -90,7 +93,9 @@ export function laterStepsFit(run: {
         runId: run.runId,
         recentRuns: [],
         recentRunsLeftOut: false,
-        triggerData: run.triggerData,
+        ...(run.onEvent && run.triggerData !== null
+          ? { triggerData: null, events: eventsOf(run.triggerData) }
+          : { triggerData: run.triggerData, events: null }),
         dueAt: null,
       };
       return fitsEngine(wake, UNKNOWN_RESERVE);

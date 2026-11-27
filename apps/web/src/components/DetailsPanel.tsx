@@ -44,6 +44,7 @@ import {
   roomStop,
   type Teammate,
   trackCast,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -604,7 +605,7 @@ function RoutineRow({
                 <RoutineCast steps={steps} />
               </span>
               <RoutineSentence
-                trigger={routine.trigger}
+                trigger={trackTrigger(routine.trigger, routine.connectorName ?? null)}
                 steps={steps}
                 className="line-clamp-2 text-xs text-muted-foreground"
               />

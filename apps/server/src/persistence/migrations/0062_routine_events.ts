@@ -5,9 +5,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 // A routine can run when a connector's server says an event happened (MCP's
 // Events extension, decision 0088).
 //
-// Its changes are entries of a new kind, `event-routine-change`, which the
-// check on `entries.kind` refuses: the column is replaced in place, as
-// migration 0060 replaced it, with every kind 0060 allows and the new one.
+// Its changes are entries of a new kind, `event-routine-change`, and a run of
+// one with several steps is shown by an `event-routine-run`, which the check
+// on `entries.kind` refuses: the column is replaced in place, as migration
+// 0060 replaced it, with every kind 0060 allows and the new ones.
 //
 // `routine_event_listeners` holds what J3 Bots keeps of each event routine's
 // subscription, which the server holds, never the bot: the trigger it was
@@ -39,7 +40,7 @@ export default Effect.gen(function* () {
         'message', 'question', 'approval', 'secret-request', 'browser-help', 'secret-ask',
         'work-fold', 'notice', 'handoff', 'routine-change', 'connector-suggestion',
         'connector-auth', 'connector-input', 'connector-ask', 'routine-run',
-        'event-routine-change'
+        'event-routine-change', 'event-routine-run'
       )
     )
   `;

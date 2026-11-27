@@ -7,6 +7,7 @@ import {
   type Teammate,
   teammatesOf,
   trackCast,
+  trackTrigger,
 } from "@j3-bots/client-runtime/presentation";
 import {
   useBotFiles,
@@ -374,7 +375,7 @@ function RoutineRow({
               <RoutineCast steps={steps} />
             </View>
             <RoutineSentence
-              trigger={routine.trigger}
+              trigger={trackTrigger(routine.trigger, routine.connectorName ?? null)}
               steps={steps}
               className="text-sm"
               lines={2}

@@ -100,6 +100,7 @@ export {
   eventStopText,
   scheduleInWords,
   timeZoneHint,
+  triggerInWords,
 } from "./schedule.ts";
 export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";

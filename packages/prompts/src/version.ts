@@ -233,6 +233,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     recentRuns: [],
     recentRunsLeftOut: false,
     triggerData: null,
+    events: null,
     dueAt: null,
   })),
   ...[false, true].flatMap((askName) =>

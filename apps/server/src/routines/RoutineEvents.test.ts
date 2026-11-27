@@ -10,6 +10,7 @@ import {
   CommandId,
   type Connector,
   ConnectorId,
+  EntryId,
   type Routine,
   type RoutineId,
   ServerOrigin,
@@ -26,6 +27,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Bots } from "../bots/Bots.ts";
 import { ServerConfig } from "../config.ts";
 import { Connectors } from "../connectors/Connectors.ts";
+import { Entries } from "../entries/Entries.ts";
 import { connectorSecretIdOf } from "../connectors/credentials.ts";
 import * as Domain from "../domain.ts";
 import { Secrets } from "../secrets/Secrets.ts";
@@ -188,6 +190,71 @@ const firstRun = (id: RoutineId) =>
   );
 
 describe("RoutineEvents", () => {
+  it.live(
+    "posts a run of an event routine in steps as a card of its own kind, with the connector's name",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* sdkHttpServer({
+          revision: "2026-07-28",
+          events: { types: [typeWith(["poll"])], nextPollMs: 1_000 },
+        });
+        const control = fake.events;
+        if (control === null) return yield* Effect.die("The fake offers events");
+        const ana = yield* connectBot(fake.url);
+        const routine = yield* (yield* Routines)
+          .create({
+            commandId: null,
+            botId: ana,
+            draft: {
+              name: "Invoices from Bia",
+              instruction: "Read each email from Bia.",
+              steps: [
+                {
+                  _tag: "bot",
+                  botId: ana,
+                  action: "reads the email",
+                  instruction: "Read each email from Bia.",
+                },
+                {
+                  _tag: "bot",
+                  botId: ana,
+                  action: "files the invoice",
+                  instruction: "File the invoice the email holds.",
+                },
+              ],
+              trigger: {
+                _tag: "event",
+                connectorId: ID,
+                name: NAME,
+                arguments: { from: "bia@example.com" },
+                summary: "an email from Bia arrives",
+              },
+            },
+            author: { _tag: "bot", botId: ana },
+          })
+          .pipe(Effect.orDie);
+        yield* listeningAs(ana, routine.id, "listening");
+        yield* Effect.promise(() => control.emit(NAME, { subject: "Invoice 12" }));
+        yield* firstRun(routine.id);
+        const sql = yield* SqlClient.SqlClient;
+        const [row] = yield* sql<{ readonly entry_id: string | null }>`
+          SELECT entry_id FROM routine_runs WHERE routine_id = ${routine.id}
+        `.pipe(Effect.orDie);
+        if (row?.entry_id == null) return yield* Effect.die("The run has a card");
+        const card = yield* (yield* Entries).find(EntryId.make(row.entry_id));
+        // A client built before event routines reads `routine-run` with three
+        // triggers only, and passes over a kind it does not know.
+        const entry = Option.getOrUndefined(card)?.entry;
+        if (entry?._tag !== "event-routine-run") {
+          return yield* Effect.die(`The card is ${entry?._tag ?? "missing"}`);
+        }
+        assert.strictEqual(entry.trigger.summary, "an email from Bia arrives");
+        assert.strictEqual(entry.connector, "Mail");
+        assert.strictEqual(entry.run.steps?.length, 2);
+      }).pipe(Effect.scoped, Effect.provide(onMachine(atHome))),
+    SLOW,
+  );
+
   it.live(
     "polls only once a routine asks, runs it with the event, and tells it what was missed",
     () =>

@@ -6,6 +6,7 @@ import {
   type OwnTrigger,
 } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
+import type { TrackTrigger } from "../presentation/routineTrack.ts";
 import * as DateTime from "effect/DateTime";
 import {
   minuteText,
@@ -50,6 +51,12 @@ export function eventInWords(trigger: EventTrigger, connector: string | null, i1
     ? i18n.t("schedule.eventRemoved", { summary: trigger.summary })
     : i18n.t("schedule.event", { connector, summary: trigger.summary });
 }
+
+/** A trigger the Track shows in words, as `scheduleInWords` and `eventInWords` say it. */
+export const triggerInWords = (trigger: TrackTrigger, ctx: TimeContext): string | null =>
+  trigger._tag === "event"
+    ? eventInWords(trigger, trigger.connector, ctx.i18n)
+    : scheduleInWords(trigger, ctx);
 
 /**
  * Why J3 Bots stopped listening for a routine's event, as a phrase that

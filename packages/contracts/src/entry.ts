@@ -24,7 +24,13 @@ import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
-import { EVENT_STOP_REASONS, EventTrigger, OwnTrigger, RoutineRun, RoutineStep } from "./routine.ts";
+import {
+  EVENT_STOP_REASONS,
+  EventTrigger,
+  OwnTrigger,
+  RoutineRun,
+  RoutineStep,
+} from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
 import { StepSkill, StepTool, TurnWork, WorkStepKind } from "./work.ts";
