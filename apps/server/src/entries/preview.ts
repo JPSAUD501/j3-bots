@@ -39,7 +39,12 @@ export const previewOf = (entry: Entry, step: WorkStep | null): EntryPreview => 
   recipientId: entry._tag === "handoff" ? entry.recipientId : null,
   step:
     entry._tag === "work-fold" && step !== null
-      ? { kind: step.kind, tool: step.tool, label: step.label }
+      ? {
+          kind: step.kind,
+          tool: step.tool,
+          label: step.label,
+          ...(step.skill === undefined ? {} : { skill: step.skill }),
+        }
       : null,
   ending: foldEnding(entry),
   notice: entry._tag === "notice" ? entry.notice : null,

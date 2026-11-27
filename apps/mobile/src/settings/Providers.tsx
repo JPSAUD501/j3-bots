@@ -2,8 +2,8 @@
 import type { HarnessSettingsChanges, SettingsSaves } from "@j3-bots/client-runtime";
 import type { EngineStatus } from "@j3-bots/contracts";
 import {
+  type AiAccount,
   aiAccountProvider,
-  aiAccounts,
   installsHarnesses,
   ownHarness,
 } from "@j3-bots/client-runtime/presentation";
@@ -17,7 +17,7 @@ import {
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import { useState } from "react";
 import { View } from "react-native";
-import { AiAccountCard, useMobileAiConnect } from "../components/AiConnect.tsx";
+import { AiAccountList, useMobileAiConnect } from "../components/AiConnect.tsx";
 import { OwnHarnessLine, ProviderRow, ProviderUpdate } from "../components/Engine.tsx";
 import { Problem, Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
@@ -84,29 +84,19 @@ export function ProvidersSection() {
 }
 
 /**
- * Each AI account, one card each: where it stands and its one button, then
- * the version it runs, with Update when a newer one is out.
+ * Each AI account, one row each: where it stands with its one button beside
+ * it, and once it is connected, the version it runs, with Update when a
+ * newer one is out.
  */
 function AiAccounts(props: { readonly engine: EngineStatus; readonly stale: boolean }) {
   const ai = useMobileAiConnect(props.engine);
-  return (
-    <>
-      {aiAccounts.map((account) => {
-        const provider = aiAccountProvider(props.engine, account);
-        const own = provider === undefined ? null : ownHarness(provider);
-        return (
-          <AiAccountCard key={account} ai={ai} account={account} stale={props.stale}>
-            {provider !== undefined &&
-              (own === null ? (
-                <ProviderUpdate provider={provider} />
-              ) : (
-                <OwnHarnessLine own={own} />
-              ))}
-          </AiAccountCard>
-        );
-      })}
-    </>
-  );
+  const version = (account: AiAccount) => {
+    const provider = aiAccountProvider(props.engine, account);
+    if (provider === undefined) return null;
+    const own = ownHarness(provider);
+    return own === null ? <ProviderUpdate provider={provider} /> : <OwnHarnessLine own={own} />;
+  };
+  return <AiAccountList ai={ai} stale={props.stale} extra={version} />;
 }
 
 /** The harness settings Providers offers as switches, and the words of each. */

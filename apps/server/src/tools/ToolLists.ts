@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
-import { toolList } from "@j3-bots/prompts";
+import { connectorSkillsDescription, toolList } from "@j3-bots/prompts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -37,6 +37,19 @@ const ownTools: ReadonlyArray<ListedTool> = toolList.map((tool) => ({
   ),
   _meta: { ...tool._meta },
 }));
+
+/**
+ * J3 Bots' own tools for a bot: `use_connector_skill` lists the skills its
+ * connectors serve in its description (decision 0089).
+ */
+const ownToolsWith = (skills: Parameters<typeof connectorSkillsDescription>[1]) =>
+  skills.length === 0
+    ? ownTools
+    : ownTools.map((tool) =>
+        tool.name === "use_connector_skill"
+          ? { ...tool, description: connectorSkillsDescription(tool.description, skills) }
+          : tool,
+      );
 
 /**
  * The tools each `j3` bridge lists for its session: J3 Bots' own, then the
@@ -88,10 +101,11 @@ export const layer = Layer.effect(
       // later version, and the bridge lists again.
       const version = versionOf(yield* SubscriptionRef.get(changes), caller.value.botId);
       const offered = yield* connectors.toolsFor(caller.value.botId);
+      const skills = yield* connectors.skillsFor(caller.value.botId);
       return {
         version,
         tools: [
-          ...ownTools,
+          ...ownToolsWith(skills),
           ...offered.map(({ name, description, inputSchema }) => ({
             name,
             description,

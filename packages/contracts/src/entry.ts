@@ -23,10 +23,10 @@ import { BrowserTabRef } from "./browser.ts";
 import { ConnectorGlyph, ConnectorId, ListingRef, SetupPageUrl } from "./connector.ts";
 import { Elicitation } from "./elicitation.ts";
 import { ConnectorAppRef, MAX_CONNECTOR_APPS_PER_FOLD } from "./connectorApp.ts";
-import { RoutineTrigger } from "./routine.ts";
+import { RoutineRun, RoutineStep, RoutineTrigger } from "./routine.ts";
 import { CredentialFill, SiteOrigin } from "./secrets.ts";
 import { Visual } from "./visual.ts";
-import { StepTool, TurnWork } from "./work.ts";
+import { StepSkill, StepTool, TurnWork } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -817,6 +817,8 @@ export const WorkStep = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** For a `login` step, the fill it made or refused. */
   fill: Schema.optionalKey(CredentialFill),
+  /** For a `connector-skill` step, the skill it loads; absent when it could not be named. */
+  skill: Schema.optionalKey(StepSkill),
   /**
    * For a call to a connector's tool: the connector, and the tool's `_meta.ui`
    * as its server listed it (MCP Apps), null when it has none.
@@ -839,8 +841,13 @@ export const WorkStep = Schema.Struct({
 });
 export type WorkStep = typeof WorkStep.Type;
 
-/** What a client needs to say a step in a line: its kind, its tool and its label. */
-export const StepSummary = WorkStep.mapFields(({ kind, tool, label }) => ({ kind, tool, label }));
+/** What a client needs to say a step in a line: its kind, its tool, its label and the skill it loads. */
+export const StepSummary = WorkStep.mapFields(({ kind, tool, label, skill }) => ({
+  kind,
+  tool,
+  label,
+  skill,
+}));
 export type StepSummary = typeof StepSummary.Type;
 
 /**
@@ -1058,8 +1065,30 @@ export const RoutineChangeEntry = Schema.TaggedStruct("routine-change", {
   change: Schema.Literals(["created", "updated", "paused", "resumed", "deleted"]),
   /** The trigger as saved by this change. */
   trigger: RoutineTrigger,
+  /**
+   * The steps as saved by this change, for a routine with several steps:
+   * the card draws its track. Absent for a one-step routine, a deletion, and
+   * from a server that predates steps.
+   */
+  steps: Schema.optionalKey(Schema.Array(RoutineStep)),
 });
 export type RoutineChangeEntry = typeof RoutineChangeEntry.Type;
+
+/**
+ * A run of a routine with several steps (decision 0080), in its owner's
+ * conversation, which the server updates as the run moves: its steps, where
+ * each stands, the yes it waits for, and how it ended. Its author is the
+ * routine's owner.
+ */
+export const RoutineRunEntry = Schema.TaggedStruct("routine-run", {
+  ...entry,
+  author: BotAuthor,
+  routineId: RoutineId,
+  name: Label,
+  trigger: RoutineTrigger,
+  run: RoutineRun,
+});
+export type RoutineRunEntry = typeof RoutineRunEntry.Type;
 
 export const Entry = Schema.Union([
   MessageEntry,
@@ -1075,6 +1104,7 @@ export const Entry = Schema.Union([
   NoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  RoutineRunEntry,
 ]);
 export type Entry = typeof Entry.Type;
 
@@ -1131,6 +1161,7 @@ export const ReceivedEntry = Schema.Union([
   ReceivedNoticeEntry,
   HandoffEntry,
   RoutineChangeEntry,
+  RoutineRunEntry,
   UnknownEntry,
 ]);
 export type ReceivedEntry = typeof ReceivedEntry.Type;
@@ -1165,6 +1196,7 @@ export const entryText = (entry: Entry): string => {
     case "connector-ask":
       return entry.name;
     case "routine-change":
+    case "routine-run":
       return entry.name;
     case "work-fold":
     case "notice":

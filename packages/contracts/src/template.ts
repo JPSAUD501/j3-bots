@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { Label, OpenLiterals } from "./base.ts";
+import { Label, OpenLiterals, SkillName } from "./base.ts";
 import { Avatar, ModelChoice, PermissionMode, Profile } from "./bot.ts";
 import { RoutineInstruction } from "./routine.ts";
 
@@ -38,17 +38,6 @@ export const MAX_TEMPLATE_FILE_SIZE = 1_048_576;
 
 /** How much one template holds. */
 export const TEMPLATE_LIMITS = { skills: 16, skillText: 20_000, routines: 16 } as const;
-
-/**
- * A skill's name, which is its folder in the bot's workspace: lowercase
- * letters, digits and inner hyphens, at most 64 characters, the names
- * harnesses list skills under. It cannot hold a separator or a dot, so it can
- * never name a place outside the bot's skills.
- */
-export const SkillName = Schema.String.check(
-  Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
-);
-export type SkillName = typeof SkillName.Type;
 
 /** A skill as a template carries it: its name and its `SKILL.md`, the one file of its folder that travels. */
 export const TemplateSkill = Schema.Struct({

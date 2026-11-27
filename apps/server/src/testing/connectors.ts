@@ -62,6 +62,8 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
   readonly answer?: FakeOptions["call"];
   /** What its server answers `resources/read` with, as the fake's own option. */
   readonly resources?: FakeOptions["resources"];
+  /** The skills its server serves, as the fake's own option. */
+  readonly skills?: FakeOptions["skills"];
 }) {
   const calls: Array<FakeCall> = [];
   const fake = yield* fakeMcpServer({
@@ -71,6 +73,7 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
       return input.answer?.(name, args, headers) ?? { _tag: "result", text: `${name} answered` };
     },
     ...(input.resources === undefined ? {} : { resources: input.resources }),
+    ...(input.skills === undefined ? {} : { skills: input.skills }),
   });
   const secrets = yield* Secrets;
   const service = yield* Connectors;
@@ -104,7 +107,9 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
           (connector: Connector) =>
             connector.id === id &&
             connector.status._tag === "connected" &&
-            connector.tools.length > 0,
+            connector.tools.length > 0 &&
+            // What its server serves is listed after its tools.
+            (input.skills === undefined || connector.skills !== undefined),
         ),
         Stream.runHead,
       );

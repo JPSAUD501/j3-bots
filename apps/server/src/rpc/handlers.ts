@@ -237,6 +237,9 @@ export const handlers = J3Rpcs.toLayer(
       "routine.delete": ({ commandId, routineId }) =>
         routines.remove({ commandId, routineId, author: operator }),
       "routine.run": (input) => routines.run(input),
+      "routine.answer": (input) => routines.answer(input),
+      "routine.retry": (input) => routines.retry(input),
+      "routine.stopRun": (input) => routines.stopRun(input),
       "memory.list": ({ scope }) => memory.list(scope),
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),

@@ -26,6 +26,7 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
+import { runCards, runStops } from "../routines/runSteps.ts";
 import { Ledger } from "./Ledger.ts";
 import {
   type Audience,
@@ -165,6 +166,14 @@ export class Stops extends Context.Service<
         readonly audience: Audience;
       },
     ) => Effect.Effect<void>;
+    /**
+     * Ends, in the caller's transaction, every run of the bot's routines
+     * with several steps that is going (decision 0080), as the operator's
+     * Stop of the bot, or its deletion, does: each run is recorded stopped,
+     * and the turn of its step that runs in another bot's side session gets
+     * a Stop of that turn alone, which covers none of that bot's other work.
+     */
+    readonly stopRoutineRuns: (ownerId: BotId) => Effect.Effect<void>;
     /** `bot.stop`. */
     readonly stopBot: (input: {
       readonly commandId: CommandId;
@@ -217,7 +226,9 @@ export const layer = Layer.effect(
     const bots = yield* BotStore;
     const changes = yield* ChangeLog;
     const targets = stopTargets(sql);
-    const { sessionLost } = sessionLoss(sql, yield* Entries, ledger, yield* WorkSteps, signals);
+    const entries = yield* Entries;
+    const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
+    const routineRuns = runStops(sql, ledger, changes, runCards(sql, entries, changes));
 
     /** Whether an audience column pair is in a Stop's scope. */
     const inScope = (scope: StopScope) =>
@@ -493,6 +504,20 @@ export const layer = Layer.effect(
       yield* sql.afterCommit(signals.stops.fire);
     }, Effect.orDie);
 
+    const stopRoutineRuns = Effect.fn("Stops.stopRoutineRuns")(function* (ownerId: BotId) {
+      const turns = yield* routineRuns.stopRunsOf(ownerId);
+      for (const turn of turns) {
+        // The owner's own side sessions are its Stop's already.
+        if (turn.botId === ownerId) continue;
+        yield* endTurn(turn.botId, {
+          sessionId: turn.sessionId,
+          turnId: turn.turnId,
+          audience: { _tag: "conversation" },
+        });
+      }
+      yield* sql.afterCommit(signals.routines.fire);
+    });
+
     const stopBot = Effect.fn("Stops.stopBot")(function* (input: {
       readonly commandId: CommandId;
       readonly botId: BotId;
@@ -507,6 +532,7 @@ export const layer = Layer.effect(
             return yield* new NotFound({ resource: "bot" });
           }
           yield* record(input.botId, { _tag: "bot" });
+          yield* stopRoutineRuns(input.botId);
         }),
       });
     });
@@ -520,18 +546,29 @@ export const layer = Layer.effect(
               ignoredTurnId: sql`sessions.stop_ignored_turn_id`,
               roomId: scope.roomId,
             });
-      const forced = yield* sql`
+      // A Force stop of the whole bot also reaches the side sessions of its
+      // routines' steps that its Stop ended in other bots (decision 0080).
+      const stoppedSteps =
+        scope._tag === "bot"
+          ? sql`side_wake_id IN (
+              SELECT r.wake_id FROM routine_runs r JOIN routines ro ON ro.id = r.routine_id
+              WHERE ro.bot_id = ${botId} AND r.steps_json IS NOT NULL AND r.stopped = 1
+            )`
+          : sql`0`;
+      const forced = yield* sql<{ readonly bot_id: string }>`
         UPDATE sessions SET force_stop_turn_id = stop_ignored_turn_id
-        WHERE bot_id = ${botId} AND lost_at IS NULL AND engine_retired_at IS NULL
+        WHERE lost_at IS NULL AND engine_retired_at IS NULL
           AND stop_ignored_turn_id IS NOT NULL
           AND force_stop_turn_id IS NOT stop_ignored_turn_id
-          AND ${ignoredInScope}
-        RETURNING id
+          AND ((bot_id = ${botId} AND ${ignoredInScope}) OR ${stoppedSteps})
+        RETURNING bot_id
       `;
       if (forced.length === 0) return;
-      // The bot no longer offers Force stop, nor do its rooms (`BotStates`,
+      // The bots no longer offer Force stop, nor do their rooms (`BotStates`,
       // `RoomStates`).
-      yield* changes.touch({ _tag: "bot", botId });
+      for (const forcedBot of new Set(forced.map((row) => row.bot_id))) {
+        yield* changes.touch({ _tag: "bot", botId: BotId.make(forcedBot) });
+      }
       yield* sql.afterCommit(signals.stops.fire);
     }, Effect.orDie);
 
@@ -549,6 +586,7 @@ export const layer = Layer.effect(
             return yield* new NotFound({ resource: "bot" });
           }
           yield* record(input.botId, { _tag: "bot" });
+          yield* stopRoutineRuns(input.botId);
           yield* force(input.botId, { _tag: "bot" });
         }),
       });
@@ -1409,7 +1447,16 @@ export const layer = Layer.effect(
       readiness,
     });
 
-    return Stops.of({ record, endTurn, stopBot, force, forceStopBot, runPending, run });
+    return Stops.of({
+      record,
+      endTurn,
+      stopRoutineRuns,
+      stopBot,
+      force,
+      forceStopBot,
+      runPending,
+      run,
+    });
   }),
 );
 

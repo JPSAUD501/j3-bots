@@ -45,8 +45,10 @@ const FORWARD_DEADLINE = Duration.seconds(30);
 /**
  * J3 Bots' own tools that reach outside it: a search asks the registry,
  * adding or changing an MCP server lists its tools, removing one revokes its
- * sign-in, and installing a skill fetches a repository. They have a connector
- * call's deadline, and an answer that never came is answered as one.
+ * sign-in, installing a skill fetches a repository, and loading a
+ * connector's skill or reading one of its files fetches it from its server.
+ * They have a connector call's deadline, and an answer that never came is
+ * answered as one.
  */
 const REACHES_OUT: ReadonlySet<string> = new Set<ToolName>([
   "search_mcp_servers",
@@ -54,6 +56,8 @@ const REACHES_OUT: ReadonlySet<string> = new Set<ToolName>([
   "update_mcp_server",
   "remove_mcp_server",
   "install_skill",
+  "use_connector_skill",
+  "read_connector_skill_file",
 ]);
 
 /**

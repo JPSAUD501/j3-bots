@@ -15,6 +15,7 @@ import {
   DEFAULT_SESSION_LIMITS,
   makeSupervisor,
   MAX_APP_RESOURCE_JSON_BYTES,
+  MAX_SKILL_BYTES,
   type McpSession,
   NeedsSignIn,
   nextFailing,
@@ -31,7 +32,11 @@ import {
   responseCache,
   type SecretHeader,
   type SecretNeed,
+  type ServedSkill,
   type SessionLimits,
+  type SkillFile,
+  type SkillFolderEntry,
+  type SkillRead,
   toolName,
   type UrlPolicy,
   Withdrawn,
@@ -78,16 +83,20 @@ import {
   SecretRefused,
 } from "@j3-bots/contracts";
 import {
+  type CatalogSkill,
   CONNECTOR_UNAVAILABLE,
   type ConnectorResult,
   type ConnectorUnavailable,
   connectorToolDescription,
   type ListedPrompt,
   type ListedResource,
+  type ListedSkill,
   listingText,
   NOTHING_LISTED,
   renderConnectorResult,
+  type SkillRefusal,
 } from "@j3-bots/prompts";
+import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -146,11 +155,31 @@ import {
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
 import {
+  catalogOf,
+  charged,
+  findSkill,
+  forgetConnector,
+  type HeldSkill,
+  type HeldSkills,
+  heldSkill,
+  hold,
+  isAddress,
+  letGo,
+  renewed,
+  sameInstructions,
+  skillsFingerprint,
+} from "./skills.ts";
+import {
   type ConnectorState,
   connectorOf,
+  listedSkill,
+  NO_SKILLS,
   NOTHING_SEEN,
   offeredOf,
   type Seen,
+  type ServedSkills,
+  servedUnlisted,
+  skillsListed,
   statusOfConnector,
 } from "./view.ts";
 
@@ -288,6 +317,41 @@ export class Connectors extends Context.Service<
       readonly name: string;
       readonly arguments: Readonly<Record<string, string>>;
       readonly hooks?: Pick<ConnectorCallHooks, "ask">;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * The skills of the connectors `botId` may use that are connected, as
+     * their servers listed them last, each by its connector (decision 0089).
+     */
+    readonly skillsFor: (botId: BotId) => Effect.Effect<ReadonlyArray<CatalogSkill>>;
+    /** As {@link resources}, of skills. */
+    readonly skills: (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * Loads a skill of the connector `slug` names, by its name or its
+     * address, for `botId`: its `SKILL.md`, checked against the skill's
+     * entry, framed for the bot. The bot holds the entry from then on, so it
+     * may read the skill's other files. `started` hears the connector once
+     * the skill is found, before it is read.
+     */
+    readonly loadSkill: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly started?: (connector: ConnectorRef) => Effect.Effect<void>;
+    }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
+    /**
+     * Reads a file of a skill `botId` loaded, or lists one of its folders, by
+     * its path from the skill's folder: only what the entry it holds lists,
+     * checked against it.
+     */
+    readonly readSkillFile: (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly path: string;
     }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
     /** The prompts of the connectors `botId` may use, for the operator's `/` menu in its conversation. */
     readonly menuPrompts: (
@@ -680,6 +744,69 @@ interface Prepared {
   ) => ConnectorSignIn;
 }
 
+/** What a bot's use of a connector's skill came to, before it is framed for the bot. */
+type SkillOutcome =
+  | {
+      readonly _tag: "skill";
+      readonly skill: ServedSkill;
+      readonly text: string;
+      readonly cut: boolean;
+    }
+  | {
+      readonly _tag: "file";
+      readonly skill: ServedSkill;
+      readonly path: string;
+      readonly text: string;
+      readonly cut: boolean;
+    }
+  | {
+      readonly _tag: "folder";
+      readonly skill: ServedSkill;
+      readonly path: string;
+      readonly entries: ReadonlyArray<SkillFolderEntry>;
+    }
+  | { readonly _tag: "refused"; readonly reason: SkillRefusal };
+
+/** A skill outcome as the bot reads it: the server's text in a `data` block, or J3 Bots' own line. */
+const skillResult = (connector: StoredConnector, outcome: SkillOutcome): ConnectorResult => {
+  const from = { connector: connector.name, slug: connector.slug };
+  switch (outcome._tag) {
+    case "refused":
+      return { type: "skill-refused", connector: connector.name, reason: outcome.reason };
+    case "skill":
+      return {
+        type: "data",
+        ...from,
+        about: {
+          kind: "skill",
+          name: outcome.skill.name,
+          uri: outcome.skill.uri,
+          files: outcome.skill.files,
+        },
+        text: outcome.text,
+        cut: outcome.cut,
+      };
+    case "file":
+      return {
+        type: "data",
+        ...from,
+        about: { kind: "skill-file", skill: outcome.skill.name, path: outcome.path, folder: false },
+        text: outcome.text,
+        cut: outcome.cut,
+      };
+    case "folder":
+      return {
+        type: "data",
+        ...from,
+        about: { kind: "skill-file", skill: outcome.skill.name, path: outcome.path, folder: true },
+        text: outcome.entries
+          .map((entry) => `- ${entry.path}${entry.folder ? "/" : ""}`)
+          .join("\n"),
+        cut: false,
+      };
+  }
+};
+
 const refOf = (connector: StoredConnector): ConnectorRef => ({
   id: connector.id,
   name: connector.name,
@@ -709,6 +836,8 @@ export const layer = Layer.effect(
     });
 
     const seenRef = yield* Ref.make<ReadonlyMap<ConnectorId, Seen>>(new Map());
+    /** The skills each bot loaded, whose files it may read (decision 0089). */
+    const heldRef = yield* Ref.make<HeldSkills>(new Map());
     const referencesRef = yield* Ref.make<ReadonlyMap<ConnectorId, References>>(new Map());
     const secretsUnavailable = yield* Ref.make(true);
     const signInStates = yield* Ref.make<ReadonlyMap<ConnectorId, SignInState>>(new Map());
@@ -843,13 +972,78 @@ export const layer = Layer.effect(
       );
 
     /**
-     * What the connector's server said of itself, and the resources and
-     * prompts it lists now: none of a kind it does not offer, or could not
+     * The skills the connector's server serves now: those it listed last,
+     * while that listing holds, else listed again (`relist`, too, when it
+     * said its resources changed, as a server says its skills did). One that
+     * could not be listed keeps what it listed before, while what signed that
+     * still signs its requests, until the next session lists it again.
+     */
+    const servedSkills = Effect.fn("Connectors.servedSkills")(function* (
+      id: ConnectorId,
+      session: McpSession,
+      relist: boolean,
+    ) {
+      if (!session.info.offers.skills) return NO_SKILLS;
+      const seen = yield* seenOf(id);
+      const now = yield* Clock.currentTimeMillis;
+      const kept = seen.served.pipe(
+        Option.map((served) => served.skills),
+        Option.filter((skills) => skills.signing === seen.signing),
+      );
+      if (!relist && Option.isSome(kept) && kept.value.until > now) return kept.value;
+      return yield* session.skills.listSkills.pipe(
+        Effect.map((listing): ServedSkills => ({
+          skills: listing.skills,
+          until: now + (listing.ttlMs ?? 0),
+          signing: seen.signing,
+        })),
+        Effect.orElseSucceed((): ServedSkills => ({
+          skills: Option.match(kept, { onNone: () => [], onSome: (skills) => skills.skills }),
+          until: 0,
+          signing: seen.signing,
+        })),
+      );
+    });
+
+    /**
+     * After what the connector serves was recorded: its bots' tool lists
+     * changed when the skills they may load did, since `use_connector_skill`
+     * lists them. Whether they did.
+     */
+    const skillsRecorded = Effect.fn("Connectors.skillsRecorded")(function* (
+      id: ConnectorId,
+      before: string,
+    ) {
+      if (skillsFingerprint(skillsListed(yield* seenOf(id))) === before) return false;
+      const connector = yield* store.get(id);
+      if (Option.isSome(connector)) yield* toolsTouched(yield* botsOf(connector.value));
+      return true;
+    });
+
+    /** Keeps the skills the connector's server listed, once a session found them changed. */
+    const keepSkills = Effect.fn("Connectors.keepSkills")(function* (
+      id: ConnectorId,
+      skills: ServedSkills,
+    ) {
+      const before = yield* seenOf(id);
+      if (Option.exists(before.served, (served) => served.skills === skills)) return;
+      yield* updateSeen(id, (seen) => ({
+        ...seen,
+        served: Option.map(seen.served, (served) => ({ ...served, skills })),
+      }));
+      // Clients show its skills by name and description: only a change of those is news to them.
+      if (yield* skillsRecorded(id, skillsFingerprint(skillsListed(before)))) yield* touch(id);
+    });
+
+    /**
+     * What the connector's server said of itself, and the resources, prompts
+     * and skills it lists now: none of a kind it does not offer, or could not
      * list, which the next listing tries again.
      */
     const recordServed = Effect.fn("Connectors.recordServed")(function* (
       id: ConnectorId,
       session: McpSession,
+      relist = false,
     ) {
       const listed = <A>(
         offered: boolean,
@@ -858,10 +1052,13 @@ export const layer = Layer.effect(
         offered ? list.pipe(Effect.orElseSucceed((): ReadonlyArray<A> => [])) : Effect.succeed([]);
       const resources = yield* listed(session.info.offers.resources, session.listResources);
       const prompts = yield* listed(session.info.offers.prompts, session.listPrompts);
+      const skills = yield* servedSkills(id, session, relist);
+      const before = skillsFingerprint(skillsListed(yield* seenOf(id)));
       yield* updateSeen(id, (seen) => ({
         ...seen,
-        served: Option.some({ info: session.info, resources, prompts }),
+        served: Option.some({ info: session.info, resources, prompts, skills }),
       }));
+      yield* skillsRecorded(id, before);
       yield* touch(id);
     });
 
@@ -878,7 +1075,7 @@ export const layer = Layer.effect(
         opened.pipe(
           Effect.flatMap((session) =>
             Effect.flatMap(session.listTools, (listed) => recordListing(id, listed)).pipe(
-              Effect.andThen(recordServed(id, session)),
+              Effect.andThen(recordServed(id, session, true)),
             ),
           ),
           Effect.ignore,
@@ -1130,7 +1327,11 @@ export const layer = Layer.effect(
       // the connector as a whole, which is also when its cache goes, and what
       // signs its requests may have changed.
       if (holder === undefined) {
+        const offered = skillsFingerprint(skillsListed(yield* seenOf(id)));
         yield* updateSeen(id, (seen) => ({ ...seen, signing: seen.signing + 1 }));
+        // What bots loaded, and the skills they are offered, were of what signed before.
+        yield* Ref.update(heldRef, (held) => forgetConnector(held, id));
+        if (yield* skillsRecorded(id, offered)) yield* touch(id);
         yield* processes.stop(id);
         yield* dropCache(id);
       }
@@ -1190,7 +1391,9 @@ export const layer = Layer.effect(
         if (Option.exists(connector, (c) => isCommand(c) && c.tools !== null)) return false;
         // One whose settings name a secret it cannot use sends nothing until it can.
         if (Option.isSome(yield* needOfConnector(id))) return false;
-        return Option.isNone((yield* seenOf(id)).listed);
+        // One its add listed the tools of still lists what it serves, as its skills.
+        const seen = yield* seenOf(id);
+        return Option.isNone(seen.listed) || servedUnlisted(seen);
       });
       if (!(yield* unlisted)) return;
       yield* inFlight(
@@ -1448,7 +1651,10 @@ export const layer = Layer.effect(
         Effect.provideService(SecureRandom.SecureRandom, random),
         Effect.map((text): ToolCallAnswer => ({
           text,
-          isError: result.type === "unavailable" || (result.type === "answer" && result.isError),
+          isError:
+            result.type === "unavailable" ||
+            result.type === "skill-refused" ||
+            (result.type === "answer" && result.isError),
         })),
       );
 
@@ -1794,7 +2000,7 @@ export const layer = Layer.effect(
 
     /** Each connector's listing framed for the bot, one block each, or J3 Bots' line when there is none. */
     const framedListings = (
-      of: "resources" | "prompts",
+      of: "resources" | "prompts" | "skills",
       listings: ReadonlyArray<{
         readonly connector: ConnectorRef;
         readonly listing: Parameters<typeof listingText>[0];
@@ -1976,6 +2182,255 @@ export const layer = Layer.effect(
           ].join("\n\n"),
           cut: prompt.cut,
         }),
+      );
+
+    // ---- Skills (decision 0089) ---------------------------------------------
+
+    /** The skills of the connectors `botId` may use that are connected, as their servers listed them last. */
+    const skillsFor = Effect.fn("Connectors.skillsFor")(function* (botId: BotId) {
+      const connected = yield* usable(botId).pipe(
+        Effect.orElseSucceed((): ReadonlyArray<StoredConnector> => []),
+      );
+      const seen = yield* Ref.get(seenRef);
+      return catalogOf(
+        connected.map((connector) => ({
+          connector: refOf(connector),
+          skills: skillsListed(seen.get(connector.id) ?? NOTHING_SEEN),
+        })),
+      );
+    });
+
+    /** The skills the connector's server serves now, through `session`, kept when they changed. */
+    const skillsNow = (connector: StoredConnector, session: McpSession) =>
+      Effect.tap(servedSkills(connector.id, session, false), (skills) =>
+        keepSkills(connector.id, skills),
+      );
+
+    const skills = (input: {
+      readonly botId: BotId;
+      readonly slug?: string;
+      readonly search?: string;
+    }) =>
+      Effect.flatMap(usable(input.botId, input.slug), (connectors) =>
+        Effect.forEach(
+          connectors,
+          (connector) =>
+            withSession(connector, input.botId, (session) => skillsNow(connector, session)).pipe(
+              Effect.map((served): ReadonlyArray<Listed<ListedSkill>> => {
+                const items = served.skills
+                  .filter((skill) => !skill.tooLarge)
+                  .map(({ name, uri, description }) => ({ name, uri, description }));
+                return items.length === 0 ? [] : [{ connector: refOf(connector), items }];
+              }),
+              Effect.orElseSucceed((): ReadonlyArray<Listed<ListedSkill>> => []),
+            ),
+          { concurrency: 4 },
+        ),
+      ).pipe(
+        Effect.flatMap((all) =>
+          framedListings(
+            "skills",
+            matching(all.flat(), input.search, (skill: ListedSkill) => [
+              skill.name,
+              skill.uri,
+              skill.description,
+            ]).map(({ connector, items }) => ({ connector, listing: { of: "skills", items } })),
+          ),
+        ),
+      );
+
+    /**
+     * Reads `path` of `skill`, or its `SKILL.md`, checked against its entry.
+     * What does not match it is asked for once more against the entry its
+     * server gives now (`skills/get`), as the extension has a host do: the
+     * skill may have changed since it was listed. With the entry that read
+     * was checked against, which is the one to hold.
+     */
+    const readChecked = Effect.fn("Connectors.readChecked")(function* (
+      id: ConnectorId,
+      session: McpSession,
+      skill: ServedSkill,
+      path?: string,
+    ) {
+      const first = yield* session.skills.readSkillFile(skill, path);
+      if (first._tag === "read" || first.reason !== "mismatch") return { skill, read: first };
+      const fresh = yield* session.skills.getSkill(skill.uri);
+      if (fresh === null || fresh.tooLarge) {
+        return { skill, read: { _tag: "refused", reason: "gone" } satisfies SkillRead<SkillFile> };
+      }
+      // Its server's word now, in place of what it listed, which every later read starts from.
+      yield* updateSeen(id, (seen) => ({
+        ...seen,
+        served: Option.map(seen.served, (served) => ({
+          ...served,
+          skills: {
+            ...served.skills,
+            skills: served.skills.skills.map((one) => (one.uri === fresh.uri ? fresh : one)),
+          },
+        })),
+      }));
+      return { skill: fresh, read: yield* session.skills.readSkillFile(fresh, path) };
+    });
+
+    const refusedSkill = (reason: SkillRefusal): SkillOutcome => ({ _tag: "refused", reason });
+
+    const loadSkill = (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly started?: (connector: ConnectorRef) => Effect.Effect<void>;
+    }) =>
+      readFor(
+        input.botId,
+        input.slug,
+        (connector) =>
+          withSession(connector, input.botId, (session) =>
+            Effect.gen(function* () {
+              // What signs its requests as it loads: a hold of another sign-in's is never read.
+              const { signing } = yield* seenOf(connector.id);
+              const listed = yield* skillsNow(connector, session);
+              const found = findSkill(listed.skills, input.skill);
+              if (found._tag === "ambiguous") return refusedSkill("ambiguous");
+              // One the bot names by address may be one its server does not list.
+              const skill =
+                found._tag === "found"
+                  ? found.skill
+                  : isAddress(input.skill)
+                    ? yield* session.skills.getSkill(input.skill)
+                    : null;
+              if (skill === null) return refusedSkill("unknown");
+              if (skill.tooLarge) return refusedSkill("too-large");
+              if (input.started !== undefined) yield* input.started(refOf(connector));
+              const loaded = yield* readChecked(connector.id, session, skill);
+              if (loaded.read._tag === "refused") {
+                return refusedSkill(loaded.read.reason === "gone" ? "unknown" : "mismatch");
+              }
+              const { value: file } = loaded.read;
+              if (file.text === null) return refusedSkill("not-text");
+              if (loaded.skill.files === null && file.bytes > MAX_SKILL_BYTES) {
+                return refusedSkill("too-large");
+              }
+              yield* Ref.update(heldRef, (held) =>
+                hold(held, input.botId, connector.id, {
+                  skill: loaded.skill,
+                  bytes: file.bytes,
+                  signing,
+                }),
+              );
+              return {
+                _tag: "skill",
+                skill: loaded.skill,
+                text: file.text,
+                cut: file.cut,
+              } satisfies SkillOutcome;
+            }),
+          ),
+        (connector, outcome: SkillOutcome) => skillResult(connector, outcome),
+      );
+
+    /**
+     * The skill at `uri` as the connector's server serves it now: as it listed
+     * it, while that listing holds, else as it gives it when asked; null when
+     * it serves none there.
+     */
+    const currentSkill = Effect.fn("Connectors.currentSkill")(function* (
+      connectorId: ConnectorId,
+      session: McpSession,
+      uri: string,
+    ) {
+      const listed = listedSkill(yield* seenOf(connectorId), uri, yield* Clock.currentTimeMillis);
+      return listed ?? (yield* session.skills.getSkill(uri));
+    });
+
+    /**
+     * A file of a skill the bot holds, or the listing of one of its folders,
+     * checked against the entry its server gives now. That entry is the one
+     * the bot holds from then on while the skill's instructions (its
+     * `SKILL.md`) are the ones the bot loaded; once its server changed them,
+     * the bot is told to load it again, and reads nothing of it until then.
+     */
+    const readHeld = Effect.fn("Connectors.readHeld")(function* (
+      session: McpSession,
+      botId: BotId,
+      held: HeldSkill,
+      path: string,
+    ) {
+      const { connectorId } = held;
+      const lettingGo = (reason: SkillRefusal) =>
+        Effect.as(
+          Ref.update(heldRef, (all) => letGo(all, botId, connectorId, held.skill.uri)),
+          refusedSkill(reason),
+        );
+      // Loaded under another sign-in than the one that signs its requests now: not this account's.
+      if (held.signing !== (yield* seenOf(connectorId)).signing) return yield* lettingGo("changed");
+      const current = yield* currentSkill(connectorId, session, held.skill.uri);
+      if (current === null) return yield* lettingGo("gone");
+      if (!sameInstructions(held.skill, current)) return yield* lettingGo("changed");
+      if (current.tooLarge) return yield* lettingGo("too-large");
+      if (current !== held.skill) {
+        yield* Ref.update(heldRef, (all) => renewed(all, botId, connectorId, current));
+      }
+      const folder = (
+        skill: ServedSkill,
+        listing: SkillRead<ReadonlyArray<SkillFolderEntry>>,
+      ): SkillOutcome =>
+        listing._tag === "read"
+          ? { _tag: "folder", skill, path, entries: listing.value }
+          : refusedSkill(listing.reason === "gone" ? "gone" : "unlisted");
+      if (path.trim() === "" || path.trim() === "/") {
+        return folder(current, yield* session.skills.listSkillFolder(current, ""));
+      }
+      const checked = yield* readChecked(connectorId, session, current, path);
+      if (checked.read._tag === "refused") {
+        switch (checked.read.reason) {
+          case "unlisted":
+            // Not one of its files: one of its folders, or nothing it holds.
+            return folder(current, yield* session.skills.listSkillFolder(current, path));
+          case "gone":
+            return yield* lettingGo("gone");
+          case "mismatch":
+            return refusedSkill("mismatch");
+        }
+      }
+      const { skill } = checked;
+      if (skill !== current) {
+        // Asked for again on a mismatch: used only while its instructions are the same.
+        if (!sameInstructions(current, skill)) return yield* lettingGo("changed");
+        yield* Ref.update(heldRef, (all) => renewed(all, botId, connectorId, skill));
+      }
+      const file = checked.read.value;
+      const within = yield* Ref.modify(heldRef, (all) =>
+        charged(all, botId, connectorId, skill.uri, file.bytes),
+      );
+      if (!within) return refusedSkill("read-limit");
+      if (file.text === null) return refusedSkill("not-text");
+      return { _tag: "file", skill, path, text: file.text, cut: file.cut } satisfies SkillOutcome;
+    });
+
+    const readSkillFile = (input: {
+      readonly botId: BotId;
+      readonly slug: string;
+      readonly skill: string;
+      readonly path: string;
+    }) =>
+      readFor(
+        input.botId,
+        input.slug,
+        (connector) =>
+          Effect.gen(function* () {
+            const found = heldSkill(
+              yield* Ref.get(heldRef),
+              input.botId,
+              connector.id,
+              input.skill,
+            );
+            if (found._tag === "ambiguous") return refusedSkill("ambiguous");
+            if (found._tag === "none") return refusedSkill("not-loaded");
+            return yield* withSession(connector, input.botId, (session) =>
+              readHeld(session, input.botId, found.held, input.path),
+            );
+          }),
+        (connector, outcome: SkillOutcome) => skillResult(connector, outcome),
       );
 
     const menuPrompts = Effect.fn("Connectors.menuPrompts")(function* (botId: BotId) {
@@ -2343,6 +2798,9 @@ export const layer = Layer.effect(
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
+      // Its add listed its tools only: what it serves besides, its skills among them, is listed now.
+      // One that signs in as a service was listed whole by the relist above.
+      if (Result.isSuccess(listing) && pinned === null) yield* ensureListed(input.id);
       return yield* render(yield* require(input.id));
     });
 
@@ -2456,6 +2914,7 @@ export const layer = Layer.effect(
      * seen of it, then its sign-in and secrets, now or once the secrets can be read.
      */
     const forget = Effect.fn("Connectors.forget")(function* (id: ConnectorId) {
+      // Its sessions close, and what bots loaded of its skills goes with them.
       yield* closeSessions(id);
       yield* Ref.update(seenRef, (seen) => {
         const next = new Map(seen);
@@ -2873,6 +3332,10 @@ export const layer = Layer.effect(
       readResource,
       prompts,
       getPrompt,
+      skillsFor,
+      skills,
+      loadSkill,
+      readSkillFile,
       menuPrompts,
       renderPrompt,
       appCall,

@@ -16,6 +16,7 @@ import {
   type ListingRef,
   SecretName,
   SetupPageUrl,
+  SkillName,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
@@ -124,6 +125,18 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     account: "sam@example.com",
     signedInAt: ago(60 * 24 * 12),
     tools: notesTools,
+    skills: [
+      {
+        uri: "skill://notes/meeting-notes/SKILL.md",
+        name: SkillName.make("meeting-notes"),
+        description: "Turns a page of notes into decisions, owners and dates.",
+      },
+      {
+        uri: "skill://notes/project-brief/SKILL.md",
+        name: SkillName.make("project-brief"),
+        description: "Writes a one-page brief for a new project from its database row.",
+      },
+    ],
     lastChange: { by: { _tag: "operator" }, at: ago(60 * 24 * 12) },
     server: {
       protocolVersion: "2026-07-28",

@@ -134,6 +134,7 @@ describe("revision", () => {
         resources: true,
         prompts: true,
         tasks: false,
+        skills: false,
       });
       const methods = fake.requests.map((request) => request.method);
       assert.strictEqual(methods[0], "server/discover");

@@ -21,6 +21,7 @@ import {
   type SessionLimits,
   scrubberOf,
 } from "./session.ts";
+import { SKILLS_EXTENSION } from "./skills.ts";
 import { TASKS_EXTENSION } from "./tasks.ts";
 import { type FakeOptions, fakeMcpServer } from "./testing/fakeMcpServer.ts";
 
@@ -285,6 +286,7 @@ describe("openSession", () => {
           [MCP_APPS_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
           // A connector's server may sign J3 Bots in as a service, with credentials the operator gave.
           [CLIENT_CREDENTIALS_EXTENSION]: {},
+          [SKILLS_EXTENSION]: {},
         },
       });
       const [tool] = yield* session.listTools;

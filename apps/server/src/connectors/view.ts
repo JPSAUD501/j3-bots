@@ -5,6 +5,7 @@ import {
   type Prompt,
   type Resource,
   type SecretNeed,
+  type ServedSkill,
   type ServerInfo,
   type SignInNeed,
   statusOf,
@@ -30,7 +31,7 @@ import type { StoredConnector } from "./ConnectorStore.ts";
 export interface Seen {
   /** What its server listed last; none until a session listed its tools. */
   readonly listed: Option.Option<ReadonlyArray<CatalogTool>>;
-  /** What its server said of itself, and the resources and prompts it listed last. */
+  /** What its server said of itself, and the resources, prompts and skills it listed last. */
   readonly served: Option.Option<Served>;
   readonly failing: Option.Option<Failing>;
   /** Its server refused the credentials it was sent, and nothing has worked since. */
@@ -52,7 +53,54 @@ interface Served {
   readonly info: ServerInfo;
   readonly resources: ReadonlyArray<Resource>;
   readonly prompts: ReadonlyArray<Prompt>;
+  readonly skills: ServedSkills;
 }
+
+/**
+ * The skills a connector's server listed last (MCP's Skills extension,
+ * decision 0089), and how long that listing holds: until `until`, as its
+ * server's `ttlMs` says, and only while what signed it still signs the
+ * connector's requests, since a listing may be the account's own
+ * (`cacheScope: "private"`).
+ */
+export interface ServedSkills {
+  readonly skills: ReadonlyArray<ServedSkill>;
+  /** When it is listed again, at the next session that opens, in milliseconds since the epoch. */
+  readonly until: number;
+  /** `Seen.signing` when it was listed. */
+  readonly signing: number;
+}
+
+/** No skills: a server that serves none, or one not listed yet. */
+export const NO_SKILLS: ServedSkills = { skills: [], until: 0, signing: -1 };
+
+/** The skills its server listed under what signs the connector's requests now: none since it changed. */
+export const skillsListed = (seen: Seen): ReadonlyArray<ServedSkill> =>
+  Option.match(seen.served, {
+    onNone: () => [],
+    onSome: (served) => (served.skills.signing === seen.signing ? served.skills.skills : []),
+  });
+
+/** The skills of a connector's a bot may load: those its server listed, but one J3 Bots declines. */
+export const skillsOffered = (seen: Seen): ReadonlyArray<ServedSkill> =>
+  skillsListed(seen).filter((skill) => !skill.tooLarge);
+
+/** The skill at `uri` its server listed, while that listing holds at `now`. */
+export const listedSkill = (seen: Seen, uri: string, now: number): ServedSkill | undefined =>
+  Option.exists(seen.served, (served) => served.skills.until > now)
+    ? skillsListed(seen).find((skill) => skill.uri === uri)
+    : undefined;
+
+/**
+ * Whether what a connector's server serves is still to be listed: not since
+ * this server started, or its skills not since what signs its requests
+ * changed.
+ */
+export const servedUnlisted = (seen: Seen): boolean =>
+  Option.match(seen.served, {
+    onNone: () => true,
+    onSome: (served) => served.info.offers.skills && served.skills.signing !== seen.signing,
+  });
 
 export const NOTHING_SEEN: Seen = {
   listed: Option.none(),
@@ -163,6 +211,19 @@ export const connectorOf = (connector: StoredConnector, state: ConnectorState): 
         : connector.signedInAt,
     tools: offeredOf(connector, seen).map(toolOf),
     server: serverOf(connector, seen),
+    ...Option.match(seen.served, {
+      onNone: () => ({}),
+      onSome: (served) =>
+        served.info.offers.skills
+          ? {
+              skills: skillsOffered(seen).map(({ uri, name, description }) => ({
+                uri,
+                name,
+                description,
+              })),
+            }
+          : {},
+    }),
     createdAt: connector.createdAt,
     lastChange: connector.lastChange,
   };

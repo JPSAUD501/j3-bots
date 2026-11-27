@@ -74,29 +74,24 @@ const intents: AiIntents = {
   recheck: () => Promise.resolve(true),
 };
 
-/** A screen that connects the accounts, with the open account's button and the way to the other. */
+/** A screen that connects the accounts, with Claude's button and its Cancel. */
 function Screen({ engine, name = "" }: { readonly engine: EngineStatus; readonly name?: string }) {
   const ai = useAiConnect({
     facts: { engine, locations: null, signIns: new Map() },
     place: "here",
     intents,
-    initial: "claude-code",
   });
+  const claude = ai.accounts["claude-code"];
   return (
     <>
-      <output>{ai.opened?.queued === true ? "queued" : "idle"}</output>
-      {ai.opened?.action != null && (
-        <button type="button" onClick={ai.opened.act}>
+      <output>{claude.queued ? "queued" : "idle"}</output>
+      {claude.action !== null && (
+        <button type="button" onClick={claude.act}>
           {`act${name}`}
         </button>
       )}
-      {ai.opened === null && (
-        <button type="button" onClick={() => ai.open("claude-code")}>
-          claude
-        </button>
-      )}
-      <button type="button" onClick={() => ai.open("codex")}>
-        other
+      <button type="button" onClick={claude.cancel}>
+        {`cancel${name}`}
       </button>
     </>
   );
@@ -183,10 +178,10 @@ describe("a sign-in asked for before the account can take one", () => {
     expect(asked).toEqual(["download claude-code"]);
   });
 
-  it("is forgotten when the operator turns to the other account, while the download goes on", async () => {
+  it("is forgotten when the operator cancels it, while the download goes on", async () => {
     shown(downloading);
     await press("act");
-    await press("other");
+    await press("cancel");
 
     shown(signedOut);
     expect(asked).toEqual([]);
@@ -225,10 +220,9 @@ describe("what one app remembers of connecting an AI, from screen to screen", ()
 
   it("keeps a sign-in asked for in the first run through creating the bot, and opens it from the conversation", async () => {
     app(downloading, "step");
-    await press("claude");
     await press("act");
 
-    // Create: the step goes, the conversation comes, on the account that was picked.
+    // Create: the step goes, the conversation comes.
     app(downloading, "conversation");
     expect(queuedShown()).toBe("queued");
 
@@ -238,7 +232,6 @@ describe("what one app remembers of connecting an AI, from screen to screen", ()
 
   it("starts the sign-in once when two screens show the account", async () => {
     app(downloading, "both");
-    await press("claude");
     await press("act");
 
     app(signedOut, "both");
