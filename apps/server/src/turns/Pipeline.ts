@@ -23,6 +23,7 @@ import {
   RoomId,
   ROOM_CLOSING_ROUND,
   secretReference,
+  type TelemetryClient,
 } from "@j3-bots/contracts";
 import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
@@ -66,6 +67,7 @@ import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 import { admission } from "./admission.ts";
 import {
   askAnswer,
@@ -329,21 +331,24 @@ interface Plan {
 export class Pipeline extends Context.Service<
   Pipeline,
   {
-    readonly sendMessage: (input: {
-      readonly commandId: CommandId;
-      readonly target: EntryTarget;
-      readonly text: string;
-      readonly attachments: ReadonlyArray<AttachmentId>;
-      /** Where the operator placed each file in `text`; left out, they follow it. */
-      readonly attachmentOffsets?: ReadonlyArray<number>;
-      readonly mentions?: Mentions;
-      /** The bots and rooms the message names in a bot's conversation. */
-      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
-      /** The window the operator was looking at, from quick access. */
-      readonly lookingAt?: LookingAt;
-      /** The messages it quotes, whole or a passage (decision 0094). */
-      readonly quotes?: ReadonlyArray<QuoteRequest>;
-    }) => Effect.Effect<EntryId, NotFound | Conflict | Invalid>;
+    readonly sendMessage: (
+      input: {
+        readonly commandId: CommandId;
+        readonly target: EntryTarget;
+        readonly text: string;
+        readonly attachments: ReadonlyArray<AttachmentId>;
+        /** Where the operator placed each file in `text`; left out, they follow it. */
+        readonly attachmentOffsets?: ReadonlyArray<number>;
+        readonly mentions?: Mentions;
+        /** The bots and rooms the message names in a bot's conversation. */
+        readonly conversationMentions?: ReadonlyArray<ConversationMention>;
+        /** The window the operator was looking at, from quick access. */
+        readonly lookingAt?: LookingAt;
+        /** The messages it quotes, whole or a passage (decision 0094). */
+        readonly quotes?: ReadonlyArray<QuoteRequest>;
+      },
+      /** The client whose socket sent it, for its usage data. */ client?: TelemetryClient,
+    ) => Effect.Effect<EntryId, NotFound | Conflict | Invalid>;
     /** Sends a failed message again, as new wakes, to the recipients it failed for. */
     readonly retryMessage: (input: {
       readonly commandId: CommandId;
@@ -374,6 +379,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const wakes = yield* Wakes;
     const entries = yield* Entries;
+    const telemetry = yield* Telemetry;
     const ledger = yield* Ledger;
     const sender = yield* Sender;
     const signals = yield* Signals;
@@ -577,17 +583,24 @@ export const layer = Layer.effect(
       yield* closeOpeningRetries(botId);
     }, Effect.orDie);
 
-    const sendMessage = Effect.fn("Pipeline.sendMessage")(function* (input: {
-      readonly commandId: CommandId;
-      readonly target: EntryTarget;
-      readonly text: string;
-      readonly attachments: ReadonlyArray<AttachmentId>;
-      readonly attachmentOffsets?: ReadonlyArray<number>;
-      readonly mentions?: Mentions;
-      readonly conversationMentions?: ReadonlyArray<ConversationMention>;
-      readonly lookingAt?: LookingAt;
-      readonly quotes?: ReadonlyArray<QuoteRequest>;
-    }) {
+    /**
+     * The operator's message, with the client whose socket sent it for its
+     * usage data (`message.sent`), told once the message is kept.
+     */
+    const sendMessage = Effect.fn("Pipeline.sendMessage")(function* (
+      input: {
+        readonly commandId: CommandId;
+        readonly target: EntryTarget;
+        readonly text: string;
+        readonly attachments: ReadonlyArray<AttachmentId>;
+        readonly attachmentOffsets?: ReadonlyArray<number>;
+        readonly mentions?: Mentions;
+        readonly conversationMentions?: ReadonlyArray<ConversationMention>;
+        readonly lookingAt?: LookingAt;
+        readonly quotes?: ReadonlyArray<QuoteRequest>;
+      },
+      client?: TelemetryClient,
+    ) {
       const { commandId, ...payload } = input;
       const named = input.conversationMentions ?? [];
       return yield* receipts.once({
@@ -725,6 +738,25 @@ export const layer = Layer.effect(
           } else if (room !== undefined) {
             yield* routing.operatorMessage({ room, message: entry });
           }
+          const mentions = input.mentions;
+          yield* sql.afterCommit(
+            telemetry.record(
+              {
+                event: "message.sent",
+                properties: {
+                  place: input.target._tag === "conversation" ? "conversation" : "room",
+                  mention:
+                    named.length > 0 ||
+                    (mentions !== undefined &&
+                      (mentions._tag === "everyone" || mentions.ids.length > 0)),
+                  reply: (input.quotes ?? []).some((quote) => quote.passage === undefined),
+                  quote: (input.quotes ?? []).some((quote) => quote.passage !== undefined),
+                  attachments: files.length > 0,
+                },
+              },
+              client,
+            ),
+          );
           return entry.id;
         }),
       });

@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, timeText } from "../persistence/columns.ts";
+import { TelemetryConfig } from "../telemetry/Telemetry.ts";
 
 const SettingsRow = Schema.Struct({
   operator_name: Schema.NullOr(Label),
@@ -20,6 +21,7 @@ const SettingsRow = Schema.Struct({
   update_channel: UpdateChannel,
   auto_update_harnesses: Flag,
   suggest_replies: Flag,
+  telemetry: Flag,
 });
 
 /** The `settings` table's one row. */
@@ -45,13 +47,14 @@ export const layer = Layer.effect(
   SettingsStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const heldOff = (yield* TelemetryConfig).environment.hold !== null;
     const read = SqlSchema.findOne({
       Request: Schema.Void,
       Result: SettingsRow,
       execute: () => sql`
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
           notifications_enabled, notification_previews, update_channel, auto_update_harnesses,
-          suggest_replies
+          suggest_replies, telemetry
         FROM settings WHERE id = 1
       `,
     });
@@ -73,6 +76,7 @@ export const layer = Layer.effect(
           updateChannel: row.update_channel,
           autoUpdateHarnesses: row.auto_update_harnesses,
           suggestReplies: row.suggest_replies,
+          telemetry: { enabled: row.telemetry, heldOff },
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (
@@ -93,6 +97,7 @@ export const layer = Layer.effect(
             update_channel = ${settings.updateChannel},
             auto_update_harnesses = ${settings.autoUpdateHarnesses ? 1 : 0},
             suggest_replies = ${settings.suggestReplies === false ? 0 : 1},
+            telemetry = ${settings.telemetry?.enabled === false ? 0 : 1},
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;

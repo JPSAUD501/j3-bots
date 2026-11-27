@@ -13,6 +13,8 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as RpcServer from "effect/rpc/RpcServer";
 import { CurrentDevice, DeviceAuth, type SocketCredential } from "./auth/DeviceAuth.ts";
+import { requestFailedOf } from "./telemetry/events.ts";
+import { Telemetry } from "./telemetry/Telemetry.ts";
 
 /** What a client sees of a request that failed unexpectedly. The cause is logged instead. */
 export const INTERNAL_ERROR = "Internal server error";
@@ -37,12 +39,23 @@ class DefectGuard extends RpcMiddleware.Service<DefectGuard>()(
   "@j3-bots/server/RpcSocket/DefectGuard",
 ) {}
 
-const defectGuard = Layer.succeed(DefectGuard)((effect, { rpc }) =>
-  Effect.catchDefect(effect, (defect) =>
-    Effect.logError(`The ${rpc._tag} handler failed`, Cause.die(defect)).pipe(
-      Effect.andThen(Effect.die(INTERNAL_ERROR)),
-    ),
-  ),
+// A typed failure, which the client shows, is told to usage data as its tag
+// and code alone (`request.failed`).
+const defectGuard = Layer.effect(
+  DefectGuard,
+  Effect.gen(function* () {
+    const telemetry = yield* Telemetry;
+    return DefectGuard.of((effect, { rpc }) =>
+      effect.pipe(
+        Effect.tapError((error) => telemetry.record(requestFailedOf(error))),
+        Effect.catchDefect((defect) =>
+          Effect.logError(`The ${rpc._tag} handler failed`, Cause.die(defect)).pipe(
+            Effect.andThen(Effect.die(INTERNAL_ERROR)),
+          ),
+        ),
+      ),
+    );
+  }),
 );
 
 const refuse = HttpServerResponse.jsonUnsafe(new NotAuthenticated(), { status: 401 });

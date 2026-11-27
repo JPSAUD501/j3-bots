@@ -66,6 +66,7 @@ import Migration0060 from "./migrations/0060_routine_steps.ts";
 import Migration0061 from "./migrations/0061_reactions.ts";
 import Migration0062 from "./migrations/0062_routine_events.ts";
 import Migration0063 from "./migrations/0063_connector_app_entries.ts";
+import Migration0064 from "./migrations/0064_telemetry.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -133,6 +134,7 @@ const migrations = SqliteMigrator.fromRecord({
   "61_reactions": Migration0061,
   "62_routine_events": Migration0062,
   "63_connector_app_entries": Migration0063,
+  "64_telemetry": Migration0064,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

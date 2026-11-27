@@ -21,6 +21,7 @@ import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { BasePrompt } from "./BasePrompt.ts";
 import { SuggestReplies } from "./SuggestReplies.ts";
 import { SettingsStore } from "./SettingsStore.ts";
+import { TelemetrySwitch } from "../telemetry/TelemetrySwitch.ts";
 
 /** The changes `settings.update` may ask for. */
 export type SettingsChanges = SettingsChange;
@@ -88,6 +89,7 @@ export const layer = Layer.effect(
     const workspaces = yield* Workspaces;
     const basePrompt = yield* BasePrompt;
     const suggestReplies = yield* SuggestReplies;
+    const telemetry = yield* TelemetrySwitch;
     const current = yield* SubscriptionRef.make(yield* store.get);
     const channel = yield* Semaphore.make(1);
     const channelSteady = Effect.fn("SettingsService.channelSteady")(function* <A, E, R>(
@@ -121,6 +123,14 @@ export const layer = Layer.effect(
         updateChannel: changes.updateChannel ?? saved.updateChannel,
         autoUpdateHarnesses: changes.autoUpdateHarnesses ?? saved.autoUpdateHarnesses,
         suggestReplies: changes.suggestReplies ?? saved.suggestReplies,
+        ...(saved.telemetry === undefined
+          ? {}
+          : {
+              telemetry: {
+                enabled: changes.telemetry ?? saved.telemetry.enabled,
+                heldOff: saved.telemetry.heldOff,
+              },
+            }),
       };
       yield* store.save(next, yield* DateTime.now, { zoneChosen: changes.timeZone !== undefined });
       return next;
@@ -129,6 +139,8 @@ export const layer = Layer.effect(
     const applied = Effect.fn("SettingsService.applied")(function* (changes: SettingsChanges) {
       if (changes.operatorName !== undefined) yield* basePrompt.refresh;
       if (changes.suggestReplies !== undefined) yield* suggestReplies.refresh;
+      // At once: what waits to be sent is dropped as it turns off.
+      if (changes.telemetry !== undefined) yield* telemetry.refresh;
       if (changes.operatorName !== undefined || changes.timeZone !== undefined) {
         yield* workspaces.renderAll;
       }

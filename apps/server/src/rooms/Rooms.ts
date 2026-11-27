@@ -4,6 +4,7 @@ import {
   type CommandError,
   type CommandId,
   Conflict,
+  countBucket,
   Invalid,
   NotFound,
   Room,
@@ -33,6 +34,7 @@ import {
   visibilityRefusal,
 } from "../roster/visibility.ts";
 import { RoomWork } from "./RoomWork.ts";
+import { Telemetry } from "../telemetry/Telemetry.ts";
 
 const RoomRow = Schema.Struct({
   id: RoomId,
@@ -138,6 +140,7 @@ export const layer = Layer.effect(
   Rooms,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const telemetry = yield* Telemetry;
     const transaction = transactional(sql);
     const changes = yield* ChangeLog;
     const receipts = yield* CommandReceipts;
@@ -285,6 +288,15 @@ export const layer = Layer.effect(
       `.pipe(Effect.orDie);
       yield* writeMembers(id, input.members);
       yield* refusals.joined(id, input.members);
+      yield* sql.afterCommit(
+        telemetry.record({
+          event: "room.created",
+          properties: {
+            members: countBucket(input.members.length),
+            by: input.madeBy === null ? "operator" : "bot",
+          },
+        }),
+      );
       yield* changes.touch({ _tag: "room", roomId: id });
       return yield* require(id).pipe(Effect.orDie);
     });

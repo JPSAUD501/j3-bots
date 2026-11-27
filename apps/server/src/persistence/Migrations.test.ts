@@ -39,6 +39,7 @@ import { updateChannelMigration } from "./migrations/0023_update_channel.ts";
 import { json } from "./columns.ts";
 import { migrate, migrationsThrough } from "./Migrations.ts";
 import * as Sqlite from "./Sqlite.ts";
+import * as TestTelemetry from "../testing/telemetry.ts";
 
 const now = "2026-11-20T09:00:00.000Z";
 
@@ -474,6 +475,7 @@ it.effect("keeps a time zone set before devices gave theirs, and lets UTC take t
             SettingsStore.layer.pipe(
               Layer.provide(Sqlite.layer),
               Layer.provide(Layer.succeed(ServerConfig, config)),
+              Layer.provide(TestTelemetry.configLayer),
             ),
           ),
         );
