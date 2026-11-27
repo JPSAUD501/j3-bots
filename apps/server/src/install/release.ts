@@ -115,7 +115,11 @@ export class ReleaseNotFetched extends Schema.TaggedError<ReleaseNotFetched>()(
 
 /** The latest stable release on the releases page at `base`. */
 const latestVersion = Effect.fn("release.latestVersion")(function* (base: string) {
-  const client = (yield* HttpClient.HttpClient).pipe(onlyToReleaseHosts([base]));
+  // Its answer belongs to this read's scope, which ends it however the read ends.
+  const client = (yield* HttpClient.HttpClient).pipe(
+    onlyToReleaseHosts([base]),
+    HttpClient.withScope,
+  );
   const latest = yield* client
     .execute(
       HttpClientRequest.get(`${base}/latest`).pipe(
@@ -132,7 +136,7 @@ const latestVersion = Effect.fn("release.latestVersion")(function* (base: string
     return yield* new ReleaseNotFetched({ reason: "latest-not-stable", subject: base });
   }
   return stable;
-});
+}, Effect.scoped);
 
 /** The version to install: `wanted`, without a leading `v`, or the latest stable release. */
 export const targetVersion = Effect.fn("release.targetVersion")(function* (
@@ -231,7 +235,12 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
   const stem = `j3-bots-${version}-${platform}`;
   const archive = `${stem}.tar.gz`;
   // Only to the releases page and where it sends downloads: a redirect elsewhere is refused.
-  const client = (yield* HttpClient.HttpClient).pipe(onlyToReleaseHosts([base]));
+  // Each answer belongs to the fetch's scope, which ends it however the fetch
+  // ends: one left unread, as a refusal is, never holds the process open.
+  const client = (yield* HttpClient.HttpClient).pipe(
+    onlyToReleaseHosts([base]),
+    HttpClient.withScope,
+  );
   const get = (file: string) =>
     client
       .execute(HttpClientRequest.get(`${download}/${file}`))
@@ -350,4 +359,4 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
   }).pipe(
     Effect.ensuring(fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
   );
-});
+}, Effect.scoped);
