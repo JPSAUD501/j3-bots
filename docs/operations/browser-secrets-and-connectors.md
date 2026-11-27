@@ -2,7 +2,7 @@
 
 This page walks through the three things that reach outside the bot's own folder: a browser the bot works in, secrets you type for bots to use without reading them, and connectors to the services you use. It says what you do and what you see. What each part guards against is in [Security: the browser, secrets and connectors](../architecture/security.md#the-browser-secrets-and-connectors).
 
-All three are off or empty until you act. A bot gets none of them by updating.
+A new bot can use the browser, signed in nowhere until you sign in for it. Secrets and connectors are empty until you add them. A bot gets none of them by updating.
 
 ## Secrets
 
@@ -37,11 +37,11 @@ On Android it is the same, on a screen for the list and one for each secret, and
 
 A bot can open pages, read them and act in them in a browser that runs on the machine J3 Bots runs on. You can watch it, and take it over for a step only a person can do.
 
-### Turn it on for a bot
+### Turn it off for a bot
 
-In the bot's details, turn on **Browser: Use this computer's browser**. It is off for every bot until you turn it on. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing, as **Stop** does: messages you queued for it and not yet sent are dropped too.
+Every new bot can browse the web. In the bot's details, **Browser: Can browse the web** turns it off, or on again. Bots made before 0.15.0 keep the switch they had: turn it on for those that should browse. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing, as **Stop** does: messages you queued for it and not yet sent are dropped too.
 
-**Every bot with the switch on uses the same browser profile**, so wherever you, or one of those bots, signs in there, all of them are signed in. On those sites a bot acts as you. Give the browser to the bots whose job needs it, and no others.
+**Every bot with the switch on uses the same browser profile**, so wherever you, or one of those bots, signs in there, all of them are signed in. On those sites a bot acts as you. The browser starts signed out of every site, and a bot that meets a sign-in asks you for it: sign in there only on sites every bot with the browser may use, and turn the browser off for bots that should not.
 
 ### What the machine needs
 
