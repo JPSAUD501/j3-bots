@@ -4,8 +4,10 @@ import { pagePoint } from "./browser.ts";
 import {
   draggedView,
   drawnRect,
-  easedToward,
   fitted,
+  followedView,
+  glidedBetween,
+  keptInSight,
   keptInView,
   NO_ZOOM,
   pinched,
@@ -22,10 +24,10 @@ const page = { width: 1280, height: 800 };
 const picture = fitted(view, page);
 
 describe("the viewer's zoom", () => {
-  it("rests a desktop page filling the phone's height, its middle across in view", () => {
+  it("rests a desktop page filling the phone's height, from its top-left", () => {
     expect(picture).toEqual({ width: 400, height: 250 });
-    // 2.4 times the fitted width: 960 by 600, as tall as the view, 280 points on each side of it.
-    expect(restingZoom(picture, view)).toEqual({ scale: 2.4, x: -280, y: 0 });
+    // 2.4 times the fitted width: 960 by 600, as tall as the view.
+    expect(restingZoom(picture, view)).toEqual({ scale: 2.4, x: 0, y: 0 });
   });
 
   it("rests a page of the view's shape, or taller, fitted to the width at its top", () => {
@@ -103,12 +105,48 @@ describe("following a bot", () => {
     expect(zoomOn({ x: 0, y: 0 }, scale, page, picture, view)).toMatchObject({ x: 0, y: 0 });
   });
 
-  it("slides toward the bot instead of jumping, and arrives", () => {
-    const to = { scale: 2, x: -400, y: -100 };
-    const halfway = easedToward(NO_ZOOM, to, 300);
-    expect(halfway.x).toBeLessThan(0);
-    expect(halfway.x).toBeGreaterThan(-400);
-    expect(easedToward(NO_ZOOM, to, 10_000)).toEqual(to);
+  it("keeps the bot's point in sight, moving the view only once it nears an edge", () => {
+    const rest = restingZoom(picture, view);
+    // At 2.4 times, a page pixel is 0.75 view points: (100, 400) is at (75, 300), in sight.
+    expect(keptInSight(rest, { x: 100, y: 400 }, page, picture, view)).toEqual(rest);
+    // (1000, 400) is at 750 across, past the view: it comes to 64 points inside its right edge.
+    expect(keptInSight(rest, { x: 1000, y: 400 }, page, picture, view)).toEqual({
+      scale: 2.4,
+      x: -414,
+      y: 0,
+    });
+    // Near the page's own edge, the view stops at it rather than leave a gap.
+    expect(keptInSight(rest, { x: 1270, y: 400 }, page, picture, view)).toEqual({
+      scale: 2.4,
+      x: -560,
+      y: 0,
+    });
+  });
+
+  it("heads from where it rests, then on from where it headed, as the bot points elsewhere", () => {
+    const first = followedView(null, { x: 1000, y: 400 }, page, picture, view);
+    expect(first).toEqual({ scale: 2.4, x: -414, y: 0 });
+    // Back near the page's start, the view moves only as far as keeps it in sight.
+    expect(followedView(first, { x: 500, y: 400 }, page, picture, view)).toEqual({
+      scale: 2.4,
+      x: -311,
+      y: 0,
+    });
+    expect(followedView(first, null, page, picture, view)).toEqual(first);
+  });
+
+  it("glides toward the bot on the pointer's curve instead of jumping, and arrives", () => {
+    const to = { scale: 2.4, x: -400, y: 0 };
+    const from = { scale: 2.4, x: 0, y: 0 };
+    const early = glidedBetween(from, to, 150, 600);
+    const late = glidedBetween(from, to, 450, 600);
+    expect(early.x).toBeLessThan(0);
+    // The glide eases out: most of the way is covered early.
+    expect(early.x).toBeLessThan(-200);
+    expect(late.x).toBeLessThan(early.x);
+    expect(late.x).toBeGreaterThan(-400);
+    expect(glidedBetween(from, to, 600, 600)).toEqual(to);
+    expect(glidedBetween(from, to, 0, 0)).toEqual(to);
   });
 
   it("shows on the little map which part of the page is in view", () => {

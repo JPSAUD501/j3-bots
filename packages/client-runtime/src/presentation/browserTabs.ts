@@ -258,14 +258,11 @@ export const tabFaces = (
   }));
 
 /**
- * The bot the live view follows on a wide page: the one of the conversation
- * the person came from while it is on the tab, else the one acting, else
- * the most recent.
+ * The bot whose work the live view keeps in sight: the one acting, else the
+ * one that worked on the tab last, so the view stays with the work between
+ * one action and the next; null while no bot is on the tab.
  */
-export const followedBot = (tab: ViewerTab, from: BotId | null): BotId | null => {
-  if (from !== null && tab.onIt.includes(from)) return from;
-  return tab.acting ?? tab.onIt[0] ?? null;
-};
+export const followedBot = (tab: ViewerTab): BotId | null => tab.acting ?? tab.onIt[0] ?? null;
 
 /**
  * The tab a bot's live card and the conversation's "Browsing" line show:
