@@ -42,9 +42,9 @@ type ServerHandlers = Rpc.ToHandler<RpcGroup.Rpcs<typeof J3Rpcs>>;
 type TapServices = Layer.Success<typeof TestDomain.layer> | CurrentDevice | ServerHandlers;
 
 /**
- * The server as a client meets it, for client tests: its HTTP routes and the
- * RPC, media and desktop page host sockets on a free loopback port, over the in-memory engine and a fresh
- * database. `taps` replaces handlers with ones that wrap the server's own
+ * The server as a client meets it, for client tests: its HTTP routes and
+ * its RPC, media and desktop browser host sockets on a free loopback port,
+ * over the in-memory engine and a fresh database. `taps` replaces handlers with ones that wrap the server's own
  * (`J3Rpcs.accessHandler`), for a test that watches a call, holds it or
  * refuses it at an exact point; every other call is the server's own. What
  * else the taps need (`R`), the layer needs.

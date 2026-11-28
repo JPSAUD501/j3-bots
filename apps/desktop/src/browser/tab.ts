@@ -27,10 +27,29 @@ const BOT_DOWNLOAD_WINDOW_MS = 5_000;
 
 /**
  * The pointer input of the view that is someone using the page. The
- * debugger's pointer input looks the same as the person's, so it is told
- * apart by the bot's command in flight (verified on Electron 44).
+ * debugger's looks the same as the person's, so it is told apart by the
+ * bot's command that makes it (verified on Linux, Electron 44).
  */
 const POINTING = new Set(["mouseDown", "touchStart", "gestureTap"]);
+
+/**
+ * Whether a debugger command makes a press, a touch or a tap in the view:
+ * a mouse button going down makes `mouseDown`, a touch starting
+ * `touchStart` and one ending `gestureTap`, a tap gesture `touchStart`
+ * (verified on Linux, Electron 44). Keys and moves make none.
+ */
+const presses = (method: string, params: Readonly<Record<string, unknown>>) => {
+  switch (method) {
+    case "Input.dispatchMouseEvent":
+      return params.type === "mousePressed";
+    case "Input.dispatchTouchEvent":
+      return params.type === "touchStart" || params.type === "touchEnd";
+    case "Input.synthesizeTapGesture":
+      return true;
+    default:
+      return false;
+  }
+};
 
 /** One tab of the desktop's browser: its view, its page, and its driver. */
 export interface DesktopTab {
@@ -49,7 +68,7 @@ export interface DesktopTab {
    * Drops the person's keys and mouse on the page while `effect` runs: a bot
    * is typing a saved login into it. The debugger's key events pass, as the
    * view's own key hook never sees them, but its mouse events would not
-   * (verified on Electron 44): a fill uses none.
+   * (verified on Linux, Electron 44): a fill uses none.
    */
   readonly holding: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   /** Whether a download that begins now is the bot's: one of its actions ran just before. */
@@ -119,18 +138,22 @@ export const takeTab = (options: {
       events.personInput();
     };
     // A key is the person's when it comes through the view's own key hook,
-    // which the debugger's keys never pass (verified on Electron 44). One the
-    // hold above stopped never reached the page.
+    // which the debugger's keys never pass (verified on Linux, Electron 44).
+    // Told once every listener of the hook has had it: one stopped, by the
+    // hold above or as one of the browser's shortcuts, never reached the page.
     contents.on("before-input-event", (event, input) => {
-      if (input.type === "keyDown" && !event.defaultPrevented) personUsing();
+      if (input.type !== "keyDown") return;
+      queueMicrotask(() => {
+        if (!event.defaultPrevented) personUsing();
+      });
     });
-    // A press or a touch is the bot's while one of its input commands is in
-    // flight: the debugger hands the view the event before it answers the
-    // command (verified on Electron 44). The count is taken before the
-    // command goes, as a press may reach the view while it is being sent.
-    let inputsInFlight = 0;
+    // A press, a touch or a tap is the bot's while a command of its that
+    // makes one is on its way: the debugger hands the view the event before
+    // it answers the command (verified on Linux, Electron 44). Counted from
+    // before the command goes, as a press may reach the view while it is sent.
+    let pressesInFlight = 0;
     contents.on("input-event", (_event, input) => {
-      if (inputsInFlight === 0 && POINTING.has(input.type)) personUsing();
+      if (pressesInFlight === 0 && POINTING.has(input.type)) personUsing();
     });
 
     // A tab of its own loads its blank page first; a pop-up, the address its opener gave.
@@ -167,12 +190,12 @@ export const takeTab = (options: {
       catch: (cause) => failed(`The page's identity was not set: ${String(cause)}`),
     });
     const relayed = yield* relayPage(contents, {
-      sending: (method) => {
+      sending: (method, params) => {
         if (DRIVING.test(method)) botAt = performance.now();
-        if (!method.startsWith("Input.")) return () => undefined;
-        inputsInFlight += 1;
+        if (!presses(method, params)) return () => undefined;
+        pressesInFlight += 1;
         return () => {
-          inputsInFlight -= 1;
+          pressesInFlight -= 1;
         };
       },
     }).pipe(Effect.mapError((error) => failed(error.detail)));

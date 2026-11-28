@@ -2,12 +2,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the fake site is a plain node:http server.
 import * as NodeHttp from "node:http";
 import { CommandId, ServerOrigin, type SharedBrowserTab } from "@j3-bots/contracts";
+import { BROWSER_NOTES } from "@j3-bots/prompts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -17,9 +17,9 @@ import { launch, linkTo, mainWindow, STEP } from "./electron.ts";
 // A bot at work in a tab the desktop app hosts, driven by the server as a
 // bot's tools drive it: its typing and clicking are the bot's, never the
 // person's, so the tab is never held for the person and no next action of
-// a bot is refused. The person's own keys in the page still hold it. Needs
-// the web client built and a display (`xvfb-run`), as the smoke does. No
-// real site is touched.
+// a bot is refused. The person's own click, and their own key, in the page
+// still hold it. Needs the web client built and a display (`xvfb-run`), as
+// the smoke does. No real site is touched.
 
 const FORM_PAGE = `<!doctype html><html><head><title>Fake Form</title></head>
 <body><input id="field" aria-label="Field"><button id="press"
@@ -31,6 +31,7 @@ const fakeSite = Effect.acquireRelease(
     const server = NodeHttp.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html" }).end(FORM_PAGE),
     );
+    server.once("error", (cause) => resume(Effect.die(cause)));
     server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
   }),
   (server) =>
@@ -46,26 +47,40 @@ const fakeSite = Effect.acquireRelease(
   }),
 );
 
-/** The person types a key in the page of the view showing `site`, as the view's own input. */
-const personTypes = (app: ElectronApplication, site: string) =>
+/** The page of the view showing `url`, given the person's own input: a click, or a key. */
+const personUses = (app: ElectronApplication, url: string, input: "click" | "key") =>
   Effect.promise(() =>
-    app.evaluate(({ webContents }, site) => {
-      const contents = webContents
-        .getAllWebContents()
-        .find((contents) => contents.getURL().startsWith(site));
-      if (contents === undefined) throw new Error("no view shows the fake site");
-      contents.focus();
-      contents.sendInputEvent({ type: "keyDown", keyCode: "x" });
-      contents.sendInputEvent({ type: "char", keyCode: "x" });
-      contents.sendInputEvent({ type: "keyUp", keyCode: "x" });
-    }, site),
+    app.evaluate(
+      ({ webContents }, { url, input }) => {
+        const contents = webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === url);
+        if (contents === undefined) throw new Error(`no view shows ${url}`);
+        contents.focus();
+        if (input === "click") {
+          contents.sendInputEvent({
+            type: "mouseDown",
+            x: 10,
+            y: 10,
+            button: "left",
+            clickCount: 1,
+          });
+          contents.sendInputEvent({ type: "mouseUp", x: 10, y: 10, button: "left", clickCount: 1 });
+          return;
+        }
+        contents.sendInputEvent({ type: "keyDown", keyCode: "x" });
+        contents.sendInputEvent({ type: "char", keyCode: "x" });
+        contents.sendInputEvent({ type: "keyUp", keyCode: "x" });
+      },
+      { url, input },
+    ),
   );
 
 it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
   excludeTestServices: true,
 })("a bot in the desktop app's browser", (it) => {
   it.effect(
-    "types and clicks as the bot, with no hold for the person, whose own keys still hold the tab",
+    "types and clicks as the bot, with no hold for the person, whose own click and key still hold the tab",
     () =>
       Effect.gen(function* () {
         const origin = yield* Server.origin;
@@ -79,14 +94,28 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const server = yield* Schema.decodeEffect(ServerOrigin)(origin.origin);
         const site = yield* fakeSite;
         const browser = yield* Server.Browser;
-        /** The fake site's tab as the server lists it, once `done` takes it. */
-        const listed = (done: (tab: SharedBrowserTab) => boolean) =>
+        /** The tab at `url` as the server lists it, once `done` takes it. */
+        const listed = (url: string, done: (tab: SharedBrowserTab) => boolean) =>
           browser.all.pipe(
-            Stream.map(({ tabs }) => tabs.find((tab) => tab.url.startsWith(site) && done(tab))),
+            Stream.map(({ tabs }) => tabs.find((tab) => tab.url === url && done(tab))),
             Stream.filter((tab) => tab !== undefined),
             Stream.runHead,
             Effect.flatMap(Effect.fromOption),
             Effect.timeout(STEP),
+          );
+        /** The person goes to `url` in the browser's tab in front. */
+        const goTo = (url: string) =>
+          Effect.promise(async () => {
+            const address = page.getByRole("combobox", { name: "Search or type an address" });
+            await address.first().click({ timeout: STEP });
+            await page.keyboard.insertText(url);
+            await page.keyboard.press("Enter");
+          });
+        /** The bot's next click on `tab` is refused, as the person holds it. */
+        const refusedForPerson = (tab: SharedBrowserTab) =>
+          browser.tools.act(bot.id, tab.ref, { action: "click", locator: "#press" }).pipe(
+            Effect.flip,
+            Effect.map((refused) => assert.strictEqual(refused.text, BROWSER_NOTES.personHolds)),
           );
 
         const app = yield* launch(profile, [linkTo({ _tag: "pair", server, code })]);
@@ -106,43 +135,60 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           await page.getByRole("button", { name: "Pair", exact: true }).click();
           await page.getByText(bot.profile.name).first().click({ timeout: STEP });
           await page.getByRole("button", { name: "Open browser" }).click({ timeout: STEP });
-          const address = page.getByRole("combobox", { name: "Search or type an address" });
-          await address.first().click({ timeout: STEP });
-          await page.keyboard.insertText(`${site}/`);
-          await page.keyboard.press("Enter");
-          await page.getByRole("tab", { name: "Fake Form" }).waitFor({ timeout: STEP });
         });
+        const formUrl = `${site}/`;
+        yield* goTo(formUrl);
         // The desktop hosts it, and the server lists it with nobody holding it.
-        const tab = yield* listed((tab) => tab.where.kind === "desktop" && tab.heldBy === null);
+        const form = yield* listed(
+          formUrl,
+          (tab) => tab.where.kind === "desktop" && tab.heldBy === null,
+        );
 
         // The bot types, adds with a clear, and clicks: none of it is refused.
-        yield* browser.tools.act(bot.id, tab.ref, {
+        yield* browser.tools.act(bot.id, form.ref, {
           action: "type",
           locator: "#field",
           text: "hello",
         });
-        yield* browser.tools.act(bot.id, tab.ref, {
+        yield* browser.tools.act(bot.id, form.ref, {
           action: "type",
           locator: "#field",
           text: "again",
           clear: true,
         });
-        yield* browser.tools.act(bot.id, tab.ref, { action: "click", locator: "#press" });
-        const after = yield* listed(
-          (listed) => listed.ref === tab.ref && listed.title === "Pressed",
-        );
+        yield* browser.tools.act(bot.id, form.ref, { action: "click", locator: "#press" });
+        const pressed = yield* listed(formUrl, (tab) => tab.title === "Pressed");
         // The tab is the bot's for a moment after its actions, never the person's.
-        assert.strictEqual(after.heldBy?.kind, "bot");
+        assert.strictEqual(pressed.heldBy?.kind, "bot");
 
-        // The person's own key in the page holds the tab for them.
-        yield* personTypes(app, site);
-        const held = yield* listed((listed) => listed.ref === tab.ref && listed.heldBy !== null);
-        assert.strictEqual(held.heldBy?.kind, "person");
-        // And a bot's next action waits for them.
-        const refused = yield* browser.tools
-          .act(bot.id, tab.ref, { action: "click", locator: "#press" })
-          .pipe(Effect.flip, Effect.option);
-        assert.isTrue(Option.isSome(refused));
+        // The person's own click in the page holds the tab for them.
+        yield* personUses(app, formUrl, "click");
+        const clicked = yield* listed(formUrl, (tab) => tab.heldBy?.kind === "person");
+        yield* refusedForPerson(clicked);
+
+        // In a new tab, the bot types, and the person's own key holds it for them.
+        yield* Effect.promise(async () => {
+          await page
+            .getByRole("combobox", { name: "Search or type an address" })
+            .first()
+            .click({ timeout: STEP });
+          await page.keyboard.press("Control+t");
+        });
+        const keysUrl = `${site}/keys`;
+        yield* goTo(keysUrl);
+        const keys = yield* listed(
+          keysUrl,
+          (tab) => tab.where.kind === "desktop" && tab.heldBy === null,
+        );
+        yield* browser.tools.act(bot.id, keys.ref, {
+          action: "type",
+          locator: "#field",
+          text: "hello",
+        });
+        assert.strictEqual((yield* listed(keysUrl, () => true)).heldBy?.kind, "bot");
+        yield* personUses(app, keysUrl, "key");
+        const typed = yield* listed(keysUrl, (tab) => tab.heldBy?.kind === "person");
+        yield* refusedForPerson(typed);
       }),
     180_000,
   );

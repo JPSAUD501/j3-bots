@@ -26,7 +26,7 @@ export interface RelayHooks {
    * page may act on it while it is being sent; what it answers runs once
    * the page has answered it, or failed to.
    */
-  readonly sending: (method: string) => () => void;
+  readonly sending: (method: string, params: Readonly<Record<string, unknown>>) => () => void;
 }
 
 /** A tab's page, as the driver drives it. */
@@ -107,7 +107,7 @@ export const relayPage = (
             if (sessionId === undefined && method === "Page.stopScreencast") {
               screencasts.delete(owner);
             }
-            const answered = hooks.sending(method);
+            const answered = hooks.sending(method, params);
             try {
               const reply: Promise<unknown> = contents.debugger.sendCommand(
                 method,
