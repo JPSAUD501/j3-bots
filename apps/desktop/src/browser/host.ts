@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -200,6 +201,8 @@ export const makeDesktopBrowser = (options: {
     by: "person" | "bot",
     tab: BrowserTabRef | null,
   ) => void;
+  /** Told that a bot's download, too large for the server, is now the person's: at `file`, in their downloads. */
+  readonly handedOver?: (item: DownloadItem, file: string) => void;
 }): Effect.Effect<DesktopBrowser, BrowserHostError, Scope.Scope> =>
   Effect.gen(function* () {
     const hostScope = yield* Effect.scope;
@@ -331,26 +334,34 @@ export const makeDesktopBrowser = (options: {
       NodeFS.mkdirSync(folder, { recursive: true });
       const file = NodePath.join(folder, name);
       item.setSavePath(file);
-      item.once("done", (_done, state) => {
-        if (state !== "completed") {
-          NodeFS.rmSync(folder, { recursive: true, force: true });
-          return;
-        }
+      /** Whether the server takes the finished file; if not, it is the person's. */
+      const forServer = () => {
         const size = NodeFS.statSync(file).size;
         // Too large for the server to keep: it stays with the person instead.
         if (size > MAX_ATTACHMENT_SIZE) {
+          const mine = app.getPath("downloads");
           const target = NodePath.join(
-            app.getPath("downloads"),
-            freeName(name, (candidate) =>
-              NodeFS.existsSync(NodePath.join(app.getPath("downloads"), candidate)),
-            ),
+            mine,
+            freeName(name, (candidate) => NodeFS.existsSync(NodePath.join(mine, candidate))),
           );
-          NodeFS.renameSync(file, target);
-          NodeFS.rmSync(folder, { recursive: true, force: true });
-          return;
+          // A copy where a move cannot cross from one disk to another.
+          NodeFS.cpSync(file, target, { errorOnExist: true, force: false });
+          options.handedOver?.(item, target);
+          return false;
         }
         downloads.set(download, folder);
         run(tell({ type: "download.finished", tab: entry.tab.ref, download, name, size }));
+        return true;
+      };
+      item.once("done", (_done, state) => {
+        // Thrown in Electron's listener, an error would take the app down: the file is let go instead.
+        const kept = Result.try(() => state === "completed" && forServer());
+        if (Result.isFailure(kept)) {
+          run(Effect.logWarning("A bot's download could not be kept", kept.failure));
+        }
+        if (Result.isFailure(kept) || !kept.success) {
+          NodeFS.rmSync(folder, { recursive: true, force: true });
+        }
       });
     };
     shared.on("will-download", onDownload);

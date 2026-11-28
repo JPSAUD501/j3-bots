@@ -34,7 +34,8 @@ export function PaneDivider({
   readonly frame: HTMLElement;
   readonly roster: RefObject<HTMLElement | null>;
   readonly wanted: number | null;
-  readonly onWanted: (width: number) => void;
+  /** Null: the usual width, as before the person first moved the divider. */
+  readonly onWanted: (width: number | null) => void;
   readonly onResizing: ((resizing: boolean) => void) | undefined;
   readonly onClose: () => void;
 }) {
@@ -100,7 +101,7 @@ export function PaneDivider({
     resizing(false);
     if (dragging.closing) {
       // It opens again as wide as it was before this drag.
-      if (dragging.from !== null) onWanted(dragging.from);
+      onWanted(dragging.from);
       onClose();
       return;
     }

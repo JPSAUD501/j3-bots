@@ -62,6 +62,11 @@ export const DesktopDownload = Schema.Struct({
   tab: Schema.NullOr(BrowserTabRef),
   /** When it began, in milliseconds since the epoch. */
   at: Schema.Int,
+  /**
+   * In the person's downloads folder, theirs to open: what they downloaded,
+   * and a bot's file too large for the server.
+   */
+  inDownloads: Schema.Boolean,
 });
 export type DesktopDownload = typeof DesktopDownload.Type;
 

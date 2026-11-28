@@ -7366,6 +7366,7 @@ function DesktopBrowserSection() {
                     by: "person",
                     tab: sampleTabRef("orders"),
                     at: 0,
+                    inDownloads: true,
                   },
                   {
                     id: "menu",
@@ -7376,6 +7377,7 @@ function DesktopBrowserSection() {
                     by: "bot",
                     tab: sampleTabRef("orders"),
                     at: 0,
+                    inDownloads: false,
                   },
                 ],
               },

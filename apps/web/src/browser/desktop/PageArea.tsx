@@ -7,9 +7,10 @@ import type {
 } from "@j3-bots/desktop-bridge";
 import { siteOf } from "@j3-bots/client-runtime/presentation";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
 import { useI18n } from "../../app/context";
 import { Button } from "../../components/ui/button";
+import { useCovered } from "../../lib/covered";
 import type { DesktopBrowserBridge } from "../../live/desktop";
 import { useFoundIn, useStillOf } from "./state";
 import { SiteTile } from "./Toolbar";
@@ -17,7 +18,9 @@ import { SiteTile } from "./Toolbar";
 // Where the tab in front is drawn. The page itself is the app's view, laid
 // over this area by the main process; the area tells it where it is. What
 // the app draws instead: a new tab's start, a page that failed to open, and
-// a still picture of the page while something of the window lies over it.
+// a still picture of the page while something of the window lies over it:
+// the browser's own menus and lists, which `covered` tells, or any of the
+// app's dialogs, which leave the area hidden from assistive technology.
 
 /** How long the area follows its own place after it appears, while its pane slides in. */
 const SETTLING_MS = 600;
@@ -41,20 +44,22 @@ export function PageArea({
   readonly command: (command: DesktopBrowserCommand) => void;
   readonly onStopFinding: () => void;
 }) {
-  const area = useRef<HTMLDivElement>(null);
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  const underDialog = useCovered(area);
+  const hidden = covered || underDialog;
   const still = useStillOf(bridge, tab?.ref ?? null);
 
   useLayoutEffect(() => {
-    const element = area.current;
+    const element = area;
     if (element === null) return;
     let last = "";
     const report = () => {
       const { left, top, width, height } = element.getBoundingClientRect();
       const placement = {
         bounds: width > 0 && height > 0 ? { x: left, y: top, width, height } : null,
-        covered,
+        covered: hidden,
       };
-      const said = `${left} ${top} ${width} ${height} ${covered}`;
+      const said = `${left} ${top} ${width} ${height} ${hidden}`;
       if (said === last) return;
       last = said;
       bridge.place(placement);
@@ -74,7 +79,7 @@ export function PageArea({
       observer.disconnect();
       window.removeEventListener("resize", report);
     };
-  }, [bridge, covered]);
+  }, [bridge, area, hidden]);
   // Gone, the tab is drawn nowhere in this window.
   useEffect(() => () => bridge.place({ bounds: null, covered: false }), [bridge]);
 
@@ -83,7 +88,7 @@ export function PageArea({
       {finding && tab !== null && (
         <FindBar bridge={bridge} tab={tab} command={command} onClose={onStopFinding} />
       )}
-      <div ref={area} className="relative min-h-0 flex-1">
+      <div ref={setArea} className="relative min-h-0 flex-1">
         {tab === null || tab.url === "" ? (
           <NewTab
             bridge={bridge}
@@ -94,7 +99,7 @@ export function PageArea({
           />
         ) : tab.failed !== null ? (
           <Failed url={tab.failed.url} onRetry={() => command({ _tag: "reload", tab: tab.ref })} />
-        ) : covered && still !== null ? (
+        ) : hidden && still !== null ? (
           <img
             src={still}
             alt=""

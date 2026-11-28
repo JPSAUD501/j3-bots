@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- the store of certificates Node's sockets trust is Node's own setting.
+import * as NodeTls from "node:tls";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { type HostSocketEnd, type PageHost, serveHostOnSocket } from "@j3-bots/browser";
 import { HTTP_PATHS } from "@j3-bots/contracts";
@@ -32,6 +34,21 @@ const nextWait = (lasted: Duration.Duration, previous: Duration.Duration | null)
   previous === null || Duration.isGreaterThanOrEqualTo(lasted, GOOD_LINK)
     ? FIRST_WAIT
     : Duration.min(Duration.times(previous, 2), LONGEST_WAIT);
+
+/**
+ * Makes Node's sockets, the link among them, trust what the system trusts
+ * besides Node's own authorities, as the page and Electron's `net` do: a
+ * server whose certificate an organisation's own authority signed is
+ * reached too. The link is Node's WebSocket, since Electron's network stack
+ * has none that sends a header; it goes straight to the server, never
+ * through the system's proxy. For the whole main process, once, at start.
+ */
+export const trustSystemCertificates = Effect.sync(() =>
+  NodeTls.setDefaultCACertificates([
+    ...NodeTls.getCACertificates("default"),
+    ...NodeTls.getCACertificates("system"),
+  ]),
+);
 
 /**
  * Serves `host` to the server at `origin`, signed in with `token`, until

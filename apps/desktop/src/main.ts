@@ -63,6 +63,7 @@ import * as Autostart from "./autostart.ts";
 import { inlineScriptSources, policyFor, resolveAsset } from "./assets.ts";
 import { serveBrowser } from "./browser/app.ts";
 import { isBrowserSession } from "./browser/host.ts";
+import { trustSystemCertificates } from "./browser/link.ts";
 import { commandSender } from "./commands.ts";
 import { transparencyHere } from "./compositing.ts";
 import { onWayland } from "./displayServer.ts";
@@ -218,6 +219,7 @@ const lockNavigation = (contents: WebContents) => {
 
 const program = Effect.gen(function* () {
   yield* Effect.promise(() => app.whenReady());
+  yield* trustSystemCertificates;
   // Started by the system as the operator signed in: the app opens in the
   // tray, its window shown only when they ask for it.
   const hidden = Autostart.launchedHidden();

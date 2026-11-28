@@ -17,7 +17,7 @@ import { launch, linkTo, mainWindow, STEP } from "./electron.ts";
 // conversation the globe opens it beside the conversation, an address typed
 // in its bar opens a page of a fake site on the loopback, and the app lays
 // the page's view over the place the window's page leaves for it, below the
-// find bar while finding. A private tab lives apart from the shared
+// find bar while finding, and puts it away while a dialog lies over it. A private tab lives apart from the shared
 // sign-ins, and a tab sent to the browser's own window goes there and comes
 // back when that window closes. Needs the web client built and a display
 // (`xvfb-run`), as the smoke does. No real site is touched.
@@ -78,7 +78,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
   excludeTestServices: true,
 })("desktop app's browser", (it) => {
   it.effect(
-    "opens beside the conversation, lays the page where the window leaves room, keeps a private tab apart, and moves a tab to its window",
+    "opens beside the conversation, lays the page where the window leaves room, steps aside for a dialog, keeps a private tab apart, and moves a tab to its window",
     () =>
       Effect.gen(function* () {
         const origin = yield* Server.origin;
@@ -148,8 +148,17 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         assert.isAtLeast(shown.bounds.y, Math.floor(bar.y + bar.height));
         assert.isAtLeast(shown.bounds.x, Math.floor(conversation.x + conversation.width) - 1);
 
+        // One of the app's dialogs over it: the page steps aside for a still, and comes back.
+        yield* Effect.promise(() =>
+          page.getByRole("button", { name: "Settings" }).click({ timeout: STEP }),
+        );
+        yield* until(views(), (now) => now.every((view) => !view.visible));
+        yield* Effect.promise(() => page.keyboard.press("Escape"));
+        yield* until(views(), (now) => now.some((view) => view.visible && view.window !== ""));
+
         // Finding: the bar takes a strip above the page, which moves down for it.
         yield* Effect.promise(async () => {
+          await page.getByRole("combobox", { name: "Search or type an address" }).first().click();
           await page.keyboard.press("Control+f");
           await page.getByPlaceholder("Find in page").fill("needle", { timeout: STEP });
           await page.getByText("1 of 3").waitFor({ timeout: STEP });

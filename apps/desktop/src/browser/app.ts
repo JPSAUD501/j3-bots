@@ -95,6 +95,8 @@ interface Pane {
 
 interface Placed {
   place: BrowserPlace;
+  /** A private tab is never opened again once closed: it leaves nothing behind. */
+  readonly private: boolean;
   failed: string | null;
   /** The last address the tab showed, to open it again once closed. */
   url: string;
@@ -105,6 +107,8 @@ interface Placed {
 interface Download {
   readonly item: DownloadItem;
   entry: DesktopDownload;
+  /** Where a bot's file went once it became the person's. */
+  handedOver: string | null;
 }
 
 /**
@@ -146,6 +150,7 @@ export const serveBrowser = (options: {
         const id = Buffer.from(SecureRandom.randomBytesUnsafe(12)).toString("base64url");
         const download: Download = {
           item,
+          handedOver: null,
           entry: {
             id,
             name: item.getFilename().slice(0, 1024),
@@ -155,6 +160,7 @@ export const serveBrowser = (options: {
             by,
             tab,
             at: Math.floor(item.getStartTime() * 1000),
+            inDownloads: by === "person",
           },
         };
         downloads.set(id, download);
@@ -172,6 +178,13 @@ export const serveBrowser = (options: {
           update(state === "interrupted" ? "interrupted" : "progressing"),
         );
         item.once("done", (_event, state) => update(state));
+        changed();
+      },
+      handedOver: (item, file) => {
+        const download = [...downloads.values()].find((download) => download.item === item);
+        if (download === undefined) return;
+        download.handedOver = file;
+        download.entry = { ...download.entry, inDownloads: true };
         changed();
       },
     }).pipe(Effect.orDie);
@@ -381,7 +394,13 @@ export const serveBrowser = (options: {
             const { tab, opener } = event;
             if (!placed.has(tab.ref)) {
               const place = opener === null ? "panel" : placeOf(opener);
-              placed.set(tab.ref, { place, failed: null, url: "", finding: "" });
+              placed.set(tab.ref, {
+                place,
+                private: tab.private,
+                failed: null,
+                url: "",
+                finding: "",
+              });
               // A tab a page opens sits beside its opener; any other goes last.
               const after = opener === null ? -1 : order.indexOf(opener);
               if (after === -1) order.push(tab.ref);
@@ -404,7 +423,7 @@ export const serveBrowser = (options: {
               front[at.place] = nextInFront(at.place, event.tab);
             }
             if (index !== -1) order.splice(index, 1);
-            if (at !== undefined && at.url !== "") {
+            if (at !== undefined && !at.private && at.url !== "") {
               closed.push({ url: at.url, place: at.place });
               closed.splice(0, Math.max(0, closed.length - CLOSED_KEPT));
             }
@@ -508,7 +527,13 @@ export const serveBrowser = (options: {
             Effect.gen(function* () {
               const tab = yield* browser.openForPerson({ private: asked.private });
               if (!placed.has(tab.ref)) {
-                placed.set(tab.ref, { place, failed: null, url: "", finding: "" });
+                placed.set(tab.ref, {
+                  place,
+                  private: tab.private,
+                  failed: null,
+                  url: "",
+                  finding: "",
+                });
               }
               show(tab.ref, place);
               if (input !== undefined && input.trim() !== "") {
@@ -533,9 +558,9 @@ export const serveBrowser = (options: {
           const download = downloads.get(asked.id);
           if (download === undefined) return;
           if (asked._tag === "cancelDownload") download.item.cancel();
-          else if (download.entry.by === "person" && download.entry.state === "completed") {
-            // Only the person's own files, in their downloads folder: a bot's is the server's.
-            const file = download.item.getSavePath();
+          else if (download.entry.inDownloads && download.entry.state === "completed") {
+            // Only files in the person's downloads folder: a bot's is the server's.
+            const file = download.handedOver ?? download.item.getSavePath();
             if (asked._tag === "showDownload") shell.showItemInFolder(file);
             else void shell.openPath(file);
           }

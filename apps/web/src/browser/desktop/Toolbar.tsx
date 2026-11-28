@@ -454,7 +454,7 @@ function Downloads({ downloads, command, open, setOpen, onCover }: ToolbarProps)
                           {t("desktopBrowser.downloads.stop")}
                         </button>
                       ) : (
-                        mine &&
+                        download.inDownloads &&
                         download.state === "completed" && (
                           <button
                             type="button"
