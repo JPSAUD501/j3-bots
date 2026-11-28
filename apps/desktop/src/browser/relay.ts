@@ -21,8 +21,12 @@ export class RelayFailed extends Schema.TaggedError<RelayFailed>()("RelayFailed"
 
 /** What a host learns of a page's debugger traffic, beyond what Playwright sees. */
 export interface RelayHooks {
-  /** A command went to the page, and `reply` settles once the page has run it. */
-  readonly sent: (method: string, reply: Promise<unknown>) => void;
+  /**
+   * A command is about to go to the page. Told before it is sent, as the
+   * page may act on it while it is being sent; what it answers runs once
+   * the page has answered it, or failed to.
+   */
+  readonly sending: (method: string, params: Readonly<Record<string, unknown>>) => () => void;
 }
 
 /** A tab's page, as the driver drives it. */
@@ -103,13 +107,19 @@ export const relayPage = (
             if (sessionId === undefined && method === "Page.stopScreencast") {
               screencasts.delete(owner);
             }
-            const reply: Promise<unknown> = contents.debugger.sendCommand(
-              method,
-              params,
-              sessionId,
-            );
-            hooks.sent(method, reply);
-            return reply;
+            const answered = hooks.sending(method, params);
+            try {
+              const reply: Promise<unknown> = contents.debugger.sendCommand(
+                method,
+                params,
+                sessionId,
+              );
+              reply.then(answered, answered);
+              return reply;
+            } catch (cause) {
+              answered();
+              throw cause;
+            }
           },
           sessionDetached: (owner) => screencasts.delete(owner),
           receivesScreencast: (owner) => screencasts.has(owner),
