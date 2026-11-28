@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the history is written as the app quits, after which no fiber runs.
-import * as NodeFS from "node:fs";
 import { HTTP_PATHS, type BrowserTabRef, type ServerOrigin } from "@j3-bots/contracts";
 import {
   BrowserLink,
@@ -21,7 +19,6 @@ import {
 } from "@j3-bots/desktop-bridge";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberHandle from "effect/FiberHandle";
 import * as FileSystem from "effect/FileSystem";
@@ -38,15 +35,16 @@ import {
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   ipcMain,
-  shell,
   type WebContents,
 } from "electron";
 import { electronFetch } from "../electronFetch.ts";
 import { onWayland } from "../displayServer.ts";
-import { typedAddress } from "./address.ts";
-import { History, recentVisits, suggestionsFor, type Visit, withVisit } from "./history.ts";
+import { makeCommand, zoomPage } from "./commands.ts";
+import { recentVisits, suggestionsFor } from "./history.ts";
+import { makeHistoryStore } from "./historyStore.ts";
 import { type DesktopBrowser, type LocalBrowserEvent, makeDesktopBrowser } from "./host.ts";
 import { linkToServer } from "./link.ts";
+import { makePlaces } from "./places.ts";
 
 // The desktop's browser in the app: it serves the server the main window's
 // page is signed in to, and the app's windows show its tabs, beside the
@@ -65,25 +63,9 @@ const encodeStill = Schema.encodeSync(BrowserStill);
 const encodeFound = Schema.encodeSync(BrowserFound);
 const encodeShortcut = Schema.encodeSync(BrowserShortcut);
 const encodeSuggestions = Schema.encodeSync(Schema.Array(BrowserSuggestion));
-const decodeHistory = Schema.decodeUnknownOption(Schema.fromJsonString(History));
-const encodeHistory = Schema.encodeSync(Schema.fromJsonString(History));
-
-/** The zoom steps a browser takes, in percent. */
-const ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
-
-/** The zoom step after `current` in the direction asked, or 100. */
-const zoomTo = (current: number, to: "in" | "out" | "reset") => {
-  if (to === "reset") return 100;
-  const steps = to === "in" ? ZOOM_STEPS : ZOOM_STEPS.toReversed();
-  return steps.find((step) => (to === "in" ? step > current : step < current)) ?? current;
-};
 
 /** How many downloads the list keeps. */
 const DOWNLOADS_KEPT = 20;
-/** How many closed tabs can be opened again. */
-const CLOSED_KEPT = 25;
-/** How long visits gather before the history is written. */
-const HISTORY_WRITE_DELAY = Duration.seconds(2);
 
 /** The page's address as a tab shows it: empty for a page not loaded yet. */
 const shownUrl = (contents: WebContents) => {
@@ -96,17 +78,6 @@ interface Pane {
   placement: BrowserPlacement;
   /** The tab drawn as a still picture while the page covers it. */
   still: BrowserTabRef | null;
-}
-
-interface Placed {
-  place: BrowserPlace;
-  /** A private tab is never opened again once closed: it leaves nothing behind. */
-  readonly private: boolean;
-  failed: string | null;
-  /** The last address the tab showed, to open it again once closed. */
-  url: string;
-  /** What finding in the page looks for now. */
-  finding: string;
 }
 
 interface Download {
@@ -148,14 +119,12 @@ export const serveBrowser = (options: {
     const panes = new Map<BrowserPlace, Pane>([
       ["panel", { window: options.main, placement: { bounds: null, covered: false }, still: null }],
     ]);
-    const placed = new Map<BrowserTabRef, Placed>();
     /** The tabs a bot is typing a saved login into, by how many fills run there: each shows as a still. */
     const held = new Map<BrowserTabRef, number>();
     /** The held tabs that had the keys as the hold began, which take them back once it ends. */
     const refocus = new Set<BrowserTabRef>();
-    const order: Array<BrowserTabRef> = [];
-    const front: Record<BrowserPlace, BrowserTabRef | null> = { panel: null, window: null };
-    const closed: Array<{ readonly url: string; readonly place: BrowserPlace }> = [];
+    const places = makePlaces(() => changed());
+    const { order, front } = places;
 
     /** Whether `window` is on the person's screen: shown, and not minimized. */
     const onScreen = (window: BrowserWindow) =>
@@ -216,62 +185,16 @@ export const serveBrowser = (options: {
       },
     }).pipe(Effect.orDie);
 
-    // -----------------------------------------------------------------------
-    // History: where the shared tabs went, kept between launches.
-
-    const historyFile = path.join(userData, "browser-history.json");
-    let visits: ReadonlyArray<Visit> = yield* fs.readFileString(historyFile).pipe(
-      Effect.map((text) =>
-        Option.match(decodeHistory(text), { onNone: () => [], onSome: (kept) => kept.visits }),
-      ),
-      Effect.orElseSucceed((): ReadonlyArray<Visit> => []),
-    );
-    let writing = false;
-    const saveHistory = Effect.gen(function* () {
-      writing = false;
-      const next = `${historyFile}.next`;
-      yield* fs.writeFileString(next, encodeHistory({ visits }));
-      yield* fs.rename(next, historyFile);
-    }).pipe(
-      Effect.catch((error) => Effect.logWarning("Keeping the browser's history failed", error)),
-    );
-    const writeHistory = Effect.andThen(Effect.sleep(HISTORY_WRITE_DELAY), saveHistory);
-    // A visit still waiting to be written as the app quits is written then, before the
-    // process ends: Electron ends it on quit without closing this scope, so not in a fiber.
-    const saveHistoryNow = () => {
-      if (!writing) return;
-      writing = false;
-      try {
-        NodeFS.writeFileSync(`${historyFile}.next`, encodeHistory({ visits }));
-        NodeFS.renameSync(`${historyFile}.next`, historyFile);
-      } catch {
-        // The visits since the last write are lost; the file before them stays whole.
-      }
-    };
-    yield* Effect.acquireRelease(
-      Effect.sync(() => app.on("will-quit", saveHistoryNow)),
-      () =>
-        Effect.sync(() => {
-          app.off("will-quit", saveHistoryNow);
-          saveHistoryNow();
-        }),
-    );
-    const visited = (visit: Visit) => {
-      visits = withVisit(visits, visit);
-      if (writing) return;
-      writing = true;
-      runFork(writeHistory);
-    };
+    const history = yield* makeHistoryStore(path.join(userData, "browser-history.json"));
 
     // -----------------------------------------------------------------------
     // What the windows show
 
-    const placeOf = (ref: BrowserTabRef) => placed.get(ref)?.place ?? "panel";
-    const paneOf = (ref: BrowserTabRef) => panes.get(placeOf(ref));
+    const paneOf = (ref: BrowserTabRef) => panes.get(places.placeOf(ref));
 
     const tabNow = (ref: BrowserTabRef): DesktopBrowserTab | null => {
       const tab = browser.tab(ref);
-      const at = placed.get(ref);
+      const at = places.at(ref);
       if (tab === undefined || at === undefined || tab.contents.isDestroyed()) return null;
       const { contents } = tab;
       const url = shownUrl(contents).slice(0, 8192);
@@ -295,7 +218,7 @@ export const serveBrowser = (options: {
       tabs: order.flatMap((ref) => tabNow(ref) ?? []),
       front: { ...front },
       windowOpen: panes.has("window"),
-      canReopen: closed.length > 0,
+      canReopen: places.canReopen(),
       downloads: [...downloads.values()].map((download) => download.entry).toReversed(),
     });
 
@@ -329,7 +252,7 @@ export const serveBrowser = (options: {
       }
       for (const ref of order) {
         const pane = paneOf(ref);
-        const at = placed.get(ref);
+        const at = places.at(ref);
         const tab = browser.tab(ref);
         if (pane === undefined || at === undefined || tab === undefined) continue;
         const { bounds } = pane.placement;
@@ -403,24 +326,6 @@ export const serveBrowser = (options: {
     const lookedAt = (place: BrowserPlace) =>
       (panes.get(place)?.placement.bounds ?? null) === null ? null : front[place];
 
-    /** The tab a place shows once `leaving` is no longer in front there. */
-    const nextInFront = (place: BrowserPlace, leaving: BrowserTabRef) => {
-      const here = order.filter((ref) => ref !== leaving && placeOf(ref) === place);
-      const index = order.indexOf(leaving);
-      return here.find((ref) => order.indexOf(ref) > index) ?? here.findLast(() => true) ?? null;
-    };
-
-    /** Puts `ref` in `place`, in front there when `inFront`. */
-    const put = (ref: BrowserTabRef, place: BrowserPlace, inFront: boolean) => {
-      const at = placed.get(ref);
-      if (at === undefined) return;
-      const was = at.place;
-      at.place = place;
-      if (was !== place && front[was] === ref) front[was] = nextInFront(was, ref);
-      if (inFront || front[place] === null) front[place] = ref;
-      changed();
-    };
-
     // -----------------------------------------------------------------------
     // The browser's own window
 
@@ -452,12 +357,7 @@ export const serveBrowser = (options: {
         // Its tabs go beside the conversation; their views go to the shelf first.
         browser.evacuate(window);
         panes.delete("window");
-        for (const ref of order) {
-          const at = placed.get(ref);
-          if (at?.place === "window") at.place = "panel";
-        }
-        front.window = null;
-        front.panel ??= order.find((ref) => placeOf(ref) === "panel") ?? null;
+        places.windowClosed();
         runFork(browser.focus(lookedAt("panel")));
         changed();
       });
@@ -470,9 +370,9 @@ export const serveBrowser = (options: {
     };
 
     const show = (ref: BrowserTabRef, place: BrowserPlace) => {
-      const from = placed.get(ref)?.place;
+      const from = places.at(ref)?.place;
       if (place === "window") openWindow();
-      put(ref, place, true);
+      places.put(ref, place, true);
       const pane = panes.get(place);
       // Sent to the other place, the tab is followed there.
       if (pane !== undefined && from !== undefined && from !== place) pane.window.focus();
@@ -487,22 +387,7 @@ export const serveBrowser = (options: {
         switch (event.type) {
           case "opened": {
             const { tab, opener } = event;
-            if (!placed.has(tab.ref)) {
-              const place = opener === null ? "panel" : placeOf(opener);
-              placed.set(tab.ref, {
-                place,
-                private: tab.private,
-                failed: null,
-                url: "",
-                finding: "",
-              });
-              // A tab a page opens sits beside its opener; any other goes last.
-              const after = opener === null ? -1 : order.indexOf(opener);
-              if (after === -1) order.push(tab.ref);
-              else order.splice(after + 1, 0, tab.ref);
-              // A bot's new tab never takes the person's place from under them.
-              if (front[place] === null) front[place] = tab.ref;
-            }
+            places.opened(tab.ref, tab.private, opener);
             watch(tab.ref, tab.contents);
             changed();
             return;
@@ -520,21 +405,11 @@ export const serveBrowser = (options: {
             return;
           }
           case "closed": {
-            const at = placed.get(event.tab);
-            placed.delete(event.tab);
+            const leftFront = places.closed(event.tab);
             held.delete(event.tab);
             refocus.delete(event.tab);
-            const index = order.indexOf(event.tab);
-            if (at !== undefined && front[at.place] === event.tab) {
-              front[at.place] = nextInFront(at.place, event.tab);
-              // The person now looks at the tab that took its place, if that place is on screen.
-              runFork(browser.focus(lookedAt(at.place)));
-            }
-            if (index !== -1) order.splice(index, 1);
-            if (at !== undefined && !at.private && at.url !== "") {
-              closed.push({ url: at.url, place: at.place });
-              closed.splice(0, Math.max(0, closed.length - CLOSED_KEPT));
-            }
+            // The person now looks at the tab that took its place, if that place is on screen.
+            if (leftFront !== null) runFork(browser.focus(lookedAt(leftFront)));
             changed();
             return;
           }
@@ -549,23 +424,24 @@ export const serveBrowser = (options: {
       contents.on("page-title-updated", (_event, title) => {
         const url = shownUrl(contents);
         // The title a page settles on names its visit.
-        if (!isPrivate && url !== "" && visits[0]?.url === url) visited({ ...visits[0], title });
+        const last = history.visits()[0];
+        if (!isPrivate && url !== "" && last?.url === url) history.visited({ ...last, title });
         changed();
       });
       contents.on("did-navigate-in-page", changed);
       contents.on("did-start-navigation", (details) => {
-        const at = placed.get(ref);
+        const at = places.at(ref);
         if (at !== undefined && details.isMainFrame && !details.isSameDocument) at.failed = null;
         changed();
       });
       contents.on("did-navigate", (_event, url) => {
-        const at = placed.get(ref);
+        const at = places.at(ref);
         if (at !== undefined && url !== "about:blank") at.url = url;
         if (!isPrivate && /^https?:/.test(url)) {
           const byBot = browser.tab(ref)?.botLed() ?? false;
           runFork(
             Effect.map(Clock.currentTimeMillis, (at) =>
-              visited({ url, title: contents.getTitle(), at, byBot }),
+              history.visited({ url, title: contents.getTitle(), at, byBot }),
             ),
           );
         }
@@ -573,14 +449,15 @@ export const serveBrowser = (options: {
       });
       contents.on("did-fail-load", (_event, code, _description, url, isMainFrame) => {
         // -3: cut short by another navigation, or stopped; not a failure to show.
-        const at = placed.get(ref);
+        const at = places.at(ref);
         if (!isMainFrame || code === -3 || at === undefined) return;
         at.failed = url;
         changed();
       });
-      contents.on("zoom-changed", (_event, direction) =>
-        zoom(contents, direction === "in" ? "in" : "out"),
-      );
+      contents.on("zoom-changed", (_event, direction) => {
+        zoomPage(contents, direction === "in" ? "in" : "out");
+        changed();
+      });
       contents.on("found-in-page", (_event, result) => {
         const pane = paneOf(ref);
         if (pane === undefined || pane.window.isDestroyed()) return;
@@ -619,119 +496,15 @@ export const serveBrowser = (options: {
     // -----------------------------------------------------------------------
     // The person's commands
 
-    const zoom = (contents: WebContents, to: "in" | "out" | "reset") => {
-      // The zoom holds for the page's whole site, as Chromium keeps it per host.
-      const current = Math.round(contents.getZoomFactor() * 100);
-      contents.setZoomFactor(zoomTo(current, to) / 100);
-      changed();
-    };
-
-    const command = (asked: DesktopBrowserCommand) => {
-      const used = (ref: BrowserTabRef) => runFork(browser.personUsed(ref));
-      switch (asked._tag) {
-        case "open": {
-          const { input, place } = asked;
-          runFork(
-            Effect.gen(function* () {
-              const tab = yield* browser.openForPerson({ private: asked.private });
-              if (!placed.has(tab.ref)) {
-                placed.set(tab.ref, {
-                  place,
-                  private: tab.private,
-                  failed: null,
-                  url: "",
-                  finding: "",
-                });
-              }
-              show(tab.ref, place);
-              if (input !== undefined && input.trim() !== "") {
-                tab.contents.loadURL(typedAddress(input)).catch(() => undefined);
-              }
-            }).pipe(Effect.catch((error) => Effect.logWarning("Opening a tab failed", error))),
-          );
-          return;
-        }
-        case "reopen": {
-          const last = closed.pop();
-          if (last === undefined) return;
-          command({ _tag: "open", input: last.url, private: false, place: asked.place });
-          return;
-        }
-        case "closeWindow":
-          panes.get("window")?.window.close();
-          return;
-        case "openDownload":
-        case "showDownload":
-        case "cancelDownload": {
-          const download = downloads.get(asked.id);
-          if (download === undefined) return;
-          if (asked._tag === "cancelDownload") download.item.cancel();
-          else if (download.entry.inDownloads && download.entry.state === "completed") {
-            // Only files in the person's downloads folder: a bot's is the server's.
-            const file = download.handedOver ?? download.item.getSavePath();
-            if (asked._tag === "showDownload") shell.showItemInFolder(file);
-            else void shell.openPath(file);
-          }
-          return;
-        }
-        default:
-          break;
-      }
-      const tab = browser.tab(asked.tab);
-      if (tab === undefined || tab.contents.isDestroyed()) return;
-      const { contents } = tab;
-      switch (asked._tag) {
-        case "close":
-          runFork(browser.close(asked.tab));
-          return;
-        case "show":
-          show(asked.tab, asked.place);
-          return;
-        case "go":
-          used(asked.tab);
-          contents.loadURL(typedAddress(asked.input)).catch(() => undefined);
-          return;
-        case "back":
-          used(asked.tab);
-          contents.navigationHistory.goBack();
-          return;
-        case "forward":
-          used(asked.tab);
-          contents.navigationHistory.goForward();
-          return;
-        case "reload": {
-          used(asked.tab);
-          const failed = placed.get(asked.tab)?.failed ?? null;
-          if (failed === null) contents.reload();
-          else contents.loadURL(failed).catch(() => undefined);
-          return;
-        }
-        case "stop":
-          contents.stop();
-          return;
-        case "zoom":
-          zoom(contents, asked.to);
-          return;
-        case "find": {
-          // Finding is looking, not using the page: the bots go on.
-          const at = placed.get(asked.tab);
-          if (at === undefined || asked.text === "") return;
-          const again = at.finding === asked.text;
-          at.finding = asked.text;
-          contents.findInPage(asked.text, { forward: asked.forward, findNext: !again });
-          return;
-        }
-        case "stopFinding": {
-          const at = placed.get(asked.tab);
-          if (at !== undefined) at.finding = "";
-          contents.stopFindInPage("keepSelection");
-          return;
-        }
-        case "print":
-          contents.print();
-          return;
-      }
-    };
+    const command = makeCommand({
+      browser,
+      places,
+      downloads,
+      show,
+      closeWindow: () => panes.get("window")?.window.close(),
+      changed,
+      runFork,
+    });
 
     // -----------------------------------------------------------------------
     // The link to the server
@@ -857,8 +630,8 @@ export const serveBrowser = (options: {
           });
           return encodeSuggestions(
             decoded.value.recent === true
-              ? recentVisits(visits)
-              : suggestionsFor(decoded.value.text, shared, visits),
+              ? recentVisits(history.visits())
+              : suggestionsFor(decoded.value.text, shared, history.visits()),
           );
         });
       }),
