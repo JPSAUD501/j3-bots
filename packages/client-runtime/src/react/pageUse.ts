@@ -47,9 +47,11 @@ export const usePageUse = (input: {
   const [state, setState] = useState<PageUseState>(NO_PAGE_USE_STATE);
   const [now, setNow] = useState(() => Date.now());
   // The newest state and `send`, for the handlers, which stay the same across renders.
-  const latest = useRef({ state, send, shared });
+  // Another device or a saved login holds the tab: nothing this device asks of it takes.
+  const elsewhere = tab?.holder._tag === "elsewhere" || tab?.holder._tag === "fill";
+  const latest = useRef({ state, send, shared, elsewhere });
   useEffect(() => {
-    latest.current = { state, send, shared };
+    latest.current = { state, send, shared, elsewhere };
   });
 
   const dispatch = useCallback((event: PageUseEvent) => {
@@ -77,6 +79,12 @@ export const usePageUse = (input: {
   useEffect(() => {
     if (ended) dispatch({ _tag: "hold-ended" });
   }, [ended, dispatch]);
+  // What this device asked of a tab another holds did not take: Wait for me must not stand once
+  // that other hold ends and the tab is nobody's.
+  const lost = elsewhere && (state.took || state.use.waiting || state.use.lastInputAt !== null);
+  useEffect(() => {
+    if (lost) dispatch({ _tag: "held-elsewhere" });
+  }, [lost, dispatch]);
 
   return {
     line: tab === null ? { _tag: "empty" } : tabLine(tab, state.use, now),
@@ -87,7 +95,9 @@ export const usePageUse = (input: {
       [dispatch],
     ),
     giveBack: useCallback(() => dispatch({ _tag: "give-back" }), [dispatch]),
-    waitForMe: useCallback(() => dispatch({ _tag: "wait-for-me" }), [dispatch]),
+    waitForMe: useCallback(() => {
+      if (!latest.current.elsewhere) dispatch({ _tag: "wait-for-me" });
+    }, [dispatch]),
     keyboard: useCallback((up: boolean) => dispatch({ _tag: "keyboard", up }), [dispatch]),
     leave: useCallback(() => dispatch({ _tag: "leave" }), [dispatch]),
   };

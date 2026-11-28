@@ -129,6 +129,7 @@ export {
 export {
   botsTab,
   botViewerTab,
+  closeFailed,
   COUNTDOWN_SECONDS,
   type FaceLight,
   followedBot,

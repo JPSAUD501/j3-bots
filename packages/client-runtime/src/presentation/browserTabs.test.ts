@@ -209,7 +209,7 @@ describe("a frozen picture", () => {
   it("says this device is offline first, then that the computer went away", () => {
     const parked = viewerTab({ where: { kind: "parked" } });
     expect(frozenOf({ tab: parked, online: false, status: "live" })._tag).toBe("you-offline");
-    expect(frozenOf({ tab: parked, online: true, status: "live" })._tag).toBe("computer-away");
+    expect(frozenOf({ tab: parked, online: true, status: "live" })._tag).toBe("parked");
     expect(frozenOf({ tab: viewerTab(), online: true, status: "reconnecting" })._tag).toBe(
       "reconnecting",
     );
@@ -249,6 +249,12 @@ describe("what the person's use of a page sends", () => {
       { _tag: "hold-ended" },
     ]);
     expect(touched.sent).toEqual(["take", "pointer", "pointer", "release"]);
+  });
+
+  it("drops Wait for me once another device is seen holding the tab", () => {
+    const refused = run(true, [{ _tag: "wait-for-me" }, { _tag: "held-elsewhere" }]);
+    expect(refused.sent).toEqual(["take"]);
+    expect(refused.state).toEqual(NO_PAGE_USE_STATE);
   });
 
   it("never holds the tab for a pointer that only moves", () => {

@@ -12,6 +12,7 @@ import {
   type SharedBrowserTab,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
+import type { IntentResult } from "../intents/Actions.ts";
 
 // A tab as the phone and the web show it (browser-ux-v2, section 4): the
 // faces of the bots on it, the one quiet line that says who acts and who
@@ -363,10 +364,21 @@ export type Frozen =
   | { readonly _tag: "live" }
   /** This device is offline: the bots go on on the computer. */
   | { readonly _tag: "you-offline" }
-  /** The tab's computer went away; the next bot to use it opens it again on the server. */
-  | { readonly _tag: "computer-away" }
+  /**
+   * No browser has the tab open now: its computer went away, it sat unused,
+   * or the server restarted. The next bot to use it opens it again.
+   */
+  | { readonly _tag: "parked" }
   /** The view lost its socket and is opening another. */
   | { readonly _tag: "reconnecting" };
+
+/**
+ * Whether closing a tab failed. A tab the server no longer knows was closed
+ * already, by a bot or another device, while Undo waited: that is done.
+ */
+export const closeFailed = (result: IntentResult): boolean =>
+  result._tag === "failed" &&
+  !(result.failure._tag === "refused" && result.failure.error._tag === "NotFound");
 
 export const frozenOf = (input: {
   readonly tab: ViewerTab | null;
@@ -374,7 +386,7 @@ export const frozenOf = (input: {
   readonly status: "connecting" | "live" | "reconnecting" | "paused" | "ended";
 }): Frozen => {
   if (!input.online) return { _tag: "you-offline" };
-  if (input.tab?.where?.kind === "parked") return { _tag: "computer-away" };
+  if (input.tab?.where?.kind === "parked") return { _tag: "parked" };
   if (input.status === "reconnecting") return { _tag: "reconnecting" };
   return { _tag: "live" };
 };
@@ -398,7 +410,13 @@ export type PageUseEvent =
   /** The person left the live view. */
   | { readonly _tag: "leave" }
   /** The hold ended here, which a server from before does not know by itself. */
-  | { readonly _tag: "hold-ended" };
+  | { readonly _tag: "hold-ended" }
+  /**
+   * Another device, or a saved login being typed, holds the tab: what this
+   * device asked of it did not take, Wait for me included, and nothing of it
+   * is held here.
+   */
+  | { readonly _tag: "held-elsewhere" };
 
 /** Whether `input` uses the page, which holds the tab, rather than only pointing at it or asking. */
 export const usesPage = (input: BrowserInput): boolean => {
@@ -470,5 +488,7 @@ export const pageUseStep = (
     // The hook says so once for a tab it took, or one the server still says this device took.
     case "hold-ended":
       return { state: { use, took: false }, send: shared ? [] : [{ type: "release" }] };
+    case "held-elsewhere":
+      return { state: NO_PAGE_USE_STATE, send: [] };
   }
 };

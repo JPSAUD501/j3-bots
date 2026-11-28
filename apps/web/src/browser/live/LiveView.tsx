@@ -554,8 +554,9 @@ const frozenLine = (frozen: Frozen, line: string, t: ReturnType<typeof useI18n>[
     case "reconnecting":
       return t("browser.reconnecting");
     case "you-offline":
-    case "computer-away":
       return t("browser.line.noConnection");
+    case "parked":
+      return t("browser.line.parked");
   }
 };
 
@@ -890,8 +891,8 @@ function InPlace({
     </div>
   );
   const body = (text: string) => <p className="max-w-80 text-sm text-muted-foreground">{text}</p>;
-  if (frozen._tag === "computer-away" || frozen._tag === "you-offline") {
-    const away = frozen._tag === "computer-away";
+  if (frozen._tag === "parked" || frozen._tag === "you-offline") {
+    const away = frozen._tag === "parked";
     return (
       <div className="relative flex-1 bg-muted">
         {still}
@@ -901,11 +902,11 @@ function InPlace({
             className="flex w-full max-w-sm flex-col gap-1.5 rounded-xl border border-border bg-surface p-5 text-start shadow-overlay"
           >
             <p className="text-base font-medium">
-              {t(away ? "browser.frozen.computerAway.title" : "browser.frozen.youOffline.title")}
+              {t(away ? "browser.frozen.parked.title" : "browser.frozen.youOffline.title")}
             </p>
             {time !== null && (
               <p className="text-sm text-muted-foreground">
-                {t(away ? "browser.frozen.computerAway.body" : "browser.frozen.youOffline.body", {
+                {t(away ? "browser.frozen.parked.body" : "browser.frozen.youOffline.body", {
                   time,
                 })}
               </p>

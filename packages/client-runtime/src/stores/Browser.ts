@@ -41,7 +41,7 @@ export type BrowserViewStatus =
   /** The first socket is opening. */
   | { readonly _tag: "connecting" }
   | { readonly _tag: "live" }
-  /** The socket dropped and the view is opening another; a tab this device held stays its own for a minute. */
+  /** The socket dropped and the view is opening another; a tab this device held stays held by the server's rules. */
   | { readonly _tag: "reconnecting" }
   /** The app is in the background: no socket until it returns. */
   | { readonly _tag: "paused" }

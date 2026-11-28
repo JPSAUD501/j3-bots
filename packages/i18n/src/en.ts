@@ -2554,9 +2554,10 @@ export const en = {
   "browser.line.now": "Now",
   "browser.line.continue": "Continue",
   "browser.line.noConnection": "No connection",
-  "browser.frozen.computerAway.title": "The computer went offline",
-  "browser.frozen.computerAway.body":
-    "This is the last picture, from {time}. The page opens again when a bot needs it.",
+  "browser.line.parked": "Paused",
+  "browser.frozen.parked.title": "This page is paused",
+  "browser.frozen.parked.body":
+    "No browser has it open now. This is the last picture, from {time}. It opens again when a bot needs it.",
   "browser.frozen.youOffline.title": "You’re offline",
   "browser.frozen.youOffline.body": "Your bots carry on. This is the last picture, from {time}.",
   "browser.card.live": "Live",

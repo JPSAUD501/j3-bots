@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { closeFailed } from "@j3-bots/client-runtime/presentation";
 import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBrowser } from "../context";
@@ -34,7 +35,7 @@ export function useClosingTabs(onFailed: () => void) {
     (ref: BrowserTabRef) => {
       timers.current.delete(ref);
       void source.closeBrowserTab(ref).then((result) => {
-        if (result._tag !== "failed") return;
+        if (!closeFailed(result)) return;
         failed.current();
         // The list drops a closed tab as the server says so; one it refused comes back.
         setClosing((now) => {

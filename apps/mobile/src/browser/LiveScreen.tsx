@@ -479,8 +479,9 @@ const frozenLine = (frozen: Frozen, line: string, t: ReturnType<typeof useI18n>[
     case "reconnecting":
       return t("browser.reconnecting");
     case "you-offline":
-    case "computer-away":
       return t("browser.line.noConnection");
+    case "parked":
+      return t("browser.line.parked");
   }
 };
 
@@ -789,8 +790,8 @@ function InPlace({
         className="absolute inset-0 opacity-40"
       />
     );
-  if (frozen._tag === "computer-away" || frozen._tag === "you-offline") {
-    const away = frozen._tag === "computer-away";
+  if (frozen._tag === "parked" || frozen._tag === "you-offline") {
+    const away = frozen._tag === "parked";
     return (
       <>
         {still}
@@ -801,11 +802,11 @@ function InPlace({
             style={{ elevation: OVERLAY_ELEVATION }}
           >
             <Text accessibilityRole="header" className="text-base font-medium text-foreground">
-              {t(away ? "browser.frozen.computerAway.title" : "browser.frozen.youOffline.title")}
+              {t(away ? "browser.frozen.parked.title" : "browser.frozen.youOffline.title")}
             </Text>
             {time !== null && (
               <Text className="text-sm text-muted-foreground">
-                {t(away ? "browser.frozen.computerAway.body" : "browser.frozen.youOffline.body", {
+                {t(away ? "browser.frozen.parked.body" : "browser.frozen.youOffline.body", {
                   time,
                 })}
               </Text>

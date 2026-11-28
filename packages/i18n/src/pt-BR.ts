@@ -2598,9 +2598,10 @@ const sentences = {
   "browser.line.now": "Agora",
   "browser.line.continue": "Continuar",
   "browser.line.noConnection": "Sem conexão",
-  "browser.frozen.computerAway.title": "O computador saiu do ar",
-  "browser.frozen.computerAway.body":
-    "Esta é a última imagem, das {time}. A página abre de novo quando um bot precisar dela.",
+  "browser.line.parked": "Em pausa",
+  "browser.frozen.parked.title": "Esta página está em pausa",
+  "browser.frozen.parked.body":
+    "Nenhum navegador está com ela aberta agora. Esta é a última imagem, das {time}. Ela abre de novo quando um bot precisar dela.",
   "browser.frozen.youOffline.title": "Você está sem internet",
   "browser.frozen.youOffline.body":
     "Seus bots seguem normalmente. Esta é a última imagem, das {time}.",

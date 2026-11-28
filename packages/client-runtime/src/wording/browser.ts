@@ -10,7 +10,7 @@ import type { TabLine } from "../presentation/browserTabs.ts";
  * failure.
  */
 export const tabOpenFailed = (failure: IntentFailure, { t }: I18n): string =>
-  refusedWith({ _tag: "failed", failure }, "browser-unavailable")
+  refusedWith(failure, "browser-unavailable")
     ? t("browser.grid.openUnavailable")
     : t("browser.grid.openFailed");
 
