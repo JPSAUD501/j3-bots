@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- the history is written as the app quits, after which no fiber runs.
+import * as NodeFS from "node:fs";
 import { HTTP_PATHS, type BrowserTabRef, type ServerOrigin } from "@j3-bots/contracts";
 import {
   BrowserLink,
@@ -211,8 +213,26 @@ export const serveBrowser = (options: {
       Effect.catch((error) => Effect.logWarning("Keeping the browser's history failed", error)),
     );
     const writeHistory = Effect.andThen(Effect.sleep(HISTORY_WRITE_DELAY), saveHistory);
-    // A visit still waiting to be written as the app quits is written then.
-    yield* Effect.addFinalizer(() => Effect.suspend(() => (writing ? saveHistory : Effect.void)));
+    // A visit still waiting to be written as the app quits is written then, before the
+    // process ends: Electron ends it on quit without closing this scope, so not in a fiber.
+    const saveHistoryNow = () => {
+      if (!writing) return;
+      writing = false;
+      try {
+        NodeFS.writeFileSync(`${historyFile}.next`, encodeHistory({ visits }));
+        NodeFS.renameSync(`${historyFile}.next`, historyFile);
+      } catch {
+        // The visits since the last write are lost; the file before them stays whole.
+      }
+    };
+    yield* Effect.acquireRelease(
+      Effect.sync(() => app.on("will-quit", saveHistoryNow)),
+      () =>
+        Effect.sync(() => {
+          app.off("will-quit", saveHistoryNow);
+          saveHistoryNow();
+        }),
+    );
     const visited = (visit: Visit) => {
       visits = withVisit(visits, visit);
       if (writing) return;

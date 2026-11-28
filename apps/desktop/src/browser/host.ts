@@ -26,7 +26,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -118,6 +117,17 @@ const SHELF_SIZE = { width: 1280, height: 800 };
 const mintRef = () => BrowserTabRef.make(randomId());
 const mintDownload = () => BrowserDownloadId.make(randomId());
 const samePage = Schema.toEquivalence(BrowserPageState);
+
+/** A file call of Node's that failed: its `code`, as `EXDEV`, and what it said. */
+interface FileFailure {
+  readonly code: string | null;
+  readonly detail: string;
+}
+const fileFailure = (cause: unknown): FileFailure => ({
+  code:
+    cause instanceof Error && "code" in cause && typeof cause.code === "string" ? cause.code : null,
+  detail: String(cause),
+});
 
 const failed = (reason: BrowserHostError["reason"], detail?: string) =>
   new BrowserHostError(
@@ -339,34 +349,71 @@ export const makeDesktopBrowser = (options: {
       NodeFS.mkdirSync(folder, { recursive: true });
       const file = NodePath.join(folder, name);
       item.setSavePath(file);
-      /** Whether the server takes the finished file; if not, it is the person's. */
-      const forServer = () => {
+      const letGo = Effect.sync(() => NodeFS.rmSync(folder, { recursive: true, force: true }));
+      /** A file too large for the server is the person's: moved to their downloads, or copied where a move cannot cross disks. */
+      const handOver = (target: string) =>
+        Effect.try({
+          try: () => NodeFS.renameSync(file, target),
+          catch: fileFailure,
+        }).pipe(
+          Effect.catchIf(
+            (failure) => failure.code === "EXDEV",
+            () =>
+              // Off the main thread: a large file would hold every window and the link meanwhile.
+              Effect.tryPromise({
+                try: () => NodeFS.promises.copyFile(file, target, NodeFS.constants.COPYFILE_EXCL),
+                catch: fileFailure,
+              }).pipe(
+                // A copy cut short leaves no part of the file behind; one refused as taken leaves that file be.
+                Effect.tapError((failure) =>
+                  failure.code === "EEXIST"
+                    ? Effect.void
+                    : Effect.promise(() =>
+                        NodeFS.promises.rm(target, { force: true }).catch(() => undefined),
+                      ),
+                ),
+              ),
+          ),
+          Effect.andThen(Effect.sync(() => options.handedOver?.(item, target))),
+          Effect.tapError((cause) =>
+            Effect.logWarning("A bot's download could not be kept", cause),
+          ),
+          Effect.ensuring(letGo),
+        );
+      const finished = Effect.fn("DesktopBrowser.botDownloadFinished")(function* () {
         const size = NodeFS.statSync(file).size;
-        // Too large for the server to keep: it stays with the person instead.
-        if (size > MAX_ATTACHMENT_SIZE) {
-          const mine = app.getPath("downloads");
-          const target = NodePath.join(
+        if (size <= MAX_ATTACHMENT_SIZE) {
+          downloads.set(download, folder);
+          return yield* tell({
+            type: "download.finished",
+            tab: entry.tab.ref,
+            download,
+            name,
+            size,
+          });
+        }
+        const mine = app.getPath("downloads");
+        yield* handOver(
+          NodePath.join(
             mine,
             freeName(name, (candidate) => NodeFS.existsSync(NodePath.join(mine, candidate))),
-          );
-          // A copy where a move cannot cross from one disk to another.
-          NodeFS.cpSync(file, target, { errorOnExist: true, force: false });
-          options.handedOver?.(item, target);
-          return false;
-        }
-        downloads.set(download, folder);
-        run(tell({ type: "download.finished", tab: entry.tab.ref, download, name, size }));
-        return true;
-      };
+          ),
+        );
+      });
       item.once("done", (_done, state) => {
-        // Thrown in Electron's listener, an error would take the app down: the file is let go instead.
-        const kept = Result.try(() => state === "completed" && forServer());
-        if (Result.isFailure(kept)) {
-          run(Effect.logWarning("A bot's download could not be kept", kept.failure));
-        }
-        if (Result.isFailure(kept) || !kept.success) {
-          NodeFS.rmSync(folder, { recursive: true, force: true });
-        }
+        // Nothing thrown in Electron's listener: an error there would take the app down.
+        run(
+          state === "completed"
+            ? Effect.suspend(finished).pipe(
+                Effect.catchDefect((cause) =>
+                  Effect.andThen(
+                    Effect.logWarning("A bot's download could not be kept", cause),
+                    letGo,
+                  ),
+                ),
+              )
+            : letGo,
+        );
       });
     };
     shared.on("will-download", onDownload);
