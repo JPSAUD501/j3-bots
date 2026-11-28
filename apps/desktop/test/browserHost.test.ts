@@ -347,7 +347,8 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
             expression: `document.querySelector("input").focus()`,
             awaitPromise: false,
           });
-          const filled = yield* host.fill({
+          const { fill } = host;
+          const filled = yield* fill({
             tab,
             field: "password",
             value: Redacted.make("not-a-real-password"),
