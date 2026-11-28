@@ -452,3 +452,61 @@ it.effect(
       assert.strictEqual(yield* callsOf(host, "tab.input"), 0);
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "keeps the screencast going for those who stay when a socket leaves with a picture it never drew",
+  () =>
+    Effect.gen(function* () {
+      const { host, laptop, phone, ref } = yield* scene;
+      const staying = yield* fakeLink;
+      yield* connect(laptop, ref, staying.link);
+      yield* eventually(Effect.map(callsOf(host, "tab.screencast"), (n) => n === 1));
+
+      // A still on the phone takes the newest picture with the laptop and leaves without drawing it.
+      const still = yield* fakeLink;
+      const stillSocket = yield* connect(phone, ref, still.link);
+      yield* host.paint(ref);
+      yield* staying.nextWhere(isPicture);
+      yield* still.nextWhere(isPicture);
+      yield* Fiber.interrupt(stillSocket);
+      yield* staying.say({ type: "ack" });
+      yield* eventually(Effect.map(ackedFrames(host), (frames) => frames.length === 1));
+      yield* host.paint(ref);
+      yield* staying.nextWhere(isPicture);
+
+      // Again with the still leaving behind the newest picture, waiting for the one it draws.
+      const second = yield* fakeLink;
+      const secondSocket = yield* connect(phone, ref, second.link);
+      yield* second.nextWhere(isPicture);
+      yield* staying.say({ type: "ack" });
+      yield* eventually(Effect.map(ackedFrames(host), (frames) => frames.length === 2));
+      yield* host.paint(ref);
+      yield* staying.nextWhere(isPicture);
+      yield* settle;
+      yield* Fiber.interrupt(secondSocket);
+      yield* staying.say({ type: "ack" });
+      yield* eventually(Effect.map(ackedFrames(host), (frames) => frames.length === 3));
+      yield* host.paint(ref);
+      yield* staying.nextWhere(isPicture);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect("asks the host again for a screencast that failed, while the feed lives", () =>
+  Effect.gen(function* () {
+    const { host, laptop, phone, ref } = yield* scene;
+    yield* host.failNext("tab.screencast");
+    const viewer = yield* fakeLink;
+    yield* connect(laptop, ref, viewer.link);
+    yield* settle;
+    assert.strictEqual(yield* callsOf(host, "tab.screencast"), 0);
+
+    yield* TestClock.adjust(Duration.seconds(1));
+    yield* eventually(Effect.map(callsOf(host, "tab.screencast"), (n) => n === 1));
+    yield* host.paint(ref);
+    yield* viewer.nextWhere(isPicture);
+    // A still that joins the feed has its picture at once.
+    const still = yield* fakeLink;
+    yield* connect(phone, ref, still.link);
+    yield* still.nextWhere(isPicture);
+  }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);

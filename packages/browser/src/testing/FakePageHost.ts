@@ -98,7 +98,10 @@ export interface FakePageHost extends PageHost {
   readonly restart: Effect.Effect<void>;
   /** The host empties its store, under the new id `cookieStore`, as a desktop does when revoked. */
   readonly emptyStore: (cookieStore: string | undefined) => Effect.Effect<void>;
-  /** The next sign-ins call named `call` (`cookies.write`, `storage.read`, …) fails, doing nothing. */
+  /**
+   * The next call named `call` fails, doing nothing: a sign-ins call
+   * (`cookies.write`, `storage.read`, …), or `tab.screencast`.
+   */
   readonly failNext: (call: string) => Effect.Effect<void>;
   /**
    * While `held`, a page of `origin` holds its databases open: a write of
@@ -462,23 +465,29 @@ export const makeFakePageHost = (
               Effect.acquireRelease(
                 // Recorded once watching, so a test that waits for the call loses no picture.
                 Effect.suspend(() => {
-                  if (watchers.has(tab))
+                  if (failing.delete("tab.screencast"))
                     return Effect.fail(
-                      new BrowserHostError({
-                        reason: "refused",
-                        detail: "This tab is already being watched; its one screencast is shared.",
-                      }),
+                      new BrowserHostError({ reason: "page", detail: "A test failed it." }),
                     );
-                  watchers.set(tab, { queue, out: undefined, next: undefined });
+                  // As a real host does, the newest takes the place of a screencast that runs.
+                  const before = watchers.get(tab);
+                  if (before !== undefined) Queue.endUnsafe(before.queue);
+                  const mine: Watcher = { queue, out: undefined, next: undefined };
+                  watchers.set(tab, mine);
                   return Effect.sync(() => {
                     calls.push({
                       call: "tab.screencast",
                       tab,
                       size: { maxWidth, maxHeight, quality },
                     });
+                    return mine;
                   });
                 }),
-                () => Effect.sync(() => watchers.delete(tab)),
+                // One that took this one's place keeps the tab.
+                (mine) =>
+                  Effect.sync(() => {
+                    if (watchers.get(tab) === mine) watchers.delete(tab);
+                  }),
               ),
             ).pipe(
               Stream.map((frame) => ({
