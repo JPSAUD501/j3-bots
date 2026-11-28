@@ -13,7 +13,11 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { type BrowserHostNeeds, inspectBrowserHost } from "../browser/server/hostNeeds.ts";
+import {
+  type BrowserHostNeeds,
+  hostProbes,
+  inspectBrowserHost,
+} from "../browser/server/hostNeeds.ts";
 import { freeSpaceAt } from "./freeSpace.ts";
 import { type PortState, portStateOf } from "./Ports.ts";
 import { runPowerShell } from "./PowerShell.ts";
@@ -168,6 +172,7 @@ export const layer = Layer.effect(
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
     const user = NodeOs.userInfo();
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const probes = yield* hostProbes;
 
     return Host.of({
       nodeVersion: process.versions.node,
@@ -249,7 +254,7 @@ export const layer = Layer.effect(
       ),
       browserNeeds: Effect.fn("Host.browserNeeds")(
         (input: { readonly home: string; readonly sandboxRefused: boolean }) =>
-          inspectBrowserHost(input),
+          inspectBrowserHost({ ...input, probes }),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

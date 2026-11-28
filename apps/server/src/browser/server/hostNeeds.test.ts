@@ -10,10 +10,12 @@ import * as Option from "effect/Option";
 import { chromeFolders, chromePlatformOf } from "./chrome.ts";
 import {
   apparmorProfile,
+  type HostProbes,
   inspectBrowserHost,
   missingLibrariesOf,
   offeredPackagesOf,
   setupOf,
+  type SystemTool,
 } from "./hostNeeds.ts";
 
 describe("the server browser's host setup", () => {
@@ -106,9 +108,43 @@ describe("the server browser's host setup", () => {
     assert.deepStrictEqual([...offeredPackagesOf(policy)], ["libasound2t64", "libnss3"]);
   });
 
+  /**
+   * A Debian host, as the probes report it: apt offers the `t64` names, no
+   * sandbox restriction, a font, and `ldd` listing the library the loader
+   * misses. Each tool run is recorded.
+   */
+  const debianHost = () => {
+    const runs: Array<{ readonly tool: SystemTool; readonly args: ReadonlyArray<string> }> = [];
+    const probes: HostProbes = {
+      tool: (tool, args) =>
+        Effect.sync(() => {
+          runs.push({ tool, args });
+          switch (tool) {
+            case "ldd":
+              return "\tlinux-vdso.so.1 (0x00007ffd)\n\tlibgbm.so.1 => not found";
+            case "fc-match":
+              return "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
+            case "apt-cache":
+              return [
+                "libasound2t64:",
+                "  Installed: (none)",
+                "  Candidate: 1.2.11-1build2",
+                "libasound2:",
+                "  Installed: (none)",
+                "  Candidate: (none)",
+              ].join("\n");
+          }
+        }),
+      exists: (file) => Effect.succeed(file === "/usr/bin/apt-get"),
+      read: () => Effect.succeed("0"),
+    };
+    return { probes, runs: () => runs };
+  };
+
   const platform = Option.getOrUndefined(chromePlatformOf(process.platform, process.arch));
+  // The browser it runs is a script, as the loader would answer for Chrome.
   it.effect.skipIf(process.platform !== "linux" || platform === undefined)(
-    "checks the libraries of the browser the server downloaded, once it has",
+    "checks the libraries of the browser the server downloaded, once it has, and the packages apt offers for them",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -122,20 +158,31 @@ describe("the server browser's host setup", () => {
             yield* fs.writeFileString(executable, `#!/bin/sh\n${script}\n`);
             yield* fs.chmod(executable, 0o755);
           });
+        const host = debianHost();
+        const inspect = inspectBrowserHost({ home, sandboxRefused: false, probes: host.probes });
+        const aptRuns = () => host.runs().filter((run) => run.tool === "apt-cache");
 
-        const before = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        const before = yield* inspect;
         assert.isFalse(before.downloaded);
         assert.deepStrictEqual(before.missingLibraries, []);
+        assert.deepStrictEqual(aptRuns(), []);
 
         yield* browser(
           "echo 'chrome: error while loading shared libraries: libgbm.so.1: cannot open shared object file' >&2; exit 127",
         );
-        const broken = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        const broken = yield* inspect;
         assert.isTrue(broken.downloaded);
         assert.deepStrictEqual(broken.missingLibraries, ["libgbm.so.1"]);
+        // One apt-cache run asks for every name.
+        const [asked, ...more] = aptRuns();
+        assert.deepStrictEqual(more, []);
+        assert.includeMembers([...(asked?.args ?? [])], ["policy", "libasound2t64", "libasound2"]);
+        const install = broken.setup.find((command) => command.includes(" install ")) ?? "";
+        assert.include(install.split(" "), "libasound2t64");
+        assert.notInclude(install.split(" "), "libasound2");
 
         yield* browser("echo 'Google Chrome for Testing 158.0.8127.88'");
-        const working = yield* inspectBrowserHost({ home, sandboxRefused: false });
+        const working = yield* inspect;
         assert.deepStrictEqual(working.missingLibraries, []);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

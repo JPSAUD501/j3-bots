@@ -226,54 +226,93 @@ export const offeredPackagesOf = (policy: string): ReadonlySet<string> => {
   return offered;
 };
 
+/** The system tools the host check runs. */
+export type SystemTool = "ldd" | "fc-match" | "apt-cache";
+
+/**
+ * What the host check asks of the system, apart from the browser itself,
+ * which it runs: a host's tools and files, given apart so a test can answer
+ * for them.
+ */
+export interface HostProbes {
+  /**
+   * What `tool` prints for `args`, its errors too with `includeStderr`, in
+   * the C locale: empty when the tool is missing, fails or takes over 5 s.
+   */
+  readonly tool: (
+    tool: SystemTool,
+    args: ReadonlyArray<string>,
+    includeStderr: boolean,
+  ) => Effect.Effect<string>;
+  /** Whether a system file exists. */
+  readonly exists: (file: string) => Effect.Effect<boolean>;
+  /** A system file's text, empty when it cannot be read. */
+  readonly read: (file: string) => Effect.Effect<string>;
+}
+
+/**
+ * What `command` prints for `args`, in the C locale, as the output is read
+ * for words a translation would change: empty when it fails or takes over 5 s.
+ */
+const printed = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  command: string,
+  args: ReadonlyArray<string>,
+  includeStderr: boolean,
+) =>
+  spawner
+    .string(
+      ChildProcess.make(command, args, { stdin: "ignore", env: { LC_ALL: "C" }, extendEnv: true }),
+      { includeStderr },
+    )
+    .pipe(
+      Effect.timeout("5 seconds"),
+      Effect.orElseSucceed(() => ""),
+    );
+
+/** This host's tools and files. */
+export const hostProbes = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return {
+    tool: (tool, args, includeStderr) => printed(spawner, tool, args, includeStderr),
+    exists: (file) => fs.exists(file).pipe(Effect.orElseSucceed(() => false)),
+    read: (file) => fs.readFileString(file).pipe(Effect.orElseSucceed(() => "")),
+  } satisfies HostProbes;
+});
+
 /**
  * What the server's browser needs from this Linux host, for the server's
  * `home`. `sandboxRefused`: the server found the sandbox blocked when it last
- * started the browser, which the files here may not show.
+ * started the browser, which the files here may not show. `probes`: the
+ * host's tools and files (`hostProbes`).
  */
 export const inspectBrowserHost = Effect.fn("browser.inspectBrowserHost")(function* (input: {
   readonly home: string;
   readonly sandboxRefused: boolean;
+  readonly probes: HostProbes;
 }) {
-  const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  // In the C locale, as the output is read for words a translation would change.
-  const output = (command: string, args: ReadonlyArray<string>, includeStderr: boolean) =>
-    spawner
-      .string(
-        ChildProcess.make(command, args, {
-          stdin: "ignore",
-          env: { LC_ALL: "C" },
-          extendEnv: true,
-        }),
-        { includeStderr },
-      )
-      .pipe(
-        Effect.timeout("5 seconds"),
-        Effect.orElseSucceed(() => ""),
-      );
-
-  const restricted = yield* fs.readFileString(USERNS_RESTRICTION).pipe(
-    Effect.map((value) => value.trim() === "1"),
-    Effect.orElseSucceed(() => false),
-  );
-  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
+  const { probes } = input;
+  const restricted = (yield* probes.read(USERNS_RESTRICTION)).trim() === "1";
   const browser = yield* installedBrowser(input.home);
   const missingLibraries = yield* Option.match(browser, {
     onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
     onSome: Effect.fnUntraced(function* (executable) {
       // `--version` first: ldd can name a library that the loader still
       // finds, as NixOS's nix-ld provides.
-      const loaderError = LOADER_ERROR.exec(yield* output(executable, ["--version"], true))?.[1];
+      const loaderError = LOADER_ERROR.exec(
+        yield* printed(spawner, executable, ["--version"], true),
+      )?.[1];
       if (loaderError === undefined) return [];
-      return missingLibrariesOf(loaderError, yield* output("ldd", [executable], true));
+      return missingLibrariesOf(loaderError, yield* probes.tool("ldd", [executable], true));
     }),
   });
   // Without fontconfig there is no `fc-match`, which counts as no font.
   const noFonts =
-    (yield* output("fc-match", ["--format=%{file}", "sans-serif"], false)).trim() === "";
+    (yield* probes.tool("fc-match", ["--format=%{file}", "sans-serif"], false)).trim() === "";
   const sandbox: SandboxBlock = restricted
-    ? !(yield* exists(APPARMOR_PROFILE))
+    ? !(yield* probes.exists(APPARMOR_PROFILE))
       ? "no-profile"
       : input.sandboxRefused
         ? "profile-unloaded"
@@ -282,15 +321,17 @@ export const inspectBrowserHost = Effect.fn("browser.inspectBrowserHost")(functi
       ? "unknown"
       : "none";
   // apt-cache reads the package lists without root, every name in one run.
-  const debianLibraries = output("apt-cache", ["policy", ...DEBIAN_PACKAGES.flat()], false).pipe(
-    Effect.map((policy) => {
-      const offered = offeredPackagesOf(policy);
-      return DEBIAN_PACKAGES.map((names) => names.find((name) => offered.has(name)) ?? names[0]);
-    }),
-  );
-  const packageManager: PackageManager = (yield* exists("/usr/bin/apt-get"))
+  const debianLibraries = probes
+    .tool("apt-cache", ["policy", ...DEBIAN_PACKAGES.flat()], false)
+    .pipe(
+      Effect.map((policy) => {
+        const offered = offeredPackagesOf(policy);
+        return DEBIAN_PACKAGES.map((names) => names.find((name) => offered.has(name)) ?? names[0]);
+      }),
+    );
+  const packageManager: PackageManager = (yield* probes.exists("/usr/bin/apt-get"))
     ? { _tag: "apt-get", libraries: missingLibraries.length === 0 ? [] : yield* debianLibraries }
-    : (yield* exists("/usr/bin/dnf"))
+    : (yield* probes.exists("/usr/bin/dnf"))
       ? { _tag: "dnf" }
       : { _tag: "none" };
   return {
