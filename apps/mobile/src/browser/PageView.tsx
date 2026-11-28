@@ -99,6 +99,7 @@ export interface PageViewHandle {
  */
 export function PageView({
   tabRef,
+  address,
   view,
   page,
   usable,
@@ -113,6 +114,8 @@ export function PageView({
   children,
 }: {
   readonly tabRef: BrowserTabRef;
+  /** The page's address: the bots' pointers show afresh once it changes. */
+  readonly address: string;
   readonly view: BrowserViewHandle;
   readonly page: PageSize | null;
   /** Whether the person's touches reach the page: not while it is frozen. */
@@ -383,7 +386,15 @@ export function PageView({
           />
         ))}
       {drawn !== null && page !== null && (
-        <BotCursors cursors={cursors} onIt={onIt} drawn={drawn} page={page} faded={holding} />
+        <BotCursors
+          cursors={cursors}
+          tab={tabRef}
+          address={address}
+          onIt={onIt}
+          drawn={drawn}
+          page={page}
+          faded={holding}
+        />
       )}
       {mark !== null && (
         <Animated.View

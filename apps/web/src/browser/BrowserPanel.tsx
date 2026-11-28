@@ -6,6 +6,7 @@ import { useI18n } from "../app/context";
 import { useBrowser, useBrowserTabs } from "./context";
 import { Faces } from "./Faces";
 import { useWaitingBots } from "./waiting";
+import { preloadBrowserViewer } from "./live/slots";
 import { useStill } from "./still";
 import { botViewerTab, frontTab, siteOf, tabFaces } from "@j3-bots/client-runtime/presentation";
 
@@ -27,6 +28,10 @@ export function BrowserPanel({
 }) {
   const tabs = useBrowserTabs(bot.id);
   const tab = tabs === null ? null : frontTab(tabs);
+  const hasTab = tab !== null;
+  useEffect(() => {
+    if (hasTab) preloadBrowserViewer();
+  }, [hasTab]);
   if (tab === null) return null;
   return <Panel tab={tab} working={bot.state._tag === "working"} onOpen={() => onOpen(tab)} />;
 }

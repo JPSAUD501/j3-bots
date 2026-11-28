@@ -77,7 +77,7 @@ function Card({
         onPress={open}
         className="overflow-hidden rounded-xl border border-border bg-surface"
       >
-        <Picture tabRef={tab.ref} live={live} onIt={tab.onIt} width={width} />
+        <Picture tabRef={tab.ref} address={tab.url} live={live} onIt={tab.onIt} width={width} />
         <View className="min-h-11 flex-row items-center gap-2 px-3 py-2">
           <Icon icon={AppWindow} size={16} color="accent-muted-foreground" />
           <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
@@ -98,11 +98,13 @@ function Card({
  */
 function Picture({
   tabRef,
+  address,
   live,
   onIt,
   width,
 }: {
   readonly tabRef: BrowserTabRef;
+  readonly address: string;
   readonly live: boolean;
   readonly onIt: ReadonlyArray<BotId>;
   readonly width: number;
@@ -151,7 +153,15 @@ function Picture({
         <Image source={{ uri: last.uri }} resizeMode="contain" className="size-full" />
       )}
       {view !== null && drawn !== null && page !== null && (
-        <BotCursors cursors={cursors} onIt={onIt} drawn={drawn} page={page} faded={false} />
+        <BotCursors
+          cursors={cursors}
+          tab={tabRef}
+          address={address}
+          onIt={onIt}
+          drawn={drawn}
+          page={page}
+          faded={false}
+        />
       )}
     </View>
   );

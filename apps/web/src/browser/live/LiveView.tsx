@@ -392,6 +392,7 @@ function TabLive({
           <LivePage
             ref={page}
             tabRef={tab.ref}
+            address={tab.url}
             view={tabView.view}
             page={state?.viewport ?? null}
             usable={usable}

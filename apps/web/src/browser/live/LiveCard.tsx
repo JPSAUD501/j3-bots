@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserViewHandle } from "@j3-bots/client-runtime";
-import { botsTab, siteOf, tabFaces, type ViewerTab } from "@j3-bots/client-runtime/presentation";
-import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
+import { siteOf, tabFaces, type ViewerTab } from "@j3-bots/client-runtime/presentation";
+import type { BrowserTabRef } from "@j3-bots/contracts";
 import { AppWindowIcon } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../../app/context";
 import { BotCursors } from "../BotCursors";
-import { useBrowser, useViewerTabs } from "../context";
+import { useBrowser } from "../context";
 import { Faces } from "../Faces";
 import { viewSize, type Size } from "../input";
 import { viewLockName } from "../kept";
@@ -24,12 +24,6 @@ const CARD_QUALITY = 50;
 /** How long the card waits to look again once a view of the tab took its place. */
 const LOOK_AGAIN_MS = 5_000;
 
-/** The tab the bot is on now, or null while it is on none. */
-function useBotsTab(botId: BotId): ViewerTab | null {
-  const { tabs } = useViewerTabs(botId);
-  return tabs === null ? null : botsTab(tabs, botId);
-}
-
 /**
  * At the end of a bot's conversation while it browses, as on the phone: the
  * page in small, live, with its pointer, and under it the site and the faces
@@ -38,13 +32,13 @@ function useBotsTab(botId: BotId): ViewerTab | null {
  * conversation is opened again.
  */
 export function LiveCard({
-  botId,
+  tab,
   onOpen,
 }: {
-  readonly botId: BotId;
+  /** The tab the bot is on now, or null once it left it. */
+  readonly tab: ViewerTab | null;
   readonly onOpen: (ref: BrowserTabRef) => void;
 }) {
-  const tab = useBotsTab(botId);
   // The last tab the card showed, which stays as a still picture once the bot is done.
   const [last, setLast] = useState<ViewerTab | null>(tab);
   if (tab !== null && tab !== last) setLast(tab);
@@ -223,39 +217,16 @@ function Picture({ tab, live }: { readonly tab: ViewerTab; readonly live: boolea
           className="pointer-events-none absolute"
           style={{ left: drawn.left, top: drawn.top, width: drawn.width, height: drawn.height }}
         >
-          <BotCursors view={view} viewport={page} onIt={tab.onIt} faded={false} />
+          <BotCursors
+            view={view}
+            tab={tab.ref}
+            address={tab.url}
+            viewport={page}
+            onIt={tab.onIt}
+            faded={false}
+          />
         </span>
       )}
     </span>
-  );
-}
-
-/**
- * "See the browser", over the top of a conversation scrolled away from its
- * end, where the live card is, while the bot browses.
- */
-export function BrowserPill({
-  botId,
-  shown,
-  onOpen,
-}: {
-  readonly botId: BotId;
-  readonly shown: boolean;
-  readonly onOpen: (ref: BrowserTabRef) => void;
-}) {
-  const { t } = useI18n();
-  const tab = useBotsTab(botId);
-  if (tab === null || !shown) return null;
-  return (
-    <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
-      <button
-        type="button"
-        onClick={() => onOpen(tab.ref)}
-        className="pointer-events-auto flex min-h-11 items-center gap-2 rounded-pill border border-border bg-surface px-4 text-sm font-medium shadow-overlay focus-visible:outline-2 focus-visible:outline-accent"
-      >
-        <AppWindowIcon aria-hidden className="size-4" />
-        {t("browser.pill")}
-      </button>
-    </div>
   );
 }

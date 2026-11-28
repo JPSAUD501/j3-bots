@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot } from "@j3-bots/contracts";
-import { resolveAvatar } from "@j3-bots/design-tokens";
+import { motion, resolveAvatar } from "@j3-bots/design-tokens";
 import { BotAvatar } from "../components/avatar/BotAvatar";
 import { cn } from "../lib/cn";
+import { useReducedMotion } from "../onboarding/motion";
 
 /**
  * A bot's own pointer over the page, in its color, with a small label of its
@@ -10,7 +11,9 @@ import { cn } from "../lib/cn";
  * name folds to the face once the pointer has been still a while (`named`
  * false). A click rings where it landed; `clicked` is the click's sequence,
  * so each ring is its own. It fades while the person holds the tab. `at` is
- * where it points, as fractions of the page's width and height.
+ * where it points, as fractions of the page's width and height. It fades in
+ * where it first points, and glides from there to each next spot, taking
+ * `glide` ms; under reduced motion it moves at once.
  */
 export function BotCursor({
   bot,
@@ -18,22 +21,28 @@ export function BotCursor({
   clicked,
   named,
   faded = false,
+  glide = motion.glide,
 }: {
   readonly bot: Bot;
   readonly at: { readonly x: number; readonly y: number };
   readonly clicked: number | null;
   readonly named: boolean;
   readonly faded?: boolean;
+  readonly glide?: number;
 }) {
   const ink = `var(--bot-${resolveAvatar(bot.profile.avatar).color})`;
+  const move = useReducedMotion() ? 0 : glide;
   return (
     <span
       aria-hidden
-      className={cn(
-        "pointer-events-none absolute transition-[left,top,opacity] duration-(--duration-state) ease-out",
-        faded && "opacity-35",
-      )}
-      style={{ left: `${at.x * 100}%`, top: `${at.y * 100}%` }}
+      className={cn("fade-in pointer-events-none absolute", faded && "opacity-35")}
+      style={{
+        left: `${at.x * 100}%`,
+        top: `${at.y * 100}%`,
+        transitionProperty: "left, top, opacity",
+        transitionDuration: `${move}ms, ${move}ms, var(--duration-state)`,
+        transitionTimingFunction: "var(--ease-glide), var(--ease-glide), var(--ease-out)",
+      }}
     >
       {clicked !== null && (
         <span

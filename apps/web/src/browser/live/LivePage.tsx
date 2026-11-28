@@ -89,6 +89,7 @@ const tabKey = (step: "next" | "previous"): ReadonlyArray<BrowserInput> => {
  */
 export function LivePage({
   tabRef,
+  address,
   view,
   page,
   usable,
@@ -106,6 +107,8 @@ export function LivePage({
   children,
 }: {
   readonly tabRef: BrowserTabRef;
+  /** The page's address: the bots' pointers show afresh once it changes. */
+  readonly address: string;
   readonly view: BrowserViewHandle;
   readonly page: PageSize | null;
   /** Whether the person's touches reach the page: not while it is frozen or used elsewhere. */
@@ -487,7 +490,14 @@ export function LivePage({
           className="pointer-events-none absolute"
           style={{ left: drawn.left, top: drawn.top, width: drawn.width, height: drawn.height }}
         >
-          <BotCursors view={view} viewport={page} onIt={onIt} faded={holding} />
+          <BotCursors
+            view={view}
+            tab={tabRef}
+            address={address}
+            viewport={page}
+            onIt={onIt}
+            faded={holding}
+          />
         </div>
       )}
       {mark !== null && (

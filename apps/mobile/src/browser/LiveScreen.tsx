@@ -368,6 +368,7 @@ function TabLive({
             <PageView
               ref={page}
               tabRef={tab.ref}
+              address={tab.url}
               view={view}
               page={state?.viewport ?? null}
               usable={usable}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserViewHandle } from "@j3-bots/client-runtime";
-import type { BotId, BrowserInput } from "@j3-bots/contracts";
+import type { BotId, BrowserInput, BrowserTabRef } from "@j3-bots/contracts";
 import {
   useEffect,
   useEffectEvent,
@@ -22,6 +22,9 @@ const TOUCH_SLOP = 8;
 interface SurfaceProps {
   readonly view: BrowserViewHandle;
   /** The page's size in CSS pixels; null until the server says. */
+  /** The tab and its page's address: the bots' pointers show afresh once either changes. */
+  readonly tab: BrowserTabRef;
+  readonly address: string;
   readonly viewport: Size | null;
   /** The stage's size: the picture is drawn as large as fits in it. */
   readonly box: Size;
@@ -55,6 +58,8 @@ const contain = (box: Size, aspect: number): Size =>
  */
 export function BrowserSurface({
   view,
+  tab,
+  address,
   viewport,
   box,
   usable,
@@ -335,7 +340,14 @@ export function BrowserSurface({
           usable ? "cursor-default touch-none" : "pointer-events-none",
         )}
       />
-      <BotCursors view={view} viewport={viewport} onIt={onIt} faded={holding} />
+      <BotCursors
+        view={view}
+        tab={tab}
+        address={address}
+        viewport={viewport}
+        onIt={onIt}
+        faded={holding}
+      />
       {usable && (
         <PageField
           ref={field}

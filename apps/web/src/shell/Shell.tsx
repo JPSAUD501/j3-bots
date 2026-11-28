@@ -34,10 +34,9 @@ import {
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
-import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
+import type { BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
-import { BrowserPill, LiveCard } from "../browser/live/LiveCard";
-import { LiveView } from "../browser/live/LiveView";
+import { BrowserPill, BrowserViewer, LiveCardSlot, LiveView } from "../browser/live/slots";
 import { NeedsYouTitle } from "../browser/live/NeedsYouTitle";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
@@ -186,8 +185,13 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const detailsModal = layout === "phone" || layout === "tablet";
   const detailsCover = item !== null && aside !== null && detailsModal;
   const viewerRef = useRef<BrowserViewerHandle>(null);
+  // The viewer winds down its tab before it closes; until its code is here it holds none.
+  const closeBrowser = (next: () => void = () => navigation.setBrowser(null)) => {
+    if (viewerRef.current === null) next();
+    else viewerRef.current.requestClose(next);
+  };
   const closeAside = () => {
-    if (aside === "browser") viewerRef.current?.requestClose();
+    if (aside === "browser") closeBrowser();
     else navigation.setDetailsOpen(false);
   };
   const selectionKey =
@@ -507,7 +511,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         : null;
     const toggleDetails = () =>
       aside === "browser"
-        ? viewerRef.current?.requestClose(() => navigation.setDetailsOpen(true))
+        ? closeBrowser(() => navigation.setDetailsOpen(true))
         : navigation.setDetailsOpen(!detailsOpen);
     const browserBot = item._tag === "bot" ? item.bot : null;
     const goToEntry = (entryId: EntryId) => {
@@ -645,7 +649,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                 </AppStageProvider>
                 {/* Below the wide layout, the phone's live card ends the bot's conversation while it browses. */}
                 {browserBot !== null && layout !== "wide" && (
-                  <LiveCard botId={browserBot.id} onOpen={navigation.setBrowser} />
+                  <LiveCardSlot botId={browserBot.id} onOpen={navigation.setBrowser} />
                 )}
               </div>
             </div>

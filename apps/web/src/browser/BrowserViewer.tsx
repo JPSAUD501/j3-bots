@@ -195,6 +195,8 @@ function TabPane({
           <>
             <BrowserSurface
               view={tabView.view}
+              tab={shown.ref}
+              address={shown.url}
               viewport={state?.viewport ?? null}
               box={{ width: Math.max(box.width - 24, 64), height: Math.max(box.height - 24, 64) }}
               usable={usable}
