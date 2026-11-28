@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BrowserCookie, BrowserCookieSameSite } from "@j3-bots/contracts";
+import type { BrowserCookie, BrowserCookieKey, BrowserCookieSameSite } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -95,4 +95,21 @@ export const cdpParamOf = (cookie: BrowserCookie): CdpCookieParam => ({
   ...(cookie.sameSite === "unspecified" ? {} : { sameSite: CDP_OF_SAME_SITE[cookie.sameSite] }),
   ...(cookie.expires === undefined ? {} : { expires: cookie.expires }),
   ...(cookie.partition === undefined ? {} : { partitionKey: cookie.partition }),
+});
+
+/**
+ * The parameters that remove the cookie `key` names, for
+ * `Storage.setCookies`: the same cookie, expired, since `Storage` removes no
+ * single cookie of a browser context. Secure, so it replaces one set over
+ * https or not.
+ */
+export const cdpRemovalOf = (key: BrowserCookieKey): CdpCookieParam => ({
+  name: key.name,
+  value: "",
+  ...(key.hostOnly ? { url: `https://${key.domain}${key.path}` } : { domain: `.${key.domain}` }),
+  path: key.path,
+  secure: true,
+  httpOnly: false,
+  expires: 1,
+  ...(key.partition === undefined ? {} : { partitionKey: key.partition }),
 });

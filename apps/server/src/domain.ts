@@ -155,8 +155,6 @@ export const layer = Layer.mergeAll(
   Layer.provideMerge(OAuthSignIns.layer),
   Layer.provideMerge(ConnectorAuth.layer.pipe(Layer.provide(OAuthSignIns.connectorsLayer))),
   Layer.provideMerge(Reactions.layer),
-  // The shared sign-ins, and the one move of the engine's browser's into them.
-  Layer.provideMerge(BrowserBringIn.layer.pipe(Layer.provideMerge(BrowserSignIns.layer))),
   Layer.provideMerge(
     Layer.mergeAll(
       Ledger.layer,
@@ -166,7 +164,14 @@ export const layer = Layer.mergeAll(
       Layer.mergeAll(BrowserViewers.layer, Browser.tabAccessLayer).pipe(
         Layer.provideMerge(Browser.layer),
       ),
-      Secrets.layer,
+    ),
+  ),
+  // The shared sign-ins every browser host syncs with, and the one move of
+  // the engine's browser's into them.
+  Layer.provideMerge(
+    BrowserBringIn.layer.pipe(
+      Layer.provideMerge(BrowserSignIns.layer),
+      Layer.provideMerge(Secrets.layer),
     ),
   ),
   Layer.provideMerge(

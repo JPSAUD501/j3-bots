@@ -980,6 +980,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         case "tab.focused":
         case "person.input":
         case "pointer":
+        case "download.finished":
           return Effect.void;
       }
     };

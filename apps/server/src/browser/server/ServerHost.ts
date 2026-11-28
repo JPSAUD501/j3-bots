@@ -17,11 +17,15 @@ import {
   MAX_ATTACHMENT_SIZE,
 } from "@j3-bots/contracts";
 import {
+  cdpParamOf,
+  cdpRemovalOf,
+  cookieOfCdp,
   type DriverPage,
   driverTabCalls,
   hostErrorOf,
   makeDriverPage,
   type PageHost,
+  type PageHostPayload,
 } from "@j3-bots/browser";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,6 +33,7 @@ import * as Encoding from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
@@ -44,7 +49,31 @@ import {
   type Page,
 } from "playwright-core";
 import { CHROME_VERSION, type ChromePlatform } from "./chrome.ts";
-import { CdpCookies, fromCdp, removalOf, toCdp } from "./cookies.ts";
+
+/** Cookies as `Storage.getCookies` answers, each read by the shared mapping. */
+const CdpCookies = Schema.Struct({ cookies: Schema.Array(Schema.Unknown) });
+
+/** What signing out clears of an origin besides cookies, as `Storage.clearDataForOrigin` names it. */
+const CLEARED_STORAGE = [
+  "local_storage",
+  "indexeddb",
+  "cache_storage",
+  "service_workers",
+  "file_systems",
+  "websql",
+  "shared_storage",
+  "storage_buckets",
+].join(",");
+
+/** An address's origin, for http and https alone. */
+const webOriginOf = (url: string): string | undefined => {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /** The page size every server tab has, in CSS pixels: a laptop's. */
 const VIEWPORT = { width: 1280, height: 800 } as const;
@@ -239,6 +268,8 @@ export const launchServerHost = (input: {
     const opening = new Map<BrowserTabRef, Deferred.Deferred<DriverPage, BrowserHostError>>();
     /** Downloads reported and not taken yet. */
     const downloads = new Map<BrowserDownloadId, Download>();
+    /** Every origin a frame of a tab showed, which signing out of all sites clears. */
+    const shownOrigins = new Set<string>();
     /** Runs a page's callback's work in the host's scope. */
     const run = yield* FiberSet.makeRuntime<never>();
 
@@ -273,6 +304,10 @@ export const launchServerHost = (input: {
         Stream.runForEach((state) => publish({ type: "tab.changed", page: state })),
         Effect.forkIn(scope),
       );
+      page.on("framenavigated", (frame) => {
+        const origin = webOriginOf(frame.url());
+        if (origin !== undefined) shownOrigins.add(origin);
+      });
       // A page this one opens, as a sign-in's pop-up, is a tab of its own,
       // kept on this browser, since it needs its opener.
       page.on("popup", (popup) => {
@@ -383,11 +418,13 @@ export const launchServerHost = (input: {
           ),
         ),
       ),
-      Effect.map(({ cookies }) => ({ cookies: cookies.map(fromCdp) })),
+      Effect.map(({ cookies }) => ({
+        cookies: cookies.flatMap((cookie) => Option.toArray(cookieOfCdp(cookie))),
+      })),
     );
 
     const writeCookies = (changes: BrowserCookieChanges) => {
-      const params = [...changes.set.map(toCdp), ...changes.removed.map(removalOf)];
+      const params = [...changes.set.map(cdpParamOf), ...changes.removed.map(cdpRemovalOf)];
       return params.length === 0
         ? Effect.void
         : send(() =>
@@ -441,6 +478,30 @@ export const launchServerHost = (input: {
           ),
         { discard: true },
       );
+
+    /**
+     * Deletes the site data of `clear`'s origins, or of every origin a tab
+     * showed, besides cookies, from a page of the context: CDP's `Storage`
+     * clears the storage of the target's own browser context (**Assumed**).
+     */
+    const clearStorage = (clear: PageHostPayload<"storage.clear">["clear"]) => {
+      const origins = "all" in clear ? [...shownOrigins] : clear.origins;
+      return origins.length === 0
+        ? Effect.void
+        : send(async () => {
+            const page = await context.newPage();
+            try {
+              const cdp = await context.newCDPSession(page);
+              for (const origin of origins)
+                await cdp.send("Storage.clearDataForOrigin", {
+                  origin,
+                  storageTypes: CLEARED_STORAGE,
+                });
+            } finally {
+              await page.close();
+            }
+          });
+    };
 
     /**
      * The tab's page: the one open, the one opening, or a new one, so a ref
@@ -528,6 +589,7 @@ export const launchServerHost = (input: {
       writeCookies,
       readStorage,
       writeStorage,
+      clearStorage,
       putFile,
       takeDownload,
       tabCount: Effect.sync(() => tabs.size),
