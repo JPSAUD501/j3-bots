@@ -4,6 +4,7 @@ import * as NodeModule from "node:module";
 import { AppLinkUrl, BRIDGE_KEY, OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
 
@@ -50,6 +51,30 @@ export const launch = (profile: string, args: ReadonlyArray<string> = []) =>
     ),
     // A no-op once the check has closed it.
     (app: ElectronApplication) => Effect.promise(() => app.close()),
+  );
+
+/** The paths of the app's windows other than the main one. */
+const OTHER_WINDOWS = new Set(["/quick", "/record", "/browser"]);
+
+/**
+ * The main window's page, once it has one. Not simply the first page: the
+ * app's browser keeps pages of its own (its tabs and the probe of its
+ * sign-ins), and quick access has a window of its own.
+ */
+export const mainWindow = (app: ElectronApplication) =>
+  Effect.sync(() =>
+    app.windows().find((page) => {
+      const url = URL.parse(page.url());
+      return url !== null && url.protocol === "j3bots-dev:" && !OTHER_WINDOWS.has(url.pathname);
+    }),
+  ).pipe(
+    Effect.filterOrFail(
+      (page): page is Page => page !== undefined,
+      () => "not yet",
+    ),
+    Effect.retry(Schedule.spaced("100 millis")),
+    Effect.timeout(STEP),
+    Effect.orDie,
   );
 
 /** A link to the development build, which takes `j3bots-dev:` links. */

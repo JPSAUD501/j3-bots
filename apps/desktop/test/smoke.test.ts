@@ -22,6 +22,7 @@ import {
   environment,
   launch,
   linkTo,
+  mainWindow,
   openToken,
   SealedRecord,
   STEP,
@@ -163,7 +164,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           );
 
         const app = yield* launch(profile);
-        const page = yield* Effect.promise(() => app.firstWindow({ timeout: STEP }));
+        const page = yield* mainWindow(app);
         /**
          * What the global shortcut does, run from the application menu's item for it. Answers
          * when it was pressed, on the clock the pages share.
@@ -384,7 +385,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
 
         // Launched again, the app is still paired.
         const again = yield* launch(profile);
-        const second = yield* Effect.promise(() => again.firstWindow({ timeout: STEP }));
+        const second = yield* mainWindow(again);
         yield* onPage(second, () =>
           second.getByText(bot.profile.name).first().waitFor({ state: "visible", timeout: STEP }),
         );
@@ -477,7 +478,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         // pairing screen with the link's code. Nothing pairs until Pair: the
         // code, which works once, still pairs then.
         const app = yield* launch(profile, [linkTo({ _tag: "pair", server, code })]);
-        const page = yield* Effect.promise(() => app.firstWindow({ timeout: STEP }));
+        const page = yield* mainWindow(app);
         yield* Effect.promise(async () => {
           const address = page.getByLabel("Server address");
           await page.getByText("This pairing link is for").waitFor({ timeout: STEP });

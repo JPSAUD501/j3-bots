@@ -214,10 +214,12 @@ export const serveBrowser = (options: {
       const at = placed.get(ref);
       if (tab === undefined || at === undefined || tab.contents.isDestroyed()) return null;
       const { contents } = tab;
+      const url = shownUrl(contents).slice(0, 8192);
       return {
         ref,
-        url: shownUrl(contents).slice(0, 8192),
-        title: contents.getTitle().slice(0, 1024),
+        url,
+        // A tab with no page yet has no title: Chromium's would be `about:blank`.
+        title: url === "" ? "" : contents.getTitle().slice(0, 1024),
         loading: contents.isLoading(),
         canGoBack: contents.navigationHistory.canGoBack(),
         canGoForward: contents.navigationHistory.canGoForward(),
