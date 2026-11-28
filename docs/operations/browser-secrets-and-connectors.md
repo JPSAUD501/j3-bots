@@ -149,6 +149,6 @@ When a bot finds its connector signed out, it shows a card in its conversation t
 
 [Operating](operating.md) has the commands. What changes with these three:
 
-- **The browser's profile is left out of the backup** command: it holds live sessions for every site you signed in to. After a restore, sign in again. A rollback leaves it as it is, though going back to an older browser may sign you out of everything.
+- **The browser's sign-ins are in the backup, sealed under the secrets' key**: restored with the key file, you stay signed in where you were. What the engine's browser kept before 0.16 is in the clear, so the backup command leaves it out until 0.16 has moved it. An update's rollback leaves the sign-ins as they are, and moving to another server with `export` and `import` leaves them behind: sign in again there.
 - **The secrets are in the backup, sealed, without their key**: the backup command copies the key file on its own, to keep apart from the archive. Restored with it, they come back as they were. A service that replaces its sign-in each time it is renewed may refuse the one in an older backup (**Assumed**); sign that connector in again.
 - **An update's rollback never touches the secrets.** Logins, values and connectors' sign-ins stay as they are. Connectors themselves are in the database a rollback puts back: one added after the update is gone after the rollback, and is added again.
