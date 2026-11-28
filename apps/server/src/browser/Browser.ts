@@ -1262,8 +1262,8 @@ export const layer = Layer.effect(
 
     /**
      * Opens a new tab on `target`, or where tabs open now when it is null,
-     * registered first so it is listed while it loads, and forgotten if the
-     * host cannot open it. `run` asks the host, as the opener may: a bot
+     * registered first so it is listed while it loads, and forgotten and
+     * closed on the host if the host cannot open it. `run` asks the host, as the opener may: a bot
      * under its lease.
      */
     const openTab = <E>(
@@ -1313,7 +1313,13 @@ export const layer = Layer.effect(
           ...(input.readiness === undefined ? {} : { readiness: input.readiness }),
           ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
         });
-        const page = yield* run(tab, open).pipe(Effect.tapError(() => forget(tab)));
+        // A host that took the tab and failed its page may still hold it:
+        // forgotten first, so its word that the tab closed is no news.
+        const page = yield* run(tab, open).pipe(
+          Effect.tapError(() =>
+            forget(tab).pipe(Effect.andThen(target.host.close(ref).pipe(Effect.ignore))),
+          ),
+        );
         learnPage(tab, page);
         yield* persist(tab);
         yield* bump;

@@ -48,7 +48,7 @@ export type BrowserDialog = typeof BrowserDialog.Type;
  *
  * - `desktop`: in the J3 Bots app on that computer, in its own browser.
  *   `away` while that app's connection is gone: the tab waits 45 seconds
- *   for it to come back, with no picture and taking no input, and is parked
+ *   for it to come back, with no new picture and taking no input, and is parked
  *   if it does not. A bot that uses it meanwhile opens it again where a new
  *   tab opens. A server before `away` never sends it, at the same protocol
  *   version.

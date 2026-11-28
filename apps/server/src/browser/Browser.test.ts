@@ -415,7 +415,12 @@ it.effect("says why the browser that took the person's tab did not open its page
     const browser = yield* Browser;
     const fake = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
     const failure = yield* Ref.make(new BrowserHostError({ reason: "timeout" }));
-    yield* attach({ ...fake, open: () => Effect.flatMap(Ref.get(failure), Effect.fail) });
+    // As a real host does, it takes the tab before its page fails.
+    yield* attach({
+      ...fake,
+      open: (input) =>
+        fake.open(input).pipe(Effect.andThen(Effect.flatMap(Ref.get(failure), Effect.fail))),
+    });
     const reasonOf = (error: BrowserHostError) =>
       Effect.gen(function* () {
         yield* Ref.set(failure, error);
@@ -424,6 +429,8 @@ it.effect("says why the browser that took the person's tab did not open its page
           .openForPerson({ device: laptop, ref, url: "https://slow.example.test/" })
           .pipe(Effect.flip);
         assert.isTrue(Option.isNone(yield* browser.handsOf(ref)));
+        // Nor on the host: it was closed there.
+        assert.deepStrictEqual(yield* fake.tabs, []);
         return refused.reason;
       });
     assert.strictEqual(

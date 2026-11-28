@@ -364,7 +364,7 @@ export const layer = Layer.effect(
               return send({ type: "pong" }).pipe(Effect.as(null));
             case "refused":
               // The tab runs in no browser now: the tab list's `where` says
-              // so, and why, and a viewer offers no input meanwhile.
+              // why (`away`, `parked`).
               return Effect.succeed(null);
             case "gone":
               return Effect.succeed({ _tag: "gone" });

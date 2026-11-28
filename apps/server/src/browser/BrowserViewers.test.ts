@@ -32,6 +32,7 @@ import {
   LinkClosed,
   SILENT_LIMIT,
 } from "./BrowserViewers.ts";
+import { TabAccess } from "./TabAccess.ts";
 import { PERSON_HOLD } from "./TabControl.ts";
 
 type Received = Uint8Array | BrowserServerFrame;
@@ -409,5 +410,45 @@ it.effect(
         reason: "parked",
       });
       assert.strictEqual(yield* callsOf(host, "tab.navigate"), 0);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "refuses input that waited behind a fill once the tab's app went away meanwhile, and keeps reading the socket",
+  () =>
+    Effect.gen(function* () {
+      const laptop = yield* pairDevice("Laptop");
+      const phone = yield* pairDevice("Phone");
+      const browser = yield* Browser;
+      const host = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
+      const attached = yield* Scope.make();
+      yield* browser
+        .attachHost(host, yield* host.hello.pipe(Effect.orDie))
+        .pipe(Scope.provide(attached));
+      const ref = BrowserTabRef.make(`tab-${++tabs}`);
+      yield* browser.openForPerson({ device: laptop, ref, url: "https://example.com/" });
+      const client = yield* fakeLink;
+      yield* connect(phone, ref, client.link);
+      yield* controlSays(client, "nobody");
+
+      // The server types a saved login: the person's input waits for it to end.
+      const filling = yield* Scope.make();
+      yield* (yield* TabAccess).holdForFill(ref).pipe(Effect.orDie, Scope.provide(filling));
+      yield* client.say(textInput);
+      yield* settle;
+      yield* Scope.close(attached, Exit.void);
+      yield* settle;
+      yield* Scope.close(filling, Exit.void);
+
+      assert.deepStrictEqual(yield* client.nextWhere(isRefused), {
+        type: "refused",
+        reason: "away",
+      });
+      yield* client.say(textInput);
+      assert.deepStrictEqual(yield* client.nextWhere(isRefused), {
+        type: "refused",
+        reason: "away",
+      });
+      assert.strictEqual(yield* callsOf(host, "tab.input"), 0);
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
