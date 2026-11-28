@@ -652,6 +652,7 @@ const program = Effect.gen(function* () {
     preload,
     fromApp,
     server: Effect.map(settings.get, ({ server }) => server),
+    servers: Stream.map(settings.changes, ({ server }) => server),
     backgroundColor: () => appearance.windowBackground(),
   });
 

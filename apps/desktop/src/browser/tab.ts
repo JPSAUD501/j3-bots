@@ -42,6 +42,8 @@ export interface DesktopTab {
   ) => Effect.Effect<A, E, Exclude<R, Scope.Scope>>;
   /** Whether a download that begins now is the bot's: one of its actions ran just before. */
   readonly botLed: () => boolean;
+  /** The person used the tab from the app: its address bar, back, reload. */
+  readonly personUsed: () => void;
 }
 
 export interface DesktopTabEvents {
@@ -181,6 +183,9 @@ export const takeTab = (options: {
       botLed: () => {
         const now = performance.now();
         return now - botAt <= BOT_DOWNLOAD_WINDOW_MS && botAt > personAt;
+      },
+      personUsed: () => {
+        personAt = performance.now();
       },
     };
   });

@@ -107,6 +107,9 @@ export const makeSignIns = (
       try: () => contents.loadURL("about:blank"),
       catch: (cause) => failed(`The probe did not open: ${String(cause)}`),
     });
+    // A site's service worker would answer the probe's visit with the site itself: it is passed by.
+    yield* send("Network.enable", {});
+    yield* send("Network.setBypassServiceWorker", { bypass: true });
     yield* send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
 
     // One piece of work at a time: the probe shows one origin at once.

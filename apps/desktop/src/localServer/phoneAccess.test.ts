@@ -126,6 +126,7 @@ const heldSettings = (
       let writes = 0;
       return {
         get: settings.get,
+        changes: settings.changes,
         update: (change: (now: Settings.Settings) => Settings.Settings) =>
           Effect.suspend(() => {
             writes += 1;

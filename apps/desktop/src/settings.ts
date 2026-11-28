@@ -14,10 +14,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { parseServerAddress } from "./serverAddress.ts";
 
 /** The window's place on screen when it last closed. */
@@ -241,6 +242,8 @@ export class DesktopSettings extends Context.Service<
   DesktopSettings,
   {
     readonly get: Effect.Effect<Settings>;
+    /** The settings now, then each time a change is written. */
+    readonly changes: Stream.Stream<Settings>;
     /**
      * Applies `change` and writes the result. The change takes effect only
      * once written: a write that fails leaves the settings as they were.
@@ -271,7 +274,7 @@ export const layer = (file: string) =>
       if (loaded.dropped.length > 0) {
         yield* Effect.logWarning("Dropped desktop settings that could not be read", loaded.dropped);
       }
-      const current = yield* Ref.make(loaded.settings);
+      const current = yield* SubscriptionRef.make(loaded.settings);
       const writing = yield* Semaphore.make(1);
       const write = Effect.fn("DesktopSettings.write")(
         function* (settings: Settings) {
@@ -287,13 +290,17 @@ export const layer = (file: string) =>
         (change: (settings: Settings) => Settings) =>
           writing.withPermits(1)(
             Effect.gen(function* () {
-              const next = change(yield* Ref.get(current));
+              const next = change(yield* SubscriptionRef.get(current));
               yield* write(next);
-              yield* Ref.set(current, next);
+              yield* SubscriptionRef.set(current, next);
               return next;
             }),
           ),
       );
-      return DesktopSettings.of({ get: Ref.get(current), update });
+      return DesktopSettings.of({
+        get: SubscriptionRef.get(current),
+        changes: SubscriptionRef.changes(current),
+        update,
+      });
     }),
   );

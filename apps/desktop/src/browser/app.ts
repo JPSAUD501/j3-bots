@@ -123,6 +123,8 @@ export const serveBrowser = (options: {
   readonly fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean;
   /** The server the app keeps, which alone the browser may be linked to. */
   readonly server: Effect.Effect<ServerOrigin | null>;
+  /** The server the app keeps, now and as it changes. */
+  readonly servers: Stream.Stream<ServerOrigin | null>;
   readonly backgroundColor: () => string;
 }): Effect.Effect<DesktopBrowser, never, Scope.Scope | FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -268,16 +270,20 @@ export const serveBrowser = (options: {
           if (pane.still !== ref) {
             pane.still = ref;
             // The picture first, then the view goes: the page never shows a hole.
+            // Either way, only while it is still to be covered: what covered it may be gone by then.
+            const stillCovered = () => !pane.window.isDestroyed() && pane.still === ref;
             void tab.contents.capturePage().then(
               (image) => {
-                if (pane.window.isDestroyed() || pane.still !== ref) return;
+                if (!stillCovered()) return;
                 pane.window.webContents.send(
                   IPC_CHANNELS.browserStill,
                   encodeStill({ tab: ref, image: image.toDataURL() }),
                 );
                 browser.hide(ref);
               },
-              () => browser.hide(ref),
+              () => {
+                if (stillCovered()) browser.hide(ref);
+              },
             );
           }
           continue;
@@ -380,10 +386,12 @@ export const serveBrowser = (options: {
     };
 
     const show = (ref: BrowserTabRef, place: BrowserPlace) => {
+      const from = placed.get(ref)?.place;
       if (place === "window") openWindow();
       put(ref, place, true);
       const pane = panes.get(place);
-      if (pane !== undefined && place === "window") pane.window.focus();
+      // Sent to the other place, the tab is followed there.
+      if (pane !== undefined && from !== undefined && from !== place) pane.window.focus();
       runFork(browser.focus(ref));
     };
 
@@ -634,34 +642,54 @@ export const serveBrowser = (options: {
     // The link to the server
 
     const link = yield* FiberHandle.make<void, never>();
-    let linkedAs: string | null = null;
+    let linkedAs: {
+      readonly server: ServerOrigin;
+      readonly key: string;
+      readonly token: Redacted.Redacted<string>;
+    } | null = null;
+    /** Whether `server` no longer takes `token`: its socket ticket says so. */
+    const refuses = (server: ServerOrigin, token: Redacted.Redacted<string>) =>
+      Effect.promise(() =>
+        electronFetch(new URL(HTTP_PATHS.socketTicket, server).href, {
+          method: "POST",
+          headers: { authorization: `Bearer ${Redacted.value(token)}` },
+        }).then(
+          (response) => response.status === 401,
+          () => false,
+        ),
+      );
+    const unlink = Effect.suspend(() => {
+      linkedAs = null;
+      return FiberHandle.clear(link);
+    });
+    // A server the app no longer keeps loses the browser at once, whatever its token.
+    yield* options.servers.pipe(
+      Stream.runForEach((server) =>
+        linkedAs !== null && linkedAs.server !== server ? unlink : Effect.void,
+      ),
+      Effect.forkScoped,
+    );
     const linkTo = Effect.fn("DesktopBrowser.linkTo")(function* (asked: BrowserLink) {
       if (asked === null) {
-        linkedAs = null;
-        return yield* FiberHandle.clear(link);
+        const was = linkedAs;
+        yield* unlink;
+        // The page may hear of a revoked device before the link does: the sign-ins go all the same.
+        if (was !== null && (yield* refuses(was.server, was.token))) yield* browser.forgetSignIns;
+        return;
       }
       // Only the server the app keeps: a page cannot point the browser anywhere else.
       if ((yield* options.server) !== asked.server) return;
       const key = `${asked.server} ${asked.deviceId} ${asked.token}`;
-      if (key === linkedAs) return;
-      linkedAs = key;
+      if (key === linkedAs?.key) return;
       const token = Redacted.make<string>(asked.token);
+      linkedAs = { server: asked.server, key, token };
       yield* FiberHandle.run(
         link,
         linkToServer({
           origin: asked.server,
           token,
           host: browser.hostFor(asked.deviceId),
-          // The server no longer takes the device: its socket ticket says so.
-          refused: Effect.promise(() =>
-            electronFetch(new URL(HTTP_PATHS.socketTicket, asked.server).href, {
-              method: "POST",
-              headers: { authorization: `Bearer ${Redacted.value(token)}` },
-            }).then(
-              (response) => response.status === 401,
-              () => false,
-            ),
-          ),
+          refused: refuses(asked.server, token),
           onRefused: Effect.andThen(
             browser.forgetSignIns,
             Effect.sync(() => {

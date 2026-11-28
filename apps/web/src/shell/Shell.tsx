@@ -34,6 +34,7 @@ import {
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserToggle } from "../browser/desktop/BrowserToggle";
+import type { BrowserPlace } from "@j3-bots/desktop-bridge";
 import { useDesktopBrowserHere } from "../browser/desktop/state";
 import { desktop } from "../live/desktop";
 import { BrowserPanel } from "../browser/BrowserPanel";
@@ -201,6 +202,22 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   // In the desktop app, its own browser: a tab on this computer opens there, beside the conversation.
   const desktopBrowser = useDesktopBrowserHere(desktop?.browser ?? null);
   const [resizingBrowser, setResizingBrowser] = useState(false);
+  // A tab the person sends here from the browser's window shows beside the open conversation.
+  const sentBeside = useEffectEvent((tab: BrowserTabRef) => {
+    if (item?._tag === "bot" && navigation.browser === null) navigation.setBrowser(tab);
+  });
+  useEffect(() => {
+    const bridge = desktop?.browser;
+    if (bridge === undefined) return;
+    let places = new Map<BrowserTabRef, BrowserPlace>();
+    return bridge.onChange((state) => {
+      const was = places;
+      places = new Map(state.tabs.map((tab) => [tab.ref, tab.place]));
+      // Closing the window brings every tab back too; only a tab sent while it stays open is shown.
+      const sent = state.tabs.find((tab) => tab.place === "panel" && was.get(tab.ref) === "window");
+      if (state.windowOpen && sent !== undefined) sentBeside(sent.ref);
+    });
+  }, []);
   const inDesktopBrowser =
     desktop !== null &&
     browserTarget !== null &&

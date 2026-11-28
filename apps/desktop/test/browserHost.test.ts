@@ -55,6 +55,21 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
     HttpServerResponse.text(page("Pop-up", `<button onclick="window.close()">Close</button>`), {
       contentType: "text/html",
     }),
+  // A worker that answers a visit to the start page with the site's own code.
+  "/worker.js": () =>
+    HttpServerResponse.text(
+      `self.addEventListener("install", () => self.skipWaiting());
+       self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+       self.addEventListener("fetch", (event) => {
+         if (event.request.mode === "navigate" && new URL(event.request.url).pathname === "/") {
+           event.respondWith(new Response(
+             "<script>localStorage.setItem('worker', 'ran')</script>",
+             { headers: { "content-type": "text/html" } },
+           ));
+         }
+       });`,
+      { contentType: "text/javascript" },
+    ),
   "/file": () =>
     HttpServerResponse.text("hello", {
       contentType: "text/plain",
@@ -234,6 +249,13 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
             awaitPromise: false,
           });
           assert.strictEqual(stored.value, "v");
+          // A site's worker never answers the read: the probe runs no code of the site's.
+          const worker = yield* host.evaluate({
+            tab,
+            expression: `navigator.serviceWorker.register("/worker.js").then(() => navigator.serviceWorker.ready).then(() => true)`,
+            awaitPromise: true,
+          });
+          assert.strictEqual(worker.value, true);
           const read = yield* host.readStorage({ origins: [site], indexedDb: false });
           assert.deepStrictEqual(read.origins, [
             { origin: site, localStorage: [{ name: "k", value: "v" }] },
@@ -255,6 +277,23 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           assert.strictEqual(new TextDecoder().decode(bytes), "hello");
           assert.strictEqual(
             reasonOf(yield* Effect.flip(host.takeDownload({ download: finished.download }))),
+            "invalid-target",
+          );
+
+          // Only a file the server sent for the tab: no other file of this computer's.
+          assert.strictEqual(
+            reasonOf(
+              yield* Effect.flip(
+                host.act({
+                  tab,
+                  action: {
+                    action: "upload",
+                    locator: "input[type=file]",
+                    paths: [`${import.meta.dirname}/browserHost.test.ts`],
+                  },
+                }),
+              ),
+            ),
             "invalid-target",
           );
 

@@ -21,6 +21,7 @@ import {
   MAX_ATTACHMENT_SIZE,
 } from "@j3-bots/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -184,6 +185,8 @@ interface Entry {
   readonly reported: boolean;
   /** The tab's files for a bot's upload. */
   readonly files: string;
+  /** The files the server sent for this tab: an upload may give the page these and nothing else. */
+  readonly sent: Set<string>;
   ended: boolean;
 }
 
@@ -252,6 +255,8 @@ export const makeDesktopBrowser = (options: {
     /** The drivers of the tabs the server knows of. */
     const drivers = new Map<BrowserTabRef, DesktopTab["driver"]>();
     const downloads = new Map<BrowserDownloadId, string>();
+    /** The tabs the server opens that are not ready yet. */
+    const opening = new Map<BrowserTabRef, Deferred.Deferred<void>>();
 
     const tell = (event: BrowserHostEvent) => PubSub.publish(toServer, event);
     const tellApp = (event: LocalBrowserEvent) => PubSub.publish(toApp, event);
@@ -458,6 +463,7 @@ export const makeDesktopBrowser = (options: {
           scope,
           reported: input.reported,
           files,
+          sent: new Set(),
           ended: false,
         };
         current = entry;
@@ -589,8 +595,13 @@ export const makeDesktopBrowser = (options: {
       }),
       events: Stream.fromPubSub(toServer),
       open: Effect.fn("DesktopBrowser.open")(function* (input) {
+        // A second open of a tab still opening waits for it, so one tab never has two views.
+        const pending = opening.get(input.tab);
+        if (pending !== undefined) yield* Deferred.await(pending);
         const existing = entries.get(input.tab);
         if (existing !== undefined) return yield* existing.tab.driver.state;
+        const opened = yield* Deferred.make<void>();
+        opening.set(input.tab, opened);
         const tab = yield* openTab({
           ref: input.tab,
           private: input.private,
@@ -598,7 +609,14 @@ export const makeDesktopBrowser = (options: {
           opener: null,
           background: input.background,
           announce: false,
-        });
+        }).pipe(
+          Effect.ensuring(
+            Effect.suspend(() => {
+              opening.delete(input.tab);
+              return Deferred.succeed(opened, undefined);
+            }),
+          ),
+        );
         if (input.url === undefined) return yield* tab.driver.state;
         return yield* tab.painting(
           tab.driver.navigate(
@@ -614,7 +632,21 @@ export const makeDesktopBrowser = (options: {
         }),
       ...tabCalls,
       navigate: (input) => paintingWhile(input.tab, tabCalls.navigate(input)),
-      act: (input) => paintingWhile(input.tab, tabCalls.act(input)),
+      act: (input) =>
+        Effect.suspend(() => {
+          // The server is another computer: an upload gives the page only files it sent for this tab.
+          const { action } = input;
+          const sent = entries.get(input.tab)?.sent;
+          if (
+            action.action === "upload" &&
+            !action.paths.every((path) => sent?.has(path) === true)
+          ) {
+            return Effect.fail(
+              failed("invalid-target", "Only a file sent for this tab can be uploaded."),
+            );
+          }
+          return paintingWhile(input.tab, tabCalls.act(input));
+        }),
       evaluate: (input) => paintingWhile(input.tab, tabCalls.evaluate(input)),
       waitFor: (input) => paintingWhile(input.tab, tabCalls.waitFor(input)),
       snapshot: (input) => paintingWhile(input.tab, tabCalls.snapshot(input)),
@@ -638,6 +670,7 @@ export const makeDesktopBrowser = (options: {
               NodeFS.mkdirSync(folder, { recursive: true });
               const path = NodePath.join(folder, savedName(name));
               NodeFS.writeFileSync(path, bytes);
+              entry.sent.add(path);
               return { path };
             },
             catch: (cause) => failed("page", `The file was not kept: ${String(cause)}`),
@@ -745,11 +778,12 @@ export const makeDesktopBrowser = (options: {
         }
       },
       personUsed: (ref) =>
-        Effect.suspend(() =>
-          entries.get(ref)?.reported === true
-            ? tell({ type: "person.input", tab: ref })
-            : Effect.void,
-        ),
+        Effect.suspend(() => {
+          const entry = entries.get(ref);
+          // A download the page begins now is the person's, not a bot's.
+          entry?.tab.personUsed();
+          return entry?.reported === true ? tell({ type: "person.input", tab: ref }) : Effect.void;
+        }),
       forgetSignIns: Effect.gen(function* () {
         yield* Effect.promise(() => shared.clearData().catch(() => undefined));
         known = new Map();
