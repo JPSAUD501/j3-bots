@@ -10,6 +10,7 @@ import { ChevronLeftIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useI18n } from "../../app/context";
 import type { DesktopBrowserBridge } from "../../live/desktop";
+import { FindBar } from "./FindBar";
 import { PageArea } from "./PageArea";
 import { frontOf, tabsIn, useDesktopBrowser } from "./state";
 import { TabStrip } from "./TabStrip";
@@ -236,10 +237,19 @@ export function DesktopBrowser({
           tab={tab}
           place={place}
           covered={held || covering.size > 0}
-          finding={finding}
+          strip={
+            finding &&
+            tab !== null && (
+              <FindBar
+                bridge={bridge}
+                tab={tab}
+                command={command}
+                onClose={() => setFindingIn(null)}
+              />
+            )
+          }
           addressRef={addressRef}
           command={command}
-          onStopFinding={() => setFindingIn(null)}
         />
       </div>
     </div>

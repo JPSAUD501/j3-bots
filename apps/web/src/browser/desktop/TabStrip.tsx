@@ -8,7 +8,7 @@ import { useI18n } from "../../app/context";
 import { MenuItem } from "../../components/ui/menu";
 import { cn } from "../../lib/cn";
 import { tabName } from "./state";
-import { SiteTile } from "./Toolbar";
+import { SiteTile } from "./SiteTile";
 
 // The tabs of one place, as a browser shows them: the site's icon, the
 // title, the faces of who is on the tab where a browser shows sound

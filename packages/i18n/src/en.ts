@@ -468,6 +468,24 @@ export const en = {
   "desktopBrowser.suggest.byBot": "Visited by a bot",
   "desktopBrowser.suggest.search": "Search “{text}”",
   "desktopBrowser.history.empty": "Nothing visited yet",
+
+  // Below, a block per part of the browser, each with keys under its own prefix.
+  // The tab strip: desktopBrowser.tabStrip.*
+
+  // The page as it loads, and a page that did not open: desktopBrowser.loading.*
+
+  // Inside the page: its menu, zoom, fullscreen and saving: desktopBrowser.inPage.*
+
+  // What a site may use: desktopBrowser.permissions.*
+
+  // Bookmarks, the history page and the downloads: desktopBrowser.library.*
+
+  // Site icons and the viewers' screens: desktopBrowser.icons.*
+
+  // Bringing in another browser's data, and the default browser: desktopBrowser.import.*
+
+  // The person's sessions and logins: desktopBrowser.logins.*
+
   "browserHelp.title": "Help in the browser",
   "browserHelp.reason.captcha": "Pass a check that you’re a person",
   "browserHelp.reason.login": "Sign in",
