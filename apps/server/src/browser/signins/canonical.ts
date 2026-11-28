@@ -19,7 +19,7 @@ import { getDomain } from "tldts";
 /** An HMAC id or digest, base64url. */
 export type Digest = string;
 
-/** The site everyone signs out of with "Sign out of all sites". */
+/** The site everyone signs out of with "Clear data of all sites". */
 export const ALL_SITES = "*";
 
 /**
