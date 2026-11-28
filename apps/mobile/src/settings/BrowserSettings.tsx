@@ -14,7 +14,7 @@ import { Button } from "../ui.tsx";
 /**
  * Settings' Browser page: the sites that keep data in J3 Bots' browser,
  * which is how the person and their bots stay signed in, followed while the page is in front,
- * each with its own Sign out; then signing out of all of them, which asks
+ * each with its own Clear data; then signing out of all of them, which asks
  * first since it ends every one at once. A server older than the list shows
  * none, only signing out of all; sign-ins locked with the secrets can be
  * signed out of only once the secrets can be read.
@@ -100,7 +100,7 @@ function SitesSection({
               <Button
                 variant="secondary"
                 label={t("settings.siteSignIns.signOutSite")}
-                // Names the site, as a row of buttons each saying "Sign out" would not.
+                // Names the site, as a row of buttons each saying "Clear data" would not.
                 accessibilityLabel={t("settings.siteSignIns.signOutSite.label", { site })}
                 disabled={!connected || state === "pending"}
                 onPress={() => signOut(site)}
