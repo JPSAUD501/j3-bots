@@ -2635,6 +2635,8 @@ const sentences = {
   "browser.grid.undo": "Desfazer",
   "browser.grid.closeFailed": "Não deu para fechar a aba.",
   "browser.grid.openFailed": "Não deu para abrir uma aba.",
+  "browser.grid.openUnavailable":
+    "Nenhum navegador pode abrir uma aba agora. Abra o J3 Bots num computador ou configure o navegador do servidor.",
   "browser.keys.previous": "Campo anterior",
   "browser.keys.next": "Próximo campo",
   "browser.keys.done": "OK",

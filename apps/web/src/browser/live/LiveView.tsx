@@ -16,7 +16,7 @@ import {
   type ViewerTab,
 } from "@j3-bots/client-runtime/presentation";
 import { type PageUseHandle, type QuickSend, usePageUse } from "@j3-bots/client-runtime/react";
-import { botNames, tabLineWords } from "@j3-bots/client-runtime/wording";
+import { botNames, tabLineWords, tabOpenFailed } from "@j3-bots/client-runtime/wording";
 import type { Bot, BotId, BrowserTabRef } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import {
@@ -123,7 +123,8 @@ export function LiveView({
   headingId,
   ref,
 }: LiveViewProps) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const { source } = useBrowser();
   const { tabs, shared } = useViewerTabs(bot.id);
   const [problem, say] = usePassingNotice();
@@ -169,7 +170,7 @@ export function LiveView({
   const openTab = (url: string | null) => {
     void source.openBrowserTab(url).then((result) => {
       if (result._tag === "done") show(result.value, true);
-      else say(t("browser.grid.openFailed"));
+      else say(tabOpenFailed(result.failure, i18n));
     });
   };
 

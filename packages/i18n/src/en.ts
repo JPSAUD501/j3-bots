@@ -2590,6 +2590,8 @@ export const en = {
   "browser.grid.undo": "Undo",
   "browser.grid.closeFailed": "Couldn’t close the tab.",
   "browser.grid.openFailed": "Couldn’t open a tab.",
+  "browser.grid.openUnavailable":
+    "No browser can open a tab now. Open J3 Bots on a computer, or set up the server’s browser.",
   "browser.keys.previous": "Previous field",
   "browser.keys.next": "Next field",
   "browser.keys.done": "OK",

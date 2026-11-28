@@ -39,7 +39,7 @@ const statusIs =
     state.status._tag === tag;
 
 /** Waits until `check` holds, polling: the fake host has no events of its own. */
-const eventually = (check: Effect.Effect<boolean>) =>
+const eventually = <R>(check: Effect.Effect<boolean, never, R>) =>
   check.pipe(Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("5 millis") }));
 
 /** The host's calls of `call` on `ref`: the host is one for every test. */
@@ -201,7 +201,10 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
       yield* waitFor(view.state, statusIs("live"));
       // An idle release keeps the hold until it lapses, where a plain one would end it at once.
       yield* eventually(
-        Effect.map(shared(ref), (tab) => tab.heldBy?.kind === "person" && tab.heldBy.until !== null),
+        Effect.map(
+          shared(ref),
+          (tab) => tab.heldBy?.kind === "person" && tab.heldBy.until !== null,
+        ),
       );
       assert.deepStrictEqual(yield* callsOn(host, "tab.input", ref), []);
     }).pipe(Effect.scoped, Effect.provide(client)),

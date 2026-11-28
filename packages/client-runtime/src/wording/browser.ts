@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
+import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
 import type { TabLine } from "../presentation/browserTabs.ts";
+
+/**
+ * Why a new tab did not open: no browser can open one now, when no J3 Bots
+ * app is open on a computer and the server's own cannot run, or any other
+ * failure.
+ */
+export const tabOpenFailed = (failure: IntentFailure, { t }: I18n): string =>
+  refusedWith({ _tag: "failed", failure }, "browser-unavailable")
+    ? t("browser.grid.openUnavailable")
+    : t("browser.grid.openFailed");
 
 /** The words of a tab's line, and the one thing it offers, if any. */
 export interface TabLineWords {

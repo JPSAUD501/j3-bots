@@ -22,7 +22,7 @@ import {
   usePageUse,
   useReadable,
 } from "@j3-bots/client-runtime/react";
-import { botNames, tabLineWords } from "@j3-bots/client-runtime/wording";
+import { botNames, tabLineWords, tabOpenFailed } from "@j3-bots/client-runtime/wording";
 import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import * as DateTime from "effect/DateTime";
@@ -99,7 +99,7 @@ const PULL_TO_CLOSE = 96;
  */
 export function LiveScreen({ navigation, route }: Props) {
   const from = route.params.botId;
-  const { t } = useI18n();
+  const i18n = useI18n();
   const client = useJ3Client();
   const say = useSay();
   const { tabs, shared } = useViewerTabs(from);
@@ -130,7 +130,7 @@ export function LiveScreen({ navigation, route }: Props) {
   const openTab = (url: string | null) => {
     void client.openBrowserTab(url).then((result) => {
       if (result._tag === "done") show(result.value, true);
-      else say(t("browser.grid.openFailed"));
+      else say(tabOpenFailed(result.failure, i18n));
     });
   };
 
