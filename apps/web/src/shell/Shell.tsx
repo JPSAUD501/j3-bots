@@ -202,9 +202,16 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   // In the desktop app, its own browser: a tab on this computer opens there, beside the conversation.
   const desktopBrowser = useDesktopBrowserHere(desktop?.browser ?? null);
   const [resizingBrowser, setResizingBrowser] = useState(false);
-  // A tab the person sends here from the browser's window shows beside the open conversation.
+  const inDesktopBrowser =
+    desktop !== null &&
+    browserTarget !== null &&
+    (browserTarget === "front" ||
+      desktopBrowser?.tabs.some((tab) => tab.ref === browserTarget) === true);
+  // A tab the person sends here from the browser's window shows beside the open bot's
+  // conversation, in place of what that side showed. With no bot open it waits in the
+  // panel, which any bot's conversation opens.
   const sentBeside = useEffectEvent((tab: BrowserTabRef) => {
-    if (item?._tag === "bot" && navigation.browser === null) navigation.setBrowser(tab);
+    if (item?._tag === "bot" && !inDesktopBrowser) navigation.setBrowser(tab);
   });
   useEffect(() => {
     const bridge = desktop?.browser;
@@ -218,11 +225,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       if (state.windowOpen && sent !== undefined) sentBeside(sent.ref);
     });
   }, []);
-  const inDesktopBrowser =
-    desktop !== null &&
-    browserTarget !== null &&
-    (browserTarget === "front" ||
-      desktopBrowser?.tabs.some((tab) => tab.ref === browserTarget) === true);
   const closeAside = () => {
     if (aside === "browser") closeBrowser();
     else navigation.setDetailsOpen(false);

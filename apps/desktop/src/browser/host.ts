@@ -214,8 +214,12 @@ export const makeDesktopBrowser = (options: {
     by: "person" | "bot",
     tab: BrowserTabRef | null,
   ) => void;
-  /** Told that a bot's download, too large for the server, is now the person's: at `file`, in their downloads. */
-  readonly handedOver?: (item: DownloadItem, file: string) => void;
+  /**
+   * Told that a bot's download, too large for the server, is now the
+   * person's: at `file`, in their downloads; null when it could not be put
+   * there, and is gone.
+   */
+  readonly handedOver?: (item: DownloadItem, file: string | null) => void;
 }): Effect.Effect<DesktopBrowser, BrowserHostError, Scope.Scope> =>
   Effect.gen(function* () {
     const hostScope = yield* Effect.scope;
@@ -376,7 +380,10 @@ export const makeDesktopBrowser = (options: {
           ),
           Effect.andThen(Effect.sync(() => options.handedOver?.(item, target))),
           Effect.tapError((cause) =>
-            Effect.logWarning("A bot's download could not be kept", cause),
+            Effect.andThen(
+              Effect.logWarning("A bot's download could not be kept", cause),
+              Effect.sync(() => options.handedOver?.(item, null)),
+            ),
           ),
           Effect.ensuring(letGo),
         );
@@ -642,33 +649,39 @@ export const makeDesktopBrowser = (options: {
       }),
       events: Stream.fromPubSub(toServer),
       open: Effect.fn("DesktopBrowser.open")(function* (input) {
-        // A second open of a tab still opening waits for it, so one tab never has two views.
-        const pending = opening.get(input.tab);
-        if (pending !== undefined) yield* Deferred.await(pending);
+        // An open of a tab still opening waits until it is open and at its page, so one
+        // tab never has two views and every open answers with the page asked for.
+        for (let pending = opening.get(input.tab); pending !== undefined;) {
+          yield* Deferred.await(pending);
+          pending = opening.get(input.tab);
+        }
         const existing = entries.get(input.tab);
         if (existing !== undefined) return yield* existing.tab.driver.state;
-        const opened = yield* Deferred.make<void>();
+        // Taken with no yield since the checks above, so no other open slips in between.
+        const opened = Deferred.makeUnsafe<void>();
         opening.set(input.tab, opened);
-        const tab = yield* openTab({
-          ref: input.tab,
-          private: input.private,
-          reported: true,
-          opener: null,
-          background: input.background,
-          announce: false,
+        return yield* Effect.gen(function* () {
+          const tab = yield* openTab({
+            ref: input.tab,
+            private: input.private,
+            reported: true,
+            opener: null,
+            background: input.background,
+            announce: false,
+          });
+          if (input.url === undefined) return yield* tab.driver.state;
+          return yield* tab.painting(
+            tab.driver.navigate(
+              { kind: "url", url: input.url },
+              { readiness: input.readiness, timeoutMs: input.timeoutMs },
+            ),
+          );
         }).pipe(
           Effect.ensuring(
             Effect.suspend(() => {
               opening.delete(input.tab);
               return Deferred.succeed(opened, undefined);
             }),
-          ),
-        );
-        if (input.url === undefined) return yield* tab.driver.state;
-        return yield* tab.painting(
-          tab.driver.navigate(
-            { kind: "url", url: input.url },
-            { readiness: input.readiness, timeoutMs: input.timeoutMs },
           ),
         );
       }),

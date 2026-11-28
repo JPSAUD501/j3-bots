@@ -188,7 +188,11 @@ export const serveBrowser = (options: {
         const download = [...downloads.values()].find((download) => download.item === item);
         if (download === undefined) return;
         download.handedOver = file;
-        download.entry = { ...download.entry, inDownloads: true };
+        // One that could not be put there is lost: the list says it did not finish.
+        download.entry =
+          file === null
+            ? { ...download.entry, state: "interrupted" }
+            : { ...download.entry, inDownloads: true };
         changed();
       },
     }).pipe(Effect.orDie);
@@ -277,6 +281,10 @@ export const serveBrowser = (options: {
 
     /** Draws each place's front tab where its window's page asked, and hides every other. */
     const draw = () => {
+      // A still is of the tab in front there: one that went elsewhere, or closed, has none here.
+      for (const [place, pane] of panes) {
+        if (pane.still !== null && front[place] !== pane.still) pane.still = null;
+      }
       for (const ref of order) {
         const pane = paneOf(ref);
         const at = placed.get(ref);
@@ -340,6 +348,10 @@ export const serveBrowser = (options: {
       });
     };
 
+    /** The tab the person looks at in `place`: none while it is not on screen. */
+    const lookedAt = (place: BrowserPlace) =>
+      (panes.get(place)?.placement.bounds ?? null) === null ? null : front[place];
+
     /** The tab a place shows once `leaving` is no longer in front there. */
     const nextInFront = (place: BrowserPlace, leaving: BrowserTabRef) => {
       const here = order.filter((ref) => ref !== leaving && placeOf(ref) === place);
@@ -394,7 +406,7 @@ export const serveBrowser = (options: {
         }
         front.window = null;
         front.panel ??= order.find((ref) => placeOf(ref) === "panel") ?? null;
-        runFork(browser.focus(front.panel));
+        runFork(browser.focus(lookedAt("panel")));
         changed();
       });
       window
@@ -452,8 +464,8 @@ export const serveBrowser = (options: {
             const index = order.indexOf(event.tab);
             if (at !== undefined && front[at.place] === event.tab) {
               front[at.place] = nextInFront(at.place, event.tab);
-              // The person now looks at the tab that took its place.
-              runFork(browser.focus(front[at.place]));
+              // The person now looks at the tab that took its place, if that place is on screen.
+              runFork(browser.focus(lookedAt(at.place)));
             }
             if (index !== -1) order.splice(index, 1);
             if (at !== undefined && !at.private && at.url !== "") {
@@ -693,8 +705,11 @@ export const serveBrowser = (options: {
       if (asked === null) {
         const was = linkedAs;
         yield* unlink;
-        // The page may hear of a revoked device before the link does: the sign-ins go all the same.
-        if (was !== null && (yield* refuses(was.server, was.token))) yield* browser.forgetSignIns;
+        // The page may hear of a revoked device before the link does: the sign-ins go all the
+        // same, unless the browser was linked again meanwhile, and they are that link's now.
+        if (was !== null && (yield* refuses(was.server, was.token)) && linkedAs === null) {
+          yield* browser.forgetSignIns;
+        }
         return;
       }
       // Only the server the app keeps: a page cannot point the browser anywhere else.
