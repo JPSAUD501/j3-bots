@@ -189,8 +189,15 @@ const holdOpen = (page: Page, name: string) =>
     name,
   );
 
+/**
+ * The browser's launch, on live services: a Chromium's cold start on a busy
+ * runner takes more than a hook's ten seconds, so it gets the minute the
+ * driver tests give theirs.
+ */
+const SHARED = { excludeTestServices: true, timeout: "60 seconds" } as const;
+
 describe.skipIf(executablePath === undefined)("an origin's IndexedDB", () => {
-  layer(launched, { excludeTestServices: true })("read and written in a page", (it) => {
+  layer(launched, SHARED)("read and written in a page", (it) => {
     it.effect("comes back as it was, values JSON cannot hold included", () =>
       Effect.gen(function* () {
         const browser = yield* TestBrowser;
