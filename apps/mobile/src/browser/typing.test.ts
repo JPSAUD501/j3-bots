@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_BROWSER_TEXT_LENGTH } from "@j3-bots/contracts";
-import { fieldChange, relayed } from "./typing.ts";
+import { fieldChange, keyPress, relayed } from "./typing.ts";
 
 describe("the keyboard relay", () => {
   it("passes on what was typed, one change at a time", () => {
@@ -41,5 +41,17 @@ describe("the keyboard relay", () => {
       input.type === "text" ? [input.text] : [],
     );
     expect(texts).toEqual(["a".repeat(MAX_BROWSER_TEXT_LENGTH - 1), "👍b"]);
+  });
+
+  it("goes to the previous field with Shift held through Tab's press", () => {
+    const [down, up] = keyPress("Tab", true);
+    expect(down).toMatchObject({ type: "key", action: "down", key: "Tab", keyCode: 9 });
+    expect(up).toMatchObject({ type: "key", action: "up", key: "Tab" });
+    expect([down, up].map((input) => (input?.type === "key" ? input.modifiers : null))).toEqual([
+      8, 8,
+    ]);
+    expect(keyPress("Tab").every((input) => input.type === "key" && input.modifiers === 0)).toBe(
+      true,
+    );
   });
 });

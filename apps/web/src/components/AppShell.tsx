@@ -128,8 +128,8 @@ export function AppShell({
         >
           <Dialog.Portal container={frame}>
             {/*
-             * Beside the pane, the scrim closes it; a phone's details cover everything, and its
-             * browser rises as a sheet over the scrim.
+             * Beside the pane, the scrim closes it; a phone's details and its browser's live view
+             * cover everything.
              */}
             <Dialog.Backdrop
               className={cn(
@@ -145,8 +145,8 @@ export function AppShell({
               className={cn(
                 "absolute inset-0 z-20 flex flex-col bg-background pr-[env(safe-area-inset-right)] outline-none transition-transform duration-(--duration-slide) ease-slide data-ending-style:duration-(--duration-state) data-ending-style:ease-out @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:border-s @tablet:border-border @tablet:shadow-overlay @tablet:pt-(--inset-top) @tablet:data-ending-style:translate-x-full @tablet:data-starting-style:translate-x-full @tablet:rtl:data-ending-style:-translate-x-full @tablet:rtl:data-starting-style:-translate-x-full",
                 browser
-                  ? // A sheet on a phone, with the conversation's top still in sight; over the conversation from the tablet up.
-                    "@max-tablet:top-[calc(var(--inset-top)_+_--spacing(3))] @max-tablet:rounded-t-sheet @max-tablet:shadow-overlay @max-tablet:data-ending-style:translate-y-full @max-tablet:data-starting-style:translate-y-full @tablet:w-[calc(100%_-_var(--layout-roster-width))]"
+                  ? // The live view: the whole screen on a phone, rising from the bottom; over the conversation from the tablet up.
+                    "@max-tablet:pt-(--inset-top) @max-tablet:data-ending-style:translate-y-full @max-tablet:data-starting-style:translate-y-full @tablet:w-[calc(100%_-_var(--layout-roster-width))]"
                   : "pt-(--inset-top) pb-[env(safe-area-inset-bottom)] data-ending-style:translate-x-full data-starting-style:translate-x-full rtl:data-ending-style:-translate-x-full rtl:data-starting-style:-translate-x-full @tablet:w-(--layout-details-width)",
               )}
             >

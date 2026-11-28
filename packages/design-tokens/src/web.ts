@@ -135,6 +135,7 @@ ${lines([
   ["font-mono", fonts.mono],
   ["spacing", rem(spacingUnit)],
   ["ease-out", eases.out],
+  ["ease-glide", eases.glide],
   ...Object.entries(springs).map(([name, spring]): Entry => [`ease-${name}`, spring.easing]),
   ["breakpoint-tablet", rem(layout.breakpoints.tablet)],
   ["breakpoint-wide", rem(layout.breakpoints.wide)],

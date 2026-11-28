@@ -2,7 +2,15 @@
 import type { BrowserViewHandle, BrowserViewState } from "@j3-bots/client-runtime";
 import type { BrowserTabRef } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
-import { useCallback, useMemo, useState, useSyncExternalStore, type RefCallback } from "react";
+import {
+  type RefCallback,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useBrowser } from "./context";
 import { viewLockName } from "./kept";
 import { emptyStore, heldStore } from "./held";
@@ -40,6 +48,17 @@ export interface TabView {
 
 type Asked = { readonly maxWidth: number; readonly maxHeight: number };
 
+const sameSize = (box: Size): Size => box;
+
+/**
+ * A picture for a view that zooms, as the narrow web's live view: as large
+ * as the stage's longer side both ways, so a page zoomed to read stays sharp.
+ */
+export const zoomableSize = (box: Size): Size => {
+  const side = Math.max(box.width, box.height);
+  return { width: side, height: side };
+};
+
 /**
  * Holds a view of `shownTab`, a media socket with the picture asked for at the
  * size the stage `stageRef` is put on is drawn, opened again once that size
@@ -48,7 +67,16 @@ type Asked = { readonly maxWidth: number; readonly maxHeight: number };
  * viewer moves on, so the tab stays the operator's; the next view this device
  * opens of it takes the tab over, control included.
  */
-export function useTabView(shownTab: BrowserTabRef | null): {
+export function useTabView(
+  shownTab: BrowserTabRef | null,
+  /** The size to ask the picture for, from the stage's: the stage's own unless given. */
+  sizeFor: (box: Size) => Size = sameSize,
+  /**
+   * While true, a new size asks for nothing new, as while a phone's keyboard
+   * is up and gives the room back as it goes down.
+   */
+  keep = false,
+): {
   readonly stageRef: RefCallback<HTMLElement>;
   /** The stage's size; null until measured. */
   readonly box: Size | null;
@@ -59,30 +87,37 @@ export function useTabView(shownTab: BrowserTabRef | null): {
   const [box, setBox] = useState<Size | null>(null);
   // The size asked for, which changes only once the drawn size settles and differs enough.
   const [asked, setAsked] = useState<Asked | null>(null);
-  const stageRef = useCallback((element: HTMLElement | null) => {
-    if (element === null) return;
-    let settled: Asked | null = null;
-    let timer: number | undefined;
-    const ask = (next: Asked) => {
-      settled = next;
-      setAsked(next);
-    };
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry === undefined) return;
-      const { width, height } = entry.contentRect;
-      setBox({ width, height });
-      const next = viewSize({ width, height }, window.devicePixelRatio);
-      window.clearTimeout(timer);
-      if (settled === null) ask(next);
-      else if (sizeChanged(settled, next))
-        timer = window.setTimeout(() => ask(next), RESIZE_SETTLE);
-    });
-    observer.observe(element);
-    return () => {
-      window.clearTimeout(timer);
-      observer.disconnect();
-    };
-  }, []);
+  const keeping = useRef(keep);
+  useEffect(() => {
+    keeping.current = keep;
+  });
+  const stageRef = useCallback(
+    (element: HTMLElement | null) => {
+      if (element === null) return;
+      let settled: Asked | null = null;
+      let timer: number | undefined;
+      const ask = (next: Asked) => {
+        settled = next;
+        setAsked(next);
+      };
+      const observer = new ResizeObserver(([entry]) => {
+        if (entry === undefined) return;
+        const { width, height } = entry.contentRect;
+        setBox({ width, height });
+        const next = viewSize(sizeFor({ width, height }), window.devicePixelRatio);
+        window.clearTimeout(timer);
+        if (settled === null) ask(next);
+        else if (!keeping.current && sizeChanged(settled, next))
+          timer = window.setTimeout(() => ask(next), RESIZE_SETTLE);
+      });
+      observer.observe(element);
+      return () => {
+        window.clearTimeout(timer);
+        observer.disconnect();
+      };
+    },
+    [sizeFor],
+  );
 
   const store = useMemo(
     () =>

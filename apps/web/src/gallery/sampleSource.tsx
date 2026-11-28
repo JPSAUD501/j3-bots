@@ -1093,7 +1093,13 @@ export const sampleCardIntents = (source: ShellSource): BotCardIntents => ({
 export function useSampleSource({
   firstRun = false,
   engine,
-}: { firstRun?: boolean; engine?: EngineStatus } = {}): ShellSource & {
+  sharedBrowser = false,
+}: {
+  firstRun?: boolean;
+  engine?: EngineStatus;
+  /** The server shares its tabs, as a server from 0.16 on does. */
+  sharedBrowser?: boolean;
+} = {}): ShellSource & {
   /** The dialogs the source holds over the shell: the connectors screen. */
   readonly overlays: ReactNode;
 } {
@@ -1162,7 +1168,7 @@ export function useSampleSource({
     [store],
   );
   // Scout shops in its browser.
-  const [browser] = useState(() => sampleBrowser([ids.scout]));
+  const [browser] = useState(() => sampleBrowser([ids.scout], { shared: sharedBrowser }));
   return {
     data: toData(state, secretsView),
     intents,

@@ -411,6 +411,10 @@
     animation: pop-in var(--duration-pop) var(--ease-pop) backwards;
   }
 
+  .fade-in {
+    animation: fade-in var(--duration-state) var(--ease-out) backwards;
+  }
+
   /* A line of status giving way to the next: the old leaves upward, the new rises in. */
   .swap-in {
     animation: swap-in var(--duration-swap) var(--ease-out) backwards;
@@ -1162,7 +1166,7 @@
   }
 
   .onboarding-fade-in {
-    animation: onboarding-fade-in var(--duration-state) var(--ease-out) both;
+    animation: fade-in var(--duration-state) var(--ease-out) both;
   }
 
   .onboarding-fade-out {
@@ -1206,8 +1210,7 @@
     transition:
       opacity var(--stage-spot-in) var(--ease-out),
       scale var(--duration-soft) var(--ease-soft);
-    animation: onboarding-fade-in var(--stage-spot-in) var(--ease-out) var(--stage-cue, 0ms)
-      backwards;
+    animation: fade-in var(--stage-spot-in) var(--ease-out) var(--stage-cue, 0ms) backwards;
   }
 
   .stage-actor[data-light="key"] .stage-light {
@@ -1353,8 +1356,7 @@
       transparent
     );
     transition: opacity var(--duration-slow) var(--ease-out);
-    animation: onboarding-fade-in var(--duration-slow) var(--ease-out) var(--stage-lands, 0ms)
-      backwards;
+    animation: fade-in var(--duration-slow) var(--ease-out) var(--stage-lands, 0ms) backwards;
   }
 
   .stage-actor[data-light="spill"] .stage-shadow {
@@ -1602,7 +1604,7 @@
   }
 }
 
-@keyframes onboarding-fade-in {
+@keyframes fade-in {
   from {
     opacity: 0;
   }

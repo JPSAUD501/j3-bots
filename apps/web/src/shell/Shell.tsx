@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   BotId,
-  BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
   MessageQuote,
@@ -35,8 +34,10 @@ import {
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
-import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
+import type { BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
+import { BrowserPill, BrowserViewer, LiveCardSlot, LiveView } from "../browser/live/slots";
+import { NeedsYouTitle } from "../browser/live/NeedsYouTitle";
 import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
@@ -96,6 +97,11 @@ interface ShellNavigation {
   readonly browser: BrowserTabRef | "front" | null;
   /** Opens the viewer, closing the details, or closes it. */
   readonly setBrowser: (target: BrowserTabRef | "front" | null) => void;
+  /**
+   * The tab the open browser shows now, kept in the address in place of the
+   * one it opened on, so a reload shows it again. Not a step Back goes through.
+   */
+  readonly keepBrowser: (tab: BrowserTabRef) => void;
   /** The element a roster row renders as: a router link in the app, a button in a preview. */
   readonly rowLink: (item: RosterItem) => ReactElement;
   /**
@@ -179,8 +185,13 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const detailsModal = layout === "phone" || layout === "tablet";
   const detailsCover = item !== null && aside !== null && detailsModal;
   const viewerRef = useRef<BrowserViewerHandle>(null);
+  // The viewer winds down its tab before it closes; until its code is here it holds none.
+  const closeBrowser = (next: () => void = () => navigation.setBrowser(null)) => {
+    if (viewerRef.current === null) next();
+    else viewerRef.current.requestClose(next);
+  };
   const closeAside = () => {
-    if (aside === "browser") viewerRef.current?.requestClose();
+    if (aside === "browser") closeBrowser();
     else navigation.setDetailsOpen(false);
   };
   const selectionKey =
@@ -500,7 +511,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         : null;
     const toggleDetails = () =>
       aside === "browser"
-        ? viewerRef.current?.requestClose(() => navigation.setDetailsOpen(true))
+        ? closeBrowser(() => navigation.setDetailsOpen(true))
         : navigation.setDetailsOpen(!detailsOpen);
     const browserBot = item._tag === "bot" ? item.bot : null;
     const goToEntry = (entryId: EntryId) => {
@@ -624,7 +635,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                       drafting,
                     }}
                     recordScreen={writes ? recordScreenIn(intents.recordScreen, target) : null}
-                    {...(browserBot === null
+                    {...(browserBot === null || layout !== "wide"
                       ? {}
                       : {
                           turnExtra: (
@@ -636,8 +647,19 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                         })}
                   />
                 </AppStageProvider>
+                {/* Below the wide layout, the phone's live card ends the bot's conversation while it browses. */}
+                {browserBot !== null && layout !== "wide" && (
+                  <LiveCardSlot botId={browserBot.id} onOpen={navigation.setBrowser} />
+                )}
               </div>
             </div>
+            {browserBot !== null && layout !== "wide" && (
+              <BrowserPill
+                botId={browserBot.id}
+                shown={!end.atEnd}
+                onOpen={navigation.setBrowser}
+              />
+            )}
             <ToLatest
               end={end}
               onPress={() => scrollToEnd(timeline)}
@@ -699,32 +721,34 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       </>
     );
     if (browserBot !== null && browserTarget !== null) {
-      // The step the bot asked for in its browser, while it waits on the operator.
-      const help = view.items.findLast(
-        (entry): entry is BrowserHelpEntry =>
-          entry._tag === "browser-help" && entry.status._tag === "pending",
-      );
-      details = (
-        <BrowserViewer
-          // One viewer per bot: another bot's browser opens afresh.
-          key={browserBot.id}
-          bot={browserBot}
-          target={browserTarget}
-          help={
-            help === undefined
-              ? null
-              : {
-                  tab: help.tab,
-                  onDone: () => intents.answerBrowserHelp(help.id, "done"),
-                  onDecline: () => intents.answerBrowserHelp(help.id, "declined"),
-                }
-          }
-          onClose={() => navigation.setBrowser(null)}
-          headingRef={detailsHeadingRef}
-          headingId={detailsHeadingId}
-          ref={viewerRef}
-        />
-      );
+      // Below the wide layout, the browser is the phone's live view; beside the conversation, the viewer.
+      details =
+        layout === "wide" ? (
+          <BrowserViewer
+            // One viewer per bot: another bot's browser opens afresh.
+            key={browserBot.id}
+            bot={browserBot}
+            target={browserTarget}
+            onClose={() => navigation.setBrowser(null)}
+            headingRef={detailsHeadingRef}
+            headingId={detailsHeadingId}
+            ref={viewerRef}
+          />
+        ) : (
+          <LiveView
+            key={browserBot.id}
+            bot={browserBot}
+            target={browserTarget}
+            beside={layout === "tablet"}
+            onShown={navigation.keepBrowser}
+            onClose={() => navigation.setBrowser(null)}
+            send={intents.sendQuickMessage}
+            onConversation={(botId) => navigation.select({ _tag: "bot", botId })}
+            headingRef={detailsHeadingRef}
+            headingId={detailsHeadingId}
+            ref={viewerRef}
+          />
+        );
     } else if (detailsOpen) {
       const close = () => navigation.setDetailsOpen(false);
       if (item._tag === "bot") {
@@ -811,6 +835,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
 
   return (
     <RosterProvider roster={rosterItems} engine={data.engine}>
+      <NeedsYouTitle />
       <BotCardProvider intents={cardIntents}>
         <BrowserProvider source={browser}>
           <AvatarConnection connected={data.connected}>

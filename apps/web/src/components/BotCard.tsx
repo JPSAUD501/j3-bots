@@ -580,9 +580,12 @@ function QuickMessage({
 export function QuickMessageField({
   name,
   quick,
+  placeholder,
   onOpen,
 }: {
   readonly name: string;
+  /** What the empty field says; the card's own words unless given. */
+  readonly placeholder?: string;
   readonly quick: {
     readonly text: string;
     readonly setText: (text: string) => void;
@@ -607,7 +610,7 @@ export function QuickMessageField({
           value={quick.text}
           onChange={(event) => quick.setText(event.currentTarget.value)}
           aria-label={t("card.quick.label", { name })}
-          placeholder={t("card.quick.placeholder")}
+          placeholder={placeholder ?? t("card.quick.placeholder")}
           className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         />
         <Button

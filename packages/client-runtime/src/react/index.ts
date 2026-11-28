@@ -13,6 +13,7 @@ import type {
   PairSeq,
   Routine,
   RoutineId,
+  SharedBrowserTab,
 } from "@j3-bots/contracts";
 import {
   createContext,
@@ -187,6 +188,15 @@ export const useBrowserTabs = (botId: BotId | null): Loaded<ReadonlyArray<Browse
     useHeld(botId, same, (client, id) => client.openBrowserTabs(id)),
   );
 
+/** Whether the server shares its tabs (`sharedBrowser`), so every tab is listed. */
+export const useSharedBrowser = (): boolean => useReadable(useJ3Client().sharedBrowser);
+
+/** Every tab, live, while mounted and `on`; null otherwise and while it loads. */
+export const useAllBrowserTabs = (on: boolean): Loaded<ReadonlyArray<SharedBrowserTab>> | null =>
+  useHeldState<Loaded<ReadonlyArray<SharedBrowserTab>>>(
+    useHeld(on ? "all" : null, same, (client) => client.openAllBrowserTabs()),
+  );
+
 /**
  * A view of the tab `ref` names while mounted, or null for the first render
  * and while `ref` is null. `size` is read for each socket the view opens.
@@ -326,6 +336,7 @@ export {
   useConnectorSignIn,
 } from "./connectorSignIn.ts";
 export { useTurnAnnouncement } from "./turn.ts";
+export { type PageUseHandle, usePageUse } from "./pageUse.ts";
 export { type Answer, useAnswer } from "./answer.ts";
 export {
   type QuickMessageState,

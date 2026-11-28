@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, BrowserTab } from "@j3-bots/contracts";
 import { GlobeIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../app/context";
-import { cn } from "../lib/cn";
-import { useBrowserTabs } from "./context";
-import { statusKey } from "./status";
+import { useBrowser, useBrowserTabs } from "./context";
+import { Faces } from "./Faces";
+import { useWaitingBots } from "./waiting";
+import { preloadBrowserViewer } from "./live/slots";
 import { useStill } from "./still";
-import { frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
+import { botViewerTab, frontTab, siteOf, tabFaces } from "@j3-bots/client-runtime/presentation";
 
 /** Whether the bot's turn is using its browser right now, as its state says. */
 export const actsInBrowser = (bot: Bot): boolean =>
@@ -15,7 +16,7 @@ export const actsInBrowser = (bot: Bot): boolean =>
 
 /**
  * In the running turn's row, while the bot has a tab: a still of its front
- * tab with the site's name, taken again as it navigates and every few seconds
+ * tab with the site's name and the faces of the bots on it, taken again as it navigates and every few seconds
  * while the bot works, never a live picture. Pressing it opens the viewer.
  */
 export function BrowserPanel({
@@ -27,6 +28,10 @@ export function BrowserPanel({
 }) {
   const tabs = useBrowserTabs(bot.id);
   const tab = tabs === null ? null : frontTab(tabs);
+  const hasTab = tab !== null;
+  useEffect(() => {
+    if (hasTab) preloadBrowserViewer();
+  }, [hasTab]);
   if (tab === null) return null;
   return <Panel tab={tab} working={bot.state._tag === "working"} onOpen={() => onOpen(tab)} />;
 }
@@ -60,6 +65,9 @@ function Panel({
   }, [frame]);
   const still = useStill(tab, box, working && tab.controller === "bot", shown);
   const site = siteOf(tab.url) || t("browser.panel.newTab");
+  const { source } = useBrowser();
+  const here = useSyncExternalStore(source.pairing.subscribe, source.pairing.get);
+  const faces = tabFaces(botViewerTab(tab, here), useWaitingBots());
   return (
     <button
       type="button"
@@ -80,14 +88,7 @@ function Panel({
       <span className="flex min-h-8 items-center gap-1.5 border-t border-border px-2.5 text-2xs">
         <GlobeIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate font-medium">{site}</span>
-        <span
-          className={cn(
-            "ms-auto shrink-0",
-            tab.controller === "you" ? "text-waiting" : "text-muted-foreground",
-          )}
-        >
-          {t(statusKey(tab.controller))}
-        </span>
+        <Faces faces={faces} size={18} className="ms-auto" />
       </span>
     </button>
   );

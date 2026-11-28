@@ -61,3 +61,21 @@ export const dragWheel = (moved: Point, drawn: DrawnRect, page: PageSize): Point
   const scale = drawn.width > 0 ? page.width / drawn.width : 0;
   return { x: 0 - moved.x * scale, y: 0 - moved.y * scale };
 };
+
+/**
+ * The web address the person means by what they typed in the address
+ * field, or null when it is not one: an http or https address as typed, or a
+ * host alone, with a port and a path or not, taken as https. Any other
+ * scheme, as `javascript:` or `file:`, is not a web address.
+ */
+export const addressOf = (typed: string): string | null => {
+  const text = typed.trim();
+  const address = text.includes("://")
+    ? text
+    : /^[^\s/:?#@]+(:\d{1,5})?([/?#]|$)/.test(text)
+      ? `https://${text}`
+      : null;
+  if (address === null || !URL.canParse(address)) return null;
+  const { protocol } = new URL(address);
+  return protocol === "http:" || protocol === "https:" ? address : null;
+};

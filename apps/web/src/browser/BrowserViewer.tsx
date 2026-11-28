@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { BrowserControl, BrowserViewState } from "@j3-bots/client-runtime";
-import type { Bot, BrowserTab, BrowserTabRef } from "@j3-bots/contracts";
+import { botViewerTab, tabFaces } from "@j3-bots/client-runtime/presentation";
+import { usePageUse } from "@j3-bots/client-runtime/react";
+import type { Bot, BrowserInput, BrowserTab, BrowserTabRef } from "@j3-bots/contracts";
 import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react";
 import {
   useEffect,
@@ -9,6 +10,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -16,32 +18,26 @@ import {
 import { useI18n } from "../app/context";
 import { DocsLink } from "../components/DocsLink";
 import { Button } from "../components/ui/button";
-import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
 import { textField } from "../components/ui/field";
 import { Kbd } from "../components/ui/kbd";
 import { cn } from "../lib/cn";
 import { BrowserSurface } from "./BrowserSurface";
-import { useBrowserTabs } from "./context";
-import { addressOf, LEAVE_PAGE_KEY } from "./input";
-import { holds } from "./source";
-import { statusKey } from "./status";
-import { BROWSER_SETUP_DOCS, frontTab, siteOf } from "@j3-bots/client-runtime/presentation";
+import { useBrowser, useBrowserTabs } from "./context";
+import { Faces } from "./Faces";
+import { LEAVE_PAGE_KEY } from "./input";
+import { QuietLine } from "./QuietLine";
+import {
+  addressOf,
+  BROWSER_SETUP_DOCS,
+  frontTab,
+  siteOf,
+} from "@j3-bots/client-runtime/presentation";
 import { type TabView, useTabView } from "./useTabView";
-
-/** A help card the bot left for the operator in this browser: Done and Can't do it answer it. */
-interface BrowserHelp {
-  /** The tab the bot asked for help in. */
-  readonly tab: BrowserTabRef;
-  readonly onDone: () => void;
-  readonly onDecline: () => void;
-}
+import { useWaitingBots } from "./waiting";
 
 /** What the shell asks of an open viewer. */
 export interface BrowserViewerHandle {
-  /**
-   * Closes the viewer, or with `next` does that instead, first asking whether
-   * to hand the tab back while the operator holds it.
-   */
+  /** Closes the viewer, or with `next` does that instead; what this device held goes back first. */
   readonly requestClose: (next?: () => void) => void;
 }
 
@@ -49,8 +45,6 @@ interface BrowserViewerProps {
   readonly bot: Bot;
   /** The tab asked for, or the bot's front tab. */
   readonly target: BrowserTabRef | "front";
-  /** The bot's help card in its browser, while one waits; null otherwise. */
-  readonly help: BrowserHelp | null;
   readonly onClose: () => void;
   readonly headingRef: RefObject<HTMLHeadingElement | null>;
   readonly headingId: string;
@@ -58,16 +52,17 @@ interface BrowserViewerProps {
 }
 
 /**
- * The bot's tab, live: its site and address, who acts on it, and one primary
- * action, taking control or, once taken, handing it back. Only the operator
- * in control gets back, forward, reload and the address field, and only then
- * does what they do over the picture reach the page. It follows the bot to a
- * pop-up the page opens, as a sign-in window, and back when it closes.
+ * The bot's tab, live: its site and address, the faces of the bots on it
+ * and its one quiet line. Touching the page is using it, with no step
+ * before: what the person does over the picture reaches the page, the bots
+ * on the tab wait, and they carry on by themselves once the person stops,
+ * after a short countdown Now skips. Wait for me holds them until Continue.
+ * Leaving gives the tab back at once. It follows the bot to a pop-up the
+ * page opens, as a sign-in window, and back when it closes.
  */
 export function BrowserViewer({
   bot,
   target,
-  help,
   onClose,
   headingRef,
   headingId,
@@ -95,82 +90,14 @@ export function BrowserViewer({
   const tab: BrowserTab | null =
     (asked === null ? null : tabs?.find((each) => each.ref === asked)) ?? front;
 
-  const { stageRef, box, current: tabView } = useTabView(tab?.ref ?? null);
-  const state: BrowserViewState | null = tabView?.state ?? null;
-  const controller = state?.control?.controller ?? null;
-  const control = state !== null && holds(state);
-  const live = state?.status._tag === "live";
-
-  // Following a pop-up out of a tab the operator held, they keep going in it.
-  const followed = useRef<{ readonly from: BrowserTabRef; readonly held: boolean } | null>(null);
-  const shownTab = tab?.ref ?? null;
-  const lastShown = useRef<{ ref: BrowserTabRef | null; control: boolean }>({
-    ref: null,
-    control: false,
-  });
-  useEffect(() => {
-    const before = lastShown.current;
-    if (before.ref !== null && before.ref !== shownTab) {
-      followed.current = { from: before.ref, held: before.control };
-    }
-    lastShown.current = { ref: shownTab, control };
-  }, [shownTab, control, followed, lastShown]);
-  useEffect(() => {
-    const follow = followed.current;
-    const shownController = tabView?.state.control?.controller;
-    if (follow === null || tabView?.state.status._tag !== "live" || shownController === undefined) {
-      return;
-    }
-    followed.current = null;
-    if (follow.held && shownController !== "you" && shownController !== "another-device") {
-      tabView.view.send({ type: "take" });
-    }
-  }, [tabView, followed]);
-
-  // Leaving while in control asks once whether to hand the tab back.
-  const [asking, setAsking] = useState<{ readonly next: () => void } | null>(null);
+  const pane = useRef<TabPaneHandle>(null);
   const requestClose = useEffectEvent((next: () => void = onClose) => {
-    if (control) setAsking({ next });
-    else next();
+    pane.current?.leave();
+    next();
   });
   useImperativeHandle(ref, () => ({ requestClose: (next) => requestClose(next) }), []);
-
-  const primary = useRef<HTMLButtonElement>(null);
-  // Taking control here puts the keyboard on the page.
-  const [justTook, setJustTook] = useState(false);
-
+  const closeButton = useRef<HTMLButtonElement>(null);
   const site = tab === null ? "" : siteOf(tab.url);
-  // The help card answers for its own tab, or for whatever is shown once its tab is gone, as after
-  // the server restarted.
-  const helpHere =
-    help !== null &&
-    tabs !== null &&
-    (help.tab === tab?.ref || !tabs.some((each) => each.ref === help.tab))
-      ? help
-      : null;
-  const take = () => {
-    if (controller === "another-device") return;
-    setJustTook(true);
-    tabView?.view.send({ type: "take" });
-  };
-  /** Gives the tab back without a word on the help card, which stays open. */
-  const release = () => {
-    setJustTook(false);
-    tabView?.releasing();
-    tabView?.view.send({ type: "release" });
-  };
-  // Answering the help card gives the tab back on the server.
-  const done = () => {
-    if (helpHere === null) return release();
-    setJustTook(false);
-    tabView?.releasing();
-    helpHere.onDone();
-  };
-  const decline = () => {
-    setJustTook(false);
-    tabView?.releasing();
-    helpHere?.onDecline();
-  };
 
   return (
     <section aria-labelledby={headingId} className="flex h-full min-h-0 flex-col">
@@ -184,6 +111,7 @@ export function BrowserViewer({
           {site || t("browser.viewer.title")}
         </h2>
         <Button
+          ref={closeButton}
           variant="ghost-muted"
           size="icon"
           onClick={() => requestClose()}
@@ -192,45 +120,101 @@ export function BrowserViewer({
           <XIcon />
         </Button>
       </header>
-      {tab !== null && (
+      {tab === null ? (
+        <div className="relative flex min-h-0 flex-1">
+          {tabs !== null && <StageNote>{t("browser.noTab")}</StageNote>}
+        </div>
+      ) : (
+        <TabPane
+          // Each tab is used on its own: leaving one gives it back.
+          key={tab.ref}
+          ref={pane}
+          tab={tab}
+          site={site}
+          onLeavePage={() => closeButton.current?.focus()}
+        />
+      )}
+    </section>
+  );
+}
+
+/** What the viewer asks of the tab it shows. */
+interface TabPaneHandle {
+  /** Gives back what this device holds on the tab, at once. */
+  readonly leave: () => void;
+}
+
+/** One tab's address, page and line, and the person's use of it. */
+function TabPane({
+  tab,
+  site,
+  onLeavePage,
+  ref,
+}: {
+  readonly tab: BrowserTab;
+  readonly site: string;
+  readonly onLeavePage: () => void;
+  readonly ref: Ref<TabPaneHandle>;
+}) {
+  const { t } = useI18n();
+  // Declared first, so it runs before the view closes as the pane goes: what was held goes back.
+  const leaving = useRef(() => {});
+  useEffect(() => () => leaving.current(), []);
+
+  const { source } = useBrowser();
+  const here = useSyncExternalStore(source.pairing.subscribe, source.pairing.get);
+  const shared = useSyncExternalStore(source.sharedBrowser.subscribe, source.sharedBrowser.get);
+  const shown = botViewerTab(tab, here);
+  const { stageRef, box, current: tabView } = useTabView(tab.ref);
+  const state: BrowserViewState | null = tabView?.state ?? null;
+  const use = usePageUse({ tab: shown, send: tabView?.view.send ?? null, shared });
+  const waitsForPerson = useWaitingBots();
+  const status = state?.status._tag;
+  const usable =
+    status === "live" && shown.holder._tag !== "elsewhere" && shown.holder._tag !== "fill";
+  const reconnecting = status === "reconnecting" || status === "paused";
+
+  const leave = () => {
+    tabView?.releasing();
+    use.leave();
+  };
+  useEffect(() => {
+    leaving.current = leave;
+  });
+  useImperativeHandle(ref, () => ({ leave: () => leaving.current() }), []);
+
+  return (
+    <>
+      {tabView !== null && (
         <div className="flex min-h-11 shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
-          {control && tabView !== null ? (
-            <Navigation url={tab.url} view={tabView} />
-          ) : (
-            <p
-              className="min-w-0 flex-1 truncate px-1.5 font-mono text-2xs text-muted-foreground"
-              title={tab.url}
-            >
-              {tab.url}
-            </p>
-          )}
+          <Navigation url={tab.url} send={use.send} />
         </div>
       )}
       <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center p-3">
-        {tab === null ? (
-          tabs !== null && <StageNote>{t("browser.noTab")}</StageNote>
-        ) : tabView !== null && box !== null ? (
+        {tabView !== null && box !== null && (
           <>
             <BrowserSurface
-              // A new view starts drawing afresh.
-              key={tab.ref}
               view={tabView.view}
+              tab={shown.ref}
+              address={shown.url}
               viewport={state?.viewport ?? null}
               box={{ width: Math.max(box.width - 24, 64), height: Math.max(box.height - 24, 64) }}
-              control={control}
+              usable={usable}
+              send={use.send}
+              holding={use.holding}
+              onIt={shown.onIt}
               label={t("browser.page", { site: site || t("browser.panel.newTab") })}
-              description={t("browser.status.you")}
-              onLeave={() => primary.current?.focus()}
-              focusPage={justTook}
+              description={t("browser.viewer.touchIsUsing")}
+              onLeave={onLeavePage}
             />
             <StageState tabView={tabView} />
-            {control && state?.control?.dialog != null && (
+            {use.holding && state?.control?.dialog != null && (
               <PageDialog
                 key={`${state.control.generation}:${state.control.dialog.kind}:${state.control.dialog.message}`}
                 site={site}
                 dialog={state.control.dialog}
                 onAnswer={(accept, promptText) =>
-                  tabView.view.send({
+                  use.send({
                     type: "dialog",
                     accept,
                     ...(promptText === undefined ? {} : { promptText }),
@@ -239,108 +223,34 @@ export function BrowserViewer({
               />
             )}
           </>
-        ) : null}
+        )}
       </div>
-      <footer className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-3 py-2.5 pb-[max(--spacing(2.5),env(safe-area-inset-bottom))]">
-        <StatusLine state={state} tab={tab} />
-        {tab !== null && state !== null && (control || live) && (
-          <span className="ms-auto flex shrink-0 flex-wrap items-center gap-2">
-            {control && (
-              <Kbd className="hidden pointer-fine:inline-flex">
-                {t("browser.viewer.leaveKey", { key: LEAVE_PAGE_KEY })}
-              </Kbd>
-            )}
-            {control && helpHere !== null && (
-              <Button variant="outline" onClick={decline}>
-                {t("browser.cantDoIt")}
-              </Button>
-            )}
-            {control ? (
-              <Button ref={primary} variant="primary" onClick={done}>
-                {t("browser.done")}
-              </Button>
-            ) : (
-              <Button
-                ref={primary}
-                variant="primary"
-                onClick={take}
-                aria-disabled={controller === "another-device"}
-                aria-description={
-                  controller === "another-device" ? t("browser.viewer.heldElsewhere") : undefined
-                }
-              >
-                {t("browser.take")}
-              </Button>
-            )}
-          </span>
+      <footer className="flex min-h-12 shrink-0 items-center gap-2 border-t border-border px-3 py-2 pb-[max(--spacing(2),env(safe-area-inset-bottom))]">
+        <Faces faces={tabFaces(shown, waitsForPerson)} />
+        {reconnecting ? (
+          <p role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {t("browser.reconnecting")}
+          </p>
+        ) : (
+          <QuietLine
+            line={use.line}
+            onNow={use.giveBack}
+            onContinue={use.giveBack}
+            className="flex-1"
+          />
+        )}
+        {use.holding && (
+          <Kbd className="hidden shrink-0 pointer-fine:inline-flex">
+            {t("browser.viewer.leaveKey", { key: LEAVE_PAGE_KEY })}
+          </Kbd>
+        )}
+        {shown.onIt.length > 0 && use.line._tag !== "waits-until-continue" && (
+          <Button variant="ghost-muted" size="sm" className="shrink-0" onClick={use.waitForMe}>
+            {t("browser.sheet.waitForMe")}
+          </Button>
         )}
       </footer>
-      <AlertDialog.Root
-        open={asking !== null}
-        onOpenChange={(open) => {
-          if (!open) setAsking(null);
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Backdrop className={cn(dialogBackdrop, "z-50")} />
-          <AlertDialog.Popup className={cn(alertDialog, "z-50 max-w-sm gap-2 p-5")}>
-            <AlertDialog.Title className={dialogTitle}>
-              {t("browser.handBack.title")}
-            </AlertDialog.Title>
-            <AlertDialog.Description className="text-sm text-muted-foreground">
-              {t("browser.handBack.body")}
-            </AlertDialog.Description>
-            <div className="mt-3 flex flex-wrap justify-end gap-2">
-              <AlertDialog.Close render={<Button />} onClick={() => asking?.next()}>
-                {t("browser.handBack.keep")}
-              </AlertDialog.Close>
-              <AlertDialog.Close
-                render={<Button variant="primary" />}
-                onClick={() => {
-                  release();
-                  asking?.next();
-                }}
-              >
-                {t("browser.handBack.confirm")}
-              </AlertDialog.Close>
-            </div>
-          </AlertDialog.Popup>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-    </section>
-  );
-}
-
-/** Who acts on the tab, or what the view waits on; announced as it changes. */
-function StatusLine({
-  state,
-  tab,
-}: {
-  readonly state: BrowserViewState | null;
-  readonly tab: BrowserTab | null;
-}) {
-  const { t } = useI18n();
-  const controller = state?.control?.controller ?? null;
-  const text =
-    tab === null || state === null
-      ? null
-      : state.status._tag === "connecting"
-        ? t("browser.connecting")
-        : state.status._tag === "reconnecting" || state.status._tag === "paused"
-          ? t("browser.reconnecting")
-          : state.status._tag === "live" && controller !== null
-            ? t(statusKey(controller))
-            : null;
-  return (
-    <p
-      role="status"
-      className={cn(
-        "min-w-0 text-xs",
-        controller === "you" ? "font-medium text-waiting" : "text-muted-foreground",
-      )}
-    >
-      {text}
-    </p>
+    </>
   );
 }
 
@@ -396,8 +306,14 @@ function StageNote({
   );
 }
 
-/** Back, forward, reload and the address, for the operator in control. */
-function Navigation({ url, view }: { readonly url: string; readonly view: TabView }) {
+/** Back, forward, reload and the address: going somewhere is using the page. */
+function Navigation({
+  url,
+  send,
+}: {
+  readonly url: string;
+  readonly send: (input: BrowserInput) => void;
+}) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<{ readonly from: string; readonly text: string } | null>(null);
   const [bad, setBad] = useState(false);
@@ -408,14 +324,14 @@ function Navigation({ url, view }: { readonly url: string; readonly view: TabVie
     setBad(address === null);
     if (address === null) return;
     setDraft(null);
-    view.view.send({ type: "navigate", url: address });
+    send({ type: "navigate", url: address });
   };
   return (
     <>
       <Button
         variant="ghost-muted"
         size="icon-sm"
-        onClick={() => view.view.send({ type: "back" })}
+        onClick={() => send({ type: "back" })}
         aria-label={t("browser.viewer.back")}
       >
         <ArrowLeftIcon />
@@ -423,7 +339,7 @@ function Navigation({ url, view }: { readonly url: string; readonly view: TabVie
       <Button
         variant="ghost-muted"
         size="icon-sm"
-        onClick={() => view.view.send({ type: "forward" })}
+        onClick={() => send({ type: "forward" })}
         aria-label={t("browser.viewer.forward")}
       >
         <ArrowRightIcon />
@@ -431,7 +347,7 @@ function Navigation({ url, view }: { readonly url: string; readonly view: TabVie
       <Button
         variant="ghost-muted"
         size="icon-sm"
-        onClick={() => view.view.send({ type: "reload" })}
+        onClick={() => send({ type: "reload" })}
         aria-label={t("browser.viewer.reload")}
       >
         <RotateCwIcon />
@@ -477,8 +393,8 @@ function Navigation({ url, view }: { readonly url: string; readonly view: TabVie
   );
 }
 
-/** A dialog the page waits on, for the operator in control to answer. */
-function PageDialog({
+/** A dialog the page waits on, for the person using the page to answer: the wide viewer's and the live view's. */
+export function PageDialog({
   site,
   dialog,
   onAnswer,

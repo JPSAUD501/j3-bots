@@ -39,7 +39,7 @@ const statusIs =
     state.status._tag === tag;
 
 /** Waits until `check` holds, polling: the fake host has no events of its own. */
-const eventually = (check: Effect.Effect<boolean>) =>
+const eventually = <R>(check: Effect.Effect<boolean, never, R>) =>
   check.pipe(Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("5 millis") }));
 
 /** The host's calls of `call` on `ref`: the host is one for every test. */
@@ -182,26 +182,34 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
     }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
-  it.effect("gives the tab back only when asked, even sent while the socket was down", () =>
-    Effect.gen(function* () {
-      const opened = yield* scene;
-      const { host, ref } = opened;
-      const lifecycle = yield* TestPlatform.TestLifecycle;
-      const { view } = yield* watch(opened);
-      yield* view.send({ type: "take" });
-      yield* waitFor(view.state, (state) => state.control?.controller === "you");
+  it.effect(
+    "gives the tab back only when asked, as asked, even sent while the socket was down",
+    () =>
+      Effect.gen(function* () {
+        const opened = yield* scene;
+        const { host, ref } = opened;
+        const lifecycle = yield* TestPlatform.TestLifecycle;
+        const { view } = yield* watch(opened);
+        yield* view.send({ type: "take" });
+        yield* waitFor(view.state, (state) => state.control?.controller === "you");
 
-      yield* lifecycle.set("background");
-      yield* waitFor(view.state, statusIs("paused"));
-      // Typing is about a page the operator no longer sees; giving the tab back is not.
-      yield* view.send({ type: "text", text: "lost" });
-      yield* view.send({ type: "release" });
-      yield* lifecycle.set("foreground");
-      yield* waitFor(view.state, statusIs("live"));
-      yield* waitFor(view.state, (state) => state.control?.controller !== "you");
-      assert.notStrictEqual((yield* shared(ref)).heldBy?.kind, "person");
-      assert.deepStrictEqual(yield* callsOn(host, "tab.input", ref), []);
-    }).pipe(Effect.scoped, Effect.provide(client)),
+        yield* lifecycle.set("background");
+        yield* waitFor(view.state, statusIs("paused"));
+        // Typing is about a page the operator no longer sees; giving the tab back is not, and the
+        // frame keeps what it said: an idle release, as when the person stopped.
+        yield* view.send({ type: "text", text: "lost" });
+        yield* view.send({ type: "release", idle: true });
+        yield* lifecycle.set("foreground");
+        yield* waitFor(view.state, statusIs("live"));
+        // An idle release keeps the hold until it lapses, where a plain one would end it at once.
+        yield* eventually(
+          Effect.map(
+            shared(ref),
+            (tab) => tab.heldBy?.kind === "person" && tab.heldBy.until !== null,
+          ),
+        );
+        assert.deepStrictEqual(yield* callsOn(host, "tab.input", ref), []);
+      }).pipe(Effect.scoped, Effect.provide(client)),
   );
 
   it.effect("gives way to a second view of the tab on this device", () =>

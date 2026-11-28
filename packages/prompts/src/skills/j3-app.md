@@ -24,7 +24,7 @@ What this skill does not name may still exist, or may not. Say you are not sure 
 - The message field takes text, attached files and dictation. Typing `/` lists the prompts of the connectors that bot may use.
 - What needs your user arrives as a card: a question (tap an option or type an answer; a question a bot asked can be dismissed, which counts as a no), an approval naming the exact action ("Allow once", "Don’t ask again", "Deny"), a request for a secret, a step in the bot's browser, or a service to sign in to. A card can be answered on any paired device.
 - A finished turn's work folds into one line, such as "Worked · 6 steps", which opens to show the steps.
-- While a bot has a page open in its browser, a globe in the header opens it. "Take control" lets your user use the page; "Done" gives it back.
+- While a bot has a page open in its browser, a globe in the header opens it (on Android, a live card at the end of the conversation). Your user uses the page just by touching it, with nothing to press first; the bots on that tab wait and carry on by themselves a few seconds after your user stops, or when they press Continue after "Wait for me".
 - The conversation's header opens the bot's details. On a computer, `Ctrl+.` (`⌘.` on macOS) stops the bot's work.
 
 ## A bot's details

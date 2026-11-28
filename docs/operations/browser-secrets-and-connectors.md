@@ -53,33 +53,35 @@ While the J3 Bots app is open on a computer, its own browser runs a bot's tabs, 
 
 ### Watch it
 
-On the web and the desktop:
+On the web and the desktop, in a wide window:
 
 - While the bot has a page open, a globe sits in its conversation's header, breathing while the bot acts.
-- Under the turn under way, a picture of the page and its site, taken again when the page changes and every few seconds while the bot works. It is a picture, not a live view.
-- Either one opens the **browser**: beside the conversation on a wide window, from the bottom on a phone. The page is live, with its address, and a line says who is acting: "The bot is browsing", "You have control" or "On another device". While you only watch, the page takes nothing you do, and the bot's pointer shows where it acts.
+- Under the turn under way, a picture of the page, its site and the faces of the bots on it, taken again when the page changes and every few seconds while the bot works. It is a picture, not a live view.
+- Either one opens the **browser** beside the conversation. The page is live, with its address. At the bottom, the faces of the bots on the tab and one line say who is there and who is acting, and each bot's pointer on the page carries its face and name.
 
-On Android, the browser opens from a bot's help card (below), on the whole screen. Two fingers zoom and pan the picture.
+On Android, and on the web and the desktop in a narrower window, the end of the bot's conversation shows the page live, in small, while it browses; a press opens the **live view**, the page with a bar at the bottom: over the whole screen on a phone, over the conversation on a tablet. A wide page opens near the bot, at a size you can read, and follows its pointer; pinch to see all of it. The tabs button lists every tab, and a swipe on the bar goes to the next one.
 
-### Take control
+While a bot waits for you, the web page's title starts with "(needs you)", so the browser's tab says it.
 
-**Take control** gives you the page. While you hold it, the bot can't act on it. Everything you do goes to the page: the pointer, the wheel and typing on a computer; on a touch screen, a tap clicks, a drag scrolls and a tap on a field raises the keyboard. In the Android app, a long press right-clicks too, and a keyboard button raises the keyboard when the tap didn't. Back, forward, reload and the address field appear only now. A sign-in window the page opens shows as the bot's page, and you keep control in it.
+### Using the page
 
-**Done** gives the page back to the bot. Leaving the browser while you hold it asks once whether to give it back. If your connection drops, you keep control for a minute, and get it back if you return within it.
+**Touching the page is using it.** There is nothing to press first: a click, a tap, a key, typing, scrolling the page or going to an address reaches the page at once. The bots on that tab wait, and carry on by themselves 10 seconds after you stop; the line counts the last three seconds, and **Now** skips them. Pointing, reading, zooming and moving your view of the page don't make them wait. While your phone's keyboard is up on a field of the page, they keep waiting. **Wait for me**, by the line (on Android, in the sheet the faces open), holds them until you press **Continue**. Leaving the browser gives the tab back at once.
+
+On a touch screen, a tap clicks, a drag scrolls and a tap on a field raises the keyboard. In the live view, a long press right-clicks, and the bar over the keyboard goes to the previous or next field. A sign-in window the page opens shows as the bot's page.
 
 What you can't do in this version: paste or drop into the page, download, upload or pick a file. Your clipboard and your files never reach the page.
 
-**The bot can still read the page while you hold it**, though it can't act. What you type into a field that doesn't hide it, the bot can read, and with a script it can read a hidden field's value too (**Assumed** that a hidden field stays hidden in what it reads otherwise). To give a bot a value it must not see, use the card it asks with, not the browser.
+**The bot can still read the page while you use it**, though it can't act. What you type into a field that doesn't hide it, the bot can read, and with a script it can read a hidden field's value too (**Assumed** that a hidden field stays hidden in what it reads otherwise). To give a bot a value it must not see, use the card it asks with, not the browser.
 
 ### When the bot asks for help
 
 A bot that meets a check that a person is there, a sign-in it has no login for, a second factor, a QR code or a passkey doesn't try to get around it. It shows a **help card** that says why and on which site, and stops. You get a notification, on its own channel on Android.
 
 1. **Open browser** on the card opens the browser on that page.
-2. **Take control**, and do the one step.
-3. **Done** tells the bot the step is done and gives the page back; the bot starts again from a fresh look at the page. **Can't do it** tells it you couldn't.
+2. Do the one step there.
+3. **Done** on the card tells the bot the step is done; the bot starts again from a fresh look at the page. **Can't do it** tells it you couldn't.
 
-A card nobody answers expires: when its page has been gone for two minutes, or after an hour in which no device holds the bot's pages. The bot is told which. You can also take control without a card; giving the page back then wakes the bot if it was working while you held it.
+A card nobody answers expires: when its page has been gone for two minutes, or after an hour in which no device holds the bot's pages. The bot is told which.
 
 ### See and sign out of sites
 

@@ -37,6 +37,7 @@ import type {
   BrowserInput,
   BrowserTab,
   BrowserTabRef,
+  SharedBrowserTab,
   CommandId,
   Device,
   DeviceId,
@@ -153,8 +154,8 @@ export type Platform =
 
 /** Every service of the client runtime, for applications that use Effect directly. */
 export const layer = SignOut.layer.pipe(
-  // Above the roster, whose snapshot says whether the server keeps themes.
-  Layer.provideMerge(Themes.layer),
+  // Above the roster, whose snapshot says whether the server keeps themes, and shares its tabs.
+  Layer.provideMerge(Layer.mergeAll(Themes.layer, Browser.layer)),
   Layer.provideMerge(
     Layer.mergeAll(
       Roster.layer,
@@ -168,7 +169,6 @@ export const layer = SignOut.layer.pipe(
       Usage.layer,
       ProviderSetup.layer,
       ServerUpdate.layer,
-      Browser.layer,
       Secrets.layer,
       Connectors.layer,
       Skills.layer,
@@ -762,8 +762,16 @@ export interface J3Client {
     request: ProviderConnectionRequest,
   ) => Promise<ProviderSetup.ConnectEndpointResult>;
 
-  /** The tabs the bot has open in its browser, live while held. */
+  /** The tabs the bot is on, live while held. */
   readonly openBrowserTabs: (botId: BotId) => LoadedHandle<ReadonlyArray<BrowserTab>>;
+  /** See `Roster.sharedBrowser`: whether the server shares its tabs, so every tab is listed. */
+  readonly sharedBrowser: Readable<boolean>;
+  /** Every tab, live while held; see `Browser.allTabs`. */
+  readonly openAllBrowserTabs: () => LoadedHandle<ReadonlyArray<SharedBrowserTab>>;
+  /** Opens a tab for the person, at `url` or blank; see `Browser.open`. */
+  readonly openBrowserTab: (url: string | null) => Promise<Actions.IntentResult<BrowserTabRef>>;
+  /** Closes a tab for the person; see `Browser.close`. */
+  readonly closeBrowserTab: (ref: BrowserTabRef) => Promise<Actions.IntentResult>;
   /**
    * Shows one tab: its pictures and who holds it, on a socket of its own that
    * opens again after a drop and while the app is in the foreground. `size`
@@ -1310,6 +1318,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       const { value, release } = hold(services.browser.tabs(botId));
       return { state: value, release };
     },
+    sharedBrowser: services.roster.sharedBrowser,
+    openAllBrowserTabs: () => {
+      const { value, release } = hold(services.browser.allTabs);
+      return { state: value, release };
+    },
+    openBrowserTab: (url) => run.promise(services.browser.open(url)),
+    closeBrowserTab: (ref) => run.promise(services.browser.close(ref)),
     openBrowserView: (input) => {
       const { value, release } = hold(services.browser.view(input));
       return {

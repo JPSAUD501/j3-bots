@@ -8,6 +8,7 @@ import {
   type BrowserTab,
   type BrowserTabRef,
   type BotId,
+  type SharedBrowserTab,
   HTTP_PATHS,
   MAX_BROWSER_VIEW,
 } from "@j3-bots/contracts";
@@ -23,21 +24,24 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
 import { backoffDelay, Connection, ReconnectPolicy } from "../connection/Connection.ts";
+import { Actions, type IntentResult, intentResult } from "../intents/Actions.ts";
 import { Lifecycle, type LifecycleState, Network, type NetworkStatus } from "../ports.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { type Loaded, makeLive } from "./reads.ts";
+import { Roster } from "./Roster.ts";
 
-// A bot's browser as a client follows it: the list of its tabs, on the RPC
-// socket, and one tab's pictures and control, on a media socket of its own
-// (`HTTP_PATHS.browser`). A picture is held in memory only until the next
-// replaces it: nothing of the page is kept on the device.
+// The browser as a client follows it: the list of one bot's tabs, or of
+// every tab on a server that shares them, on the RPC socket, and one tab's
+// pictures and control, on a media socket of its own (`HTTP_PATHS.browser`).
+// A picture is held in memory only until the next replaces it: nothing of
+// the page is kept on the device.
 
 /** Why a view shows no live page, or that it does. */
 export type BrowserViewStatus =
   /** The first socket is opening. */
   | { readonly _tag: "connecting" }
   | { readonly _tag: "live" }
-  /** The socket dropped and the view is opening another; a tab this device held stays its own for a minute. */
+  /** The socket dropped and the view is opening another; a tab this device held stays held by the server's rules. */
   | { readonly _tag: "reconnecting" }
   /** The app is in the background: no socket until it returns. */
   | { readonly _tag: "paused" }
@@ -84,14 +88,16 @@ export interface BrowserProbe {
 }
 
 /**
- * Where the bot points while it acts on the tab, in page CSS pixels, and
+ * Where a bot points while it acts on the tab, in page CSS pixels, and
  * whether it clicked there. `sequence` grows with each, so a second click on
- * the same point is told apart.
+ * the same point is told apart. `botId` is null from a server before shared
+ * tabs, whose tabs have one bot each.
  */
 export interface BrowserCursor {
   readonly action: "move" | "click";
   readonly x: number;
   readonly y: number;
+  readonly botId: BotId | null;
   readonly sequence: number;
 }
 
@@ -120,7 +126,7 @@ export interface BrowserView {
   readonly picture: Readable<BrowserPicture | null>;
   /** The newest answer to a `probe`, null until the first. */
   readonly probe: Readable<BrowserProbe | null>;
-  /** The bot's newest pointer, null until the first. Nothing comes while a person holds the tab. */
+  /** A bot's newest pointer, null until the first. Nothing comes while a person holds the tab. */
   readonly cursor: Readable<BrowserCursor | null>;
   /**
    * The picture `sequence` is drawn: the server sends the next. An
@@ -172,10 +178,10 @@ const closedWith = (code: number, opened: boolean): SocketOutcome => {
 class Silent extends Schema.TaggedError<Silent>()("Silent", {}) {}
 
 /**
- * The bot's browser: its tabs, live while held, and views of one tab each,
- * for as long as their scope lives. Closing a view closes its socket and
- * nothing else: a tab this device holds stays its own for the server's grace
- * period, and then goes back to the bot.
+ * The browser: a bot's tabs and every tab, live while held, views of one tab
+ * each, for as long as their scope lives, and opening and closing tabs.
+ * Closing a view closes its socket and nothing else: a tab this device holds
+ * stays its own until its hold ends.
  */
 export class Browser extends Context.Service<
   Browser,
@@ -183,6 +189,19 @@ export class Browser extends Context.Service<
     readonly tabs: (
       botId: BotId,
     ) => Effect.Effect<Readable<Loaded<ReadonlyArray<BrowserTab>>>, never, Scope.Scope>;
+    /**
+     * Every tab, the person's own and private ones included. Stays loading
+     * on a server that does not share its tabs (`Roster.sharedBrowser`).
+     */
+    readonly allTabs: Effect.Effect<
+      Readable<Loaded<ReadonlyArray<SharedBrowserTab>>>,
+      never,
+      Scope.Scope
+    >;
+    /** Opens a tab for the person, at `url` or blank, where a new tab opens. */
+    readonly open: (url: string | null) => Effect.Effect<IntentResult<BrowserTabRef>>;
+    /** Closes a tab for the person. */
+    readonly close: (ref: BrowserTabRef) => Effect.Effect<IntentResult>;
     readonly view: (input: {
       readonly ref: BrowserTabRef;
       readonly size: () => BrowserViewSize;
@@ -199,6 +218,8 @@ export const layer = Layer.effect(
     const network = yield* Network;
     const makeWebSocket = yield* Socket.WebSocketConstructor;
     const policy = yield* ReconnectPolicy;
+    const roster = yield* Roster;
+    const actions = yield* Actions;
 
     const tabs = makeLive<BotId, ReadonlyArray<BrowserTab>>({
       scope,
@@ -208,6 +229,42 @@ export const layer = Layer.effect(
         client["browser.subscribe"]({ botId }).pipe(
           Stream.runForEach((frame) => set(() => frame.tabs)),
         ),
+    });
+
+    const shared = makeLive<"all", ReadonlyArray<SharedBrowserTab>>({
+      scope,
+      connection,
+      keyOf: (key) => key,
+      follow: (_key, client, set) =>
+        roster
+          .sharedBrowserOn(client)
+          .pipe(
+            Effect.flatMap((on) =>
+              on
+                ? client["browser.subscribeAll"]().pipe(
+                    Stream.runForEach((frame) => set(() => frame.tabs)),
+                  )
+                : Effect.never,
+            ),
+          ),
+    });
+
+    const open = Effect.fn("Browser.open")(function* (url: string | null) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["browser.open"](url === null ? { commandId } : { commandId, url }))
+        .pipe(
+          Effect.map(({ ref }) => ref),
+          Effect.exit,
+          Effect.map(intentResult),
+        );
+    });
+
+    const close = Effect.fn("Browser.close")(function* (ref: BrowserTabRef) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["browser.close"]({ commandId, ref }))
+        .pipe(Effect.exit, Effect.map(intentResult));
     });
 
     const view = Effect.fnUntraced(function* (input: {
@@ -231,8 +288,8 @@ export const layer = Layer.effect(
       let sequence = 0;
       let probes = 0;
       let pointers = 0;
-      /** Taking or giving back the tab, asked for while no socket was open. */
-      let control: "take" | "release" | null = null;
+      /** Taking or giving back the tab, asked for while no socket was open, as it was asked. */
+      let control: Extract<BrowserInput, { readonly type: "take" | "release" }> | null = null;
 
       // What the device says it is doing is read on the view's own fiber: a
       // phone answers it asynchronously, and opening a view waits for nothing.
@@ -295,7 +352,13 @@ export const layer = Layer.effect(
               return Effect.succeed(null);
             case "cursor":
               pointers += 1;
-              cursor.set({ action: value.action, x: value.x, y: value.y, sequence: pointers });
+              cursor.set({
+                action: value.action,
+                x: value.x,
+                y: value.y,
+                botId: value.botId ?? null,
+                sequence: pointers,
+              });
               return Effect.succeed(null);
             case "ping":
               return send({ type: "pong" }).pipe(Effect.as(null));
@@ -333,7 +396,7 @@ export const layer = Layer.effect(
           setStatus({ _tag: "live" });
           if (control !== null) {
             const asked = control;
-            if (yield* send({ type: asked })) control = null;
+            if (yield* send(asked)) control = null;
           }
           while (true) {
             const messages = yield* reader.pull.pipe(
@@ -436,7 +499,7 @@ export const layer = Layer.effect(
           }),
         send: (frame) =>
           Effect.suspend(() => {
-            const asked = frame.type === "take" || frame.type === "release" ? frame.type : null;
+            const asked = frame.type === "take" || frame.type === "release" ? frame : null;
             if (write === null) {
               if (asked !== null) control = asked;
               return Effect.void;
@@ -454,6 +517,6 @@ export const layer = Layer.effect(
       } satisfies BrowserView;
     });
 
-    return Browser.of({ tabs: tabs.acquire, view });
+    return Browser.of({ tabs: tabs.acquire, allTabs: shared.acquire("all"), open, close, view });
   }),
 );

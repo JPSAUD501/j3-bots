@@ -1,59 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BrowserCursor, BrowserViewHandle } from "@j3-bots/client-runtime";
-import type { BrowserInput } from "@j3-bots/contracts";
-import { MousePointer2Icon } from "lucide-react";
+import type { BrowserViewHandle } from "@j3-bots/client-runtime";
+import type { BotId, BrowserInput, BrowserTabRef } from "@j3-bots/contracts";
 import {
   useEffect,
   useEffectEvent,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { cn } from "../lib/cn";
-import {
-  buttonOf,
-  buttonsOf,
-  type KeyLike,
-  keyFrame,
-  LEAVE_PAGE_KEY,
-  modifiersOf,
-  pagePoint,
-  type Size,
-  textFrames,
-  wheelDelta,
-} from "./input";
+import { BotCursors } from "./BotCursors";
+import { PageField } from "./PageField";
+import { buttonOf, buttonsOf, modifiersOf, pagePoint, type Size, wheelDelta } from "./input";
 
 /** Two presses this close in time and place are one double click. */
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_PX = 5;
 /** A touch that moves this far is a scroll, not a tap. */
 const TOUCH_SLOP = 8;
-/** The bot's cursor fades once it has stood still this long. */
-const CURSOR_REST_MS = 2_000;
 
 interface SurfaceProps {
   readonly view: BrowserViewHandle;
   /** The page's size in CSS pixels; null until the server says. */
+  /** The tab and its page's address: the bots' pointers show afresh once either changes. */
+  readonly tab: BrowserTabRef;
+  readonly address: string;
   readonly viewport: Size | null;
   /** The stage's size: the picture is drawn as large as fits in it. */
   readonly box: Size;
-  /** This device controls the tab: input goes to the page. */
-  readonly control: boolean;
+  /** What the person does over the picture goes to the page: touching it is using it. */
+  readonly usable: boolean;
+  /** Sends what the person did, as their use of the page (`usePageUse`). */
+  readonly send: (input: BrowserInput) => void;
+  /** This device holds the tab: the bots' pointers step aside, and the person's moves reach the page. */
+  readonly holding: boolean;
+  /** The bots on the tab, the most recent first: whose pointers show. */
+  readonly onIt: ReadonlyArray<BotId>;
   /** What the page's text field is called to assistive technology. */
   readonly label: string;
   readonly description: string;
   /** The operator pressed the key that leaves the page. */
   readonly onLeave: () => void;
-  /** The page takes the keyboard as soon as this device has control. */
-  readonly focusPage: boolean;
 }
-
-/**
- * What the text field holds between keys: one character a phone's keyboard
- * can delete, since it sends Backspace on an empty field to nobody.
- */
-const SENTINEL = "\u200B";
 
 /** The largest size of `aspect` that fits in `box`. */
 const contain = (box: Size, aspect: number): Size =>
@@ -70,13 +58,17 @@ const contain = (box: Size, aspect: number): Size =>
  */
 export function BrowserSurface({
   view,
+  tab,
+  address,
   viewport,
   box,
-  control,
+  usable,
+  send,
+  holding,
+  onIt,
   label,
   description,
   onLeave,
-  focusPage,
 }: SurfaceProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   // The page's text field, which holds the focus while the operator types into the page.
@@ -136,7 +128,6 @@ export function BrowserSurface({
         : 16 / 10;
   const fitted = contain(box, aspect);
 
-  const send = (input: BrowserInput) => view.send(input);
   const pointAt = (clientX: number, clientY: number) => {
     const target = canvas.current;
     if (target === null || viewport === null) return null;
@@ -152,6 +143,8 @@ export function BrowserSurface({
     count: number;
   } | null>(null);
   const touch = useRef<{ x: number; y: number; scrolling: boolean } | null>(null);
+  // The fingers on the picture: two or more pinch, which is only looking, never a tap or a scroll.
+  const fingers = useRef(new Set<number>());
   const pendingMove = useRef<{ x: number; y: number; buttons: number; modifiers: number } | null>(
     null,
   );
@@ -204,14 +197,18 @@ export function BrowserSurface({
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!control) return;
+    if (!usable) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
     if (event.pointerType === "touch") {
+      fingers.current.add(event.pointerId);
       // A finger scrolls by dragging and clicks by tapping; a tap on a field brings the keyboard.
-      touch.current = { x: event.clientX, y: event.clientY, scrolling: false };
+      touch.current =
+        fingers.current.size === 1
+          ? { x: event.clientX, y: event.clientY, scrolling: false }
+          : null;
       return;
     }
     field.current?.focus({ preventScroll: true });
@@ -228,7 +225,7 @@ export function BrowserSurface({
     click("down", point, event.button, event.buttons, count, modifiersOf(event));
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!control) return;
+    if (!usable) return;
     const finger = touch.current;
     if (event.pointerType === "touch") {
       if (finger === null || viewport === null || canvas.current === null) return;
@@ -252,10 +249,12 @@ export function BrowserSurface({
       });
       return;
     }
-    queueMove(event);
+    // Pointing is only reading: it reaches the page while the person holds it, or drags on it.
+    if (holding || event.buttons !== 0) queueMove(event);
   };
   const onPointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!control) return;
+    fingers.current.delete(event.pointerId);
+    if (!usable) return;
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
     if (event.pointerType === "touch") {
@@ -272,12 +271,12 @@ export function BrowserSurface({
 
   // A tap that lands in a field brings the keyboard up; one elsewhere puts it away.
   useEffect(() => {
-    if (!control) return;
+    if (!usable) return;
     return view.onProbe((probe) => {
       if (probe.editable) field.current?.focus({ preventScroll: true });
       else if (document.activeElement === field.current) field.current?.blur();
     });
-  }, [view, control]);
+  }, [view, usable]);
 
   // The wheel scrolls the page, not the viewer: its listener must be able to prevent that.
   const wheel = useRef<{
@@ -288,7 +287,7 @@ export function BrowserSurface({
     modifiers: number;
   } | null>(null);
   const onWheel = useEffectEvent((event: WheelEvent) => {
-    if (!control || viewport === null || canvas.current === null) return;
+    if (!usable || viewport === null || canvas.current === null) return;
     event.preventDefault();
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
@@ -315,65 +314,10 @@ export function BrowserSurface({
     return () => target.removeEventListener("wheel", listener);
   }, []);
 
-  // Taking control puts the keyboard on the page; losing it puts the keyboard away.
+  // A page that can no longer be used puts the keyboard away.
   useEffect(() => {
-    if (control && focusPage) field.current?.focus({ preventScroll: true });
-    else if (!control && document.activeElement === field.current) field.current?.blur();
-  }, [control, focusPage]);
-
-  const keyOf = (event: ReactKeyboardEvent<HTMLTextAreaElement>): KeyLike => ({
-    key: event.key,
-    code: event.code,
-    altKey: event.altKey,
-    ctrlKey: event.ctrlKey,
-    metaKey: event.metaKey,
-    shiftKey: event.shiftKey,
-    isComposing: event.nativeEvent.isComposing,
-    keyCode: event.keyCode,
-    altGraph: event.getModifierState("AltGraph"),
-  });
-  const onKey = (action: "down" | "up") => (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!control) return;
-    if (
-      action === "down" &&
-      event.key === LEAVE_PAGE_KEY &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey
-    ) {
-      event.preventDefault();
-      onLeave();
-      return;
-    }
-    const key = keyFrame(keyOf(event), action);
-    if (key === null) return;
-    // The page takes the key, the app's own shortcuts and the browser's do not.
-    event.preventDefault();
-    send(key);
-  };
-  const typed = (text: string) => {
-    for (const frame of textFrames(text.replaceAll(SENTINEL, ""))) send(frame);
-  };
-  const pressKey = (key: string, code: string, keyCode: number, text?: string) => {
-    for (const action of ["down", "up"] as const) {
-      send({
-        type: "key",
-        action,
-        key,
-        code,
-        ...(text !== undefined && action === "down" ? { text } : {}),
-        keyCode,
-        modifiers: 0,
-      });
-    }
-  };
-  const clear = () => {
-    const target = field.current;
-    if (target === null) return;
-    target.value = SENTINEL;
-    target.setSelectionRange(SENTINEL.length, SENTINEL.length);
-  };
+    if (!usable && document.activeElement === field.current) field.current?.blur();
+  }, [usable]);
 
   return (
     <div className="relative" style={{ width: fitted.width, height: fitted.height }}>
@@ -383,104 +327,36 @@ export function BrowserSurface({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
+        onPointerCancel={(event) => {
+          fingers.current.delete(event.pointerId);
           touch.current = null;
         }}
         onContextMenu={(event) => {
-          if (control) event.preventDefault();
+          if (usable) event.preventDefault();
         }}
         className={cn(
           "block size-full rounded-md bg-muted select-none",
           pictureSize === null && "invisible",
-          control ? "cursor-default touch-none" : "pointer-events-none",
+          usable ? "cursor-default touch-none" : "pointer-events-none",
         )}
       />
-      {!control && <BotCursor view={view} viewport={viewport} />}
-      {control && (
-        <textarea
+      <BotCursors
+        view={view}
+        tab={tab}
+        address={address}
+        viewport={viewport}
+        onIt={onIt}
+        faded={holding}
+      />
+      {usable && (
+        <PageField
           ref={field}
-          data-browser-page=""
-          defaultValue={SENTINEL}
-          aria-label={label}
-          aria-description={description}
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onKeyDown={onKey("down")}
-          onKeyUp={onKey("up")}
-          onCompositionEnd={(event) => {
-            typed(event.data);
-            clear();
-          }}
-          onInput={(event) => {
-            const { nativeEvent } = event;
-            if (!(nativeEvent instanceof InputEvent) || nativeEvent.isComposing) return;
-            // A phone's keyboard often types, deletes and breaks lines without a key the page could take.
-            switch (nativeEvent.inputType) {
-              case "insertText":
-              case "insertReplacementText":
-                typed(nativeEvent.data ?? event.currentTarget.value);
-                break;
-              case "deleteContentBackward":
-                pressKey("Backspace", "Backspace", 8);
-                break;
-              case "insertLineBreak":
-                pressKey("Enter", "Enter", 13, "\r");
-                break;
-            }
-            clear();
-          }}
-          // The operator's clipboard and files stay theirs: nothing is pasted or dropped into the page.
-          onPaste={(event) => event.preventDefault()}
-          onDrop={(event) => event.preventDefault()}
-          className="pointer-events-none absolute start-0 top-0 size-px resize-none overflow-hidden border-0 p-0 opacity-0"
+          send={send}
+          label={label}
+          description={description}
+          onLeave={onLeave}
         />
       )}
     </div>
-  );
-}
-
-/** Where the bot points while it acts, over the picture; it fades once still. */
-function BotCursor({
-  view,
-  viewport,
-}: {
-  readonly view: BrowserViewHandle;
-  readonly viewport: Size | null;
-}) {
-  const [cursor, setCursor] = useState<BrowserCursor | null>(null);
-  useEffect(() => {
-    let timer: number | undefined;
-    const stop = view.onCursor((next) => {
-      window.clearTimeout(timer);
-      setCursor(next);
-      timer = window.setTimeout(() => setCursor(null), CURSOR_REST_MS);
-    });
-    return () => {
-      window.clearTimeout(timer);
-      stop();
-    };
-  }, [view]);
-  if (cursor === null || viewport === null || viewport.width === 0 || viewport.height === 0) {
-    return null;
-  }
-  return (
-    <span
-      aria-hidden
-      className="pointer-events-none absolute transition-[left,top] duration-(--duration-state) ease-out"
-      style={{
-        left: `${(cursor.x / viewport.width) * 100}%`,
-        top: `${(cursor.y / viewport.height) * 100}%`,
-      }}
-    >
-      {cursor.action === "click" && (
-        <span
-          key={cursor.sequence}
-          className="pop-in absolute -start-3 -top-3 size-6 rounded-pill border-2 border-foreground/70"
-        />
-      )}
-      <MousePointer2Icon className="size-5 fill-foreground stroke-background" />
-    </span>
   );
 }

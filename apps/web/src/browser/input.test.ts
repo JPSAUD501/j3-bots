@@ -2,7 +2,6 @@
 import { MAX_BROWSER_TEXT_LENGTH } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  addressOf,
   CELLULAR_QUALITY,
   GOOD_QUALITY,
   type KeyLike,
@@ -149,22 +148,6 @@ describe("viewSize", () => {
       maxHeight: 2160,
     });
     expect(viewSize({ width: 10, height: 10 }, 1)).toEqual({ maxWidth: 64, maxHeight: 64 });
-  });
-});
-
-describe("addressOf", () => {
-  it("takes a web address as typed, and a host alone as https", () => {
-    expect(addressOf("http://shop.example/a?b#c")).toBe("http://shop.example/a?b#c");
-    expect(addressOf(" shop.example ")).toBe("https://shop.example");
-    expect(addressOf("localhost:3000/cart")).toBe("https://localhost:3000/cart");
-  });
-
-  it("refuses any address that is not a web page's", () => {
-    expect(addressOf("javascript:alert(1)")).toBeNull();
-    expect(addressOf("file:///etc/passwd")).toBeNull();
-    expect(addressOf("data:text/html,hi")).toBeNull();
-    expect(addressOf("mailto:someone@shop.example")).toBeNull();
-    expect(addressOf("")).toBeNull();
   });
 });
 

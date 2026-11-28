@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Loaded } from "@j3-bots/client-runtime";
-import type { BotId, BrowserTab } from "@j3-bots/contracts";
+import { type Loaded, loadedList } from "@j3-bots/client-runtime";
+import { type ViewerTab, viewerTabsOf } from "@j3-bots/client-runtime/presentation";
+import type { BotId, BrowserTab, SharedBrowserTab } from "@j3-bots/contracts";
 import {
   createContext,
   use,
@@ -70,4 +71,54 @@ export function useBrowserTabs(botId: BotId | null): ReadonlyArray<BrowserTab> |
   );
   const loaded = useSyncExternalStore(store.subscribe, store.get, store.get);
   return loaded?._tag === "ready" ? loaded.value : null;
+}
+
+const noSharedTabs = emptyStore<Loaded<ReadonlyArray<SharedBrowserTab>> | null>(null);
+
+/** Every tab while mounted and `on`, from a server that shares them; null while they load. */
+function useAllBrowserTabs(on: boolean): ReadonlyArray<SharedBrowserTab> | null {
+  const { source } = useBrowser();
+  const store = useMemo(
+    () =>
+      on
+        ? heldStore<Loaded<ReadonlyArray<SharedBrowserTab>> | null>((notify) => {
+            const handle = source.openAllBrowserTabs();
+            const stop = handle.state.subscribe(notify);
+            return {
+              get: handle.state.get,
+              close: () => {
+                stop();
+                handle.release();
+              },
+            };
+          }, null)
+        : noSharedTabs,
+    [source, on],
+  );
+  return loadedList(useSyncExternalStore(store.subscribe, store.get, store.get));
+}
+
+/** Whether the server shares its tabs. */
+function useSharedBrowser(): boolean {
+  const { source } = useBrowser();
+  return useSyncExternalStore(source.sharedBrowser.subscribe, source.sharedBrowser.get);
+}
+
+/**
+ * The tabs a live view shows, as the phone's do: every tab from a server
+ * that shares them, and from one before, the tabs of the bot the person
+ * came from. Null while they load.
+ */
+export function useViewerTabs(botId: BotId | null): {
+  readonly tabs: ReadonlyArray<ViewerTab> | null;
+  /** The server shares its tabs: the person may open and close them. */
+  readonly shared: boolean;
+} {
+  const { source } = useBrowser();
+  const shared = useSharedBrowser();
+  const here = useSyncExternalStore(source.pairing.subscribe, source.pairing.get);
+  const all = useAllBrowserTabs(shared);
+  const own = useBrowserTabs(shared ? null : botId);
+  const tabs = useMemo(() => viewerTabsOf({ shared, all, own, here }), [shared, all, own, here]);
+  return { tabs, shared };
 }
