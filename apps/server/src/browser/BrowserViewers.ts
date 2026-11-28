@@ -4,6 +4,7 @@ import {
   BROWSER_CLOSE_CODES,
   type BrowserClientFrame,
   type BrowserController,
+  type BrowserHostError,
   type BrowserScreencastFrame,
   type BrowserServerFrame,
   type BrowserTabRef,
@@ -20,6 +21,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -58,6 +60,37 @@ interface ViewSize {
   readonly maxHeight: number;
   readonly quality: number;
 }
+
+/**
+ * Whether a host's screencast failed for a reason that can pass: it was
+ * refused (a host from before let only one run a tab), its call failed or
+ * took too long, or the page failed.
+ */
+const passing = (error: BrowserHostError): boolean => {
+  switch (error.reason) {
+    case "refused":
+    case "closed":
+    case "timeout":
+    case "page":
+      return true;
+    case "no-tab":
+    case "stale-ref":
+    case "invalid-target":
+    case "not-editable":
+    case "too-large":
+    case "unsupported":
+      return false;
+  }
+};
+
+/**
+ * How a feed asks a host again for a screencast that failed for a reason
+ * that can pass: soon, then less often, at most every 5 s, while it lives.
+ */
+const SCREENCAST_RETRY = Schedule.min([
+  Schedule.exponential(Duration.millis(250)),
+  Schedule.spaced(Duration.seconds(5)),
+]);
 
 export const DEFAULT_VIEW_SIZE: ViewSize = {
   maxWidth: DEFAULT_BROWSER_VIEW.width,
@@ -218,12 +251,18 @@ export const layer = Layer.effect(
 
     /**
      * The tab's screencast, from each host it runs on in turn, at the size
-     * the feed's first socket asked for. A host that fails it, or that has
-     * no screencast, leaves the sockets with the last picture until the tab
-     * moves.
+     * the feed's first socket asked for. A host that fails or refuses it is
+     * asked again while the feed lives (`SCREENCAST_RETRY`), for a reason
+     * that can pass (`passing`). Any other leaves the sockets with the last
+     * picture until the tab moves. The same host told again changes nothing.
      */
     const screencast = (feed: Feed, size: ViewSize) =>
       feed.watched.host.pipe(
+        Stream.changesWith((one, other) =>
+          Option.isNone(one)
+            ? Option.isNone(other)
+            : Option.isSome(other) && one.value === other.value,
+        ),
         Stream.tap((host) =>
           Effect.sync(() => {
             feed.host = host;
@@ -233,11 +272,36 @@ export const layer = Layer.effect(
         Stream.switchMap((host) =>
           Option.match(host, {
             onNone: () => Stream.empty,
-            onSome: (current) =>
-              current.screencast({ tab: feed.ref, ...size }).pipe(
+            onSome: (current) => {
+              // Said once for each run of failures: a picture that comes ends the run.
+              let failing = false;
+              return Stream.unwrap(
+                Effect.sync(() => {
+                  // A screencast starts over: nothing of one before is owed.
+                  feed.owed = null;
+                  return current.screencast({ tab: feed.ref, ...size });
+                }),
+              ).pipe(
+                Stream.tapError((error) => {
+                  if (failing) return Effect.void;
+                  failing = true;
+                  // The reason only: a host's detail may name the page's address.
+                  return Effect.logWarning("A tab's screencast failed", { reason: error.reason });
+                }),
+                Stream.catchIf(
+                  (error) => !passing(error),
+                  () => Stream.empty,
+                ),
+                Stream.retry(SCREENCAST_RETRY),
+                Stream.tap(() =>
+                  Effect.sync(() => {
+                    failing = false;
+                  }),
+                ),
                 Stream.mapEffect((frame) => received(feed, current, frame)),
                 Stream.catchCause(() => Stream.empty),
-              ),
+              );
+            },
           }),
         ),
         Stream.runDrain,

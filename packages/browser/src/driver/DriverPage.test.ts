@@ -2,11 +2,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   type BrowserHostError,
+  type BrowserScreencastFrame,
   BrowserTabRef,
   MAX_BROWSER_SNAPSHOT_LENGTH,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { chromium } from "playwright-core";
 import { MASKED_VALUE } from "./redact.ts";
@@ -241,18 +243,32 @@ describe.skipIf(executablePath === undefined)("makeDriverPage", () => {
   );
 
   it.live(
-    "refuses a second screencast of a tab while one runs",
+    "gives a second screencast of a tab the page's pictures, ending the first, whose end stops nothing",
     () =>
       Effect.gen(function* () {
         const driver = yield* driven;
         yield* driver.navigate({ kind: "url", url: `${SITE}/form` }, {});
         const options = { maxWidth: 640, maxHeight: 480, quality: 50 };
-        const [first] = yield* driver.screencast(options).pipe(Stream.take(1), Stream.runCollect);
-        assert.isAbove(first?.jpeg.length ?? 0, 0);
-        const watching = yield* driver.screencast(options).pipe(Stream.runDrain, Effect.forkChild);
+        // The first holds a picture it never acknowledges, as a watcher that let go of it does.
+        const first = yield* driver.screencast(options).pipe(Stream.runCollect, Effect.forkChild);
         yield* Effect.sleep(300);
-        const second = yield* Effect.flip(driver.screencast(options).pipe(Stream.runDrain));
-        assert.strictEqual(second.reason, "refused");
+        const second = yield* Queue.unbounded<BrowserScreencastFrame>();
+        const watching = yield* driver.screencast(options).pipe(
+          Stream.runForEach((frame) =>
+            Queue.offer(second, frame).pipe(Effect.andThen(driver.screencastAck(frame.frame))),
+          ),
+          Effect.forkChild,
+        );
+        // The first ends on its own once the second takes its place.
+        yield* Fiber.join(first);
+        // Its end stopped nothing: a change to the page still comes to the second.
+        yield* Effect.sleep(300);
+        yield* Queue.clear(second);
+        yield* driver.evaluate({
+          expression: "document.body.style.background = 'rgb(200, 30, 30)'",
+          awaitPromise: false,
+        });
+        yield* Queue.take(second).pipe(Effect.timeout("10 seconds"));
         yield* Fiber.interrupt(watching);
       }).pipe(Effect.scoped),
     60_000,

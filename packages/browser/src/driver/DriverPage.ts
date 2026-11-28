@@ -126,7 +126,9 @@ export interface DriverPage {
   /**
    * The page's pictures while the stream runs. The next comes only after
    * `screencastAck` of the last, and only the newest waits meanwhile. One
-   * stream at a time: a second, while one runs, is refused.
+   * stream at a time: a second takes the place of the first, which ends, as
+   * the one asked for last is the one watched (the first may be one its
+   * watcher has let go of, which this page has not heard of yet).
    */
   readonly screencast: (options: {
     readonly maxWidth: number;
@@ -138,6 +140,13 @@ export interface DriverPage {
 
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
+
+/** A picture of the page, as the DevTools protocol sends it (`Page.screencastFrame`). */
+interface ScreencastFrameEvent {
+  readonly data: string;
+  readonly sessionId: number;
+  readonly metadata: { readonly deviceWidth: number; readonly deviceHeight: number };
+}
 const TARGET_COUNT_MS = 250;
 const WAIT_POLL_MS = 100;
 /** How long a ref's element may take to be found: it was on the page at the snapshot. */
@@ -795,15 +804,22 @@ export const makeDriverPage = (options: {
     /** The frame the subscriber holds, and the newest one waiting behind it. */
     let delivered: { readonly frame: number; readonly session: number } | undefined;
     let waiting: { readonly session: number; readonly value: BrowserScreencastFrame } | undefined;
-    let screencastQueue:
-      | Queue.Queue<BrowserScreencastFrame, BrowserHostError | Cause.Done>
+    /** The stream that runs now: where its pictures go, and what hears them. */
+    let watching:
+      | {
+          readonly queue: Queue.Queue<BrowserScreencastFrame, BrowserHostError | Cause.Done>;
+          readonly onFrame: (event: ScreencastFrameEvent) => void;
+        }
       | undefined;
 
     const deliver = (session: number, value: BrowserScreencastFrame) => {
-      if (screencastQueue === undefined) return;
+      if (watching === undefined) return;
       delivered = { frame: value.frame, session };
-      Queue.offerUnsafe(screencastQueue, value);
+      Queue.offerUnsafe(watching.queue, value);
     };
+    /** Lets the page send its next picture without one it sent. */
+    const letGo = (session: number) =>
+      void cdp.send("Page.screencastFrameAck", { sessionId: session }).catch(() => undefined);
 
     const screencast = (options: {
       readonly maxWidth: number;
@@ -812,24 +828,20 @@ export const makeDriverPage = (options: {
     }) =>
       Stream.callback<BrowserScreencastFrame, BrowserHostError>((queue) =>
         Effect.gen(function* () {
-          if (screencastQueue !== undefined)
-            return yield* new BrowserHostError({
-              reason: "refused",
-              detail: "This tab is already being watched; its one screencast is shared.",
-            });
-          screencastQueue = queue;
+          // The stream before ends here: what it holds is let go, and its pictures come here.
+          const before = watching;
+          if (before !== undefined) {
+            cdp.off("Page.screencastFrame", before.onFrame);
+            if (delivered !== undefined) letGo(delivered.session);
+            if (waiting !== undefined) letGo(waiting.session);
+            Queue.endUnsafe(before.queue);
+          }
           delivered = undefined;
           waiting = undefined;
-          const onFrame = (event: {
-            readonly data: string;
-            readonly sessionId: number;
-            readonly metadata: { readonly deviceWidth: number; readonly deviceHeight: number };
-          }) => {
+          const onFrame = (event: ScreencastFrameEvent) => {
             const jpeg = Base64.decode(event.data);
             if (Result.isFailure(jpeg)) {
-              void cdp
-                .send("Page.screencastFrameAck", { sessionId: event.sessionId })
-                .catch(() => undefined);
+              letGo(event.sessionId);
               return;
             }
             const value: BrowserScreencastFrame = {
@@ -845,17 +857,18 @@ export const makeDriverPage = (options: {
               return;
             }
             // Only the newest waits: the one it replaces is let go at once.
-            if (waiting !== undefined)
-              void cdp
-                .send("Page.screencastFrameAck", { sessionId: waiting.session })
-                .catch(() => undefined);
+            if (waiting !== undefined) letGo(waiting.session);
             waiting = { session: event.sessionId, value };
           };
+          const mine = { queue, onFrame };
+          watching = mine;
           cdp.on("Page.screencastFrame", onFrame);
           yield* Effect.addFinalizer(() =>
             Effect.gen(function* () {
               cdp.off("Page.screencastFrame", onFrame);
-              screencastQueue = undefined;
+              // A stream that took this one's place keeps the page's screencast.
+              if (watching !== mine) return;
+              watching = undefined;
               delivered = undefined;
               waiting = undefined;
               yield* attempt(() => cdp.send("Page.stopScreencast")).pipe(Effect.ignore);
