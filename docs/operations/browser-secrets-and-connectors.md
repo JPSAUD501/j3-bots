@@ -35,21 +35,21 @@ On Android it is the same, on a screen for the list and one for each secret, and
 
 ## A bot's browser
 
-A bot can open pages, read them and act in them in a browser that runs on the machine J3 Bots runs on. You can watch it, and take it over for a step only a person can do.
+A bot can open pages, read them and act in them in J3 Bots' own browser: the J3 Bots app's on a computer where it is open, or the server's own otherwise. You can watch it, and take it over for a step only a person can do.
 
 ### Turn it off for a bot
 
-Every new bot can browse the web. In the bot's details, **Browser: Can browse the web** turns it off, or on again. Bots made before 0.15.0 keep the switch they had: turn it on for those that should browse. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing, as **Stop** does: messages you queued for it and not yet sent are dropped too.
+Every new bot can browse the web. In the bot's details, **Browser: Can browse the web** turns it off, or on again. Bots made before 0.15.0 keep the switch they had: turn it on for those that should browse. Turning it on applies from the bot's next turn. Turning it off takes effect at once: the bot loses its browser tools, and a call it still makes is refused, but the rest of what it is doing goes on.
 
 **Every bot with the switch on uses the same browser profile**, so wherever you, or one of those bots, signs in there, all of them are signed in. On those sites a bot acts as you. The browser starts signed out of every site, and a bot that meets a sign-in asks you for it: sign in there only on sites every bot with the browser may use, and turn the browser off for bots that should not.
 
 ### What the machine needs
 
-The engine downloads the browser, about 130 MB, from Google's storage the first time a bot uses it, so the machine must reach it then.
+While the J3 Bots app is open on a computer, its own browser runs a bot's tabs, there and with your connection. When no app is open, the server runs them in its own browser, which it downloads the first time a tab opens on it: Chrome for Testing, the version the release pins, about 210 MB (413 MB unpacked), from Google's storage, into `browser/chrome/` in the data directory. The machine must reach Google's storage then. The download is checked against the size and checksum the release pins before anything in it is used.
 
-- **Linux.** The browser needs a sandbox the system allows, a few shared libraries and fonts. `j3-bots doctor` checks them under **Browser**, and the bot's details say when the machine still needs setting up. `doctor` prints the commands that fix what is missing, for someone who can use `sudo` to run once: [Operating: the browser](operating.md#the-browser) explains each. Run `doctor` again after a bot first used the browser, since the libraries are known only once it is downloaded. Run J3 Bots as a [user of its own](install.md#choose-the-user-it-runs-as), not as root: the browser refuses its sandbox to root.
-- **Windows and macOS**, with the desktop app running your bots: nothing to install is known. **Assumed**: no run has used the browser there yet.
-- **A Raspberry Pi.** On an x86-64 machine, one page with someone watching it took about 200–250 MB of memory and, while the page animated without pause, almost two cores. A Pi has not been measured; expect it to be slower, and keep to one or two pages at a time.
+- **Linux.** The server's browser needs a sandbox the system allows, a few shared libraries and fonts: Chrome keeps each page in a sandbox, which on Ubuntu 23.10 and later AppArmor blocks until a profile allows it; a library it cannot load keeps it from starting; and without a font, pages show no text. Until the machine has them, bots browse only while a J3 Bots app is open on a computer, and a bot that tries is told why. `j3-bots doctor` checks them under **Browser**, and the bot's details say when the machine still needs setting up. `doctor` prints the commands that fix what is missing, for someone who can use `sudo` to run once: [Operating: the browser](operating.md#the-browser) explains each. Run `doctor` again after a tab first opened on the server, since the libraries are known only once the browser is downloaded. Run J3 Bots as a [user of its own](install.md#choose-the-user-it-runs-as), not as root: the browser refuses its sandbox to root.
+- **Windows and macOS.** The server's browser needs nothing installed there. **Assumed**: no run has used it there yet.
+- **A Raspberry Pi.** On an x86-64 machine, one page with someone watching it took about 380 MB of memory, and three pages that animated without pause about 470 MB and almost four cores. The server keeps at most three pages open at once and sets the least used one aside past that; it opens again when a bot uses it. A Pi has not been measured; expect it to be slower, and keep to one or two pages at a time.
 
 ### Watch it
 

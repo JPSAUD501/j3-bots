@@ -34,9 +34,9 @@ A tool call crosses the network once. The server decides which tab and whether t
 | Host interface | One method per protocol call, so a host in the server's process and one across a connection are driven alike. | `PageHost`, `driverTabCalls`, `pageHostHandlers`, `remotePageHost` in `packages/browser` | Core (here) |
 | CDP relay | Makes one desktop tab's debugger look like a browser to Playwright. | `createCdpRelayConnection` in `packages/browser` | Core (here); the desktop host uses it |
 | Fake host | A host in memory, for tests of what drives one. | `makeFakePageHost` in `@j3-bots/browser/testing` | Core (here) |
-| Browser service | The tab registry, placement on hosts, leases, the person's hold, the `browser_*` tools, and the removal of the engine adapter's browser code. | `apps/server` | Server host |
-| Server host | Chrome for Testing in new headless mode, pinned per platform, seeded from the jar, with no profile on disk. | `apps/server` | Server host |
-| Sign-ins | The sealed jar, its sync with every host, moving today's sign-ins out of the engine's profile, Settings → Browser, and the login fill and browser help on J3 Bots' tabs. | `apps/server`, clients | Sign-ins |
+| Browser service | The tab registry, placement on hosts and parking, leases, the person's hold, the `browser_*` tools, the host socket, the viewers' media socket, and the login fill and browser help on these tabs ([Server: the bot's browser](server.md#the-bots-browser)). The engine adapter's browser code is gone but what keeps the engine's browser off ([Engine: the bot's browser](engine.md#the-bots-browser)). | `apps/server/src/browser`, `browserTools.ts` in `packages/prompts` | Server host (built) |
+| Server host | Chrome for Testing in new headless mode, pinned per platform and downloaded on first use; one context with no profile on disk, which takes sign-ins as cookies and storage the server writes. | `apps/server/src/browser/server` | Server host (built) |
+| Sign-ins | The sealed jar, its sync with every host, moving today's sign-ins out of the engine's profile, Settings → Browser. | `apps/server`, clients | Sign-ins |
 | Desktop host | The in-app browser: views, the side panel, the pop-out window, private tabs, hidden tabs that keep painting. | `apps/desktop` | Desktop host |
 | Viewers | Watching and using a tab from the web and the phone. | `apps/web`, `apps/mobile` | Viewers |
 
@@ -60,6 +60,22 @@ A tool call crosses the network once. The server decides which tab and whether t
 - **Screencast.** One per tab: a second, while one runs, is refused, and the server shares the one among its viewers. One frame is out at a time. While it is, only the newest waits, and every frame dropped is acknowledged to Chromium at once.
 
 The snapshot, the masking, the actions and `evaluate` follow T3 Code's `ServerBrowserPage.ts` (**Read** at `bc0f04d`). T3 Code gives refs out per snapshot and runs one step on a tab at a time; J3 Bots keeps refs per document and finds a ref's element once, since several bots read and act on one tab.
+
+## The server's browser
+
+The server's own host runs full Chrome for Testing in its new headless mode, one version pinned per platform by size and SHA-256 (158.0.8127.88 in 0.16: 208 MB to download on `linux64`, 413 MB unpacked). It starts when a tab needs it, keeps at most three tabs live, parks a tab unused and unwatched for 5 minutes, and closes once it has had no tab for a sweep ([Server: the bot's browser](server.md#the-bots-browser)). What it needs from a host, and how to give it, is in [Operating: the browser](../operations/operating.md#the-browser).
+
+**What a tab costs.** Measured on 2026-11-27 on an x86-64 Linux machine with 8 cores, with Chrome for Testing 158.0.8127.88 at a device scale factor of 1, on a page that repaints a full canvas every frame, the worst case. Each figure is the memory of the whole browser (PSS) and the cores it kept busy. **Verified** there; no arm64 machine, such as a Raspberry Pi, was measured.
+
+| Tabs | Memory | Cores |
+| --- | --- | --- |
+| One still tab | 340 MB | 0 |
+| One moving tab | 360 MB | about 1.4 |
+| One moving tab, watched | 384 MB | about 1.4 |
+| Three still tabs | 380 MB | 0 |
+| Three moving tabs | 469 MB | 3.8 |
+
+A device scale factor of 2 adds 90 MB to one moving tab, and 207 MB and nearly a core to three; in the same test of `chrome-headless-shell` it halved a viewer's frame rate at the same picture size. So the server keeps 1. Chrome for Testing takes about 160 MB more than `chrome-headless-shell` at every point, for a browser sites cannot tell from Chrome.
 
 ## Testing
 
