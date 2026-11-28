@@ -2808,6 +2808,9 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
             const two = yield* Drafts;
             yield* two.setText(first.target, "written in two");
             yield* whenStored(device.storage, "drafts", key, holds("written in two"));
+            // One has two's text in front of it before it writes over it: typed over a
+            // draft it had not heard of yet, its text would be offered back instead.
+            yield* waitFor(one.state, (state) => state.get(key)?.text === "written in two");
             const window = yield* Deferred.make<WindowContext>();
             const sending = yield* two
               .send(first.target, undefined, Deferred.await(window))
