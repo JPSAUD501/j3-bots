@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserTabRef } from "@j3-bots/contracts";
-import type { BrowserPlace } from "@j3-bots/desktop-bridge";
+import type { BrowserInternalPage, BrowserPlace } from "@j3-bots/desktop-bridge";
 
 // Where each of the desktop's tabs is: in which place, in what order, which
 // one is in front of each place, and the closed ones that can be opened
@@ -19,6 +19,8 @@ interface Placed {
   url: string;
   /** What finding in the page looks for now. */
   finding: string;
+  /** The app's own page drawn while the tab is on its blank page, as the bookmarks. */
+  internal: BrowserInternalPage | null;
 }
 
 export interface Places {
@@ -69,6 +71,7 @@ export const makePlaces = (changed: () => void): Places => {
     failed: null,
     url: "",
     finding: "",
+    internal: null,
   });
 
   return {

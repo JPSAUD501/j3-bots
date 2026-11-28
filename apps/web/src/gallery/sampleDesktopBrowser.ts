@@ -32,6 +32,7 @@ export const sampleDesktopTab = (
   held: false,
   place: "panel",
   failed: null,
+  internal: null,
   ...change,
 });
 

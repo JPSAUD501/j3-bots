@@ -73,8 +73,8 @@ export function AddressBar({
   useEffect(() => {
     onCover("suggestions", listed);
   }, [listed, onCover]);
-  // A new tab waits for an address.
-  const blankTab = tab !== null && tab.url === "" ? ref : null;
+  // A new tab waits for an address; the app's own pages have their own fields.
+  const blankTab = tab !== null && tab.url === "" && tab.internal === null ? ref : null;
   useEffect(() => {
     if (blankTab !== null) addressRef.current?.focus();
   }, [blankTab, addressRef]);

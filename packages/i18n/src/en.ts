@@ -479,6 +479,8 @@ export const en = {
   // What a site may use: desktopBrowser.permissions.*
 
   // Bookmarks, the history page and the downloads: desktopBrowser.library.*
+  "desktopBrowser.library.bookmarks": "Bookmarks",
+  "desktopBrowser.library.history": "History",
 
   // Site icons and the viewers' screens: desktopBrowser.icons.*
 

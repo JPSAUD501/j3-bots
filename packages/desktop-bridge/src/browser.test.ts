@@ -36,6 +36,18 @@ describe("the browser's shortcuts", () => {
     );
   });
 
+  it("bookmarks with Ctrl+D, and moves the tab to the other place with Ctrl+Shift+D", () => {
+    assert.strictEqual(browserShortcutOf(press("d", { ctrl: true }), pc), "bookmark");
+    assert.strictEqual(
+      browserShortcutOf(press("D", { ctrl: true, shift: true }), pc),
+      "togglePlace",
+    );
+    assert.strictEqual(
+      browserShortcutOf(press("B", { meta: true, shift: true }), mac),
+      "bookmarksBar",
+    );
+  });
+
   it("leaves Escape to the page unless the page is loading", () => {
     assert.isNull(browserShortcutOf(press("Escape"), pc));
     assert.strictEqual(browserShortcutOf(press("Escape"), { mac: false, loading: true }), "stop");

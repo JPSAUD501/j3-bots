@@ -474,6 +474,8 @@ const sentences = {
   // What a site may use: desktopBrowser.permissions.*
 
   // Bookmarks, the history page and the downloads: desktopBrowser.library.*
+  "desktopBrowser.library.bookmarks": "Favoritos",
+  "desktopBrowser.library.history": "Histórico",
 
   // Site icons and the viewers' screens: desktopBrowser.icons.*
 

@@ -27,6 +27,12 @@ export const zoomPage = (contents: WebContents, to: "in" | "out" | "reset") => {
   contents.setZoomFactor(zoomTo(current, to) / 100);
 };
 
+/** Whether `contents` is on its blank page: a new tab, or one of the app's own pages. */
+export const blankPage = (contents: WebContents) => {
+  const url = contents.getURL();
+  return url === "" || url === "about:blank";
+};
+
 /** A download the list shows, with the file behind it. */
 export interface Download {
   readonly item: DownloadItem;
@@ -47,6 +53,11 @@ export const makeCommand = (options: {
   readonly runFork: (effect: Effect.Effect<void>) => void;
 }): ((asked: DesktopBrowserCommand) => void) => {
   const { browser, places, downloads, show, runFork } = options;
+  /** The app's page `ref` shows now, if any. */
+  const internalOf = (ref: BrowserTabRef) => {
+    const tab = browser.tab(ref);
+    return tab !== undefined && blankPage(tab.contents) ? (places.at(ref)?.internal ?? null) : null;
+  };
   const command = (asked: DesktopBrowserCommand) => {
     const used = (ref: BrowserTabRef) => runFork(browser.personUsed(ref));
     switch (asked._tag) {
@@ -68,6 +79,40 @@ export const makeCommand = (options: {
         const last = places.reopen();
         if (last === undefined) return;
         command({ _tag: "open", input: last.url, private: false, place: asked.place });
+        return;
+      }
+      case "openPage": {
+        const { page, place } = asked;
+        const here = places.order.filter((ref) => places.at(ref)?.place === place);
+        const showing = here.find((ref) => internalOf(ref) === page);
+        if (showing !== undefined) {
+          show(showing, place);
+          return;
+        }
+        // A new tab in front takes the page; any other tab keeps its own.
+        const inFront = places.front[place];
+        const blank = inFront === null ? undefined : browser.tab(inFront);
+        if (
+          inFront !== null &&
+          blank !== undefined &&
+          !blank.private &&
+          internalOf(inFront) === null &&
+          blankPage(blank.contents)
+        ) {
+          const at = places.at(inFront);
+          if (at !== undefined) at.internal = page;
+          options.changed();
+          return;
+        }
+        runFork(
+          Effect.gen(function* () {
+            const tab = yield* browser.openForPerson({ private: false });
+            places.openedInPlace(tab.ref, false, place);
+            const at = places.at(tab.ref);
+            if (at !== undefined) at.internal = page;
+            show(tab.ref, place);
+          }).pipe(Effect.catch((error) => Effect.logWarning("Opening a page failed", error))),
+        );
         return;
       }
       case "closeWindow":
