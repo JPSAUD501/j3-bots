@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -98,11 +99,14 @@ export const removeOldEngineBrowser = Effect.fn("engine.removeOldBrowser")(funct
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fs.remove(browserRoot(path, home), { recursive: true, force: true });
-  yield* fs.remove(path.join(home, "tools", "chrome-headless-shell"), {
-    recursive: true,
-    force: true,
-  });
+  // Windows may still hold a file of a profile the move's browser just read.
+  const remove = (location: string) =>
+    whileHeld(fs.remove(location, { recursive: true, force: true }), {
+      platform: process.platform,
+      codeOf: platformErrorCode,
+    });
+  yield* remove(browserRoot(path, home));
+  yield* remove(path.join(home, "tools", "chrome-headless-shell"));
 });
 
 /**

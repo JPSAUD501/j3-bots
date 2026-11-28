@@ -21,6 +21,7 @@
   "dependencies": {
     "@effect/sql-sqlite-node": "catalog:",
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/processes": "workspace:*",
     "effect": "catalog:",
     "playwright-core": "1.64.1"
   },

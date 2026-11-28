@@ -2,6 +2,7 @@
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { BrowserCookie, BrowserOriginStorage, BrowserSite } from "@j3-bots/contracts";
+import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -28,13 +29,13 @@ import Migration0002 from "./migrations/0002_origin_databases.ts";
 // through in one transaction. A file that does not open, does not open under
 // the key, holds a row that does not, or that a newer release migrated,
 // leaves the jar `unreadable`: nothing is synced from it or to it until the
-// person signs out of all sites, which deletes the file and starts it again,
-// empty. Start goes on either way.
+// person signs out of all sites, which starts it again, empty. Start goes on
+// either way.
 
 /** The sign-ins' file, in the home's `browser` folder. */
 export const SIGNINS_FILE = "signins.sqlite";
 
-/** The files SQLite keeps beside the database: what a reset deletes with it. */
+/** The files SQLite keeps beside the database: what a reset that deletes it deletes with it. */
 const BESIDE = ["-wal", "-shm", "-journal"] as const;
 
 const migrations = SqliteMigrator.fromRecord({
@@ -160,7 +161,7 @@ export type OpenedJar =
   | ({ readonly _tag: "open" } & OpenJar)
   | {
       readonly _tag: "unreadable";
-      /** Deletes the file and makes it again, empty, under the key: for "Sign out of all sites". */
+      /** Makes the file again, empty, under the key: for "Sign out of all sites" (`openJarFile`). */
       readonly reset: Effect.Effect<OpenJar>;
     };
 
@@ -430,9 +431,41 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
 });
 
 /**
+ * Empties the SQLite database at `location` in place, every table and view
+ * of it dropped (`secure_delete` overwrites what they held): false, or a
+ * failure, when SQLite cannot, as the file is not a database or is damaged. A file left
+ * in place stays usable while another connection holds it open, which on
+ * Windows forbids deleting it.
+ */
+const emptyInPlace = Effect.fn("SignIns.emptyInPlace")(function* (location: string) {
+  const sql = yield* SqliteClient.make({ filename: location }).pipe(
+    Effect.provide(Reactivity.layer),
+  );
+  yield* sql`PRAGMA foreign_keys = OFF`;
+  yield* sql`PRAGMA secure_delete = ON`;
+  const checked = yield* sql<{ readonly quick_check: string }>`PRAGMA quick_check`;
+  if (checked.length !== 1 || checked[0]?.quick_check !== "ok") return false;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const entries = yield* sql<{ readonly type: string; readonly name: string }>`
+          SELECT type, name FROM sqlite_schema
+          WHERE type IN ('view', 'table') AND name NOT LIKE 'sqlite_%'
+        `;
+      // Views first, as one may name a table.
+      for (const { name } of entries.filter((entry) => entry.type === "view"))
+        yield* sql`DROP VIEW ${sql(name)}`;
+      for (const { name } of entries.filter((entry) => entry.type === "table"))
+        yield* sql`DROP TABLE ${sql(name)}`;
+    }),
+  );
+  yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+  return true;
+});
+
+/**
  * Opens the sign-ins' file at `location`, sealed under `key`, for as long as
  * the scope lives. A file that cannot be opened is left as it is, until a
- * reset deletes it.
+ * reset empties it in place, or deletes it when SQLite cannot.
  */
 export const openJarFile = Effect.fn("SignIns.openJarFile")(function* (
   location: string,
@@ -451,8 +484,18 @@ export const openJarFile = Effect.fn("SignIns.openJarFile")(function* (
 
   const reset = Effect.gen(function* () {
     yield* Scope.close(connection, Exit.void);
-    for (const name of [location, ...BESIDE.map((suffix) => `${location}${suffix}`)])
-      yield* fs.remove(name, { force: true });
+    const emptied = yield* emptyInPlace(location).pipe(
+      Effect.scoped,
+      Effect.orElseSucceed(() => false),
+    );
+    // Only a file SQLite cannot empty is deleted, once no connection of the
+    // jar holds it.
+    if (!emptied)
+      for (const name of [location, ...BESIDE.map((suffix) => `${location}${suffix}`)])
+        yield* whileHeld(fs.remove(name, { force: true }), {
+          platform: process.platform,
+          codeOf: platformErrorCode,
+        });
     connection = yield* Scope.fork(outer, "sequential");
     const fresh = yield* connectIn(connection);
     if (Option.isNone(fresh.contents))

@@ -5,6 +5,7 @@ import {
   BrowserIndexedDb,
   type BrowserOriginStorage,
 } from "@j3-bots/contracts";
+import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -236,14 +237,18 @@ export const readProfileSignIns = Effect.fn("profile.read")(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const copy = input.workFolder;
+    // Released last, once the browser and every database of the copy closed:
+    // Windows may still hold a file of it a moment after.
+    const removeCopy = whileHeld(fs.remove(copy, { recursive: true, force: true }), {
+      platform: process.platform,
+      codeOf: platformErrorCode,
+    });
     yield* Effect.acquireRelease(
-      fs
-        .remove(copy, { recursive: true, force: true })
-        .pipe(
-          Effect.andThen(fs.makeDirectory(copy, { recursive: true, mode: 0o700 })),
-          Effect.andThen(fs.chmod(copy, 0o700)),
-        ),
-      () => fs.remove(copy, { recursive: true, force: true }).pipe(Effect.ignore),
+      removeCopy.pipe(
+        Effect.andThen(fs.makeDirectory(copy, { recursive: true, mode: 0o700 })),
+        Effect.andThen(fs.chmod(copy, 0o700)),
+      ),
+      () => removeCopy.pipe(Effect.ignore),
     );
     yield* copyNeeded(input.profile, copy);
 
