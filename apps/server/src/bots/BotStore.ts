@@ -132,7 +132,7 @@ export interface NewBot {
   readonly permissionModeChooser: Chooser;
   readonly primary: boolean;
   readonly hidden: boolean;
-  /** Whether it may use the engine's browser. */
+  /** Whether it may use J3 Bots' browser. */
   readonly browser: boolean;
   /**
    * The bot whose `create_bot` makes it, whose choice its visibility then is;
@@ -292,13 +292,6 @@ export const layer = Layer.effect(
       }
       if (changes.browser !== undefined) columns["browser"] = changes.browser ? 1 : 0;
       if (changes.sectionId !== undefined) columns["section_id"] = changes.sectionId;
-      // A browser taken away is withdrawn from the bot's project
-      // (`EngineSessions`), counted before the switch is written.
-      if (changes.browser === false) {
-        yield* sql`
-          UPDATE bots SET browser_withdrawals = browser_withdrawals + 1 WHERE id = ${id} AND browser = 1
-        `;
-      }
       yield* sql`UPDATE bots SET ${sql.update(columns)} WHERE id = ${id}`;
     }, Effect.orDie);
 

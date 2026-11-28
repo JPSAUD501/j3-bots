@@ -82,6 +82,14 @@ export const bridgeKeyOf = (text: string) =>
  */
 export const CONNECTOR_CALL_DEADLINE = Duration.minutes(61);
 
+/**
+ * How long the bridge waits for the answer to a `browser_*` call: a step's
+ * own wait at its longest (`MAX_BROWSER_TIMEOUT_MS`), after the wait for its
+ * turn on the tab, with time to open a parked tab again or start the
+ * server's browser first.
+ */
+export const BROWSER_CALL_DEADLINE = Duration.minutes(3);
+
 /** Where the bridge forwards a call: `POST` a `ToolCallRequest`, answered with a `ToolCallResponse`. */
 export const TOOL_CALL_PATH = "/tools/call";
 
@@ -101,6 +109,14 @@ export type ToolCallRequest = typeof ToolCallRequest.Type;
 export const ToolCallResponse = Schema.Union([
   /** What one of J3 Bots' own tools returns to the bot. */
   Schema.TaggedStruct("result", { value: Schema.Json }),
+  /** The same, with a picture for the bot to see: a browser tab's, base64 in `data`. */
+  Schema.TaggedStruct("image", {
+    value: Schema.Json,
+    image: Schema.Struct({
+      mimeType: Schema.Literals(["image/png", "image/jpeg"]),
+      data: Schema.String,
+    }),
+  }),
   /** What a connector's tool returns, already framed for the bot. */
   Schema.TaggedStruct("text", { text: Schema.String, isError: Schema.Boolean }),
   /** Why the call did nothing, in words for the bot. */

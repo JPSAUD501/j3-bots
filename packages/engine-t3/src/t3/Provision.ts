@@ -160,6 +160,15 @@ export const instanceIdFor = (providerId: string) =>
 export const TOOL_SERVER = "j3";
 
 /**
+ * The engine's own tool server, as the harnesses name its tools:
+ * `mcp__t3-code__delegate_task` on Claude Code, `t3-code.delegate_task` on
+ * Codex and on ACP agents. **Verified** on `0.1.11`: a step of the scripted
+ * agent's `delegate_task` call carried `t3-code.delegate_task`; the code it
+ * rests on is unchanged at `bc0f04d`.
+ */
+export const ENGINE_TOOL_SERVER = "t3-code";
+
+/**
  * The variable that gives an ACP agent the bot tools' bridge, as the JSON
  * array of its command line. The engine offers an ACP agent only the engine's
  * own MCP server, so one that calls J3 Bots' tools, as the scripted agent
@@ -169,9 +178,33 @@ export const TOOL_SERVER = "j3";
 export const TOOL_BRIDGE_VARIABLE = "J3_TOOL_BRIDGE";
 
 /**
+ * The engine's browser tools, by their bare names (**Verified**, 2026-11:
+ * the tool list a running engine gives Claude Code). A bot browses with J3 Bots' own browser
+ * (decision 0110), and the engine's stays off (`ENGINE_SETTINGS`).
+ */
+const ENGINE_BROWSER_TOOLS = [
+  "preview_status",
+  "preview_open",
+  "preview_navigate",
+  "preview_snapshot",
+  "preview_act",
+  "preview_evaluate",
+  "preview_wait_for",
+  "preview_dialog",
+  "preview_resize",
+  "preview_set_appearance",
+  "preview_recording_start",
+  "preview_recording_stop",
+  "t3_preview_list",
+  "t3_preview_close",
+] as const;
+
+/**
  * Claude Code tools that reach a person outside J3 Bots or vanish with the
- * session. Removed from the model's tool list; the base prompt names the J3
- * Bots replacement for each.
+ * session, and the engine's browser tools. Removed from the model's tool
+ * list; the base prompt names the J3 Bots replacement for each. Codex takes
+ * no such list: there the engine's browser tools stay listed, and refuse
+ * every call while the engine's browser is off.
  */
 const CLAUDE_DISALLOWED_TOOLS = [
   "AskUserQuestion",
@@ -182,7 +215,8 @@ const CLAUDE_DISALLOWED_TOOLS = [
   "CronList",
   "ScheduleWakeup",
   "PushNotification",
-] as const;
+  ...ENGINE_BROWSER_TOOLS.map((tool) => `mcp__${ENGINE_TOOL_SERVER}__${tool}`),
+];
 
 /**
  * Claude Code's launch arguments. Only J3 Bots' own tools are pre-approved,
@@ -224,9 +258,9 @@ const ENGINE_SETTINGS = {
   continueThreadsAfterServerUpdate: false,
   // Also drops the engine's device instructions from every session.
   enableAgentDeviceAccess: false,
-  // The engine's browser acts with the operator's signed-in sites, so no bot
-  // has it unless the operator turned it on for that bot, which sets it in
-  // the bot's project (`BrowserAccess.ts`). The engine's default is on.
+  // A bot browses with J3 Bots' own browser (decision 0110), never the
+  // engine's; the engine's default is on. Releases before 0.16 turned it on
+  // per project, which the adapter clears (`withoutBrowserAccess`).
   // **Read** at `bc0f04d`, `contracts/src/settings.ts`.
   enableAgentBrowserAccess: false,
 } as const;

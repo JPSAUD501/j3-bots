@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  BrowserAction,
+  BrowserActResult,
+  BrowserDoneResult,
+  BrowserEvaluateResult,
+  BrowserSnapshotResult,
+  BrowserTabResult,
+  BrowserTabsResult,
+  type BrowserToolName,
   CommandId,
   type FillOutcome,
   MAX_THEME_BACKGROUND_SIZE,
@@ -17,6 +25,8 @@ import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "@j3-bots/design-tokens";
 import type { SessionId } from "@j3-bots/engine-t3";
 import {
   APP_SHOWN_LINE,
+  BROWSER_NOTES,
+  browserTools,
   DECODE_OPTIONS,
   FILL_NOTES,
   inputCapRefusal,
@@ -27,12 +37,17 @@ import {
   type ToolName,
   tools,
 } from "@j3-bots/prompts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
+import { Browser, type BrowserToolRefused } from "../browser/Browser.ts";
 import { Bots } from "../bots/Bots.ts";
 import { type BotSession, EngineSessions } from "../bots/EngineSessions.ts";
 import { ConnectorApps } from "../connectors/ConnectorApps.ts";
@@ -63,6 +78,7 @@ import { isAnimated, isWhole } from "../themes/stillImage.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
+  CallCutOff,
   RoomReadResult,
   type TurnToolCall,
   TurnToolRefused,
@@ -70,8 +86,11 @@ import {
   TurnTools,
 } from "./TurnTools.ts";
 
-/** What a handler answers: a value the bridge encodes, or text already framed for the bot. */
-type Answered = Extract<ToolCallResponse, { readonly _tag: "result" | "text" }>;
+/**
+ * What a handler answers: a value the bridge encodes, with a picture of the
+ * page when it has one, or text already framed for the bot.
+ */
+type Answered = Extract<ToolCallResponse, { readonly _tag: "result" | "image" | "text" }>;
 
 const decodeRoomRead = Schema.decodeUnknownEffect(RoomReadResult);
 
@@ -82,6 +101,23 @@ const encodeJson = <S extends Schema.Top>(schema: S) =>
   Schema.encodeEffect(Schema.toCodecJson(schema));
 
 const isJsonObject = Schema.is(Schema.JsonObject);
+
+/**
+ * The browser tools that change a page. The bridge forwards a request again
+ * when its connection fails, so each runs once for a request, and a forward
+ * of it gets that run's answer.
+ */
+const BROWSER_CHANGES: ReadonlySet<BrowserToolName> = new Set([
+  "browser_open",
+  "browser_navigate",
+  "browser_act",
+  "browser_evaluate",
+  "browser_dialog",
+  "browser_close",
+]);
+
+/** How long a browser call's answer is kept for a forward of its request: past the bridge's deadline. */
+const BROWSER_ANSWER_KEPT = Duration.minutes(5);
 
 /** A fill's outcome as the bot reads it: a status and fixed words, never a value. */
 const fillAnswer = (outcome: FillOutcome): Schema.Json =>
@@ -196,6 +232,7 @@ export const layer = Layer.effect(
     const inputs = yield* ConnectorInputs;
     const steps = yield* ConnectorSteps;
     const themes = yield* Themes;
+    const browser = yield* Browser;
     const readWorkspaceFile = yield* workspaceReader;
 
     /** What a bot's read of a connector reaches: the operator, when the connector's server asks for something. */
@@ -404,7 +441,6 @@ export const layer = Layer.effect(
           .fillLogin({
             requestId: call.requestId,
             caller: call.caller,
-            engineSessionId: call.sessionId,
             secret: input.secret,
             field: input.field,
             submit: input.submit ?? false,
@@ -824,6 +860,152 @@ export const layer = Layer.effect(
     const isToolName = (name: string): name is ToolName => Object.hasOwn(handlers, name);
 
     /**
+     * A `browser_*` call runs only while the bot's browser is on, and the
+     * session it came from was started with it, so the tools and the rules
+     * for them always come together.
+     */
+    const browsing = Effect.fn("BotTools.browsing")(function* (caller: BotSession) {
+      const found = yield* store.find(caller.botId);
+      if (!caller.browser || Option.isNone(found) || !found.value.bot.browser) {
+        return yield* new Refused({ reason: BROWSER_NOTES.off });
+      }
+      return caller.botId;
+    });
+
+    /** A browser tool's answer, its refusal in the bot's words. */
+    const browserHandler = <S extends Schema.Decoder<unknown>, R extends Schema.Top>(
+      schema: S,
+      result: R,
+      run: (botId: BotId, input: S["Type"]) => Effect.Effect<R["Type"], BrowserToolRefused>,
+    ) =>
+      framedHandler(schema, (input, call) =>
+        Effect.gen(function* () {
+          const botId = yield* browsing(call.caller);
+          const value = yield* run(botId, input).pipe(
+            Effect.mapError((refused) => new Refused({ reason: refused.text })),
+          );
+          return {
+            _tag: "result",
+            value: yield* encodeJson(result)(value).pipe(Effect.orDie),
+          } as const;
+        }),
+      );
+
+    const decodeAction = Schema.decodeUnknownEffect(BrowserAction);
+
+    const browserHandlers: {
+      readonly [N in BrowserToolName]: (call: Call) => Effect.Effect<Answered, Refused>;
+    } = {
+      browser_tabs: browserHandler(browserTools.browser_tabs.input, BrowserTabsResult, (botId) =>
+        Effect.map(browser.tools.tabs(botId), (tabs) => ({ tabs })),
+      ),
+      browser_open: browserHandler(
+        browserTools.browser_open.input,
+        BrowserTabResult,
+        (botId, input) => browser.tools.open(botId, input),
+      ),
+      browser_navigate: browserHandler(
+        browserTools.browser_navigate.input,
+        BrowserTabResult,
+        (botId, input) => browser.tools.navigate(botId, input),
+      ),
+      // A picture the bot asked for goes to it as an image beside the page's text.
+      browser_snapshot: framedHandler(browserTools.browser_snapshot.input, (input, call) =>
+        Effect.gen(function* () {
+          const botId = yield* browsing(call.caller);
+          const snapshot = yield* browser.tools
+            .snapshot(botId, input)
+            .pipe(Effect.mapError((refused) => new Refused({ reason: refused.text })));
+          const { image, ...page } = snapshot;
+          const value = yield* encodeJson(BrowserSnapshotResult)(page).pipe(Effect.orDie);
+          return image === undefined
+            ? ({ _tag: "result", value } as const)
+            : ({
+                _tag: "image",
+                value,
+                image: { mimeType: image.mimeType, data: image.data },
+              } as const);
+        }),
+      ),
+      browser_act: framedHandler(browserTools.browser_act.input, (input, call) =>
+        Effect.gen(function* () {
+          const botId = yield* browsing(call.caller);
+          const { tab, ...step } = input;
+          const action = yield* decodeAction(step, DECODE_OPTIONS).pipe(
+            Effect.mapError((error) => new Refused({ reason: error.message })),
+          );
+          const done = yield* browser.tools
+            .act(botId, tab, action)
+            .pipe(Effect.mapError((refused) => new Refused({ reason: refused.text })));
+          const value = yield* encodeJson(BrowserActResult)(done).pipe(Effect.orDie);
+          return { _tag: "result", value } as const;
+        }),
+      ),
+      browser_evaluate: browserHandler(
+        browserTools.browser_evaluate.input,
+        BrowserEvaluateResult,
+        (botId, input) => browser.tools.evaluate(botId, input),
+      ),
+      browser_wait_for: browserHandler(
+        browserTools.browser_wait_for.input,
+        BrowserDoneResult,
+        (botId, input) => browser.tools.waitFor(botId, input),
+      ),
+      browser_dialog: browserHandler(
+        browserTools.browser_dialog.input,
+        BrowserTabResult,
+        (botId, input) => browser.tools.dialog(botId, input),
+      ),
+      browser_close: browserHandler(
+        browserTools.browser_close.input,
+        BrowserDoneResult,
+        (botId, input) => browser.tools.close(botId, input),
+      ),
+    };
+
+    const isBrowserToolName = (name: string): name is BrowserToolName =>
+      Object.hasOwn(browserHandlers, name);
+
+    /** The answers of browser calls that change a page, by session and request. */
+    interface BrowserAnswer {
+      readonly answer: Deferred.Deferred<Answered, Refused>;
+      settledAt: number | null;
+    }
+    const browserAnswers = new Map<string, BrowserAnswer>();
+
+    /** Runs `run` once for the request: a forward of it waits for, and gets, the same answer. */
+    const oncePerRequest = Effect.fnUntraced(function* (
+      tool: BrowserToolName,
+      call: Call,
+      run: Effect.Effect<Answered, Refused>,
+    ) {
+      const at = yield* Clock.currentTimeMillis;
+      for (const [key, entry] of browserAnswers)
+        if (
+          entry.settledAt !== null &&
+          at - entry.settledAt > Duration.toMillis(BROWSER_ANSWER_KEPT)
+        )
+          browserAnswers.delete(key);
+      const key = [call.sessionId, call.requestId, tool].join("\u0000");
+      const known = browserAnswers.get(key);
+      if (known !== undefined) return yield* Deferred.await(known.answer);
+      const entry: BrowserAnswer = { answer: Deferred.makeUnsafe(), settledAt: null };
+      browserAnswers.set(key, entry);
+      return yield* run.pipe(
+        Effect.onExit((exit) =>
+          Effect.gen(function* () {
+            entry.settledAt = yield* Clock.currentTimeMillis;
+            // A run cut short may or may not have changed the page.
+            const settled = Exit.hasInterrupts(exit)
+              ? Exit.fail(new Refused({ reason: new CallCutOff().message }))
+              : exit;
+            Deferred.doneUnsafe(entry.answer, settled);
+          }),
+        ),
+      );
+    });
+
+    /**
      * A connector tool's call. Its arguments are checked before anything is
      * claimed, and the call is claimed for its turn before it is made, so it
      * is made once and only for a running turn; `Connectors` decides whether
@@ -862,6 +1044,10 @@ export const layer = Layer.effect(
       call: Call,
     ): Effect.Effect<ToolCallResponse, Refused | TurnToolRetry> => {
       if (isToolName(tool)) return handlers[tool](call);
+      if (isBrowserToolName(tool)) {
+        const run = browserHandlers[tool](call);
+        return BROWSER_CHANGES.has(tool) ? oncePerRequest(tool, call, run) : run;
+      }
       if (isConnectorTool(tool)) {
         return connectorCall(tool, call).pipe(
           Effect.map(({ text, isError }) => ({ _tag: "text", text, isError })),

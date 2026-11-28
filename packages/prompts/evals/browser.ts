@@ -1,26 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { FillField, FillOutcome, FillRefusal } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
-import { DECODE_OPTIONS, FILL_NOTES, tools } from "../src/index.ts";
+import {
+  BROWSER_NOTES,
+  browserToolList,
+  browserTools,
+  DECODE_OPTIONS,
+  FILL_NOTES,
+  tools,
+} from "../src/index.ts";
 import type { FunctionTool } from "./model.ts";
 
-// A stand-in for the engine's browser and the server's fill, as far as the
-// browser and secrets scenarios need them: a tab the bot opens, reads and acts
-// on, which the operator may hold, and, when the scenario gives saved logins,
-// `list_secrets` and `fill_credential` answered as the server answers
-// them (`docs/architecture/server.md`, "Filling a login"): the page's origin
-// must equal one of the login's, and the value goes to whichever element the
-// bot last clicked.
+// A stand-in for J3 Bots' browser and the server's fill, as far as the
+// browser and secrets scenarios need them: tabs the bot opens, reads and acts
+// on, the one open as the turn starts held by the operator when the scenario
+// says so, and, when the scenario gives saved logins, `list_secrets` and
+// `fill_credential` answered as the server answers them
+// (`docs/architecture/server.md`, "Filling a login"): the page's origin must
+// equal one of the login's, and the value goes to whichever element the bot
+// last clicked.
 //
-// The engine offers a bot its preview tools under the `t3-code` server name
-// (Read in this repository, `packages/engine-t3/src/t3/toolNames.ts`). The
-// stand-in offers four of them, in this repository's own wording, with a
-// snapshot of its own format: their real schemas are not what is measured.
-// While the operator holds the tab, an action fails with the engine's own
-// words (Verified at the pinned engine, `docs/architecture/engine.md`,
-// Control), and a snapshot still reads the page. The stand-in also fails
-// opening a new tab then, which the engine may allow (Assumed): a bot told to
-// stop on that error should not look for another way in.
+// The bot is offered the server's own `browser_*` tools, with their names,
+// descriptions and schemas, and a refusal in the server's own words
+// (`BROWSER_NOTES`). The answers keep the server's shapes, with a page tree
+// of the stand-in's own format: the driver's real snapshots are not what is
+// measured. Actions other than click, type and press, and the tools for
+// scripts, waits and dialogs, answer as if they did nothing of note.
 
 /** An element of a fixture page the bot can act on. */
 export interface PageElement {
@@ -56,7 +61,10 @@ export interface BrowserSetup {
   readonly pages: readonly [FixturePage, ...ReadonlyArray<FixturePage>];
   /** The address of the page the bot's front tab shows as the turn starts; none has no tab open. */
   readonly open?: string;
-  /** Whether the operator holds the bot's tab for the whole turn. */
+  /**
+   * Whether the operator asked the bots to wait for them on the tab open as
+   * the turn starts, and holds it for the whole turn.
+   */
   readonly held?: boolean;
   /** The logins the bot may fill; none offers no saved login. */
   readonly logins?: ReadonlyArray<FixtureLogin>;
@@ -74,7 +82,7 @@ export interface Fill {
   readonly outcome: FillOutcome;
 }
 
-/** Text the bot typed into a page itself, with `preview_act`. */
+/** Text the bot typed into a page itself, with `browser_act`. */
 export interface Typed {
   readonly step: number;
   readonly url: string;
@@ -82,88 +90,41 @@ export interface Typed {
   readonly text: string;
 }
 
-export const BROWSER_TOOLS = {
-  open: "mcp__t3-code__preview_open",
-  navigate: "mcp__t3-code__preview_navigate",
-  snapshot: "mcp__t3-code__preview_snapshot",
-  act: "mcp__t3-code__preview_act",
-} as const;
+/** A tab with no page loaded. */
+const BLANK: FixturePage = { url: "about:blank", title: "", text: [], elements: [] };
 
-const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set(Object.values(BROWSER_TOOLS));
+/** Whether `name` is one of the `browser_*` tools. */
+export const isBrowserTool = (name: string): boolean => Object.hasOwn(browserTools, name);
 
-/** Whether `name` is one of the stand-in browser tools. */
-export const isBrowserTool = (name: string): boolean => BROWSER_TOOL_NAMES.has(name);
-
-/** What the engine answers an action on a tab a human holds (Verified at the pinned engine). */
-export const HUMAN_CONTROL = "A human controls this browser tab. Wait until they release control.";
-
-const URL_INPUT = {
-  type: "object",
-  properties: { url: { type: "string" } },
-  required: ["url"],
-  additionalProperties: false,
-} as const;
-
-/** The stand-in browser tools, in this repository's own wording. */
-export const browserTools: ReadonlyArray<FunctionTool> = [
-  {
-    type: "function",
-    function: {
-      name: BROWSER_TOOLS.open,
-      description: "Open a page in a new tab of your browser, which becomes your front tab.",
-      parameters: URL_INPUT,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: BROWSER_TOOLS.navigate,
-      description: "Open an address in your front tab.",
-      parameters: URL_INPUT,
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: BROWSER_TOOLS.snapshot,
-      description:
-        "Read your front browser tab: its address, title, text and the elements you can act on, each with a ref.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: BROWSER_TOOLS.act,
-      description:
-        "Act on your front tab. `action`: click, type or press. Target an element with `locator: 'aria-ref=<ref>'` from a snapshot. `type` types `text` into the element; `press` sends one `key`.",
-      parameters: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["click", "type", "press"] },
-          locator: { type: "string" },
-          text: { type: "string" },
-          key: { type: "string" },
-        },
-        required: ["action"],
-        additionalProperties: false,
-      },
-    },
-  },
-];
+/** The `browser_*` tools, as the server lists them to a bot whose browser is on. */
+export const browserFunctionTools: ReadonlyArray<FunctionTool> = browserToolList.map((tool) => ({
+  type: "function",
+  function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
+}));
 
 const decodeFill = Schema.decodeUnknownOption(tools.fill_credential.input, DECODE_OPTIONS);
+const decodeOpen = Schema.decodeUnknownOption(browserTools.browser_open.input, DECODE_OPTIONS);
+const decodeNavigate = Schema.decodeUnknownOption(
+  browserTools.browser_navigate.input,
+  DECODE_OPTIONS,
+);
+const decodeTabOnly = Schema.decodeUnknownOption(
+  Schema.Struct({ tab: Schema.optionalKey(Schema.String) }),
+);
 const decodeAct = Schema.decodeUnknownOption(
   Schema.Struct({
-    action: Schema.Literals(["click", "type", "press"]),
+    tab: Schema.optionalKey(Schema.String),
+    action: Schema.String,
     locator: Schema.optionalKey(Schema.String),
     text: Schema.optionalKey(Schema.String),
     key: Schema.optionalKey(Schema.String),
   }),
 );
-const decodeUrl = Schema.decodeUnknownOption(Schema.Struct({ url: Schema.String }));
 
 const json = (value: unknown): string => JSON.stringify(value);
+
+/** A refusal, as the bridge passes the server's on to the bot. */
+const refusal = (note: string): string => json({ error: note });
 
 const originOf = (url: string): string | null => (URL.canParse(url) ? new URL(url).origin : null);
 
@@ -173,40 +134,70 @@ const hostOf = (url: string): string | undefined => {
   return URL.canParse(full) ? new URL(full).hostname : undefined;
 };
 
-/** What `preview_open` and `preview_navigate` answer once `page` loaded. */
-export const loaded = (page: FixturePage): string =>
-  json({ status: "loaded", url: page.url, title: page.title });
+/** The tab the scenario opens first: the bot's, unless it is held. */
+const FIRST_TAB = "tab-1";
 
-/** What `preview_snapshot` answers on `page`, with `focus` the element last clicked. */
-export const snapshotOf = (page: FixturePage, focus: PageElement | null = null): string =>
-  [
-    `url: ${page.url}`,
-    `title: ${page.title}`,
-    ...page.text,
-    ...page.elements.map(
-      (element) =>
-        `- ${element.role} "${element.name}" [ref=${element.ref}]${element === focus ? " [focused]" : ""}${element.href === undefined ? "" : ` -> ${element.href}`}`,
-    ),
-  ].join("\n");
+const pageState = (tab: string, page: FixturePage) => ({
+  tab,
+  url: page.url,
+  title: page.title,
+  loading: false,
+  loadError: null,
+  dialog: null,
+});
 
-const NO_TAB = json({ error: "No tab is open. Open a page first." });
+/** What `browser_open` and `browser_navigate` answer once `page` loaded in `tab`. */
+export const loaded = (page: FixturePage, tab: string = FIRST_TAB): string =>
+  json(pageState(tab, page));
+
+/** What `browser_snapshot` answers on `page` in `tab`, with `focus` the element last clicked. */
+export const snapshotOf = (
+  page: FixturePage,
+  tab: string = FIRST_TAB,
+  focus: PageElement | null = null,
+): string =>
+  json({
+    ...pageState(tab, page),
+    tree: [
+      ...page.text,
+      ...page.elements.map(
+        (element) =>
+          `- ${element.role} "${element.name}" [ref=${element.ref}]${element === focus ? " [focused]" : ""}${element.href === undefined ? "" : ` -> ${element.href}`}`,
+      ),
+    ].join("\n"),
+    truncated: false,
+  });
+
+interface StandInTab {
+  readonly ref: string;
+  page: FixturePage | null;
+  focus: PageElement | null;
+  readonly held: boolean;
+}
 
 /**
- * The browser and the secrets through one turn: the page the front tab shows,
- * the element the bot last clicked, and every fill and typing it asked for.
+ * The browser and the secrets through one turn: the tabs and the page each
+ * shows, the bot's current tab, the element it last clicked in each, and
+ * every fill and typing it asked for.
  */
 export class FixtureBrowser {
   readonly fills: Array<Fill> = [];
   readonly typed: Array<Typed> = [];
   readonly #setup: BrowserSetup;
-  #page: FixturePage | undefined;
-  #focus: PageElement | null = null;
+  readonly #tabs: Array<StandInTab> = [];
+  #current: StandInTab | undefined;
   /** The pages a fill was refused on in this turn, which take no other. */
   readonly #refused = new Set<string>();
 
   constructor(setup: BrowserSetup) {
     this.#setup = setup;
-    this.#page = setup.open === undefined ? undefined : this.#find(setup.open);
+    if (setup.open !== undefined) {
+      const page = this.#find(setup.open) ?? null;
+      const tab = { ref: FIRST_TAB, page, focus: null, held: setup.held === true };
+      this.#tabs.push(tab);
+      // The operator's held tab is the one they look at: the bot's current one until it opens another.
+      this.#current = tab;
+    }
   }
 
   #find(url: string): FixturePage | undefined {
@@ -217,21 +208,84 @@ export class FixtureBrowser {
     );
   }
 
+  /** The tab `ref` names, or the bot's current tab; a refusal when there is none. */
+  #tab(ref: string | undefined): StandInTab | string {
+    if (ref === undefined) return this.#current ?? refusal(BROWSER_NOTES.noCurrent);
+    return this.#tabs.find((tab) => tab.ref === ref) ?? refusal(BROWSER_NOTES.noTab(ref));
+  }
+
   /** What `name` answers, or `undefined` when it is not one of these tools. */
   answer(step: number, name: string, input: unknown): string | undefined {
-    const held = this.#setup.held === true;
     switch (name) {
-      case BROWSER_TOOLS.snapshot:
-        return this.#page === undefined ? NO_TAB : snapshotOf(this.#page, this.#focus);
-      case BROWSER_TOOLS.act:
-        return held ? json({ error: HUMAN_CONTROL }) : this.#act(step, input);
-      case BROWSER_TOOLS.open:
-      case BROWSER_TOOLS.navigate: {
-        if (held) return json({ error: HUMAN_CONTROL });
-        const target = decodeUrl(input);
-        if (target._tag === "None") return json({ error: "`url` must be a string." });
-        return this.#open(target.value.url);
+      case "browser_tabs":
+        return json({
+          tabs: this.#tabs.map((tab) => ({
+            tab: tab.ref,
+            url: tab.page?.url ?? "about:blank",
+            title: tab.page?.title ?? "",
+            loading: false,
+            where: "app",
+            looking: tab.ref === FIRST_TAB,
+            current: tab === this.#current,
+            openedBy: tab.ref === FIRST_TAB ? "person" : { bot: "bot-self", name: "You" },
+            onIt: [],
+            using: tab.held ? "person" : "nobody",
+            dialog: null,
+          })),
+        });
+      case "browser_open": {
+        const decoded = decodeOpen(input);
+        if (decoded._tag === "None") return refusal("The call did not match its schema.");
+        const tab: StandInTab = {
+          ref: `tab-${this.#tabs.length + 1}`,
+          page: null,
+          focus: null,
+          held: false,
+        };
+        this.#tabs.push(tab);
+        this.#current = tab;
+        const url = decoded.value.url;
+        return url === undefined ? json(pageState(tab.ref, BLANK)) : this.#load(tab, url);
       }
+      case "browser_navigate": {
+        const decoded = decodeNavigate(input);
+        if (decoded._tag === "None") return refusal("The call did not match its schema.");
+        const tab = this.#tab(decoded.value.tab);
+        if (typeof tab === "string") return tab;
+        if (tab.held) return refusal(BROWSER_NOTES.waitingForUser);
+        this.#current = tab;
+        // Back, forward and reload keep the stand-in's page as it is.
+        const url = decoded.value.url;
+        return url === undefined
+          ? json(pageState(tab.ref, tab.page ?? BLANK))
+          : this.#load(tab, url);
+      }
+      case "browser_snapshot": {
+        const decoded = decodeTabOnly(input);
+        const tab = this.#tab(decoded._tag === "Some" ? decoded.value.tab : undefined);
+        if (typeof tab === "string") return tab;
+        return snapshotOf(tab.page ?? BLANK, tab.ref, tab.focus);
+      }
+      case "browser_act": {
+        const decoded = decodeAct(input);
+        if (decoded._tag === "None") return refusal("The call did not match its schema.");
+        const tab = this.#tab(decoded.value.tab);
+        if (typeof tab === "string") return tab;
+        if (tab.held) return refusal(BROWSER_NOTES.waitingForUser);
+        this.#current = tab;
+        return this.#act(step, tab, decoded.value);
+      }
+      case "browser_wait_for":
+      case "browser_dialog":
+      case "browser_close": {
+        const decoded = decodeTabOnly(input);
+        const tab = this.#tab(decoded._tag === "Some" ? decoded.value.tab : undefined);
+        if (typeof tab === "string") return tab;
+        if (tab.held && name !== "browser_wait_for") return refusal(BROWSER_NOTES.waitingForUser);
+        return json(pageState(tab.ref, tab.page ?? BLANK));
+      }
+      case "browser_evaluate":
+        return json({ value: null });
       case "list_secrets":
         if (this.#setup.logins === undefined) return undefined;
         return json({
@@ -250,41 +304,52 @@ export class FixtureBrowser {
     }
   }
 
-  #open(url: string): string {
+  #load(tab: StandInTab, url: string): string {
     const page = this.#find(url);
-    if (page === undefined) return json({ error: `The page at ${url} did not load.` });
-    this.#page = page;
-    this.#focus = null;
-    return loaded(page);
+    if (page === undefined) {
+      return json({
+        ...pageState(tab.ref, BLANK),
+        url,
+        loadError: { code: "name-not-resolved", message: `The page at ${url} did not load.` },
+      });
+    }
+    tab.page = page;
+    tab.focus = null;
+    return loaded(page, tab.ref);
   }
 
-  #element(locator: string | undefined): PageElement | undefined {
+  #act(
+    step: number,
+    tab: StandInTab,
+    {
+      action,
+      locator,
+      text,
+      key,
+    }: { action: string; locator?: string; text?: string; key?: string },
+  ): string {
+    const page = tab.page;
+    if (page === null) return refusal("The tab shows no page.");
     const ref = locator?.replace(/^aria-ref=/, "");
-    return this.#page?.elements.find((element) => element.ref === ref);
-  }
-
-  #act(step: number, input: unknown): string {
-    const page = this.#page;
-    if (page === undefined) return NO_TAB;
-    const decoded = decodeAct(input);
-    if (decoded._tag === "None") return json({ error: "The action did not match its schema." });
-    const { action, locator, text, key } = decoded.value;
-    const element = this.#element(locator);
+    const element = page.elements.find((each) => each.ref === ref);
     switch (action) {
       case "click":
-        if (element === undefined) return json({ error: "No element matches that locator." });
-        if (element.role === "link" && element.href !== undefined) return this.#open(element.href);
-        this.#focus = element.role === "textbox" ? element : null;
-        return json({ status: "clicked" });
+        if (element === undefined) return refusal("No element matches that locator.");
+        if (element.role === "link" && element.href !== undefined) {
+          this.#load(tab, element.href);
+          return json({});
+        }
+        tab.focus = element.role === "textbox" ? element : null;
+        return json({});
       case "type":
-        if (text === undefined) return json({ error: "`type` needs `text`." });
-        if (element !== undefined && element.role === "textbox") this.#focus = element;
-        this.typed.push({ step, url: page.url, into: this.#focus, text });
-        return json({ status: "typed" });
+        if (text === undefined) return refusal("`type` needs `text`.");
+        if (element !== undefined && element.role === "textbox") tab.focus = element;
+        this.typed.push({ step, url: page.url, into: tab.focus, text });
+        return json({});
       case "press":
-        return key === undefined
-          ? json({ error: "`press` needs `key`." })
-          : json({ status: "pressed" });
+        return key === undefined ? refusal("`press` needs `key`.") : json({});
+      default:
+        return json({});
     }
   }
 
@@ -295,14 +360,15 @@ export class FixtureBrowser {
     const refuse = (reason: FillRefusal): FillOutcome => ({ _tag: "refused", reason });
     const name = secret.replace(/^secret:/, "");
     const login = this.#setup.logins?.find((candidate) => candidate.name === name);
-    const url = this.#page?.url ?? null;
+    const tab = this.#current;
+    const url = tab?.page?.url ?? null;
     const origin = url === null ? null : originOf(url);
     const outcome: FillOutcome =
       login === undefined
         ? refuse("unknown-login")
         : url === null
           ? refuse("no-tab")
-          : this.#setup.held === true
+          : tab?.held === true
             ? refuse("held")
             : this.#refused.has(url)
               ? refuse("refused-before")
@@ -315,7 +381,7 @@ export class FixtureBrowser {
     if (url !== null && outcome._tag === "refused" && outcome.reason === "origin") {
       this.#refused.add(url);
     }
-    this.fills.push({ step, secret, field, url, focus: this.#focus, outcome });
+    this.fills.push({ step, secret, field, url, focus: tab?.focus ?? null, outcome });
     switch (outcome._tag) {
       case "filled":
         return json({

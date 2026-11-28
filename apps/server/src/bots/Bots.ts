@@ -37,6 +37,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
+import { Browser } from "../browser/Browser.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { defaultModelIn, EngineState, providerReady } from "../engine/EngineState.ts";
 import { Ids } from "../Ids.ts";
@@ -276,6 +277,7 @@ export const layer = Layer.effect(
     const stops = yield* Stops;
     const wakes = yield* Wakes;
     const ledger = yield* Ledger;
+    const browser = yield* Browser;
     const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
       sql,
       signals,
@@ -461,29 +463,24 @@ export const layer = Layer.effect(
             if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
             yield* store.update(input.botId, change, at, input.chooser);
             yield* settingsChanged;
+            // Off, its browser takes it out of every tab once the change is saved.
+            if (change.browser === false && before.bot.browser) {
+              yield* sql.afterCommit(browser.withdraw(input.botId));
+            }
             // Compared with the provider the bot's live main session runs on, in
             // this transaction: an earlier change may not have reached it yet.
             // Moving to another provider stops the work in progress before the
             // session is replaced, but leaves a hello the bot has not sent yet,
             // and the operator's messages waiting behind it, to run on the new
             // one. Moving back before that keeps the session.
-            let stopped = false;
             if (change.model !== undefined) {
               const live = yield* liveMainProvider(input.botId);
               if (Option.isSome(live) && live.value !== change.model.providerId) {
                 yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
-                stopped = true;
                 yield* requestBotRotation(input.botId, "provider-changed");
               } else if (Option.isSome(live)) {
                 yield* providerRestored(input.botId);
               }
-            }
-            // Taking the browser away stops the work in progress the same way,
-            // so no turn goes on with it, nor one the engine would start
-            // behind it on the same credential; the alignment then withdraws
-            // it from every thread of the bot's project.
-            if (change.browser === false && before.bot.browser && !stopped) {
-              yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
             }
             yield* changes.touch({ _tag: "bot", botId: input.botId });
             return (yield* require(input.botId).pipe(Effect.orDie)).bot;
@@ -881,6 +878,7 @@ export const layer = Layer.effect(
               yield* attachments.purge(carried);
               yield* changes.touch({ _tag: "bot", botId: input.botId });
               yield* sql.afterCommit(workspaces.remove(input.botId, input.deleteFiles));
+              yield* sql.afterCommit(browser.withdraw(input.botId));
             }),
           });
         }),

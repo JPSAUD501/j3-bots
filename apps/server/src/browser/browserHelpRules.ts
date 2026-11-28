@@ -9,9 +9,9 @@ import * as Duration from "effect/Duration";
 export const BROWSER_HELP_WAIT = Duration.hours(1);
 
 /**
- * How long a card's tab must be missing from the engine's list before the card
- * expires with it. The list is empty while the engine is not ready and is
- * built again after a restart, so a short gap is not a closed tab.
+ * How long a card stays open once its tab is gone from the server's tabs,
+ * open or parked, before it expires with it: an answer the operator was
+ * already giving still lands.
  */
 export const TAB_ABSENT_GRACE = Duration.minutes(2);
 
@@ -26,9 +26,9 @@ export const HAND_BACK_GRACE = Duration.minutes(2);
 export const SWEEP_EVERY = Duration.seconds(30);
 
 /**
- * How long an answer waits for the engine to say the operator's devices let
- * go of the bot's tabs, before it closes the card anyway. The engine applies a
- * release at once; this bounds a lost reply.
+ * How long an answer waits for the operator's holds on the bot's tabs to
+ * end, before it closes the card anyway. A hold ends at once; this bounds
+ * one that does not.
  */
 export const RELEASE_WAIT = Duration.seconds(5);
 

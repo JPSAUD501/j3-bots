@@ -23,6 +23,7 @@ import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SuggestReplies from "../settings/SuggestReplies.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
+import { testServerBrowserLayer } from "./browser.ts";
 import * as TestCloudSpeech from "./cloudSpeech.ts";
 import * as TestDiskSpace from "./diskSpace.ts";
 import * as TestOAuth from "./oauth.ts";
@@ -130,7 +131,7 @@ const testProviders = (starting: StartingStatuses) =>
   );
 
 /**
- * The in-memory engine and its browser, offering a Claude Code and a Codex
+ * The in-memory engine and the server's browser as a fake page host, offering a Claude Code and a Codex
  * provider, both ready until a test says otherwise. The test engine reports no providers of
  * its own, and a bot needs a model to exist.
  */
@@ -149,7 +150,7 @@ const engineWith = (starting: StartingStatuses) =>
     }),
   ).pipe(
     Layer.provideMerge(
-      Layer.mergeAll(TestEngine.layer, TestEngine.browserLayer, testProviders(starting)),
+      Layer.mergeAll(TestEngine.layer, testServerBrowserLayer, testProviders(starting)),
     ),
   );
 

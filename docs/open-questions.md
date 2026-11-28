@@ -67,14 +67,3 @@ Agents connected through ACP have no system-prompt field. T3 Code sends each tur
 The name is chosen: J3 Bots ([Concepts: Names](product/concepts.md#names)). Whether it is free to use is not checked yet: conflicting trademarks, and the npm scope, GitHub name, domain and app-store names it needs.
 
 **Settled by** those checks, which are the owner's to make.
-
-## 11. Does a fill hold on the pinned engine as the source reads?
-
-The server fills a saved login through the engine's viewer channel ([Server: filling a login](architecture/server.md#filling-a-login)). Its tests run against the in-memory browser, so these are **Assumed** until seen on the pinned engine with a real harness:
-
-- the engine queues a viewer's input messages in the order they arrived, so a `probe` answered means the typing before it ran;
-- a form submission answered with no new document shows as loading, then loaded again at the same address, or stays loading; either way the fill clears the field;
-- a password field shows dots in a snapshot, as on screen;
-- after a password the page stays on, one Backspace per character empties the field, because typing leaves the caret at the end.
-
-**Matters because** each is part of what keeps a filled value from the bot ([Security: filling a login](architecture/security.md#filling-a-login)). **Settled by** a real-engine conformance case with the scripted agent: a local sign-in page, a fill of each field, the page's received value and the field after a failed sign-in.

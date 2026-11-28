@@ -42,6 +42,8 @@ export type RosterFrame =
       readonly recordingTranscripts: true;
       /** The server keeps themes (`ThemeRpcs`) and takes `say`'s theme offer, so clients offer them. */
       readonly themes: true;
+      /** The server runs J3 Bots' own browsers and shares their tabs (decision 0110). */
+      readonly sharedBrowser: true;
     }
   | {
       readonly _tag: "changed";
@@ -260,6 +262,7 @@ export const layer = Layer.effect(
             screenRecordings: true,
             recordingTranscripts: true,
             themes: true,
+            sharedBrowser: true,
           }),
           Stream.fromSubscription(signals).pipe(
             Stream.filter(

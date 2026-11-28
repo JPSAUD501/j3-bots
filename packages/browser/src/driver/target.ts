@@ -72,10 +72,7 @@ const onElement = async <A>(run: () => Promise<A>): Promise<A> => {
   }
 };
 
-export const handleTarget = (
-  name: string,
-  handle: ElementHandle<SVGElement | HTMLElement>,
-): Target => ({
+export const handleTarget = <E>(name: string, handle: ElementHandle<E>): Target => ({
   name,
   click: (options) => onElement(() => handle.click(options)),
   hover: (timeout) => onElement(() => handle.hover({ timeout })),

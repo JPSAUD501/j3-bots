@@ -1,120 +1,148 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { Engine, IdempotencyKey } from "@j3-bots/engine-t3";
-import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import type { BotId } from "@j3-bots/contracts";
+import type { SessionId } from "@j3-bots/engine-t3";
+import { BROWSER_NOTES } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import { Browser } from "../browser/Browser.ts";
+import { botOpens, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   command,
   createBot,
-  deliveryIs,
   engineSession,
   finishRunning,
   nextTurn,
   sendToBot,
-  stopSettled,
   turnEnded,
 } from "../testing/turns.ts";
-import { BotStore } from "./BotStore.ts";
+import { BotTools } from "../tools/BotTools.ts";
+import { ToolLists } from "../tools/ToolLists.ts";
 import { Bots } from "./Bots.ts";
 
+let calls = 0;
+
+const listed = (session: SessionId) =>
+  Effect.gen(function* () {
+    const list = yield* (yield* ToolLists).list(session);
+    return {
+      version: list.version,
+      browsing: list.tools.some((tool) => tool.name === "browser_tabs"),
+    };
+  });
+
+const browse = (session: SessionId, tool: string, args: { readonly [key: string]: string }) =>
+  Effect.gen(function* () {
+    return yield* (yield* BotTools).call({
+      requestId: `browser-${++calls}`,
+      sessionId: session,
+      tool,
+      arguments: args,
+    });
+  });
+
 it.effect(
-  "gives a new bot the browser from its first turn, and once the operator turns it off, takes it away until they turn it on again",
+  "lists the browser's tools while the bot's browser is on, and once it is turned off lists them no more and refuses them at once",
   () =>
     Effect.gen(function* () {
-      const control = yield* TestEngineControl;
       const bots = yield* Bots;
-      const store = yield* BotStore;
+      const lists = yield* ToolLists;
       const bot = yield* createBot("Ana");
       const session = yield* engineSession(bot.id);
-      assert.isTrue(bot.browser);
-      const browsing = yield* sendToBot(bot.id, "Read the release notes on the site.");
-      const first = yield* nextTurn(bot.id);
-      assert.isTrue(yield* control.sessionBrowserTools(session));
-      yield* finishRunning(bot.id);
-      yield* deliveryIs(browsing, "delivered");
-      yield* turnEnded(bot.id);
+      const before = yield* listed(session);
+      assert.isTrue(before.browsing);
 
-      const off = yield* bots.update({
-        commandId: command(),
-        botId: bot.id,
-        changes: { browser: false },
+      yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
+      const changed = yield* lists.changes({ sessionId: session, since: before.version });
+      assert.isTrue(Option.isSome(changed));
+      assert.isFalse((yield* listed(session)).browsing);
+      assert.deepStrictEqual(yield* browse(session, "browser_tabs", {}), {
+        _tag: "refused",
+        message: BROWSER_NOTES.off,
       });
-      assert.isFalse(off.browser);
-      assert.isFalse(Option.getOrThrow(yield* store.find(bot.id)).bot.browser);
-      yield* sendToBot(bot.id, "Summarize them.");
-      const second = yield* nextTurn(bot.id, first);
-      assert.isFalse(yield* control.sessionBrowserTools(session));
-      yield* finishRunning(bot.id);
-      yield* turnEnded(bot.id);
-
-      const on = yield* bots.update({
-        commandId: command(),
-        botId: bot.id,
-        changes: { browser: true },
-      });
-      assert.isTrue(on.browser);
-      yield* sendToBot(bot.id, "Check the site again.");
-      yield* nextTurn(bot.id, second);
-      assert.isTrue(yield* control.sessionBrowserTools(session));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("lets a turn already running keep the tools it started with", () =>
+it.effect(
+  "gives a session the browser's tools only once it was started with the browser's rules",
+  () =>
+    Effect.gen(function* () {
+      const bots = yield* Bots;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
+      yield* sendToBot(bot.id, "Plan the launch.");
+      const running = yield* nextTurn(bot.id);
+
+      // Turned on mid-turn: the running session's instructions have no browser rules yet.
+      yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: true } });
+      assert.isFalse((yield* listed(session)).browsing);
+      yield* finishRunning(bot.id);
+      yield* turnEnded(bot.id);
+
+      yield* sendToBot(bot.id, "Now check the site.");
+      yield* nextTurn(bot.id, running);
+      assert.isTrue((yield* listed(session)).browsing);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "opens a bot's tab in the server's browser when no app is open, and reads it from there",
+  () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const opened = yield* browse(session, "browser_open", { url: "https://shop.example.test/" });
+      assert.strictEqual(opened._tag, "result");
+      const host = yield* (yield* TestServerBrowser).running;
+      const tabs = yield* host.tabs;
+      assert.deepStrictEqual(
+        tabs.map((tab) => tab.url),
+        ["https://shop.example.test/"],
+      );
+      const read = yield* browse(session, "browser_snapshot", {});
+      assert.strictEqual(read._tag, "result");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("takes a bot off the tabs it is on once its browser is turned off", () =>
   Effect.gen(function* () {
-    const control = yield* TestEngineControl;
     const bots = yield* Bots;
+    const browser = yield* Browser;
     const bot = yield* createBot("Ana");
-    const session = yield* engineSession(bot.id);
+    const ref = yield* botOpens(bot.id, "https://shop.example.test/");
+    const onIt = (until: (bots: ReadonlyArray<BotId>) => boolean) =>
+      browser.all.pipe(
+        Stream.map(({ tabs }) => tabs.find((tab) => tab.ref === ref)?.onIt),
+        Stream.filter((on): on is ReadonlyArray<BotId> => on !== undefined && until(on)),
+        Stream.runHead,
+      );
+    yield* onIt((on) => on.includes(bot.id));
     yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
-    yield* sendToBot(bot.id, "Plan the launch.");
-    const running = yield* nextTurn(bot.id);
-
-    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: true } });
-    assert.isFalse(yield* control.sessionBrowserTools(session));
-    yield* finishRunning(bot.id);
-    yield* turnEnded(bot.id);
-
-    yield* sendToBot(bot.id, "Now check the site.");
-    yield* nextTurn(bot.id, running);
-    assert.isTrue(yield* control.sessionBrowserTools(session));
+    assert.deepStrictEqual(yield* onIt((on) => !on.includes(bot.id)), Option.some([]));
+    // A call that came in before the change touches no page after it.
+    const late = yield* browser.tools.snapshot(bot.id, { tab: ref }).pipe(Effect.flip);
+    assert.strictEqual(late.text, BROWSER_NOTES.off);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect(
-  "takes the browser from every thread of the bot's project at once when the operator turns it off, stopping the turn running there",
-  () =>
-    Effect.gen(function* () {
-      const control = yield* TestEngineControl;
-      const engine = yield* Engine;
-      const bots = yield* Bots;
-      const store = yield* BotStore;
-      const bot = yield* createBot("Ana");
-      const session = yield* engineSession(bot.id);
-      yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: true } });
-      yield* sendToBot(bot.id, "Read the release notes on the site.");
-      yield* nextTurn(bot.id);
-      assert.isTrue(yield* control.sessionBrowserTools(session));
-      // A thread the bot's turn delegated to, in the same project, which the
-      // engine runs on its own.
-      const stored = Option.getOrThrow(yield* store.find(bot.id));
-      const delegate = yield* engine.openSession({
-        key: IdempotencyKey.make("delegate"),
-        projectId: Option.getOrThrow(stored.engineProjectId),
-        title: "Delegate",
-        model: stored.bot.model,
-        effort: stored.bot.effort,
-        fast: stored.bot.fast,
-        permissionMode: stored.bot.permissionMode,
-      });
-      yield* control.startEngineTurn(delegate);
-      assert.isTrue(yield* control.sessionBrowserTools(delegate));
-
-      yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
-      yield* turnEnded(bot.id);
-      yield* stopSettled;
-      assert.isFalse(yield* control.sessionBrowserTools(session));
-      assert.isFalse(yield* control.sessionBrowserTools(delegate));
-    }).pipe(Effect.provide(TestDomain.layer)),
+it.effect("opens one tab for a request the bridge forwards twice, and answers both alike", () =>
+  Effect.gen(function* () {
+    const tools = yield* BotTools;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const request = {
+      requestId: "browser-forwarded",
+      sessionId: session,
+      tool: "browser_open",
+      arguments: { url: "https://shop.example.test/" },
+    };
+    const first = yield* tools.call(request);
+    const again = yield* tools.call(request);
+    assert.deepStrictEqual(again, first);
+    const host = yield* (yield* TestServerBrowser).running;
+    assert.strictEqual((yield* host.tabs).length, 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

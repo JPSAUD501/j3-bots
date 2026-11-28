@@ -282,13 +282,14 @@ export const EngineInstallFailure = OpenLiterals(engineInstallFailures);
 export type EngineInstallFailure = typeof EngineInstallFailure.Type;
 
 /**
- * Whether the engine's browser can run on the machine that hosts J3 Bots, as
- * far as the server could tell: what a bot given the browser needs first.
- * `setup-required` says what is missing: a sandbox the system allows, the
- * libraries the browser loads, fonts. `j3-bots doctor` on that machine gives
- * the one command, run once by an administrator, that sets them up.
- * Libraries are known only once the engine has downloaded the browser, the
- * first time a bot uses it.
+ * Whether the server's own browser can run on the machine that hosts J3
+ * Bots, as far as the server could tell (decision 0110); before J3 Bots ran
+ * its own browsers, the engine's. Without it, bots browse only while a J3
+ * Bots app is open on a computer. `setup-required` says what is missing: a
+ * sandbox the system allows, the libraries the browser loads, fonts. `j3-bots
+ * doctor` on that machine gives the one command, run once by an
+ * administrator, that sets them up. Libraries are known only once the server
+ * has downloaded the browser, the first time a tab opens on it.
  */
 export const BrowserHostStatus = Schema.Union([
   Schema.TaggedStruct("ready", {}),
@@ -331,9 +332,11 @@ export const EngineStatus = Schema.Struct({
   pinnedVersion: Label,
   providers: Schema.Array(ProviderStatus),
   /**
-   * Whether the browser can run here, once the engine is ready and has
-   * checked; absent before that. A server older than `browser` never sends
-   * it, at the same protocol version, and an older client ignores it.
+   * Whether the server's own browser can run here, once the server has
+   * checked; absent before that, and from a server whose browser is off
+   * because it runs beside the desktop app (local mode). A server older than
+   * `browser` never sends it, at the same protocol version, and an older
+   * client ignores it.
    */
   browser: Schema.optionalKey(BrowserHostStatus),
   /**

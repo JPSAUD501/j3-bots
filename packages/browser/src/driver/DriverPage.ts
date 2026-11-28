@@ -7,6 +7,7 @@ import {
   type BrowserActOutcome,
   type BrowserDialog,
   type BrowserEvaluation,
+  type BrowserFillResult,
   BrowserHostError,
   type BrowserImage,
   type BrowserLoadError,
@@ -47,6 +48,7 @@ import {
 import { hostErrorOf } from "./errors.ts";
 import { handleTarget, locatorTarget, type Target } from "./target.ts";
 import { FramesChanged, openReaders, type FrameReader } from "./frames.ts";
+import { type FillRequest, makeFill } from "./fill.ts";
 import {
   dottedPattern,
   maskText,
@@ -116,6 +118,11 @@ export interface DriverPage {
   readonly input: (input: BrowserPageInput) => Effect.Effect<void, BrowserHostError>;
   /** Whether a tap at the point lands in a field that takes text. */
   readonly probe: (x: number, y: number) => Effect.Effect<boolean, BrowserHostError>;
+  /**
+   * Types a saved login's value into the focused field, once the page is
+   * at `url`, loaded, and the field in its top frame fits (see `fill.ts`).
+   */
+  readonly fill: (request: FillRequest) => Effect.Effect<BrowserFillResult, BrowserHostError>;
   /**
    * The page's pictures while the stream runs. The next comes only after
    * `screencastAck` of the last, and only the newest waits meanwhile. One
@@ -1129,6 +1136,7 @@ export const makeDriverPage = (options: {
       screenshot: (options) => shoot(options.format, options.quality),
       input,
       probe,
+      fill: makeFill({ page, cdp, noDialog, dialogOpens }),
       screencast,
       screencastAck,
     } satisfies DriverPage;

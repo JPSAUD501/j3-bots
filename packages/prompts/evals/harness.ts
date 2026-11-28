@@ -24,7 +24,7 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
-import { type BrowserSetup, browserTools, FixtureBrowser } from "./browser.ts";
+import { type BrowserSetup, browserFunctionTools, FixtureBrowser } from "./browser.ts";
 import { McpServers, connectorAnswer, type ConnectorStage, connectorTools } from "./connectors.ts";
 import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
@@ -303,7 +303,7 @@ const functionTools = (
     },
   },
   ...(engine === undefined ? [] : engineTools),
-  ...(browser ? browserTools : []),
+  ...(browser ? browserFunctionTools : []),
 ];
 
 /** A tool the model called, with its arguments as it sent them. */

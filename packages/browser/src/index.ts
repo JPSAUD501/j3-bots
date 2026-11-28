@@ -18,3 +18,10 @@ export {
   pageHostHandlers,
   remotePageHost,
 } from "./PageHost.ts";
+export {
+  HOST_SOCKET_PING,
+  HOST_SOCKET_SILENCE,
+  type HostSocketEnd,
+  pageHostOnSocket,
+  serveHostOnSocket,
+} from "./hostSocket.ts";

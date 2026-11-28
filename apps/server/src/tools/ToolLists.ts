@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
-import { connectorSkillsDescription, toolList } from "@j3-bots/prompts";
+import { browserToolList, connectorSkillsDescription, toolList } from "@j3-bots/prompts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -10,7 +10,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { BotStore } from "../bots/BotStore.ts";
 import { EngineSessions } from "../bots/EngineSessions.ts";
+import { browserSwitches } from "../browser/switches.ts";
 import { Connectors } from "../connectors/Connectors.ts";
 import { Ids } from "../Ids.ts";
 import type {
@@ -28,15 +30,20 @@ const CHANGE_WAIT = Duration.minutes(4);
 
 const decodeJson = Schema.decodeUnknownOption(Schema.Json);
 
-/** J3 Bots' own tools, as every bridge lists them first. */
-const ownTools: ReadonlyArray<ListedTool> = toolList.map((tool) => ({
+const listed = (tool: (typeof toolList)[number]): ListedTool => ({
   name: tool.name,
   description: tool.description,
   inputSchema: decodeJson(tool.inputSchema).pipe(
     Option.getOrElse((): Schema.Json => ({ type: "object" })),
   ),
   _meta: { ...tool._meta },
-}));
+});
+
+/** J3 Bots' own tools, as every bridge lists them first. */
+const ownTools: ReadonlyArray<ListedTool> = toolList.map(listed);
+
+/** The browser's tools, listed after J3 Bots' own to a bot whose browser is on (decision 0110). */
+const browserTools: ReadonlyArray<ListedTool> = browserToolList.map(listed);
 
 /**
  * J3 Bots' own tools for a bot: `use_connector_skill` lists the skills its
@@ -52,11 +59,12 @@ const ownToolsWith = (skills: Parameters<typeof connectorSkillsDescription>[1]) 
       );
 
 /**
- * The tools each `j3` bridge lists for its session: J3 Bots' own, then the
- * connector tools its bot is offered (`docs/architecture/server.md`, Bot
- * tools). Each bot's list has a version, which changes whenever its offered
- * tools may have, and which no other server process gives, so a bridge that
- * outlives a restart of the server also learns its list may have changed.
+ * The tools each `j3` bridge lists for its session: J3 Bots' own, the
+ * browser's while the bot's browser is on, then the connector tools its bot
+ * is offered (`docs/architecture/server.md`, Bot tools). Each bot's list has
+ * a version, which changes whenever its offered tools may have, and which no
+ * other server process gives, so a bridge that outlives a restart of the
+ * server also learns its list may have changed.
  */
 export class ToolLists extends Context.Service<
   ToolLists,
@@ -79,9 +87,13 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sessions = yield* EngineSessions;
     const connectors = yield* Connectors;
+    const bots = yield* BotStore;
     const process = yield* (yield* Ids).make("tools");
     const changes = yield* SubscriptionRef.make<ReadonlyMap<BotId, number>>(new Map());
-    yield* connectors.toolsChanged.pipe(
+    yield* Stream.merge(
+      connectors.toolsChanged,
+      (yield* browserSwitches).pipe(Stream.map(({ botId }) => botId)),
+    ).pipe(
       Stream.runForEach((botId) =>
         SubscriptionRef.update(changes, (counts) =>
           new Map(counts).set(botId, (counts.get(botId) ?? 0) + 1),
@@ -102,10 +114,16 @@ export const layer = Layer.effect(
       const version = versionOf(yield* SubscriptionRef.get(changes), caller.value.botId);
       const offered = yield* connectors.toolsFor(caller.value.botId);
       const skills = yield* connectors.skillsFor(caller.value.botId);
+      // Only once the session's instructions carry the browser's rules, and
+      // never after the switch is off, even before the session is reloaded.
+      const browsing =
+        caller.value.browser &&
+        Option.exists(yield* bots.find(caller.value.botId), (stored) => stored.bot.browser);
       return {
         version,
         tools: [
           ...ownToolsWith(skills),
+          ...(browsing ? browserTools : []),
           ...offered.map(({ name, description, inputSchema }) => ({
             name,
             description,

@@ -6,7 +6,7 @@
 
 Until now J3 Bots ran only from a checkout: `git clone`, `pnpm install`, `pnpm build`, then the server bundle in `apps/server/dist/bin.mjs` on the host's own Node ([Installing J3 Bots: from a checkout](../operations/install.md#from-a-checkout)). That needs Git, pnpm and the right Node release on every host, and a host's Node can change under the service.
 
-The server is already close to runnable on its own. Its production build bundles every dependency into two entry points, `bin.mjs` (the CLI and the server) and `bridge.mjs` (the `j3` MCP bridge each harness starts), with the prompt files copied beside them; SQLite is Node's own; and the bridge and the scripted agent are started with `process.execPath`, the Node that runs the server. What it lacked was a Node that does not depend on the host, a place for the web client that is not the checkout's `apps/web/dist`, and the license notices of what it bundles, which a redistribution must carry.
+The server is already close to runnable on its own. Its production build bundles every dependency into two entry points, `bin.mjs` (the CLI and the server) and `bridge.mjs` (the `j3` MCP bridge each harness starts), with the prompt files copied beside them, and Playwright, which reads its own files at run time, carried beside them as a package ([decision 0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md)); SQLite is Node's own; and the bridge and the scripted agent are started with `process.execPath`, the Node that runs the server. What it lacked was a Node that does not depend on the host, a place for the web client that is not the checkout's `apps/web/dist`, and the license notices of what it bundles, which a redistribution must carry.
 
 Local mode (0.3.0) runs the same server as a child of the desktop app, on the person's own computer, on Linux x64 and Windows x64, and on Apple Silicon once it has been tried on a Mac. Electron brings its own Node, but not the release J3 Bots pins: 24.22.1 in Electron 44.10.1, against 26.13.1 (**Verified**). The tool bridge each harness starts is `process.execPath`, which under Electron would start the app again rather than Node.
 
@@ -20,7 +20,8 @@ T3 Code ships its command line as a Node single executable application (**Read**
 j3-bots-<version>-<platform>/
   bin/j3-bots           a sh launcher: the Node below, on server/bin.mjs
   node/bin/node         the official Node release J3 Bots pins
-  server/               the server bundle, with its prompt files beside it
+  server/               the server bundle, with its prompt files and the packages
+                        it carries (node_modules/) beside it
   web/                  the web client
   release.json          version, platform and Node release: marks the layout
   LICENSE

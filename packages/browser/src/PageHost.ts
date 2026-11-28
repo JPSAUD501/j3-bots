@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  BROWSER_DOWNLOAD_CHUNK_BYTES,
   type BrowserActOutcome,
   type BrowserCookie,
   type BrowserCookieChanges,
   type BrowserEvaluation,
+  type BrowserFillResult,
   BrowserHostError,
   type BrowserHostEvent,
   type BrowserHostHello,
@@ -14,6 +16,7 @@ import {
   type BrowserPageState,
   type BrowserScreencastFrame,
   type BrowserTabRef,
+  MAX_ATTACHMENT_SIZE,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -73,6 +76,15 @@ export interface PageHost {
   readonly probe: (
     input: PageHostPayload<"tab.probe">,
   ) => Effect.Effect<{ readonly editable: boolean }, BrowserHostError>;
+  readonly putFile: (
+    input: PageHostPayload<"files.put">,
+  ) => Effect.Effect<{ readonly path: string }, BrowserHostError>;
+  readonly takeDownload: (
+    input: PageHostPayload<"download.take">,
+  ) => Effect.Effect<{ readonly bytes: Uint8Array }, BrowserHostError>;
+  readonly fill: (
+    input: PageHostPayload<"tab.fill">,
+  ) => Effect.Effect<BrowserFillResult, BrowserHostError>;
   readonly readCookies: Effect.Effect<
     { readonly cookies: ReadonlyArray<BrowserCookie> },
     BrowserHostError
@@ -100,6 +112,7 @@ export type PageHostTabCalls = Pick<
   | "screencastAck"
   | "input"
   | "probe"
+  | "fill"
 >;
 
 const noTab = Effect.fail(new BrowserHostError({ reason: "no-tab" }));
@@ -152,6 +165,7 @@ export const driverTabCalls = (
     input: ({ tab, input }) => on(tab, (driver) => driver.input(input)),
     probe: ({ tab, x, y }) =>
       on(tab, (driver) => Effect.map(driver.probe(x, y), (editable) => ({ editable }))),
+    fill: ({ tab, ...request }) => on(tab, (driver) => driver.fill(request)),
   };
 };
 
@@ -173,6 +187,10 @@ export const pageHostHandlers = (host: PageHost) =>
     "tab.screencastAck": (input) => host.screencastAck(input),
     "tab.input": (input) => host.input(input),
     "tab.probe": (input) => host.probe(input),
+    "files.put": (input) => host.putFile(input),
+    "download.take": (input) =>
+      Stream.unwrap(Effect.map(host.takeDownload(input), ({ bytes }) => chunksOf(bytes))),
+    "tab.fill": (input) => host.fill(input),
     "cookies.read": () => host.readCookies,
     "cookies.write": ({ changes }) => host.writeCookies(changes),
     "storage.read": (input) => host.readStorage(input),
@@ -181,6 +199,38 @@ export const pageHostHandlers = (host: PageHost) =>
 
 /** A host's client, as the server holds one: a call the connection loses fails as `closed`. */
 export type PageHostClient = RpcClient.RpcClient<BrowserHostRpc, RpcClientError.RpcClientError>;
+
+/** A download's bytes as `download.take` sends them, a chunk to a message. */
+const chunksOf = (bytes: Uint8Array) =>
+  Stream.fromIterable(
+    Array.from({ length: Math.ceil(bytes.length / BROWSER_DOWNLOAD_CHUNK_BYTES) }, (_, index) =>
+      bytes.subarray(
+        index * BROWSER_DOWNLOAD_CHUNK_BYTES,
+        (index + 1) * BROWSER_DOWNLOAD_CHUNK_BYTES,
+      ),
+    ),
+  );
+
+const sizeOf = (chunks: ReadonlyArray<Uint8Array>) =>
+  chunks.reduce((total, chunk) => total + chunk.length, 0);
+
+const joined = (chunks: ReadonlyArray<Uint8Array>) => {
+  const bytes = new Uint8Array(sizeOf(chunks));
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
+};
+
+/** A host that sends more of a download than an attachment may hold. */
+const tooLarge = Effect.fail(
+  new BrowserHostError({
+    reason: "too-large",
+    detail: "The download is larger than an attachment.",
+  }),
+);
 
 const lost = (cause: RpcClientError.RpcClientError) =>
   Effect.fail(new BrowserHostError({ reason: "closed", detail: cause.message.slice(0, 500) }));
@@ -209,6 +259,20 @@ export const remotePageHost = (client: PageHostClient): PageHost => ({
     client["tab.screencastAck"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   input: (input) => client["tab.input"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   probe: (input) => client["tab.probe"](input).pipe(Effect.catchTag("RpcClientError", lost)),
+  putFile: (input) => client["files.put"](input).pipe(Effect.catchTag("RpcClientError", lost)),
+  takeDownload: (input) =>
+    client["download.take"](input).pipe(
+      Stream.runFoldEffect(
+        (): Array<Uint8Array> => [],
+        (chunks, chunk) => {
+          chunks.push(chunk);
+          return sizeOf(chunks) <= MAX_ATTACHMENT_SIZE ? Effect.succeed(chunks) : tooLarge;
+        },
+      ),
+      Effect.map((chunks) => ({ bytes: joined(chunks) })),
+      Effect.catchTag("RpcClientError", lost),
+    ),
+  fill: (input) => client["tab.fill"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   readCookies: client["cookies.read"]().pipe(Effect.catchTag("RpcClientError", lost)),
   writeCookies: (changes) =>
     client["cookies.write"]({ changes }).pipe(Effect.catchTag("RpcClientError", lost)),

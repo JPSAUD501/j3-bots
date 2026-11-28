@@ -2,7 +2,11 @@
 import {
   BROWSER_HOST_PROTOCOL_VERSION,
   type BrowserCookie,
+  type BrowserCookieChanges,
   type BrowserCookieKey,
+  BrowserDownloadId,
+  type BrowserFillField,
+  type BrowserFillResult,
   BrowserHostError,
   type BrowserHostEvent,
   type BrowserHostHello,
@@ -14,6 +18,7 @@ import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import type * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { addressOf } from "../driver/address.ts";
@@ -27,12 +32,32 @@ import type { PageHost, PageHostPayload } from "../PageHost.ts";
 export interface FakePage {
   readonly title: string;
   readonly tree: string;
+  /**
+   * What has the focus on the page, for `tab.fill`: a field that a login's
+   * user name, password or one-time code fits, or something no value fits,
+   * as a field inside an embedded frame. Nothing, when absent.
+   */
+  readonly focus?: BrowserFillField | "other";
+}
+
+/** A value `tab.fill` typed, as the fake host took it. */
+export interface FakeFill {
+  readonly tab: BrowserTabRef;
+  readonly field: BrowserFillField;
+  readonly value: Redacted.Redacted<string>;
+  readonly submitted: boolean;
 }
 
 /** A call the fake host was asked, by its name in the protocol. */
 export interface FakeHostCall {
   readonly call: string;
   readonly tab?: BrowserTabRef;
+  /** For `tab.screencast`: the size and quality asked for. */
+  readonly size?: {
+    readonly maxWidth: number;
+    readonly maxHeight: number;
+    readonly quality: number;
+  };
 }
 
 /**
@@ -54,10 +79,47 @@ export interface FakePageHost extends PageHost {
    * next only after the last is acknowledged, keeping the newest meanwhile.
    */
   readonly paint: (tab: BrowserTabRef) => Effect.Effect<void>;
+  /**
+   * The host's sites change its cookies: the fake keeps the change and, as
+   * a host with `changeEvents` does, reports it as `cookies.changed`.
+   */
+  readonly siteCookies: (changes: BrowserCookieChanges) => Effect.Effect<void>;
+  /** A site's page writes its origin's storage, reported as `storage.changed` with `changeEvents`. */
+  readonly siteStorage: (origin: BrowserOriginStorage) => Effect.Effect<void>;
+  /** The cookies the host holds now. */
+  readonly cookies: Effect.Effect<ReadonlyArray<BrowserCookie>>;
+  /** What the host keeps of each origin now. */
+  readonly storage: Effect.Effect<ReadonlyArray<BrowserOriginStorage>>;
+  /**
+   * The host restarts its browser: session cookies are gone, as a browser
+   * without "continue where you left off" drops them, and nothing reports it.
+   */
+  readonly restart: Effect.Effect<void>;
+  /** The host empties its store, under the new id `cookieStore`, as a desktop does when revoked. */
+  readonly emptyStore: (cookieStore: string | undefined) => Effect.Effect<void>;
+  /** Every value `tab.fill` typed, in order. */
+  readonly fills: Effect.Effect<ReadonlyArray<FakeFill>>;
   /** The frames acknowledged so far, by tab. */
   readonly acked: Effect.Effect<
     ReadonlyArray<{ readonly tab: BrowserTabRef; readonly frame: number }>
   >;
+  /** A file a bot's action downloaded on the tab: kept, and reported as started, then finished. */
+  readonly download: (
+    tab: BrowserTabRef,
+    name: string,
+    bytes: Uint8Array,
+  ) => Effect.Effect<BrowserDownloadId>;
+  /** A download that starts on the tab now, and finishes, kept, once `finish` runs. */
+  readonly startDownload: (
+    tab: BrowserTabRef,
+    name: string,
+    bytes: Uint8Array,
+  ) => Effect.Effect<{
+    readonly download: BrowserDownloadId;
+    readonly finish: Effect.Effect<void>;
+  }>;
+  /** The files given for uploads, by the path the host answered. */
+  readonly files: Effect.Effect<ReadonlyMap<string, Uint8Array>>;
 }
 
 interface FakeTab {
@@ -88,6 +150,7 @@ export const makeFakePageHost = (
   options: {
     readonly host?: BrowserHostHello["host"];
     readonly capabilities?: BrowserHostHello["capabilities"];
+    readonly cookieStore?: string;
   } = {},
 ): Effect.Effect<FakePageHost, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -96,11 +159,28 @@ export const makeFakePageHost = (
     const tabs = new Map<BrowserTabRef, FakeTab>();
     const pages = new Map<string, FakePage>();
     const cookies = new Map<string, BrowserCookie>();
+    const files = new Map<string, Uint8Array>();
+    const downloads = new Map<BrowserDownloadId, Uint8Array>();
     const storage = new Map<string, BrowserOriginStorage>();
     const calls: Array<FakeHostCall> = [];
     const acked: Array<{ readonly tab: BrowserTabRef; readonly frame: number }> = [];
+    const fills: Array<FakeFill> = [];
+    let cookieStore = options.cookieStore;
+    const capabilities = options.capabilities ?? {
+      screencast: true,
+      input: true,
+      cookies: true,
+      storage: true,
+      files: true,
+    };
     const watchers = new Map<BrowserTabRef, Watcher>();
     let frames = 0;
+
+    const applyCookies = (changes: BrowserCookieChanges) => {
+      for (const removed of changes.removed) cookies.delete(cookieKey(removed, removed.partition));
+      for (const cookie of changes.set)
+        cookies.set(cookieKey(cookie, cookie.partition?.topLevelSite), cookie);
+    };
 
     const record = (call: string, tab?: BrowserTabRef) =>
       Effect.sync(() => {
@@ -167,21 +247,40 @@ export const makeFakePageHost = (
         return Effect.void;
       });
 
+    const privateTabs = () =>
+      [...tabs.values()].filter((tab) => tab.private).map((tab) => tab.state);
+
+    let downloadsStarted = 0;
+    const startDownload: FakePageHost["startDownload"] = (tab, name, bytes) =>
+      Effect.gen(function* () {
+        downloadsStarted += 1;
+        const id = BrowserDownloadId.make(`download-${downloadsStarted}`);
+        yield* PubSub.publish(events, { type: "download.started", tab, download: id });
+        const finish = Effect.suspend(() => {
+          downloads.set(id, bytes);
+          return PubSub.publish(events, {
+            type: "download.finished",
+            tab,
+            download: id,
+            name,
+            size: bytes.length,
+          });
+        }).pipe(Effect.asVoid);
+        return { download: id, finish };
+      });
     const host: FakePageHost = {
+      // Built at each call: the tabs and the store are the host's as they are now.
       hello: record("host.hello").pipe(
-        Effect.as({
+        Effect.map(() => ({
           protocol: BROWSER_HOST_PROTOCOL_VERSION,
           host: options.host ?? { kind: "server" },
           platform: { os: "linux", arch: "x64" },
           browser: { version: "1.0.0.0", userAgent: "Mozilla/5.0 (X11; Linux x86_64) Fake" },
-          capabilities: options.capabilities ?? {
-            screencast: true,
-            input: true,
-            cookies: true,
-            storage: true,
-          },
+          capabilities,
+          ...(cookieStore === undefined ? {} : { cookieStore }),
           tabs: [...tabs.values()].filter((tab) => !tab.private).map((tab) => tab.state),
-        }),
+          ...(privateTabs().length === 0 ? {} : { privateTabs: privateTabs() }),
+        })),
       ),
       // Recorded once subscribed, so a test that waits for the call loses no event.
       events: Stream.unwrap(
@@ -292,7 +391,7 @@ export const makeFakePageHost = (
             height: 800,
           }),
         ),
-      screencast: ({ tab }) =>
+      screencast: ({ tab, maxWidth, maxHeight, quality }) =>
         Stream.unwrap(
           Effect.gen(function* () {
             yield* find(tab);
@@ -308,7 +407,13 @@ export const makeFakePageHost = (
                       }),
                     );
                   watchers.set(tab, { queue, out: undefined, next: undefined });
-                  return record("tab.screencast", tab);
+                  return Effect.sync(() => {
+                    calls.push({
+                      call: "tab.screencast",
+                      tab,
+                      size: { maxWidth, maxHeight, quality },
+                    });
+                  });
                 }),
                 () => Effect.sync(() => watchers.delete(tab)),
               ),
@@ -335,20 +440,43 @@ export const makeFakePageHost = (
         ),
       input: ({ tab }) => onTab("tab.input", tab, () => Effect.void),
       probe: ({ tab }) => onTab("tab.probe", tab, () => Effect.succeed({ editable: false })),
+      putFile: ({ tab, name, bytes }) =>
+        onTab("files.put", tab, () =>
+          Effect.sync(() => {
+            const path = `/fake/files/${tab}/${files.size}/${name}`;
+            files.set(path, bytes);
+            return { path };
+          }),
+        ),
+      takeDownload: ({ download }) =>
+        record("download.take").pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const bytes = downloads.get(download);
+              if (bytes === undefined) {
+                return Effect.fail(new BrowserHostError({ reason: "invalid-target" }));
+              }
+              downloads.delete(download);
+              return Effect.succeed({ bytes });
+            }),
+          ),
+        ),
+      fill: ({ tab, field, value, url, submit }) =>
+        onTab("tab.fill", tab, (found) =>
+          Effect.sync((): BrowserFillResult => {
+            if (found.state.url !== url) return { _tag: "refused", reason: "navigated" };
+            if (found.state.loading) return { _tag: "refused", reason: "loading" };
+            if (pages.get(url)?.focus !== field) return { _tag: "refused", reason: "field" };
+            const submitted = submit || field === "password";
+            fills.push({ tab, field, value, submitted });
+            return { _tag: "typed", submitted, cleared: false };
+          }),
+        ),
       readCookies: record("cookies.read").pipe(
         Effect.andThen(Effect.sync(() => ({ cookies: [...cookies.values()] }))),
       ),
       writeCookies: (changes) =>
-        record("cookies.write").pipe(
-          Effect.andThen(
-            Effect.sync(() => {
-              for (const removed of changes.removed)
-                cookies.delete(cookieKey(removed, removed.partition));
-              for (const cookie of changes.set)
-                cookies.set(cookieKey(cookie, cookie.partition?.topLevelSite), cookie);
-            }),
-          ),
-        ),
+        record("cookies.write").pipe(Effect.andThen(Effect.sync(() => applyCookies(changes)))),
       readStorage: (input: PageHostPayload<"storage.read">) =>
         record("storage.read").pipe(
           Effect.andThen(
@@ -394,7 +522,43 @@ export const makeFakePageHost = (
           if (watcher.out === undefined) deliver(watcher, frames);
           else watcher.next = frames;
         }),
+      siteCookies: (changes) =>
+        Effect.suspend(() => {
+          applyCookies(changes);
+          return capabilities.changeEvents === true
+            ? PubSub.publish(events, { type: "cookies.changed", changes }).pipe(Effect.asVoid)
+            : Effect.void;
+        }),
+      siteStorage: (origin) =>
+        Effect.suspend(() => {
+          storage.set(origin.origin, origin);
+          return capabilities.changeEvents === true
+            ? PubSub.publish(events, { type: "storage.changed", origins: [origin.origin] }).pipe(
+                Effect.asVoid,
+              )
+            : Effect.void;
+        }),
+      cookies: Effect.sync(() => [...cookies.values()]),
+      storage: Effect.sync(() => [...storage.values()]),
+      restart: Effect.sync(() => {
+        for (const [key, cookie] of cookies) if (cookie.expires === undefined) cookies.delete(key);
+      }),
+      emptyStore: (next) =>
+        Effect.sync(() => {
+          cookies.clear();
+          storage.clear();
+          cookieStore = next;
+        }),
+      fills: Effect.sync(() => [...fills]),
       acked: Effect.sync(() => [...acked]),
+      startDownload,
+      download: (tab, name, bytes) =>
+        Effect.gen(function* () {
+          const started = yield* startDownload(tab, name, bytes);
+          yield* started.finish;
+          return started.download;
+        }),
+      files: Effect.sync(() => new Map(files)),
     };
     return host;
   });

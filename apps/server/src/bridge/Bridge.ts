@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SessionId } from "@j3-bots/engine-t3";
-import { isConnectorTool, type ToolName, toolList } from "@j3-bots/prompts";
+import { browserTools, isConnectorTool, type ToolName, toolList } from "@j3-bots/prompts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -19,6 +19,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
+  BROWSER_CALL_DEADLINE,
   type BridgeSigner,
   bridgeKeyOf,
   bridgeSigner,
@@ -264,13 +265,19 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     const { sessionId, signer } = caller.value;
     const connector = isConnectorTool(call.value.name) || ASKS_CONNECTOR.has(call.value.name);
     const reachesOut = connector || REACHES_OUT.has(call.value.name);
+    const browsing = Object.hasOwn(browserTools, call.value.name);
     const requestId = Base64Url.encode(yield* random.randomBytes(16));
     const answer = yield* forward(signer, {
       requestId,
       sessionId,
       tool: call.value.name,
       arguments: call.value.arguments ?? {},
-    }).pipe(Effect.timeout(reachesOut ? CONNECTOR_CALL_DEADLINE : FORWARD_DEADLINE), Effect.option);
+    }).pipe(
+      Effect.timeout(
+        reachesOut ? CONNECTOR_CALL_DEADLINE : browsing ? BROWSER_CALL_DEADLINE : FORWARD_DEADLINE,
+      ),
+      Effect.option,
+    );
     if (Option.isNone(answer)) {
       // The server may have made the call before its answer was lost, and a
       // new call is a new request: the bot is told to look first.
@@ -279,13 +286,23 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
           ? "J3 Bots did not answer this call, so it may or may not have taken effect at the connector. Check before you make it again."
           : reachesOut
             ? "J3 Bots did not answer this call, so it may or may not have taken effect. Check `list_mcp_servers` or `list_skills` before you make it again."
-            : "J3 Bots could not be reached. Try the call again.",
+            : browsing
+              ? "J3 Bots did not answer this call, so it may or may not have taken effect in the browser. Take a snapshot before you make it again."
+              : "J3 Bots could not be reached. Try the call again.",
         true,
       );
     }
     switch (answer.value._tag) {
       case "result":
         return textResult(encodeLine(answer.value.value), false);
+      case "image":
+        return {
+          content: [
+            { type: "text", text: encodeLine(answer.value.value) },
+            { type: "image", data: answer.value.image.data, mimeType: answer.value.image.mimeType },
+          ],
+          isError: false,
+        } satisfies Schema.Json;
       case "text":
         return textResult(answer.value.text, answer.value.isError);
       case "refused":

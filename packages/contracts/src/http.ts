@@ -114,6 +114,17 @@ export const HTTP_PATHS = {
    */
   browser: "/api/browser/ws",
   /**
+   * The page host socket (decision 0110): the desktop app's own browser
+   * dials it and answers `BrowserHostRpcs` on it, with the server as the
+   * caller, in Effect RPC's JSON frames (`serveHostOnSocket` and
+   * `pageHostOnSocket` in `@j3-bots/browser`). The upgrade carries the
+   * device token as a bearer; one without a valid token is answered 401 and
+   * never becomes a socket. The server pings every 15 s, and a host that
+   * hears nothing for 45 s dials again. A server without J3 Bots' own
+   * browser answers 404, and the desktop tries again at its next connect.
+   */
+  browserHost: "/api/browser/host",
+  /**
    * The voice socket, for one dictation on the server (decision 0096):
    * `VoiceClientFrame` and `VoiceServerFrame` as JSON text, the audio as
    * binary frames. The upgrade carries the device token as a bearer or a

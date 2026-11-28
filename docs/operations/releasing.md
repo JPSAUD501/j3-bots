@@ -40,7 +40,8 @@ Each desktop package for a platform the app runs local mode on carries the serve
 ```
 server-runtime/
   node/bin/node         the Node release package.json pins; node/node.exe on Windows
-  server/               the server bundle, with its prompt files
+  server/               the server bundle, with its prompt files and the packages
+                        it carries (node_modules/)
   release.json          version (the app's), platform, Node release and engine
   LICENSE
   APP-STORE-PERMISSION

@@ -636,6 +636,7 @@ export const en = {
   "fill.refused.insecureAt": "{origin} isn’t secure.",
   "fill.refused.origin": "The page isn’t one of the login’s sites.",
   "fill.refused.originAt": "The page, {origin}, isn’t one of the login’s sites.",
+  "fill.refused.field": "The focused field wasn’t one this value goes into.",
   "fill.refused.navigated": "The page changed while it was being filled.",
   "fill.refused.before": "A login was already refused on this page just now.",
   "fill.refused.unavailable":

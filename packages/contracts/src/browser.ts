@@ -49,8 +49,9 @@ export type BrowserDialog = typeof BrowserDialog.Type;
  * - `desktop`: in the J3 Bots app on that computer, in its own browser.
  * - `server`: in the server's own browser.
  * - `parked`: its host went away (the app closed, or the server's browser
- *   let an idle tab go). It keeps its address, title and last picture, and
- *   the next bot that uses it opens it again on the server.
+ *   let an idle tab go). It keeps its address and title, and the next bot
+ *   that uses it opens it again where a new tab opens: in the app the person
+ *   used last, else on the server.
  */
 export const BrowserTabWhere = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("desktop"), device: DeviceId }),
@@ -174,6 +175,11 @@ export const DEFAULT_BROWSER_VIEW = { width: 1280, height: 800, quality: 70 } as
 export const MAX_BROWSER_TEXT_LENGTH = 10_000;
 /** The longest address a `navigate` frame takes. */
 export const MAX_BROWSER_URL_LENGTH = 2_048;
+/**
+ * How long a person holds a tab after their last input to its page, in
+ * milliseconds: bots act on it again once it passes (`BrowserTabHolder`).
+ */
+export const BROWSER_PERSON_HOLD_MS = 10_000;
 
 /**
  * How the server closes a media socket, besides a normal close (1000) after
@@ -181,8 +187,12 @@ export const MAX_BROWSER_URL_LENGTH = 2_048;
  *
  * - `invalid` (1008): the request named no tab or a size out of range, or the
  *   device was revoked while the socket was open.
- * - `reconnect` (1012): the browser restarted; open the socket again.
- * - `unavailable` (1013): the engine is not ready; try again later.
+ * - `reconnect` (1012): the browser restarted; open the socket again. Only
+ *   from a server before J3 Bots' own browser (no `sharedBrowser` in the
+ *   roster): on one with it, a tab whose host goes away keeps its socket and
+ *   its last picture, and its pictures resume wherever it opens again.
+ * - `unavailable` (1013): the engine is not ready; try again later. Only from
+ *   a server before J3 Bots' own browser.
  * - `replaced` (4409): this device opened another socket on the same tab,
  *   which took this one's place, control included.
  */
@@ -222,7 +232,7 @@ const Coordinate = Schema.Finite.check(Schema.isBetween({ minimum: -100_000, max
 const Modifiers = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 15 }));
 
 /** An `http:` or `https:` address: a client never opens a local file or a browser page. */
-const WebAddress = Schema.String.check(
+export const BrowserWebAddress = Schema.String.check(
   Schema.isMaxLength(MAX_BROWSER_URL_LENGTH),
   Schema.makeFilter((value: string) => {
     if (!URL.canParse(value)) return "an absolute address";
@@ -264,16 +274,24 @@ export const BrowserServerFrame = Schema.Union([
     editable: Schema.Boolean,
   }),
   /**
-   * Where the bot points while it acts on the tab, and when it clicks: sent
-   * only while the bot acts, never for a person's input.
+   * Where a bot points while it acts on the tab, and when it clicks: sent
+   * only while a bot acts, never for a person's input. `botId` names the
+   * bot, since several may work on one tab; a server from before shared
+   * tabs leaves it out, and the pointer is then the tab's one bot's.
    */
   Schema.Struct({
     type: Schema.Literal("cursor"),
     action: Schema.Literals(["move", "click"]),
     x: Coordinate,
     y: Coordinate,
+    botId: Schema.optionalKey(BotId),
   }),
-  /** The engine's browser cannot start until the host is set up; `j3-bots doctor` says how. */
+  /**
+   * The engine's browser cannot start until the host is set up; `j3-bots
+   * doctor` says how. Only from a server before J3 Bots' own browser (no
+   * `sharedBrowser` in the roster): on one with it, the engine status's
+   * `browser` says whether the server's own browser can run.
+   */
   Schema.Struct({
     type: Schema.Literal("setup-needed"),
     need: Schema.Literals(["sandbox", "libraries"]),
@@ -331,19 +349,37 @@ export const BrowserPageInput = Schema.Union(pageInputFrames);
 export type BrowserPageInput = typeof BrowserPageInput.Type;
 
 /**
- * What a client sends, as JSON text. Input is dropped unless this socket
- * holds the tab (`take`); `ack`, `pong`, `take` and `probe` work either way.
+ * What a client sends, as JSON text.
+ *
+ * On a server that shares its tabs (the roster's `sharedBrowser`), using the
+ * page is taking it: page input holds the tab for this socket's person until
+ * `BROWSER_PERSON_HOLD_MS` after the last, and is dropped while a person on
+ * another device holds it. On a server from before, input is dropped unless
+ * this socket holds the tab (`take`). `ack`, `pong`, `take` and `probe` work
+ * either way.
  */
 export const BrowserClientFrame = Schema.Union([
   /** The last picture is drawn: send the next. */
   Schema.Struct({ type: Schema.Literal("ack") }),
   Schema.Struct({ type: Schema.Literal("pong") }),
-  /** Take the tab from the bot. Fails, and changes nothing, while another device holds it. */
+  /**
+   * "Wait for me": hold the tab until `release`, with no end of its own
+   * (`until` null). On a server from before shared tabs, take it from the
+   * bot. Fails, and changes nothing, while another device holds it.
+   */
   Schema.Struct({ type: Schema.Literal("take") }),
-  /** Give the tab back to the bot. */
-  Schema.Struct({ type: Schema.Literal("release") }),
+  /**
+   * Give the tab back to the bots now. With `idle`, stop holding it with no
+   * end but keep the hold `BROWSER_PERSON_HOLD_MS` from now, as after any
+   * input: a phone's keyboard closing ends an open hold this way. A server
+   * from before shared tabs gives it back at once either way.
+   */
+  Schema.Struct({
+    type: Schema.Literal("release"),
+    idle: Schema.optionalKey(Schema.Literal(true)),
+  }),
   ...pageInputFrames,
-  Schema.Struct({ type: Schema.Literal("navigate"), url: WebAddress }),
+  Schema.Struct({ type: Schema.Literal("navigate"), url: BrowserWebAddress }),
   Schema.Struct({ type: Schema.Literal("back") }),
   Schema.Struct({ type: Schema.Literal("forward") }),
   Schema.Struct({ type: Schema.Literal("reload") }),

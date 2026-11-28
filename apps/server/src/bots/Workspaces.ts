@@ -126,8 +126,8 @@ export const layer = Layer.effect(
         },
         runtime: yield* engineState.labels(bot.model),
         pinned: { shared: pinnedText(pinnedShared), bot: pinnedText(pinnedBot) },
-        // Its rules go only to a bot whose browser switch is on: the engine
-        // offers the browser's tools to that bot alone.
+        // Its rules go only to a bot whose browser switch is on: its bridge
+        // lists the browser's tools to that bot alone (`ToolLists`).
         browser: bot.browser,
         // Granted, whatever its status: one that needs a sign-in comes back
         // without a new session, and its rules must already be there.

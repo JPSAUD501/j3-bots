@@ -27,7 +27,7 @@ import {
   Sequence,
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
-import { BrowserTabs } from "./browser.ts";
+import { BrowserTabRef, BrowserTabs, BrowserWebAddress, SharedBrowserTabs } from "./browser.ts";
 import {
   CommandLine,
   Connector,
@@ -238,6 +238,15 @@ export const RosterRpcs = RpcGroup.make(
          * default and Create from colors only then.
          */
         themes: Schema.optionalKey(Schema.Literal(true)),
+        /**
+         * Always `true` from a server that runs J3 Bots' own browsers
+         * (decision 0110): it serves `browser.subscribeAll`, `browser.open`
+         * and `browser.close`, names the bot of each pointer, and takes page
+         * input with no `take` first. A client shows every tab, offers to
+         * open and close them, and lets the page be used by touching it only
+         * then.
+         */
+        sharedBrowser: Schema.optionalKey(Schema.Literal(true)),
       }),
       Schema.TaggedStruct("changed", {
         upsert: Schema.Array(RosterItem),
@@ -1249,16 +1258,44 @@ export const ProviderRpcs = RpcGroup.make(
 
 export const BrowserRpcs = RpcGroup.make(
   /**
-   * The tabs the bot opened in the engine's browser, then the whole list
-   * again on every change: a tab opened, closed, navigated or loaded, or
-   * taken or given back by a person. Small, and always starts afresh. A
-   * tab's picture and control are on the media socket (`HTTP_PATHS.browser`).
+   * The tabs the bot is on, then the whole list again on every change: a tab
+   * opened, closed, moved, navigated or loaded, or taken or given back by a
+   * person. Small, and always starts afresh. A tab's picture and control are
+   * on the media socket (`HTTP_PATHS.browser`). Before J3 Bots ran its own
+   * browsers (no `sharedBrowser` in the roster), the tabs the bot opened in
+   * the engine's browser.
    */
   Rpc.make("browser.subscribe", {
     payload: { botId: BotId },
     success: BrowserTabs,
     error: NotFound,
     stream: true,
+  }),
+  /**
+   * Every tab, the person's own and private ones included, then the whole
+   * list again on every change: a tab opened, closed, moved, navigated or
+   * loaded, a bot coming onto it or acting on it, a hold taken or ended.
+   * Small, and always starts afresh. Only on a server whose roster carries
+   * `sharedBrowser`.
+   */
+  Rpc.make("browser.subscribeAll", { success: SharedBrowserTabs, stream: true }),
+  /**
+   * Opens a tab for the person, where a new tab opens (on the desktop they
+   * used last, else on the server), at `url` or blank. Only on a server
+   * whose roster carries `sharedBrowser`.
+   */
+  Rpc.make("browser.open", {
+    payload: { ...command, url: Schema.optionalKey(BrowserWebAddress) },
+    success: Schema.Struct({ ref: BrowserTabRef }),
+    error: CommandError,
+  }),
+  /**
+   * Closes a tab, for the person. The bots that were on it learn it at
+   * their next call. Only on a server whose roster carries `sharedBrowser`.
+   */
+  Rpc.make("browser.close", {
+    payload: { ...command, ref: BrowserTabRef },
+    error: CommandError,
   }),
 );
 

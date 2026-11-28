@@ -3,6 +3,7 @@ import {
   accessAllows,
   type Attachment,
   BotId,
+  type BrowserTabRef,
   Conflict,
   EntryId,
   type EntryTarget,
@@ -26,7 +27,6 @@ import {
 } from "@j3-bots/contracts";
 import {
   attachmentLimitViolation,
-  type EngineTabId,
   SessionId,
   TurnId,
   toolInputDigest,
@@ -54,7 +54,7 @@ import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import { BROWSER_HELP_WAIT, siteOf } from "../browser/browserHelpRules.ts";
-import { BrowserTabs } from "../browser/BrowserTabs.ts";
+import { TabAccess } from "../browser/TabAccess.ts";
 import { Entries } from "../entries/Entries.ts";
 import { messageIn, quoteOf } from "../entries/quotes.ts";
 import { Reactions } from "../reactions/Reactions.ts";
@@ -361,7 +361,7 @@ export const layer = Layer.effect(
     const settings = yield* SettingsStore;
     const settingsService = yield* SettingsService;
     const wakes = yield* Wakes;
-    const browserTabs = yield* BrowserTabs;
+    const browserTabs = yield* TabAccess;
     const secrets = yield* Secrets;
     const ids = yield* Ids;
     const themes = yield* Themes;
@@ -1335,7 +1335,7 @@ export const layer = Layer.effect(
      * ask again for that tab until they do. Its cards wait one at a time, so
      * the last one asked is the last one closed.
      */
-    const lastUnanswered = (found: Pin, tab: EngineTabId) =>
+    const lastUnanswered = (found: Pin, tab: BrowserTabRef) =>
       SqlSchema.findOneOption({
         Request: Schema.Void,
         Result: Schema.Struct({
@@ -1344,7 +1344,7 @@ export const layer = Layer.effect(
         execute: () => sql`
           SELECT lu_card.closing FROM browser_help_cards lu_card
           JOIN entries lu_asked ON lu_asked.id = lu_card.entry_id
-          WHERE lu_card.bot_id = ${found.botId} AND lu_card.engine_tab_id = ${tab}
+          WHERE lu_card.bot_id = ${found.botId} AND lu_card.tab_ref = ${tab}
             AND NOT EXISTS (
               SELECT 1 FROM entries lu_entry
               WHERE lu_entry.kind = 'message' AND lu_entry.author_kind = 'operator'
@@ -1370,7 +1370,7 @@ export const layer = Layer.effect(
 
     /**
      * `request_browser_help` (`docs/architecture/server.md`, Browser help): a
-     * `browser-help` card in the bot's own conversation for its front tab,
+     * `browser-help` card in the bot's own conversation for its current tab,
      * found here, never named by the bot. Like an `ask`, it ends the turn; the
      * operator's answer, or the card expiring, wakes the bot for the turn's
      * audience, in a turn of its own: once the card is in, the server stops
@@ -1399,7 +1399,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           // Looked up here, after the pin: a retry of a request that went
           // through returns what it answered, whatever the tabs are now.
-          const front = yield* browserTabs.front(found.botId);
+          const front = yield* browserTabs.toolTab(found.botId, undefined);
           if (Option.isNone(front)) {
             return yield* new TurnToolRefused({
               reason:
@@ -1423,7 +1423,7 @@ export const layer = Layer.effect(
                 "Nothing was asked: your user already has a request of yours for help in your browser. Their answer arrives as your next turn. End this turn now.",
             });
           }
-          const unanswered = yield* lastUnanswered(found, tab.tab);
+          const unanswered = yield* lastUnanswered(found, tab.ref);
           if (Option.isSome(unanswered)) {
             return yield* new TurnToolRefused({
               reason:
@@ -1448,11 +1448,11 @@ export const layer = Layer.effect(
           const columns = audienceColumns(found.audience);
           yield* sql`
             INSERT INTO browser_help_cards (
-              entry_id, bot_id, audience, audience_room_id, origin_seq, engine_tab_id,
+              entry_id, bot_id, audience, audience_room_id, origin_seq, tab_ref,
               expires_at, created_at
             ) VALUES (
               ${card.id}, ${found.botId}, ${columns.audience}, ${columns.roomId}, ${work.seq},
-              ${tab.tab}, ${timeText(DateTime.addDuration(now, BROWSER_HELP_WAIT))},
+              ${tab.ref}, ${timeText(DateTime.addDuration(now, BROWSER_HELP_WAIT))},
               ${timeText(now)}
             )
           `.pipe(Effect.orDie);

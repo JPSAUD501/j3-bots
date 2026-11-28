@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { type ToolCall, toolStep } from "./toolNames.ts";
+import { isStepTool, type ToolCall, toolStep } from "./toolNames.ts";
 
 /** A call as the engine reports it, named, with no title or input unless given. */
 const call = (name: string | null, more: Partial<ToolCall> = {}): ToolCall => ({
@@ -22,6 +22,11 @@ describe("toolStep", () => {
     }
     expect(toolStep(call("mcp__t3-code__preview_navigate"))?.tool).toBe("browser");
     expect(toolStep(call("t3-code.pull_request_read"))?.tool).toBe("pull-request");
+  });
+
+  it("makes a call to the bot's browser a browser step", () => {
+    expect(toolStep(call("mcp__j3__browser_act"))?.tool).toBe("browser");
+    expect(isStepTool("browser_snapshot")).toBe(true);
   });
 
   it("keeps a pasted secret out of the step a `request_secret` call becomes", () => {

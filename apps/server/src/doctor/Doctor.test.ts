@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import type { BrowserHostNeeds } from "@j3-bots/engine-t3/live";
+import type { BrowserHostNeeds } from "../browser/server/hostNeeds.ts";
 import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
 import { markRestoring, takeSnapshot } from "../install/snapshot.ts";
@@ -116,7 +116,7 @@ interface World {
    */
   readonly engineBinary: boolean;
   /**
-   * What the engine's browser needs from this host, as the host check finds
+   * What the server's browser needs from this host, as the host check finds
    * it given whether the running server says the sandbox is blocked.
    */
   readonly browser: (sandboxRefused: boolean) => BrowserHostNeeds;

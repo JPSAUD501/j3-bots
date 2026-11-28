@@ -29,7 +29,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { BUNDLE_INPUTS_FOLDER } from "./bundle-inputs.ts";
+import { BUNDLE_INPUTS_FOLDER, installedFrom } from "./bundle-inputs.ts";
 import {
   PLATFORMS,
   type Platform,
@@ -225,17 +225,6 @@ const COMPILED_IN: ReadonlyArray<{
   { part: "web", from: WEB, through: ["vite-plus", "vite"] },
 ];
 
-/** The folder, links resolved, of package `name` as Node finds it from `folder`. */
-const installedFrom = (folder: string, name: string): string => {
-  for (let at = folder; ; at = NodePath.dirname(at)) {
-    const candidate = NodePath.join(at, "node_modules", name);
-    if (NodeFS.existsSync(NodePath.join(candidate, "package.json"))) {
-      return NodeFS.realpathSync(candidate);
-    }
-    if (NodePath.dirname(at) === at) throw new Error(`${name} is not installed for ${folder}.`);
-  }
-};
-
 const compiledIn = (parts: ReadonlyArray<Part>) =>
   COMPILED_IN.filter(({ part }) => parts.includes(part)).map(({ part, from, through }) => ({
     part,
@@ -300,11 +289,18 @@ const within = (packages: ReadonlyArray<ThirdParty>, parts: ReadonlyArray<Part>)
 const RULE = "=".repeat(78);
 const THIN = "-".repeat(78);
 
+/**
+ * The notices of code J3 Bots adapted from others into its own files, which
+ * no package of theirs carries: T3 Code's, in the browser driver.
+ */
+const ADAPTED_NOTICES = [NodePath.join(ROOT, "packages", "browser", "NOTICE")];
+
 const notices = (
   release: { readonly version: string; readonly platform: Platform },
   node: { readonly version: string; readonly license: string },
   packages: ReadonlyArray<ThirdParty>,
   holder: "archive" | "folder",
+  adapted: ReadonlyArray<string>,
 ) =>
   [
     `J3 Bots ${release.version} for ${release.platform}: third-party notices`,
@@ -316,6 +312,7 @@ const notices = (
     "is in, the license it declares, and the license and notice files it ships,",
     "as it ships them.",
     "",
+    ...adapted.flatMap((text) => [RULE, text.trimEnd(), ""]),
     RULE,
     `Node.js ${node.version}, in node/`,
     "License: MIT, with the licenses of its own dependencies below",
@@ -387,6 +384,7 @@ const buildRelease = async (platform: Platform, runtimeOnly: boolean) => {
           node,
           within(packages, holder === "archive" ? ["server", "web"] : ["server"]),
           holder,
+          ADAPTED_NOTICES.map((file) => NodeFS.readFileSync(file, "utf8")),
         ),
       });
     NodeFS.mkdirSync(out, { recursive: true });

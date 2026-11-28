@@ -50,6 +50,8 @@ export const Resource = Schema.Literals([
   "connector-app",
   /** A saved theme, which only theme requests, new in 0.15.0, name. */
   "theme",
+  /** A browser tab, which only `browser.*` requests, new in 0.16.0, name. */
+  "browser-tab",
 ]);
 export type Resource = typeof Resource.Type;
 
@@ -165,6 +167,13 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * meets it.
      */
     "no-space",
+    /**
+     * No browser can open the tab now: no J3 Bots app is open on a computer,
+     * and the server's own browser cannot run. Only `browser.open` answers
+     * it, which a client sends only to a server whose roster carries
+     * `sharedBrowser`.
+     */
+    "browser-unavailable",
   ]),
 }) {
   override get message(): string {

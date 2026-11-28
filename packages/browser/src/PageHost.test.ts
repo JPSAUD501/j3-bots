@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { BrowserHostError, BrowserHostRpcs, BrowserTabRef } from "@j3-bots/contracts";
+import {
+  BROWSER_DOWNLOAD_CHUNK_BYTES,
+  BrowserHostError,
+  BrowserHostRpcs,
+  BrowserTabRef,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -74,4 +79,33 @@ it.effect("streams the host's events and a watched tab's pictures across the con
       assert.deepStrictEqual(yield* fake.acked, [{ tab: TAB, frame: 1 }]);
     }),
   ),
+);
+
+it.effect(
+  "hands a bot's download over once, and takes a file for an upload, across the connection",
+  () =>
+    overTheWire((host, fake) =>
+      Effect.gen(function* () {
+        yield* host.open({ tab: TAB, background: false, private: false });
+        const { path } = yield* host.putFile({
+          tab: TAB,
+          name: "invoice.pdf",
+          bytes: new Uint8Array([1, 2]),
+        });
+        assert.deepStrictEqual((yield* fake.files).get(path), new Uint8Array([1, 2]));
+        const download = yield* fake.download(TAB, "menu.pdf", new Uint8Array([3]));
+        assert.deepStrictEqual((yield* host.takeDownload({ download })).bytes, new Uint8Array([3]));
+        assert.strictEqual(
+          (yield* Effect.flip(host.takeDownload({ download }))).reason,
+          "invalid-target",
+        );
+        // A larger file crosses in pieces, each under a socket message's limit, and arrives whole.
+        const large = Uint8Array.from(
+          { length: 2 * BROWSER_DOWNLOAD_CHUNK_BYTES + 3 },
+          (_, index) => index % 251,
+        );
+        const report = yield* fake.download(TAB, "report.pdf", large);
+        assert.deepStrictEqual((yield* host.takeDownload({ download: report })).bytes, large);
+      }),
+    ),
 );

@@ -104,7 +104,6 @@ export {
   type RoutineStepDraft,
   type ToolInput,
   type ToolName,
-  preApprovedTools,
   toolList,
   tools,
 } from "./tools.ts";
@@ -139,6 +138,14 @@ export {
   type RoomReadEntry,
   roomReadFits,
 } from "./roomRead.ts";
+export {
+  BROWSER_NOTES,
+  type BrowserToolInput,
+  browserToolList,
+  browserTools,
+  preApprovedTools,
+  type ServerBrowserProblem,
+} from "./browserTools.ts";
 export { sharedSkills } from "./skills.ts";
 export { defuseTags } from "./text.ts";
 export { THEME_GUIDE } from "./themeGuide.ts";

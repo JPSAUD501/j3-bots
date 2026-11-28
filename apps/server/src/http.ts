@@ -51,6 +51,7 @@ import { Diagnostics } from "./diagnostics/Diagnostics.ts";
 import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
+import * as HostSocket from "./browser/HostSocket.ts";
 import * as MediaSocket from "./browser/MediaSocket.ts";
 import * as VoiceSocket from "./voice/VoiceSocket.ts";
 import * as OAuthCallback from "./connectors/oauth/callback.ts";
@@ -551,6 +552,7 @@ export const app = Layer.mergeAll(
   routes,
   RpcSocket.layer(J3Rpcs, Rpc.handlers),
   MediaSocket.route,
+  HostSocket.route,
   VoiceSocket.route,
   WebClient.layer,
 );

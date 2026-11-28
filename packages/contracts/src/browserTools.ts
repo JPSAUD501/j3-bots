@@ -42,7 +42,10 @@ export const MAX_BROWSER_TYPE_LENGTH = 10_000;
 const MAX_LOCATOR_LENGTH = 1_024;
 const MAX_ADDRESS_LENGTH = 2_048;
 
-const Timeout = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_BROWSER_TIMEOUT_MS }));
+/** How long one step may wait, in milliseconds. */
+export const BrowserTimeout = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: MAX_BROWSER_TIMEOUT_MS }),
+);
 
 /**
  * An element on the page: `aria-ref=<ref>` with a ref from the latest
@@ -56,7 +59,9 @@ export const BrowserLocator = Schema.String.check(
 );
 
 /** A point on the page, in its CSS pixels. */
-const Coordinate = Schema.Finite.check(Schema.isBetween({ minimum: -100_000, maximum: 100_000 }));
+export const BrowserCoordinate = Schema.Finite.check(
+  Schema.isBetween({ minimum: -100_000, maximum: 100_000 }),
+);
 
 /**
  * An address a bot opens: absolute `http:` or `https:`, or a bare host,
@@ -94,9 +99,9 @@ const exactlyOneTarget = Schema.makeFilter(
 
 const pointerTarget = {
   locator: Schema.optionalKey(BrowserLocator),
-  x: Schema.optionalKey(Coordinate),
-  y: Schema.optionalKey(Coordinate),
-  timeoutMs: Schema.optionalKey(Timeout),
+  x: Schema.optionalKey(BrowserCoordinate),
+  y: Schema.optionalKey(BrowserCoordinate),
+  timeoutMs: Schema.optionalKey(BrowserTimeout),
 };
 
 /**
@@ -118,7 +123,7 @@ export const BrowserAction = Schema.Union([
     text: Schema.String.check(Schema.isMaxLength(MAX_BROWSER_TYPE_LENGTH)),
     /** Replace what the field holds instead of adding to it. */
     clear: Schema.optionalKey(Schema.Boolean),
-    timeoutMs: Schema.optionalKey(Timeout),
+    timeoutMs: Schema.optionalKey(BrowserTimeout),
   }),
   Schema.Struct({ action: Schema.Literal("hover"), ...pointerTarget }).check(exactlyOneTarget),
   Schema.Struct({
@@ -126,13 +131,13 @@ export const BrowserAction = Schema.Union([
     locator: BrowserLocator,
     /** Options of one native `<select>`, by value or label. Empty clears it. */
     values: Schema.Array(Schema.String).check(Schema.isMaxLength(100)),
-    timeoutMs: Schema.optionalKey(Timeout),
+    timeoutMs: Schema.optionalKey(BrowserTimeout),
   }),
   Schema.Struct({
     action: Schema.Literal("drag"),
     source: BrowserLocator,
     target: BrowserLocator,
-    timeoutMs: Schema.optionalKey(Timeout),
+    timeoutMs: Schema.optionalKey(BrowserTimeout),
   }),
   Schema.Struct({
     action: Schema.Literal("upload"),
@@ -143,7 +148,7 @@ export const BrowserAction = Schema.Union([
     paths: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(Schema.isMaxLength(20)),
     /** The `<input type=file>` to set, or a label for one. */
     locator: BrowserLocator,
-    timeoutMs: Schema.optionalKey(Timeout),
+    timeoutMs: Schema.optionalKey(BrowserTimeout),
   }),
   Schema.Struct({
     action: Schema.Literal("press"),
@@ -155,8 +160,8 @@ export const BrowserAction = Schema.Union([
     action: Schema.Literal("scroll"),
     /** A container to scroll; without one, the page. */
     locator: Schema.optionalKey(BrowserLocator),
-    deltaX: Schema.optionalKey(Coordinate),
-    deltaY: Schema.optionalKey(Coordinate),
+    deltaX: Schema.optionalKey(BrowserCoordinate),
+    deltaY: Schema.optionalKey(BrowserCoordinate),
   }).check(
     Schema.makeFilter(
       (input) =>
@@ -181,7 +186,7 @@ export const BrowserWaitCondition = Schema.Struct({
   locator: Schema.optionalKey(BrowserLocator),
   text: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1))),
   urlIncludes: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1))),
-  timeoutMs: Schema.optionalKey(Timeout),
+  timeoutMs: Schema.optionalKey(BrowserTimeout),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -270,7 +275,7 @@ export const BrowserOpenInput = Schema.Struct({
   /** Open it without bringing it to the front where the person looks. */
   background: Schema.optionalKey(Schema.Boolean),
   readiness: Schema.optionalKey(BrowserReadiness),
-  timeoutMs: Schema.optionalKey(Timeout),
+  timeoutMs: Schema.optionalKey(BrowserTimeout),
 });
 export type BrowserOpenInput = typeof BrowserOpenInput.Type;
 
@@ -280,7 +285,7 @@ export const BrowserNavigateInput = Schema.Struct({
   /** Instead of `url`: go back, forward, or reload the page. */
   go: Schema.optionalKey(Schema.Literals(["back", "forward", "reload"])),
   readiness: Schema.optionalKey(BrowserReadiness),
-  timeoutMs: Schema.optionalKey(Timeout),
+  timeoutMs: Schema.optionalKey(BrowserTimeout),
 }).check(
   Schema.makeFilter(
     (input) => (input.url === undefined) !== (input.go === undefined) || "Give url or go.",
@@ -313,8 +318,8 @@ export const BrowserActInput = Schema.Struct({
     "scroll",
   ]),
   locator: Schema.optionalKey(BrowserLocator),
-  x: Schema.optionalKey(Coordinate),
-  y: Schema.optionalKey(Coordinate),
+  x: Schema.optionalKey(BrowserCoordinate),
+  y: Schema.optionalKey(BrowserCoordinate),
   button: Schema.optionalKey(Schema.Literals(["left", "right", "middle"])),
   clickCount: Schema.optionalKey(Schema.Int),
   text: Schema.optionalKey(Schema.String),
@@ -326,9 +331,9 @@ export const BrowserActInput = Schema.Struct({
   paths: Schema.optionalKey(Schema.Array(Schema.String)),
   key: Schema.optionalKey(Schema.String),
   modifiers: Schema.optionalKey(Schema.Array(BrowserKeyModifier)),
-  deltaX: Schema.optionalKey(Coordinate),
-  deltaY: Schema.optionalKey(Coordinate),
-  timeoutMs: Schema.optionalKey(Timeout),
+  deltaX: Schema.optionalKey(BrowserCoordinate),
+  deltaY: Schema.optionalKey(BrowserCoordinate),
+  timeoutMs: Schema.optionalKey(BrowserTimeout),
 });
 export type BrowserActInput = typeof BrowserActInput.Type;
 

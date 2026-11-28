@@ -103,7 +103,7 @@ export interface BotChanges {
   /** Fast mode, for a model the engine reports one for (`Bot.fast`). */
   readonly fast?: boolean;
   readonly permissionMode?: PermissionMode;
-  /** Whether the bot may use the engine's browser, from its next turn. */
+  /** Whether the bot may use J3 Bots' browser, from its next turn. */
   readonly browser?: boolean;
   /** Whether it is among the hidden conversations: the operator's choice, which no bot changes. */
   readonly hidden?: boolean;

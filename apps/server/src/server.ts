@@ -43,6 +43,7 @@ import * as SkillRepositories from "./skills/SkillRepositories.ts";
 import * as DiskSpace from "./system/DiskSpace.ts";
 import * as CloudSpeech from "./voice/CloudSpeech.ts";
 import * as Host from "./system/Host.ts";
+import * as ServerBrowser from "./browser/server/ServerBrowser.ts";
 import * as Network from "./system/Network.ts";
 import * as Systemd from "./system/Systemd.ts";
 import { CONNECTOR_CALL_DEADLINE } from "./tools/protocol.ts";
@@ -161,6 +162,7 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
         OAuthEndpoints.layer,
         CloudSpeech.layer,
         HarnessSources.layer.pipe(Layer.provide(Host.layer)),
+        ServerBrowser.layer.pipe(Layer.provide(Layer.merge(Host.layer, Layout.layer))),
       ),
     ),
     Layer.provide(Layer.merge(McpRegistry.layer, SkillRepositories.layer)),

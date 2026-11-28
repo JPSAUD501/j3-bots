@@ -14,7 +14,8 @@
 //
 //   node/                 the official Node release that package.json pins:
 //                         bin/node on Linux and macOS, node.exe on Windows
-//   server/               the server bundle, its prompt files beside it
+//   server/               the server bundle, its prompt files and the packages
+//                         it carries (node_modules/) beside it
 //   release.json          what this copy is (apps/server/src/installation.ts)
 //   LICENSE               J3 Bots' license
 //   APP-STORE-PERMISSION  its additional permission for app stores

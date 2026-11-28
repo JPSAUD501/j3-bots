@@ -517,10 +517,11 @@ export const layer = Layer.effect(
           yield* sql`
             INSERT INTO sessions (
               id, bot_id, purpose, prompt_version, provider_id, settings_pending,
-              settings_revision, created_at, side_wake_id
+              settings_revision, browser, created_at, side_wake_id
             ) VALUES (
               ${id}, ${attempt.bot_id}, 'side', ${PROMPT_VERSION}, ${providerId}, 0,
-              (SELECT settings_revision FROM bots WHERE id = ${attempt.bot_id}), ${at},
+              (SELECT settings_revision FROM bots WHERE id = ${attempt.bot_id}),
+              (SELECT browser FROM bots WHERE id = ${attempt.bot_id}), ${at},
               ${attempt.wake_id}
             )
           `;
@@ -549,10 +550,6 @@ export const layer = Layer.effect(
       sessionId: SessionRowId,
     ): Effect.fn.Return<Step> {
       if (Option.isNone(found.engineProjectId)) return "deferred";
-      const synced = yield* sessions.syncBrowserAccess(found.bot.id).pipe(Effect.result);
-      if (synced._tag === "Failure") {
-        return synced.failure._tag === "EngineUnavailable" ? "unavailable" : "deferred";
-      }
       const opened = yield* sessions
         .open(sessionId, {
           projectId: found.engineProjectId.value,

@@ -277,6 +277,9 @@ export type FillField = typeof FillField.Type;
  * - `loading`: the page was still loading.
  * - `insecure`: the page is plain `http:` on another computer.
  * - `origin`: the page's origin is none of the login's.
+ * - `field`: the focus is not on a field that takes this value in the page's
+ *   top frame: a text area, a search box, an editable element, a field that
+ *   is hidden, or one inside an embedded frame.
  * - `navigated`: the page changed while the server held the tab.
  * - `refused-before`: a fill was refused on this tab earlier in this turn.
  * - `stopped`: the bot's turn was stopped or ended before anything was typed.
@@ -292,6 +295,7 @@ export const FillRefusal = Schema.Literals([
   "loading",
   "insecure",
   "origin",
+  "field",
   "navigated",
   "refused-before",
   "stopped",

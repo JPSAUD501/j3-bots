@@ -2,7 +2,12 @@
 import { assert, it } from "@effect/vitest";
 import { SessionId, type TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import { connectorToolDescription, NO_TURN_REFUSAL, toolList } from "@j3-bots/prompts";
+import {
+  connectorToolDescription,
+  NO_TURN_REFUSAL,
+  browserToolList,
+  toolList,
+} from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -85,7 +90,8 @@ it.effect(
       const ana = yield* working("Ana");
       const ben = yield* working("Ben");
       yield* connector.grant([ana.bot.id]);
-      const own = toolList.map((tool) => tool.name);
+      // Their browsers are on: their own tools, then the browser's.
+      const own = [...toolList, ...browserToolList].map((tool) => tool.name);
 
       assert.deepStrictEqual(yield* listed(ana.session), [...own, "notion__search"]);
       assert.deepStrictEqual(yield* listed(ben.session), own);
