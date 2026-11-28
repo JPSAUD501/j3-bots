@@ -8,6 +8,7 @@ import { BrowserHostError, type BrowserTabRef } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type { WebContents, WebContentsView } from "electron";
+import { makeInputHold } from "./hold.ts";
 import type { Identity } from "./identity.ts";
 import { pageMayGo } from "./policy.ts";
 import { relayPage } from "./relay.ts";
@@ -40,6 +41,13 @@ export interface DesktopTab {
   readonly painting: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, Exclude<R, Scope.Scope>>;
+  /**
+   * Drops the person's keys and mouse on the page while `effect` runs: a bot
+   * is typing a saved login into it. The debugger's key events pass, as the
+   * view's own input hooks never see them, but its mouse events would not
+   * (verified on Electron 44): a fill uses none.
+   */
+  readonly holding: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   /** Whether a download that begins now is the bot's: one of its actions ran just before. */
   readonly botLed: () => boolean;
   /** The person used the tab from the app: its address bar, back, reload. */
@@ -93,6 +101,11 @@ export const takeTab = (options: {
     contents.on("will-frame-navigate", guard);
     contents.on("will-redirect", guard);
     contents.on("will-attach-webview", (event) => event.preventDefault());
+
+    const holding = makeInputHold((drop) => {
+      contents.on("before-input-event", drop);
+      contents.on("before-mouse-event", drop);
+    });
 
     // Whose input reaches the view: the bot's, through the debugger, or the person's.
     let driving = 0;
@@ -180,6 +193,7 @@ export const takeTab = (options: {
       driver,
       paint,
       painting,
+      holding,
       botLed: () => {
         const now = performance.now();
         return now - botAt <= BOT_DOWNLOAD_WINDOW_MS && botAt > personAt;

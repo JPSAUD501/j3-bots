@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as HttpServer from "effect/http/HttpServer";
@@ -50,6 +51,17 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
          <label>Notes <input type="file" onchange="document.title = this.files[0].name"></label>`,
       ),
       { contentType: "text/html", headers: { "set-cookie": "seen=1; Path=/" } },
+    ),
+  // A login whose form, once sent, names how much was typed into it.
+  "/login": () =>
+    HttpServerResponse.text(
+      page(
+        "Login",
+        `<form onsubmit="document.title = 'Sent ' + this.p.value.length; return false">
+           <input name="p" type="password">
+         </form>`,
+      ),
+      { contentType: "text/html" },
     ),
   "/popup": () =>
     HttpServerResponse.text(page("Pop-up", `<button onclick="window.close()">Close</button>`), {
@@ -183,6 +195,9 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           assert.isTrue(hello.capabilities.files);
           assert.match(hello.browser.userAgent, /Chrome\/\d+\.0\.0\.0 Safari/);
           assert.notMatch(hello.browser.userAgent, /Electron|J3/);
+          // The person's private tab, open since before the link (browserHost.main.ts), is named nowhere.
+          assert.deepStrictEqual(hello.tabs, []);
+          assert.isUndefined(hello.privateTabs);
 
           const events = yield* Queue.unbounded<BrowserHostEvent>();
           yield* host.events.pipe(
@@ -325,16 +340,27 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           yield* next(events, "tab.changed", (event) => event.page.dialog !== null);
           yield* host.dialog({ tab, accept: true });
 
-          // A private tab the server opens is in the hello apart from the shared ones.
-          const secret = BrowserTabRef.make("tab-check-private");
-          yield* host.open({ tab: secret, background: true, private: true });
-          const again = yield* host.hello;
-          assert.deepStrictEqual(
-            again.privateTabs?.map((page) => page.tab),
-            [secret],
-          );
-          assert.isFalse(again.tabs.some((page) => page.tab === secret));
-          yield* host.close(secret);
+          // A saved login is typed and sent while the person's input is held: the bot's Enter passes.
+          yield* host.navigate({ tab, to: { kind: "url", url: `${site}/login` } });
+          yield* host.evaluate({
+            tab,
+            expression: `document.querySelector("input").focus()`,
+            awaitPromise: false,
+          });
+          const filled = yield* host.fill({
+            tab,
+            field: "password",
+            value: Redacted.make("not-a-real-password"),
+            url: `${site}/login`,
+            submit: true,
+          });
+          assert.deepStrictEqual(filled, { _tag: "typed", submitted: true, cleared: true });
+          const sent = yield* host.evaluate({
+            tab,
+            expression: "document.title",
+            awaitPromise: false,
+          });
+          assert.strictEqual(sent.value, "Sent 19");
 
           yield* host.close(tab);
           yield* next(events, "tab.closed", (event) => event.tab === tab);

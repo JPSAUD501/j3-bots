@@ -100,19 +100,23 @@ export function PageArea({
           />
         ) : tab.failed !== null ? (
           <Failed url={tab.failed.url} onRetry={() => command({ _tag: "reload", tab: tab.ref })} />
-        ) : hidden && still !== null ? (
-          <img
-            src={still}
-            alt=""
-            draggable={false}
-            className="absolute inset-0 size-full object-cover object-top-left"
-          />
-        ) : null}
-        {tab?.held === true && (
-          // No live region here: the area must hold none for `useCovered` to see a dialog over it.
-          <p className="absolute inset-x-0 top-3 mx-auto w-fit max-w-[calc(100%-2rem)] rounded-full bg-foreground px-3 py-1.5 text-center text-xs text-background shadow-raised">
-            {t("desktopBrowser.held")}
-          </p>
+        ) : (
+          <>
+            {hidden && still !== null && (
+              <img
+                src={still}
+                alt=""
+                draggable={false}
+                className="absolute inset-0 size-full object-cover object-top-left"
+              />
+            )}
+            {tab.held && (
+              // No live region here: the area must hold none for `useCovered` to see a dialog over it.
+              <p className="absolute inset-x-0 top-3 mx-auto w-fit max-w-[calc(100%-2rem)] rounded-full bg-foreground px-3 py-1.5 text-center text-xs text-background shadow-raised">
+                {t("desktopBrowser.held")}
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>

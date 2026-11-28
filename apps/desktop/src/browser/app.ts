@@ -144,8 +144,10 @@ export const serveBrowser = (options: {
       ["panel", { window: options.main, placement: { bounds: null, covered: false }, still: null }],
     ]);
     const placed = new Map<BrowserTabRef, Placed>();
-    /** The tabs a bot is typing a saved login into, which no window takes input for meanwhile. */
-    const held = new Set<BrowserTabRef>();
+    /** The tabs a bot is typing a saved login into, by how many fills run there: each shows as a still. */
+    const held = new Map<BrowserTabRef, number>();
+    /** The held tabs that had the keys as the hold began, which take them back once it ends. */
+    const refocus = new Set<BrowserTabRef>();
     const order: Array<BrowserTabRef> = [];
     const front: Record<BrowserPlace, BrowserTabRef | null> = { panel: null, window: null };
     const closed: Array<{ readonly url: string; readonly place: BrowserPlace }> = [];
@@ -334,6 +336,8 @@ export const serveBrowser = (options: {
           width: Math.max(0, Math.round(bounds.width * scale)),
           height: Math.max(0, Math.round(bounds.height * scale)),
         });
+        // Someone typing in the page as a bot's fill began has the keys there again.
+        if (refocus.delete(ref) && pane.window.isFocused()) tab.contents.focus();
       }
     };
 
@@ -463,15 +467,20 @@ export const serveBrowser = (options: {
           case "changed":
             changed();
             return;
-          case "held":
-            if (event.held) held.add(event.tab);
+          case "held": {
+            const holds = (held.get(event.tab) ?? 0) + (event.held ? 1 : -1);
+            if (holds > 0) held.set(event.tab, holds);
             else held.delete(event.tab);
+            if (event.held && holds === 1 && browser.tab(event.tab)?.contents.isFocused() === true)
+              refocus.add(event.tab);
             changed();
             return;
+          }
           case "closed": {
             const at = placed.get(event.tab);
             placed.delete(event.tab);
             held.delete(event.tab);
+            refocus.delete(event.tab);
             const index = order.indexOf(event.tab);
             if (at !== undefined && front[at.place] === event.tab) {
               front[at.place] = nextInFront(at.place, event.tab);

@@ -21,6 +21,8 @@ app.on("window-all-closed", () => undefined);
 
 const program = Effect.gen(function* () {
   const browser = yield* makeDesktopBrowser({ scratch: `${folder}/scratch` });
+  // A private tab of the person's, which the server must never hear of.
+  yield* browser.openForPerson({ url: `${server}/`, private: true });
   yield* linkToServer({
     origin: server,
     token: Redacted.make("device-token-of-the-check"),

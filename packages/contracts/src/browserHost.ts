@@ -283,7 +283,8 @@ export const BrowserHostHello = Schema.Struct({
   /**
    * The private tabs the host holds now, apart from `tabs`, so the server
    * keeps showing them to the person after a reconnect or its own restart.
-   * No bot lists or reads them. Left out, the host holds none.
+   * No bot lists or reads them. Left out, the host reports none: a
+   * desktop never reports a private tab the person opened.
    */
   privateTabs: Schema.optionalKey(Schema.Array(BrowserPageState)),
 });

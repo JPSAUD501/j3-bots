@@ -393,16 +393,10 @@ export const makeDesktopBrowser = (options: {
         );
       const finished = Effect.fn("DesktopBrowser.botDownloadFinished")(function* () {
         const size = NodeFS.statSync(file).size;
-        if (size <= MAX_ATTACHMENT_SIZE) {
-          downloads.set(download, folder);
-          return yield* tell({
-            type: "download.finished",
-            tab: entry.tab.ref,
-            download,
-            name,
-            size,
-          });
-        }
+        if (size <= MAX_ATTACHMENT_SIZE) downloads.set(download, folder);
+        // One too large is told too, by its size, for the server to tell the bot it is not kept.
+        yield* tell({ type: "download.finished", tab: entry.tab.ref, download, name, size });
+        if (size <= MAX_ATTACHMENT_SIZE) return;
         const mine = app.getPath("downloads");
         yield* handOver(
           NodePath.join(
@@ -634,7 +628,8 @@ export const makeDesktopBrowser = (options: {
           reported().filter((entry) => !entry.tab.private),
           (entry) => entry.tab.driver.state,
         );
-        // The private tabs the server opened, and their pop-ups: never one the person opened here.
+        // A private tab the server asked for, and the pop-ups it opened (the server asks for none
+        // today): never one the person opened here.
         const privateTabs = yield* Effect.forEach(
           reported().filter((entry) => entry.tab.private),
           (entry) => entry.tab.driver.state,
@@ -650,6 +645,7 @@ export const makeDesktopBrowser = (options: {
             cookies: true,
             storage: true,
             files: true,
+            changeEvents: true,
             privateTabs: true,
             nativeView: true,
           },
@@ -702,14 +698,24 @@ export const makeDesktopBrowser = (options: {
         }),
       ...tabCalls,
       navigate: (input) => paintingWhile(input.tab, tabCalls.navigate(input)),
-      // The window showing the tab takes none of the person's input while the login is typed,
-      // so no key of theirs lands among the value's: the app shows a still of the page meanwhile.
+      // The page takes none of the person's input from before the login is typed until it is,
+      // so no key of theirs lands among the value's: the app shows a still of the page meanwhile,
+      // captured while the page paints.
       fill: (input) =>
-        Effect.acquireUseRelease(
-          tellApp({ type: "held", tab: input.tab, held: true }),
-          () => paintingWhile(input.tab, tabCalls.fill(input)),
-          () => tellApp({ type: "held", tab: input.tab, held: false }),
-        ),
+        Effect.suspend(() => {
+          const entry = entries.get(input.tab);
+          if (entry === undefined) return tabCalls.fill(input);
+          const { tab } = entry;
+          return tab.painting(
+            tab.holding(
+              Effect.acquireUseRelease(
+                tellApp({ type: "held", tab: input.tab, held: true }),
+                () => tabCalls.fill(input),
+                () => tellApp({ type: "held", tab: input.tab, held: false }),
+              ),
+            ),
+          );
+        }),
       act: (input) =>
         Effect.suspend(() => {
           // The server is another computer: an upload gives the page only files it sent for this tab.
