@@ -2656,7 +2656,7 @@ const sentences = {
   "browser.grid.openAppOnly":
     "Nenhum navegador pode abrir uma aba agora. Abra o J3 Bots num computador.",
   "browser.grid.openFull":
-    "O navegador do servidor não tem aba livre: todas estão em uso. Feche uma ou tente de novo daqui a pouco.",
+    "O navegador do servidor está cheio: todas as abas estão em uso. Feche uma, abra o J3 Bots num computador ou tente de novo daqui a pouco.",
   "browser.grid.openTimeout": "A página não carregou a tempo. Tente de novo.",
   "browser.grid.openPageFailed": "O navegador não conseguiu abrir a página.",
   "browser.grid.openRefused": "O navegador não abre esse endereço.",

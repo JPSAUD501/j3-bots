@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserControl, BrowserViewState } from "@j3-bots/client-runtime";
-import { botViewerTab, tabFaces } from "@j3-bots/client-runtime/presentation";
-import { usePageUse } from "@j3-bots/client-runtime/react";
+import {
+  botViewerTab,
+  frozenOf,
+  tabComputerName,
+  tabFaces,
+  viewLiveness,
+} from "@j3-bots/client-runtime/presentation";
+import { usePageUse, useRefusedInput } from "@j3-bots/client-runtime/react";
+import { liveLine } from "@j3-bots/client-runtime/wording";
 import type { Bot, BrowserInput, BrowserTab, BrowserTabRef } from "@j3-bots/contracts";
 import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react";
 import {
@@ -22,9 +29,10 @@ import { textField } from "../components/ui/field";
 import { Kbd } from "../components/ui/kbd";
 import { cn } from "../lib/cn";
 import { BrowserSurface } from "./BrowserSurface";
-import { useBrowser, useBrowserTabs } from "./context";
+import { useBrowser, useBrowserTabs, usePairedDevices } from "./context";
 import { Faces } from "./Faces";
 import { LEAVE_PAGE_KEY } from "./input";
+import { useOnline } from "./online";
 import { QuietLine } from "./QuietLine";
 import {
   addressOf,
@@ -156,7 +164,8 @@ function TabPane({
   readonly onLeavePage: () => void;
   readonly ref: Ref<TabPaneHandle>;
 }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   // Declared first, so it runs before the view closes as the pane goes: what was held goes back.
   const leaving = useRef(() => {});
   useEffect(() => () => leaving.current(), []);
@@ -170,8 +179,15 @@ function TabPane({
   const use = usePageUse({ tab: shown, send: tabView?.view.send ?? null, shared });
   const waitsForPerson = useWaitingBots();
   const status = state?.status._tag;
+  const frozen = frozenOf({ tab: shown, online: useOnline(), status: viewLiveness(state) });
+  const refused = useRefusedInput(tabView?.view.refused ?? null);
+  const computer = tabComputerName(shown, usePairedDevices());
+  const live = frozen._tag === "live";
   const usable =
-    status === "live" && shown.holder._tag !== "elsewhere" && shown.holder._tag !== "fill";
+    status === "live" && live && shown.holder._tag !== "elsewhere" && shown.holder._tag !== "fill";
+  // Why the page takes nothing now, or that input was not sent, in place of the tab's line.
+  const frozenText =
+    live && refused === null ? null : liveLine({ frozen, line: "", refused, computer }, i18n);
   const reconnecting = status === "reconnecting" || status === "paused";
 
   const leave = () => {
@@ -187,7 +203,7 @@ function TabPane({
     <>
       {tabView !== null && (
         <div className="flex min-h-11 shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
-          <Navigation url={tab.url} send={use.send} />
+          <Navigation url={tab.url} send={use.send} frozen={!live} />
         </div>
       )}
       <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center p-3">
@@ -208,7 +224,7 @@ function TabPane({
               onLeave={onLeavePage}
             />
             <StageState tabView={tabView} />
-            {use.holding && state?.control?.dialog != null && (
+            {use.holding && live && state?.control?.dialog != null && (
               <PageDialog
                 key={`${state.control.generation}:${state.control.dialog.kind}:${state.control.dialog.message}`}
                 site={site}
@@ -227,9 +243,9 @@ function TabPane({
       </div>
       <footer className="flex min-h-12 shrink-0 items-center gap-2 border-t border-border px-3 py-2 pb-[max(--spacing(2),env(safe-area-inset-bottom))]">
         <Faces faces={tabFaces(shown, waitsForPerson)} />
-        {reconnecting ? (
+        {frozenText !== null || reconnecting ? (
           <p role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {t("browser.reconnecting")}
+            {frozenText ?? t("browser.reconnecting")}
           </p>
         ) : (
           <QuietLine
@@ -310,9 +326,12 @@ function StageNote({
 function Navigation({
   url,
   send,
+  frozen,
 }: {
   readonly url: string;
   readonly send: (input: BrowserInput) => void;
+  /** The page takes nothing now: back, forward and reload wait for it. */
+  readonly frozen: boolean;
 }) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<{ readonly from: string; readonly text: string } | null>(null);
@@ -331,6 +350,7 @@ function Navigation({
       <Button
         variant="ghost-muted"
         size="icon-sm"
+        disabled={frozen}
         onClick={() => send({ type: "back" })}
         aria-label={t("browser.viewer.back")}
       >
@@ -339,6 +359,7 @@ function Navigation({
       <Button
         variant="ghost-muted"
         size="icon-sm"
+        disabled={frozen}
         onClick={() => send({ type: "forward" })}
         aria-label={t("browser.viewer.forward")}
       >
@@ -347,6 +368,7 @@ function Navigation({
       <Button
         variant="ghost-muted"
         size="icon-sm"
+        disabled={frozen}
         onClick={() => send({ type: "reload" })}
         aria-label={t("browser.viewer.reload")}
       >

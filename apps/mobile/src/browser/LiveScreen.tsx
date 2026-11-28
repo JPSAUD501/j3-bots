@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BrowserViewState, Readable } from "@j3-bots/client-runtime";
+import type { BrowserPicture, BrowserViewState, Readable } from "@j3-bots/client-runtime";
 import {
   BROWSER_SETUP_DOCS,
   clockTime,
@@ -15,6 +15,7 @@ import {
   tabComputerName,
   tabFaces,
   type ViewerTab,
+  viewLiveness,
 } from "@j3-bots/client-runtime/presentation";
 import {
   type PageUseHandle,
@@ -24,6 +25,7 @@ import {
   usePageUse,
   useReadable,
   useRefusedInput,
+  useSelected,
 } from "@j3-bots/client-runtime/react";
 import { botNames, liveLine, tabLineWords, tabOpenFailed } from "@j3-bots/client-runtime/wording";
 import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
@@ -192,24 +194,6 @@ function useOnline(): boolean {
   return network.isConnected !== false && network.isInternetReachable !== false;
 }
 
-/** The view's status, as whether the page is frozen reads it. */
-const liveness = (state: BrowserViewState | null) => {
-  switch (state?.status._tag) {
-    case undefined:
-    case "connecting":
-      return "connecting";
-    case "live":
-    case "reconnecting":
-    case "paused":
-      return state.status._tag;
-    case "gone":
-    case "setup-needed":
-    case "replaced":
-    case "failed":
-      return "ended";
-  }
-};
-
 /** What a viewer with no view yet reads. */
 const IDLE: Readable<null> = { get: () => null, subscribe: () => () => undefined };
 
@@ -251,16 +235,22 @@ function TabLive({
 
   const view = useBrowserView(tab?.ref ?? null, useViewSize());
   const state = useReadable<BrowserViewState | null>(view?.state ?? IDLE);
+  const drawn = useSelected<BrowserPicture | null, boolean>(
+    view?.picture ?? IDLE,
+    (picture) => picture !== null,
+  );
   const use = usePageUse({ tab, send: view?.send ?? null, shared });
   const online = useOnline();
-  const frozen = frozenOf({ tab, online, status: liveness(state) });
+  const frozen = frozenOf({ tab, online, status: viewLiveness(state) });
   const refused = useRefusedInput(view?.refused ?? null);
   const computer = tabComputerName(tab, useDevices());
   const status = state?.status._tag;
-  // While the tab's computer is away, the page stays on its last picture.
+  const live = frozen._tag === "live";
+  // While the tab's computer is away, the page stays on the last picture this view drew; a view
+  // opened since has none, and shows the one kept for the tab.
   const showsPage =
     view !== null &&
-    (frozen._tag === "live" || frozen._tag === "away") &&
+    (live || (frozen._tag === "away" && drawn)) &&
     (status === "live" || status === "reconnecting" || status === "paused");
 
   // Leaving, or going to another tab, gives what this device holds back at once.
@@ -275,8 +265,8 @@ function TabLive({
   // A frozen page takes no typing: what reached the site before is what stands.
   const page = useRef<PageViewHandle>(null);
   useEffect(() => {
-    if (frozen._tag !== "live") Keyboard.dismiss();
-  }, [frozen._tag]);
+    if (!live) Keyboard.dismiss();
+  }, [live]);
 
   // A wide page opens near the bot, at a size that reads, and slides after its pointer.
   const [following, setFollowing] = useState(true);
@@ -292,11 +282,9 @@ function TabLive({
   const site = siteOf(tab?.url ?? "");
   const where = site === "" ? (tab?.title ?? "") : site;
   const usable =
-    status === "live" &&
-    frozen._tag === "live" &&
-    tab?.holder._tag !== "elsewhere" &&
-    tab?.holder._tag !== "fill";
-  const dialog = use.holding ? (state?.control?.dialog ?? null) : null;
+    status === "live" && live && tab?.holder._tag !== "elsewhere" && tab?.holder._tag !== "fill";
+  // A frozen page answers nothing: its dialog waits until it is live again.
+  const dialog = use.holding && live ? (state?.control?.dialog ?? null) : null;
 
   const closeTab = (closed: ViewerTab) =>
     closing.close({ ref: closed.ref, bots: closed.onIt } satisfies Closed);
@@ -306,7 +294,8 @@ function TabLive({
     if (next !== null) showTab(next.ref);
   };
 
-  const entries: ReadonlyArray<MenuEntry> = [
+  // A frozen page takes nothing: the menu offers only what is not the page's.
+  const pageEntries: ReadonlyArray<MenuEntry> = [
     {
       label: t("browser.live.forward"),
       icon: ArrowRight,
@@ -318,6 +307,9 @@ function TabLive({
       onPress: () => use.send({ type: "reload" }),
     },
     { label: t("browser.live.goTo"), icon: Globe, onPress: () => setOpened("address") },
+  ];
+  const entries: ReadonlyArray<MenuEntry> = [
+    ...(live ? pageEntries : []),
     ...(shared
       ? [
           { label: t("browser.live.newTab"), icon: Plus, onPress: () => setOpened("new") },
@@ -335,6 +327,7 @@ function TabLive({
       : []),
   ];
 
+  const lineText = liveLine({ frozen, line: words.text, refused, computer }, ctx.i18n);
   const undo = <UndoLine closed={closing.last} onUndo={closing.undo} />;
   const bar = (
     <LiveBar
@@ -342,8 +335,8 @@ function TabLive({
       use={use}
       frozen={frozen}
       faces={tab === null ? [] : tabFaces(tab, waitsForPerson)}
-      text={liveLine({ frozen, line: words.text, refused, computer }, ctx.i18n)}
-      action={frozen._tag === "live" ? words.action : null}
+      text={lineText}
+      action={live ? words.action : null}
       tabs={tabs}
       shown={tab?.ref ?? null}
       needsYou={needsYouElsewhere(tabs, tab?.ref ?? null, waitsForPerson)}
@@ -409,6 +402,22 @@ function TabLive({
                   {t("browser.live.follow", { name: nameOf(followed) })}
                 </Text>
               </PressScale>
+            </View>
+          )}
+          {/* Lying, the rail has no room for words: why the page takes nothing shows over it. */}
+          {lying && (frozen._tag === "away" || refused !== null) && (
+            <View
+              className="absolute inset-x-0 top-3 items-center"
+              pointerEvents="none"
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Text
+                numberOfLines={1}
+                className="max-w-full rounded-pill border border-border bg-surface px-4 py-2 text-sm text-foreground"
+                style={{ elevation: OVERLAY_ELEVATION }}
+              >
+                {lineText}
+              </Text>
             </View>
           )}
           {dialog !== null && view !== null && (
@@ -827,9 +836,12 @@ function InPlace({
       return (
         <>
           {still}
-          <View className="absolute inset-0 items-center justify-center">
-            <Working />
-          </View>
+          {/* Away, the page waits for its computer: the line says so, and nothing is coming. */}
+          {frozen._tag !== "away" && (
+            <View className="absolute inset-0 items-center justify-center">
+              <Working />
+            </View>
+          )}
         </>
       );
     case "gone":

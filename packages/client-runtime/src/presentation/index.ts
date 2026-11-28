@@ -158,6 +158,8 @@ export {
   usesPage,
   type ViewerTab,
   viewerTabsOf,
+  type ViewLiveness,
+  viewLiveness,
 } from "./browserTabs.ts";
 export {
   dragged,

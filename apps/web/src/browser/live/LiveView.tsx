@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BrowserViewState } from "@j3-bots/client-runtime";
+import type { BrowserPicture, BrowserViewState, Readable } from "@j3-bots/client-runtime";
 import {
   BROWSER_SETUP_DOCS,
   clockTime,
@@ -15,12 +15,14 @@ import {
   tabComputerName,
   tabFaces,
   type ViewerTab,
+  viewLiveness,
 } from "@j3-bots/client-runtime/presentation";
 import {
   type PageUseHandle,
   type QuickSend,
   usePageUse,
   useRefusedInput,
+  useSelected,
 } from "@j3-bots/client-runtime/react";
 import { botNames, liveLine, tabLineWords, tabOpenFailed } from "@j3-bots/client-runtime/wording";
 import type { Bot, BotId, BrowserTabRef } from "@j3-bots/contracts";
@@ -48,7 +50,6 @@ import {
   useImperativeHandle,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { useBots, useI18n, usePresentation } from "../../app/context";
 import { DocsLink } from "../../components/DocsLink";
@@ -58,6 +59,7 @@ import { cn } from "../../lib/cn";
 import type { BrowserViewerHandle } from "../BrowserViewer";
 import { PageDialog } from "../BrowserViewer";
 import { useBrowser, usePairedDevices, useViewerTabs } from "../context";
+import { useOnline } from "../online";
 import { Faces } from "../Faces";
 import { useTabView, zoomableSize } from "../useTabView";
 import { useWaitingBots } from "../waiting";
@@ -92,21 +94,11 @@ interface LiveViewProps {
   readonly ref?: Ref<BrowserViewerHandle>;
 }
 
-/** Whether this browser reaches the network, as far as it knows. */
-function useOnline(): boolean {
-  return useSyncExternalStore(
-    (change) => {
-      window.addEventListener("online", change);
-      window.addEventListener("offline", change);
-      return () => {
-        window.removeEventListener("online", change);
-        window.removeEventListener("offline", change);
-      };
-    },
-    () => navigator.onLine,
-    () => true,
-  );
-}
+/** No view yet: no picture. */
+const NO_PICTURE: Readable<BrowserPicture | null> = {
+  get: () => null,
+  subscribe: () => () => {},
+};
 
 /**
  * The narrow web's live view of the browser, the phone's design (decision
@@ -245,24 +237,6 @@ const sameTabs = (
   one.length === other.length &&
   one.every((tab, index) => tab.ref === other[index]?.ref);
 
-/** The view's status, as whether the page is frozen reads it. */
-const liveness = (state: BrowserViewState | null) => {
-  switch (state?.status._tag) {
-    case undefined:
-    case "connecting":
-      return "connecting";
-    case "live":
-    case "reconnecting":
-    case "paused":
-      return state.status._tag;
-    case "gone":
-    case "setup-needed":
-    case "replaced":
-    case "failed":
-      return "ended";
-  }
-};
-
 type Opened = "sheet" | "tabs" | "address" | "new" | null;
 
 /** What the live view asks of the tab it shows. */
@@ -326,14 +300,17 @@ function TabLive({
   const state: BrowserViewState | null = tabView?.state ?? null;
   const use = usePageUse({ tab, send: tabView?.view.send ?? null, shared });
   const online = useOnline();
-  const frozen = frozenOf({ tab, online, status: liveness(state) });
+  const frozen = frozenOf({ tab, online, status: viewLiveness(state) });
   const refused = useRefusedInput(tabView?.view.refused ?? null);
   const computer = tabComputerName(tab, usePairedDevices());
+  const drawn = useSelected(tabView?.view.picture ?? NO_PICTURE, (picture) => picture !== null);
   const status = state?.status._tag;
-  // While the tab's computer is away, the page stays on its last picture.
+  const live = frozen._tag === "live";
+  // While the tab's computer is away, the page stays on the last picture this view drew; a view
+  // opened since has none, and shows the one kept for the tab.
   const showsPage =
     tabView !== null &&
-    (frozen._tag === "live" || frozen._tag === "away") &&
+    (live || (frozen._tag === "away" && drawn)) &&
     (status === "live" || status === "reconnecting" || status === "paused");
 
   // Leaving, or going to another tab, gives what this device holds back at once.
@@ -365,11 +342,9 @@ function TabLive({
   const site = siteOf(tab?.url ?? "");
   const where = site === "" ? (tab?.title ?? "") : site;
   const usable =
-    status === "live" &&
-    frozen._tag === "live" &&
-    tab?.holder._tag !== "elsewhere" &&
-    tab?.holder._tag !== "fill";
-  const dialog = use.holding ? (state?.control?.dialog ?? null) : null;
+    status === "live" && live && tab?.holder._tag !== "elsewhere" && tab?.holder._tag !== "fill";
+  // A frozen page answers nothing: its dialog waits until it is live again.
+  const dialog = use.holding && live ? (state?.control?.dialog ?? null) : null;
 
   const closeTab = (closed: ViewerTab) =>
     closing.close({ ref: closed.ref, bots: closed.onIt } satisfies Closed);
@@ -472,22 +447,27 @@ function TabLive({
           frozen={frozen}
           faces={tab === null ? [] : tabFaces(tab, waitsForPerson)}
           text={liveLine({ frozen, line: words.text, refused, computer }, ctx.i18n)}
-          action={frozen._tag === "live" ? words.action : null}
+          action={live ? words.action : null}
           tabs={tabs}
           shown={tab?.ref ?? null}
           needsYou={needsYouElsewhere(tabs, tab?.ref ?? null, waitsForPerson)}
           closeButton={closeButton}
           menu={
             <MenuPopup side="top" align="end">
-              <MenuItem icon={<ArrowRightIcon />} onClick={() => use.send({ type: "forward" })}>
-                {t("browser.live.forward")}
-              </MenuItem>
-              <MenuItem icon={<RotateCwIcon />} onClick={() => use.send({ type: "reload" })}>
-                {t("browser.live.reload")}
-              </MenuItem>
-              <MenuItem icon={<GlobeIcon />} onClick={() => setOpened("address")}>
-                {t("browser.live.goTo")}
-              </MenuItem>
+              {/* A frozen page takes nothing: the menu offers only what is not the page's. */}
+              {live && (
+                <>
+                  <MenuItem icon={<ArrowRightIcon />} onClick={() => use.send({ type: "forward" })}>
+                    {t("browser.live.forward")}
+                  </MenuItem>
+                  <MenuItem icon={<RotateCwIcon />} onClick={() => use.send({ type: "reload" })}>
+                    {t("browser.live.reload")}
+                  </MenuItem>
+                  <MenuItem icon={<GlobeIcon />} onClick={() => setOpened("address")}>
+                    {t("browser.live.goTo")}
+                  </MenuItem>
+                </>
+              )}
               {shared && (
                 <MenuItem icon={<PlusIcon />} onClick={() => setOpened("new")}>
                   {t("browser.live.newTab")}
@@ -929,7 +909,8 @@ function InPlace({
         return (
           <>
             {still}
-            {working}
+            {/* Away, the page waits for its computer: the line says so, and nothing is coming. */}
+            {frozen._tag !== "away" && working}
           </>
         );
       case "gone":

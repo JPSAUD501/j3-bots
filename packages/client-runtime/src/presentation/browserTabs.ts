@@ -14,6 +14,7 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import type { IntentResult } from "../intents/Actions.ts";
+import type { BrowserViewState } from "../stores/Browser.ts";
 import type { Synced } from "../stores/synced.ts";
 
 // A tab as the phone and the web show it (browser-ux-v2, section 4): the
@@ -401,10 +402,30 @@ export const tabComputerName = (
   return devices.value.find((device) => device.id === where.device)?.name ?? null;
 };
 
+/** A view's status, as whether its page is frozen reads it: null is no view yet. */
+export type ViewLiveness = "connecting" | "live" | "reconnecting" | "paused" | "ended";
+
+export const viewLiveness = (state: BrowserViewState | null): ViewLiveness => {
+  switch (state?.status._tag) {
+    case undefined:
+    case "connecting":
+      return "connecting";
+    case "live":
+    case "reconnecting":
+    case "paused":
+      return state.status._tag;
+    case "gone":
+    case "setup-needed":
+    case "replaced":
+    case "failed":
+      return "ended";
+  }
+};
+
 export const frozenOf = (input: {
   readonly tab: ViewerTab | null;
   readonly online: boolean;
-  readonly status: "connecting" | "live" | "reconnecting" | "paused" | "ended";
+  readonly status: ViewLiveness;
 }): Frozen => {
   if (!input.online) return { _tag: "you-offline" };
   const where = input.tab?.where;
