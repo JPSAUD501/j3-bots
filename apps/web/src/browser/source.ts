@@ -7,7 +7,7 @@ import type { BrowserViewState, J3Client } from "@j3-bots/client-runtime";
  * device, which says whether a hold on a tab is its own; `sharedBrowser`
  * says whether the server shares its tabs, which lists every tab, lets the
  * person open and close them, and changes what using a page sends
- * (`usePageUse`).
+ * (`usePageUse`). `devices` names the computer a tab runs on.
  */
 export type BrowserSource = Pick<
   J3Client,
@@ -18,6 +18,7 @@ export type BrowserSource = Pick<
   | "openBrowserView"
   | "pairing"
   | "sharedBrowser"
+  | "devices"
 >;
 
 /** Whether a view is, or soon will be, showing the page. */

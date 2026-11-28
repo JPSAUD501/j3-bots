@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Loaded, loadedList } from "@j3-bots/client-runtime";
+import { type Loaded, loadedList, type Synced } from "@j3-bots/client-runtime";
 import { type ViewerTab, viewerTabsOf } from "@j3-bots/client-runtime/presentation";
-import type { BotId, BrowserTab, SharedBrowserTab } from "@j3-bots/contracts";
+import type { BotId, BrowserTab, Device, SharedBrowserTab } from "@j3-bots/contracts";
 import {
   createContext,
   use,
@@ -102,6 +102,12 @@ function useAllBrowserTabs(on: boolean): ReadonlyArray<SharedBrowserTab> | null 
 function useSharedBrowser(): boolean {
   const { source } = useBrowser();
   return useSyncExternalStore(source.sharedBrowser.subscribe, source.sharedBrowser.get);
+}
+
+/** The paired devices, which name the computer a tab runs on. */
+export function usePairedDevices(): Synced<ReadonlyArray<Device>> {
+  const { source } = useBrowser();
+  return useSyncExternalStore(source.devices.subscribe, source.devices.get);
 }
 
 /**

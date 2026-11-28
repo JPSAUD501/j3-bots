@@ -354,13 +354,7 @@ export const handlers = J3Rpcs.toLayer(
             result: Schema.Struct({ ref: BrowserTabRef }),
             apply: ids.make("tab").pipe(Effect.map((id) => ({ ref: BrowserTabRef.make(id) }))),
           })
-          .pipe(
-            Effect.tap(({ ref }) =>
-              browser
-                .openForPerson({ device: device.id, url, ref })
-                .pipe(Effect.mapError(() => new Conflict({ reason: "browser-unavailable" }))),
-            ),
-          ),
+          .pipe(Effect.tap(({ ref }) => browser.openForPerson({ device: device.id, url, ref }))),
       // Closing again closes nothing more: a retry after a lost reply succeeds.
       "browser.close": ({ commandId, ref }) =>
         receipts

@@ -88,6 +88,16 @@ export interface BrowserProbe {
 }
 
 /**
+ * Input the server refused, as the tab runs in no browser now: `away`, its
+ * computer disconnected and may come back; `parked`, nobody has it open.
+ * `sequence` grows with each refusal, so the next is told apart.
+ */
+export interface BrowserRefusal {
+  readonly reason: Extract<BrowserServerFrame, { readonly type: "refused" }>["reason"];
+  readonly sequence: number;
+}
+
+/**
  * Where a bot points while it acts on the tab, in page CSS pixels, and
  * whether it clicked there. `sequence` grows with each, so a second click on
  * the same point is told apart. `botId` is null from a server before shared
@@ -128,6 +138,8 @@ export interface BrowserView {
   readonly probe: Readable<BrowserProbe | null>;
   /** A bot's newest pointer, null until the first. Nothing comes while a person holds the tab. */
   readonly cursor: Readable<BrowserCursor | null>;
+  /** The newest input the server refused, null until the first. */
+  readonly refused: Readable<BrowserRefusal | null>;
   /**
    * The picture `sequence` is drawn: the server sends the next. An
    * acknowledgement of any other picture, or of one from a socket since
@@ -279,6 +291,7 @@ export const layer = Layer.effect(
       const picture = new Cell<BrowserPicture | null>(null);
       const probe = new Cell<BrowserProbe | null>(null);
       const cursor = new Cell<BrowserCursor | null>(null);
+      const refused = new Cell<BrowserRefusal | null>(null);
       const setStatus = (status: BrowserViewStatus) => state.update((now) => ({ ...now, status }));
 
       /** Writes a frame on the open socket, if any. */
@@ -288,6 +301,7 @@ export const layer = Layer.effect(
       let sequence = 0;
       let probes = 0;
       let pointers = 0;
+      let refusals = 0;
       /** Taking or giving back the tab, asked for while no socket was open, as it was asked. */
       let control: Extract<BrowserInput, { readonly type: "take" | "release" }> | null = null;
 
@@ -362,6 +376,10 @@ export const layer = Layer.effect(
               return Effect.succeed(null);
             case "ping":
               return send({ type: "pong" }).pipe(Effect.as(null));
+            case "refused":
+              refusals += 1;
+              refused.set({ reason: value.reason, sequence: refusals });
+              return Effect.succeed(null);
             case "gone":
               return Effect.succeed({ _tag: "gone" });
             case "setup-needed":
@@ -491,6 +509,7 @@ export const layer = Layer.effect(
         picture,
         probe,
         cursor,
+        refused,
         ack: (drawn) =>
           Effect.suspend(() => {
             if (write === null || owed !== drawn) return Effect.void;

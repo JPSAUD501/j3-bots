@@ -169,11 +169,33 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "no-space",
     /**
      * No browser can open the tab now: no J3 Bots app is open on a computer,
-     * and the server's own browser cannot run. Only `browser.open` answers
+     * and the server's own browser could not start. It needs setting up on
+     * the server's computer (the engine status's `browser` says what, and
+     * `j3-bots doctor` how), or its download or start failed, which trying
+     * again may fix. Only `browser.open` answers it, and the reasons after
      * it, which a client sends only to a server whose roster carries
      * `sharedBrowser`.
      */
     "browser-unavailable",
+    /**
+     * No J3 Bots app is open on a computer, and this server runs no browser
+     * of its own: it is turned off, as in local mode, or there is none for
+     * the server's system. Only an app on a computer opens tabs.
+     */
+    "browser-app-only",
+    /**
+     * No app is open on a computer, and the server's own browser runs as many
+     * tabs as it keeps, each in use: a bot acts on it or holds it, a person
+     * holds it, or a viewer shows it. A tab that closes, or that nobody uses
+     * or shows any more, frees a place.
+     */
+    "browser-full",
+    /** The browser that took the tab did not load its page in time. Trying again may work. */
+    "browser-page-timeout",
+    /** The browser that took the tab failed while it opened the page. */
+    "browser-page-failed",
+    /** The browser that took the tab will not open that address. */
+    "browser-address-refused",
   ]),
 }) {
   override get message(): string {

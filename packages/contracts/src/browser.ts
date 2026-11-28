@@ -47,6 +47,11 @@ export type BrowserDialog = typeof BrowserDialog.Type;
  * Where a tab runs now.
  *
  * - `desktop`: in the J3 Bots app on that computer, in its own browser.
+ *   `away` while that app's connection is gone: the tab waits 45 seconds
+ *   for it to come back, with no new picture and taking no input, and is parked
+ *   if it does not. A bot that uses it meanwhile opens it again where a new
+ *   tab opens. A server before `away` never sends it, at the same protocol
+ *   version.
  * - `server`: in the server's own browser.
  * - `parked`: its host went away (the app closed, or the server's browser
  *   let an idle tab go). It keeps its address and title, and the next bot
@@ -54,7 +59,11 @@ export type BrowserDialog = typeof BrowserDialog.Type;
  *   used last, else on the server.
  */
 export const BrowserTabWhere = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("desktop"), device: DeviceId }),
+  Schema.Struct({
+    kind: Schema.Literal("desktop"),
+    device: DeviceId,
+    away: Schema.optionalKey(Schema.Literal(true)),
+  }),
   Schema.Struct({ kind: Schema.Literal("server") }),
   Schema.Struct({ kind: Schema.Literal("parked") }),
 ]);
@@ -333,6 +342,18 @@ export const BrowserServerFrame = Schema.Union([
     type: Schema.Literal("setup-needed"),
     need: Schema.Literals(["sandbox", "libraries"]),
   }),
+  /**
+   * The person's input was not applied: the tab runs in no browser now, so
+   * nothing took it, and it holds the tab for nobody. `away`: the app it
+   * runs in lost its connection, and the tab waits for it (`BrowserTabWhere`
+   * `away`); `parked`: it runs nowhere until a bot uses it again. One for
+   * each input that would have used the page or answered its dialog, never
+   * for moving the pointer. Only from a server that shares its tabs.
+   */
+  Schema.Struct({
+    type: Schema.Literal("refused"),
+    reason: Schema.Literals(["away", "parked"]),
+  }),
   /** The tab is closed, or never existed. */
   Schema.Struct({ type: Schema.Literal("gone") }),
   /** Sent every 15 s; answer with `pong`. A socket silent for 45 s is taken for dropped. */
@@ -391,7 +412,8 @@ export type BrowserPageInput = typeof BrowserPageInput.Type;
  * On a server that shares its tabs (the roster's `sharedBrowser`), using the
  * page is taking it: page input holds the tab for this socket's person until
  * `BROWSER_PERSON_HOLD_MS` after the last, and is dropped while a person on
- * another device holds it. On a server from before, input is dropped unless
+ * another device holds it. While the tab runs in no browser it is refused,
+ * with a `refused` frame saying why. On a server from before, input is dropped unless
  * this socket holds the tab (`take`). `ack`, `pong`, `take` and `probe` work
  * either way.
  */

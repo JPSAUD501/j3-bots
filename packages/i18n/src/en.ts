@@ -2565,6 +2565,11 @@ export const en = {
   "browser.line.continue": "Continue",
   "browser.line.noConnection": "No connection",
   "browser.line.parked": "Paused",
+  "browser.line.away": "{computer} disconnected",
+  "browser.line.awayUnnamed": "The computer with this tab disconnected",
+  "browser.line.notSent.away": "Not sent: {computer} disconnected",
+  "browser.line.notSent.awayUnnamed": "Not sent: the computer with this tab disconnected",
+  "browser.line.notSent.parked": "Not sent: this page is paused",
   "browser.frozen.parked.title": "This page is paused",
   "browser.frozen.parked.body":
     "No browser has it open now. This is the last picture, from {time}. It opens again when a bot needs it.",
@@ -2603,6 +2608,12 @@ export const en = {
   "browser.grid.openFailed": "Couldn’t open a tab.",
   "browser.grid.openUnavailable":
     "No browser can open a tab now. Open J3 Bots on a computer, or set up the server’s browser.",
+  "browser.grid.openAppOnly": "No browser can open a tab now. Open J3 Bots on a computer.",
+  "browser.grid.openFull":
+    "The server’s browser is full: every tab it keeps is in use. Close one, open J3 Bots on a computer, or try again in a moment.",
+  "browser.grid.openTimeout": "The page didn’t load in time. Try again.",
+  "browser.grid.openPageFailed": "The browser couldn’t open the page.",
+  "browser.grid.openRefused": "The browser won’t open that address.",
   "browser.keys.previous": "Previous field",
   "browser.keys.next": "Next field",
   "browser.keys.done": "OK",

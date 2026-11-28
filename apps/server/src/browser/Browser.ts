@@ -22,6 +22,7 @@ import {
   type BrowserTabs,
   type BrowserTabWhere,
   type BrowserToolTab,
+  Conflict,
   type DeviceId,
   Label,
   MAX_ATTACHMENT_NAME_LENGTH,
@@ -55,7 +56,7 @@ import { BotStore } from "../bots/BotStore.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Ids } from "../Ids.ts";
 import { makeRegistryStore, type StoredTab } from "./registry.ts";
-import { ServerBrowser } from "./server/ServerBrowser.ts";
+import { ServerBrowser, ServerBrowserUnavailable } from "./server/ServerBrowser.ts";
 import { SignIns, type SignInsAttachment } from "./signins/SignIns.ts";
 import { FillHoldRefused, TabAccess } from "./TabAccess.ts";
 import { type ActRefused, makeTabControl, QUEUE_WAIT, type TabControl } from "./TabControl.ts";
@@ -98,10 +99,66 @@ export class BrowserToolRefused extends Schema.TaggedError<BrowserToolRefused>()
 
 const refusal = (text: string) => new BrowserToolRefused({ text });
 
+/**
+ * No app is open on a computer, and the server's browser runs as many tabs
+ * as it keeps, each in use.
+ */
+class ServerFull extends Schema.TaggedError<ServerFull>()("ServerFull", {}) {}
+
+/** Why a new tab has nowhere to open. */
+type NoPlace = ServerBrowserUnavailable | ServerFull;
+
+/** Why a new tab has nowhere to open, in words for a bot. */
+const noPlaceRefusal = (error: NoPlace) =>
+  refusal(
+    error._tag === "ServerFull"
+      ? BROWSER_NOTES.serverFull
+      : BROWSER_NOTES.unavailable(error.reason),
+  );
+
+/** A bot's call that found no place for a tab, refused in words for the bot. */
+const refusingNoPlace = <A, E, R>(effect: Effect.Effect<A, E | NoPlace, R>) =>
+  Effect.mapError(effect, (error) =>
+    Schema.is(ServerFull)(error) || Schema.is(ServerBrowserUnavailable)(error)
+      ? noPlaceRefusal(error)
+      : error,
+  );
+
+/**
+ * Why no tab opened for the person, as `browser.open` answers it. A host's
+ * own words are not kept: they may hold the address the person asked for.
+ */
+const openConflict = (error: NoPlace | BrowserHostError): Conflict => {
+  switch (error._tag) {
+    case "ServerFull":
+      return new Conflict({ reason: "browser-full" });
+    case "ServerBrowserUnavailable":
+      return new Conflict({
+        reason:
+          error.reason === "off" || error.reason === "platform"
+            ? "browser-app-only"
+            : "browser-unavailable",
+      });
+    case "BrowserHostError":
+      return new Conflict({
+        reason:
+          error.reason === "refused"
+            ? "browser-address-refused"
+            : error.reason === "timeout"
+              ? "browser-page-timeout"
+              : "browser-page-failed",
+      });
+  }
+};
+
 /** A tab a viewer watches: its host while it has one, and who acts on it. */
 export interface WatchedTab {
   readonly ref: BrowserTabRef;
-  /** The host the tab runs on now, and again whenever that changes; none while it has none. */
+  /**
+   * The host the tab runs on now, and again whenever that changes; none
+   * while it has none, from the moment its host goes, also while a desktop's
+   * tab waits for its app to come back.
+   */
   readonly host: Stream.Stream<Option.Option<PageHost>>;
   /** The tab as the list shows it, now and on every change, until it closes. */
   readonly tab: Stream.Stream<SharedBrowserTab>;
@@ -176,12 +233,14 @@ export class Browser extends Context.Service<
     /**
      * Opens a tab for the person on `device` as `ref`: on that desktop, else
      * where new tabs open. A tab already open as `ref` is left as it is.
+     * Fails with the `Conflict` `browser.open` answers: why no browser took
+     * the tab, or why the one that did could not open its page.
      */
     readonly openForPerson: (input: {
       readonly device: DeviceId;
       readonly ref: BrowserTabRef;
       readonly url?: string | undefined;
-    }) => Effect.Effect<void, BrowserToolRefused>;
+    }) => Effect.Effect<void, Conflict>;
     /** Closes a tab for the person. */
     readonly close: (ref: BrowserTabRef) => Effect.Effect<void, NotFound>;
     /** A viewer of `ref` while the scope lives, which keeps the tab from being parked. */
@@ -280,7 +339,8 @@ interface Tab {
   /** How many times it was opened again after its host lost it. */
   reopened: number;
   viewers: number;
-  readonly hostChanges: SubscriptionRef.SubscriptionRef<BrowserTabWhere>;
+  /** The host it runs on now: set as it moves, and as its host goes. */
+  readonly hostChanges: SubscriptionRef.SubscriptionRef<Option.Option<PageHost>>;
   /** Its opening again after its host lost it, while that runs. */
   reopening: Deferred.Deferred<Host, BrowserToolRefused> | null;
   /** What each bot saw of it when it last used it. */
@@ -423,6 +483,10 @@ export const layer = Layer.effect(
       return key === null ? undefined : hosts.get(key);
     };
 
+    /** Tells the tab's viewers the host it runs on now. */
+    const hostMoved = (tab: Tab) =>
+      SubscriptionRef.set(tab.hostChanges, Option.fromUndefinedOr(hostOf(tab)?.host));
+
     const makeTab = Effect.fnUntraced(function* (input: {
       readonly ref: BrowserTabRef;
       readonly openedBy: BrowserTabOpener;
@@ -455,12 +519,13 @@ export const layer = Layer.effect(
         actionCount: 0,
         reopened: 0,
         viewers: 0,
-        hostChanges: yield* SubscriptionRef.make(input.where),
+        hostChanges: yield* SubscriptionRef.make(Option.none<PageHost>()),
         reopening: null,
         seen: new Map(),
         pending: new Map(),
       };
       tabs.set(tab.ref, tab);
+      yield* hostMoved(tab);
       // Each change of hands changes the list.
       yield* control.changes.pipe(
         Stream.runForEach((state) =>
@@ -476,7 +541,7 @@ export const layer = Layer.effect(
     const moveTo = Effect.fnUntraced(function* (tab: Tab, where: BrowserTabWhere) {
       tab.where = where;
       if (where.kind === "server") serverUsedAt = yield* now;
-      yield* SubscriptionRef.set(tab.hostChanges, where);
+      yield* hostMoved(tab);
     });
 
     /** Forgets a tab: it closed. */
@@ -705,7 +770,11 @@ export const layer = Layer.effect(
         }
       });
 
-    /** The host is gone: the server's tabs are parked now, a desktop's after its grace. */
+    /**
+     * The host is gone: the server's tabs are parked now, a desktop's after
+     * its grace. Meanwhile they are listed as away, and their viewers learn
+     * at once that they have no host.
+     */
     const detach = Effect.fnUntraced(function* (entry: Host) {
       if (hosts.get(entry.key) !== entry) return;
       hosts.delete(entry.key);
@@ -713,6 +782,8 @@ export const layer = Layer.effect(
         for (const tab of tabs.values()) if (keyOfWhere(tab.where) === SERVER) yield* park(tab);
         return yield* bump;
       }
+      for (const tab of tabs.values())
+        if (keyOfWhere(tab.where) === entry.key) yield* hostMoved(tab);
       const fiber = yield* Effect.sleep(DESKTOP_GRACE).pipe(
         Effect.andThen(
           Effect.gen(function* () {
@@ -828,15 +899,14 @@ export const layer = Layer.effect(
         if (running !== undefined) return running;
         const scope = yield* Scope.make();
         yield* serverBrowser.launch.pipe(
-          Effect.mapError((cause): ServerBrowserProblem => cause.reason),
           Effect.flatMap((launched) =>
             launched.hello.pipe(
               Effect.flatMap((hello) => attach(launched, hello)),
-              Effect.mapError((): ServerBrowserProblem => "failed"),
+              Effect.mapError(() => new ServerBrowserUnavailable({ reason: "failed" })),
             ),
           ),
           Scope.provide(scope),
-          Effect.tapError((problem) => SubscriptionRef.set(serverProblem, Option.some(problem))),
+          Effect.tapError((error) => SubscriptionRef.set(serverProblem, Option.some(error.reason))),
           // A start that failed or was interrupted leaves nothing running.
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, exit))),
         );
@@ -845,7 +915,7 @@ export const layer = Layer.effect(
         // A start can take a while: its idle time counts from when it is ready.
         serverUsedAt = yield* now;
         const host = hosts.get(SERVER);
-        if (host === undefined) return yield* Effect.fail<ServerBrowserProblem>("failed");
+        if (host === undefined) return yield* new ServerBrowserUnavailable({ reason: "failed" });
         return host;
       }),
     );
@@ -869,7 +939,7 @@ export const layer = Layer.effect(
       }
       idle.sort((left, right) => left.usedAt - right.usedAt);
       const oldest = idle[0];
-      if (oldest === undefined) return yield* refusal(BROWSER_NOTES.serverFull);
+      if (oldest === undefined) return yield* new ServerFull();
       // Parked first, so the host's word that the tab closed is not taken for a close.
       yield* park(oldest);
       yield* host.host.close(oldest.ref).pipe(Effect.ignore);
@@ -881,9 +951,7 @@ export const layer = Layer.effect(
       desktops.sort((left, right) => right.activeAt - left.activeAt);
       const desktop = desktops[0];
       if (desktop !== undefined) return desktop;
-      const server = yield* serverHost.pipe(
-        Effect.mapError((problem) => refusal(BROWSER_NOTES.unavailable(problem))),
-      );
+      const server = yield* serverHost;
       yield* makeRoomOnServer;
       return server;
     });
@@ -892,7 +960,9 @@ export const layer = Layer.effect(
      * Runs `place` with a place for one more tab, held until it ends, by
      * when the tab is registered where it opened.
      */
-    const withPlace = <A, E>(place: (target: Host) => Effect.Effect<A, E>) =>
+    const withPlace = <A, E>(
+      place: (target: Host) => Effect.Effect<A, E>,
+    ): Effect.Effect<A, E | NoPlace> =>
       Effect.acquireUseRelease(
         roomLock.withPermits(1)(
           Effect.tap(placement, (target) =>
@@ -932,7 +1002,7 @@ export const layer = Layer.effect(
           yield* bump;
           return target;
         }),
-      );
+      ).pipe(refusingNoPlace);
 
     const liveHost = Effect.fnUntraced(function* (tab: Tab) {
       // Calls that find the tab parked together open it once.
@@ -1192,59 +1262,69 @@ export const layer = Layer.effect(
 
     /**
      * Opens a new tab on `target`, or where tabs open now when it is null,
-     * registered first so it is listed while it loads, and forgotten if the
-     * host cannot open it. A bot's tab opens under the bot's lease.
+     * registered first so it is listed while it loads, and forgotten and
+     * closed on the host if the host cannot open it. `run` asks the host, as the opener may: a bot
+     * under its lease.
      */
-    const openTab = Effect.fnUntraced(function* (input: {
-      readonly ref?: BrowserTabRef;
-      readonly openedBy: BrowserTabOpener;
-      readonly target: Host | null;
-      readonly url: string | undefined;
-      readonly background: boolean;
-      readonly readiness?: BrowserToolInput<"browser_open">["readiness"];
-      readonly timeoutMs?: number | undefined;
-    }) {
-      const ref = input.ref ?? BrowserTabRef.make(yield* ids.make("tab"));
-      const at = yield* now;
-      const bot = input.openedBy.kind === "bot" ? input.openedBy.botId : null;
-      const register = Effect.fnUntraced(function* (target: Host) {
-        const tab = yield* makeTab({
-          ref,
-          openedBy: input.openedBy,
-          private: false,
-          createdAt: at,
-          usedAt: at,
-          url: input.url ?? "",
-          title: "",
-          where: whereOfHello(target.hello),
-          onIt: bot === null ? [] : [bot],
+    const openTab = <E>(
+      input: {
+        readonly ref?: BrowserTabRef;
+        readonly openedBy: BrowserTabOpener;
+        readonly target: Host | null;
+        readonly url: string | undefined;
+        readonly background: boolean;
+        readonly readiness?: BrowserToolInput<"browser_open">["readiness"];
+        readonly timeoutMs?: number | undefined;
+      },
+      run: (
+        tab: Tab,
+        open: Effect.Effect<BrowserPageState, BrowserHostError>,
+      ) => Effect.Effect<BrowserPageState, E>,
+    ): Effect.Effect<{ readonly tab: Tab; readonly page: BrowserPageState }, E | NoPlace> =>
+      Effect.gen(function* () {
+        const ref = input.ref ?? BrowserTabRef.make(yield* ids.make("tab"));
+        const at = yield* now;
+        const bot = input.openedBy.kind === "bot" ? input.openedBy.botId : null;
+        const register = Effect.fnUntraced(function* (target: Host) {
+          const tab = yield* makeTab({
+            ref,
+            openedBy: input.openedBy,
+            private: false,
+            createdAt: at,
+            usedAt: at,
+            url: input.url ?? "",
+            title: "",
+            where: whereOfHello(target.hello),
+            onIt: bot === null ? [] : [bot],
+          });
+          yield* persist(tab);
+          yield* bump;
+          return { tab, target };
         });
+        const { tab, target } = yield* input.target === null
+          ? withPlace(register)
+          : register(input.target);
+        if (input.url !== undefined) yield* target.signIns.prepare(input.url);
+        const open = target.host.open({
+          tab: ref,
+          ...(input.url === undefined ? {} : { url: input.url }),
+          background: input.background,
+          private: false,
+          ...(input.readiness === undefined ? {} : { readiness: input.readiness }),
+          ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+        });
+        // A host that took the tab and failed its page may still hold it:
+        // forgotten first, so its word that the tab closed is no news.
+        const page = yield* run(tab, open).pipe(
+          Effect.tapError(() =>
+            forget(tab).pipe(Effect.andThen(target.host.close(ref).pipe(Effect.ignore))),
+          ),
+        );
+        learnPage(tab, page);
         yield* persist(tab);
         yield* bump;
-        return { tab, target };
+        return { tab, page };
       });
-      const { tab, target } = yield* input.target === null
-        ? withPlace(register)
-        : register(input.target);
-      if (input.url !== undefined) yield* target.signIns.prepare(input.url);
-      const open = target.host.open({
-        tab: ref,
-        ...(input.url === undefined ? {} : { url: input.url }),
-        background: input.background,
-        private: false,
-        ...(input.readiness === undefined ? {} : { readiness: input.readiness }),
-        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-      });
-      const page = yield* (
-        bot === null
-          ? open.pipe(Effect.mapError(hostFailed))
-          : underLease(tab, bot, Effect.andThen(stillOn(bot), open))
-      ).pipe(Effect.tapError(() => forget(tab)));
-      learnPage(tab, page);
-      yield* persist(tab);
-      yield* bump;
-      return { tab, page };
-    });
 
     const tools: BrowserTools = {
       tabs: Effect.fn("Browser.tools.tabs")(function* (botId: BotId) {
@@ -1256,14 +1336,17 @@ export const layer = Layer.effect(
         botId: BotId,
         input: BrowserToolInput<"browser_open">,
       ) {
-        const { tab, page } = yield* openTab({
-          openedBy: { kind: "bot", botId },
-          target: null,
-          url: input.url,
-          background: input.background ?? false,
-          readiness: input.readiness,
-          timeoutMs: input.timeoutMs,
-        });
+        const { tab, page } = yield* openTab(
+          {
+            openedBy: { kind: "bot", botId },
+            target: null,
+            url: input.url,
+            background: input.background ?? false,
+            readiness: input.readiness,
+            timeoutMs: input.timeoutMs,
+          },
+          (tab, open) => underLease(tab, botId, Effect.andThen(stillOn(botId), open)),
+        ).pipe(refusingNoPlace);
         yield* using(botId, tab);
         sawOwn(botId, tab);
         return page;
@@ -1370,7 +1453,11 @@ export const layer = Layer.effect(
         url: tab.url,
         title: tab.title,
         loading: tab.loading,
-        where: tab.where,
+        // A desktop's tab whose app is gone waits for it: away.
+        where:
+          tab.where.kind === "desktop" && hostOf(tab) === undefined
+            ? { ...tab.where, away: true }
+            : tab.where,
         openedBy: tab.openedBy,
         onIt: onItOf(tab, at),
         acting: state.acting,
@@ -1447,13 +1534,16 @@ export const layer = Layer.effect(
       readonly url?: string | undefined;
     }) {
       if (tabs.has(input.ref)) return;
-      yield* openTab({
-        ref: input.ref,
-        openedBy: { kind: "person", device: input.device },
-        target: hosts.get(desktopKey(input.device)) ?? null,
-        url: input.url,
-        background: false,
-      });
+      yield* openTab(
+        {
+          ref: input.ref,
+          openedBy: { kind: "person", device: input.device },
+          target: hosts.get(desktopKey(input.device)) ?? null,
+          url: input.url,
+          background: false,
+        },
+        (_tab, open) => open,
+      ).pipe(Effect.mapError(openConflict));
     });
 
     const closeTab = Effect.fn("Browser.close")(function* (ref: BrowserTabRef) {
@@ -1478,9 +1568,7 @@ export const layer = Layer.effect(
       );
       return Option.some({
         ref,
-        host: SubscriptionRef.changes(tab.hostChanges).pipe(
-          Stream.map(() => Option.fromUndefinedOr(hostOf(tab)?.host)),
-        ),
+        host: SubscriptionRef.changes(tab.hostChanges),
         tab: SubscriptionRef.changes(version).pipe(
           Stream.takeWhile(() => tabs.get(ref) === tab),
           Stream.mapEffect(() => Effect.flatMap(now, (at) => sharedOf(tab, at))),

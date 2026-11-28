@@ -2609,6 +2609,11 @@ const sentences = {
   "browser.line.continue": "Continuar",
   "browser.line.noConnection": "Sem conexão",
   "browser.line.parked": "Em pausa",
+  "browser.line.away": "{computer} se desconectou",
+  "browser.line.awayUnnamed": "O computador com esta aba se desconectou",
+  "browser.line.notSent.away": "Não enviado: {computer} se desconectou",
+  "browser.line.notSent.awayUnnamed": "Não enviado: o computador com esta aba se desconectou",
+  "browser.line.notSent.parked": "Não enviado: esta página está em pausa",
   "browser.frozen.parked.title": "Esta página está em pausa",
   "browser.frozen.parked.body":
     "Nenhum navegador está com ela aberta agora. Esta é a última imagem, das {time}. Ela abre de novo quando um bot precisar dela.",
@@ -2648,6 +2653,13 @@ const sentences = {
   "browser.grid.openFailed": "Não deu para abrir uma aba.",
   "browser.grid.openUnavailable":
     "Nenhum navegador pode abrir uma aba agora. Abra o J3 Bots num computador ou configure o navegador do servidor.",
+  "browser.grid.openAppOnly":
+    "Nenhum navegador pode abrir uma aba agora. Abra o J3 Bots num computador.",
+  "browser.grid.openFull":
+    "O navegador do servidor está cheio: todas as abas estão em uso. Feche uma, abra o J3 Bots num computador ou tente de novo daqui a pouco.",
+  "browser.grid.openTimeout": "A página não carregou a tempo. Tente de novo.",
+  "browser.grid.openPageFailed": "O navegador não conseguiu abrir a página.",
+  "browser.grid.openRefused": "O navegador não abre esse endereço.",
   "browser.keys.previous": "Campo anterior",
   "browser.keys.next": "Próximo campo",
   "browser.keys.done": "OK",

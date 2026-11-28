@@ -359,17 +359,31 @@ export const layer = Layer.effect(
         }),
       );
 
-    /** A person's input to the page: applied only once it holds the tab for them. */
+    /** Tells a socket its input was not applied: the tab has no host. */
+    const refuse = (feed: Feed, viewer: Viewer) =>
+      // A desktop's tab with no host waits for its app; any other runs nowhere.
+      sendTo(viewer, {
+        type: "refused",
+        reason: feed.tab?.where.kind === "desktop" ? "away" : "parked",
+      });
+
+    /**
+     * A person's input to the page: applied only once it holds the tab for
+     * them. With no host to take it, refused, saying why, and holding nothing.
+     */
     const used = Effect.fnUntraced(function* (
       feed: Feed,
       viewer: Viewer,
       apply: (host: PageHost) => Effect.Effect<unknown>,
     ) {
-      if (Option.isNone(feed.host)) return;
+      if (Option.isNone(feed.host)) return yield* refuse(feed, viewer);
       if (!(yield* browser.personUsed(feed.ref, viewer.deviceId))) return;
       // Their input takes the tab at once, and reaches the page once a fill's typing ended.
       yield* feed.watched.control.afterFill;
-      yield* apply(feed.host.value);
+      // Read again: the host may have gone while the input waited.
+      const host = feed.host;
+      if (Option.isNone(host)) return yield* refuse(feed, viewer);
+      yield* apply(host.value);
     });
 
     /** Whether a person on another device holds the tab now. */
@@ -406,8 +420,10 @@ export const layer = Layer.effect(
           // holds the tab, unless that is a person on another device.
           if (frame.action === "move") {
             return Effect.gen(function* () {
-              if (Option.isNone(feed.host) || (yield* heldElsewhere(feed, viewer))) return;
-              yield* feed.host.value.input({ tab, input: frame }).pipe(Effect.ignore);
+              if (yield* heldElsewhere(feed, viewer)) return;
+              const host = feed.host;
+              if (Option.isNone(host)) return;
+              yield* host.value.input({ tab, input: frame }).pipe(Effect.ignore);
             });
           }
           return used(feed, viewer, (host) =>

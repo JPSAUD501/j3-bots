@@ -2,10 +2,12 @@
 import {
   type BrowserCursor,
   type BrowserProbe,
+  type BrowserRefusal,
   type BrowserViewHandle,
   type BrowserViewState,
   Cell,
   type Loaded,
+  type Synced,
 } from "@j3-bots/client-runtime";
 import { usesPage } from "@j3-bots/client-runtime/presentation";
 import {
@@ -16,6 +18,7 @@ import {
   type BrowserTab,
   type BrowserTabHolder,
   BrowserTabRef,
+  type Device,
   DeviceId,
   type SharedBrowserTab,
 } from "@j3-bots/contracts";
@@ -196,6 +199,8 @@ export function sampleBrowser(
   return {
     pairing: new Cell<DeviceId | null>(shared ? SAMPLE_DEVICE : null),
     sharedBrowser: new Cell(shared),
+    // The sample's tabs run on the server's browser: no computer is named.
+    devices: new Cell<Synced<ReadonlyArray<Device>>>({ _tag: "ready", value: [], stale: false }),
     openBrowserTabs: (botId) => listOf(() => botTabs(botId)),
     openAllBrowserTabs: () => listOf(() => [...samples.values()].map(sharedTab)),
     openBrowserTab: (url) => {
@@ -222,6 +227,7 @@ export function sampleBrowser(
       );
       const probe = new Cell<BrowserProbe | null>(null);
       const cursor = new Cell<BrowserCursor | null>(null);
+      const refused = new Cell<BrowserRefusal | null>(null);
       const timers = new Set<number>();
       let stopTab = () => {};
       let closed = false;
@@ -298,6 +304,7 @@ export function sampleBrowser(
           picture,
           probe,
           cursor,
+          refused,
           onProbe: each(probe),
           onCursor: each(cursor),
           ack: (acked) => {

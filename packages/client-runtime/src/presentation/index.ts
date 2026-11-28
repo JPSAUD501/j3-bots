@@ -150,6 +150,7 @@ export {
   pageUseStep,
   sharedViewerTab,
   tabAfterClose,
+  tabComputerName,
   tabFaces,
   type TabHolder,
   type TabLine,
@@ -157,6 +158,8 @@ export {
   usesPage,
   type ViewerTab,
   viewerTabsOf,
+  type ViewLiveness,
+  viewLiveness,
 } from "./browserTabs.ts";
 export {
   dragged,

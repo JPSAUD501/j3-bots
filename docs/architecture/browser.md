@@ -44,6 +44,8 @@ A tool call crosses the network once. The server decides which tab and whether t
 
 - **`packages/browser` knows nothing of T3 Code:** not its protocol, its types or its files. Some of its code is adapted from T3 Code under the MIT license; each such file says so, and `packages/browser/NOTICE` carries the license.
 - **Clients never reach a host.** They watch and use tabs through the server, by the tab's ref.
+- **A client learns at once that a tab's host is gone.** A desktop's tab waits 45 s for its app to come back, listed as `away` meanwhile, and is parked if it does not. A tab with no host sends no new picture, its viewers keep the last, and the server refuses the person's input to it with a `refused` frame saying why, rather than passing it to a host that is gone or holding the tab for nothing.
+- **Opening a tab for the person says why it did not.** `browser.open` tells apart no browser to take the tab, a server that runs only an app's, a full server browser, and a page the host could not open: not in time, at a refused address, or a failure ([Server: the bot's browser](server.md#the-bots-browser)).
 - **A host never speaks raw CDP to the server.** One call is one piece of page work.
 - **The server owns every ref.** A host mints one only for a tab it opens by itself, such as a pop-up or the person's new tab, with at least 128 bits of randomness.
 

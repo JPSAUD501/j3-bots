@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId } from "@j3-bots/contracts";
+import { BotId, Conflict, NotFound } from "@j3-bots/contracts";
 import { createI18n } from "@j3-bots/i18n";
 import { describe, expect, it } from "vite-plus/test";
-import { tabLineWords } from "./browser.ts";
+import { liveLine, tabLineWords, tabOpenFailed } from "./browser.ts";
 
 const ana = BotId.make("ana");
 const lia = BotId.make("lia");
@@ -33,5 +33,67 @@ describe("tabLineWords", () => {
     expect(
       tabLineWords({ _tag: "acting", bots: [ana], acting: ana }, nameOf, en).action,
     ).toBeNull();
+  });
+});
+
+describe("tabOpenFailed", () => {
+  const en = createI18n("en");
+  const refused = (reason: Conflict["reason"]) =>
+    tabOpenFailed({ _tag: "refused", error: new Conflict({ reason }) }, en);
+
+  it("says why no tab opened, and what to do where there is something", () => {
+    expect(refused("browser-app-only")).toBe(
+      "No browser can open a tab now. Open J3 Bots on a computer.",
+    );
+    expect(refused("browser-full")).toBe(
+      "The server’s browser is full: every tab it keeps is in use. Close one, open J3 Bots on a computer, or try again in a moment.",
+    );
+    expect(refused("browser-page-timeout")).toBe("The page didn’t load in time. Try again.");
+    expect(refused("browser-address-refused")).toBe("The browser won’t open that address.");
+  });
+
+  it("says only that it failed for anything else", () => {
+    expect(refused("engine-unavailable")).toBe("Couldn’t open a tab.");
+    expect(
+      tabOpenFailed({ _tag: "refused", error: new NotFound({ resource: "browser-tab" }) }, en),
+    ).toBe("Couldn’t open a tab.");
+    expect(tabOpenFailed({ _tag: "unexpected" }, en)).toBe("Couldn’t open a tab.");
+  });
+});
+
+describe("liveLine", () => {
+  const en = createI18n("en");
+  const pt = createI18n("pt-BR");
+  const live = { _tag: "live" } as const;
+  const away = { _tag: "away" } as const;
+
+  it("names the computer that disconnected, or says which it was without its name", () => {
+    expect(liveLine({ frozen: away, line: "Ana", refused: null, computer: "Laptop" }, en)).toBe(
+      "Laptop disconnected",
+    );
+    expect(liveLine({ frozen: away, line: "Ana", refused: null, computer: null }, pt)).toBe(
+      "O computador com esta aba se desconectou",
+    );
+  });
+
+  it("says input was not sent while the refusal is fresh, then the line again", () => {
+    expect(liveLine({ frozen: live, line: "Ana", refused: "away", computer: "Laptop" }, en)).toBe(
+      "Not sent: Laptop disconnected",
+    );
+    expect(
+      liveLine({ frozen: { _tag: "parked" }, line: "Ana", refused: "parked", computer: null }, en),
+    ).toBe("Not sent: this page is paused");
+    expect(liveLine({ frozen: live, line: "Ana", refused: null, computer: "Laptop" }, en)).toBe(
+      "Ana",
+    );
+  });
+
+  it("says there is no connection over any refusal heard before", () => {
+    expect(
+      liveLine(
+        { frozen: { _tag: "you-offline" }, line: "Ana", refused: "away", computer: "Laptop" },
+        en,
+      ),
+    ).toBe("No connection");
   });
 });
