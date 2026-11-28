@@ -388,4 +388,8 @@ export const BROWSER_NOTES = {
   downloaded: (path: string) => `A file downloaded from this tab is in your workspace at ${path}.`,
   downloadTooLarge: (name: string) =>
     `The page downloaded ${name}, which is too large to keep, so it was dropped.`,
+  downloadCancelled: (name: string) =>
+    `The download of ${name} from this tab was cancelled, so there is no file.`,
+  downloadFailed: (name: string) =>
+    `The download of ${name} from this tab failed, so there is no file.`,
 } as const;

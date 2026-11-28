@@ -405,6 +405,19 @@ export const makeDesktopBrowser = (options: {
           ),
         );
       });
+      /** It left no file to take: stopped before its end, cut short, or not kept here. */
+      const leftNoFile = (outcome: "cancelled" | "failed") =>
+        Effect.andThen(
+          tell({
+            type: "download.finished",
+            tab: entry.tab.ref,
+            download,
+            name,
+            size: item.getReceivedBytes(),
+            outcome,
+          }),
+          letGo,
+        );
       item.once("done", (_done, state) => {
         // Nothing thrown in Electron's listener: an error there would take the app down.
         run(
@@ -413,11 +426,11 @@ export const makeDesktopBrowser = (options: {
                 Effect.catchDefect((cause) =>
                   Effect.andThen(
                     Effect.logWarning("A bot's download could not be kept", cause),
-                    letGo,
+                    leftNoFile("failed"),
                   ),
                 ),
               )
-            : letGo,
+            : leftNoFile(state === "cancelled" ? "cancelled" : "failed"),
         );
       });
     };

@@ -258,6 +258,25 @@ it.effect("acts on nothing a desktop's replaced connection still says", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("tells the bot a download that was cancelled left no file, and takes nothing", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const ana = yield* createBot("Ana");
+    const { host } = yield* desktop(laptop);
+    const ref = yield* open(ana.id, "https://files.example.test/");
+    const started = yield* host.startDownload(ref, "report.pdf", new Uint8Array(10));
+    yield* started.end("cancelled");
+
+    const cancelled = BROWSER_NOTES.downloadCancelled("report.pdf");
+    let read = yield* browser.tools.snapshot(ana.id, { tab: ref }).pipe(Effect.orDie);
+    while (!(read.notice ?? "").includes(cancelled)) {
+      yield* Effect.yieldNow;
+      read = yield* browser.tools.snapshot(ana.id, { tab: ref }).pipe(Effect.orDie);
+    }
+    assert.isFalse((yield* host.calls).some((call) => call.call === "download.take"));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("gives a download to the bot whose action started it, not to one acting as it ends", () =>
   Effect.gen(function* () {
     const browser = yield* Browser;

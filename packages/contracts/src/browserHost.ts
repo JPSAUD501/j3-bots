@@ -401,9 +401,12 @@ const FileChunk = Schema.Uint8ArrayFromBase64.check(
  *   then whose it is, so a bot that acts on the tab later never takes it.
  *   A desktop reports only one that began while a bot's action ran there:
  *   what the person downloads stays with them and is not reported at all.
- * - `download.finished`: a download the host reported started is
- *   complete, under the same id. The host keeps it until the server takes
- *   it (`download.take`) or the host restarts.
+ * - `download.finished`: a download the host reported started has ended,
+ *   under the same id, as `outcome` says. A host sends it for every
+ *   download it reported started. One `done` (or with no `outcome`, from a
+ *   host before it) the host keeps until the server takes it
+ *   (`download.take`) or the host restarts; one `cancelled` or `failed` left
+ *   no file, and `size` is what had arrived.
  */
 export const BrowserHostEvent = Schema.Union([
   Schema.Struct({
@@ -444,6 +447,8 @@ export const BrowserHostEvent = Schema.Union([
     /** The name the site gave it. */
     name: BrowserFileName,
     size: NonNegativeInt,
+    /** How it ended. Left out, it is `done`. */
+    outcome: Schema.optionalKey(Schema.Literals(["done", "cancelled", "failed"])),
   }),
 ]);
 export type BrowserHostEvent = typeof BrowserHostEvent.Type;
