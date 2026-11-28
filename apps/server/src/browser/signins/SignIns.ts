@@ -583,6 +583,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     Effect.suspend(() => {
       if (a.broken || a.pending.size > 0 || a.agreed) return Effect.void;
       a.agreed = true;
+      // Only a host agreed in full is well again: one whose origins keep
+      // failing waits longer each time.
+      a.failures = 0;
       a.since = Math.max(a.since, a.agreeing, a.signedOut);
       return saveBaseline(open, a);
     });
@@ -595,20 +598,23 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     const now = yield* Clock.currentTimeMillis;
     // A host reconciled again in the same attachment keeps what it had:
     // the store's own, when it has none to keep across starts.
-    const stored: StoreBaseline | undefined =
+    const kept: StoreBaseline | undefined =
       a.baseline !== undefined
-        ? { version: a.since, run: a.run, ...a.baseline }
+        ? { version: a.since, run: a.run, ...a.baseline, dropped: false }
         : a.store === undefined
           ? undefined
           : Option.getOrUndefined(yield* file.baseline(a.store));
-    a.since = stored?.version ?? -1;
+    a.since = kept?.version ?? -1;
+    // What it held, when the server still knows it: a store unseen for 90
+    // days is agreed as a new one is, though the sign-outs since still win.
+    const stored = kept?.dropped === true ? undefined : kept;
     a.signedOut = -1;
     a.agreed = false;
     a.pending.clear();
     // A store the jar does not know, after the person signed out of all
     // sites lately: what it holds is from before, and goes first.
     if (
-      stored === undefined &&
+      kept === undefined &&
       contents.clearedAt !== undefined &&
       now - contents.clearedAt < KEPT_MS
     )
@@ -616,7 +622,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     // A store the jar knows, that missed sign-outs while it was away or a
     // clear failed: what those sites stored goes before anything of the
     // host's is taken.
-    if (stored !== undefined && !(yield* clearMissed(open, a, stored.version))) return;
+    if (kept !== undefined && !(yield* clearMissed(open, a, kept.version))) return;
     let cookies = new Map(stored?.cookies ?? []);
     if (a.cookies) {
       const read = yield* hostCall("give its cookies", a.host.readCookies);
@@ -627,8 +633,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         tombstones: contents.tombstones,
         baseline: stored?.cookies,
         restarted: stored?.run === undefined || a.run === undefined || stored.run !== a.run,
-        revoked: (cookie) =>
-          stored !== undefined && revokedSince(open, since, sitesOfCookie(cookie)),
+        revoked: (cookie) => kept !== undefined && revokedSince(open, since, sitesOfCookie(cookie)),
         host: read.value.cookies,
         now,
         digests,
@@ -661,7 +666,6 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     a.baseline = { cookies, origins };
     a.agreeing = contents.version;
     a.broken = false;
-    a.failures = 0;
     yield* saveBaseline(open, a);
     yield* agree(open, a);
     yield* Effect.forkIn(seed(a), a.scope);

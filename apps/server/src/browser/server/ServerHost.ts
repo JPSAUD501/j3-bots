@@ -487,8 +487,9 @@ export const launchServerHost = (input: {
     /**
      * Deletes the site data of `clear`'s origins, or of every origin a tab
      * showed, besides cookies, from a page of the context: CDP's `Storage`
-     * clears the storage of the target's own browser context (**Assumed**).
-     * Then each open tab of those origins loses its `sessionStorage`, which
+     * clears the storage of the target's own browser context, as
+     * `ServerHost.test.ts` checks. Then each open tab of those origins loses
+     * its `sessionStorage`, which
      * CDP does not clear, in every frame of them, and a tab whose page is of
      * one loads again, so no page keeps a sign-in in its memory either.
      */

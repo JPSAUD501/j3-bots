@@ -78,9 +78,9 @@ const signInsIn = Effect.fn(function* (folder?: string, key = newKey()) {
 
 type Signins = Effect.Success<ReturnType<typeof signInsIn>>;
 
-/** Attaches `host` until `detach`. */
+/** Attaches `host` until `detach`, or the test's end. */
 const attach = Effect.fn(function* (signIns: Signins, host: FakePageHost) {
-  const scope = yield* Scope.make();
+  const scope = yield* Scope.fork(yield* Scope.Scope);
   const hello = yield* host.hello;
   const attached: SignInsAttachment = yield* signIns.attach(host, hello).pipe(Scope.provide(scope));
   yield* settle;
@@ -511,6 +511,30 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       yield* attach(signIns, away);
       assert.deepStrictEqual(yield* held(away), []);
       assert.deepStrictEqual(yield* held(a), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a store away over 90 days after a sign-out of all comes back empty", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "j3-signins-" });
+      const key = newKey();
+      const before = yield* signInsIn(folder, key);
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const onA = yield* attach(before, a);
+      yield* siteSets(a, onA, cookie("sid", "one", "x.test"));
+      yield* onA.detach;
+
+      yield* TestClock.adjust("2 days");
+      yield* before.signOut;
+      yield* TestClock.adjust("98 days");
+      // The next start drops what the store held, and keeps its version.
+      const signIns = yield* signInsIn(folder, key);
+      const b = yield* host(EVENTS, "store-b-0000000000");
+      yield* attach(signIns, b);
+      yield* attach(signIns, a);
+      assert.deepStrictEqual(yield* held(a), []);
+      assert.deepStrictEqual(yield* held(b), []);
     }).pipe(Effect.scoped),
   );
 

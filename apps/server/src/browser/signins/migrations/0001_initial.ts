@@ -23,7 +23,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 // - `stores`, `store_entries`: a host's store (its `cookieStore`), the
 //   version up to which every sign-out reached it, the run of its browser
 //   (an HMAC of `browserRun`), and what it held when it last agreed with the
-//   jar.
+//   jar. A store not seen for 90 days loses what it held (`dropped_at`) and
+//   keeps its version, so a sign-out after it still wins when it comes back.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -77,7 +78,8 @@ export default Effect.gen(function* () {
       id TEXT PRIMARY KEY,
       version INTEGER NOT NULL,
       run TEXT,
-      seen_at INTEGER NOT NULL
+      seen_at INTEGER NOT NULL,
+      dropped_at INTEGER
     ) WITHOUT ROWID
   `;
   yield* sql`

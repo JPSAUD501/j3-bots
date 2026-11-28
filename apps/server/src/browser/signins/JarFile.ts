@@ -66,7 +66,11 @@ const MetaRow = Schema.Struct({
 const SealedRow = Schema.Struct({ id: Schema.String, nonce: Schema.String, sealed: Schema.String });
 const TombstoneRow = Schema.Struct({ id: Schema.String, digest: Schema.String });
 const SignoutRow = Schema.Struct({ id: Schema.String, version: Schema.Int });
-const StoreRow = Schema.Struct({ version: Schema.Int, run: Schema.NullOr(Schema.String) });
+const StoreRow = Schema.Struct({
+  version: Schema.Int,
+  run: Schema.NullOr(Schema.String),
+  dropped_at: Schema.NullOr(Schema.Int),
+});
 const EntryRow = Schema.Struct({
   kind: Schema.Literals(["cookie", "origin"]),
   id: Schema.String,
@@ -98,6 +102,11 @@ export interface StoreBaseline {
   readonly run: Digest | undefined;
   readonly cookies: Map<Digest, Digest>;
   readonly origins: Map<Digest, Digest>;
+  /**
+   * What it held was dropped, after 90 days unseen: it is agreed as a new
+   * store is, but with its version, so the sign-outs after it still win.
+   */
+  readonly dropped: boolean;
 }
 
 /** A change to one store's baseline: `replace` writes it whole. */
@@ -184,7 +193,7 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
     const store = yield* SqlSchema.findOneOption({
       Request: Schema.Void,
       Result: StoreRow,
-      execute: () => sql`SELECT version, run FROM stores WHERE id = ${id}`,
+      execute: () => sql`SELECT version, run, dropped_at FROM stores WHERE id = ${id}`,
     })(undefined);
     if (Option.isNone(store)) return Option.none<StoreBaseline>();
     const entries = yield* SqlSchema.findAll({
@@ -201,6 +210,7 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
       run: store.value.run ?? undefined,
       cookies,
       origins,
+      dropped: store.value.dropped_at !== null,
     });
   }, Effect.orDie);
 
@@ -276,20 +286,35 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
             ON CONFLICT (id) DO UPDATE SET
               version = excluded.version, run = excluded.run, seen_at = excluded.seen_at
           `;
-          if (store.replace) yield* sql`DELETE FROM store_entries WHERE store = ${store.id}`;
+          if (store.replace) {
+            yield* sql`DELETE FROM store_entries WHERE store = ${store.id}`;
+            yield* sql`UPDATE stores SET dropped_at = NULL WHERE id = ${store.id}`;
+          }
           yield* writeEntries(store.id, "cookie", store.cookies);
           yield* writeEntries(store.id, "origin", store.origins);
         }
       }),
     ).pipe(Effect.orDie);
 
-  /** What is old enough to go: tombstones, emptied origins, stores not seen for long. */
+  /**
+   * What is old enough to go: tombstones, emptied origins, and what a store
+   * not seen for long held. The store's version stays, so a sign-out after
+   * it still wins when it comes back.
+   */
   const prune = inTransaction(
     Effect.gen(function* () {
-      const before = (yield* Clock.currentTimeMillis) - KEPT_MS;
+      const now = yield* Clock.currentTimeMillis;
+      const before = now - KEPT_MS;
       yield* sql`DELETE FROM tombstones WHERE removed_at < ${before}`;
       yield* sql`DELETE FROM origins WHERE emptied_at < ${before}`;
-      yield* sql`DELETE FROM stores WHERE seen_at < ${before}`;
+      yield* sql`
+        DELETE FROM store_entries WHERE store IN
+          (SELECT id FROM stores WHERE seen_at < ${before} AND dropped_at IS NULL)
+      `;
+      yield* sql`
+        UPDATE stores SET run = NULL, dropped_at = ${now}
+        WHERE seen_at < ${before} AND dropped_at IS NULL
+      `;
     }),
   );
 
