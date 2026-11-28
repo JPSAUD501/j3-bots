@@ -13,6 +13,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -64,7 +65,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
             Effect.timeout(STEP),
           );
         // The person opens a page of their own in the browser beside the bot's
-        // conversation, as in the demo: the desktop now hosts the tabs.
+        // conversation: the desktop now hosts the tabs.
         yield* Effect.promise(async () => {
           await page.getByText(bot.profile.name).first().click({ timeout: STEP });
           await page.getByRole("button", { name: "Open browser" }).click({ timeout: STEP });
@@ -79,18 +80,20 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const ref = yield* Server.botOpens(bot.id, errand);
         const tab: SharedBrowserTab = yield* hosted(errand);
         assert.strictEqual(tab.ref, ref);
+        /** The size of the window whose views show `url`. */
+        const holderOf = (url: string) =>
+          Effect.promise(() =>
+            app.evaluate(({ BaseWindow, WebContentsView }, url) => {
+              const window = BaseWindow.getAllWindows().find((window) =>
+                window.contentView.children.some(
+                  (view) => view instanceof WebContentsView && view.webContents.getURL() === url,
+                ),
+              );
+              return window?.getBounds() ?? null;
+            }, url),
+          );
         // Its view is in the shelf, the one-pixel window out of sight.
-        const holder = yield* Effect.promise(() =>
-          app.evaluate(({ BaseWindow, WebContentsView }, errand) => {
-            const window = BaseWindow.getAllWindows().find((window) =>
-              window.contentView.children.some(
-                (view) => view instanceof WebContentsView && view.webContents.getURL() === errand,
-              ),
-            );
-            return window?.getBounds() ?? null;
-          }, errand),
-        );
-        assert.deepInclude(holder, { width: 1, height: 1 });
+        assert.deepInclude(yield* holderOf(errand), { width: 1, height: 1 });
 
         // A phone of the person's watches it, through the server, as the apps do.
         const devices = yield* Server.Devices;
@@ -122,10 +125,15 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         // pictures once the window hides and its page moves to another site,
         // whose page begins anew while no window of it is on screen.
         const mine = yield* hosted(`${site}/mine`);
-        yield* Effect.promise(() =>
-          app.evaluate(({ BrowserWindow }) => {
-            for (const window of BrowserWindow.getAllWindows()) window.hide();
-          }),
+        const hidden = yield* Effect.promise(() =>
+          app.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()
+              .filter((window) => window.isVisible())
+              .map((window) => {
+                window.hide();
+                return window.id;
+              }),
+          ),
         );
         const elsewhere = `${site.replace("127.0.0.1", "localhost")}/elsewhere`;
         yield* browser.tools.navigate(bot.id, {
@@ -133,6 +141,19 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           url: yield* Schema.decodeEffect(BrowserAddress)(elsewhere),
         });
         yield* hosted(elsewhere);
+        yield* firstPicture(mine.ref);
+
+        // The window back on screen shows the tab in it again, which goes on painting.
+        yield* Effect.promise(() =>
+          app.evaluate(({ BrowserWindow }, hidden) => {
+            for (const id of hidden) BrowserWindow.fromId(id)?.show();
+          }, hidden),
+        );
+        yield* holderOf(elsewhere).pipe(
+          Effect.filterOrFail((bounds) => bounds !== null && bounds.width > 1),
+          Effect.retry(Schedule.spaced(Duration.millis(50))),
+          Effect.timeout(STEP),
+        );
         yield* firstPicture(mine.ref);
       }),
     180_000,

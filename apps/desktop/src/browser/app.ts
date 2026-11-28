@@ -42,6 +42,7 @@ import {
   type WebContents,
 } from "electron";
 import { electronFetch } from "../electronFetch.ts";
+import { onWayland } from "../displayServer.ts";
 import { typedAddress } from "./address.ts";
 import { History, recentVisits, suggestionsFor, type Visit, withVisit } from "./history.ts";
 import { type DesktopBrowser, type LocalBrowserEvent, makeDesktopBrowser } from "./host.ts";
@@ -156,7 +157,16 @@ export const serveBrowser = (options: {
     const front: Record<BrowserPlace, BrowserTabRef | null> = { panel: null, window: null };
     const closed: Array<{ readonly url: string; readonly place: BrowserPlace }> = [];
 
+    /** Whether `window` is on the person's screen: shown, and not minimized. */
+    const onScreen = (window: BrowserWindow) =>
+      !window.isDestroyed() && window.isVisible() && !window.isMinimized();
+
     const browser = yield* makeDesktopBrowser({
+      // On Wayland no window is out of the person's sight: the tabs no window
+      // shows wait hidden in one of the app's on their screen.
+      ...(onWayland()
+        ? { onScreen: () => [...panes.values()].map((pane) => pane.window).filter(onScreen) }
+        : {}),
       scratch,
       drawing: options.drawing,
       downloading: (item, by, tab) => {
@@ -289,25 +299,26 @@ export const serveBrowser = (options: {
       downloads: [...downloads.values()].map((download) => download.entry).toReversed(),
     });
 
-    /** Whether `window` is on the person's screen: shown, and not minimized. */
-    const onScreen = (window: BrowserWindow) =>
-      !window.isDestroyed() && window.isVisible() && !window.isMinimized();
-
     /**
-     * Keeps `window`'s tabs in the shelf while it is off the screen, hidden
-     * or minimized, and draws them in it again once it is back: a page that
-     * begins anew in a hidden window, as one a navigation moves to another
-     * site does, never paints (verified on Linux, Electron 44).
+     * Moves `window`'s tabs aside while it is off the screen, hidden or
+     * minimized, and draws them in it again once it is back, with the tabs
+     * the shelf kept meanwhile: a page that begins anew in a hidden window, as
+     * one a navigation moves to another site does, never paints (verified on
+     * Linux, Electron 44).
      */
     const shelveWhileAway = (window: BrowserWindow) => {
       const away = () => {
         browser.evacuate(window);
         changed();
       };
+      const back = () => {
+        browser.unshelve(window);
+        changed();
+      };
       window.on("hide", away);
       window.on("minimize", away);
-      window.on("show", changed);
-      window.on("restore", changed);
+      window.on("show", back);
+      window.on("restore", back);
     };
 
     /** Draws each place's front tab where its window's page asked, and hides every other. */

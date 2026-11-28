@@ -42,6 +42,37 @@ const page = (title: string, body: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
 
 /** The fake site, by path. */
+// A page whose policy lets in nothing but its own script, as a strict site's does, where a
+// bot's pointer is drawn (browserHost.main.ts): what is pressed and typed shows in its title.
+// It is orange and black throughout, styled by its script as its policy allows: nothing of
+// it is blue, as the bot's pointer is, or white, as its tag is.
+const presencePage = () =>
+  HttpServerResponse.text(
+    page(
+      "Presence",
+      `<button id="press">Press</button>
+       <input id="field" aria-label="Field">
+       <script>
+         document.documentElement.style.background = "rgb(200, 140, 60)";
+         for (const element of document.querySelectorAll("button, input")) {
+           element.style.background = "rgb(170, 110, 40)";
+           element.style.color = "black";
+           element.style.border = "0";
+           element.style.outline = "none";
+         }
+         let pressed = 0;
+         document.getElementById("press").onclick = () => {
+           pressed += 1;
+           document.title = "Pressed " + pressed;
+         };
+       </script>`,
+    ),
+    {
+      contentType: "text/html",
+      headers: { "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'" },
+    },
+  );
+
 const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse>> = {
   "/": () =>
     HttpServerResponse.text(
@@ -138,36 +169,9 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
       ),
       { contentType: "text/html" },
     ),
-  // A page whose policy lets in nothing but its own script, as a strict site's does, where a
-  // bot's pointer is drawn (browserHost.main.ts): what is pressed and typed shows in its title.
-  // It is orange and black throughout, styled by its script as its policy allows: nothing of
-  // it is blue, as the bot's pointer is, or white, as its tag is.
-  "/presence": () =>
-    HttpServerResponse.text(
-      page(
-        "Presence",
-        `<button id="press">Press</button>
-         <input id="field" aria-label="Field">
-         <script>
-           document.documentElement.style.background = "rgb(200, 140, 60)";
-           for (const element of document.querySelectorAll("button, input")) {
-             element.style.background = "rgb(170, 110, 40)";
-             element.style.color = "black";
-             element.style.border = "0";
-             element.style.outline = "none";
-           }
-           let pressed = 0;
-           document.getElementById("press").onclick = () => {
-             pressed += 1;
-             document.title = "Pressed " + pressed;
-           };
-         </script>`,
-      ),
-      {
-        contentType: "text/html",
-        headers: { "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'" },
-      },
-    ),
+  "/presence": presencePage,
+  // The same page, where the bot is too, in a tab no window shows (browserHost.main.ts).
+  "/aside": presencePage,
   "/popup": () =>
     HttpServerResponse.text(page("Pop-up", `<button onclick="window.close()">Close</button>`), {
       contentType: "text/html",
@@ -753,33 +757,63 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           const watched = yield* host
             .screencast({ tab: onScreen, maxWidth: 800, maxHeight: 600, quality: 100 })
             .pipe(Stream.runHead, Effect.flatMap(Effect.fromOption), Effect.timeout(STEP));
-          yield* hand(watched.jpeg);
           const reader = BrowserTabRef.make("tab-reader");
           yield* host.open({ tab: reader, url: `${site}/frame`, background: true, private: false });
-          const forPerson = decodeInk(
-            (yield* host.evaluate({
-              tab: reader,
-              awaitPromise: true,
-              timeoutMs: 5_000,
-              expression: `(async () => {
-                const picture = await createImageBitmap(await (await fetch("/frame")).blob());
-                const canvas = new OffscreenCanvas(picture.width, picture.height);
-                const paint = canvas.getContext("2d");
-                paint.drawImage(picture, 0, 0);
-                const { data } = paint.getImageData(0, 0, picture.width, picture.height);
-                let blue = 0;
-                let white = 0;
-                for (let at = 0; at < data.length; at += 4) {
-                  const [red, green, blueness] = [data[at], data[at + 1], data[at + 2]];
-                  if (blueness > red + 60 && blueness > green + 40) blue += 1;
-                  if (red > 235 && green > 235 && blueness > 235) white += 1;
-                }
-                return { blue, white };
-              })()`,
-            })).value,
-          );
+          /** The pointer's and the tag's pixels in a picture for the person. */
+          const inkFor = (jpeg: Uint8Array) =>
+            Effect.andThen(
+              hand(jpeg),
+              host.evaluate({
+                tab: reader,
+                awaitPromise: true,
+                timeoutMs: 5_000,
+                expression: `(async () => {
+                  const picture = await createImageBitmap(await (await fetch("/frame")).blob());
+                  const canvas = new OffscreenCanvas(picture.width, picture.height);
+                  const paint = canvas.getContext("2d");
+                  paint.drawImage(picture, 0, 0);
+                  const { data } = paint.getImageData(0, 0, picture.width, picture.height);
+                  let blue = 0;
+                  let white = 0;
+                  for (let at = 0; at < data.length; at += 4) {
+                    const [red, green, blueness] = [data[at], data[at + 1], data[at + 2]];
+                    if (blueness > red + 60 && blueness > green + 40) blue += 1;
+                    if (red > 235 && green > 235 && blueness > 235) white += 1;
+                  }
+                  return { blue, white };
+                })()`,
+              }),
+            ).pipe(Effect.map(({ value }) => decodeInk(value)));
+          const forPerson = yield* inkFor(watched.jpeg);
           assert.isAbove(forPerson.blue, 0);
           assert.isAbove(forPerson.white, 0);
+          // A tab no window shows, with the bot on it, draws nothing until it is watched;
+          // then its pictures show the bot's pointer where it last pointed.
+          const aside = BrowserTabRef.make("tab-aside");
+          yield* host.open({ tab: aside, url: `${site}/aside`, background: true, private: false });
+          yield* host.act({ tab: aside, action: { action: "click", locator: "#press" } });
+          const drawn = (yield* host.evaluate({
+            tab: aside,
+            awaitPromise: false,
+            expression: `document.querySelector("j3-presence") !== null`,
+          })).value;
+          assert.strictEqual(drawn, false);
+          const asideInk = yield* host
+            .screencast({ tab: aside, maxWidth: 800, maxHeight: 600, quality: 100 })
+            .pipe(
+              Stream.mapEffect((frame) =>
+                Effect.andThen(
+                  host.screencastAck({ tab: aside, frame: frame.frame }),
+                  inkFor(frame.jpeg),
+                ),
+              ),
+              Stream.filter((ink) => ink.blue > 0),
+              Stream.runHead,
+              Effect.flatMap(Effect.fromOption),
+              Effect.timeout(STEP),
+            );
+          assert.isAbove(asideInk.blue, 0);
+          yield* host.close(aside);
           yield* host.close(reader);
           // A field the bot types in shows the bot's caret.
           yield* host.act({

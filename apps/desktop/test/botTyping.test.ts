@@ -155,7 +155,8 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         });
         const keysUrl = `${site}/keys`;
         yield* goTo(keysUrl);
-        // The person's address holds the new tab for them, until their hold ends.
+        // The person's address holds the new tab for them, until the server publishes that
+        // their hold ended, 10 s on (`BROWSER_PERSON_HOLD_MS`).
         const addressed = yield* listed(
           keysUrl,
           (tab) => tab.where.kind === "desktop" && tab.heldBy?.kind === "person",

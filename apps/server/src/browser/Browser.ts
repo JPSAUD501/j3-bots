@@ -363,7 +363,11 @@ const keyOfWhere = (where: BrowserTabWhere): HostKey | null => {
 const whereOfHello = (hello: BrowserHostHello): BrowserTabWhere =>
   hello.host.kind === "server"
     ? { kind: "server" }
-    : { kind: "desktop", device: hello.host.device };
+    : {
+        kind: "desktop",
+        device: hello.host.device,
+        ...(hello.capabilities.pointers === true ? { pointers: true } : {}),
+      };
 
 /** What a bot saw of a tab when it last used it, for the notice of its next call. */
 interface Seen {
